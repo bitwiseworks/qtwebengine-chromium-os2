@@ -3,24 +3,22 @@
 # found in the LICENSE file.
 
 executable("ipc_message_util") {
+  testonly = true
   configs += [ "//tools/ipc_fuzzer:ipc_fuzzer_tool_config" ]
   deps = [
     "//third_party/re2",
     "//tools/ipc_fuzzer/message_lib:ipc_message_lib",
   ]
-  sources = [
-    "message_util.cc",
-  ]
+  sources = [ "message_util.cc" ]
 }
 
 executable("ipc_message_list") {
+  testonly = true
   configs += [ "//tools/ipc_fuzzer:ipc_fuzzer_tool_config" ]
   deps = [
     "//chrome/common/safe_browsing:proto",
     "//components/nacl/common:buildflags",
     "//tools/ipc_fuzzer/message_lib:ipc_message_lib",
   ]
-  sources = [
-    "message_list.cc",
-  ]
+  sources = [ "message_list.cc" ]
 }

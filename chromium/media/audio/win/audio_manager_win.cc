@@ -19,7 +19,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/win/windows_version.h"
 #include "media/audio/audio_device_description.h"
@@ -57,15 +56,15 @@ DEFINE_GUID(AM_KSCATEGORY_AUDIO,
 namespace media {
 
 // Maximum number of output streams that can be open simultaneously.
-static const int kMaxOutputStreams = 50;
+constexpr int kMaxOutputStreams = 50;
 
 // Up to 8 channels can be passed to the driver.  This should work, given the
 // right drivers, but graceful error handling is needed.
-static const int kWinMaxChannels = 8;
+constexpr int kWinMaxChannels = 8;
 
 // Buffer size to use for input and output stream when a proper size can't be
 // determined from the system
-static const int kFallbackBufferSize = 2048;
+constexpr int kFallbackBufferSize = 2048;
 
 static int NumberOfWaveOutBuffers() {
   // Use the user provided buffer count if provided.
@@ -132,9 +131,10 @@ void AudioManagerWin::InitializeOnAudioThread() {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
 
   // AudioDeviceListenerWin must be initialized on a COM thread.
-  output_device_listener_.reset(new AudioDeviceListenerWin(BindToCurrentLoop(
-      base::Bind(&AudioManagerWin::NotifyAllOutputDeviceChangeListeners,
-                 base::Unretained(this)))));
+  output_device_listener_ = std::make_unique<AudioDeviceListenerWin>(
+      BindToCurrentLoop(base::BindRepeating(
+          &AudioManagerWin::NotifyAllOutputDeviceChangeListeners,
+          base::Unretained(this))));
 }
 
 void AudioManagerWin::GetAudioDeviceNamesImpl(bool input,
@@ -206,7 +206,7 @@ AudioOutputStream* AudioManagerWin::MakeLinearOutputStream(
     const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
   if (params.channels() > kWinMaxChannels)
-    return NULL;
+    return nullptr;
 
   return new PCMWaveOutAudioOutputStream(this, params, NumberOfWaveOutBuffers(),
                                          WAVE_MAPPER);
@@ -223,7 +223,13 @@ AudioOutputStream* AudioManagerWin::MakeLowLatencyOutputStream(
     const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
   if (params.channels() > kWinMaxChannels)
-    return NULL;
+    return nullptr;
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kForceWaveAudio)) {
+    DLOG(WARNING) << "Forcing usage of Windows WaveXxx APIs";
+    return nullptr;
+  }
 
   // Pass an empty string to indicate that we want the default device
   // since we consistently only check for an empty string in
@@ -235,7 +241,7 @@ AudioOutputStream* AudioManagerWin::MakeLowLatencyOutputStream(
       communications || device_id == AudioDeviceDescription::kDefaultDeviceId
           ? std::string()
           : device_id,
-      params, communications ? eCommunications : eConsole);
+      params, communications ? eCommunications : eConsole, log_callback);
 }
 
 // Factory for the implementations of AudioInputStream for AUDIO_PCM_LINEAR
@@ -255,7 +261,6 @@ AudioInputStream* AudioManagerWin::MakeLowLatencyInputStream(
     const std::string& device_id,
     const LogCallback& log_callback) {
   // Used for both AUDIO_PCM_LOW_LATENCY and AUDIO_PCM_LINEAR.
-  DVLOG(1) << "MakeLowLatencyInputStream: " << device_id;
   return new WASAPIAudioInputStream(this, params, device_id, log_callback);
 }
 
@@ -279,6 +284,7 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     const std::string& output_device_id,
     const AudioParameters& input_params) {
   const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+  int channels = 0;
   ChannelLayout channel_layout = CHANNEL_LAYOUT_STEREO;
   int sample_rate = 48000;
   int buffer_size = kFallbackBufferSize;
@@ -314,9 +320,10 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
       DLOG(ERROR) << "GetPreferredAudioParameters failed: " << std::hex << hr;
       return AudioParameters();
     }
-
+    DVLOG(1) << params.AsHumanReadableString();
     DCHECK(params.IsValid());
 
+    channels = params.channels();
     buffer_size = params.frames_per_buffer();
     channel_layout = params.channel_layout();
     sample_rate = params.sample_rate();
@@ -376,6 +383,9 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
       buffer_size,
       AudioParameters::HardwareCapabilities(min_buffer_size, max_buffer_size));
   params.set_effects(effects);
+  if (channel_layout == CHANNEL_LAYOUT_DISCRETE) {
+    params.set_channels_for_discrete(channels);
+  }
   DCHECK(params.IsValid());
   return params;
 }

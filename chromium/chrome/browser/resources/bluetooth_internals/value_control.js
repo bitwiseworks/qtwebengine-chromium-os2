@@ -7,8 +7,8 @@
  */
 
 cr.define('value_control', function() {
-  /** @const */ var Snackbar = snackbar.Snackbar;
-  /** @const */ var SnackbarType = snackbar.SnackbarType;
+  const Snackbar = snackbar.Snackbar;
+  const SnackbarType = snackbar.SnackbarType;
 
   /**
    * @typedef {{
@@ -19,10 +19,10 @@ cr.define('value_control', function() {
    *    properties: (number|undefined),
    *  }}
    */
-  var ValueLoadOptions;
+  let ValueLoadOptions;
 
   /** @enum {string}  */
-  var ValueDataType = {
+  const ValueDataType = {
     HEXADECIMAL: 'Hexadecimal',
     UTF8: 'UTF-8',
     DECIMAL: 'Decimal',
@@ -45,7 +45,7 @@ cr.define('value_control', function() {
      * Gets the backing array value.
      * @return {!Array<number>}
      */
-    getArray: function() {
+    getArray() {
       return this.value_;
     },
 
@@ -53,7 +53,7 @@ cr.define('value_control', function() {
      * Sets the backing array value.
      * @param {!Array<number>} newValue
      */
-    setArray: function(newValue) {
+    setArray(newValue) {
       this.value_ = newValue;
     },
 
@@ -63,7 +63,7 @@ cr.define('value_control', function() {
      * @param {!value_control.ValueDataType} valueDataType
      * @param {string} newValue
      */
-    setAs: function(valueDataType, newValue) {
+    setAs(valueDataType, newValue) {
       switch (valueDataType) {
         case ValueDataType.HEXADECIMAL:
           this.setValueFromHex_(newValue);
@@ -84,7 +84,7 @@ cr.define('value_control', function() {
      * @param {!value_control.ValueDataType} valueDataType
      * @return {string}
      */
-    getAs: function(valueDataType) {
+    getAs(valueDataType) {
       switch (valueDataType) {
         case ValueDataType.HEXADECIMAL:
           return this.toHex_();
@@ -104,7 +104,7 @@ cr.define('value_control', function() {
      * @return {string}
      * @private
      */
-    toHex_: function() {
+    toHex_() {
       if (this.value_.length == 0) {
         return '';
       }
@@ -119,7 +119,7 @@ cr.define('value_control', function() {
      * @param {string} newValue
      * @private
      */
-    setValueFromHex_: function(newValue) {
+    setValueFromHex_(newValue) {
       if (!newValue) {
         this.value_ = [];
         return;
@@ -129,8 +129,8 @@ cr.define('value_control', function() {
         throw new Error('Expected new value to start with "0x".');
       }
 
-      var result = [];
-      for (var i = 2; i < newValue.length; i += 2) {
+      const result = [];
+      for (let i = 2; i < newValue.length; i += 2) {
         result.push(parseInt(newValue.substr(i, 2), 16));
       }
 
@@ -142,7 +142,7 @@ cr.define('value_control', function() {
      * @return {string}
      * @private
      */
-    toUTF8_: function() {
+    toUTF8_() {
       return this.value_.reduce(function(result, value) {
         return result + String.fromCharCode(value);
       }, '');
@@ -153,7 +153,7 @@ cr.define('value_control', function() {
      * @param {string} newValue
      * @private
      */
-    setValueFromUTF8_: function(newValue) {
+    setValueFromUTF8_(newValue) {
       if (!newValue) {
         this.value_ = [];
         return;
@@ -169,7 +169,7 @@ cr.define('value_control', function() {
      * @return {string}
      * @private
      */
-    toDecimal_: function() {
+    toDecimal_() {
       return this.value_.join('-');
     },
 
@@ -178,7 +178,7 @@ cr.define('value_control', function() {
      * @param {string} newValue
      * @private
      */
-    setValueFromDecimal_: function(newValue) {
+    setValueFromDecimal_(newValue) {
       if (!newValue) {
         this.value_ = [];
         return;
@@ -203,7 +203,7 @@ cr.define('value_control', function() {
    * @constructor
    * @extends {HTMLDivElement}
    */
-  var ValueControl = cr.ui.define('div');
+  const ValueControl = cr.ui.define('div');
 
   ValueControl.prototype = {
     __proto__: HTMLDivElement.prototype,
@@ -214,7 +214,7 @@ cr.define('value_control', function() {
      * read/write requests. Event handlers are attached and references to these
      * elements are stored for later use.
      */
-    decorate: function() {
+    decorate() {
       this.classList.add('value-control');
 
       /** @private {!Value} */
@@ -245,8 +245,8 @@ cr.define('value_control', function() {
       this.typeSelect_ = document.createElement('select');
 
       Object.keys(ValueDataType).forEach(function(key) {
-        var type = ValueDataType[key];
-        var option = document.createElement('option');
+        const type = ValueDataType[key];
+        const option = document.createElement('option');
         option.value = type;
         option.text = type;
         this.typeSelect_.add(option);
@@ -254,7 +254,7 @@ cr.define('value_control', function() {
 
       this.typeSelect_.addEventListener('change', this.redraw.bind(this));
 
-      var inputDiv = document.createElement('div');
+      const inputDiv = document.createElement('div');
       inputDiv.appendChild(this.valueInput_);
       inputDiv.appendChild(this.typeSelect_);
 
@@ -266,7 +266,7 @@ cr.define('value_control', function() {
       this.writeBtn_.textContent = 'Write';
       this.writeBtn_.addEventListener('click', this.writeValue_.bind(this));
 
-      var buttonsDiv = document.createElement('div');
+      const buttonsDiv = document.createElement('div');
       buttonsDiv.appendChild(this.readBtn_);
       buttonsDiv.appendChild(this.writeBtn_);
 
@@ -281,7 +281,7 @@ cr.define('value_control', function() {
      * are not provided, no restrictions on reading/writing are applied.
      * @param {!ValueLoadOptions} options
      */
-    load: function(options) {
+    load(options) {
       this.deviceAddress_ = options.deviceAddress;
       this.serviceId_ = options.serviceId;
       this.characteristicId_ = options.characteristicId;
@@ -298,7 +298,7 @@ cr.define('value_control', function() {
      * Redraws the value control with updated layout depending on the
      * availability of reads and writes and the current cached value.
      */
-    redraw: function() {
+    redraw() {
       this.readBtn_.hidden =
           (this.properties_ & bluetooth.mojom.Property.READ) === 0;
       this.writeBtn_.hidden =
@@ -306,7 +306,7 @@ cr.define('value_control', function() {
           (this.properties_ &
            bluetooth.mojom.Property.WRITE_WITHOUT_RESPONSE) === 0;
 
-      var isAvailable = !this.readBtn_.hidden || !this.writeBtn_.hidden;
+      const isAvailable = !this.readBtn_.hidden || !this.writeBtn_.hidden;
       this.unavailableMessage_.hidden = isAvailable;
       this.valueInput_.hidden = !isAvailable;
       this.typeSelect_.hidden = !isAvailable;
@@ -322,7 +322,7 @@ cr.define('value_control', function() {
      * Sets the value of the control.
      * @param {!Array<number>} value
      */
-    setValue: function(value) {
+    setValue(value) {
       this.value_.setArray(value);
       this.redraw();
     },
@@ -332,10 +332,10 @@ cr.define('value_control', function() {
      * @param {!bluetooth.mojom.GattResult} result
      * @private
      */
-    getErrorString_: function(result) {
+    getErrorString_(result) {
       // TODO(crbug.com/663394): Replace with more descriptive error
       // messages.
-      var GattResult = bluetooth.mojom.GattResult;
+      const GattResult = bluetooth.mojom.GattResult;
       return Object.keys(GattResult).find(function(key) {
         return GattResult[key] === result;
       });
@@ -348,7 +348,7 @@ cr.define('value_control', function() {
      * descriptor value with |descriptor_id| is read instead.
      * @private
      */
-    readValue_: function() {
+    readValue_() {
       this.readBtn_.disabled = true;
 
       device_broker.connectToDevice(assert(this.deviceAddress_))
@@ -372,7 +372,7 @@ cr.define('value_control', function() {
               return;
             }
 
-            var errorString = this.getErrorString_(response.result);
+            const errorString = this.getErrorString_(response.result);
             Snackbar.show(
                 this.deviceAddress_ + ': ' + errorString, SnackbarType.ERROR,
                 'Retry', this.readValue_.bind(this));
@@ -386,7 +386,7 @@ cr.define('value_control', function() {
      * the descriptor value with |descriptor_id| is written instead.
      * @private
      */
-    writeValue_: function() {
+    writeValue_() {
       this.writeBtn_.disabled = true;
 
       device_broker.connectToDevice(assert(this.deviceAddress_))
@@ -411,7 +411,7 @@ cr.define('value_control', function() {
               return;
             }
 
-            var errorString = this.getErrorString_(response.result);
+            const errorString = this.getErrorString_(response.result);
             Snackbar.show(
                 this.deviceAddress_ + ': ' + errorString, SnackbarType.ERROR,
                 'Retry', this.writeValue_.bind(this));

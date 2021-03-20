@@ -5,7 +5,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+#      https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,13 +19,21 @@ absl_cc_library(
     stacktrace
   HDRS
     "stacktrace.h"
+    "internal/stacktrace_aarch64-inl.inc"
+    "internal/stacktrace_arm-inl.inc"
+    "internal/stacktrace_config.h"
+    "internal/stacktrace_generic-inl.inc"
+    "internal/stacktrace_powerpc-inl.inc"
+    "internal/stacktrace_unimplemented-inl.inc"
+    "internal/stacktrace_win32-inl.inc"
+    "internal/stacktrace_x86-inl.inc"
   SRCS
     "stacktrace.cc"
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
     absl::debugging_internal
-    absl::base
+    absl::config
     absl::core_headers
   PUBLIC
 )
@@ -43,12 +51,18 @@ absl_cc_library(
     "symbolize_win32.inc"
   COPTS
     ${ABSL_DEFAULT_COPTS}
+  LINKOPTS
+    ${ABSL_DEFAULT_LINKOPTS}
+    $<$<BOOL:${MINGW}>:"dbghelp">
   DEPS
     absl::debugging_internal
     absl::demangle_internal
     absl::base
+    absl::config
     absl::core_headers
+    absl::dynamic_annotations
     absl::malloc_internal
+    absl::raw_logging_internal
   PUBLIC
 )
 
@@ -59,12 +73,16 @@ absl_cc_test(
     "symbolize_test.cc"
   COPTS
     ${ABSL_TEST_COPTS}
+    $<$<BOOL:${MSVC}>:-Z7>
+  LINKOPTS
+    $<$<BOOL:${MSVC}>:-DEBUG>
   DEPS
     absl::stack_consumption
     absl::symbolize
     absl::base
     absl::core_headers
     absl::memory
+    absl::raw_logging_internal
     gmock
 )
 
@@ -80,8 +98,9 @@ absl_cc_library(
   DEPS
     absl::stacktrace
     absl::symbolize
-    absl::base
+    absl::config
     absl::core_headers
+    absl::raw_logging_internal
 )
 
 absl_cc_library(
@@ -99,6 +118,8 @@ absl_cc_library(
     absl::base
     absl::config
     absl::core_headers
+    absl::errno_saver
+    absl::raw_logging_internal
   PUBLIC
 )
 
@@ -113,8 +134,8 @@ absl_cc_test(
     absl::failure_signal_handler
     absl::stacktrace
     absl::symbolize
-    absl::base
     absl::strings
+    absl::raw_logging_internal
     Threads::Threads
     gmock
 )
@@ -125,14 +146,6 @@ absl_cc_library(
   HDRS
     "internal/address_is_readable.h"
     "internal/elf_mem_image.h"
-    "internal/stacktrace_aarch64-inl.inc"
-    "internal/stacktrace_arm-inl.inc"
-    "internal/stacktrace_config.h"
-    "internal/stacktrace_generic-inl.inc"
-    "internal/stacktrace_powerpc-inl.inc"
-    "internal/stacktrace_unimplemented-inl.inc"
-    "internal/stacktrace_win32-inl.inc"
-    "internal/stacktrace_x86-inl.inc"
     "internal/vdso_support.h"
   SRCS
     "internal/address_is_readable.cc"
@@ -141,9 +154,11 @@ absl_cc_library(
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
-    absl::base
     absl::core_headers
+    absl::config
     absl::dynamic_annotations
+    absl::errno_saver
+    absl::raw_logging_internal
 )
 
 absl_cc_library(
@@ -171,9 +186,9 @@ absl_cc_test(
   DEPS
     absl::demangle_internal
     absl::stack_consumption
-    absl::base
     absl::core_headers
     absl::memory
+    absl::raw_logging_internal
     gmock_main
 )
 
@@ -187,6 +202,7 @@ absl_cc_library(
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
+    absl::config
     absl::core_headers
   PUBLIC
 )
@@ -196,13 +212,10 @@ absl_cc_library(
     leak_check_disable
   SRCS
     "leak_check_disable.cc"
+  COPTS
+    ${ABSL_DEFAULT_COPTS}
   PUBLIC
 )
-
-# TODO(cohenjon) Move into the copts code.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(ABSL_LSAN_LINKOPTS "-fsanitize=leak")
-endif()
 
 absl_cc_library(
   NAME
@@ -212,7 +225,8 @@ absl_cc_library(
   SRCS
     "leak_check.cc"
   COPTS
-    $<$<BOOL:${ABSL_USING_CLANG}>:-DLEAK_SANITIZER>
+    ${ABSL_DEFAULT_COPTS}
+    $<$<BOOL:${ABSL_HAVE_LSAN}>:-DLEAK_SANITIZER>
   TESTONLY
 )
 
@@ -224,6 +238,7 @@ absl_cc_library(
   SRCS
     "leak_check.cc"
   COPTS
+    ${ABSL_DEFAULT_COPTS}
     "-ULEAK_SANITIZER"
   TESTONLY
 )
@@ -234,7 +249,8 @@ absl_cc_test(
   SRCS
     "leak_check_test.cc"
   COPTS
-    "$<$<CXX_COMPILER_ID:Clang>:-DABSL_EXPECT_LEAK_SANITIZER>"
+    ${ABSL_TEST_COPTS}
+    "$<$<BOOL:${ABSL_HAVE_LSAN}>:-DABSL_EXPECT_LEAK_SANITIZER>"
   LINKOPTS
     "${ABSL_LSAN_LINKOPTS}"
   DEPS
@@ -249,6 +265,7 @@ absl_cc_test(
   SRCS
     "leak_check_test.cc"
   COPTS
+    ${ABSL_TEST_COPTS}
     "-UABSL_EXPECT_LEAK_SANITIZER"
   DEPS
     absl::leak_check_api_disabled_for_testing
@@ -261,12 +278,15 @@ absl_cc_test(
     disabled_leak_check_test
   SRCS
     "leak_check_fail_test.cc"
+  COPTS
+    ${ABSL_TEST_COPTS}
   LINKOPTS
     "${ABSL_LSAN_LINKOPTS}"
   DEPS
     absl::leak_check_api_enabled_for_testing
     absl::leak_check_disable
     absl::base
+    absl::raw_logging_internal
     gmock_main
 )
 
@@ -280,8 +300,9 @@ absl_cc_library(
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
-    absl::base
+    absl::config
     absl::core_headers
+    absl::raw_logging_internal
   TESTONLY
 )
 
@@ -294,8 +315,8 @@ absl_cc_test(
     ${ABSL_TEST_COPTS}
   DEPS
     absl::stack_consumption
-    absl::base
     absl::core_headers
+    absl::raw_logging_internal
     gmock_main
 )
 
@@ -303,6 +324,8 @@ absl_cc_test(
 absl_cc_library(
   NAME
     debugging
+  COPTS
+    ${ABSL_DEFAULT_COPTS}
   DEPS
     absl::stacktrace
     absl::leak_check

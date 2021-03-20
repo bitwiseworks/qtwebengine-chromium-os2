@@ -64,6 +64,7 @@ InspectedContext::InspectedContext(V8InspectorImpl* inspector,
                     v8::WeakCallbackType::kParameter);
   if (!info.hasMemoryOnConsole) return;
   v8::Context::Scope contextScope(info.context);
+  v8::HandleScope handleScope(info.context->GetIsolate());
   v8::Local<v8::Object> global = info.context->Global();
   v8::Local<v8::Value> console;
   if (global->Get(info.context, toV8String(m_inspector->isolate(), "console"))
@@ -111,7 +112,7 @@ InjectedScript* InspectedContext::getInjectedScript(int sessionId) {
 
 InjectedScript* InspectedContext::createInjectedScript(int sessionId) {
   std::unique_ptr<InjectedScript> injectedScript =
-      v8::base::make_unique<InjectedScript>(this, sessionId);
+      std::make_unique<InjectedScript>(this, sessionId);
   CHECK(m_injectedScripts.find(sessionId) == m_injectedScripts.end());
   m_injectedScripts[sessionId] = std::move(injectedScript);
   return getInjectedScript(sessionId);

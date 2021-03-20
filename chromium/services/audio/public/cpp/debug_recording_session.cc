@@ -6,22 +6,21 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "media/audio/audio_debug_recording_manager.h"
-#include "media/audio/audio_manager.h"
-#include "services/audio/public/mojom/constants.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 namespace audio {
 
 namespace {
 
 #if defined(OS_WIN)
-#define IntToStringType base::IntToString16
+#define NumberToStringType base::NumberToString16
 #else
-#define IntToStringType base::IntToString
+#define NumberToStringType base::NumberToString
 #endif
 
 const base::FilePath::CharType* StreamTypeToStringType(
@@ -39,9 +38,9 @@ const base::FilePath::CharType* StreamTypeToStringType(
 }  // namespace
 
 DebugRecordingSession::DebugRecordingFileProvider::DebugRecordingFileProvider(
-    mojom::DebugRecordingFileProviderRequest request,
+    mojo::PendingReceiver<mojom::DebugRecordingFileProvider> receiver,
     const base::FilePath& file_name_base)
-    : binding_(this, std::move(request)), file_name_base_(file_name_base) {}
+    : receiver_(this, std::move(receiver)), file_name_base_(file_name_base) {}
 
 DebugRecordingSession::DebugRecordingFileProvider::
     ~DebugRecordingFileProvider() = default;
@@ -50,7 +49,7 @@ void DebugRecordingSession::DebugRecordingFileProvider::CreateWavFile(
     media::AudioDebugRecordingStreamType stream_type,
     uint32_t id,
     CreateWavFileCallback reply_callback) {
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
@@ -60,24 +59,21 @@ void DebugRecordingSession::DebugRecordingFileProvider::CreateWavFile(
                                              base::File::FLAG_WRITE);
           },
           file_name_base_.AddExtension(StreamTypeToStringType(stream_type))
-              .AddExtension(IntToStringType(id))
+              .AddExtension(NumberToStringType(id))
               .AddExtension(FILE_PATH_LITERAL("wav"))),
       std::move(reply_callback));
 }
 
 DebugRecordingSession::DebugRecordingSession(
     const base::FilePath& file_name_base,
-    std::unique_ptr<service_manager::Connector> connector) {
-  DCHECK(connector);
-
-  mojom::DebugRecordingFileProviderPtr file_provider;
+    mojo::PendingRemote<mojom::DebugRecording> debug_recording) {
+  mojo::PendingRemote<mojom::DebugRecordingFileProvider> remote_file_provider;
   file_provider_ = std::make_unique<DebugRecordingFileProvider>(
-      mojo::MakeRequest(&file_provider), file_name_base);
-
-  connector->BindInterface(audio::mojom::kServiceName,
-                           mojo::MakeRequest(&debug_recording_));
-  if (debug_recording_.is_bound())
-    debug_recording_->Enable(std::move(file_provider));
+      remote_file_provider.InitWithNewPipeAndPassReceiver(), file_name_base);
+  if (debug_recording) {
+    debug_recording_.Bind(std::move(debug_recording));
+    debug_recording_->Enable(std::move(remote_file_provider));
+  }
 }
 
 DebugRecordingSession::~DebugRecordingSession() {}

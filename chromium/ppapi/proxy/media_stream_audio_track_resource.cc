@@ -4,6 +4,7 @@
 
 #include "ppapi/proxy/media_stream_audio_track_resource.h"
 
+#include "base/bind.h"
 #include "ppapi/proxy/audio_buffer_resource.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/shared_impl/media_stream_audio_track_shared.h"
@@ -141,7 +142,7 @@ void MediaStreamAudioTrackResource::Close() {
   if (TrackedCallback::IsPending(get_buffer_callback_)) {
     *get_buffer_output_ = 0;
     get_buffer_callback_->PostAbort();
-    get_buffer_callback_ = NULL;
+    get_buffer_callback_.reset();
     get_buffer_output_ = 0;
   }
 
@@ -182,7 +183,7 @@ void MediaStreamAudioTrackResource::ReleaseBuffers() {
     // Just invalidate and release VideoBufferResorce, but keep PP_Resource.
     // So plugin can still use |RecycleBuffer()|.
     it->second->Invalidate();
-    it->second = NULL;
+    it->second.reset();
   }
 }
 

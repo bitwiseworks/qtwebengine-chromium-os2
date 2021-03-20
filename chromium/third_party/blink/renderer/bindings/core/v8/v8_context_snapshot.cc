@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_context_snapshot.h"
 
-#include <array>
 #include <cstring>
 
 #include "third_party/blink/renderer/bindings/core/v8/generated_code_helper.h"
@@ -115,7 +114,7 @@ struct DataForDeserializer {
  public:
   DataForDeserializer(Document* document) : document(document) {}
 
-  Member<Document> document;
+  Document* document;
   // Figures if we failed the deserialization.
   bool did_fail = false;
 };
@@ -136,9 +135,11 @@ v8::Local<v8::Context> V8ContextSnapshot::CreateContextFromSnapshot(
   DataForDeserializer data(document);
   v8::DeserializeInternalFieldsCallback callback =
       v8::DeserializeInternalFieldsCallback(&DeserializeInternalField, &data);
+
   v8::Local<v8::Context> context =
-      v8::Context::FromSnapshot(isolate, index, callback,
-                                extension_configuration, global_proxy)
+      v8::Context::FromSnapshot(
+          isolate, index, callback, extension_configuration, global_proxy,
+          document->ToExecutionContext()->GetMicrotaskQueue())
           .ToLocalChecked();
 
   // In case we fail to deserialize v8::Context from snapshot,
@@ -208,7 +209,7 @@ bool V8ContextSnapshot::InstallConditionalFeatures(
   // The below code handles window.document on the main world.
   {
     CHECK(document);
-    DCHECK(document->IsHTMLDocument());
+    DCHECK(IsA<HTMLDocument>(document));
     CHECK(document->ContainsWrapper());
     v8::Local<v8::Object> document_wrapper =
         ToV8(document, global_proxy, isolate).As<v8::Object>();
@@ -425,7 +426,7 @@ bool V8ContextSnapshot::CanCreateContextFromSnapshot(
   // When creating a context for the main world from snapshot, we also need a
   // HTMLDocument instance. If typeof window.document is not HTMLDocument, e.g.
   // SVGDocument or XMLDocument, we can't create contexts from the snapshot.
-  return !world.IsMainWorld() || document->IsHTMLDocument();
+  return !world.IsMainWorld() || IsA<HTMLDocument>(document);
 }
 
 void V8ContextSnapshot::EnsureInterfaceTemplatesForWorld(
@@ -458,8 +459,8 @@ void V8ContextSnapshot::TakeSnapshotForWorld(v8::SnapshotCreator* creator,
 
   // Function templates
   v8::HandleScope handleScope(isolate);
-  std::array<v8::Local<v8::FunctionTemplate>, kSnapshotInterfaceSize>
-      interface_templates;
+  Vector<v8::Local<v8::FunctionTemplate>> interface_templates(
+      kSnapshotInterfaceSize);
   v8::Local<v8::FunctionTemplate> window_template;
   for (size_t i = 0; i < kSnapshotInterfaceSize; ++i) {
     const WrapperTypeInfo* wrapper_type_info =

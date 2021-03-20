@@ -13,7 +13,7 @@
 
 if {![info exists testdir]} {
   set testdir [file join [file dirname [info script]] .. .. test]
-}
+} 
 source [file join [file dirname [info script]] session_common.tcl]
 source $testdir/tester.tcl
 ifcapable !session {finish_test; return}
@@ -40,7 +40,7 @@ proc do_invert_test {tn sql {iter {}}} {
   set I [sqlite3changeset_invert $C]
   sqlite3changeset_apply db $I {}
   uplevel [list do_test $tn.2 [list compare_db db db2] {}]
-
+  
   sqlite3changeset_apply_v2 -invert db3 $C {}
   uplevel [list do_test $tn.3 [list compare_db db db3] {}]
 
@@ -108,13 +108,13 @@ do_invert_test 1.5 {
   {UPDATE t2 0 .XX {i 4 t five t v} {i 5 {} {} {} {}}}
 }
 
-do_execsql_test 2.0 {
+do_execsql_test 2.0 { 
   ANALYZE;
   PRAGMA writable_schema = 1;
   DROP TABLE IF EXISTS sqlite_stat4;
   SELECT * FROM sqlite_stat1;
 } {
-  t2 sqlite_autoindex_t2_1 {6 1 1}
+  t2 sqlite_autoindex_t2_1 {6 1 1} 
   t1 sqlite_autoindex_t1_1 {6 1}
 }
 
@@ -151,7 +151,7 @@ do_test 3.1 {
 } {1 SQLITE_CORRUPT}
 
 do_test 3.2 {
-  sqlite3changeset_apply_v2 db2 $P {}
+  sqlite3changeset_apply_v2 db2 $P {} 
   compare_db db db2
 } {}
 

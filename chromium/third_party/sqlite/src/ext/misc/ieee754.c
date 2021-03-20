@@ -114,17 +114,19 @@ static void ieee754func(
 __declspec(dllexport)
 #endif
 int sqlite3_ieee_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;
   SQLITE_EXTENSION_INIT2(pApi);
   (void)pzErrMsg;  /* Unused parameter */
-  rc = sqlite3_create_function(db, "ieee754", 1, SQLITE_UTF8, 0,
+  rc = sqlite3_create_function(db, "ieee754", 1, 
+                               SQLITE_UTF8|SQLITE_INNOCUOUS, 0,
                                ieee754func, 0, 0);
   if( rc==SQLITE_OK ){
-    rc = sqlite3_create_function(db, "ieee754", 2, SQLITE_UTF8, 0,
+    rc = sqlite3_create_function(db, "ieee754", 2,
+                                 SQLITE_UTF8|SQLITE_INNOCUOUS, 0,
                                  ieee754func, 0, 0);
   }
   return rc;

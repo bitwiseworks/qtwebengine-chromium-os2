@@ -55,6 +55,17 @@ uint32_t IPAddress::v4AddressAsHostOrderInteger() const {
   }
 }
 
+int IPAddress::overhead() const {
+  switch (family_) {
+    case AF_INET:  // IPv4
+      return 20;
+    case AF_INET6:  // IPv6
+      return 40;
+    default:
+      return 0;
+  }
+}
+
 bool IPAddress::IsNil() const {
   return IPIsUnspec(*this);
 }
@@ -267,6 +278,18 @@ bool IPIsPrivateNetwork(const IPAddress& ip) {
   return false;
 }
 
+static bool IPIsSharedNetworkV4(const IPAddress& ip) {
+  uint32_t ip_in_host_order = ip.v4AddressAsHostOrderInteger();
+  return (ip_in_host_order >> 22) == ((100 << 2) | 1);
+}
+
+bool IPIsSharedNetwork(const IPAddress& ip) {
+  if (ip.family() == AF_INET) {
+    return IPIsSharedNetworkV4(ip);
+  }
+  return false;
+}
+
 #ifndef WEBRTC_NO_INET6
 in_addr ExtractMappedAddress(const in6_addr& in6) {
   in_addr ipv4;
@@ -365,7 +388,8 @@ bool IPIsLoopback(const IPAddress& ip) {
 }
 
 bool IPIsPrivate(const IPAddress& ip) {
-  return IPIsLinkLocal(ip) || IPIsLoopback(ip) || IPIsPrivateNetwork(ip);
+  return IPIsLinkLocal(ip) || IPIsLoopback(ip) || IPIsPrivateNetwork(ip) ||
+         IPIsSharedNetwork(ip);
 }
 
 bool IPIsUnspec(const IPAddress& ip) {
@@ -433,7 +457,7 @@ IPAddress TruncateIP(const IPAddress& ip, int length) {
   return IPAddress();
 }
 
-int CountIPMaskBits(IPAddress mask) {
+int CountIPMaskBits(const IPAddress& mask) {
   uint32_t word_to_count = 0;
   int bits = 0;
   switch (mask.family()) {
@@ -459,7 +483,9 @@ int CountIPMaskBits(IPAddress mask) {
       break;
     }
 #endif
-    default: { return 0; }
+    default: {
+      return 0;
+    }
   }
   if (word_to_count == 0) {
     return bits;

@@ -44,7 +44,7 @@ class ZoomEventManager : public base::SupportsUserData::Data {
   // ZoomEventManagerObserver instead.
   std::unique_ptr<content::HostZoomMap::Subscription>
   AddZoomLevelChangedCallback(
-      const content::HostZoomMap::ZoomLevelChangedCallback& callback);
+      content::HostZoomMap::ZoomLevelChangedCallback callback);
 
   // Called by ZoomLevelDelegates when changes are made to the default zoom
   // level for their associated HostZoomMap.
@@ -65,7 +65,7 @@ class ZoomEventManager : public base::SupportsUserData::Data {
   base::CallbackList<void(const content::HostZoomMap::ZoomLevelChange&)>
       zoom_level_changed_callbacks_;
   base::ObserverList<ZoomEventManagerObserver>::Unchecked observers_;
-  base::WeakPtrFactory<ZoomEventManager> weak_ptr_factory_;
+  base::WeakPtrFactory<ZoomEventManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ZoomEventManager);
 };

@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/inspector/inspector_base_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/Performance.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -26,15 +25,13 @@ class UpdateLayout;
 class V8Compile;
 }  // namespace probe
 
+using blink::protocol::Maybe;
+
 class CORE_EXPORT InspectorPerformanceAgent final
     : public InspectorBaseAgent<protocol::Performance::Metainfo>,
       public base::sequence_manager::TaskTimeObserver {
  public:
-  void Trace(blink::Visitor*) override;
-
-  static InspectorPerformanceAgent* Create(InspectedFrames* inspected_frames) {
-    return MakeGarbageCollected<InspectorPerformanceAgent>(inspected_frames);
-  }
+  void Trace(Visitor*) override;
 
   explicit InspectorPerformanceAgent(InspectedFrames*);
   ~InspectorPerformanceAgent() override;
@@ -42,7 +39,7 @@ class CORE_EXPORT InspectorPerformanceAgent final
   void Restore() override;
 
   // Performance protocol domain implementation.
-  protocol::Response enable() override;
+  protocol::Response enable(Maybe<String> time_domain) override;
   protocol::Response disable() override;
   protocol::Response setTimeDomain(const String& time_domain) override;
   protocol::Response getMetrics(
@@ -61,6 +58,8 @@ class CORE_EXPORT InspectorPerformanceAgent final
   void Did(const probe::UpdateLayout&);
   void Will(const probe::V8Compile&);
   void Did(const probe::V8Compile&);
+  void WillStartDebuggerTask();
+  void DidFinishDebuggerTask();
 
   // TaskTimeObserver implementation.
   void WillProcessTask(base::TimeTicks start_time) override;
@@ -71,25 +70,31 @@ class CORE_EXPORT InspectorPerformanceAgent final
   void ScriptStarts();
   void ScriptEnds();
   void InnerEnable();
-  TimeTicks GetTimeTicksNow();
+  base::TimeTicks GetTimeTicksNow();
+  base::TimeTicks GetThreadTimeNow();
+  bool HasTimeDomain(const String& time_domain);
+  protocol::Response InnerSetTimeDomain(const String& time_domain);
 
   Member<InspectedFrames> inspected_frames_;
-  TimeDelta layout_duration_;
-  TimeTicks layout_start_ticks_;
-  TimeDelta recalc_style_duration_;
-  TimeTicks recalc_style_start_ticks_;
-  TimeDelta script_duration_;
-  TimeTicks script_start_ticks_;
-  TimeDelta task_duration_;
-  TimeTicks task_start_ticks_;
-  TimeDelta v8compile_duration_;
-  TimeTicks v8compile_start_ticks_;
-  unsigned long long layout_count_ = 0;
-  unsigned long long recalc_style_count_ = 0;
+  base::TimeDelta layout_duration_;
+  base::TimeTicks layout_start_ticks_;
+  base::TimeDelta recalc_style_duration_;
+  base::TimeTicks recalc_style_start_ticks_;
+  base::TimeDelta script_duration_;
+  base::TimeTicks script_start_ticks_;
+  base::TimeDelta task_duration_;
+  base::TimeTicks task_start_ticks_;
+  base::TimeDelta v8compile_duration_;
+  base::TimeTicks v8compile_start_ticks_;
+  base::TimeDelta devtools_command_duration_;
+  base::TimeTicks devtools_command_start_ticks_;
+  base::TimeTicks thread_time_origin_;
+  uint64_t layout_count_ = 0;
+  uint64_t recalc_style_count_ = 0;
   int script_call_depth_ = 0;
   int layout_depth_ = 0;
-  bool use_thread_ticks_ = false;
   InspectorAgentState::Boolean enabled_;
+  InspectorAgentState::Boolean use_thread_ticks_;
   DISALLOW_COPY_AND_ASSIGN(InspectorPerformanceAgent);
 };
 

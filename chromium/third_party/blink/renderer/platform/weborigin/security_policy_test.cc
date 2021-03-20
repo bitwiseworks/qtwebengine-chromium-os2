@@ -30,11 +30,17 @@
 
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
-#include "services/network/public/mojom/cors.mojom-shared.h"
+#include "services/network/public/mojom/cors.mojom-blink.h"
+#include "services/network/public/mojom/cors_origin_pattern.mojom-blink.h"
+#include "services/network/public/mojom/referrer_policy.mojom-shared.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "url/url_canon.h"
+#include "url/url_util.h"
 
 namespace blink {
 
@@ -96,6 +102,9 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
       "blob:http://a.test/b3aae9c8-7f90-440d-8d7c-43aa20d72fde";
   const char kFilesystemURL[] = "filesystem:http://a.test/path/t/file.html";
 
+  bool reduced_granularity =
+      RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled();
+
   TestCase inputs[] = {
       // HTTP -> HTTP: Same Origin
       {network::mojom::ReferrerPolicy::kAlways, kInsecureURLA, kInsecureURLA,
@@ -114,15 +123,14 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
        kInsecureURLA, kInsecureURLA},
       {network::mojom::ReferrerPolicy::kStrictOrigin, kInsecureURLA,
        kInsecureURLA, kInsecureOriginA},
-      {network::mojom::ReferrerPolicy::
-           kNoReferrerWhenDowngradeOriginWhenCrossOrigin,
+      {network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin,
        kInsecureURLA, kInsecureURLA, kInsecureURLA},
 
       // HTTP -> HTTP: Cross Origin
       {network::mojom::ReferrerPolicy::kAlways, kInsecureURLA, kInsecureURLB,
        kInsecureURLA},
       {network::mojom::ReferrerPolicy::kDefault, kInsecureURLA, kInsecureURLB,
-       kInsecureURLA},
+       reduced_granularity ? kInsecureOriginA : kInsecureURLA},
       {network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade, kInsecureURLA,
        kInsecureURLB, kInsecureURLA},
       {network::mojom::ReferrerPolicy::kNever, kInsecureURLA, kInsecureURLB,
@@ -135,8 +143,7 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
        kInsecureURLB, nullptr},
       {network::mojom::ReferrerPolicy::kStrictOrigin, kInsecureURLA,
        kInsecureURLB, kInsecureOriginA},
-      {network::mojom::ReferrerPolicy::
-           kNoReferrerWhenDowngradeOriginWhenCrossOrigin,
+      {network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin,
        kInsecureURLA, kInsecureURLB, kInsecureOriginA},
 
       // HTTPS -> HTTPS: Same Origin
@@ -156,15 +163,14 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
        kSecureURLA},
       {network::mojom::ReferrerPolicy::kStrictOrigin, kSecureURLA, kSecureURLA,
        kSecureOriginA},
-      {network::mojom::ReferrerPolicy::
-           kNoReferrerWhenDowngradeOriginWhenCrossOrigin,
+      {network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin,
        kSecureURLA, kSecureURLA, kSecureURLA},
 
       // HTTPS -> HTTPS: Cross Origin
       {network::mojom::ReferrerPolicy::kAlways, kSecureURLA, kSecureURLB,
        kSecureURLA},
       {network::mojom::ReferrerPolicy::kDefault, kSecureURLA, kSecureURLB,
-       kSecureURLA},
+       reduced_granularity ? kSecureOriginA : kSecureURLA},
       {network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade, kSecureURLA,
        kSecureURLB, kSecureURLA},
       {network::mojom::ReferrerPolicy::kNever, kSecureURLA, kSecureURLB,
@@ -177,15 +183,14 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
        nullptr},
       {network::mojom::ReferrerPolicy::kStrictOrigin, kSecureURLA, kSecureURLB,
        kSecureOriginA},
-      {network::mojom::ReferrerPolicy::
-           kNoReferrerWhenDowngradeOriginWhenCrossOrigin,
+      {network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin,
        kSecureURLA, kSecureURLB, kSecureOriginA},
 
       // HTTP -> HTTPS
       {network::mojom::ReferrerPolicy::kAlways, kInsecureURLA, kSecureURLB,
        kInsecureURLA},
       {network::mojom::ReferrerPolicy::kDefault, kInsecureURLA, kSecureURLB,
-       kInsecureURLA},
+       reduced_granularity ? kInsecureOriginA : kInsecureURLA},
       {network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade, kInsecureURLA,
        kSecureURLB, kInsecureURLA},
       {network::mojom::ReferrerPolicy::kNever, kInsecureURLA, kSecureURLB,
@@ -198,8 +203,7 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
        nullptr},
       {network::mojom::ReferrerPolicy::kStrictOrigin, kInsecureURLA,
        kSecureURLB, kInsecureOriginA},
-      {network::mojom::ReferrerPolicy::
-           kNoReferrerWhenDowngradeOriginWhenCrossOrigin,
+      {network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin,
        kInsecureURLA, kSecureURLB, kInsecureOriginA},
 
       // HTTPS -> HTTP
@@ -219,8 +223,7 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
        nullptr},
       {network::mojom::ReferrerPolicy::kStrictOrigin, kSecureURLA,
        kInsecureURLB, nullptr},
-      {network::mojom::ReferrerPolicy::
-           kNoReferrerWhenDowngradeOriginWhenCrossOrigin,
+      {network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin,
        kSecureURLA, kInsecureURLB, nullptr},
 
       // blob and filesystem URL handling
@@ -242,17 +245,25 @@ TEST(SecurityPolicyTest, GenerateReferrer) {
       EXPECT_EQ(String::FromUTF8(test.expected), result.referrer)
           << "'" << test.referrer << "' to '" << test.destination
           << "' should have been '" << test.expected << "': was '"
-          << result.referrer.Utf8().data() << "'.";
+          << result.referrer.Utf8() << "'.";
     } else {
       EXPECT_TRUE(result.referrer.IsEmpty())
           << "'" << test.referrer << "' to '" << test.destination
-          << "' should have been empty: was '" << result.referrer.Utf8().data()
+          << "' should have been empty: was '" << result.referrer.Utf8()
           << "'.";
     }
-    EXPECT_EQ(test.policy == network::mojom::ReferrerPolicy::kDefault
-                  ? network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade
-                  : test.policy,
-              result.referrer_policy);
+
+    network::mojom::ReferrerPolicy expected_policy = test.policy;
+    if (expected_policy == network::mojom::ReferrerPolicy::kDefault) {
+      if (RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled()) {
+        expected_policy =
+            network::mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin;
+      } else {
+        expected_policy =
+            network::mojom::ReferrerPolicy::kNoReferrerWhenDowngrade;
+      }
+    }
+    EXPECT_EQ(expected_policy, result.referrer_policy);
   }
 }
 
@@ -291,7 +302,7 @@ TEST(SecurityPolicyTest, ReferrerPolicyFromHeaderValue) {
   }
 }
 
-TEST(SecurityPolicyTest, TrustworthyWhiteList) {
+TEST(SecurityPolicyTest, TrustworthySafelist) {
   const char* insecure_urls[] = {
       "http://a.test/path/to/file.html", "http://b.test/path/to/file.html",
       "blob:http://c.test/b3aae9c8-7f90-440d-8d7c-43aa20d72fde",
@@ -302,11 +313,11 @@ TEST(SecurityPolicyTest, TrustworthyWhiteList) {
     scoped_refptr<const SecurityOrigin> origin =
         SecurityOrigin::CreateFromString(url);
     EXPECT_FALSE(origin->IsPotentiallyTrustworthy());
-    SecurityPolicy::AddOriginTrustworthyWhiteList(origin->ToString());
+    SecurityPolicy::AddOriginToTrustworthySafelist(origin->ToString());
     EXPECT_TRUE(origin->IsPotentiallyTrustworthy());
   }
 
-  // Tests that adding URLs that have inner-urls to the whitelist
+  // Tests that adding URLs that have inner-urls to the safelist
   // takes effect on the origins of the inner-urls (and vice versa).
   struct TestCase {
     const char* url;
@@ -329,7 +340,7 @@ TEST(SecurityPolicyTest, TrustworthyWhiteList) {
 
     EXPECT_FALSE(origin1->IsPotentiallyTrustworthy());
     EXPECT_FALSE(origin2->IsPotentiallyTrustworthy());
-    SecurityPolicy::AddOriginTrustworthyWhiteList(origin1->ToString());
+    SecurityPolicy::AddOriginToTrustworthySafelist(origin1->ToString());
     EXPECT_TRUE(origin1->IsPotentiallyTrustworthy());
     EXPECT_TRUE(origin2->IsPotentiallyTrustworthy());
   }
@@ -395,7 +406,10 @@ TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowed) {
   // Adding access for https://example.com should work, but should not grant
   // access to subdomains or other schemes.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "example.com", false,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   EXPECT_TRUE(SecurityPolicy::IsOriginAccessAllowed(https_chromium_origin(),
                                                     https_example_origin()));
@@ -416,7 +430,10 @@ TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowed) {
   // Adding an entry that matches subdomains should grant access to any
   // subdomains.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "example.com", true,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   EXPECT_TRUE(SecurityPolicy::IsOriginAccessAllowed(https_chromium_origin(),
                                                     https_example_origin()));
@@ -429,7 +446,10 @@ TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowed) {
 TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowedWildCard) {
   // An empty domain that matches subdomains results in matching every domain.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "", true,
+      *https_chromium_origin(), "https", "",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   EXPECT_TRUE(SecurityPolicy::IsOriginAccessAllowed(https_chromium_origin(),
                                                     https_example_origin()));
@@ -442,10 +462,16 @@ TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowedWildCard) {
 TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowedWithBlockListEntry) {
   // The block list takes priority over the allow list.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "example.com", true,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *https_chromium_origin(), "https", "example.com", false,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
 
   EXPECT_FALSE(SecurityPolicy::IsOriginAccessAllowed(https_chromium_origin(),
@@ -457,10 +483,16 @@ TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowedWithBlockListEntry) {
 TEST_F(SecurityPolicyAccessTest,
        IsOriginAccessAllowedWildcardWithBlockListEntry) {
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "", true,
+      *https_chromium_origin(), "https", "",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *https_chromium_origin(), "https", "google.com", false,
+      *https_chromium_origin(), "https", "google.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
 
   EXPECT_TRUE(SecurityPolicy::IsOriginAccessAllowed(https_chromium_origin(),
@@ -471,13 +503,22 @@ TEST_F(SecurityPolicyAccessTest,
 
 TEST_F(SecurityPolicyAccessTest, ClearOriginAccessListForOrigin) {
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "example.com", true,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "google.com", true,
+      *https_chromium_origin(), "https", "google.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_example_origin(), "https", "google.com", true,
+      *https_example_origin(), "https", "google.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
 
   SecurityPolicy::ClearOriginAccessListForOrigin(*https_chromium_origin());
@@ -494,21 +535,72 @@ TEST_F(SecurityPolicyAccessTest, IsOriginAccessAllowedPriority) {
   EXPECT_FALSE(SecurityPolicy::IsOriginAccessAllowed(
       https_chromium_origin(), https_sub_example_origin()));
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "sub.example.com", false,
+      *https_chromium_origin(), "https", "sub.example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kLowPriority);
   EXPECT_TRUE(SecurityPolicy::IsOriginAccessAllowed(
       https_chromium_origin(), https_sub_example_origin()));
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *https_chromium_origin(), "https", "example.com", true,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
   EXPECT_FALSE(SecurityPolicy::IsOriginAccessAllowed(
       https_chromium_origin(), https_sub_example_origin()));
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *https_chromium_origin(), "https", "example.com", true,
+      *https_chromium_origin(), "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kHighPriority);
-
   EXPECT_TRUE(SecurityPolicy::IsOriginAccessAllowed(
       https_chromium_origin(), https_sub_example_origin()));
+}
+
+// Test that referrers for custom hierarchical (standard) schemes are correctly
+// handled by the new policy. (For instance, this covers android-app://.)
+TEST(SecurityPolicyTest, ReferrerForCustomScheme) {
+  url::ScopedSchemeRegistryForTests scoped_registry;
+  const char kCustomStandardScheme[] = "my-new-scheme";
+  url::AddStandardScheme(kCustomStandardScheme, url::SCHEME_WITH_HOST);
+  SchemeRegistry::RegisterURLSchemeAsAllowedForReferrer(kCustomStandardScheme);
+
+  String kFullReferrer = "my-new-scheme://com.foo.me/this-should-be-truncated";
+  String kTruncatedReferrer = "my-new-scheme://com.foo.me/";
+
+  bool initially_enabled =
+      RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled();
+
+  {
+    // With the feature off, the old default policy of
+    // no-referrer-when-downgrade should preserve the entire URL.
+    RuntimeEnabledFeatures::SetReducedReferrerGranularityEnabled(false);
+
+    EXPECT_EQ(SecurityPolicy::GenerateReferrer(
+                  network::mojom::ReferrerPolicy::kDefault,
+                  KURL("https://www.example.com/"), kFullReferrer)
+                  .referrer,
+              kFullReferrer);
+  }
+
+  {
+    // With the feature on, the new default policy of
+    // strict-origin-when-cross-origin should truncate the referrer.
+    RuntimeEnabledFeatures::SetReducedReferrerGranularityEnabled(true);
+
+    ASSERT_TRUE(RuntimeEnabledFeatures::ReducedReferrerGranularityEnabled());
+    EXPECT_EQ(SecurityPolicy::GenerateReferrer(
+                  network::mojom::ReferrerPolicy::kDefault,
+                  KURL("https://www.example.com/"), kFullReferrer)
+                  .referrer,
+              kTruncatedReferrer);
+  }
+
+  RuntimeEnabledFeatures::SetReducedReferrerGranularityEnabled(
+      initially_enabled);
 }
 
 }  // namespace blink

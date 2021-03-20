@@ -6,60 +6,58 @@
 
 #include <fuchsia/sys/cpp/fidl.h>
 #include <lib/fidl/cpp/binding_set.h>
+#include <lib/sys/cpp/component_context.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file.h"
-#include "base/fuchsia/component_context.h"
+#include "base/files/file_util.h"
+#include "base/fuchsia/default_context.h"
 #include "base/fuchsia/file_utils.h"
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/fuchsia/scoped_service_binding.h"
-#include "base/fuchsia/service_directory.h"
+#include "base/fuchsia/startup_context.h"
 #include "base/logging.h"
+#include "fuchsia/runners/buildflags.h"
 #include "fuchsia/runners/common/web_component.h"
 #include "url/gurl.h"
 
-// static
-chromium::web::ContextPtr WebContentRunner::CreateDefaultWebContext() {
-  auto web_context_provider =
-      base::fuchsia::ComponentContext::GetDefault()
-          ->ConnectToService<chromium::web::ContextProvider>();
+WebContentRunner::WebContentRunner(
+    fuchsia::web::CreateContextParams create_params,
+    sys::OutgoingDirectory* outgoing_directory)
+    : create_params_(std::move(create_params)),
+      is_headless_((create_params_.features() &
+                    fuchsia::web::ContextFeatureFlags::HEADLESS) ==
+                   fuchsia::web::ContextFeatureFlags::HEADLESS) {
+  service_binding_.emplace(outgoing_directory, this);
+}
 
-  chromium::web::CreateContextParams create_params;
+WebContentRunner::WebContentRunner(fuchsia::web::ContextPtr context,
+                                   bool is_headless)
+    : context_(std::move(context)), is_headless_(is_headless) {}
 
-  // Clone /svc to the context.
-  create_params.service_directory =
-      zx::channel(base::fuchsia::GetHandleFromFile(
-          base::File(base::FilePath("/svc"),
-                     base::File::FLAG_OPEN | base::File::FLAG_READ)));
+WebContentRunner::~WebContentRunner() = default;
 
-  chromium::web::ContextPtr web_context;
-  web_context_provider->Create(std::move(create_params),
+fuchsia::web::ContextPtr WebContentRunner::CreateWebContext(
+    fuchsia::web::CreateContextParams create_params) {
+  fuchsia::web::ContextPtr web_context;
+  GetContextProvider()->Create(std::move(create_params),
                                web_context.NewRequest());
   web_context.set_error_handler([](zx_status_t status) {
-    // If the browser instance died, then exit everything and do not attempt
-    // to recover. appmgr will relaunch the runner when it is needed again.
+    // If the browser instance died, then exit everything and do not attempt to
+    // recover. appmgr will relaunch the runner when it is needed again.
     ZX_LOG(ERROR, status) << "Connection to Context lost.";
-    exit(1);
   });
+
   return web_context;
 }
 
-WebContentRunner::WebContentRunner(
-    base::fuchsia::ServiceDirectory* service_directory,
-    chromium::web::ContextPtr context,
-    base::OnceClosure on_idle_closure)
-    : context_(std::move(context)),
-      service_binding_(service_directory, this),
-      on_idle_closure_(std::move(on_idle_closure)) {
-  DCHECK(context_);
-  DCHECK(on_idle_closure_);
+fuchsia::web::Context* WebContentRunner::GetContext() {
+  if (!context_)
+    context_ = CreateWebContext(std::move(create_params_));
 
-  // Signal that we're idle if the service manager connection is dropped.
-  service_binding_.SetOnLastClientCallback(base::BindOnce(
-      &WebContentRunner::RunOnIdleClosureIfValid, base::Unretained(this)));
+  return context_.get();
 }
-
-WebContentRunner::~WebContentRunner() = default;
 
 void WebContentRunner::StartComponent(
     fuchsia::sys::Package package,
@@ -72,38 +70,47 @@ void WebContentRunner::StartComponent(
     return;
   }
 
-  RegisterComponent(WebComponent::ForUrlRequest(this, std::move(url),
-                                                std::move(startup_info),
-                                                std::move(controller_request)));
+  std::unique_ptr<WebComponent> component = std::make_unique<WebComponent>(
+      this,
+      std::make_unique<base::fuchsia::StartupContext>(std::move(startup_info)),
+      std::move(controller_request));
+#if BUILDFLAG(WEB_RUNNER_REMOTE_DEBUGGING_PORT) != 0
+  component->EnableRemoteDebugging();
+#endif
+  component->StartComponent();
+  component->LoadUrl(url, std::vector<fuchsia::net::http::Header>());
+  RegisterComponent(std::move(component));
 }
 
-void WebContentRunner::GetWebComponentForTest(
-    base::OnceCallback<void(WebComponent*)> callback) {
-  if (!components_.empty()) {
-    std::move(callback).Run(components_.begin()->get());
-    return;
-  }
-  web_component_test_callback_ = std::move(callback);
+void WebContentRunner::SetWebComponentCreatedCallbackForTest(
+    base::RepeatingCallback<void(WebComponent*)> callback) {
+  DCHECK(components_.empty());
+  web_component_created_callback_for_test_ = std::move(callback);
 }
 
 void WebContentRunner::DestroyComponent(WebComponent* component) {
   components_.erase(components_.find(component));
-
-  if (components_.empty())
-    RunOnIdleClosureIfValid();
 }
 
 void WebContentRunner::RegisterComponent(
     std::unique_ptr<WebComponent> component) {
-  if (web_component_test_callback_) {
-    std::move(web_component_test_callback_).Run(component.get());
-  }
-  if (component) {
-    components_.insert(std::move(component));
-  }
+  if (web_component_created_callback_for_test_)
+    web_component_created_callback_for_test_.Run(component.get());
+
+  components_.insert(std::move(component));
 }
 
-void WebContentRunner::RunOnIdleClosureIfValid() {
-  if (on_idle_closure_)
-    std::move(on_idle_closure_).Run();
+void WebContentRunner::SetContextProviderForTest(
+    fuchsia::web::ContextProviderPtr context_provider) {
+  DCHECK(context_provider);
+  context_provider_ = std::move(context_provider);
+}
+
+fuchsia::web::ContextProvider* WebContentRunner::GetContextProvider() {
+  if (!context_provider_) {
+    context_provider_ = base::fuchsia::ComponentContextForCurrentProcess()
+                            ->svc()
+                            ->Connect<fuchsia::web::ContextProvider>();
+  }
+  return context_provider_.get();
 }

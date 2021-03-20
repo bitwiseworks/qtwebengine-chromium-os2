@@ -18,6 +18,7 @@
 #include "rtc_base/ssl_certificate.h"
 #include "rtc_base/ssl_identity.h"
 #include "rtc_base/ssl_stream_adapter.h"
+#include "rtc_base/system/rtc_export.h"
 
 namespace rtc {
 
@@ -68,7 +69,9 @@ class SSLAdapter : public AsyncSocketAdapter {
   virtual void SetCertVerifier(SSLCertificateVerifier* ssl_cert_verifier) = 0;
 
   // Set the certificate this socket will present to incoming clients.
-  virtual void SetIdentity(SSLIdentity* identity) = 0;
+  // Takes ownership of |identity|.
+  RTC_DEPRECATED virtual void SetIdentity(SSLIdentity* identity) = 0;
+  virtual void SetIdentity(std::unique_ptr<SSLIdentity> identity) = 0;
 
   // Choose whether the socket acts as a server socket or client socket.
   virtual void SetRole(SSLRole role) = 0;
@@ -96,10 +99,10 @@ class SSLAdapter : public AsyncSocketAdapter {
 
 // Call this on the main thread, before using SSL.
 // Call CleanupSSL when finished with SSL.
-bool InitializeSSL();
+RTC_EXPORT bool InitializeSSL();
 
 // Call to cleanup additional threads, and also the main thread.
-bool CleanupSSL();
+RTC_EXPORT bool CleanupSSL();
 
 }  // namespace rtc
 

@@ -7,6 +7,7 @@
 
 #include <hstring.h>
 
+#include "base/compiler_specific.h"
 #include "base/scoped_generic.h"
 #include "base/strings/string_piece_forward.h"
 
@@ -35,7 +36,7 @@ namespace win {
 // One-time Initialization for ScopedHString:
 //
 //   bool success = ScopedHString::ResolveCoreWinRTStringDelayload();
-//   if (!success) {
+//   if (success) {
 //     // ScopeHString can be used.
 //   } else {
 //     // Handle error.
@@ -57,13 +58,18 @@ class BASE_EXPORT ScopedHString
   // Constructs a ScopedHString from an HSTRING, and takes ownership of |hstr|.
   explicit ScopedHString(HSTRING hstr);
 
-  static ScopedHString Create(StringPiece16 str);
+  static ScopedHString Create(WStringPiece str);
   static ScopedHString Create(StringPiece str);
 
   // Loads all required HSTRING functions, available from Win8 and onwards.
-  static bool ResolveCoreWinRTStringDelayload();
+  static bool ResolveCoreWinRTStringDelayload() WARN_UNUSED_RESULT;
 
-  StringPiece16 Get() const;
+  // Returns a view into the memory buffer managed by the instance. The returned
+  // StringPiece is only valid during the lifetime of this ScopedHString
+  // instance.
+  WStringPiece Get() const;
+
+  // Returns a copy of the instance as a UTF-8 string.
   std::string GetAsUTF8() const;
 };
 

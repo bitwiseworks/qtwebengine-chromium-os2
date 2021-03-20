@@ -31,6 +31,8 @@ static blink::WebSourceBufferClient::ParseWarning ParseWarningToBlink(
     CHROMIUM_PARSE_WARNING_TO_BLINK_ENUM_CASE(
         kKeyframeTimeGreaterThanDependant);
     CHROMIUM_PARSE_WARNING_TO_BLINK_ENUM_CASE(kMuxedSequenceMode);
+    CHROMIUM_PARSE_WARNING_TO_BLINK_ENUM_CASE(
+        kGroupEndTimestampDecreaseWithinMediaSegment);
   }
 
   NOTREACHED();
@@ -71,8 +73,8 @@ WebSourceBufferImpl::WebSourceBufferImpl(const std::string& id,
       id, base::Bind(&WebSourceBufferImpl::InitSegmentReceived,
                      base::Unretained(this)));
   demuxer_->SetParseWarningCallback(
-      id, base::Bind(&WebSourceBufferImpl::NotifyParseWarning,
-                     base::Unretained(this)));
+      id, base::BindRepeating(&WebSourceBufferImpl::NotifyParseWarning,
+                              base::Unretained(this)));
 }
 
 WebSourceBufferImpl::~WebSourceBufferImpl() = default;
@@ -224,12 +226,12 @@ void WebSourceBufferImpl::InitSegmentReceived(
   for (const auto& track : tracks->tracks()) {
     blink::WebSourceBufferClient::MediaTrackInfo trackInfo;
     trackInfo.track_type = mediaTrackTypeToBlink(track->type());
-    trackInfo.id = blink::WebString::FromUTF8(track->id());
+    trackInfo.id = blink::WebString::FromUTF8(track->id().value());
     trackInfo.byte_stream_track_id = blink::WebString::FromUTF8(
-        base::UintToString(track->bytestream_track_id()));
-    trackInfo.kind = blink::WebString::FromUTF8(track->kind());
-    trackInfo.label = blink::WebString::FromUTF8(track->label());
-    trackInfo.language = blink::WebString::FromUTF8(track->language());
+        base::NumberToString(track->bytestream_track_id()));
+    trackInfo.kind = blink::WebString::FromUTF8(track->kind().value());
+    trackInfo.label = blink::WebString::FromUTF8(track->label().value());
+    trackInfo.language = blink::WebString::FromUTF8(track->language().value());
     trackInfoVector.push_back(trackInfo);
   }
 

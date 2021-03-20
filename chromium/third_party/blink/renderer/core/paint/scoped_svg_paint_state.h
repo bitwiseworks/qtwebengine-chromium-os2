@@ -30,14 +30,14 @@
 #include "third_party/blink/renderer/core/paint/object_paint_properties.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/svg_filter_painter.h"
+#include "third_party/blink/renderer/core/paint/svg_mask_painter.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 
 namespace blink {
 
+class FilterData;
 class LayoutObject;
-class LayoutSVGResourceFilter;
-class LayoutSVGResourceMasker;
 class SVGResources;
 
 // Hooks up the correct paint property transform node.
@@ -58,9 +58,16 @@ class ScopedSVGTransformState {
       return;
 
     if (const auto* transform_node = properties->Transform()) {
-      DCHECK(transform_node->Matrix() == transform.ToTransformationMatrix());
+#if DCHECK_IS_ON()
+      if (transform_node->IsIdentityOr2DTranslation()) {
+        DCHECK_EQ(transform_node->Translation2D(),
+                  transform.ToTransformationMatrix().To2DTranslation());
+      } else {
+        DCHECK_EQ(transform_node->Matrix(), transform.ToTransformationMatrix());
+      }
+#endif
       transform_property_scope_.emplace(
-          paint_info.context.GetPaintController(), transform_node, object,
+          paint_info.context.GetPaintController(), *transform_node, object,
           DisplayItem::PaintPhaseToSVGTransformType(paint_info.phase));
     }
   }
@@ -74,28 +81,31 @@ class ScopedSVGPaintState {
 
  public:
   ScopedSVGPaintState(const LayoutObject& object, const PaintInfo& paint_info)
+      : ScopedSVGPaintState(object, paint_info, object) {}
+
+  ScopedSVGPaintState(const LayoutObject& object,
+                      const PaintInfo& paint_info,
+                      const DisplayItemClient& display_item_client)
       : object_(object),
         paint_info_(paint_info),
-        filter_(nullptr),
-        masker_(nullptr) {}
+        display_item_client_(display_item_client),
+        filter_data_(nullptr) {}
 
   ~ScopedSVGPaintState();
 
-  PaintInfo& GetPaintInfo() {
-    return filter_paint_info_ ? *filter_paint_info_ : paint_info_;
+  const PaintInfo& GetPaintInfo() const {
+    return filter_recording_context_ ? filter_recording_context_->GetPaintInfo()
+                                     : paint_info_;
   }
 
   // Return true if these operations aren't necessary or if they are
   // successfully applied.
-  bool ApplyClipMaskAndFilterIfNecessary();
+  bool ApplyEffects();
 
  private:
   void ApplyPaintPropertyState();
   void ApplyClipIfNecessary();
-
-  // Return true if no masking is necessary or if the mask is successfully
-  // applied.
-  bool ApplyMaskIfNecessary(SVGResources*);
+  void ApplyMaskIfNecessary(SVGResources*);
 
   // Return true if no filtering is necessary or if the filter is successfully
   // applied.
@@ -103,12 +113,12 @@ class ScopedSVGPaintState {
 
   const LayoutObject& object_;
   PaintInfo paint_info_;
-  std::unique_ptr<PaintInfo> filter_paint_info_;
-  LayoutSVGResourceFilter* filter_;
-  LayoutSVGResourceMasker* masker_;
+  const DisplayItemClient& display_item_client_;
+  FilterData* filter_data_;
   base::Optional<ClipPathClipper> clip_path_clipper_;
   std::unique_ptr<SVGFilterRecordingContext> filter_recording_context_;
   base::Optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties_;
+  base::Optional<SVGMaskPainter> mask_painter_;
 #if DCHECK_IS_ON()
   bool apply_clip_mask_and_filter_if_necessary_called_ = false;
 #endif

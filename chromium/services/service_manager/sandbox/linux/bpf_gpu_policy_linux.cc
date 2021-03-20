@@ -23,11 +23,11 @@
 #include "services/service_manager/sandbox/linux/sandbox_linux.h"
 #include "services/service_manager/sandbox/linux/sandbox_seccomp_bpf_linux.h"
 
+using sandbox::SyscallSets;
 using sandbox::bpf_dsl::Allow;
 using sandbox::bpf_dsl::ResultExpr;
 using sandbox::bpf_dsl::Trap;
 using sandbox::syscall_broker::BrokerProcess;
-using sandbox::SyscallSets;
 
 namespace service_manager {
 
@@ -38,9 +38,20 @@ GpuProcessPolicy::~GpuProcessPolicy() {}
 // Main policy for x86_64/i386. Extended by CrosArmGpuProcessPolicy.
 ResultExpr GpuProcessPolicy::EvaluateSyscall(int sysno) const {
   switch (sysno) {
-#if !defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS)
+    case __NR_memfd_create:
+#else   // !defined(OS_CHROMEOS)
+    case __NR_fallocate:
+#endif  // defined(OS_CHROMEOS)
     case __NR_ftruncate:
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_ftruncate64:
 #endif
+#if !defined(__aarch64__)
+    case __NR_getdents:
+#endif
+    case __NR_getdents64:
     case __NR_ioctl:
       return Allow();
 #if defined(__i386__) || defined(__x86_64__) || defined(__mips__)
@@ -58,9 +69,16 @@ ResultExpr GpuProcessPolicy::EvaluateSyscall(int sysno) const {
     case __NR_sched_getaffinity:
     case __NR_sched_setaffinity:
       return sandbox::RestrictSchedTarget(GetPolicyPid(), sysno);
+    case __NR_prlimit64:
+      return sandbox::RestrictPrlimit64(GetPolicyPid());
     default:
       if (SyscallSets::IsEventFd(sysno))
         return Allow();
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_X11)
+      if (SyscallSets::IsSystemVSharedMemory(sysno))
+        return Allow();
+#endif
 
       auto* broker_process = SandboxLinux::GetInstance()->broker_process();
       if (broker_process->IsSyscallAllowed(sysno)) {

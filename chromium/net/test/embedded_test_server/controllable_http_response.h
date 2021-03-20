@@ -68,7 +68,7 @@ class ControllableHttpResponse {
   void OnRequest(scoped_refptr<base::SingleThreadTaskRunner>
                      embedded_test_server_task_runner,
                  const SendBytesCallback& send,
-                 const SendCompleteCallback& done,
+                 SendCompleteCallback done,
                  std::unique_ptr<HttpRequest> http_request);
 
   static std::unique_ptr<HttpResponse> RequestHandler(
@@ -88,7 +88,7 @@ class ControllableHttpResponse {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<ControllableHttpResponse> weak_ptr_factory_;
+  base::WeakPtrFactory<ControllableHttpResponse> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ControllableHttpResponse);
 };

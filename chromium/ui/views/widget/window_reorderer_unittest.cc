@@ -4,12 +4,12 @@
 
 #include <memory>
 
-#include "ui/aura/test/aura_test_base.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/test/test_layers.h"
+#include "ui/views/test/views_test_base.h"
 #include "ui/views/view.h"
 #include "ui/views/view_constants_aura.h"
 #include "ui/views/widget/widget.h"
@@ -17,44 +17,45 @@
 namespace views {
 namespace {
 
-// Creates a control widget with the passed in parameters.
-// The caller takes ownership of the returned widget.
-Widget* CreateControlWidget(aura::Window* parent, const gfx::Rect& bounds) {
-  Widget::InitParams params(Widget::InitParams::TYPE_CONTROL);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  params.parent = parent;
-  params.bounds = bounds;
-  Widget* widget = new Widget();
-  widget->Init(params);
-  return widget;
-}
-
 // Sets the name of |window| and |window|'s layer to |name|.
 void SetWindowAndLayerName(aura::Window* window, const std::string& name) {
   window->SetName(name);
-  window->layer()->set_name(name);
+  window->layer()->SetName(name);
 }
 
 // Returns a string containing the name of each of the child windows (bottommost
 // first) of |parent|. The format of the string is "name1 name2 name3 ...".
 std::string ChildWindowNamesAsString(const aura::Window& parent) {
   std::string names;
-  for (auto it = parent.children().begin(); it != parent.children().end();
-       ++it) {
+  for (const auto* child : parent.children()) {
     if (!names.empty())
       names += " ";
-    names += (*it)->GetName();
+    names += child->GetName();
   }
   return names;
 }
 
-typedef aura::test::AuraTestBase WindowReordererTest;
+class WindowReordererTest : public ViewsTestBase {
+ public:
+  Widget::InitParams CreateParams(Widget::InitParams::Type type) override {
+    Widget::InitParams params = ViewsTestBase::CreateParams(type);
+    params.parent = parent_;
+    return params;
+  }
+
+  std::unique_ptr<Widget> CreateControlWidget(aura::Window* parent) {
+    parent_ = parent;
+    return CreateTestWidget(Widget::InitParams::TYPE_CONTROL);
+  }
+
+ private:
+  aura::Window* parent_ = nullptr;
+};
 
 // Test that views with layers and views with associated windows are reordered
 // according to the view hierarchy.
 TEST_F(WindowReordererTest, Basic) {
-  std::unique_ptr<Widget> parent(
-      CreateControlWidget(root_window(), gfx::Rect(0, 0, 100, 100)));
+  std::unique_ptr<Widget> parent = CreateControlWidget(root_window());
   parent->Show();
   aura::Window* parent_window = parent->GetNativeWindow();
 
@@ -66,15 +67,13 @@ TEST_F(WindowReordererTest, Basic) {
   // view.
   View* v = new View();
   v->SetPaintToLayer();
-  v->layer()->set_name("v");
+  v->layer()->SetName("v");
   contents_view->AddChildView(v);
 
-  std::unique_ptr<Widget> w1(
-      CreateControlWidget(parent_window, gfx::Rect(0, 1, 100, 101)));
+  std::unique_ptr<Widget> w1 = CreateControlWidget(parent_window);
   SetWindowAndLayerName(w1->GetNativeView(), "w1");
   w1->Show();
-  std::unique_ptr<Widget> w2(
-      CreateControlWidget(parent_window, gfx::Rect(0, 2, 100, 102)));
+  std::unique_ptr<Widget> w2 = CreateControlWidget(parent_window);
   SetWindowAndLayerName(w2->GetNativeView(), "w2");
   w2->Show();
 
@@ -119,10 +118,6 @@ TEST_F(WindowReordererTest, Basic) {
   EXPECT_EQ("w1 w2", ChildWindowNamesAsString(*parent_window));
   EXPECT_EQ("w1 v w2",
             ui::test::ChildLayerNamesAsString(*parent_window->layer()));
-
-  // Work around for bug in NativeWidgetAura.
-  // TODO: fix bug and remove this.
-  parent->Close();
 }
 
 // Test that different orderings of:
@@ -131,19 +126,18 @@ TEST_F(WindowReordererTest, Basic) {
 // - associating the "host" view and window
 // all correctly reorder the child windows and layers.
 TEST_F(WindowReordererTest, Association) {
-  std::unique_ptr<Widget> parent(
-      CreateControlWidget(root_window(), gfx::Rect(0, 0, 100, 100)));
+  std::unique_ptr<Widget> parent = CreateControlWidget(root_window());
   parent->Show();
   aura::Window* parent_window = parent->GetNativeWindow();
 
   View* contents_view = new View();
   parent->SetContentsView(contents_view);
 
-  aura::Window* w1 = aura::test::CreateTestWindowWithId(0,
-      parent->GetNativeWindow());
+  aura::Window* w1 =
+      aura::test::CreateTestWindowWithId(0, parent->GetNativeWindow());
   SetWindowAndLayerName(w1, "w1");
 
-  aura::Window* w2 = aura::test::CreateTestWindowWithId(0, NULL);
+  aura::Window* w2 = aura::test::CreateTestWindowWithId(0, nullptr);
   SetWindowAndLayerName(w2, "w2");
 
   View* host_view2 = new View();
@@ -153,8 +147,7 @@ TEST_F(WindowReordererTest, Association) {
   contents_view->AddChildView(host_view2);
   w2->SetProperty(views::kHostViewKey, host_view2);
   EXPECT_EQ("w1", ChildWindowNamesAsString(*parent_window));
-  EXPECT_EQ("w1",
-            ui::test::ChildLayerNamesAsString(*parent_window->layer()));
+  EXPECT_EQ("w1", ui::test::ChildLayerNamesAsString(*parent_window->layer()));
 
   parent_window->AddChild(w2);
   EXPECT_EQ("w2 w1", ChildWindowNamesAsString(*parent_window));
@@ -181,10 +174,6 @@ TEST_F(WindowReordererTest, Association) {
   EXPECT_EQ("w2 w1", ChildWindowNamesAsString(*parent_window));
   EXPECT_EQ("w2 w1",
             ui::test::ChildLayerNamesAsString(*parent_window->layer()));
-
-  // Work around for bug in NativeWidgetAura.
-  // TODO: fix bug and remove this.
-  parent->Close();
 }
 
 // It is possible to associate a window to a view which has a parent layer
@@ -192,8 +181,7 @@ TEST_F(WindowReordererTest, Association) {
 // view and the parent layer of the associated window are different. Test that
 // the layers and windows are properly reordered in this case.
 TEST_F(WindowReordererTest, HostViewParentHasLayer) {
-  std::unique_ptr<Widget> parent(
-      CreateControlWidget(root_window(), gfx::Rect(0, 0, 100, 100)));
+  std::unique_ptr<Widget> parent = CreateControlWidget(root_window());
   parent->Show();
   aura::Window* parent_window = parent->GetNativeWindow();
 
@@ -215,11 +203,10 @@ TEST_F(WindowReordererTest, HostViewParentHasLayer) {
 
   View* v11 = new View();
   v11->SetPaintToLayer();
-  v11->layer()->set_name("v11");
+  v11->layer()->SetName("v11");
   v1->AddChildView(v11);
 
-  std::unique_ptr<Widget> w(
-      CreateControlWidget(parent_window, gfx::Rect(0, 1, 100, 101)));
+  std::unique_ptr<Widget> w = CreateControlWidget(parent_window);
   SetWindowAndLayerName(w->GetNativeView(), "w");
   w->Show();
 
@@ -229,12 +216,12 @@ TEST_F(WindowReordererTest, HostViewParentHasLayer) {
 
   View* v13 = new View();
   v13->SetPaintToLayer();
-  v13->layer()->set_name("v13");
+  v13->layer()->SetName("v13");
   v1->AddChildView(v13);
 
   View* v2 = new View();
   v2->SetPaintToLayer();
-  v2->layer()->set_name("v2");
+  v2->layer()->SetName("v2");
   contents_view->AddChildView(v2);
 
   // Test intial state.
@@ -244,20 +231,53 @@ TEST_F(WindowReordererTest, HostViewParentHasLayer) {
 
   // |w|'s layer should be stacked above |v1|'s layer.
   v1->SetPaintToLayer();
-  v1->layer()->set_name("v1");
+  v1->layer()->SetName("v1");
   EXPECT_EQ("w", ChildWindowNamesAsString(*parent_window));
   EXPECT_EQ("v1 w v2",
             ui::test::ChildLayerNamesAsString(*parent_window->layer()));
 
   // Test moving the host view from one view with a layer to another.
+  v1->RemoveChildView(v12);
   v2->AddChildView(v12);
   EXPECT_EQ("w", ChildWindowNamesAsString(*parent_window));
   EXPECT_EQ("v1 v2 w",
             ui::test::ChildLayerNamesAsString(*parent_window->layer()));
+}
 
-  // Work around for bug in NativeWidgetAura.
-  // TODO: fix bug and remove this.
-  parent->Close();
+// Test that a layer added beneath a view is restacked correctly.
+TEST_F(WindowReordererTest, ViewWithLayerBeneath) {
+  std::unique_ptr<Widget> parent = CreateControlWidget(root_window());
+  parent->Show();
+
+  aura::Window* parent_window = parent->GetNativeWindow();
+
+  View* contents_view = new View;
+  parent->SetContentsView(contents_view);
+
+  View* view_with_layer_beneath =
+      contents_view->AddChildView(std::make_unique<View>());
+  ui::Layer layer_beneath;
+  view_with_layer_beneath->AddLayerBeneathView(&layer_beneath);
+
+  ASSERT_NE(nullptr, view_with_layer_beneath->layer());
+  view_with_layer_beneath->layer()->SetName("view");
+  layer_beneath.SetName("beneath");
+
+  // Verify that the initial ordering is correct.
+  EXPECT_EQ("beneath view",
+            ui::test::ChildLayerNamesAsString(*parent_window->layer()));
+
+  // Add a hosted window to make WindowReorderer::ReorderChildWindows() restack
+  // layers.
+  std::unique_ptr<Widget> child_widget = CreateControlWidget(parent_window);
+  SetWindowAndLayerName(child_widget->GetNativeView(), "child_widget");
+  child_widget->Show();
+  View* host_view = contents_view->AddChildView(std::make_unique<View>());
+  child_widget->GetNativeView()->SetProperty(kHostViewKey, host_view);
+
+  // Verify the new order is correct.
+  EXPECT_EQ("beneath view child_widget",
+            ui::test::ChildLayerNamesAsString(*parent_window->layer()));
 }
 
 }  // namespace

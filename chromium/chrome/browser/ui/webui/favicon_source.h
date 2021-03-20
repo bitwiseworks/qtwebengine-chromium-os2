@@ -10,6 +10,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/favicon_service.h"
 #include "content/public/browser/url_data_source.h"
@@ -17,74 +18,49 @@
 
 class Profile;
 
+namespace base {
+class RefCountedMemory;
+}
+
+namespace chrome {
+enum class FaviconUrlFormat;
+struct ParsedFaviconPath;
+}
+
+namespace ui {
+class NativeTheme;
+}
+
 // FaviconSource is the gateway between network-level chrome:
 // requests for favicons and the history backend that serves these.
-//
-// Format:
-//   chrome://favicon/size&scalefactor/iconurl/url
-// Some parameters are optional as described below. However, the order of the
-// parameters is not interchangeable.
-//
-// Parameter:
-//  'url'               Required
-//    Specifies the page URL of the requested favicon. If the 'iconurl'
-//    parameter is specified, the URL refers to the URL of the favicon image
-//    instead.
-//  'size&scalefactor'  Optional
-//    Values: ['size/aa@bx/']
-//      Specifies the requested favicon's size in DIP (aa) and the requested
-//      favicon's scale factor. (b).
-//      The supported requested DIP sizes are: 16x16, 32x32 and 64x64.
-//      If the parameter is unspecified, the requested favicon's size defaults
-//      to 16 and the requested scale factor defaults to 1x.
-//      Example: chrome://favicon/size/16@2x/https://www.google.com/
-//  'iconurl'           Optional
-//    Values: ['iconurl']
-//    'iconurl': Specifies that the url parameter refers to the URL of
-//    the favicon image as opposed to the URL of the page that the favicon is
-//    on.
-//    Example: chrome://favicon/iconurl/https://www.google.com/favicon.ico
+// Two possible formats are allowed: chrome://favicon, kept only for backwards
+// compatibility for extensions, and chrome://favicon2. Formats are described in
+// favicon_url_parser.h.
 class FaviconSource : public content::URLDataSource {
  public:
   // |type| is the type of icon this FaviconSource will provide.
-  explicit FaviconSource(Profile* profile);
+  explicit FaviconSource(Profile* profile, chrome::FaviconUrlFormat format);
 
   ~FaviconSource() override;
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
+  std::string GetSource() override;
   void StartDataRequest(
-      const std::string& path,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-      const content::URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string&) const override;
-  bool AllowCaching() const override;
-  bool ShouldReplaceExistingSource() const override;
+      const GURL& url,
+      const content::WebContents::Getter& wc_getter,
+      content::URLDataSource::GotDataCallback callback) override;
+  std::string GetMimeType(const std::string&) override;
+  bool AllowCaching() override;
+  bool ShouldReplaceExistingSource() override;
   bool ShouldServiceRequest(const GURL& url,
                             content::ResourceContext* resource_context,
-                            int render_process_id) const override;
+                            int render_process_id) override;
 
  protected:
-  struct IconRequest {
-    IconRequest();
-    IconRequest(const content::URLDataSource::GotDataCallback& cb,
-                const GURL& path,
-                int size,
-                float scale);
-    IconRequest(const IconRequest& other);
-    ~IconRequest();
-
-    content::URLDataSource::GotDataCallback callback;
-    GURL request_path;
-    int size_in_dip;
-    float device_scale_factor;
-  };
-
-  // Called when the favicon data is missing to perform additional checks to
-  // locate the resource.
-  // |request| contains information for the failed request.
-  // Returns true if the missing resource is found.
-  virtual bool HandleMissingResource(const IconRequest& request);
+  // Exposed for testing.
+  virtual ui::NativeTheme* GetNativeTheme();
+  virtual base::RefCountedMemory* LoadIconBytes(float scale_factor,
+                                                int resource_id);
 
   Profile* profile_;
 
@@ -97,19 +73,31 @@ class FaviconSource : public content::URLDataSource {
     NUM_SIZES
   };
 
-  // Called when favicon data is available from the history backend.
+  // Called when favicon data is available from the history backend. If
+  // |bitmap_result| is valid, returns it to caller using |callback|. Otherwise
+  // will send appropriate default icon for |size_in_dip| and |scale_factor|.
   void OnFaviconDataAvailable(
-      const IconRequest& request,
+      content::URLDataSource::GotDataCallback callback,
+      const chrome::ParsedFaviconPath& parsed,
       const favicon_base::FaviconRawBitmapResult& bitmap_result);
 
   // Sends the 16x16 DIP 1x default favicon.
-  void SendDefaultResponse(
-      const content::URLDataSource::GotDataCallback& callback);
+  void SendDefaultResponse(content::URLDataSource::GotDataCallback callback);
+
+  // Sends back default favicon or fallback monogram.
+  void SendDefaultResponse(content::URLDataSource::GotDataCallback callback,
+                           const chrome::ParsedFaviconPath& parsed);
 
   // Sends the default favicon.
-  void SendDefaultResponse(const IconRequest& request);
+  void SendDefaultResponse(content::URLDataSource::GotDataCallback callback,
+                           int size_in_dip,
+                           float scale_factor);
+
+  chrome::FaviconUrlFormat url_format_;
 
   base::CancelableTaskTracker cancelable_task_tracker_;
+
+  base::WeakPtrFactory<FaviconSource> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FaviconSource);
 };

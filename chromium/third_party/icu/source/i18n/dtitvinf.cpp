@@ -42,12 +42,15 @@ U_NAMESPACE_BEGIN
 
 
 #ifdef DTITVINF_DEBUG
-#define PRINTMESG(msg) { std::cout << "(" << __FILE__ << ":" << __LINE__ << ") " << msg << "\n"; }
+#define PRINTMESG(msg) UPRV_BLOCK_MACRO_BEGIN { \
+    std::cout << "(" << __FILE__ << ":" << __LINE__ << ") " << msg << "\n"; \
+} UPRV_BLOCK_MACRO_END
 #endif
 
 UOBJECT_DEFINE_RTTI_IMPLEMENTATION(DateIntervalInfo)
 
 static const char gCalendarTag[]="calendar";
+static const char gGenericTag[]="generic";
 static const char gGregorianTag[]="gregorian";
 static const char gIntervalDateTimePatternTag[]="intervalFormats";
 static const char gFallbackPatternTag[]="fallback";
@@ -326,7 +329,9 @@ struct DateIntervalInfo::DateIntervalSink : public ResourceSink {
         char c0;
         if ((c0 = patternLetter[0]) != 0 && patternLetter[1] == 0) {
             // Check that the pattern letter is accepted
-            if (c0 == 'y') {
+            if (c0 == 'G') {
+                return UCAL_ERA;
+            } else if (c0 == 'y') {
                 return UCAL_YEAR;
             } else if (c0 == 'M') {
                 return UCAL_MONTH;
@@ -422,9 +427,32 @@ DateIntervalInfo::initializeData(const Locale& locale, UErrorCode& status)
         calTypeBundle = ures_getByKeyWithFallback(calBundle, calendarTypeToUse, NULL, &status);
         itvDtPtnResource = ures_getByKeyWithFallback(calTypeBundle,
                                                      gIntervalDateTimePatternTag, NULL, &status);
-        resStr = ures_getStringByKeyWithFallback(itvDtPtnResource, gFallbackPatternTag,
-                                                 &resStrLen, &status);
+
+        // TODO(ICU-20400): After the fixing, we should find the "fallback" from
+        // the rb directly by the path "calendar/${calendar}/intervalFormats/fallback".
         if ( U_SUCCESS(status) ) {
+            resStr = ures_getStringByKeyWithFallback(itvDtPtnResource, gFallbackPatternTag,
+                                                     &resStrLen, &status);
+            if ( U_FAILURE(status) ) {
+                // Try to find "fallback" from "generic" to work around the bug in
+                // ures_getByKeyWithFallback
+                UErrorCode localStatus = U_ZERO_ERROR;
+                UResourceBundle *genericCalBundle =
+                    ures_getByKeyWithFallback(calBundle, gGenericTag, NULL, &localStatus);
+                UResourceBundle *genericItvDtPtnResource =
+                    ures_getByKeyWithFallback(
+                        genericCalBundle, gIntervalDateTimePatternTag, NULL, &localStatus);
+                resStr = ures_getStringByKeyWithFallback(
+                    genericItvDtPtnResource, gFallbackPatternTag, &resStrLen, &localStatus);
+                ures_close(genericItvDtPtnResource);
+                ures_close(genericCalBundle);
+                if ( U_SUCCESS(localStatus) ) {
+                    status = U_USING_FALLBACK_WARNING;;
+                }
+            }
+        }
+
+        if ( U_SUCCESS(status) && (resStr != nullptr)) {
             UnicodeString pattern = UnicodeString(TRUE, resStr, resStrLen);
             setFallbackIntervalPattern(pattern, status);
         }
@@ -683,6 +711,9 @@ DateIntervalInfo::calendarFieldToIntervalIndex(UCalendarDateFields field,
         break;
       case UCAL_SECOND:
         index = kIPI_SECOND;
+        break;
+      case UCAL_MILLISECOND:
+        index = kIPI_MILLISECOND;
         break;
       default:
         status = U_ILLEGAL_ARGUMENT_ERROR;

@@ -7,20 +7,28 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
-#include "base/macros.h"
+#include "base/callback_forward.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_unique_id.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/views_export.h"
 
+namespace ui {
+
+class AXPlatformNodeDelegate;
+
+}  // namespace ui
+
 namespace views {
 
 class View;
+class Widget;
 
 // An object that manages the accessibility interface for a View.
 //
@@ -33,8 +41,15 @@ class View;
 // that implements the native accessibility APIs on a specific platform.
 class VIEWS_EXPORT ViewAccessibility {
  public:
+  using AccessibilityEventsCallback =
+      base::RepeatingCallback<void(const ui::AXPlatformNodeDelegate*,
+                                   const ax::mojom::Event)>;
+  using AXVirtualViews = AXVirtualView::AXVirtualViews;
+
   static std::unique_ptr<ViewAccessibility> Create(View* view);
 
+  ViewAccessibility(const ViewAccessibility&) = delete;
+  ViewAccessibility& operator=(const ViewAccessibility&) = delete;
   virtual ~ViewAccessibility();
 
   // Modifies |node_data| to reflect the current accessible state of the
@@ -64,12 +79,30 @@ class VIEWS_EXPORT ViewAccessibility {
   void OverrideIsLeaf(bool value);
   void OverrideIsIgnored(bool value);
   void OverrideBounds(const gfx::RectF& bounds);
+  void OverrideDescribedBy(View* described_by_view);
+  void OverrideHasPopup(const ax::mojom::HasPopup has_popup);
 
-  virtual gfx::NativeViewAccessible GetNativeObject();
-  virtual void NotifyAccessibilityEvent(ax::mojom::Event event_type) {}
-#if defined(OS_MACOSX)
-  virtual void AnnounceText(base::string16& text) {}
-#endif
+  // Override indexes used by some screen readers when describing elements in a
+  // menu, list, etc. If not specified, a view's index in its parent and its
+  // parent's number of children provide the values for these.
+  //
+  // Note: |pos_in_set| is 1-indexed.
+  void OverridePosInSet(int pos_in_set, int set_size);
+
+  // Override the next or previous focused widget. Some screen readers may
+  // utilize this information to transition focus from the beginning or end of
+  // one window to another when navigating by its default navigation method.
+  void OverrideNextFocus(Widget* widget);
+  void OverridePreviousFocus(Widget* widget);
+  Widget* GetNextFocus();
+  Widget* GetPreviousFocus();
+
+  virtual gfx::NativeViewAccessible GetNativeObject() const;
+  virtual void NotifyAccessibilityEvent(ax::mojom::Event event_type);
+
+  // Causes the screen reader to announce |text|. If the current user is not
+  // using a screen reader, has no effect.
+  virtual void AnnounceText(const base::string16& text);
 
   virtual const ui::AXUniqueId& GetUniqueId() const;
 
@@ -82,11 +115,9 @@ class VIEWS_EXPORT ViewAccessibility {
   // Methods for managing virtual views.
   //
 
-  // Adds |virtual_view| as a child of this View, optionally at |index|.
-  // We take ownership of our virtual children.
+  // Adds |virtual_view| as a child of this View. We take ownership of our
+  // virtual children.
   void AddVirtualChildView(std::unique_ptr<AXVirtualView> virtual_view);
-  void AddVirtualChildViewAt(std::unique_ptr<AXVirtualView> virtual_view,
-                             int index);
 
   // Removes |virtual_view| from this View. The virtual view's parent will
   // change to nullptr. Hands ownership back to the caller.
@@ -97,20 +128,7 @@ class VIEWS_EXPORT ViewAccessibility {
   // The virtual views are deleted.
   void RemoveAllVirtualChildViews();
 
-  int virtual_child_count() const {
-    return static_cast<int>(virtual_children_.size());
-  }
-
-  AXVirtualView* virtual_child_at(int index) {
-    return const_cast<AXVirtualView*>(
-        const_cast<const ViewAccessibility*>(this)->virtual_child_at(index));
-  }
-
-  const AXVirtualView* virtual_child_at(int index) const {
-    DCHECK_GE(index, 0);
-    DCHECK_LT(index, virtual_child_count());
-    return virtual_children_[index].get();
-  }
+  const AXVirtualViews& virtual_children() const { return virtual_children_; }
 
   // Returns true if |virtual_view| is contained within the hierarchy of this
   // View, even as an indirect descendant.
@@ -126,8 +144,17 @@ class VIEWS_EXPORT ViewAccessibility {
   // native accessibility object associated with this view.
   gfx::NativeViewAccessible GetFocusedDescendant();
 
+  virtual void FireFocusAfterMenuClose();
+
+  // Used for testing. Allows a test to watch accessibility events.
+  const AccessibilityEventsCallback& accessibility_events_callback() const;
+  void set_accessibility_events_callback(AccessibilityEventsCallback callback);
+
  protected:
   explicit ViewAccessibility(View* view);
+
+  // Used for testing. Called every time an accessibility event is fired.
+  AccessibilityEventsCallback accessibility_events_callback_;
 
  private:
   // Weak. Owns this.
@@ -135,7 +162,7 @@ class VIEWS_EXPORT ViewAccessibility {
 
   // If there are any virtual children, they override any real children.
   // We own our virtual children.
-  std::vector<std::unique_ptr<AXVirtualView>> virtual_children_;
+  AXVirtualViews virtual_children_;
 
   // The virtual child that is currently focused.
   // This is nullptr if no virtual child is focused.
@@ -162,7 +189,8 @@ class VIEWS_EXPORT ViewAccessibility {
   // "presentational".
   bool is_ignored_;
 
-  DISALLOW_COPY_AND_ASSIGN(ViewAccessibility);
+  Widget* next_focus_ = nullptr;
+  Widget* previous_focus_ = nullptr;
 };
 
 }  // namespace views

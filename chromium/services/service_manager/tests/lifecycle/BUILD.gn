@@ -8,9 +8,7 @@ import("//testing/test.gni")
 
 source_set("lifecycle") {
   testonly = true
-  sources = [
-    "lifecycle_unittest.cc",
-  ]
+  sources = [ "lifecycle_unittest.cc" ]
   deps = [
     ":interfaces",
     "//base",
@@ -18,22 +16,19 @@ source_set("lifecycle") {
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/cpp/test:test_support",
     "//services/service_manager/public/mojom",
-    "//services/service_manager/runner/common",
     "//testing/gtest",
   ]
 
   data_deps = [
     ":lifecycle_unittest_app",
-    ":lifecycle_unittest_parent",
     ":lifecycle_unittest_package",
+    ":lifecycle_unittest_parent",
   ]
 }
 
 mojom("interfaces") {
   testonly = true
-  sources = [
-    "lifecycle.test-mojom",
-  ]
+  sources = [ "lifecycle.test-mojom" ]
 }
 
 source_set("app_client") {
@@ -52,9 +47,7 @@ source_set("app_client") {
 
 service_executable("lifecycle_unittest_package") {
   testonly = true
-  sources = [
-    "package.cc",
-  ]
+  sources = [ "package.cc" ]
   deps = [
     ":app_client",
     ":interfaces",
@@ -66,9 +59,7 @@ service_executable("lifecycle_unittest_package") {
 
 service_executable("lifecycle_unittest_app") {
   testonly = true
-  sources = [
-    "app.cc",
-  ]
+  sources = [ "app.cc" ]
   deps = [
     ":app_client",
     ":interfaces",
@@ -79,9 +70,7 @@ service_executable("lifecycle_unittest_app") {
 
 service_executable("lifecycle_unittest_parent") {
   testonly = true
-  sources = [
-    "parent.cc",
-  ]
+  sources = [ "parent.cc" ]
   deps = [
     ":interfaces",
     "//base",

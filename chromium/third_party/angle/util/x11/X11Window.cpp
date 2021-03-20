@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -10,7 +10,7 @@
 
 #include "common/debug.h"
 #include "util/Timer.h"
-#include "util/system_utils.h"
+#include "util/test_utils.h"
 
 namespace
 {
@@ -26,7 +26,7 @@ static Key X11CodeToKey(Display *display, unsigned int scancode)
     KeySym *keySymbols;
     keySymbols = XGetKeyboardMapping(display, scancode, 1, &temp);
 
-    unsigned int keySymbol = keySymbols[0];
+    KeySym keySymbol = keySymbols[0];
     XFree(keySymbols);
 
     switch (keySymbol)
@@ -277,7 +277,7 @@ X11Window::~X11Window()
     destroy();
 }
 
-bool X11Window::initialize(const std::string &name, size_t width, size_t height)
+bool X11Window::initialize(const std::string &name, int width, int height)
 {
     destroy();
 
@@ -387,6 +387,8 @@ void X11Window::destroy()
     WM_PROTOCOLS     = None;
 }
 
+void X11Window::resetNativeWindow() {}
+
 EGLNativeWindowType X11Window::getNativeWindow() const
 {
     return mWindow;
@@ -425,19 +427,17 @@ bool X11Window::resize(int width, int height)
     XResizeWindow(mDisplay, mWindow, width, height);
     XFlush(mDisplay);
 
-    Timer *timer = CreateTimer();
-    timer->start();
+    Timer timer;
+    timer.start();
 
     // Wait until the window as actually been resized so that the code calling resize
     // can assume the window has been resized.
     const double kResizeWaitDelay = 0.2;
-    while (mHeight != height && mWidth != width && timer->getElapsedTime() < kResizeWaitDelay)
+    while ((mHeight != height || mWidth != width) && timer.getElapsedTime() < kResizeWaitDelay)
     {
         messageLoop();
         angle::Sleep(10);
     }
-
-    delete timer;
 
     return true;
 }
@@ -478,6 +478,10 @@ void X11Window::signalTestEvent()
 
     // Hijack StructureNotifyMask as we know we will be listening for it.
     XSendEvent(mDisplay, mWindow, False, StructureNotifyMask, &event);
+
+    // For test events, the tests want to check that it really did arrive, and they don't wait
+    // long.  XSync here makes sure the event is sent by the time the messageLoop() is called.
+    XSync(mDisplay, false);
 }
 
 void X11Window::processEvent(const XEvent &xEvent)

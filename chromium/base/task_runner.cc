@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/threading/post_task_and_reply_impl.h"
@@ -15,7 +16,7 @@ namespace base {
 namespace {
 
 // TODO(akalin): There's only one other implementation of
-// PostTaskAndReplyImpl in WorkerPool.  Investigate whether it'll be
+// PostTaskAndReplyImpl in post_task.cc.  Investigate whether it'll be
 // possible to merge the two.
 class PostTaskAndReplyTaskRunner : public internal::PostTaskAndReplyImpl {
  public:

@@ -93,7 +93,7 @@ class MEDIA_EXPORT DecoderSelector {
 
  private:
   void InitializeDecoder();
-  void OnDecoderInitializeDone(bool success);
+  void OnDecoderInitializeDone(Status status);
   void ReturnNullDecoder();
   void InitializeDecryptingDemuxerStream();
   void OnDecryptingDemuxerStreamInitializeDone(PipelineStatus status);
@@ -124,7 +124,7 @@ class MEDIA_EXPORT DecoderSelector {
   bool is_codec_changing_ = false;
   base::TimeTicks codec_change_start_;
 
-  base::WeakPtrFactory<DecoderSelector> weak_this_factory_;
+  base::WeakPtrFactory<DecoderSelector> weak_this_factory_{this};
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(DecoderSelector);
 };

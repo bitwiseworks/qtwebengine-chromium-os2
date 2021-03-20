@@ -21,7 +21,7 @@ namespace fxcrt {
 
 // An immutable string with caller-provided storage which must outlive the
 // string itself. These are not necessarily nul-terminated, so that substring
-// extraction (via the Mid(), Left(), and Right() methods) is copy-free.
+// extraction (via the Substr(), First(), and Last() methods) is copy-free.
 //
 // String view arguments should be passed by value, since they are small,
 // rather than const-ref, even if they are not modified.
@@ -47,7 +47,7 @@ class StringViewTemplate {
       : m_Span(reinterpret_cast<const UnsignedType*>(ptr), len) {}
 
   explicit constexpr StringViewTemplate(
-      const pdfium::span<CharType>& other) noexcept
+      const pdfium::span<const CharType>& other) noexcept
       : m_Span(reinterpret_cast<const UnsignedType*>(other.data()),
                other.size()) {}
 
@@ -73,8 +73,10 @@ class StringViewTemplate {
       : m_Span(reinterpret_cast<const UnsignedType*>(&ch), 1) {}
 
   // Any changes to |vec| invalidate the string.
-  explicit StringViewTemplate(const std::vector<UnsignedType>& vec) noexcept
-      : m_Span(vec.size() ? vec.data() : nullptr, vec.size()) {}
+  template <typename AllocType>
+  explicit StringViewTemplate(
+      const std::vector<UnsignedType, AllocType>& vec) noexcept
+      : m_Span(!vec.empty() ? vec.data() : nullptr, vec.size()) {}
 
   StringViewTemplate& operator=(const CharType* src) {
     m_Span = pdfium::span<const UnsignedType>(
@@ -147,7 +149,7 @@ class StringViewTemplate {
   }
 
   uint32_t GetID() const {
-    if (m_Span.size() == 0)
+    if (m_Span.empty())
       return 0;
 
     uint32_t strid = 0;
@@ -158,7 +160,11 @@ class StringViewTemplate {
     return strid << ((4 - size) * 8);
   }
 
-  pdfium::span<const UnsignedType> span() const { return m_Span; }
+  pdfium::span<const UnsignedType> raw_span() const { return m_Span; }
+  pdfium::span<const CharType> span() const {
+    return pdfium::make_span(reinterpret_cast<const CharType*>(m_Span.data()),
+                             m_Span.size());
+  }
   const UnsignedType* raw_str() const { return m_Span.data(); }
   const CharType* unterminated_c_str() const {
     return reinterpret_cast<const CharType*>(m_Span.data());
@@ -173,9 +179,9 @@ class StringViewTemplate {
     return m_Span[index];
   }
 
-  UnsignedType First() const { return m_Span.size() ? m_Span[0] : 0; }
-  UnsignedType Last() const {
-    return m_Span.size() ? m_Span[m_Span.size() - 1] : 0;
+  UnsignedType Front() const { return !m_Span.empty() ? m_Span[0] : 0; }
+  UnsignedType Back() const {
+    return !m_Span.empty() ? m_Span[m_Span.size() - 1] : 0;
   }
 
   const CharType CharAt(const size_t index) const {
@@ -191,7 +197,7 @@ class StringViewTemplate {
 
   bool Contains(CharType ch) const { return Find(ch).has_value(); }
 
-  StringViewTemplate Mid(size_t first, size_t count) const {
+  StringViewTemplate Substr(size_t first, size_t count) const {
     if (!m_Span.data())
       return StringViewTemplate();
 
@@ -207,16 +213,16 @@ class StringViewTemplate {
     return StringViewTemplate(m_Span.data() + first, count);
   }
 
-  StringViewTemplate Left(size_t count) const {
+  StringViewTemplate First(size_t count) const {
     if (count == 0 || !IsValidLength(count))
       return StringViewTemplate();
-    return Mid(0, count);
+    return Substr(0, count);
   }
 
-  StringViewTemplate Right(size_t count) const {
+  StringViewTemplate Last(size_t count) const {
     if (count == 0 || !IsValidLength(count))
       return StringViewTemplate();
-    return Mid(GetLength() - count, count);
+    return Substr(GetLength() - count, count);
   }
 
   StringViewTemplate TrimmedRight(CharType ch) const {

@@ -20,11 +20,12 @@ class InputHandlerProxyClient {
   // passive event listeners.
   virtual void DispatchNonBlockingEventToMainThread(
       WebScopedInputEvent event,
-      const ui::LatencyInfo& latency_info) = 0;
+      const ui::LatencyInfo& latency_info,
+      const blink::WebInputEventAttribution& attribution) = 0;
 
-  // |HandleInputEvent/WithLatencyInfo| will respond to overscroll by calling
-  // the passed in callback.
-  // Otherwise |DidOverscroll| will be fired.
+  // |HandleInputEventWithLatencyInfo/RouteToTypeSpecificHandler| will respond
+  // to overscroll by calling the passed in callback. Otherwise |DidOverscroll|
+  // will be fired.
   virtual void DidOverscroll(
       const gfx::Vector2dF& accumulated_overscroll,
       const gfx::Vector2dF& latest_overscroll_delta,
@@ -39,7 +40,8 @@ class InputHandlerProxyClient {
   // Used to send a GSB to the main thread when the scrolling should switch to
   // the main thread.
   virtual void GenerateScrollBeginAndSendToMainThread(
-      const blink::WebGestureEvent& update_event) = 0;
+      const blink::WebGestureEvent& update_event,
+      const blink::WebInputEventAttribution& attribution) = 0;
 
   virtual void SetWhiteListedTouchAction(
       cc::TouchAction touch_action,

@@ -24,6 +24,7 @@
 
 #include "third_party/blink/renderer/core/html/forms/html_form_control_element_with_state.h"
 
+#include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 
@@ -130,7 +131,7 @@ String HTMLFormControlElementWithState::IDLExposedAutofillValue() const {
   // TODO(tkent): Share the code with autofill::FormStructure::
   // ParseFieldTypesFromAutocompleteAttributes().
 
-  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill-processing-model
+  // https://html.spec.whatwg.org/C/#autofill-processing-model
   // 1. If the element has no autocomplete attribute, then jump to the step
   // labeled default.
   const AtomicString& value = FastGetAttribute(html_names::kAutocompleteAttr);
@@ -265,10 +266,25 @@ void HTMLFormControlElementWithState::setIDLExposedAutofillValue(
   setAttribute(html_names::kAutocompleteAttr, AtomicString(autocomplete_value));
 }
 
+bool HTMLFormControlElementWithState::ClassSupportsStateRestore() const {
+  return true;
+}
+
 bool HTMLFormControlElementWithState::ShouldSaveAndRestoreFormControlState()
     const {
   // We don't save/restore control state in a form with autocomplete=off.
   return isConnected() && ShouldAutocomplete();
+}
+
+void HTMLFormControlElementWithState::DispatchInputEvent() {
+  // Legacy 'input' event for forms set value and checked.
+  Event* event = Event::CreateBubble(event_type_names::kInput);
+  event->SetComposed(true);
+  DispatchScopedEvent(*event);
+}
+
+void HTMLFormControlElementWithState::DispatchChangeEvent() {
+  DispatchScopedEvent(*Event::CreateBubble(event_type_names::kChange));
 }
 
 void HTMLFormControlElementWithState::FinishParsingChildren() {
@@ -278,6 +294,10 @@ void HTMLFormControlElementWithState::FinishParsingChildren() {
 
 bool HTMLFormControlElementWithState::IsFormControlElementWithState() const {
   return true;
+}
+
+int HTMLFormControlElementWithState::DefaultTabIndex() const {
+  return 0;
 }
 
 }  // namespace blink

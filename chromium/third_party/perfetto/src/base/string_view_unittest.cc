@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-#include "perfetto/base/string_view.h"
+#include "perfetto/ext/base/string_view.h"
 
 #include <forward_list>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include "test/gtest_and_gmock.h"
 
 namespace perfetto {
 namespace base {
 namespace {
 
 TEST(StringViewTest, BasicCases) {
+  EXPECT_EQ(StringView(), StringView(""));
   EXPECT_EQ(StringView(""), StringView(""));
   EXPECT_EQ(StringView(""), StringView("", 0));
   EXPECT_EQ(StringView("ab"), StringView("ab", 2));
@@ -38,6 +38,8 @@ TEST(StringViewTest, BasicCases) {
   EXPECT_TRUE(StringView("x") != StringView(""));
   EXPECT_TRUE(StringView("") != StringView("y"));
   EXPECT_TRUE(StringView("a") != StringView("b"));
+  EXPECT_EQ(StringView().size(), 0ul);
+  EXPECT_EQ(StringView().data(), nullptr);
   EXPECT_EQ(StringView("").size(), 0ul);
   EXPECT_NE(StringView("").data(), nullptr);
   EXPECT_TRUE(StringView("").empty());
@@ -51,7 +53,106 @@ TEST(StringViewTest, BasicCases) {
     EXPECT_TRUE(x == "abc");
     EXPECT_TRUE(x == StringView("abc"));
     EXPECT_TRUE(x != StringView("abcd"));
+    EXPECT_FALSE(x == StringView("aBc"));
+    EXPECT_TRUE(x.CaseInsensitiveEq("aBc"));
+    EXPECT_TRUE(x.CaseInsensitiveEq("AbC"));
+    EXPECT_FALSE(x.CaseInsensitiveEq("AbCd"));
+    EXPECT_FALSE(x.CaseInsensitiveEq("ab"));
+    EXPECT_FALSE(x.CaseInsensitiveEq("abcd"));
+    EXPECT_FALSE(x.CaseInsensitiveEq(""));
   }
+
+  // Test find(char).
+  EXPECT_EQ(StringView().find('x'), StringView::npos);
+  EXPECT_EQ(StringView("").find('x'), StringView::npos);
+  EXPECT_EQ(StringView("foo").find('x'), StringView::npos);
+  EXPECT_EQ(StringView("foo").find('f'), 0u);
+  EXPECT_EQ(StringView("foo").find('o'), 1u);
+
+  // Test rfind(char).
+  EXPECT_EQ(StringView().rfind('x'), StringView::npos);
+  EXPECT_EQ(StringView("").rfind('x'), StringView::npos);
+  EXPECT_EQ(StringView("foo").rfind('x'), StringView::npos);
+  EXPECT_EQ(StringView("foo").rfind('f'), 0u);
+  EXPECT_EQ(StringView("foo").rfind('o'), 2u);
+
+  // Test find(const char*).
+  EXPECT_EQ(StringView().find("x"), StringView::npos);
+  EXPECT_EQ(StringView("").find("x"), StringView::npos);
+  EXPECT_EQ(StringView("foo").find("x"), StringView::npos);
+  EXPECT_EQ(StringView("foo").find("foobar"), StringView::npos);
+  EXPECT_EQ(StringView("foo").find("f", 1), StringView::npos);
+  EXPECT_EQ(StringView("foo").find("f"), 0u);
+  EXPECT_EQ(StringView("foo").find("fo"), 0u);
+  EXPECT_EQ(StringView("foo").find("oo"), 1u);
+  EXPECT_EQ(StringView("foo").find("o"), 1u);
+  EXPECT_EQ(StringView("foo").find("o", 2), 2u);
+  EXPECT_EQ(StringView("foo").find("o", 3), StringView::npos);
+  EXPECT_EQ(StringView("foo").find("o", 10), StringView::npos);
+  EXPECT_EQ(StringView("foobar").find("bar", 3), 3u);
+  EXPECT_EQ(StringView("foobar").find("bartender"), StringView::npos);
+  EXPECT_EQ(StringView("foobar").find("bartender", 3), StringView::npos);
+  EXPECT_EQ(StringView("foo").find(""), 0u);  // std::string behaves the same.
+
+  // Test substr().
+  EXPECT_EQ(StringView().substr(0, 0).ToStdString(), "");
+  EXPECT_EQ(StringView().substr(3, 1).ToStdString(), "");
+  EXPECT_EQ(StringView("foo").substr(3, 1).ToStdString(), "");
+  EXPECT_EQ(StringView("foo").substr(4, 0).ToStdString(), "");
+  EXPECT_EQ(StringView("foo").substr(4, 1).ToStdString(), "");
+  EXPECT_EQ(StringView("foo").substr(0, 1).ToStdString(), "f");
+  EXPECT_EQ(StringView("foo").substr(0, 3).ToStdString(), "foo");
+  EXPECT_EQ(StringView("foo").substr(0, 99).ToStdString(), "foo");
+  EXPECT_EQ(StringView("foo").substr(1, 2).ToStdString(), "oo");
+  EXPECT_EQ(StringView("foo").substr(1, 3).ToStdString(), "oo");
+  EXPECT_EQ(StringView("foo").substr(1, 99).ToStdString(), "oo");
+  EXPECT_EQ(StringView("xyz").substr(0).ToStdString(), "xyz");
+  EXPECT_EQ(StringView("xyz").substr(2).ToStdString(), "z");
+  EXPECT_EQ(StringView("xyz").substr(3).ToStdString(), "");
+
+  // Test the < operator.
+  EXPECT_FALSE(StringView() < StringView());
+  EXPECT_FALSE(StringView() < StringView(""));
+  EXPECT_TRUE(StringView() < StringView("foo"));
+  EXPECT_TRUE(StringView("") < StringView("foo"));
+  EXPECT_FALSE(StringView() < StringView("foo", 0));
+  EXPECT_FALSE(StringView("foo") < StringView("foo"));
+  EXPECT_TRUE(StringView("foo") < StringView("fooo"));
+  EXPECT_FALSE(StringView("fooo") < StringView("foo"));
+  EXPECT_TRUE(StringView("bar") < StringView("foo"));
+
+  // Test the <= operator.
+  EXPECT_TRUE(StringView() <= StringView());
+  EXPECT_TRUE(StringView() <= StringView(""));
+  EXPECT_TRUE(StringView() <= StringView("foo"));
+  EXPECT_TRUE(StringView("") <= StringView("foo"));
+  EXPECT_TRUE(StringView() <= StringView("foo", 0));
+  EXPECT_TRUE(StringView("foo") <= StringView("foo"));
+  EXPECT_TRUE(StringView("foo") <= StringView("fooo"));
+  EXPECT_FALSE(StringView("fooo") <= StringView("foo"));
+  EXPECT_TRUE(StringView("bar") <= StringView("foo"));
+
+  // Test the > operator.
+  EXPECT_FALSE(StringView() > StringView());
+  EXPECT_FALSE(StringView() > StringView(""));
+  EXPECT_FALSE(StringView() > StringView("foo"));
+  EXPECT_FALSE(StringView("") > StringView("foo"));
+  EXPECT_FALSE(StringView() > StringView("foo", 0));
+  EXPECT_FALSE(StringView("foo") > StringView("foo"));
+  EXPECT_FALSE(StringView("foo") > StringView("fooo"));
+  EXPECT_TRUE(StringView("fooo") > StringView("foo"));
+  EXPECT_FALSE(StringView("bar") > StringView("foo"));
+
+  // Test the >= operator.
+  EXPECT_TRUE(StringView() >= StringView());
+  EXPECT_TRUE(StringView() >= StringView(""));
+  EXPECT_FALSE(StringView() >= StringView("foo"));
+  EXPECT_FALSE(StringView("") >= StringView("foo"));
+  EXPECT_TRUE(StringView() >= StringView("foo", 0));
+  EXPECT_TRUE(StringView("foo") >= StringView("foo"));
+  EXPECT_FALSE(StringView("foo") >= StringView("fooo"));
+  EXPECT_TRUE(StringView("fooo") >= StringView("foo"));
+  EXPECT_FALSE(StringView("bar") >= StringView("foo"));
 }
 
 TEST(StringViewTest, HashCollisions) {

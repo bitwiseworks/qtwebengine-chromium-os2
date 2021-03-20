@@ -96,6 +96,12 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
     new_process_id_for_test_ = process_id;
   }
 
+  // Forces AllocateWorkerProcess to create a new process instead of reusing an
+  // existing one.
+  void ForceNewProcessForTest(bool force_new_process) {
+    force_new_process_for_test_ = force_new_process;
+  }
+
   // AsWeakPtr() can be called from any thread, but the WeakPtr must be
   // dereferenced on the UI thread only.
   base::WeakPtr<ServiceWorkerProcessManager> AsWeakPtr() { return weak_this_; }
@@ -135,9 +141,11 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
   int process_id_for_test_;
   int new_process_id_for_test_;
 
+  bool force_new_process_for_test_;
+
   // Used to double-check that we don't access *this after it's destroyed.
   base::WeakPtr<ServiceWorkerProcessManager> weak_this_;
-  base::WeakPtrFactory<ServiceWorkerProcessManager> weak_this_factory_;
+  base::WeakPtrFactory<ServiceWorkerProcessManager> weak_this_factory_{this};
 };
 
 }  // namespace content

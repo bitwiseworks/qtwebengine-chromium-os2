@@ -10,36 +10,43 @@
 #include "base/logging.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/limits.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "media/gpu/gpu_video_encode_accelerator_factory.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
 namespace media {
 
 // static
 void MojoVideoEncodeAcceleratorProvider::Create(
-    mojom::VideoEncodeAcceleratorProviderRequest request,
-    const CreateAndInitializeVideoEncodeAcceleratorCallback&
-        create_vea_callback,
+    mojo::PendingReceiver<mojom::VideoEncodeAcceleratorProvider> receiver,
+    CreateAndInitializeVideoEncodeAcceleratorCallback create_vea_callback,
     const gpu::GpuPreferences& gpu_preferences) {
-  mojo::MakeStrongBinding(std::make_unique<MojoVideoEncodeAcceleratorProvider>(
-                              create_vea_callback, gpu_preferences),
-                          std::move(request));
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<MojoVideoEncodeAcceleratorProvider>(
+          std::move(create_vea_callback), gpu_preferences),
+      std::move(receiver));
 }
 
 MojoVideoEncodeAcceleratorProvider::MojoVideoEncodeAcceleratorProvider(
-    const CreateAndInitializeVideoEncodeAcceleratorCallback&
-        create_vea_callback,
+    CreateAndInitializeVideoEncodeAcceleratorCallback create_vea_callback,
     const gpu::GpuPreferences& gpu_preferences)
-    : create_vea_callback_(create_vea_callback),
+    : create_vea_callback_(std::move(create_vea_callback)),
       gpu_preferences_(gpu_preferences) {}
 
 MojoVideoEncodeAcceleratorProvider::~MojoVideoEncodeAcceleratorProvider() =
     default;
 
 void MojoVideoEncodeAcceleratorProvider::CreateVideoEncodeAccelerator(
-    mojom::VideoEncodeAcceleratorRequest request) {
+    mojo::PendingReceiver<mojom::VideoEncodeAccelerator> receiver) {
   MojoVideoEncodeAcceleratorService::Create(
-      std::move(request), create_vea_callback_, gpu_preferences_);
+      std::move(receiver), create_vea_callback_, gpu_preferences_);
+}
+
+void MojoVideoEncodeAcceleratorProvider::
+    GetVideoEncodeAcceleratorSupportedProfiles(
+        GetVideoEncodeAcceleratorSupportedProfilesCallback callback) {
+  std::move(callback).Run(
+      GpuVideoEncodeAcceleratorFactory::GetSupportedProfiles(gpu_preferences_));
 }
 
 }  // namespace media

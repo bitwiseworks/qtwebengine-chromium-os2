@@ -69,13 +69,40 @@ class Config(Mapping):
     def as_dict(self):
         return json_types(self.__dict__)
 
+    # Environment variables are limited in size so we need to prune the most egregious contributors
+    # to size, the origin policy subdomains.
+    def as_dict_for_wd_env_variable(self):
+        result = self.as_dict()
+
+        for key in [
+            ("subdomains",),
+            ("domains", "alt"),
+            ("domains", ""),
+            ("all_domains", "alt"),
+            ("all_domains", ""),
+            ("domains_set",),
+            ("all_domains_set",)
+        ]:
+            target = result
+            for part in key[:-1]:
+                target = target[part]
+            value = target[key[-1]]
+            if isinstance(value, dict):
+                target[key[-1]] = {k:v for (k,v) in iteritems(value) if not k.startswith("op")}
+            else:
+                target[key[-1]] = [x for x in value if not x.startswith("op")]
+
+        return result
+
 
 def json_types(obj):
     if isinstance(obj, dict):
         return {key: json_types(value) for key, value in iteritems(obj)}
     if (isinstance(obj, string_types) or
         isinstance(obj, integer_types) or
-        isinstance(obj, float)):
+        isinstance(obj, float) or
+        isinstance(obj, bool) or
+        obj is None):
         return obj
     if isinstance(obj, list) or hasattr(obj, "__iter__"):
         return [json_types(value) for value in obj]

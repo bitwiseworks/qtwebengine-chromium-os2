@@ -23,10 +23,12 @@ class ParameterizedHitTestingBidiTest
   ParameterizedHitTestingBidiTest() : ScopedLayoutNGForTest(GetParam()) {}
 
  protected:
-  bool LayoutNGEnabled() const { return GetParam(); }
+  bool LayoutNGEnabled() const {
+    return RuntimeEnabledFeatures::LayoutNGEnabled();
+  }
 };
 
-INSTANTIATE_TEST_CASE_P(All, ParameterizedHitTestingBidiTest, testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All, ParameterizedHitTestingBidiTest, testing::Bool());
 
 // This file contains script-generated tests for PositionForPoint()
 // that are related to bidirectional text. The test cases are only for

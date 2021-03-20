@@ -15,7 +15,7 @@ typedef struct Datatest2 Datatest2;
 **
 **   2. Insert nRow key value pairs into the database.
 **
-**   3. Delete all keys from the database. Deletes are done in the same
+**   3. Delete all keys from the database. Deletes are done in the same 
 **      order as the inserts.
 **
 ** During steps 2 and 3 above, after each Datatest1.nVerify inserts or
@@ -42,11 +42,11 @@ struct Datatest1 {
 
 /*
 ** An instance of the following data structure is used to describe the
-** second type of test case in this file. The chief difference between
+** second type of test case in this file. The chief difference between 
 ** these tests and those described by Datatest1 is that these tests also
 ** experiment with range-delete operations. Tests proceed as follows:
 **
-**     1. Open the datasource described by Datatest2.defn.
+**     1. Open the datasource described by Datatest2.defn. 
 **
 **     2. Open a connection on an empty database.
 **
@@ -65,7 +65,7 @@ struct Datatest1 {
 **        e) Verify that the contents of the database are still as expected.
 **
 ** The inserts and range deletes are run twice - once on the database being
-** tested and once using a control system (sqlite3, kc etc. - something that
+** tested and once using a control system (sqlite3, kc etc. - something that 
 ** works). In order to verify that the contents of the db being tested are
 ** correct, the test runs a bunch of scans and lookups on both the test and
 ** control databases. If the results are the same, the test passes.
@@ -85,7 +85,7 @@ static char *getName(const char *zSystem, int bRecover, Datatest1 *pTest){
   char *zRet;
   char *zData;
   zData = testDatasourceName(&pTest->defn);
-  zRet = testMallocPrintf("data.%s.%s.rec=%d.%d.%d",
+  zRet = testMallocPrintf("data.%s.%s.rec=%d.%d.%d", 
       zSystem, zData, bRecover, pTest->nRow, pTest->nVerify
   );
   testFree(zData);
@@ -116,7 +116,7 @@ void testDatasourceFetch(
 /*
 ** This function is called to test that the contents of database pDb
 ** are as expected. In this case, expected is defined as containing
-** key-value pairs iFirst through iLast, inclusive, from data source
+** key-value pairs iFirst through iLast, inclusive, from data source 
 ** pData. In other words, a loop like the following could be used to
 ** construct a database with identical contents from scratch.
 **
@@ -488,7 +488,7 @@ static char *getName2(const char *zSystem, int bRecover, Datatest2 *pTest){
   char *zRet;
   char *zData;
   zData = testDatasourceName(&pTest->defn);
-  zRet = testMallocPrintf("data2.%s.%s.rec=%d.%d.%d.%d",
+  zRet = testMallocPrintf("data2.%s.%s.rec=%d.%d.%d.%d", 
       zSystem, zData, bRecover, pTest->nRange, pTest->nWrite, pTest->nIter
   );
   testFree(zData);
@@ -628,7 +628,7 @@ static void doDataTest3(
 
 static char *getName3(const char *zSystem, Datatest3 *p){
   return testMallocPrintf("data3.%s.%d.%d.%d.%d.(%d..%d)",
-      zSystem, p->nRange, p->nIter, p->nWrite, p->nDelete,
+      zSystem, p->nRange, p->nIter, p->nWrite, p->nDelete, 
       p->nValMin, p->nValMax
   );
 }

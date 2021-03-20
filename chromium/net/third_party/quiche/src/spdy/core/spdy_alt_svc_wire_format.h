@@ -11,12 +11,12 @@
 #define QUICHE_SPDY_CORE_SPDY_ALT_SVC_WIRE_FORMAT_H_
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_containers.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_export.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string_piece.h"
 
 namespace spdy {
 
@@ -24,13 +24,13 @@ namespace test {
 class SpdyAltSvcWireFormatPeer;
 }  // namespace test
 
-class SPDY_EXPORT_PRIVATE SpdyAltSvcWireFormat {
+class QUICHE_EXPORT_PRIVATE SpdyAltSvcWireFormat {
  public:
   using VersionVector = SpdyInlinedVector<uint32_t, 8>;
 
-  struct SPDY_EXPORT_PRIVATE AlternativeService {
-    SpdyString protocol_id;
-    SpdyString host;
+  struct QUICHE_EXPORT_PRIVATE AlternativeService {
+    std::string protocol_id;
+    std::string host;
 
     // Default is 0: invalid port.
     uint16_t port = 0;
@@ -40,8 +40,8 @@ class SPDY_EXPORT_PRIVATE SpdyAltSvcWireFormat {
     VersionVector version;
 
     AlternativeService();
-    AlternativeService(const SpdyString& protocol_id,
-                       const SpdyString& host,
+    AlternativeService(const std::string& protocol_id,
+                       const std::string& host,
                        uint16_t port,
                        uint32_t max_age,
                        VersionVector version);
@@ -60,27 +60,29 @@ class SPDY_EXPORT_PRIVATE SpdyAltSvcWireFormat {
   typedef std::vector<AlternativeService> AlternativeServiceVector;
 
   friend class test::SpdyAltSvcWireFormatPeer;
-  static bool ParseHeaderFieldValue(SpdyStringPiece value,
+  static bool ParseHeaderFieldValue(quiche::QuicheStringPiece value,
                                     AlternativeServiceVector* altsvc_vector);
-  static SpdyString SerializeHeaderFieldValue(
+  static std::string SerializeHeaderFieldValue(
       const AlternativeServiceVector& altsvc_vector);
 
  private:
-  static void SkipWhiteSpace(SpdyStringPiece::const_iterator* c,
-                             SpdyStringPiece::const_iterator end);
-  static bool PercentDecode(SpdyStringPiece::const_iterator c,
-                            SpdyStringPiece::const_iterator end,
-                            SpdyString* output);
-  static bool ParseAltAuthority(SpdyStringPiece::const_iterator c,
-                                SpdyStringPiece::const_iterator end,
-                                SpdyString* host,
+  static void SkipWhiteSpace(quiche::QuicheStringPiece::const_iterator* c,
+                             quiche::QuicheStringPiece::const_iterator end);
+  static bool PercentDecode(quiche::QuicheStringPiece::const_iterator c,
+                            quiche::QuicheStringPiece::const_iterator end,
+                            std::string* output);
+  static bool ParseAltAuthority(quiche::QuicheStringPiece::const_iterator c,
+                                quiche::QuicheStringPiece::const_iterator end,
+                                std::string* host,
                                 uint16_t* port);
-  static bool ParsePositiveInteger16(SpdyStringPiece::const_iterator c,
-                                     SpdyStringPiece::const_iterator end,
-                                     uint16_t* value);
-  static bool ParsePositiveInteger32(SpdyStringPiece::const_iterator c,
-                                     SpdyStringPiece::const_iterator end,
-                                     uint32_t* value);
+  static bool ParsePositiveInteger16(
+      quiche::QuicheStringPiece::const_iterator c,
+      quiche::QuicheStringPiece::const_iterator end,
+      uint16_t* value);
+  static bool ParsePositiveInteger32(
+      quiche::QuicheStringPiece::const_iterator c,
+      quiche::QuicheStringPiece::const_iterator end,
+      uint32_t* value);
 };
 
 }  // namespace spdy

@@ -15,7 +15,7 @@
 #ifndef DAWNWIRE_WIRECMD_AUTOGEN_H_
 #define DAWNWIRE_WIRECMD_AUTOGEN_H_
 
-#include <dawn/dawn.h>
+#include <dawn/webgpu.h>
 
 namespace dawn_wire {
 
@@ -24,12 +24,24 @@ namespace dawn_wire {
     struct ObjectHandle {
       ObjectId id;
       ObjectSerial serial;
+
+      ObjectHandle();
+      ObjectHandle(ObjectId id, ObjectSerial serial);
+      ObjectHandle(const volatile ObjectHandle& rhs);
+
+      // MSVC has a bug where it thinks the volatile copy assignment is a duplicate.
+      // Workaround this by forwarding to a different function AssignFrom.
+      template <typename T>
+      ObjectHandle& operator=(const T& rhs) {
+          return AssignFrom(rhs);
+      }
+      ObjectHandle& AssignFrom(const ObjectHandle& rhs);
+      ObjectHandle& AssignFrom(const volatile ObjectHandle& rhs);
     };
 
     enum class DeserializeResult {
         Success,
         FatalError,
-        ErrorObject,
     };
 
     // Interface to allocate more space to deserialize pointed-to data.
@@ -40,8 +52,7 @@ namespace dawn_wire {
     };
 
     // Interface to convert an ID to a server object, if possible.
-    // Methods return FatalError if the ID is for a non-existent object, ErrorObject if the
-    // object is an error value and Success otherwise.
+    // Methods return FatalError if the ID is for a non-existent object and Success otherwise.
     class ObjectIdResolver {
         public:
             {% for type in by_category["object"] %}
@@ -101,11 +112,7 @@ namespace dawn_wire {
         //* Deserialize returns:
         //*  - Success if everything went well (yay!)
         //*  - FatalError is something bad happened (buffer too small for example)
-        //*  - ErrorObject if one if the deserialized object is an error value, for the implementation
-        //*    of the Maybe monad.
-        //* If the return value is not FatalError, selfId, resultId and resultSerial (if present) are
-        //* filled.
-        DeserializeResult Deserialize(const char** buffer, size_t* size, DeserializeAllocator* allocator
+        DeserializeResult Deserialize(const volatile char** buffer, size_t* size, DeserializeAllocator* allocator
             {%- if command.has_dawn_object -%}
                 , const ObjectIdResolver& resolver
             {%- endif -%}

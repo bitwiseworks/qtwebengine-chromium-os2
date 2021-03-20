@@ -57,7 +57,7 @@ static void testOomAssert(OomTest *p, int bVal){
 
 /*
 ** Test that the error code matches the state of the OomTest object passed
-** as the first argument. Specifically, check that rc is LSM_NOMEM if an
+** as the first argument. Specifically, check that rc is LSM_NOMEM if an 
 ** OOM error has already been injected, or LSM_OK if not.
 */
 static void testOomAssertRc(OomTest *p, int rc){
@@ -189,8 +189,8 @@ static void testOomWriteData(
 }
 
 static void testOomScan(
-  OomTest *pOom,
-  lsm_db *pDb,
+  OomTest *pOom, 
+  lsm_db *pDb, 
   int bReverse,
   const void *pKey, int nKey,
   int nScan,
@@ -201,7 +201,7 @@ static void testOomScan(
     int iScan = 0;
     lsm_cursor *pCsr;
     int (*xAdvance)(lsm_cursor *) = 0;
-
+    
 
     rc = lsm_csr_open(pDb, &pCsr);
     testOomAssertRc(pOom, rc);
@@ -238,7 +238,7 @@ static void testOomScan(
   }
 }
 
-#define LSMTEST6_TESTDB "testdb.lsm"
+#define LSMTEST6_TESTDB "testdb.lsm" 
 
 void testDeleteLsmdb(const char *zFile){
   char *zLog = testMallocPrintf("%s-log", zFile);
@@ -424,9 +424,9 @@ static void setup_populate_db2(void){
   rc = lsm_new(tdb_lsm_env(), &pDb);
   if( rc==LSM_OK ) rc = lsm_open(pDb, LSMTEST6_TESTDB);
 
-  lsm_config(pDb, LSM_CONFIG_BLOCK_SIZE, &nBlocksize);
-  lsm_config(pDb, LSM_CONFIG_PAGE_SIZE, &nPagesize);
-  lsm_config(pDb, LSM_CONFIG_AUTOFLUSH, &nWritebuffer);
+  lsm_config(pDb, LSM_CONFIG_BLOCK_SIZE, &nBlocksize); 
+  lsm_config(pDb, LSM_CONFIG_PAGE_SIZE, &nPagesize); 
+  lsm_config(pDb, LSM_CONFIG_AUTOFLUSH, &nWritebuffer); 
 
   pData = getDatasource();
   for(ii=0; rc==LSM_OK && ii<5000; ii++){
@@ -566,7 +566,7 @@ static void simple_oom_8(OomTest *pOom){
 
 /*
 ** This test case has two clients connected to a database. The first client
-** hits an OOM while writing to the database. Check that the second
+** hits an OOM while writing to the database. Check that the second 
 ** connection is still able to query the db following the OOM.
 */
 static void simple_oom2_1(OomTest *pOom){

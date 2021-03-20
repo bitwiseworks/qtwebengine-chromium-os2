@@ -6,20 +6,46 @@
 
 #include "base/command_line.h"
 #include "base/process/launch.h"
+#include "base/strings/stringprintf.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "services/service_manager/embedder/result_codes.h"
+#include "services/service_manager/embedder/switches.h"
 
 namespace content {
 namespace internal {
+
+namespace {
+
+const char* ProcessNameFromSandboxType(
+    service_manager::SandboxType sandbox_type) {
+  switch (sandbox_type) {
+    case service_manager::SandboxType::kNoSandbox:
+      return nullptr;
+    case service_manager::SandboxType::kWebContext:
+      return "context";
+    case service_manager::SandboxType::kRenderer:
+      return "renderer";
+    case service_manager::SandboxType::kUtility:
+      return "utility";
+    case service_manager::SandboxType::kGpu:
+      return "gpu";
+    case service_manager::SandboxType::kNetwork:
+      return "network";
+    default:
+      NOTREACHED() << "Unknown sandbox_type.";
+      return nullptr;
+  }
+}
+
+}  // namespace
 
 void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
     base::Process process,
     const ChildProcessLauncherPriority& priority) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
-  // TODO(fuchsia): Implement this. (crbug.com/707031)
-  NOTIMPLEMENTED();
+  // TODO(https://crbug.com/926583): Fuchsia does not currently support this.
 }
 
 ChildProcessTerminationInfo ChildProcessLauncherHelper::GetTerminationInfo(
@@ -37,22 +63,8 @@ bool ChildProcessLauncherHelper::TerminateProcess(const base::Process& process,
   return process.Terminate(exit_code, false);
 }
 
-// static
-void ChildProcessLauncherHelper::SetRegisteredFilesForService(
-    const std::string& service_name,
-    std::map<std::string, base::FilePath> required_files) {
-  // TODO(fuchsia): Implement this. (crbug.com/707031)
-  NOTIMPLEMENTED();
-}
-
-// static
-void ChildProcessLauncherHelper::ResetRegisteredFilesForTesting() {
-  // TODO(fuchsia): Implement this. (crbug.com/707031)
-  NOTIMPLEMENTED();
-}
-
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
 
   sandbox_policy_.Initialize(delegate_->GetSandboxType());
 }
@@ -64,13 +76,19 @@ ChildProcessLauncherHelper::GetFilesToMap() {
 }
 
 bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const PosixFileDescriptorInfo& files_to_register,
+    PosixFileDescriptorInfo& files_to_register,
     base::LaunchOptions* options) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
 
   mojo_channel_->PrepareToPassRemoteEndpoint(&options->handles_to_transfer,
                                              command_line());
   sandbox_policy_.UpdateLaunchOptionsForSandbox(options);
+
+  // Set process name suffix to make it easier to identify the process.
+  const char* process_type =
+      ProcessNameFromSandboxType(delegate_->GetSandboxType());
+  if (process_type)
+    options->process_name_suffix = base::StringPrintf(":%s", process_type);
 
   return true;
 }
@@ -85,7 +103,6 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
   DCHECK(mojo_channel_);
   DCHECK(mojo_channel_->remote_endpoint().is_valid());
 
-  // TODO(750938): Implement sandboxed/isolated subprocess launching.
   Process child_process;
   child_process.process = base::LaunchProcess(*command_line(), options);
   return child_process;

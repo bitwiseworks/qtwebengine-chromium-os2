@@ -38,14 +38,15 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_crypto_key.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/modules/crypto/crypto_key.h"
 #include "third_party/blink/renderer/modules/crypto/normalize_algorithm.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -73,13 +74,13 @@ class CryptoResultImpl::Resolver final : public ScriptPromiseResolver {
   Resolver(ScriptState* script_state, CryptoResultImpl* result)
       : ScriptPromiseResolver(script_state), result_(result) {}
 
-  void ContextDestroyed(ExecutionContext* destroyed_context) override {
+  void ContextDestroyed() override {
     result_->Cancel();
     result_ = nullptr;
-    ScriptPromiseResolver::ContextDestroyed(destroyed_context);
+    ScriptPromiseResolver::ContextDestroyed();
   }
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(result_);
     ScriptPromiseResolver::Trace(visitor);
   }
@@ -120,17 +121,13 @@ CryptoResultImpl::~CryptoResultImpl() {
   DCHECK(!resolver_);
 }
 
-void CryptoResultImpl::Trace(blink::Visitor* visitor) {
+void CryptoResultImpl::Trace(Visitor* visitor) {
   visitor->Trace(resolver_);
   CryptoResult::Trace(visitor);
 }
 
 void CryptoResultImpl::ClearResolver() {
   resolver_ = nullptr;
-}
-
-CryptoResultImpl* CryptoResultImpl::Create(ScriptState* script_state) {
-  return MakeGarbageCollected<CryptoResultImpl>(script_state);
 }
 
 void CryptoResultImpl::CompleteWithError(WebCryptoErrorType error_type,
@@ -145,12 +142,12 @@ void CryptoResultImpl::CompleteWithError(WebCryptoErrorType error_type,
   if (exception_code == ToExceptionCode(ESErrorType::kTypeError)) {
     RejectWithTypeError(error_details, resolver_);
   } else if (IsDOMExceptionCode(exception_code)) {
-    resolver_->Reject(DOMException::Create(
+    resolver_->Reject(MakeGarbageCollected<DOMException>(
         static_cast<DOMExceptionCode>(exception_code), error_details));
   } else {
     NOTREACHED();
-    resolver_->Reject(
-        DOMException::Create(DOMExceptionCode::kUnknownError, error_details));
+    resolver_->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kUnknownError, error_details));
   }
   ClearResolver();
 }
@@ -201,7 +198,7 @@ void CryptoResultImpl::CompleteWithKey(const WebCryptoKey& key) {
   if (!resolver_)
     return;
 
-  resolver_->Resolve(CryptoKey::Create(key));
+  resolver_->Resolve(MakeGarbageCollected<CryptoKey>(key));
   ClearResolver();
 }
 
@@ -216,11 +213,21 @@ void CryptoResultImpl::CompleteWithKeyPair(const WebCryptoKey& public_key,
   V8ObjectBuilder key_pair(script_state);
 
   key_pair.Add("publicKey",
-               ScriptValue::From(script_state, CryptoKey::Create(public_key)));
+               ScriptValue::From(script_state,
+                                 MakeGarbageCollected<CryptoKey>(public_key)));
   key_pair.Add("privateKey",
-               ScriptValue::From(script_state, CryptoKey::Create(private_key)));
+               ScriptValue::From(script_state,
+                                 MakeGarbageCollected<CryptoKey>(private_key)));
 
   resolver_->Resolve(key_pair.V8Value());
+  ClearResolver();
+}
+
+void CryptoResultImpl::CompleteWithError(ExceptionState& exception_state) {
+  if (!resolver_)
+    return;
+
+  resolver_->Reject(exception_state);
   ClearResolver();
 }
 

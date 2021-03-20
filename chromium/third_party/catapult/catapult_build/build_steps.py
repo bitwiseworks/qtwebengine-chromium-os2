@@ -13,7 +13,6 @@ import sys
 # name (required): The name of the step, to show on the buildbot status page.
 # path (required): The path to the executable which runs the tests.
 # additional_args (optional): An array of optional arguments.
-# uses_app_engine_sdk (optional): True if app engine SDK must be in PYTHONPATH.
 # uses_sandbox_env (optional): True if CHROME_DEVEL_SANDBOX must be in
 #   environment.
 # disabled (optional): List of platforms the test is disabled on. May contain
@@ -22,6 +21,35 @@ import sys
 #   argument to the test executable to allow it to update the buildbot status
 #   page. More details here:
 # github.com/luci/recipes-py/blob/master/recipe_modules/generator_script/api.py
+_DASHBOARD_TESTS = [
+    {
+        'name': 'Dashboard Dev Server Tests Stable',
+        'path': 'dashboard/bin/run_dev_server_tests',
+        'additional_args': [
+            '--no-install-hooks', '--no-use-local-chrome', '--channel=stable',
+            '--timeout-sec=120', '--timeout-retries=2'
+        ],
+        'outputs_presentation_json': True,
+        'disabled': ['android'],
+    },
+    {
+        'name': 'Dashboard Dev Server Tests Canary',
+        'path': 'dashboard/bin/run_dev_server_tests',
+        'additional_args': [
+            '--no-install-hooks', '--no-use-local-chrome', '--channel=canary',
+            '--timeout-sec=120', '--timeout-retries=2'
+        ],
+        'outputs_presentation_json': True,
+        'disabled': ['android'],
+    },
+    {
+        'name': 'Dashboard Python Tests',
+        'path': 'dashboard/bin/run_py_tests',
+        'additional_args': ['--no-install-hooks'],
+        'disabled': ['android'],
+    },
+]
+
 _CATAPULT_TESTS = [
     {
         'name': 'Build Python Tests',
@@ -31,40 +59,6 @@ _CATAPULT_TESTS = [
     {
         'name': 'Common Tests',
         'path': 'common/bin/run_tests',
-    },
-    {
-        'name': 'Dashboard Dev Server Tests Canary',
-        'path': 'dashboard/bin/run_dev_server_tests',
-        'additional_args': [
-            '--no-install-hooks',
-            '--no-use-local-chrome',
-            '--channel=canary'
-        ],
-        'outputs_presentation_json': True,
-        'disabled': ['android'],
-    },
-    {
-        'name': 'Dashboard Dev Server Tests Stable',
-        'path': 'dashboard/bin/run_dev_server_tests',
-        'additional_args': [
-            '--no-install-hooks',
-            '--no-use-local-chrome',
-            '--channel=stable',
-        ],
-        'outputs_presentation_json': True,
-        'disabled': ['android'],
-    },
-    {
-        'name': 'Dashboard Python Tests',
-        'path': 'dashboard/bin/run_py_tests',
-        'additional_args': ['--no-install-hooks'],
-        'uses_app_engine_sdk': True,
-        'disabled': ['android'],
-    },
-    {
-        'name': 'Dashboard WCT Tests',
-        'path': 'dashboard/bin/run_wct_tests',
-        'disabled': ['android', 'win', 'mac'],
     },
     {
         'name': 'Dependency Manager Tests',
@@ -103,22 +97,17 @@ _CATAPULT_TESTS = [
     {
         'name': 'Snap-it Tests',
         'path': 'telemetry/bin/run_snap_it_unittest',
-        'additional_args': [
-            '--browser=reference',
-        ],
+        'additional_args': ['--browser=reference',],
         'uses_sandbox_env': True,
         'disabled': ['android'],
-    },
-    {
-        'name': 'Soundwave Tests',
-        'path': 'experimental/soundwave/bin/run_tests',
     },
     {
         'name': 'Telemetry Tests with Stable Browser (Desktop)',
         'path': 'catapult_build/fetch_telemetry_deps_and_run_tests',
         'additional_args': [
             '--browser=reference',
-            '--start-xvfb'
+            '--start-xvfb',
+            '-v',
         ],
         'uses_sandbox_env': True,
         'disabled': ['android'],
@@ -129,7 +118,8 @@ _CATAPULT_TESTS = [
         'additional_args': [
             '--browser=reference',
             '--device=android',
-            '--jobs=1'
+            '--jobs=1',
+            '-v',
         ],
         'uses_sandbox_env': True,
         'disabled': ['win', 'mac', 'linux']
@@ -138,11 +128,24 @@ _CATAPULT_TESTS = [
         'name': 'Telemetry Integration Tests with Stable Browser',
         'path': 'telemetry/bin/run_browser_tests',
         'additional_args': [
-            'SimpleBrowserTest',
+            'BrowserTest',
             '--browser=reference',
+            '-v',
         ],
         'uses_sandbox_env': True,
         'disabled': ['android', 'linux'],  # TODO(nedn): enable this on linux
+    },
+    {
+        'name': 'Tracing Dev Server Tests',
+        'path': 'tracing/bin/run_dev_server_tests',
+        'additional_args': [
+            '--no-install-hooks',
+            '--no-use-local-chrome',
+            '--channel=stable',
+            '--timeout-sec=900',
+        ],
+        'outputs_presentation_json': True,
+        'disabled': ['android'],
     },
     {
         'name': 'Tracing Dev Server Tests Canary',
@@ -150,18 +153,8 @@ _CATAPULT_TESTS = [
         'additional_args': [
             '--no-install-hooks',
             '--no-use-local-chrome',
-            '--channel=canary'
-        ],
-        'outputs_presentation_json': True,
-        'disabled': ['android'],
-    },
-    {
-        'name': 'Tracing Dev Server Tests Stable',
-        'path': 'tracing/bin/run_dev_server_tests',
-        'additional_args': [
-            '--no-install-hooks',
-            '--no-use-local-chrome',
-            '--channel=stable',
+            '--channel=canary',
+            '--timeout-sec=900',
         ],
         'outputs_presentation_json': True,
         'disabled': ['android'],
@@ -181,9 +174,8 @@ _CATAPULT_TESTS = [
         'name': 'Typ unittest',
         'path': 'third_party/typ/run',
         'additional_args': ['tests'],
-        'disabled': [
-            'android',
-            'win'],  # TODO(crbug.com/851498): enable typ unittests on Win
+        'disabled': ['android', 'win'
+                    ],  # TODO(crbug.com/851498): enable typ unittests on Win
     },
     {
         'name': 'Vinn Tests',
@@ -212,70 +204,152 @@ def main(args=None):
   """
   parser = argparse.ArgumentParser(description='Run catapult tests.')
   parser.add_argument('--api-path-checkout', help='Path to catapult checkout')
-  parser.add_argument('--app-engine-sdk-pythonpath',
-                      help='PYTHONPATH to include app engine SDK path')
-  parser.add_argument('--wct-path', help='Path to infra/testing/wct binary')
-  parser.add_argument('--platform',
-                      help='Platform name (linux, mac, or win)')
+  parser.add_argument(
+      '--app-engine-sdk-pythonpath',
+      help='PYTHONPATH to include app engine SDK path')
+  parser.add_argument('--platform', help='Platform name (linux, mac, or win)')
   parser.add_argument('--output-json', help='Output for buildbot status page')
+  parser.add_argument(
+      '--run_android_tests', default=True, help='Run Android tests')
+  parser.add_argument(
+      '--dashboard_only',
+      default=False,
+      help='Run only the Dashboard and Pinpoint tests',
+      action='store_true')
   args = parser.parse_args(args)
 
-  steps = [{
-      # Always remove stale files first. Not listed as a test above
-      # because it is a step and not a test, and must be first.
-      'name': 'Remove Stale files',
-      'cmd': ['python',
-              os.path.join(args.api_path_checkout,
-                           'catapult_build', 'remove_stale_files.py'),
-              args.api_path_checkout, ','.join(_STALE_FILE_TYPES)]
-  }]
-  if args.platform == 'android':
+  dashboard_protos_path = os.path.join(args.api_path_checkout, 'dashboard',
+                                       'dashboard', 'proto')
+  dashboard_proto_files = [
+      os.path.join(dashboard_protos_path, p)
+      for p in ['sheriff.proto', 'sheriff_config.proto']
+  ]
+
+  sheriff_proto_output_path = os.path.join(args.api_path_checkout, 'dashboard',
+                                           'dashboard', 'sheriff_config')
+  dashboard_proto_output_path = os.path.join(args.api_path_checkout,
+                                             'dashboard', 'dashboard')
+
+  tracing_protos_path = os.path.join(args.api_path_checkout, 'tracing',
+                                     'tracing', 'proto')
+  tracing_proto_output_path = tracing_protos_path
+  tracing_proto_files = [os.path.join(tracing_protos_path, 'histogram.proto')]
+
+
+  steps = [
+      {
+          # Always remove stale files first. Not listed as a test above
+          # because it is a step and not a test, and must be first.
+          'name':
+              'Remove Stale files',
+          'cmd': [
+              'python',
+              os.path.join(args.api_path_checkout, 'catapult_build',
+                           'remove_stale_files.py'),
+              args.api_path_checkout,
+              ','.join(_STALE_FILE_TYPES),
+          ]
+      },
+      # Since we might not have access to 'make', let's run the protobuf
+      # compiler directly. We want to run the proto compiler to generate the
+      # right data in the right places.
+      {
+          'name':
+              'Generate Sheriff Config protocol buffers',
+          'cmd': [
+              'protoc',
+              '--proto_path',
+              dashboard_protos_path,
+              '--python_out',
+              sheriff_proto_output_path,
+          ] + dashboard_proto_files,
+      },
+      {
+          'name':
+              'Generate Dashboard protocol buffers',
+          'cmd': [
+              'protoc',
+              '--proto_path',
+              dashboard_protos_path,
+              '--python_out',
+              dashboard_proto_output_path,
+          ] + dashboard_proto_files,
+      },
+      {
+          'name':
+              'Generate Tracing protocol buffers',
+          'cmd': [
+              'protoc',
+              '--proto_path',
+              tracing_protos_path,
+              '--python_out',
+              tracing_proto_output_path,
+          ] + tracing_proto_files,
+      },
+  ]
+  if args.platform == 'android' and args.run_android_tests:
     # On Android, we need to prepare the devices a bit before using them in
     # tests. These steps are not listed as tests above because they aren't
     # tests and because they must precede all tests.
     steps.extend([
         {
-            'name': 'Android: Recover Devices',
-            'cmd': ['python',
-                    os.path.join(args.api_path_checkout, 'devil', 'devil',
-                                 'android', 'tools', 'device_recovery.py')],
+            'name':
+                'Android: Recover Devices',
+            'cmd': [
+                'python',
+                os.path.join(args.api_path_checkout, 'devil', 'devil',
+                             'android', 'tools', 'device_recovery.py')
+            ],
         },
         {
-            'name': 'Android: Provision Devices',
-            'cmd': ['python',
-                    os.path.join(args.api_path_checkout, 'devil', 'devil',
-                                 'android', 'tools', 'provision_devices.py')],
+            'name':
+                'Android: Provision Devices',
+            'cmd': [
+                'python',
+                os.path.join(args.api_path_checkout, 'devil', 'devil',
+                             'android', 'tools', 'provision_devices.py')
+            ],
         },
         {
-            'name': 'Android: Device Status',
-            'cmd': ['python',
-                    os.path.join(args.api_path_checkout, 'devil', 'devil',
-                                 'android', 'tools', 'device_status.py')],
+            'name':
+                'Android: Device Status',
+            'cmd': [
+                'python',
+                os.path.join(args.api_path_checkout, 'devil', 'devil',
+                             'android', 'tools', 'device_status.py')
+            ],
         },
     ])
 
-  for test in _CATAPULT_TESTS:
+  tests = None
+  if args.dashboard_only:
+    tests = _DASHBOARD_TESTS
+  else:
+    tests = _DASHBOARD_TESTS + _CATAPULT_TESTS
+  for test in tests:
+    if args.platform == 'android' and not args.run_android_tests:
+      # Remove all the steps for the Android configuration if we're asked to not
+      # run the Android tests.
+      steps = []
+      break
+
     if args.platform in test.get('disabled', []):
       continue
-    step = {
-        'name': test['name'],
-        'env': {}
-    }
+    step = {'name': test['name'], 'env': {}}
 
-    # vpython doesn't integrate well with app engine SDK yet
-    if test.get('uses_app_engine_sdk'):
-      executable = 'python'
-    else:
-      executable = 'vpython.bat' if sys.platform == 'win32' else 'vpython'
+    executable = 'vpython.bat' if sys.platform == 'win32' else 'vpython'
+
+    # Always add the appengine SDK path.
+    step['env']['PYTHONPATH'] = args.app_engine_sdk_pythonpath
 
     step['cmd'] = [
-        executable, os.path.join(args.api_path_checkout, test['path'])]
+        executable,
+        os.path.join(args.api_path_checkout, test['path'])
+    ]
     if step['name'] == 'Systrace Tests':
       step['cmd'] += ['--device=' + args.platform]
     if test.get('additional_args'):
       step['cmd'] += test['additional_args']
-    if test.get('uses_app_engine_sdk'):
-      step['env']['PYTHONPATH'] = args.app_engine_sdk_pythonpath
     if test.get('uses_sandbox_env'):
       step['env']['CHROME_DEVEL_SANDBOX'] = '/opt/chromium/chrome_sandbox'
     if test.get('outputs_presentation_json'):

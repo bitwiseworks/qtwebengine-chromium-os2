@@ -40,8 +40,6 @@ class SVGFEConvolveMatrixElement final
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGFEConvolveMatrixElement);
-
   explicit SVGFEConvolveMatrixElement(Document&);
 
   SVGAnimatedBoolean* preserveAlpha() { return preserve_alpha_.Get(); }
@@ -61,7 +59,7 @@ class SVGFEConvolveMatrixElement final
   SVGAnimatedInteger* targetX() { return target_x_.Get(); }
   SVGAnimatedInteger* targetY() { return target_y_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   IntSize MatrixOrder() const;
@@ -71,6 +69,7 @@ class SVGFEConvolveMatrixElement final
   bool SetFilterEffectAttribute(FilterEffect*, const QualifiedName&) override;
   void SvgAttributeChanged(const QualifiedName&) override;
   FilterEffect* Build(SVGFilterBuilder*, Filter*) override;
+  bool TaintsOrigin() const override { return false; }
 
   Member<SVGAnimatedNumber> bias_;
   Member<SVGAnimatedNumber> divisor_;

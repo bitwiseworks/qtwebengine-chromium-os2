@@ -6,10 +6,12 @@
 
 #include <utility>
 
+#include "components/cbor/writer.h"
 #include "device/fido/attestation_object.h"
 #include "device/fido/attestation_statement_formats.h"
 #include "device/fido/attested_credential_data.h"
 #include "device/fido/authenticator_data.h"
+#include "device/fido/client_data.h"
 #include "device/fido/ec_public_key.h"
 #include "device/fido/fido_parsing_utils.h"
 
@@ -75,7 +77,8 @@ AuthenticatorMakeCredentialResponse::~AuthenticatorMakeCredentialResponse() =
 
 std::vector<uint8_t>
 AuthenticatorMakeCredentialResponse::GetCBOREncodedAttestationObject() const {
-  return attestation_object_.SerializeToCBOREncodedBytes();
+  return cbor::Writer::Write(AsCBOR(attestation_object_))
+      .value_or(std::vector<uint8_t>());
 }
 
 void AuthenticatorMakeCredentialResponse::EraseAttestationStatement(
@@ -98,9 +101,20 @@ AuthenticatorMakeCredentialResponse::GetRpIdHash() const {
   return attestation_object_.rp_id_hash();
 }
 
-std::vector<uint8_t> GetSerializedCtapDeviceResponse(
+std::vector<uint8_t> AsCTAPStyleCBORBytes(
     const AuthenticatorMakeCredentialResponse& response) {
-  return SerializeToCtapStyleCborEncodedBytes(response.attestation_object());
+  const AttestationObject& object = response.attestation_object();
+  cbor::Value::MapValue map;
+  map.emplace(1, cbor::Value(object.attestation_statement().format_name()));
+  map.emplace(2, cbor::Value(object.authenticator_data().SerializeToByteArray()));
+  map.emplace(3, AsCBOR(object.attestation_statement()));
+  if (response.android_client_data_ext()) {
+    map.emplace(kAndroidClientDataExtOutputKey,
+                cbor::Value(*response.android_client_data_ext()));
+  }
+  auto encoded_bytes = cbor::Writer::Write(cbor::Value(std::move(map)));
+  DCHECK(encoded_bytes);
+  return std::move(*encoded_bytes);
 }
 
 }  // namespace device

@@ -7,7 +7,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "base/logging.h"
@@ -33,20 +32,6 @@ static_assert(File::FROM_BEGIN == SEEK_SET && File::FROM_CURRENT == SEEK_CUR &&
               "whence mapping must match the system headers");
 
 namespace {
-
-#if defined(OS_BSD) || defined(OS_MACOSX) || defined(OS_NACL) || \
-  defined(OS_FUCHSIA) || (defined(OS_ANDROID) && __ANDROID_API__ < 21) || \
-  defined(OS_OS2)
-int CallFstat(int fd, stat_wrapper_t *sb) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  return fstat(fd, sb);
-}
-#else
-int CallFstat(int fd, stat_wrapper_t *sb) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  return fstat64(fd, sb);
-}
-#endif
 
 // NaCl doesn't provide the following system calls, so either simulate them or
 // wrap them in order to minimize the number of #ifdef's in this file.
@@ -77,9 +62,22 @@ int CallFutimes(PlatformFile file, const struct timeval times[2]) {
 }
 
 #if !defined(OS_FUCHSIA)
-File::Error CallFcntlFlock(PlatformFile file, bool do_lock) {
+short FcntlFlockType(base::Optional<File::LockMode> mode) {
+  if (!mode.has_value())
+    return F_UNLCK;
+  switch (mode.value()) {
+    case File::LockMode::kShared:
+      return F_RDLCK;
+    case File::LockMode::kExclusive:
+      return F_WRLCK;
+  }
+  NOTREACHED();
+}
+
+File::Error CallFcntlFlock(PlatformFile file,
+                           base::Optional<File::LockMode> mode) {
   struct flock lock;
-  lock.l_type = do_lock ? F_WRLCK : F_UNLCK;
+  lock.l_type = FcntlFlockType(std::move(mode));
   lock.l_whence = SEEK_SET;
   lock.l_start = 0;
   lock.l_len = 0;  // Lock entire file.
@@ -108,7 +106,8 @@ int CallFutimes(PlatformFile file, const struct timeval times[2]) {
   return 0;
 }
 
-File::Error CallFcntlFlock(PlatformFile file, bool do_lock) {
+File::Error CallFcntlFlock(PlatformFile file,
+                           base::Optional<File::LockMode> mode) {
   NOTIMPLEMENTED();  // NaCl doesn't implement flock struct.
   return File::FILE_ERROR_INVALID_OPERATION;
 }
@@ -121,7 +120,14 @@ void File::Info::FromStat(const stat_wrapper_t& stat_info) {
   is_symbolic_link = S_ISLNK(stat_info.st_mode);
   size = stat_info.st_size;
 
-#if defined(OS_LINUX)
+  // Get last modification time, last access time, and creation time from
+  // |stat_info|.
+  // Note: st_ctime is actually last status change time when the inode was last
+  // updated, which happens on any metadata change. It is not the file's
+  // creation time. However, other than on Mac & iOS where the actual file
+  // creation time is included as st_birthtime, the rest of POSIX platforms have
+  // no portable way to get the creation time.
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
   time_t last_modified_sec = stat_info.st_mtim.tv_sec;
   int64_t last_modified_nsec = stat_info.st_mtim.tv_nsec;
   time_t last_accessed_sec = stat_info.st_atim.tv_sec;
@@ -135,7 +141,14 @@ void File::Info::FromStat(const stat_wrapper_t& stat_info) {
   int64_t last_accessed_nsec = stat_info.st_atime_nsec;
   time_t creation_time_sec = stat_info.st_ctime;
   int64_t creation_time_nsec = stat_info.st_ctime_nsec;
-#elif defined(OS_MACOSX) || defined(OS_IOS) || defined(OS_BSD)
+#elif defined(OS_MACOSX) || defined(OS_IOS)
+  time_t last_modified_sec = stat_info.st_mtimespec.tv_sec;
+  int64_t last_modified_nsec = stat_info.st_mtimespec.tv_nsec;
+  time_t last_accessed_sec = stat_info.st_atimespec.tv_sec;
+  int64_t last_accessed_nsec = stat_info.st_atimespec.tv_nsec;
+  time_t creation_time_sec = stat_info.st_birthtimespec.tv_sec;
+  int64_t creation_time_nsec = stat_info.st_birthtimespec.tv_nsec;
+#elif defined(OS_BSD)
   time_t last_modified_sec = stat_info.st_mtimespec.tv_sec;
   int64_t last_modified_nsec = stat_info.st_mtimespec.tv_nsec;
   time_t last_accessed_sec = stat_info.st_atimespec.tv_sec;
@@ -184,12 +197,12 @@ void File::Close() {
     return;
 
   SCOPED_FILE_TRACE("Close");
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   file_.reset();
 }
 
 int64_t File::Seek(Whence whence, int64_t offset) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
 
   SCOPED_FILE_TRACE_WITH_SIZE("Seek", offset);
@@ -206,7 +219,7 @@ int64_t File::Seek(Whence whence, int64_t offset) {
 }
 
 int File::Read(int64_t offset, char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   if (size < 0)
     return -1;
@@ -228,7 +241,7 @@ int File::Read(int64_t offset, char* data, int size) {
 }
 
 int File::ReadAtCurrentPos(char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   if (size < 0)
     return -1;
@@ -249,14 +262,14 @@ int File::ReadAtCurrentPos(char* data, int size) {
 }
 
 int File::ReadNoBestEffort(int64_t offset, char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   SCOPED_FILE_TRACE_WITH_SIZE("ReadNoBestEffort", size);
   return HANDLE_EINTR(pread(file_.get(), data, size, offset));
 }
 
 int File::ReadAtCurrentPosNoBestEffort(char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   if (size < 0)
     return -1;
@@ -266,7 +279,7 @@ int File::ReadAtCurrentPosNoBestEffort(char* data, int size) {
 }
 
 int File::Write(int64_t offset, const char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 
   if (IsOpenAppend(file_.get()))
     return WriteAtCurrentPos(data, size);
@@ -301,7 +314,7 @@ int File::Write(int64_t offset, const char* data, int size) {
 }
 
 int File::WriteAtCurrentPos(const char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   if (size < 0)
     return -1;
@@ -323,7 +336,7 @@ int File::WriteAtCurrentPos(const char* data, int size) {
 }
 
 int File::WriteAtCurrentPosNoBestEffort(const char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   if (size < 0)
     return -1;
@@ -338,14 +351,14 @@ int64_t File::GetLength() {
   SCOPED_FILE_TRACE("GetLength");
 
   stat_wrapper_t file_info;
-  if (CallFstat(file_.get(), &file_info))
+  if (Fstat(file_.get(), &file_info))
     return -1;
 
   return file_info.st_size;
 }
 
 bool File::SetLength(int64_t length) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
 
   SCOPED_FILE_TRACE_WITH_SIZE("SetLength", length);
@@ -353,7 +366,7 @@ bool File::SetLength(int64_t length) {
 }
 
 bool File::SetTimes(Time last_access_time, Time last_modified_time) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
 
   SCOPED_FILE_TRACE("SetTimes");
@@ -371,7 +384,7 @@ bool File::GetInfo(Info* info) {
   SCOPED_FILE_TRACE("GetInfo");
 
   stat_wrapper_t file_info;
-  if (CallFstat(file_.get(), &file_info))
+  if (Fstat(file_.get(), &file_info))
     return false;
 
   info->FromStat(file_info);
@@ -379,14 +392,14 @@ bool File::GetInfo(Info* info) {
 }
 
 #if !defined(OS_FUCHSIA)
-File::Error File::Lock() {
+File::Error File::Lock(File::LockMode mode) {
   SCOPED_FILE_TRACE("Lock");
-  return CallFcntlFlock(file_.get(), true);
+  return CallFcntlFlock(file_.get(), mode);
 }
 
 File::Error File::Unlock() {
   SCOPED_FILE_TRACE("Unlock");
-  return CallFcntlFlock(file_.get(), false);
+  return CallFcntlFlock(file_.get(), base::Optional<File::LockMode>());
 }
 #endif
 
@@ -396,11 +409,11 @@ File File::Duplicate() const {
 
   SCOPED_FILE_TRACE("Duplicate");
 
-  PlatformFile other_fd = HANDLE_EINTR(dup(GetPlatformFile()));
-  if (other_fd == -1)
+  ScopedPlatformFile other_fd(HANDLE_EINTR(dup(GetPlatformFile())));
+  if (!other_fd.is_valid())
     return File(File::GetLastFileError());
 
-  return File(other_fd, async());
+  return File(std::move(other_fd), async());
 }
 
 // Static.
@@ -445,7 +458,7 @@ File::Error File::OSErrorToFileError(int saved_errno) {
 #if !defined(OS_NACL)
 // TODO(erikkay): does it make sense to support FLAG_EXCLUSIVE_* here?
 void File::DoInitialize(const FilePath& path, uint32_t flags) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(!IsValid());
 
   int open_flags = 0;
@@ -533,7 +546,7 @@ void File::DoInitialize(const FilePath& path, uint32_t flags) {
 #endif  // !defined(OS_NACL)
 
 bool File::Flush() {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(IsValid());
   SCOPED_FILE_TRACE("Flush");
 
@@ -573,5 +586,35 @@ void File::SetPlatformFile(PlatformFile file) {
 File::Error File::GetLastFileError() {
   return base::File::OSErrorToFileError(errno);
 }
+
+#if defined(OS_BSD) || defined(OS_MACOSX) || defined(OS_NACL) || \
+    defined(OS_FUCHSIA) || (defined(OS_ANDROID) && __ANDROID_API__ < 21) || \
+    defined(OS_OS2)
+int File::Stat(const char* path, stat_wrapper_t* sb) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  return stat(path, sb);
+}
+int File::Fstat(int fd, stat_wrapper_t* sb) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  return fstat(fd, sb);
+}
+int File::Lstat(const char* path, stat_wrapper_t* sb) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  return lstat(path, sb);
+}
+#else
+int File::Stat(const char* path, stat_wrapper_t* sb) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  return stat64(path, sb);
+}
+int File::Fstat(int fd, stat_wrapper_t* sb) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  return fstat64(fd, sb);
+}
+int File::Lstat(const char* path, stat_wrapper_t* sb) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  return lstat64(path, sb);
+}
+#endif
 
 }  // namespace base

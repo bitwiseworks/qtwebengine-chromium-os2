@@ -11,14 +11,15 @@ RendererMainPlatformDelegate::RendererMainPlatformDelegate(
 
 RendererMainPlatformDelegate::~RendererMainPlatformDelegate() {}
 
-void RendererMainPlatformDelegate::PlatformInitialize() {}
+void RendererMainPlatformDelegate::PlatformInitialize() {
+  fuchsia_audio_device_factory_ = std::make_unique<FuchsiaAudioDeviceFactory>();
+}
 
-void RendererMainPlatformDelegate::PlatformUninitialize() {}
+void RendererMainPlatformDelegate::PlatformUninitialize() {
+  fuchsia_audio_device_factory_.reset();
+}
 
 bool RendererMainPlatformDelegate::EnableSandbox() {
-  // TODO(750938): Report NOTIMPLEMENTED() here until we re-enable sandboxing
-  // of sub-processes.
-  NOTIMPLEMENTED();
   return true;
 }
 

@@ -11,13 +11,16 @@
 #ifndef P2P_BASE_TRANSPORT_DESCRIPTION_H_
 #define P2P_BASE_TRANSPORT_DESCRIPTION_H_
 
-#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/types/optional.h"
+#include "api/rtc_error.h"
 #include "p2p/base/p2p_constants.h"
 #include "rtc_base/ssl_fingerprint.h"
+#include "rtc_base/system/rtc_export.h"
 
 namespace cricket {
 
@@ -55,6 +58,12 @@ enum ConnectionRole {
 };
 
 struct IceParameters {
+  // Constructs an IceParameters from a user-provided ufrag/pwd combination.
+  // Returns a SyntaxError if the ufrag or pwd are malformed.
+  static RTC_EXPORT webrtc::RTCErrorOr<IceParameters> Parse(
+      absl::string_view raw_ufrag,
+      absl::string_view raw_pwd);
+
   // TODO(honghaiz): Include ICE mode in this structure to match the ORTC
   // struct:
   // http://ortc.org/wp-content/uploads/2016/03/ortc.html#idl-def-RTCIceParameters
@@ -74,6 +83,10 @@ struct IceParameters {
   bool operator!=(const IceParameters& other) const {
     return !(*this == other);
   }
+
+  // Validate IceParameters, returns a SyntaxError if the ufrag or pwd are
+  // malformed.
+  webrtc::RTCError Validate() const;
 };
 
 extern const char CONNECTIONROLE_ACTIVE_STR[];
@@ -86,6 +99,28 @@ constexpr auto* ICE_OPTION_RENOMINATION = "renomination";
 
 bool StringToConnectionRole(const std::string& role_str, ConnectionRole* role);
 bool ConnectionRoleToString(const ConnectionRole& role, std::string* role_str);
+
+// Parameters for an opaque transport protocol which may be plugged into WebRTC.
+struct OpaqueTransportParameters {
+  // Protocol used by this opaque transport.  Two endpoints that support the
+  // same protocol are expected to be able to understand the contents of each
+  // others' |parameters| fields.  If those parameters are compatible, the
+  // endpoints are expected to use this transport protocol.
+  std::string protocol;
+
+  // Opaque parameters for this transport.  These parameters are serialized in a
+  // manner determined by the |protocol|.  They can be parsed and understood by
+  // the plugin that supports |protocol|.
+  std::string parameters;
+
+  bool operator==(const OpaqueTransportParameters& other) const {
+    return protocol == other.protocol && parameters == other.parameters;
+  }
+
+  bool operator!=(const OpaqueTransportParameters& other) const {
+    return !(*this == other);
+  }
+};
 
 struct TransportDescription {
   TransportDescription();
@@ -104,15 +139,14 @@ struct TransportDescription {
 
   // TODO(deadbeef): Rename to HasIceOption, etc.
   bool HasOption(const std::string& option) const {
-    return (std::find(transport_options.begin(), transport_options.end(),
-                      option) != transport_options.end());
+    return absl::c_linear_search(transport_options, option);
   }
   void AddOption(const std::string& option) {
     transport_options.push_back(option);
   }
   bool secure() const { return identity_fingerprint != nullptr; }
 
-  IceParameters GetIceParameters() {
+  IceParameters GetIceParameters() const {
     return IceParameters(ice_ufrag, ice_pwd,
                          HasOption(ICE_OPTION_RENOMINATION));
   }
@@ -134,6 +168,7 @@ struct TransportDescription {
   ConnectionRole connection_role;
 
   std::unique_ptr<rtc::SSLFingerprint> identity_fingerprint;
+  absl::optional<OpaqueTransportParameters> opaque_parameters;
 };
 
 }  // namespace cricket

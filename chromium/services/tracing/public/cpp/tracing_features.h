@@ -16,13 +16,22 @@ namespace features {
 // The features should be documented alongside the definition of their values
 // in the .cc file.
 extern const COMPONENT_EXPORT(TRACING_CPP) base::Feature
-    kTracingPerfettoBackend;
+    kTracingServiceInProcess;
+
+extern const COMPONENT_EXPORT(TRACING_CPP) base::Feature
+    kBackgroundTracingProtoOutput;
+
+extern const COMPONENT_EXPORT(TRACING_CPP) base::Feature
+    kEnablePerfettoSystemTracing;
 
 }  // namespace features
 
 namespace tracing {
 
-bool COMPONENT_EXPORT(TRACING_CPP) TracingUsesPerfettoBackend();
+// Returns true if the system tracing Perfetto producer should be setup. This
+// can be influenced by the feature above or other situations (like debug
+// android builds).
+bool COMPONENT_EXPORT(TRACING_CPP) ShouldSetupSystemTracing();
 
 }  // namespace tracing
 

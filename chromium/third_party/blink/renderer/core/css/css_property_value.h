@@ -25,7 +25,7 @@
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -60,7 +60,7 @@ struct CSSPropertyValueMetadata {
   unsigned inherited_ : 1;
 };
 
-class CSSPropertyValue {
+class CORE_EXPORT CSSPropertyValue {
   DISALLOW_NEW();
 
  public:
@@ -95,7 +95,7 @@ class CSSPropertyValue {
 
   bool operator==(const CSSPropertyValue& other) const;
 
-  void Trace(blink::Visitor* visitor) { visitor->Trace(value_); }
+  void Trace(Visitor* visitor) { visitor->Trace(value_); }
 
  private:
   CSSPropertyValueMetadata metadata_;
@@ -104,6 +104,6 @@ class CSSPropertyValue {
 
 }  // namespace blink
 
-WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::CSSPropertyValue);
+WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::CSSPropertyValue)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_PROPERTY_VALUE_H_

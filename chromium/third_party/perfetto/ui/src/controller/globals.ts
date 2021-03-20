@@ -12,28 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {produce} from 'immer';
+import {Patch, produce} from 'immer';
 
 import {assertExists} from '../base/logging';
 import {Remote} from '../base/remote';
 import {DeferredAction, StateActions} from '../common/actions';
-import {Engine} from '../common/engine';
 import {createEmptyState, State} from '../common/state';
-import {
-  createWasmEngine,
-  destroyWasmEngine,
-  WasmEngineProxy
-} from '../common/wasm_engine_proxy';
-
 import {ControllerAny} from './controller';
 
+type PublishKinds = 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|
+    'LegacyTrace'|'SliceDetails'|'CounterDetails'|'HeapProfileDetails'|
+    'HeapProfileFlamegraph'|'FileDownload'|'Loading'|'Search'|'BufferUsage'|
+    'RecordingLog'|'SearchResult'|'AggregateData';
 
 export interface App {
   state: State;
   dispatch(action: DeferredAction): void;
-  publish(
-      what: 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|'LegacyTrace',
-      data: {}, transferList?: Array<{}>): void;
+  publish(what: PublishKinds, data: {}, transferList?: Array<{}>): void;
 }
 
 /**
@@ -72,14 +67,19 @@ class Globals implements App {
 
     // Run controllers locally until all state machines reach quiescence.
     let runAgain = false;
-    let summary = this._queuedActions.map(action => action.type).join(', ');
-    summary = `Controllers loop (${summary})`;
+    const patches: Patch[] = [];
     for (let iter = 0; runAgain || this._queuedActions.length > 0; iter++) {
       if (iter > 100) throw new Error('Controllers are stuck in a livelock');
       const actions = this._queuedActions;
       this._queuedActions = new Array<DeferredAction>();
+
       for (const action of actions) {
-        this.applyAction(action);
+        const originalLength = patches.length;
+        const morePatches = this.applyAction(action);
+        patches.length += morePatches.length;
+        for (let i = 0; i < morePatches.length; ++i) {
+          patches[i + originalLength] = morePatches[i];
+        }
       }
       this._runningControllers = true;
       try {
@@ -88,23 +88,11 @@ class Globals implements App {
         this._runningControllers = false;
       }
     }
-    assertExists(this._frontend).send<void>('updateState', [this.state]);
-  }
-
-  createEngine(): Engine {
-    const id = new Date().toUTCString();
-    const portAndId = {id, worker: createWasmEngine(id)};
-    return new WasmEngineProxy(portAndId);
-  }
-
-  destroyEngine(id: string): void {
-    destroyWasmEngine(id);
+    assertExists(this._frontend).send<void>('patchState', [patches]);
   }
 
   // TODO: this needs to be cleaned up.
-  publish(
-      what: 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|'LegacyTrace',
-      data: {}, transferList?: Array<{}>) {
+  publish(what: PublishKinds, data: {}, transferList?: Transferable[]) {
     assertExists(this._frontend)
         .send<void>(`publish${what}`, [data], transferList);
   }
@@ -113,21 +101,27 @@ class Globals implements App {
     return assertExists(this._state);
   }
 
-  applyAction(action: DeferredAction): void {
+  applyAction(action: DeferredAction): Patch[] {
     assertExists(this._state);
-    // We need a special case for when we want to replace the whole tree.
-    if (action.type === 'setState') {
-      const args = (action as DeferredAction<{newState: State}>).args;
-      this._state = args.newState;
-      return;
-    }
+    const patches: Patch[] = [];
+
     // 'produce' creates a immer proxy which wraps the current state turning
     // all imperative mutations of the state done in the callback into
     // immutable changes to the returned state.
-    this._state = produce(this.state, draft => {
-      // tslint:disable-next-line no-any
-      (StateActions as any)[action.type](draft, action.args);
-    });
+    this._state = produce(
+        this.state,
+        draft => {
+          // tslint:disable-next-line no-any
+          (StateActions as any)[action.type](draft, action.args);
+        },
+        (morePatches, _) => {
+          const originalLength = patches.length;
+          patches.length += morePatches.length;
+          for (let i = 0; i < morePatches.length; ++i) {
+            patches[i + originalLength] = morePatches[i];
+          }
+        });
+    return patches;
   }
 
   resetForTesting() {

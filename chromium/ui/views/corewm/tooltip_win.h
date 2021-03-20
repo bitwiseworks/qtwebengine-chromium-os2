@@ -5,14 +5,15 @@
 #ifndef UI_VIEWS_COREWM_TOOLTIP_WIN_H_
 #define UI_VIEWS_COREWM_TOOLTIP_WIN_H_
 
-#include <windows.h>
+#include <windows.h>  // Must come before other Windows system headers.
+
 #include <commctrl.h>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
-#include "ui/gfx/font.h"
+#include "base/win/scoped_gdi_object.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/views/corewm/tooltip.h"
 
@@ -51,9 +52,8 @@ class VIEWS_EXPORT TooltipWin : public Tooltip {
   bool IsVisible() override;
 
   // Font we're currently overriding our UI font with.
-  // (Lets us keep a handle around so we don't leak.)
   // Should outlast |tooltip_hwnd_|.
-  base::Optional<gfx::Font> override_font_;
+  base::win::ScopedHFONT override_font_;
 
   // The window |tooltip_hwnd_| is parented to.
   HWND parent_hwnd_;

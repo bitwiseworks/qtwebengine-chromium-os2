@@ -22,9 +22,11 @@
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_observer.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/renderer_preferences.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -38,11 +40,7 @@ namespace mojom {
 class CreateNewWindowParams;
 }
 
-enum ResourceRequestAction {
-  BLOCK,
-  RESUME,
-  CANCEL
-};
+enum ResourceRequestAction { BLOCK, RESUME, CANCEL };
 
 class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
                                             public NotificationObserver,
@@ -71,8 +69,8 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
   void Hide() override;
   void DontProceed() override;
   void Proceed() override;
-  WebContents* GetWebContents() const override;
-  RenderFrameHost* GetMainFrame() const override;
+  WebContents* GetWebContents() override;
+  RenderFrameHostImpl* GetMainFrame() override;
   InterstitialPageDelegate* GetDelegateForTesting() override;
   void DontCreateViewForTesting() override;
   void SetSize(const gfx::Size& size) override;
@@ -93,15 +91,16 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
 
   // TODO(nasko): This should move to InterstitialPageNavigatorImpl, but in
   // the meantime make it public, so it can be called directly.
-  void DidNavigate(
-      RenderViewHost* render_view_host,
-      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
+  void DidNavigate(RenderViewHost* render_view_host,
+                   const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
 
   // NavigatorDelegate implementation.
   WebContents* OpenURL(const OpenURLParams& params) override;
-  const std::string& GetUserAgentOverride() override;
+  const blink::UserAgentOverride& GetUserAgentOverride() override;
   bool ShouldOverrideUserAgentInNewTabs() override;
-  bool ShowingInterstitialPage() override;
+
+  // RenderViewHostDelegate implementation:
+  FrameTree* GetFrameTree() override;
 
  protected:
   // NotificationObserver method:
@@ -124,12 +123,10 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
   void Copy() override;
   void Paste() override;
   void SelectAll() override;
-  void CreateNewWindow(
+  RenderFrameHostDelegate* CreateNewWindow(
       RenderFrameHost* opener,
-      int32_t render_view_route_id,
-      int32_t main_frame_route_id,
-      int32_t main_frame_widget_route_id,
       const mojom::CreateNewWindowParams& params,
+      bool is_new_browsing_instance,
       bool has_user_gesture,
       SessionStorageNamespace* session_storage_namespace) override;
   void ShowCreatedWindow(int process_id,
@@ -143,6 +140,21 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
                                    int context_id) override;
   void AudioContextPlaybackStopped(RenderFrameHost* host,
                                    int context_id) override;
+  void CreateNewWidget(int32_t render_process_id,
+                       int32_t route_id,
+                       mojo::PendingRemote<mojom::Widget> widget,
+                       mojo::PendingAssociatedReceiver<blink::mojom::WidgetHost>
+                           blink_widget_host,
+                       mojo::PendingAssociatedRemote<blink::mojom::Widget>
+                           blink_widget) override;
+  void CreateNewFullscreenWidget(
+      int32_t render_process_id,
+      int32_t route_id,
+      mojo::PendingRemote<mojom::Widget> widget,
+      mojo::PendingAssociatedReceiver<blink::mojom::WidgetHost>
+          blink_widget_host,
+      mojo::PendingAssociatedRemote<blink::mojom::Widget> blink_widget)
+      override;
 
   // RenderViewHostDelegate implementation:
   RenderViewHostDelegateView* GetDelegateView() override;
@@ -152,14 +164,8 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
   void RenderViewTerminated(RenderViewHost* render_view_host,
                             base::TerminationStatus status,
                             int error_code) override;
-  RendererPreferences GetRendererPrefs(
+  blink::mojom::RendererPreferences GetRendererPrefs(
       BrowserContext* browser_context) const override;
-  void CreateNewWidget(int32_t render_process_id,
-                       int32_t route_id,
-                       mojom::WidgetPtr widget) override;
-  void CreateNewFullscreenWidget(int32_t render_process_id,
-                                 int32_t route_id,
-                                 mojom::WidgetPtr widget) override;
   void ShowCreatedWidget(int process_id,
                          int route_id,
                          const gfx::Rect& initial_rect) override;
@@ -167,8 +173,6 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
 
   SessionStorageNamespace* GetSessionStorageNamespace(
       SiteInstance* instance) override;
-
-  FrameTree* GetFrameTree() override;
 
   // RenderWidgetHostDelegate implementation:
   void RenderWidgetDeleted(RenderWidgetHostImpl* render_widget_host) override;
@@ -242,6 +246,9 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
   // Creates the RenderViewHost containing the interstitial content.
   RenderViewHostImpl* CreateRenderViewHost();
 
+  // Returns the focused frame's input handler.
+  mojom::FrameInputHandler* GetFocusedFrameInputHandler();
+
   // Watches the underlying WebContents for reasons to cancel the interstitial.
   UnderlyingContentObserver underlying_content_observer_;
 
@@ -305,7 +312,7 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
   std::unique_ptr<InterstitialPageRVHDelegateView> rvh_delegate_view_;
 
   // Settings passed to the renderer.
-  mutable RendererPreferences renderer_preferences_;
+  mutable blink::mojom::RendererPreferences renderer_preferences_;
 
   bool create_view_;
 
@@ -318,9 +325,10 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
 
   scoped_refptr<SessionStorageNamespace> session_storage_namespace_;
 
-  ScopedObserver<RenderWidgetHost, RenderWidgetHostObserver> widget_observer_;
+  ScopedObserver<RenderWidgetHost, RenderWidgetHostObserver> widget_observer_{
+      this};
 
-  base::WeakPtrFactory<InterstitialPageImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<InterstitialPageImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InterstitialPageImpl);
 };

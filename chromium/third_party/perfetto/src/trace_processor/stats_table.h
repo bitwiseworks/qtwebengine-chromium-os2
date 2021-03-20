@@ -20,9 +20,9 @@
 #include <limits>
 #include <memory>
 
-#include "src/trace_processor/stats.h"
-#include "src/trace_processor/table.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/sqlite/sqlite_table.h"
+#include "src/trace_processor/storage/stats.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -30,36 +30,44 @@ namespace trace_processor {
 // The stats table contains diagnostic info and errors that are either:
 // - Collected at trace time (e.g., ftrace buffer overruns).
 // - Generated at parsing time (e.g., clock events out-of-order).
-class StatsTable : public Table {
+class StatsTable : public SqliteTable {
  public:
   enum Column { kName = 0, kIndex, kSeverity, kSource, kValue };
+  class Cursor : public SqliteTable::Cursor {
+   public:
+    Cursor(StatsTable*);
+
+    // Implementation of SqliteTable::Cursor.
+    int Filter(const QueryConstraints&,
+               sqlite3_value**,
+               FilterHistory) override;
+    int Next() override;
+    int Eof() override;
+    int Column(sqlite3_context*, int N) override;
+
+   private:
+    Cursor(Cursor&) = delete;
+    Cursor& operator=(const Cursor&) = delete;
+
+    Cursor(Cursor&&) noexcept = default;
+    Cursor& operator=(Cursor&&) = default;
+
+    StatsTable* table_ = nullptr;
+    const TraceStorage* storage_ = nullptr;
+    size_t key_ = 0;
+    TraceStorage::Stats::IndexMap::const_iterator index_{};
+  };
 
   static void RegisterTable(sqlite3* db, const TraceStorage* storage);
 
   StatsTable(sqlite3*, const TraceStorage*);
 
   // Table implementation.
-  base::Optional<Table::Schema> Init(int, const char* const*) override;
-  std::unique_ptr<Table::Cursor> CreateCursor(const QueryConstraints&,
-                                              sqlite3_value**) override;
+  util::Status Init(int, const char* const*, SqliteTable::Schema*) override;
+  std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
   int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
 
  private:
-  class Cursor : public Table::Cursor {
-   public:
-    Cursor(const TraceStorage*);
-
-    // Implementation of Table::Cursor.
-    int Next() override;
-    int Eof() override;
-    int Column(sqlite3_context*, int N) override;
-
-   private:
-    const TraceStorage* const storage_;
-    size_t key_ = 0;
-    TraceStorage::Stats::IndexMap::const_iterator index_{};
-  };
-
   const TraceStorage* const storage_;
 };
 }  // namespace trace_processor

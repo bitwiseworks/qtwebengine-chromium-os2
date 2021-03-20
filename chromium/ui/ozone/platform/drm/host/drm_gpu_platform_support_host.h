@@ -24,7 +24,6 @@ namespace ui {
 
 class DrmCursor;
 class DrmDisplayHostMananger;
-class DrmOverlayManager;
 class GpuThreadObserver;
 
 class DrmGpuPlatformSupportHost : public GpuPlatformSupportHost,
@@ -39,9 +38,10 @@ class DrmGpuPlatformSupportHost : public GpuPlatformSupportHost,
       int host_id,
       scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
       scoped_refptr<base::SingleThreadTaskRunner> send_runner,
-      const base::Callback<void(IPC::Message*)>& send_callback) override;
+      base::RepeatingCallback<void(IPC::Message*)> send_callback) override;
   void OnChannelDestroyed(int host_id) override;
   void OnGpuServiceLaunched(
+      int host_id,
       scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
       scoped_refptr<base::SingleThreadTaskRunner> io_runner,
       GpuHostBindInterfaceCallback binder,
@@ -66,19 +66,11 @@ class DrmGpuPlatformSupportHost : public GpuPlatformSupportHost,
   bool GpuTakeDisplayControl() override;
   bool GpuRefreshNativeDisplays() override;
   bool GpuRelinquishDisplayControl() override;
-  bool GpuAddGraphicsDevice(const base::FilePath& path,
-                            base::ScopedFD fd) override;
+  bool GpuAddGraphicsDeviceOnUIThread(const base::FilePath& path,
+                                      base::ScopedFD fd) override;
+  void GpuAddGraphicsDeviceOnIOThread(const base::FilePath& path,
+                                      base::ScopedFD fd) override;
   bool GpuRemoveGraphicsDevice(const base::FilePath& path) override;
-
-  // Methods needed for DrmOverlayManager.
-  // Methods for DrmOverlayManager.
-  void RegisterHandlerForDrmOverlayManager(DrmOverlayManager* handler) override;
-  void UnRegisterHandlerForDrmOverlayManager() override;
-
-  // Services needed by DrmOverlayManager
-  bool GpuCheckOverlayCapabilities(
-      gfx::AcceleratedWidget widget,
-      const OverlaySurfaceCandidateList& new_params) override;
 
   // Services needed by DrmDisplayHost
   bool GpuConfigureNativeDisplay(int64_t display_id,
@@ -93,16 +85,17 @@ class DrmGpuPlatformSupportHost : public GpuPlatformSupportHost,
       int64_t display_id,
       const std::vector<display::GammaRampRGBEntry>& degamma_lut,
       const std::vector<display::GammaRampRGBEntry>& gamma_lut) override;
+  bool GpuSetPrivacyScreen(int64_t display_id, bool enabled) override;
 
   // Services needed by DrmWindowHost
   bool GpuDestroyWindow(gfx::AcceleratedWidget widget) override;
-  bool GpuCreateWindow(gfx::AcceleratedWidget widget) override;
+  bool GpuCreateWindow(gfx::AcceleratedWidget widget,
+                       const gfx::Rect& initial_bounds) override;
   bool GpuWindowBoundsChanged(gfx::AcceleratedWidget widget,
                               const gfx::Rect& bounds) override;
 
  private:
   void OnChannelEstablished();
-  bool OnMessageReceivedForDrmDisplayHostManager(const IPC::Message& message);
   void OnUpdateNativeDisplays(
       const std::vector<DisplaySnapshot_Params>& displays);
   void OnDisplayConfigured(int64_t display_id, bool status);
@@ -113,29 +106,23 @@ class DrmGpuPlatformSupportHost : public GpuPlatformSupportHost,
   void OnTakeDisplayControl(bool status);
   void OnRelinquishDisplayControl(bool status);
 
-  bool OnMessageReceivedForDrmOverlayManager(const IPC::Message& message);
-  void OnOverlayResult(gfx::AcceleratedWidget widget,
-                       const std::vector<OverlayCheck_Params>& params,
-                       const std::vector<OverlayCheckReturn_Params>& returns);
-
   int host_id_ = -1;
   bool channel_established_ = false;
 
   scoped_refptr<base::SingleThreadTaskRunner> ui_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> send_runner_;
-  base::Callback<void(IPC::Message*)> send_callback_;
+  base::RepeatingCallback<void(IPC::Message*)> send_callback_;
 
   DrmDisplayHostManager* display_manager_;  // Not owned.
-  DrmOverlayManager* overlay_manager_;      // Not owned.
 
   DrmCursor* const cursor_;  // Not owned.
   base::ObserverList<GpuThreadObserver>::Unchecked gpu_thread_observers_;
 
   base::WeakPtr<DrmGpuPlatformSupportHost> weak_ptr_;
-  base::WeakPtrFactory<DrmGpuPlatformSupportHost> weak_ptr_factory_;
+  base::WeakPtrFactory<DrmGpuPlatformSupportHost> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(DrmGpuPlatformSupportHost);
 };
 
 }  // namespace ui
 
-#endif  // UI_OZONE_GPU_DRM_GPU_PLATFORM_SUPPORT_HOST_H_
+#endif  // UI_OZONE_PLATFORM_DRM_HOST_DRM_GPU_PLATFORM_SUPPORT_HOST_H_

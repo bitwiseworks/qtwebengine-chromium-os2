@@ -5,9 +5,7 @@
 group("all") {
   testonly = true
 
-  deps = [
-    ":display",
-  ]
+  deps = [ ":display" ]
 }
 
 group("all_test") {
@@ -29,7 +27,7 @@ source_set("display") {
   public_deps = [
     "//remoting/client",
     "//third_party/protobuf:protobuf_lite",
-    "//third_party/webrtc/rtc_base:rtc_base_approved",
+    "//third_party/webrtc_overrides:webrtc_component",
   ]
 
   deps = [
@@ -44,6 +42,9 @@ source_set("display") {
     "GLKit.framework",
     "OpenGLES.framework",
   ]
+
+  # TODO(crbug.com/875022) fix for OpenGLES deprecation.
+  defines = [ "GLES_SILENCE_DEPRECATION" ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
 }

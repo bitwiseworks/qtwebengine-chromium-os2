@@ -2,17 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/device_service_test_base.h"
 #include "services/device/hid/hid_manager_impl.h"
 #include "services/device/hid/mock_hid_connection.h"
 #include "services/device/hid/mock_hid_service.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/hid.mojom.h"
 
 namespace device {
@@ -20,17 +23,20 @@ namespace device {
 namespace {
 
 #if defined(OS_MACOSX)
-const uint64_t kTestDeviceIds[] = {1, 2};
+const uint64_t kTestDeviceIds[] = {0, 1, 2};
+#elif defined(OS_WIN)
+const wchar_t* const kTestDeviceIds[] = {L"0", L"1", L"2"};
 #else
-const char* kTestDeviceIds[] = {"A", "B"};
+const char* const kTestDeviceIds[] = {"0", "1", "2"};
 #endif
 
 class MockHidManagerClient : public mojom::HidManagerClient {
  public:
-  MockHidManagerClient() : binding_(this) {}
+  MockHidManagerClient() = default;
+  ~MockHidManagerClient() override = default;
 
-  void Bind(mojom::HidManagerClientAssociatedRequest request) {
-    binding_.Bind(std::move(request));
+  void Bind(mojo::PendingAssociatedReceiver<mojom::HidManagerClient> receiver) {
+    receiver_.Bind(std::move(receiver));
   }
 
   void DeviceAdded(mojom::HidDeviceInfoPtr device_info) override {
@@ -43,8 +49,8 @@ class MockHidManagerClient : public mojom::HidManagerClient {
     std::move(quit_closure_).Run();
   }
 
-  void SetConnection(mojom::HidConnectionPtr hid_connection) {
-    hid_connection_ = std::move(hid_connection);
+  void SetConnection(mojo::PendingRemote<mojom::HidConnection> hid_connection) {
+    hid_connection_.Bind(std::move(hid_connection));
   }
 
   mojom::HidConnection* GetConnection() { return hid_connection_.get(); }
@@ -56,8 +62,8 @@ class MockHidManagerClient : public mojom::HidManagerClient {
   void SetExpectGUID(std::string guid) { expect_guid_ = guid; }
 
  private:
-  mojo::AssociatedBinding<mojom::HidManagerClient> binding_;
-  mojom::HidConnectionPtr hid_connection_;
+  mojo::AssociatedReceiver<mojom::HidManagerClient> receiver_{this};
+  mojo::Remote<mojom::HidConnection> hid_connection_;
   base::OnceClosure quit_closure_;
   std::string expect_guid_;
 
@@ -74,7 +80,7 @@ void OnGetDevices(base::OnceClosure quit_closure,
 
 void OnConnect(base::OnceClosure quit_closure,
                MockHidManagerClient* client,
-               mojom::HidConnectionPtr connection) {
+               mojo::PendingRemote<mojom::HidConnection> connection) {
   DCHECK(client);
   DCHECK(connection);
   client->SetConnection(std::move(connection));
@@ -127,20 +133,49 @@ class HidManagerTest : public DeviceServiceTestBase {
     // Transfer the ownership of the |mock_hid_service| to HidManagerImpl.
     // It is safe to use the |mock_hid_service_| in this test.
     HidManagerImpl::SetHidServiceForTesting(std::move(mock_hid_service));
-    connector()->BindInterface(mojom::kServiceName, &hid_manager_);
+    device_service()->BindHidManager(hid_manager_.BindNewPipeAndPassReceiver());
   }
 
   void TearDown() override { HidManagerImpl::SetHidServiceForTesting(nullptr); }
 
-  void AddDevice(scoped_refptr<HidDeviceInfo> device_info) {
+  scoped_refptr<HidDeviceInfo> AddTestDevice0() {
+    // Construct a minimal HidDeviceInfo.
+    auto device_info = base::MakeRefCounted<HidDeviceInfo>(
+        kTestDeviceIds[0], "physical id 0", /*vendor_id=*/0, /*product_id=*/0,
+        "Hid Service Unit Test", "HidDevice-0",
+        mojom::HidBusType::kHIDBusTypeUSB,
+        /*report_descriptor=*/std::vector<uint8_t>());
     mock_hid_service_->AddDevice(device_info);
+    return device_info;
   }
 
-  void RemoveDevice(const HidPlatformDeviceId& platform_device_id) {
-    mock_hid_service_->RemoveDevice(platform_device_id);
+  scoped_refptr<HidDeviceInfo> AddTestDevice1() {
+    // Construct a minimal HidDeviceInfo with a different device ID than above.
+    auto device_info = base::MakeRefCounted<HidDeviceInfo>(
+        kTestDeviceIds[1], "physical id 1", /*vendor_id=*/0, /*product_id=*/0,
+        "Hid Service Unit Test", "HidDevice-1",
+        mojom::HidBusType::kHIDBusTypeUSB,
+        /*report_descriptor=*/std::vector<uint8_t>());
+    mock_hid_service_->AddDevice(device_info);
+    return device_info;
   }
 
-  mojom::HidManagerPtr hid_manager_;
+  scoped_refptr<HidDeviceInfo> AddTestDeviceWithTopLevelCollection() {
+    // Construct a HidDeviceInfo with a top-level collection. The collection has
+    // a usage ID from the FIDO usage page.
+    auto collection_info = mojom::HidCollectionInfo::New();
+    collection_info->usage = mojom::HidUsageAndPage::New(1, 0xf1d0);
+    auto device_info = base::MakeRefCounted<HidDeviceInfo>(
+        kTestDeviceIds[2], "physical id 2", /*vendor_id=*/0, /*product_id=*/0,
+        "Hid Service Unit Test", "HidDevice-2",
+        mojom::HidBusType::kHIDBusTypeUSB, std::move(collection_info),
+        /*max_input_report_size=*/64, /*max_output_report_size=*/64,
+        /*max_feature_report_size=*/64);
+    mock_hid_service_->AddDevice(device_info);
+    return device_info;
+  }
+
+  mojo::Remote<mojom::HidManager> hid_manager_;
   MockHidService* mock_hid_service_;
 
   DISALLOW_COPY_AND_ASSIGN(HidManagerTest);
@@ -148,16 +183,9 @@ class HidManagerTest : public DeviceServiceTestBase {
 
 // Test the GetDevices.
 TEST_F(HidManagerTest, GetDevicesOnly) {
-  // Add two hid devices
-  auto device0 = base::MakeRefCounted<HidDeviceInfo>(
-      kTestDeviceIds[0], 0, 0, "Hid Service Unit Test", "HidDevice-0",
-      mojom::HidBusType::kHIDBusTypeUSB, std::vector<uint8_t>());
-
-  auto device1 = base::MakeRefCounted<HidDeviceInfo>(
-      kTestDeviceIds[1], 0, 0, "Hid Service Unit Test", "HidDevice-1",
-      mojom::HidBusType::kHIDBusTypeUSB, std::vector<uint8_t>());
-  mock_hid_service_->AddDevice(device0);
-  mock_hid_service_->AddDevice(device1);
+  // Add two hid devices.
+  AddTestDevice0();
+  AddTestDevice1();
   mock_hid_service_->FirstEnumerationComplete();
 
   // Expect two devices will be received in OnGetDevices().
@@ -171,15 +199,12 @@ TEST_F(HidManagerTest, GetDevicesOnly) {
 // interface.
 TEST_F(HidManagerTest, GetDevicesAndSetClient) {
   // Add one hid device.
-  auto device0 = base::MakeRefCounted<HidDeviceInfo>(
-      kTestDeviceIds[0], 0, 0, "Hid Service Unit Test", "HidDevice-0",
-      mojom::HidBusType::kHIDBusTypeUSB, std::vector<uint8_t>());
-  mock_hid_service_->AddDevice(device0);
+  auto device0 = AddTestDevice0();
   mock_hid_service_->FirstEnumerationComplete();
 
   auto client = std::make_unique<MockHidManagerClient>();
-  mojom::HidManagerClientAssociatedPtrInfo hid_manager_client;
-  client->Bind(mojo::MakeRequest(&hid_manager_client));
+  mojo::PendingAssociatedRemote<mojom::HidManagerClient> hid_manager_client;
+  client->Bind(hid_manager_client.InitWithNewEndpointAndPassReceiver());
 
   // Call GetDevicesAndSetClient, expect 1 device will be received in
   // OnGetDevices().
@@ -193,10 +218,7 @@ TEST_F(HidManagerTest, GetDevicesAndSetClient) {
 
   // Add another hid device, expect MockHidManagerClient::DeviceAdded() will be
   // called, and the guid should be same as expected.
-  auto device1 = base::MakeRefCounted<HidDeviceInfo>(
-      kTestDeviceIds[1], 0, 0, "Hid Service Unit Test", "HidDevice-1",
-      mojom::HidBusType::kHIDBusTypeUSB, std::vector<uint8_t>());
-  mock_hid_service_->AddDevice(device1);
+  auto device1 = AddTestDevice1();
   {
     base::RunLoop run_loop;
     client->SetQuitClosure(run_loop.QuitClosure());
@@ -217,18 +239,13 @@ TEST_F(HidManagerTest, GetDevicesAndSetClient) {
 
 // Test the Connect and the mojom::HidConnection interface.
 TEST_F(HidManagerTest, TestHidConnectionInterface) {
-  // Add one hid device.
-  auto c_info = mojom::HidCollectionInfo::New();
-  c_info->usage = mojom::HidUsageAndPage::New(1, 0xf1d0);
-  auto device0 = base::MakeRefCounted<HidDeviceInfo>(
-      kTestDeviceIds[0], 0, 0, "Hid Service Unit Test", "HidDevice-0",
-      mojom::HidBusType::kHIDBusTypeUSB, std::move(c_info), 64, 64, 64);
-  mock_hid_service_->AddDevice(device0);
+  // Add a hid device with a top-level collection.
+  auto device = AddTestDeviceWithTopLevelCollection();
   mock_hid_service_->FirstEnumerationComplete();
 
   auto client = std::make_unique<MockHidManagerClient>();
-  mojom::HidManagerClientAssociatedPtrInfo hid_manager_client;
-  client->Bind(mojo::MakeRequest(&hid_manager_client));
+  mojo::PendingAssociatedRemote<mojom::HidManagerClient> hid_manager_client;
+  client->Bind(hid_manager_client.InitWithNewEndpointAndPassReceiver());
 
   // Call GetDevicesAndSetClient, expect 1 device will be received in
   // OnGetDevices().
@@ -244,7 +261,9 @@ TEST_F(HidManagerTest, TestHidConnectionInterface) {
   {
     base::RunLoop run_loop;
     hid_manager_->Connect(
-        device0->device_guid(),
+        device->device_guid(),
+        /*connection_client=*/mojo::NullRemote(),
+        /*watcher=*/mojo::NullRemote(),
         base::BindOnce(&OnConnect, run_loop.QuitClosure(), client.get()));
     run_loop.Run();
   }

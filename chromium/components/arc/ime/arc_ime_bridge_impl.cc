@@ -10,8 +10,8 @@
 
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/text_input_flags.h"
 #include "ui/base/ime/text_input_type.h"
@@ -79,6 +79,15 @@ void ArcImeBridgeImpl::SendConfirmCompositionText() {
   ime_instance->ConfirmCompositionText();
 }
 
+void ArcImeBridgeImpl::SendSelectionRange(const gfx::Range& selection_range) {
+  auto* ime_instance =
+      ARC_GET_INSTANCE_FOR_METHOD(bridge_service_->ime(), SetSelectionText);
+  if (!ime_instance)
+    return;
+
+  ime_instance->SetSelectionText(selection_range);
+}
+
 void ArcImeBridgeImpl::SendInsertText(const base::string16& text) {
   auto* ime_instance =
       ARC_GET_INSTANCE_FOR_METHOD(bridge_service_->ime(), InsertText);
@@ -141,8 +150,8 @@ void ArcImeBridgeImpl::OnCursorRectChangedWithSurroundingText(
       is_screen_coordinates);
 }
 
-void ArcImeBridgeImpl::RequestHideIme() {
-  delegate_->RequestHideIme();
+void ArcImeBridgeImpl::RequestHideImeDeprecated() {
+  DVLOG(1) << "RequestHideIme is deprecated.";
 }
 
 }  // namespace arc

@@ -14,7 +14,6 @@
 #include "base/time/time.h"
 #include "components/ntp_snippets/category.h"
 #include "components/reading_list/core/reading_list_entry.h"
-#include "components/reading_list/core/reading_list_model.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -38,8 +37,7 @@ ReadingListSuggestionsProvider::ReadingListSuggestionsProvider(
       category_status_(CategoryStatus::AVAILABLE_LOADING),
       provided_category_(
           Category::FromKnownCategory(KnownCategories::READING_LIST)),
-      reading_list_model_(reading_list_model),
-      scoped_observer_(this) {
+      reading_list_model_(reading_list_model) {
   observer->OnCategoryStatusChanged(this, provided_category_, category_status_);
 
   // If the ReadingListModel is loaded, this will trigger a call to
@@ -47,7 +45,7 @@ ReadingListSuggestionsProvider::ReadingListSuggestionsProvider(
   scoped_observer_.Add(reading_list_model_);
 }
 
-ReadingListSuggestionsProvider::~ReadingListSuggestionsProvider(){};
+ReadingListSuggestionsProvider::~ReadingListSuggestionsProvider() {}
 
 CategoryStatus ReadingListSuggestionsProvider::GetCategoryStatus(
     Category category) {
@@ -110,7 +108,7 @@ void ReadingListSuggestionsProvider::Fetch(
 void ReadingListSuggestionsProvider::ClearHistory(
     base::Time begin,
     base::Time end,
-    const base::Callback<bool(const GURL& url)>& filter) {
+    const base::RepeatingCallback<bool(const GURL& url)>& filter) {
   // Ignored, Reading List does not depend on history.
 }
 

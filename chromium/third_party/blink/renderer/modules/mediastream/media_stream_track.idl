@@ -25,15 +25,14 @@
 
 // https://w3c.github.io/mediacapture-main/#mediastreamtrack
 
-// TODO(foolip): Remove or standardize MediaStreamTrackState "muted".
-// https://crbug.com/651414
 enum MediaStreamTrackState {
     "live",
-    "muted",
     "ended"
 };
 
+// https://w3c.github.io/mediacapture-main/#media-stream-track-interface-definition
 [
+    Exposed=Window,
     ActiveScriptWrappable
 ] interface MediaStreamTrack : EventTarget {
     readonly attribute DOMString kind;
@@ -52,5 +51,5 @@ enum MediaStreamTrackState {
     MediaTrackCapabilities getCapabilities();
     MediaTrackConstraints getConstraints();
     MediaTrackSettings getSettings();
-    [CallWith=ScriptState] Promise<void> applyConstraints(optional MediaTrackConstraints constraints);
+    [CallWith=ScriptState] Promise<void> applyConstraints(optional MediaTrackConstraints constraints = {});
 };

@@ -145,9 +145,14 @@ ObjectTemplateBuilder::ObjectTemplateBuilder(v8::Isolate* isolate)
 
 ObjectTemplateBuilder::ObjectTemplateBuilder(v8::Isolate* isolate,
                                              const char* type_name)
-    : isolate_(isolate),
-      type_name_(type_name),
-      template_(v8::ObjectTemplate::New(isolate)) {
+    : ObjectTemplateBuilder(isolate,
+                            type_name,
+                            v8::ObjectTemplate::New(isolate)) {}
+
+ObjectTemplateBuilder::ObjectTemplateBuilder(v8::Isolate* isolate,
+                                             const char* type_name,
+                                             v8::Local<v8::ObjectTemplate> tmpl)
+    : isolate_(isolate), type_name_(type_name), template_(tmpl) {
   template_->SetInternalFieldCount(kNumberOfInternalFields);
 }
 
@@ -184,6 +189,15 @@ ObjectTemplateBuilder& ObjectTemplateBuilder::SetPropertyImpl(
     v8::Local<v8::FunctionTemplate> setter) {
   template_->SetAccessorProperty(StringToSymbol(isolate_, name), getter,
                                  setter);
+  return *this;
+}
+
+ObjectTemplateBuilder& ObjectTemplateBuilder::SetLazyDataPropertyImpl(
+    const base::StringPiece& name,
+    v8::AccessorNameGetterCallback callback,
+    v8::Local<v8::Value> data) {
+  template_->SetLazyDataProperty(StringToSymbol(isolate_, name), callback,
+                                 data);
   return *this;
 }
 

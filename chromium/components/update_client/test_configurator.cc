@@ -9,12 +9,16 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
 #include "components/prefs/pref_service.h"
-#include "components/services/patch/public/interfaces/constants.mojom.h"
-#include "components/services/unzip/public/interfaces/constants.mojom.h"
+#include "components/services/patch/in_process_file_patcher.h"
+#include "components/services/unzip/in_process_unzipper.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/net/network_chromium.h"
+#include "components/update_client/patch/patch_impl.h"
+#include "components/update_client/patcher.h"
 #include "components/update_client/protocol_handler.h"
+#include "components/update_client/unzip/unzip_impl.h"
+#include "components/update_client/unzipper.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -30,26 +34,26 @@ std::vector<GURL> MakeDefaultUrls() {
 
 }  // namespace
 
-TestConfigurator::TestConfigurator()
+TestConfigurator::TestConfigurator(PrefService* pref_service)
     : brand_("TEST"),
       initial_time_(0),
       ondemand_time_(0),
       enabled_cup_signing_(false),
       enabled_component_updates_(true),
-      use_JSON_(false),
-      connector_(connector_factory_.CreateConnector()),
-      unzip_service_(
-          connector_factory_.RegisterInstance(unzip::mojom::kServiceName)),
-      patch_service_(
-          connector_factory_.RegisterInstance(patch::mojom::kServiceName)),
+      pref_service_(pref_service),
+      unzip_factory_(base::MakeRefCounted<update_client::UnzipChromiumFactory>(
+          base::BindRepeating(&unzip::LaunchInProcessUnzipper))),
+      patch_factory_(base::MakeRefCounted<update_client::PatchChromiumFactory>(
+          base::BindRepeating(&patch::LaunchInProcessFilePatcher))),
       test_shared_loader_factory_(
           base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-              &test_url_loader_factory_)) {
-  connector_factory_.set_ignore_quit_requests(true);
-}
+              &test_url_loader_factory_)),
+      network_fetcher_factory_(
+          base::MakeRefCounted<NetworkFetcherChromiumFactory>(
+              test_shared_loader_factory_,
+              base::BindRepeating([](const GURL& url) { return false; }))) {}
 
-TestConfigurator::~TestConfigurator() {
-}
+TestConfigurator::~TestConfigurator() = default;
 
 int TestConfigurator::InitialDelay() const {
   return initial_time_;
@@ -115,14 +119,17 @@ std::string TestConfigurator::GetDownloadPreference() const {
   return download_preference_;
 }
 
-scoped_refptr<network::SharedURLLoaderFactory>
-TestConfigurator::URLLoaderFactory() const {
-  return test_shared_loader_factory_;
+scoped_refptr<NetworkFetcherFactory>
+TestConfigurator::GetNetworkFetcherFactory() {
+  return network_fetcher_factory_;
 }
 
-std::unique_ptr<service_manager::Connector>
-TestConfigurator::CreateServiceManagerConnector() const {
-  return connector_->Clone();
+scoped_refptr<UnzipperFactory> TestConfigurator::GetUnzipperFactory() {
+  return unzip_factory_;
+}
+
+scoped_refptr<PatcherFactory> TestConfigurator::GetPatcherFactory() {
+  return patch_factory_;
 }
 
 bool TestConfigurator::EnabledDeltas() const {
@@ -175,16 +182,8 @@ void TestConfigurator::SetPingUrl(const GURL& url) {
   ping_url_ = url;
 }
 
-void TestConfigurator::SetAppGuid(const std::string& app_guid) {
-  app_guid_ = app_guid;
-}
-
-void TestConfigurator::SetUseJSON(bool use_JSON) {
-  use_JSON_ = use_JSON;
-}
-
 PrefService* TestConfigurator::GetPrefService() const {
-  return nullptr;
+  return pref_service_;
 }
 
 ActivityDataService* TestConfigurator::GetActivityDataService() const {
@@ -195,23 +194,9 @@ bool TestConfigurator::IsPerUserInstall() const {
   return true;
 }
 
-std::vector<uint8_t> TestConfigurator::GetRunActionKeyHash() const {
-  return std::vector<uint8_t>(std::begin(gjpm_hash), std::end(gjpm_hash));
-}
-
-std::string TestConfigurator::GetAppGuid() const {
-  return app_guid_;
-}
-
 std::unique_ptr<ProtocolHandlerFactory>
 TestConfigurator::GetProtocolHandlerFactory() const {
-  if (use_JSON_)
-    return std::make_unique<ProtocolHandlerFactoryJSON>();
-  return std::make_unique<ProtocolHandlerFactoryXml>();
-}
-
-RecoveryCRXElevator TestConfigurator::GetRecoveryCRXElevator() const {
-  return {};
+  return std::make_unique<ProtocolHandlerFactoryJSON>();
 }
 
 }  // namespace update_client

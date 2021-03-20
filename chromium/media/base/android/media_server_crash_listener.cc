@@ -6,14 +6,14 @@
 
 #include "base/android/jni_android.h"
 #include "base/memory/singleton.h"
-#include "jni/MediaServerCrashListener_jni.h"
+#include "media/base/android/media_jni_headers/MediaServerCrashListener_jni.h"
 
 namespace media {
 
 MediaServerCrashListener::MediaServerCrashListener(
-    const OnMediaServerCrashCB& on_server_crash_cb,
+    OnMediaServerCrashCB on_server_crash_cb,
     scoped_refptr<base::SingleThreadTaskRunner> callback_thread)
-    : on_server_crash_cb_(on_server_crash_cb),
+    : on_server_crash_cb_(std::move(on_server_crash_cb)),
       callback_task_runner_(std::move(callback_thread)) {
   JNIEnv* env = base::android::AttachCurrentThread();
   CHECK(env);

@@ -76,7 +76,7 @@ static void doDataTest4(
         rc = lsm_work(db, 1, (1<<30), &nDone);
       }while( rc==0 && nDone>0 );
       if( bMultiThreaded && rc==LSM_BUSY ) rc = LSM_OK;
-#if 0
+#if 0 
       fprintf(stderr, "lsm_work() done...\n"); fflush(stderr);
 #endif
     }
@@ -110,7 +110,7 @@ static char *getName4(const char *zSystem, Datatest4 *pTest){
   char *zRet;
   char *zData;
   zData = testDatasourceName(&pTest->defn);
-  zRet = testMallocPrintf("data4.%s.%s.%d.%d.%d",
+  zRet = testMallocPrintf("data4.%s.%s.%d.%d.%d", 
       zSystem, zData, pTest->nRec, pTest->nRepeat, pTest->bReopen
   );
   testFree(zData);

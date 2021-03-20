@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fetch/form_data_bytes_consumer.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
+#include "third_party/blink/renderer/platform/network/wrapped_data_pipe_getter.h"
 
 namespace blink {
 
@@ -98,7 +99,7 @@ BytesConsumer::PublicState BlobBytesConsumer::GetPublicState() const {
   return nested_consumer_->GetPublicState();
 }
 
-void BlobBytesConsumer::Trace(blink::Visitor* visitor) {
+void BlobBytesConsumer::Trace(Visitor* visitor) {
   visitor->Trace(execution_context_);
   visitor->Trace(nested_consumer_);
   visitor->Trace(client_);

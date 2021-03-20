@@ -21,10 +21,13 @@
 
 #include "third_party/blink/renderer/core/html/forms/radio_input_type.h"
 
+#include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -45,8 +48,8 @@ HTMLInputElement* NextInputElement(const HTMLInputElement& element,
 
 }  // namespace
 
-InputType* RadioInputType::Create(HTMLInputElement& element) {
-  return MakeGarbageCollected<RadioInputType>(element);
+void RadioInputType::CountUsage() {
+  CountUsageIfVisible(WebFeature::kInputTypeRadio);
 }
 
 const AtomicString& RadioInputType::FormControlType() const {
@@ -54,13 +57,37 @@ const AtomicString& RadioInputType::FormControlType() const {
 }
 
 bool RadioInputType::ValueMissing(const String&) const {
-  return GetElement().IsInRequiredRadioButtonGroup() &&
-         !GetElement().CheckedRadioButtonForGroup();
+  HTMLInputElement& input = GetElement();
+  if (auto* scope = input.GetRadioButtonGroupScope())
+    return scope->IsInRequiredGroup(&input) && !CheckedRadioButtonForGroup();
+
+  // This element is not managed by a RadioButtonGroupScope. We need to traverse
+  // the tree from TreeRoot.
+  DCHECK(!input.isConnected());
+  DCHECK(!input.formOwner());
+  const AtomicString& name = input.GetName();
+  if (name.IsEmpty())
+    return false;
+  bool is_required = false;
+  bool is_checked = false;
+  Node& root = input.TreeRoot();
+  for (auto* another = Traversal<HTMLInputElement>::InclusiveFirstWithin(root);
+       another; another = Traversal<HTMLInputElement>::Next(*another, &root)) {
+    if (another->type() != input_type_names::kRadio ||
+        another->GetName() != name || another->formOwner())
+      continue;
+    if (another->checked())
+      is_checked = true;
+    if (another->FastHasAttribute(html_names::kRequiredAttr))
+      is_required = true;
+    if (is_checked && is_required)
+      return false;
+  }
+  return is_required && !is_checked;
 }
 
 String RadioInputType::ValueMissingText() const {
-  return GetLocale().QueryString(
-      WebLocalizedString::kValidationValueMissingForRadio);
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_VALUE_MISSING_RADIO);
 }
 
 void RadioInputType::HandleClickEvent(MouseEvent& event) {
@@ -109,7 +136,7 @@ void RadioInputType::HandleKeydownEvent(KeyboardEvent& event) {
                      : (key == "ArrowDown" || key == "ArrowRight");
 
   // Force layout for isFocusable() in findNextFocusableRadioButtonInGroup().
-  document.UpdateStyleAndLayoutIgnorePendingStylesheets();
+  document.UpdateStyleAndLayout(DocumentUpdateReason::kInput);
 
   // We can only stay within the form's children if the form hasn't been demoted
   // to a leaf because of malformed HTML.
@@ -127,9 +154,9 @@ void RadioInputType::HandleKeydownEvent(KeyboardEvent& event) {
     }
   }
   if (input_element) {
-    document.SetFocusedElement(input_element,
-                               FocusParams(SelectionBehaviorOnFocus::kRestore,
-                                           kWebFocusTypeNone, nullptr));
+    document.SetFocusedElement(
+        input_element, FocusParams(SelectionBehaviorOnFocus::kRestore,
+                                   mojom::blink::FocusType::kNone, nullptr));
     input_element->DispatchSimulatedClick(&event, kSendNoEvents);
     event.SetDefaultHandled();
     return;
@@ -137,14 +164,19 @@ void RadioInputType::HandleKeydownEvent(KeyboardEvent& event) {
 }
 
 void RadioInputType::HandleKeyupEvent(KeyboardEvent& event) {
-  if (event.key() != " ")
-    return;
   // If an unselected radio is tabbed into (because the entire group has nothing
   // checked, or because of some explicit .focus() call), then allow space to
   // check it.
   if (GetElement().checked())
     return;
-  DispatchSimulatedClickIfActive(event);
+
+  // Use Space key simulated click by default.
+  // Use Enter key simulated click when Spatial Navigation enabled.
+  if (event.key() == " " ||
+      (IsSpatialNavigationEnabled(GetElement().GetDocument().GetFrame()) &&
+       event.key() == "Enter")) {
+    DispatchSimulatedClickIfActive(event);
+  }
 }
 
 bool RadioInputType::IsKeyboardFocusable() const {
@@ -159,7 +191,8 @@ bool RadioInputType::IsKeyboardFocusable() const {
   // skip any other elements in the group.
   Element* current_focused_element =
       GetElement().GetDocument().FocusedElement();
-  if (auto* focused_input = ToHTMLInputElementOrNull(current_focused_element)) {
+  if (auto* focused_input =
+          DynamicTo<HTMLInputElement>(current_focused_element)) {
     if (focused_input->type() == input_type_names::kRadio &&
         focused_input->Form() == GetElement().Form() &&
         focused_input->GetName() == GetElement().GetName())
@@ -168,7 +201,7 @@ bool RadioInputType::IsKeyboardFocusable() const {
 
   // Allow keyboard focus if we're checked or if nothing in the group is
   // checked.
-  return GetElement().checked() || !GetElement().CheckedRadioButtonForGroup();
+  return GetElement().checked() || !CheckedRadioButtonForGroup();
 }
 
 bool RadioInputType::ShouldSendChangeEventAfterCheckedChanged() {
@@ -190,8 +223,8 @@ ClickHandlingState* RadioInputType::WillDispatchClick() {
   ClickHandlingState* state = MakeGarbageCollected<ClickHandlingState>();
 
   state->checked = GetElement().checked();
-  state->checked_radio_button = GetElement().CheckedRadioButtonForGroup();
-  GetElement().setChecked(true, kDispatchChangeEvent);
+  state->checked_radio_button = CheckedRadioButtonForGroup();
+  GetElement().setChecked(true, TextFieldEventBehavior::kDispatchChangeEvent);
   is_in_click_handler_ = true;
   return state;
 }
@@ -218,7 +251,7 @@ void RadioInputType::DidDispatchClick(Event& event,
 }
 
 bool RadioInputType::ShouldAppearIndeterminate() const {
-  return !GetElement().CheckedRadioButtonForGroup();
+  return !CheckedRadioButtonForGroup();
 }
 
 HTMLInputElement* RadioInputType::NextRadioButtonInGroup(
@@ -238,6 +271,44 @@ HTMLInputElement* RadioInputType::NextRadioButtonInGroup(
       return input_element;
   }
   return nullptr;
+}
+
+HTMLInputElement* RadioInputType::CheckedRadioButtonForGroup() const {
+  HTMLInputElement& input = GetElement();
+  if (input.checked())
+    return &input;
+  if (auto* scope = input.GetRadioButtonGroupScope())
+    return scope->CheckedButtonForGroup(input.GetName());
+
+  // This element is not managed by a RadioButtonGroupScope. We need to traverse
+  // the tree from TreeRoot.
+  DCHECK(!input.isConnected());
+  DCHECK(!input.formOwner());
+  const AtomicString& name = input.GetName();
+  if (name.IsEmpty())
+    return nullptr;
+  Node& root = input.TreeRoot();
+  for (auto* another = Traversal<HTMLInputElement>::InclusiveFirstWithin(root);
+       another; another = Traversal<HTMLInputElement>::Next(*another, &root)) {
+    if (another->type() != input_type_names::kRadio ||
+        another->GetName() != name || another->formOwner())
+      continue;
+    if (another->checked())
+      return another;
+  }
+  return nullptr;
+}
+
+void RadioInputType::WillUpdateCheckedness(bool new_checked) {
+  if (!new_checked)
+    return;
+  if (GetElement().GetRadioButtonGroupScope()) {
+    // Buttons in RadioButtonGroupScope are handled in
+    // HTMLInputElement::setChecked().
+    return;
+  }
+  if (auto* input = CheckedRadioButtonForGroup())
+    input->setChecked(false);
 }
 
 }  // namespace blink

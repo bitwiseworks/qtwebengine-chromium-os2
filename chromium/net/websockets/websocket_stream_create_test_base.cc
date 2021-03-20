@@ -8,6 +8,7 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "net/base/ip_endpoint.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/log/net_log_with_source.h"
@@ -33,7 +34,12 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
     owner_->url_request_ = request;
   }
 
-  void OnSuccess(std::unique_ptr<WebSocketStream> stream) override {
+  void OnSuccess(
+      std::unique_ptr<WebSocketStream> stream,
+      std::unique_ptr<WebSocketHandshakeResponseInfo> response) override {
+    if (owner_->response_info_)
+      ADD_FAILURE();
+    owner_->response_info_ = std::move(response);
     stream.swap(owner_->stream_);
     done_callback_.Run();
   }
@@ -51,16 +57,10 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
     owner_->request_info_ = std::move(request);
   }
 
-  void OnFinishOpeningHandshake(
-      std::unique_ptr<WebSocketHandshakeResponseInfo> response) override {
-    if (owner_->response_info_)
-      ADD_FAILURE();
-    owner_->response_info_ = std::move(response);
-  }
-
   void OnSSLCertificateError(
       std::unique_ptr<WebSocketEventInterface::SSLErrorCallbacks>
           ssl_error_callbacks,
+      int net_error,
       const SSLInfo& ssl_info,
       bool fatal) override {
     owner_->ssl_error_callbacks_ = std::move(ssl_error_callbacks);
@@ -68,13 +68,13 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
     owner_->ssl_fatal_ = fatal;
   }
 
-  int OnAuthRequired(scoped_refptr<AuthChallengeInfo> auth_info,
+  int OnAuthRequired(const AuthChallengeInfo& auth_info,
                      scoped_refptr<HttpResponseHeaders> response_headers,
-                     const HostPortPair& host_port_pair,
+                     const IPEndPoint& remote_endpoint,
                      base::OnceCallback<void(const AuthCredentials*)> callback,
                      base::Optional<AuthCredentials>* credentials) override {
     owner_->run_loop_waiting_for_on_auth_required_.Quit();
-    owner_->auth_challenge_info_ = std::move(auth_info);
+    owner_->auth_challenge_info_ = auth_info;
     *credentials = owner_->auth_credentials_;
     owner_->on_auth_required_callback_ = std::move(callback);
     return owner_->on_auth_required_rv_;
@@ -95,14 +95,16 @@ void WebSocketStreamCreateTestBase::CreateAndConnectStream(
     const GURL& socket_url,
     const std::vector<std::string>& sub_protocols,
     const url::Origin& origin,
-    const GURL& site_for_cookies,
+    const SiteForCookies& site_for_cookies,
+    const net::NetworkIsolationKey& network_isolation_key,
     const HttpRequestHeaders& additional_headers,
     std::unique_ptr<base::OneShotTimer> timer) {
   auto connect_delegate = std::make_unique<TestConnectDelegate>(
       this, connect_run_loop_.QuitClosure());
   auto api_delegate = std::make_unique<TestWebSocketStreamRequestAPI>();
   stream_request_ = WebSocketStream::CreateAndConnectStreamForTesting(
-      socket_url, sub_protocols, origin, site_for_cookies, additional_headers,
+      socket_url, sub_protocols, origin, site_for_cookies,
+      network_isolation_key, additional_headers,
       url_request_context_host_.GetURLRequestContext(), NetLogWithSource(),
       std::move(connect_delegate),
       timer ? std::move(timer) : std::make_unique<base::OneShotTimer>(),

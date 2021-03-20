@@ -15,8 +15,8 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/aligned_memory.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/shared_memory_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/decrypt_config.h"
@@ -27,10 +27,6 @@
 namespace media {
 
 // A specialized buffer for interfacing with audio / video decoders.
-//
-// Specifically ensures that data is aligned and padded as necessary by the
-// underlying decoding framework.  On desktop platforms this means memory is
-// allocated using FFmpeg with particular alignment and padding requirements.
 //
 // Also includes decoder specific functionality for decryption.
 //
@@ -47,35 +43,49 @@ class MEDIA_EXPORT DecoderBuffer
 #endif
   };
 
-  // Allocates buffer with |size| >= 0.  Buffer will be padded and aligned
-  // as necessary, and |is_key_frame_| will default to false.
+  // Allocates buffer with |size| >= 0. |is_key_frame_| will default to false.
   explicit DecoderBuffer(size_t size);
 
-  // Create a DecoderBuffer whose |data_| is copied from |data|.  Buffer will be
-  // padded and aligned as necessary.  |data| must not be NULL and |size| >= 0.
-  // The buffer's |is_key_frame_| will default to false.
+  // Create a DecoderBuffer whose |data_| is copied from |data|. |data| must not
+  // be NULL and |size| >= 0. The buffer's |is_key_frame_| will default to
+  // false.
   static scoped_refptr<DecoderBuffer> CopyFrom(const uint8_t* data,
                                                size_t size);
 
   // Create a DecoderBuffer whose |data_| is copied from |data| and |side_data_|
-  // is copied from |side_data|. Buffers will be padded and aligned as necessary
-  // Data pointers must not be NULL and sizes must be >= 0. The buffer's
-  // |is_key_frame_| will default to false.
+  // is copied from |side_data|. Data pointers must not be NULL and sizes must
+  // be >= 0. The buffer's |is_key_frame_| will default to false.
   static scoped_refptr<DecoderBuffer> CopyFrom(const uint8_t* data,
                                                size_t size,
                                                const uint8_t* side_data,
                                                size_t side_data_size);
 
+  // Create a DecoderBuffer where data() of |size| bytes resides within the heap
+  // as byte array. The buffer's |is_key_frame_| will default to false.
+  //
+  // Ownership of |data| is transferred to the buffer.
+  static scoped_refptr<DecoderBuffer> FromArray(std::unique_ptr<uint8_t[]> data,
+                                                size_t size);
+
   // Create a DecoderBuffer where data() of |size| bytes resides within the
-  // memory referred to by |handle| at non-negative offset |offset|. The
+  // memory referred to by |region| at non-negative offset |offset|. The
   // buffer's |is_key_frame_| will default to false.
   //
   // The shared memory will be mapped read-only.
   //
-  // If mapping fails, nullptr will be returned. In all cases |handle| is
-  // consumed.
-  static scoped_refptr<DecoderBuffer> FromSharedMemoryHandle(
-      const base::SharedMemoryHandle& handle,
+  // If mapping fails, nullptr will be returned.
+  static scoped_refptr<DecoderBuffer> FromSharedMemoryRegion(
+      base::subtle::PlatformSharedMemoryRegion region,
+      off_t offset,
+      size_t size);
+
+  // Create a DecoderBuffer where data() of |size| bytes resides within the
+  // ReadOnlySharedMemoryRegion referred to by |mapping| at non-negative offset
+  // |offset|. The buffer's |is_key_frame_| will default to false.
+  //
+  // Ownership of |region| is transferred to the buffer.
+  static scoped_refptr<DecoderBuffer> FromSharedMemoryRegion(
+      base::ReadOnlySharedMemoryRegion region,
       off_t offset,
       size_t size);
 
@@ -109,6 +119,8 @@ class MEDIA_EXPORT DecoderBuffer
 
   const uint8_t* data() const {
     DCHECK(!end_of_stream());
+    if (shared_mem_mapping_ && shared_mem_mapping_->IsValid())
+      return static_cast<const uint8_t*>(shared_mem_mapping_->memory());
     if (shm_)
       return static_cast<uint8_t*>(shm_->memory());
     return data_.get();
@@ -118,6 +130,7 @@ class MEDIA_EXPORT DecoderBuffer
   uint8_t* writable_data() const {
     DCHECK(!end_of_stream());
     DCHECK(!shm_);
+    DCHECK(!shared_mem_mapping_);
     return data_.get();
   }
 
@@ -160,7 +173,7 @@ class MEDIA_EXPORT DecoderBuffer
   }
 
   // If there's no data in this buffer, it represents end of stream.
-  bool end_of_stream() const { return !shm_ && !data_; }
+  bool end_of_stream() const { return !shared_mem_mapping_ && !shm_ && !data_; }
 
   bool is_key_frame() const {
     DCHECK(!end_of_stream());
@@ -185,18 +198,25 @@ class MEDIA_EXPORT DecoderBuffer
  protected:
   friend class base::RefCountedThreadSafe<DecoderBuffer>;
 
-  // Allocates a buffer of size |size| >= 0 and copies |data| into it.  Buffer
-  // will be padded and aligned as necessary.  If |data| is NULL then |data_| is
-  // set to NULL and |buffer_size_| to 0.  |is_key_frame_| will default to
-  // false.
+  // Allocates a buffer of size |size| >= 0 and copies |data| into it. If |data|
+  // is NULL then |data_| is set to NULL and |buffer_size_| to 0.
+  // |is_key_frame_| will default to false.
   DecoderBuffer(const uint8_t* data,
                 size_t size,
                 const uint8_t* side_data,
                 size_t side_data_size);
 
+  DecoderBuffer(std::unique_ptr<uint8_t[]> data, size_t size);
+
   DecoderBuffer(std::unique_ptr<UnalignedSharedMemory> shm, size_t size);
 
+  DecoderBuffer(std::unique_ptr<ReadOnlyUnalignedMapping> shared_mem_mapping,
+                size_t size);
+
   virtual ~DecoderBuffer();
+
+  // Encoded data, if it is stored on the heap.
+  std::unique_ptr<uint8_t[]> data_;
 
  private:
   // Presentation time of the frame.
@@ -206,16 +226,13 @@ class MEDIA_EXPORT DecoderBuffer
 
   // Size of the encoded data.
   size_t size_;
-  // Encoded data, if it is stored on the heap.
-  std::unique_ptr<uint8_t, base::AlignedFreeDeleter> data_;
 
   // Side data. Used for alpha channel in VPx, and for text cues.
   size_t side_data_size_;
-  std::unique_ptr<uint8_t, base::AlignedFreeDeleter> side_data_;
+  std::unique_ptr<uint8_t[]> side_data_;
 
-  // Copy of |data_| for debugging purposes. This field is not to be used.
-  // crbug.com/794740.
-  void* data_at_initialize_;
+  // Encoded data, if it is stored in a shared memory mapping.
+  std::unique_ptr<ReadOnlyUnalignedMapping> shared_mem_mapping_;
 
   // Encoded data, if it is stored in SHM.
   std::unique_ptr<UnalignedSharedMemory> shm_;
@@ -231,10 +248,6 @@ class MEDIA_EXPORT DecoderBuffer
 
   // Whether the frame was marked as a keyframe in the container.
   bool is_key_frame_;
-
-  // Check for double destruction. This field is not to be used.
-  // crbug.com/794740.
-  uint32_t destruction_ = 0x55555555;
 
   // Constructor helper method for memory allocations.
   void Initialize();

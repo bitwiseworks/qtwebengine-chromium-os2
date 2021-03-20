@@ -25,15 +25,23 @@ class CONTENT_EXPORT BrowserAccessibilityWin : public BrowserAccessibility {
   //
   // BrowserAccessibility methods.
   //
-  void OnSubtreeWillBeDeleted() override;
+  ui::AXPlatformNode* GetAXPlatformNode() const override;
   bool IsNative() const override;
   void OnLocationChanged() override;
   base::string16 GetText() const override;
+  base::string16 GetHypertext() const override;
+
+  const std::vector<gfx::NativeViewAccessible> GetUIADescendants()
+      const override;
 
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
-  ui::AXPlatformNode* GetFromNodeID(int32_t id) override;
 
   class BrowserAccessibilityComWin* GetCOM() const;
+
+ protected:
+  ui::TextAttributeList ComputeTextAttributes() const override;
+
+  bool ShouldHideChildrenForUIA() const;
 
  private:
   CComObject<BrowserAccessibilityComWin>* browser_accessibility_com_;
@@ -42,11 +50,11 @@ class CONTENT_EXPORT BrowserAccessibilityWin : public BrowserAccessibility {
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityWin);
 };
 
-CONTENT_EXPORT BrowserAccessibilityWin*
-ToBrowserAccessibilityWin(BrowserAccessibility* obj);
+CONTENT_EXPORT BrowserAccessibilityWin* ToBrowserAccessibilityWin(
+    BrowserAccessibility* obj);
 
-CONTENT_EXPORT const BrowserAccessibilityWin*
-ToBrowserAccessibilityWin(const BrowserAccessibility* obj);
+CONTENT_EXPORT const BrowserAccessibilityWin* ToBrowserAccessibilityWin(
+    const BrowserAccessibility* obj);
 
 }  // namespace content
 

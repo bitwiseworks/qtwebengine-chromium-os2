@@ -22,6 +22,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/test/scoped_feature_list.h"
@@ -38,10 +39,14 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
+#include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/policy/developer_tools_policy_handler.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -50,14 +55,19 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_chrome_web_ui_controller_factory.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/app_modal/javascript_app_modal_dialog.h"
-#include "components/app_modal/native_app_modal_dialog.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_manager_test_delegate.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/javascript_dialogs/app_modal_dialog_controller.h"
+#include "components/javascript_dialogs/app_modal_dialog_view.h"
+#include "components/keep_alive_registry/keep_alive_registry.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "components/policy/core/common/policy_map.h"
+#include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -93,7 +103,8 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "services/network/public/cpp/features.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gl/gl_switches.h"
 #include "url/gurl.h"
@@ -102,8 +113,6 @@
 #include "chromeos/constants/chromeos_switches.h"
 #endif
 
-using app_modal::JavaScriptAppModalDialog;
-using app_modal::NativeAppModalDialog;
 using content::BrowserThread;
 using content::DevToolsAgentHost;
 using content::DevToolsAgentHostObserver;
@@ -111,6 +120,7 @@ using content::NavigationController;
 using content::RenderFrameHost;
 using content::WebContents;
 using extensions::Extension;
+using javascript_dialogs::AppModalDialogView;
 
 namespace {
 
@@ -145,6 +155,7 @@ const char kEmulateNetworkConditionsPage[] =
 const char kDispatchKeyEventShowsAutoFill[] =
     "files/devtools/dispatch_key_event_shows_auto_fill.html";
 const char kDOMWarningsTestPage[] = "files/devtools/dom_warnings_page.html";
+const char kEmptyTestPage[] = "files/devtools/empty.html";
 
 template <typename... T>
 void DispatchOnTestSuiteSkipCheck(DevToolsWindow* window,
@@ -270,7 +281,7 @@ class SitePerProcessDevToolsSanityTest : public DevToolsSanityTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     DevToolsSanityTest::SetUpCommandLine(command_line);
     content::IsolateAllSitesForTesting(command_line);
-  };
+  }
 
   void SetUpOnMainThread() override {
     DevToolsSanityTest::SetUpOnMainThread();
@@ -356,13 +367,10 @@ class DevToolsBeforeUnloadTest: public DevToolsSanityTest {
       before_unload_observer.Wait();
     }
     {
-      content::WindowedNotificationObserver close_observer(
-          chrome::NOTIFICATION_BROWSER_CLOSED,
-          content::Source<Browser>(browser()));
       close_method.Run();
       AcceptModalDialog();
       if (wait_for_browser_close)
-        close_observer.Wait();
+        ui_test_utils::WaitForBrowserToClose(browser());
     }
     runner->Run();
   }
@@ -389,20 +397,21 @@ class DevToolsBeforeUnloadTest: public DevToolsSanityTest {
   }
 
   void AcceptModalDialog() {
-    NativeAppModalDialog* native_dialog = GetDialog();
-    native_dialog->AcceptAppModalDialog();
+    AppModalDialogView* view = GetDialog();
+    view->AcceptAppModalDialog();
   }
 
   void CancelModalDialog() {
-    NativeAppModalDialog* native_dialog = GetDialog();
-    native_dialog->CancelAppModalDialog();
+    AppModalDialogView* view = GetDialog();
+    view->CancelAppModalDialog();
   }
 
-  NativeAppModalDialog* GetDialog() {
-    JavaScriptAppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
-    NativeAppModalDialog* native_dialog = dialog->native_dialog();
-    EXPECT_TRUE(native_dialog);
-    return native_dialog;
+  AppModalDialogView* GetDialog() {
+    javascript_dialogs::AppModalDialogController* dialog =
+        ui_test_utils::WaitForAppModalDialog();
+    AppModalDialogView* view = dialog->view();
+    EXPECT_TRUE(view);
+    return view;
   }
 };
 
@@ -622,7 +631,7 @@ class WorkerDevToolsSanityTest : public InProcessBrowserTest {
       if (host->GetType() == DevToolsAgentHost::kTypeSharedWorker &&
           host->GetURL().path().rfind(path_) != std::string::npos) {
         *out_host_ = host;
-        base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, quit_);
+        base::PostTask(FROM_HERE, {BrowserThread::UI}, quit_);
         delete this;
       }
     }
@@ -758,8 +767,9 @@ IN_PROC_BROWSER_TEST_F(DevToolsBeforeUnloadTest,
 
 // Tests that BeforeUnload event gets called on devtools that are opened
 // on another devtools.
+// TODO(https://crbug.com/1000654): Re-enable this test.
 IN_PROC_BROWSER_TEST_F(DevToolsBeforeUnloadTest,
-                       TestDevToolsOnDevTools) {
+                       DISABLED_TestDevToolsOnDevTools) {
   ASSERT_TRUE(spawned_test_server()->Start());
   LoadTestPage(kDebuggerTestPage);
 
@@ -787,32 +797,28 @@ IN_PROC_BROWSER_TEST_F(DevToolsBeforeUnloadTest,
       DevToolsWindowTesting::Get(windows[2])->main_web_contents());
   // Try to close second devtools.
   {
-    content::WindowedNotificationObserver cancel_browser(
-        chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED,
-        content::NotificationService::AllSources());
     chrome::CloseWindow(DevToolsWindowTesting::Get(windows[1])->browser());
     CancelModalDialog();
-    cancel_browser.Wait();
+    base::RunLoop().RunUntilIdle();
+    // The second devtools hasn't closed.
+    EXPECT_EQ(windows[1],
+              DevToolsWindow::GetInstanceForInspectedWebContents(
+                  DevToolsWindowTesting::Get(windows[0])->main_web_contents()));
   }
   // Try to close browser window.
   {
-    content::WindowedNotificationObserver cancel_browser(
-        chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED,
-        content::NotificationService::AllSources());
     chrome::CloseWindow(browser());
     AcceptModalDialog();
     CancelModalDialog();
-    cancel_browser.Wait();
+    base::RunLoop().RunUntilIdle();
+    EXPECT_EQ(browser(), BrowserList::GetInstance()->get(0));
   }
   // Try to exit application.
   {
-    content::WindowedNotificationObserver close_observer(
-        chrome::NOTIFICATION_BROWSER_CLOSED,
-        content::Source<Browser>(browser()));
     chrome::CloseAllBrowsers();
     AcceptModalDialog();
     AcceptModalDialog();
-    close_observer.Wait();
+    ui_test_utils::WaitForBrowserToClose(browser());
   }
   for (auto& close_observer : close_observers)
     close_observer->Wait();
@@ -826,9 +832,16 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestShowScriptsTab) {
 // Tests that scripts tab is populated with inspected scripts even if it
 // hadn't been shown by the moment inspected paged refreshed.
 // @see http://crbug.com/26312
-IN_PROC_BROWSER_TEST_F(
-    DevToolsSanityTest,
-    TestScriptsTabIsPopulatedOnInspectedPageRefresh) {
+// This test is flaky on windows and linux asan. See https://crbug.com/1013003
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#define MAYBE_TestScriptsTabIsPopulatedOnInspectedPageRefresh \
+  DISABLED_TestScriptsTabIsPopulatedOnInspectedPageRefresh
+#else
+#define MAYBE_TestScriptsTabIsPopulatedOnInspectedPageRefresh \
+  TestScriptsTabIsPopulatedOnInspectedPageRefresh
+#endif
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
+                       MAYBE_TestScriptsTabIsPopulatedOnInspectedPageRefresh) {
   RunTest("testScriptsTabIsPopulatedOnInspectedPageRefresh",
           kDebuggerTestPage);
 }
@@ -869,7 +882,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
 
   // Now that we know the panel is loaded, switch to it.
   SwitchToExtensionPanel(window_, extension, "iframe_panel");
-  content::WaitForLoadStop(main_web_contents());
+  EXPECT_TRUE(content::WaitForLoadStop(main_web_contents()));
 
   std::vector<RenderFrameHost*> rfhs = main_web_contents()->GetAllFrames();
   EXPECT_EQ(7U, rfhs.size());
@@ -1358,8 +1371,10 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, DevtoolsInDevTools) {
 // Some web features, when used from an extension, are subject to browser-side
 // security policy enforcement. Make sure they work properly from inside a
 // devtools extension.
+// ToDo(993982): The test is flaky (timeout, crash, and fail) on several builds:
+// Debug, Windows, Mac, MSan, and ASan.
 IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
-                       DevToolsExtensionSecurityPolicyGrants) {
+                       DISABLED_DevToolsExtensionSecurityPolicyGrants) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   auto dir = std::make_unique<extensions::TestExtensionDir>();
@@ -1539,21 +1554,21 @@ bool InterceptURLLoad(content::URLLoaderInterceptor::RequestParams* params) {
     return false;
   }
 
-  network::ResourceResponseHead response;
+  auto response = network::mojom::URLResponseHead::New();
 
-  response.headers = new net::HttpResponseHeaders("200 OK\r\n\r\n");
+  response->headers = new net::HttpResponseHeaders("200 OK\r\n\r\n");
 
   auto start_time =
       base::TimeTicks::Now() - base::TimeDelta::FromMilliseconds(10);
-  response.request_start = start_time;
-  response.response_start = base::TimeTicks::Now();
-  response.request_time =
+  response->request_start = start_time;
+  response->response_start = base::TimeTicks::Now();
+  response->request_time =
       base::Time::Now() - base::TimeDelta::FromMilliseconds(10);
-  response.response_time = base::Time::Now();
+  response->response_time = base::Time::Now();
 
-  auto& load_timing = response.load_timing;
+  auto& load_timing = response->load_timing;
   load_timing.request_start = start_time;
-  load_timing.request_start_time = response.request_time;
+  load_timing.request_start_time = response->request_time;
   load_timing.send_start = start_time;
   load_timing.send_end = base::TimeTicks::Now();
   load_timing.receive_headers_end = base::TimeTicks::Now();
@@ -1561,7 +1576,7 @@ bool InterceptURLLoad(content::URLLoaderInterceptor::RequestParams* params) {
   if (url.query() != kPushUseNullEndTime)
     load_timing.push_end = base::TimeTicks::Now();
 
-  params->client->OnReceiveResponse(response);
+  params->client->OnReceiveResponse(std::move(response));
   mojo::DataPipe pipe;  // The response's body is empty. The pipe is not filled.
   params->client->OnStartLoadingResponseBody(std::move(pipe.consumer_handle));
   params->client->OnComplete(network::URLLoaderCompletionStatus());
@@ -1597,7 +1612,13 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, MAYBE_TestConsoleOnNavigateBack) {
   RunTest("testConsoleOnNavigateBack", kNavigateBackTestPage);
 }
 
-IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDeviceEmulation) {
+#if defined(OS_LINUX)
+// Flaking on linux runs, see crbug.com/990692.
+#define MAYBE_TestDeviceEmulation DISABLED_TestDeviceEmulation
+#else
+#define MAYBE_TestDeviceEmulation TestDeviceEmulation
+#endif
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, MAYBE_TestDeviceEmulation) {
   RunTest("testDeviceMetricsOverrides", "about:blank");
 }
 
@@ -1652,6 +1673,28 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
   autofill_manager->SetTestDelegate(&autoFillTestDelegate);
 
   RunTestFunction(window_, "testDispatchKeyEventShowsAutoFill");
+  CloseDevToolsWindow();
+}
+
+// Tests that whitelisted unhandled shortcuts are forwarded from inspected page
+// into devtools frontend
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, testKeyEventUnhandled) {
+  OpenDevToolsWindow("about:blank", true);
+  RunTestFunction(window_, "testKeyEventUnhandled");
+  CloseDevToolsWindow();
+}
+
+// Test that showing a certificate in devtools does not crash the process.
+// Disabled on windows as this opens a modal in its own thread, which leads to a
+// test timeout.
+#if defined(OS_WIN)
+#define MAYBE_testShowCertificate DISABLED_testShowCertificate
+#else
+#define MAYBE_testShowCertificate testShowCertificate
+#endif
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, MAYBE_testShowCertificate) {
+  OpenDevToolsWindow("about:blank", true);
+  RunTestFunction(window_, "testShowCertificate");
   CloseDevToolsWindow();
 }
 
@@ -1753,7 +1796,16 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutoOpenerTest, TestAutoOpenForTabs) {
   observer_->CloseAllSync();
 }
 
-class DevToolsReattachAfterCrashTest : public DevToolsSanityTest {
+// Flaky timeouts on Win7 Tests (dbg)(1); see https://crbug.com/985255.
+// Flaky timeouts and failures on Win7 (32) Tests; see
+// https://crbug.com/1025411.
+#if defined(OS_WIN)
+#define MAYBE_DevToolsReattachAfterCrashTest \
+  DISABLED_DevToolsReattachAfterCrashTest
+#else
+#define MAYBE_DevToolsReattachAfterCrashTest DevToolsReattachAfterCrashTest
+#endif
+class MAYBE_DevToolsReattachAfterCrashTest : public DevToolsSanityTest {
  protected:
   void RunTestWithPanel(const char* panel_name) {
     OpenDevToolsWindow("about:blank", false);
@@ -1771,12 +1823,12 @@ class DevToolsReattachAfterCrashTest : public DevToolsSanityTest {
   }
 };
 
-IN_PROC_BROWSER_TEST_F(DevToolsReattachAfterCrashTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_DevToolsReattachAfterCrashTest,
                        TestReattachAfterCrashOnTimeline) {
   RunTestWithPanel("timeline");
 }
 
-IN_PROC_BROWSER_TEST_F(DevToolsReattachAfterCrashTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_DevToolsReattachAfterCrashTest,
                        TestReattachAfterCrashOnNetwork) {
   RunTestWithPanel("network");
 }
@@ -1800,7 +1852,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, SecondTabAfterDevTools) {
       browser(), spawned_test_server()->GetURL(kDebuggerTestPage),
       WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB |
-          ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+          ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
   WebContents* second = browser()->tab_strip_model()->GetActiveWebContents();
 
   scoped_refptr<content::DevToolsAgentHost> agent(
@@ -1892,7 +1944,8 @@ class RemoteDebuggingTest : public extensions::ExtensionApiTest {
 #if defined(OS_CHROMEOS)
 #define MAYBE_RemoteDebugger DISABLED_RemoteDebugger
 #else
-#define MAYBE_RemoteDebugger RemoteDebugger
+// TODO(crbug.com/997911): Flaky on all platforms.
+#define MAYBE_RemoteDebugger DISABLED_RemoteDebugger
 #endif
 IN_PROC_BROWSER_TEST_F(RemoteDebuggingTest, MAYBE_RemoteDebugger) {
   ASSERT_TRUE(RunExtensionTest("target_list")) << message_;
@@ -2092,18 +2145,17 @@ class StaticURLDataSource : public content::URLDataSource {
   ~StaticURLDataSource() override = default;
 
   // content::URLDataSource:
-  std::string GetSource() const override { return source_; }
-  void StartDataRequest(
-      const std::string& path,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-      const GotDataCallback& callback) override {
+  std::string GetSource() override { return source_; }
+  void StartDataRequest(const GURL& url,
+                        const content::WebContents::Getter& wc_getter,
+                        GotDataCallback callback) override {
     std::string data(content_);
-    callback.Run(base::RefCountedString::TakeString(&data));
+    std::move(callback).Run(base::RefCountedString::TakeString(&data));
   }
-  std::string GetMimeType(const std::string& path) const override {
+  std::string GetMimeType(const std::string& path) override {
     return "text/html";
   }
-  bool ShouldAddContentSecurityPolicy() const override { return false; }
+  bool ShouldAddContentSecurityPolicy() override { return false; }
 
  private:
   const std::string source_;
@@ -2161,42 +2213,24 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
   content::WebUIControllerFactory::UnregisterFactoryForTesting(&test_factory);
 }
 
-void AddHSTSHost(scoped_refptr<net::URLRequestContextGetter> context,
-                 std::string host) {
-  net::TransportSecurityState* transport_security_state =
-      context->GetURLRequestContext()->transport_security_state();
-  base::Time expiry = base::Time::Now() + base::TimeDelta::FromDays(1000);
-  bool include_subdomains = false;
-  transport_security_state->AddHSTS(host, expiry, include_subdomains);
-}
-
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestRawHeadersWithRedirectAndHSTS) {
   net::EmbeddedTestServer https_test_server(
       net::EmbeddedTestServer::TYPE_HTTPS);
   https_test_server.SetSSLConfig(
       net::EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN);
-  https_test_server.ServeFilesFromSourceDirectory("chrome/test/data");
+  https_test_server.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
   ASSERT_TRUE(https_test_server.Start());
   GURL https_url = https_test_server.GetURL("localhost", "/devtools/image.png");
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(
-            AddHSTSHost,
-            base::RetainedRef(browser()->profile()->GetRequestContext()),
-            https_url.host()));
-  } else {
-    base::Time expiry = base::Time::Now() + base::TimeDelta::FromDays(1000);
-    bool include_subdomains = false;
-    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
-    content::StoragePartition* partition =
-        content::BrowserContext::GetDefaultStoragePartition(
-            browser()->profile());
-    base::RunLoop run_loop;
-    partition->GetNetworkContext()->AddHSTS(
-        https_url.host(), expiry, include_subdomains, run_loop.QuitClosure());
-    run_loop.Run();
-  }
+  base::Time expiry = base::Time::Now() + base::TimeDelta::FromDays(1000);
+  bool include_subdomains = false;
+  mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+  content::StoragePartition* partition =
+      content::BrowserContext::GetDefaultStoragePartition(browser()->profile());
+  base::RunLoop run_loop;
+  partition->GetNetworkContext()->AddHSTS(
+      https_url.host(), expiry, include_subdomains, run_loop.QuitClosure());
+  run_loop.Run();
+
   ASSERT_TRUE(embedded_test_server()->Start());
 
   OpenDevToolsWindow(std::string(), false);
@@ -2244,7 +2278,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestOpenInNewTabFilter) {
 
   TabStripModel* tabs = browser()->tab_strip_model();
   int i = 0;
-  for (const std::pair<const std::string, const std::string> pair : tests) {
+  for (const std::pair<const std::string, const std::string>& pair : tests) {
     bindings_delegate_->OpenInNewTab(pair.first);
     i++;
 
@@ -2258,6 +2292,14 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestOpenInNewTabFilter) {
 }
 
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, LoadNetworkResourceForFrontend) {
+  base::FilePath root_dir;
+  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &root_dir));
+  std::string file_url =
+      "file://" +
+      root_dir.AppendASCII("content/test/data/devtools/navigation.html")
+          .NormalizePathSeparatorsTo('/')
+          .AsUTF8Unsafe();
+
   embedded_test_server()->ServeFilesFromSourceDirectory("content/test/data");
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -2266,13 +2308,13 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, LoadNetworkResourceForFrontend) {
                                embedded_test_server()->GetURL("/hello.html"));
   window_ =
       DevToolsWindowTesting::OpenDevToolsWindowSync(GetInspectedTab(), false);
-  RunTestMethod("testLoadResourceForFrontend", url.spec().c_str());
+  RunTestMethod("testLoadResourceForFrontend", url.spec().c_str(),
+                file_url.c_str());
   DevToolsWindowTesting::CloseDevToolsWindowSync(window_);
 }
 
 // TODO(crbug.com/921608) Disabled for flakiness.
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, DISABLED_CreateBrowserContext) {
-  embedded_test_server()->ServeFilesFromSourceDirectory("chrome/test/data");
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL("/devtools/empty.html"));
   window_ = DevToolsWindowTesting::OpenDiscoveryDevToolsWindowSync(
@@ -2303,7 +2345,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessDevToolsSanityTest, InspectElement) {
 
   navigation_manager.WaitForNavigationFinished();
   navigation_manager_iframe.WaitForNavigationFinished();
-  content::WaitForLoadStop(tab);
+  EXPECT_TRUE(content::WaitForLoadStop(tab));
 
   std::vector<RenderFrameHost*> frames = GetInspectedTab()->GetAllFrames();
   ASSERT_EQ(2u, frames.size());
@@ -2320,6 +2362,8 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessDevToolsSanityTest, InspectElement) {
 }
 
 IN_PROC_BROWSER_TEST_F(InProcessBrowserTest, BrowserCloseWithBeforeUnload) {
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::REMOTE_DEBUGGING));
   ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(content::ExecuteScript(
@@ -2327,11 +2371,70 @@ IN_PROC_BROWSER_TEST_F(InProcessBrowserTest, BrowserCloseWithBeforeUnload) {
       "window.addEventListener('beforeunload',"
       "function(event) { event.returnValue = 'Foo'; });"));
   content::PrepContentsForBeforeUnloadTest(tab);
-  content::WindowedNotificationObserver close_observer(
-      chrome::NOTIFICATION_BROWSER_CLOSED, content::Source<Browser>(browser()));
   BrowserHandler handler(nullptr, std::string());
   handler.Close();
-  close_observer.Wait();
+  ui_test_utils::WaitForBrowserToClose(browser());
+}
+
+class KeepAliveDevToolsTest : public InProcessBrowserTest {
+ protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitchASCII(switches::kRemoteDebuggingPort, "0");
+    command_line->AppendSwitch(switches::kNoStartupWindow);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(KeepAliveDevToolsTest, KeepsAliveUntilBrowserClose) {
+  EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::REMOTE_DEBUGGING));
+  chrome::NewEmptyWindow(ProfileManager::GetLastUsedProfile());
+  EXPECT_FALSE(BrowserList::GetInstance()->empty());
+  BrowserHandler handler(nullptr, std::string());
+  handler.Close();
+  ui_test_utils::WaitForBrowserToClose();
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::REMOTE_DEBUGGING));
+}
+
+class DevToolsPolicyTest : public InProcessBrowserTest {
+ protected:
+  DevToolsPolicyTest() {
+    EXPECT_CALL(provider_, IsInitializationComplete(testing::_))
+        .WillRepeatedly(testing::Return(true));
+  }
+
+  void SetUpInProcessBrowserTestFixture() override {
+    policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
+  }
+  policy::MockConfigurationPolicyProvider provider_;
+};
+
+IN_PROC_BROWSER_TEST_F(DevToolsPolicyTest, OpenBlackListedDevTools) {
+  base::ListValue blacklist;
+  blacklist.AppendString("devtools://*");
+  policy::PolicyMap policies;
+  policies.Set(policy::key::kURLBlacklist, policy::POLICY_LEVEL_MANDATORY,
+               policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
+               blacklist.CreateDeepCopy(), nullptr);
+  provider_.UpdateChromePolicy(policies);
+
+  WebContents* wc = browser()->tab_strip_model()->GetActiveWebContents();
+  scoped_refptr<content::DevToolsAgentHost> agent(
+      content::DevToolsAgentHost::GetOrCreateFor(wc));
+  DevToolsWindow::OpenDevToolsWindow(wc);
+  DevToolsWindow* window = DevToolsWindow::FindDevToolsWindow(agent.get());
+  if (window) {
+    base::RunLoop run_loop;
+    DevToolsWindowTesting::Get(window)->SetCloseCallback(
+        run_loop.QuitClosure());
+    run_loop.Run();
+  }
+  window = DevToolsWindow::FindDevToolsWindow(agent.get());
+  ASSERT_EQ(nullptr, window);
 }
 
 // Flaky on Mus. See https://crbug.com/819285.
@@ -2352,13 +2455,30 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessDevToolsSanityTest,
 
   navigation_manager.WaitForNavigationFinished();
   navigation_manager_iframe.WaitForNavigationFinished();
-  content::WaitForLoadStop(tab);
+  EXPECT_TRUE(content::WaitForLoadStop(tab));
 
   for (auto* frame : GetInspectedTab()->GetAllFrames()) {
-    content::WaitForHitTestDataOrChildSurfaceReady(frame);
+    content::WaitForHitTestData(frame);
   }
   DevToolsWindow* window =
       DevToolsWindowTesting::OpenDevToolsWindowSync(GetInspectedTab(), false);
   RunTestFunction(window, "testInputDispatchEventsToOOPIF");
   DevToolsWindowTesting::CloseDevToolsWindowSync(window);
+}
+
+// See https://crbug.com/971241
+IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
+                       DISABLED_ExtensionWebSocketUserAgentOverride) {
+  net::SpawnedTestServer websocket_server(
+      net::SpawnedTestServer::TYPE_WS,
+      base::FilePath(FILE_PATH_LITERAL("net/data/websocket")));
+  websocket_server.set_websocket_basic_auth(false);
+  ASSERT_TRUE(websocket_server.Start());
+  uint16_t websocket_port = websocket_server.host_port_pair().port();
+
+  LoadExtension("web_request");
+  OpenDevToolsWindow(kEmptyTestPage, /* is_docked */ false);
+  DispatchOnTestSuite(window_, "testExtensionWebSocketUserAgentOverride",
+                      std::to_string(websocket_port).c_str());
+  CloseDevToolsWindow();
 }

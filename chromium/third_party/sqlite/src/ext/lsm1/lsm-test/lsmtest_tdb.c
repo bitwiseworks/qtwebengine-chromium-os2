@@ -1,6 +1,6 @@
 
 /*
-** This program attempts to test the correctness of some facets of the
+** This program attempts to test the correctness of some facets of the 
 ** LSM database library. Specifically, that the contents of the database
 ** are maintained correctly during a series of inserts and deletes.
 */
@@ -22,10 +22,10 @@
 
 typedef struct SqlDb SqlDb;
 
-static int error_transaction_function(TestDb *p, int iLevel){
+static int error_transaction_function(TestDb *p, int iLevel){ 
   unused_parameter(p);
   unused_parameter(iLevel);
-  return -1;
+  return -1; 
 }
 
 
@@ -61,10 +61,10 @@ static int test_leveldb_close(TestDb *pTestDb){
 }
 
 static int test_leveldb_write(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void *pVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void *pVal, 
   int nVal
 ){
   LevelDb *pDb = (LevelDb *)pTestDb;
@@ -81,10 +81,10 @@ static int test_leveldb_delete(TestDb *pTestDb, void *pKey, int nKey){
 }
 
 static int test_leveldb_fetch(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void **ppVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void **ppVal, 
   int *pnVal
 ){
   LevelDb *pDb = (LevelDb *)pTestDb;
@@ -179,9 +179,9 @@ static int test_leveldb_scan(
 }
 
 static int test_leveldb_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   static const DatabaseMethods LeveldbMethods = {
@@ -226,7 +226,7 @@ static int test_leveldb_open(
   return 0;
 }
 #endif  /* HAVE_LEVELDB */
-/*
+/* 
 ** End wrapper for LevelDB.
 *************************************************************************/
 
@@ -236,10 +236,10 @@ static int kc_close(TestDb *pTestDb){
 }
 
 static int kc_write(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void *pVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void *pVal, 
   int nVal
 ){
   return test_kc_write(pTestDb, pKey, nKey, pVal, nVal);
@@ -250,7 +250,7 @@ static int kc_delete(TestDb *pTestDb, void *pKey, int nKey){
 }
 
 static int kc_delete_range(
-  TestDb *pTestDb,
+  TestDb *pTestDb, 
   void *pKey1, int nKey1,
   void *pKey2, int nKey2
 ){
@@ -258,10 +258,10 @@ static int kc_delete_range(
 }
 
 static int kc_fetch(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void **ppVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void **ppVal, 
   int *pnVal
 ){
   if( pKey==0 ) return LSM_OK;
@@ -282,9 +282,9 @@ static int kc_scan(
 }
 
 static int kc_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   static const DatabaseMethods KcdbMethods = {
@@ -312,7 +312,7 @@ static int kc_open(
   return 0;
 }
 #endif /* HAVE_KYOTOCABINET */
-/*
+/* 
 ** End wrapper for Kyoto cabinet.
 *************************************************************************/
 
@@ -322,10 +322,10 @@ static int mdb_close(TestDb *pTestDb){
 }
 
 static int mdb_write(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void *pVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void *pVal, 
   int nVal
 ){
   return test_mdb_write(pTestDb, pKey, nKey, pVal, nVal);
@@ -336,10 +336,10 @@ static int mdb_delete(TestDb *pTestDb, void *pKey, int nKey){
 }
 
 static int mdb_fetch(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void **ppVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void **ppVal, 
   int *pnVal
 ){
   if( pKey==0 ) return LSM_OK;
@@ -360,9 +360,9 @@ static int mdb_scan(
 }
 
 static int mdb_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   static const DatabaseMethods KcdbMethods = {
@@ -440,10 +440,10 @@ static int sql_close(TestDb *pTestDb){
 }
 
 static int sql_write(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void *pVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void *pVal, 
   int nVal
 ){
   SqlDb *pDb = (SqlDb *)pTestDb;
@@ -461,7 +461,7 @@ static int sql_delete(TestDb *pTestDb, void *pKey, int nKey){
 }
 
 static int sql_delete_range(
-  TestDb *pTestDb,
+  TestDb *pTestDb, 
   void *pKey1, int nKey1,
   void *pKey2, int nKey2
 ){
@@ -473,10 +473,10 @@ static int sql_delete_range(
 }
 
 static int sql_fetch(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void **ppVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void **ppVal, 
   int *pnVal
 ){
   SqlDb *pDb = (SqlDb *)pTestDb;
@@ -552,7 +552,7 @@ static int sql_begin(TestDb *pTestDb, int iLevel){
 
   /* If there are no transactions at all open, open a read transaction. */
   if( pDb->nOpenTrans==0 ){
-    int rc = sqlite3_exec(pDb->db,
+    int rc = sqlite3_exec(pDb->db, 
         "BEGIN; SELECT * FROM sqlite_master LIMIT 1;" , 0, 0, 0
     );
     if( rc!=0 ) return rc;
@@ -619,9 +619,9 @@ static int sql_rollback(TestDb *pTestDb, int iLevel){
 }
 
 static int sql_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   static const DatabaseMethods SqlMethods = {
@@ -646,7 +646,7 @@ static int sql_open(
   const char *zScan2  = "SELECT * FROM t1 WHERE k >= ?1 ORDER BY k";
   const char *zScan3  = "SELECT * FROM t1 ORDER BY k";
 
-  const char *zScan4  =
+  const char *zScan4  = 
     "SELECT * FROM t1 WHERE k BETWEEN ?1 AND ?2 ORDER BY k DESC";
   const char *zScan5  = "SELECT * FROM t1 WHERE k <= ?2 ORDER BY k DESC";
   const char *zScan6  = "SELECT * FROM t1 WHERE k >= ?1 ORDER BY k DESC";
@@ -706,7 +706,7 @@ static int sql_open(
   *ppDb = (TestDb *)pDb;
   return 0;
 }
-/*
+/* 
 ** End wrapper for SQLite.
 *************************************************************************/
 
@@ -841,6 +841,6 @@ const char *tdb_library_name(TestDb *pDb){
   return pDb->zLibrary;
 }
 
-/*
+/* 
 ** End exported functions.
 *************************************************************************/

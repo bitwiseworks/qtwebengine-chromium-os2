@@ -2,20 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//services/service_manager/public/service_manifest.gni")
 import("//testing/test.gni")
-
-service_manifest("manifest") {
-  name = "mirroring"
-  source = "manifest.json"
-}
 
 component("mirroring_service") {
   sources = [
     "captured_audio_input.cc",
     "captured_audio_input.h",
-    "features.cc",
-    "features.h",
     "media_remoter.cc",
     "media_remoter.h",
     "message_dispatcher.cc",
@@ -44,9 +36,7 @@ component("mirroring_service") {
     "wifi_status_monitor.h",
   ]
 
-  public_deps = [
-    "//base",
-  ]
+  public_deps = [ "//base" ]
 
   deps = [
     "//components/mirroring/mojom:service",
@@ -62,15 +52,14 @@ component("mirroring_service") {
     "//media/gpu",
     "//media/mojo/clients",
     "//media/mojo/common:common",
-    "//media/mojo/interfaces",
-    "//media/mojo/interfaces:remoting",
+    "//media/mojo/mojom",
+    "//media/mojo/mojom:remoting",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
     "//net",
     "//services/network/public/cpp",
     "//services/network/public/mojom",
-    "//services/service_manager/public/cpp:cpp",
-    "//services/ws/public/cpp/gpu",
+    "//services/viz/public/cpp/gpu",
     "//ui/base",
     "//ui/gfx",
   ]
@@ -109,13 +98,13 @@ source_set("unittests") {
     "//media/cast:net",
     "//media/cast:sender",
     "//media/cast:test_support",
-    "//media/mojo/interfaces",
-    "//media/mojo/interfaces:remoting",
+    "//media/mojo/mojom",
+    "//media/mojo/mojom:remoting",
     "//mojo/public/cpp/bindings",
     "//net",
     "//services/network:test_support",
     "//services/network/public/mojom",
-    "//services/ws/public/cpp/gpu",
+    "//services/viz/public/cpp/gpu",
     "//testing/gmock",
     "//testing/gtest",
   ]

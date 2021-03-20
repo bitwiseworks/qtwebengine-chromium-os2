@@ -8,8 +8,14 @@
 
 namespace gfx {
 
-GpuMemoryBufferHandle::GpuMemoryBufferHandle()
-    : type(EMPTY_BUFFER), id(0), offset(0), stride(0) {}
+GpuMemoryBufferHandle::GpuMemoryBufferHandle() = default;
+
+#if defined(OS_ANDROID)
+GpuMemoryBufferHandle::GpuMemoryBufferHandle(
+    base::android::ScopedHardwareBufferHandle handle)
+    : type(GpuMemoryBufferType::ANDROID_HARDWARE_BUFFER),
+      android_hardware_buffer(std::move(handle)) {}
+#endif
 
 // TODO(crbug.com/863011): Reset |type| and possibly the handles on the
 // moved-from object.
@@ -20,6 +26,25 @@ GpuMemoryBufferHandle& GpuMemoryBufferHandle::operator=(
     GpuMemoryBufferHandle&& other) = default;
 
 GpuMemoryBufferHandle::~GpuMemoryBufferHandle() = default;
+
+GpuMemoryBufferHandle GpuMemoryBufferHandle::Clone() const {
+  GpuMemoryBufferHandle handle;
+  handle.type = type;
+  handle.id = id;
+  handle.region = region.Duplicate();
+  handle.offset = offset;
+  handle.stride = stride;
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
+  handle.native_pixmap_handle = CloneHandleForIPC(native_pixmap_handle);
+#elif defined(OS_MACOSX) && !defined(OS_IOS)
+  NOTIMPLEMENTED();
+#elif defined(OS_WIN)
+  NOTIMPLEMENTED();
+#elif defined(OS_ANDROID)
+  NOTIMPLEMENTED();
+#endif
+  return handle;
+}
 
 void GpuMemoryBuffer::SetColorSpace(const gfx::ColorSpace& color_space) {}
 

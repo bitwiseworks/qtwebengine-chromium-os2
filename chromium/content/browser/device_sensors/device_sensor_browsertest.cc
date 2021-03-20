@@ -6,12 +6,15 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "components/network_session_configurator/common/network_switches.h"
+#include "content/browser/generic_sensor/sensor_provider_proxy_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -23,17 +26,14 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_javascript_dialog_manager.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/device/public/cpp/generic_sensor/platform_sensor_configuration.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
 #include "services/device/public/cpp/test/fake_sensor_and_provider.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/sensor.mojom.h"
 #include "services/device/public/mojom/sensor_provider.mojom.h"
-#include "services/service_manager/public/cpp/service_binding.h"
 
 namespace content {
 
@@ -44,18 +44,14 @@ using device::FakeSensorProvider;
 class DeviceSensorBrowserTest : public ContentBrowserTest {
  public:
   DeviceSensorBrowserTest() {
-    // Because Device Service also runs in this process (browser process), here
-    // we can directly set our binder to intercept interface requests against
-    // it.
-    service_manager::ServiceBinding::OverrideInterfaceBinderForTesting(
-        device::mojom::kServiceName,
+    SensorProviderProxyImpl::OverrideSensorProviderBinderForTesting(
         base::BindRepeating(&DeviceSensorBrowserTest::BindSensorProvider,
                             base::Unretained(this)));
   }
 
   ~DeviceSensorBrowserTest() override {
-    service_manager::ServiceBinding::ClearInterfaceBinderOverrideForTesting<
-        device::mojom::SensorProvider>(device::mojom::kServiceName);
+    SensorProviderProxyImpl::OverrideSensorProviderBinderForTesting(
+        base::NullCallback());
   }
 
   void SetUpOnMainThread() override {
@@ -94,9 +90,8 @@ class DeviceSensorBrowserTest : public ContentBrowserTest {
             shell()->GetJavaScriptDialogManager(shell()->web_contents()));
 
     scoped_refptr<MessageLoopRunner> runner = new MessageLoopRunner();
-    dialog_manager->set_dialog_request_callback(
-        base::Bind(&DeviceSensorBrowserTest::DelayAndQuit,
-                   base::Unretained(this), delay));
+    dialog_manager->set_dialog_request_callback(base::BindOnce(
+        &DeviceSensorBrowserTest::DelayAndQuit, base::Unretained(this), delay));
     runner->Run();
   }
 
@@ -104,8 +99,9 @@ class DeviceSensorBrowserTest : public ContentBrowserTest {
   std::unique_ptr<net::EmbeddedTestServer> https_embedded_test_server_;
 
  private:
-  void BindSensorProvider(device::mojom::SensorProviderRequest request) {
-    sensor_provider_->Bind(std::move(request));
+  void BindSensorProvider(
+      mojo::PendingReceiver<device::mojom::SensorProvider> receiver) {
+    sensor_provider_->Bind(std::move(receiver));
   }
 };
 

@@ -4,7 +4,10 @@
 
 #include "third_party/blink/renderer/core/script/fetch_client_settings_object_impl.h"
 
+#include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -14,7 +17,12 @@ FetchClientSettingsObjectImpl::FetchClientSettingsObjectImpl(
   DCHECK(execution_context_->IsContextThread());
 }
 
-const KURL& FetchClientSettingsObjectImpl::BaseURL() const {
+const KURL& FetchClientSettingsObjectImpl::GlobalObjectUrl() const {
+  DCHECK(execution_context_->IsContextThread());
+  return execution_context_->Url();
+}
+
+const KURL& FetchClientSettingsObjectImpl::BaseUrl() const {
   DCHECK(execution_context_->IsContextThread());
   return execution_context_->BaseURL();
 }
@@ -42,6 +50,9 @@ HttpsState FetchClientSettingsObjectImpl::GetHttpsState() const {
 
 AllowedByNosniff::MimeTypeCheck
 FetchClientSettingsObjectImpl::MimeTypeCheckForClassicWorkerScript() const {
+  if (RuntimeEnabledFeatures::StrictMimeTypesForWorkersEnabled())
+    return AllowedByNosniff::MimeTypeCheck::kStrict;
+
   if (execution_context_->IsDocument()) {
     // For worker creation on a document, don't impose strict MIME-type checks
     // on the top-level worker script for backward compatibility. Note that
@@ -51,7 +62,7 @@ FetchClientSettingsObjectImpl::MimeTypeCheckForClassicWorkerScript() const {
     // For worker creation on a document with off-the-main-thread top-level
     // worker classic script loading, this value is propagated to
     // outsideSettings FCSO.
-    return AllowedByNosniff::MimeTypeCheck::kLax;
+    return AllowedByNosniff::MimeTypeCheck::kLaxForWorker;
   }
 
   // For importScripts() and nested worker top-level scripts impose the strict
@@ -59,6 +70,22 @@ FetchClientSettingsObjectImpl::MimeTypeCheckForClassicWorkerScript() const {
   // Nested workers is a new feature (enabled by default in M69) and there is no
   // backward compatibility issue.
   return AllowedByNosniff::MimeTypeCheck::kStrict;
+}
+
+network::mojom::IPAddressSpace FetchClientSettingsObjectImpl::GetAddressSpace()
+    const {
+  return execution_context_->GetSecurityContext().AddressSpace();
+}
+
+mojom::blink::InsecureRequestPolicy
+FetchClientSettingsObjectImpl::GetInsecureRequestsPolicy() const {
+  return execution_context_->GetSecurityContext().GetInsecureRequestPolicy();
+}
+
+const FetchClientSettingsObject::InsecureNavigationsSet&
+FetchClientSettingsObjectImpl::GetUpgradeInsecureNavigationsSet() const {
+  return execution_context_->GetSecurityContext()
+      .InsecureNavigationsToUpgrade();
 }
 
 void FetchClientSettingsObjectImpl::Trace(Visitor* visitor) {

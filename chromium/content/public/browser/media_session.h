@@ -13,7 +13,7 @@
 
 namespace content {
 
-class MediaSessionObserver;
+class BrowserContext;
 class WebContents;
 
 // MediaSession manages the media session and audio focus for a given
@@ -23,11 +23,18 @@ class WebContents;
 // and allows clients to resume/suspend/stop the managed players.
 class MediaSession : public media_session::mojom::MediaSession {
  public:
+  ~MediaSession() override = default;
+
   // Returns the MediaSession associated to this WebContents. Creates one if
   // none is currently available.
   CONTENT_EXPORT static MediaSession* Get(WebContents* contents);
 
-  ~MediaSession() override = default;
+  // Returns the source identity for the given BrowserContext.
+  CONTENT_EXPORT static const base::UnguessableToken& GetSourceId(
+      BrowserContext* browser_context);
+
+  CONTENT_EXPORT static WebContents* GetWebContentsFromRequestId(
+      const base::UnguessableToken& request_id);
 
   // Tell the media session a user action has performed.
   virtual void DidReceiveAction(
@@ -68,7 +75,8 @@ class MediaSession : public media_session::mojom::MediaSession {
 
   // Adds an observer to listen to events related to this MediaSession.
   void AddObserver(
-      media_session::mojom::MediaSessionObserverPtr observer) override = 0;
+      mojo::PendingRemote<media_session::mojom::MediaSessionObserver> observer)
+      override = 0;
 
   // Skip to the previous track. If there is no previous track then this will be
   // a no-op.
@@ -81,23 +89,44 @@ class MediaSession : public media_session::mojom::MediaSession {
   // Skip ad.
   void SkipAd() override = 0;
 
-  // Seek the media session. If the media cannot seek then this will be a no-op.
-  // The |seek_time| is the time delta that the media will seek by and supports
-  // both positive and negative values.
+  // Seek the media session from the current position. If the media cannot
+  // seek then this will be a no-op. The |seek_time| is the time delta that
+  // the media will seek by and supports both positive and negative values.
+  // This value cannot be zero. The |kDefaultSeekTimeSeconds| provides a
+  // default value for seeking by a few seconds.
   void Seek(base::TimeDelta seek_time) override = 0;
 
   // Stop the media session.
   // |type| represents the origin of the request.
   void Stop(SuspendType suspend_type) override = 0;
 
+  // Downloads the bitmap version of a MediaImage at least |minimum_size_px|
+  // and closest to |desired_size_px|. If the download failed, was too small or
+  // the image did not come from the media session then returns a null image.
+  void GetMediaImageBitmap(const media_session::MediaImage& image,
+                           int minimum_size_px,
+                           int desired_size_px,
+                           GetMediaImageBitmapCallback callback) override = 0;
+
+  // Seek the media session to a non-negative |seek_time| from the beginning of
+  // the current playing media. If the media cannot seek then this will be a
+  // no-op.
+  void SeekTo(base::TimeDelta seek_time) override = 0;
+
+  // Scrub ("fast seek") the media session to a non-negative |seek_time| from
+  // the beginning of the current playing media. If the media cannot scrub then
+  // this will be a no-op. The client should call |SeekTo| to finish the
+  // scrubbing operation.
+  void ScrubTo(base::TimeDelta seek_time) override = 0;
+
+  // Enter picture-in-picture.
+  void EnterPictureInPicture() override = 0;
+
+  // Exit picture-in-picture.
+  void ExitPictureInPicture() override = 0;
+
  protected:
   MediaSession() = default;
-
- private:
-  friend class MediaSessionObserver;
-
-  virtual void AddObserver(MediaSessionObserver* observer) = 0;
-  virtual void RemoveObserver(MediaSessionObserver* observer) = 0;
 };
 
 }  // namespace content

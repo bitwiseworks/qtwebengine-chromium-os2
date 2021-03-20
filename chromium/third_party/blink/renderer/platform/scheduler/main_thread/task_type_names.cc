@@ -61,10 +61,6 @@ const char* TaskTypeNames::TaskTypeToString(TaskType task_type) {
       return "IdleTask";
     case TaskType::kMiscPlatformAPI:
       return "MiscPlatformAPI";
-    case TaskType::kExperimentalWebSchedulingUserInteraction:
-      return "ExperimentalWebSchedulingUserInteraction";
-    case TaskType::kExperimentalWebSchedulingBestEffort:
-      return "ExperimentalWebSchedulingBackground";
     case TaskType::kFontLoading:
       return "FontLoading";
     case TaskType::kApplicationLifeCycle:
@@ -73,6 +69,10 @@ const char* TaskTypeNames::TaskTypeToString(TaskType task_type) {
       return "BackgroundFetch";
     case TaskType::kPermission:
       return "Permission";
+    case TaskType::kServiceWorkerClientMessage:
+      return "ServiceWorkerClientMessage";
+    case TaskType::kWebLocks:
+      return "WebLocks";
     case TaskType::kInternalDefault:
       return "InternalDefault";
     case TaskType::kInternalLoading:
@@ -81,20 +81,14 @@ const char* TaskTypeNames::TaskTypeToString(TaskType task_type) {
       return "InternalTest";
     case TaskType::kInternalWebCrypto:
       return "InternalWebCrypto";
-    case TaskType::kInternalIndexedDB:
-      return "InternalIndexedDB";
     case TaskType::kInternalMedia:
       return "InternalMedia";
     case TaskType::kInternalMediaRealTime:
       return "InternalMediaRealTime";
-    case TaskType::kInternalIPC:
-      return "InternalIPC";
     case TaskType::kInternalUserInteraction:
       return "InternalUserInteraction";
     case TaskType::kInternalInspector:
       return "InternalInspector";
-    case TaskType::kInternalWorker:
-      return "InternalWorker";
     case TaskType::kMainThreadTaskQueueV8:
       return "MainThreadTaskQueueV8";
     case TaskType::kMainThreadTaskQueueCompositor:
@@ -111,6 +105,10 @@ const char* TaskTypeNames::TaskTypeToString(TaskType task_type) {
       return "MainThreadTaskQueueControl";
     case TaskType::kMainThreadTaskQueueCleanup:
       return "MainThreadTaskQueueCleanup";
+    case TaskType::kMainThreadTaskQueueMemoryPurge:
+      return "MainThreadTaskQueueMemoryPurge";
+    case TaskType::kMainThreadTaskQueueNonWaking:
+      return "MainThreadTaskQueueNonWaking";
     case TaskType::kInternalIntersectionObserver:
       return "InternalIntersectionObserver";
     case TaskType::kCompositorThreadTaskQueueDefault:
@@ -127,6 +125,20 @@ const char* TaskTypeNames::TaskTypeToString(TaskType task_type) {
       return "WorkerAnimation";
     case TaskType::kInternalTranslation:
       return "InternalTranslation";
+    case TaskType::kInternalContentCapture:
+      return "InternalContentCapture";
+    case TaskType::kInternalNavigationAssociated:
+      return "InternalNavigationAssociated";
+    case TaskType::kInternalNavigationAssociatedUnfreezable:
+      return "InternalNavigationAssociatedUnfreezable";
+    case TaskType::kInternalContinueScriptLoading:
+      return "InternalContinueScriptLoading";
+    case TaskType::kExperimentalWebScheduling:
+      return "ExperimentalWebScheduling";
+    case TaskType::kInternalFrameLifecycleControl:
+      return "InternalFrameLifecycleControl";
+    case TaskType::kInternalFindInPage:
+      return "InternalFindInPage";
     case TaskType::kCount:
       return "Count";
   }

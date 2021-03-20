@@ -7,10 +7,13 @@ found in the LICENSE file.
 
 <link rel="import" href="/tracing/base/category_util.html">
 <link rel="import" href="/tracing/base/math/statistics.html">
+<link rel="import" href="/tracing/extras/chrome/cc/display_item_list.html">
 <link rel="import" href="/tracing/extras/chrome/event_finder_utils.html">
+<link rel="import" href="/tracing/extras/chrome/largest_contentful_paint.html">
 <link rel="import" href="/tracing/extras/chrome/time_to_interactive.html">
 <link rel="import" href="/tracing/metrics/metric_registry.html">
 <link rel="import" href="/tracing/metrics/system_health/breakdown_tree_helpers.html">
+<link rel="import" href="/tracing/metrics/system_health/rects_based_speed_index_metric.html">
 <link rel="import" href="/tracing/metrics/system_health/utils.html">
 <link rel="import" href="/tracing/model/helpers/chrome_model_helper.html">
 <link rel="import" href="/tracing/model/helpers/chrome_thread_helper.html">
@@ -25,29 +28,11 @@ tr.exportTo('tr.metrics.sh', function() {
   const LONG_TASK_THRESHOLD_MS = 50;
   const timeDurationInMs_smallerIsBetter =
       tr.b.Unit.byName.timeDurationInMs_smallerIsBetter;
+  const unitlessNumber_smallerIsBetter =
+      tr.b.Unit.byName.unitlessNumber_smallerIsBetter;
   const RelatedEventSet = tr.v.d.RelatedEventSet;
   const hasCategoryAndName = tr.metrics.sh.hasCategoryAndName;
   const EventFinderUtils = tr.e.chrome.EventFinderUtils;
-
-  /**
-   * @param  {!tr.model.Process} process
-   * @param  {!tr.b.math.Range} range
-   * @return {Array.<tr.model.Event>} An array of network events of a process
-   * and that are intersecting a range.
-   */
-  function getNetworkEventsInRange(process, range) {
-    const networkEvents = [];
-    for (const thread of Object.values(process.threads)) {
-      const threadHelper = new tr.model.helpers.ChromeThreadHelper(thread);
-      const events = threadHelper.getNetworkEvents();
-      for (const event of events) {
-        if (range.intersectsExplicitRangeInclusive(event.start, event.end)) {
-          networkEvents.push(event);
-        }
-      }
-    }
-    return networkEvents;
-  }
 
   /**
    * @param {!Object.<string, Object>} breakdownTree
@@ -75,6 +60,9 @@ tr.exportTo('tr.metrics.sh', function() {
   // loads. Data obtained through Cluster Telemetry analysis.
       .createExponential(1, 40e3, 35)
       .addExponentialBins(80e3, 15);
+
+  const LAYOUT_SHIFT_SCORE_BOUNDARIES = tr.v.HistogramBinBoundaries
+      .createLinear(0, 50, 25);
 
   const SUMMARY_OPTIONS = {
     avg: true,
@@ -130,7 +118,7 @@ tr.exportTo('tr.metrics.sh', function() {
     return validEvent;
   }
 
-  function getAboveTheFoldLoadedToVisibleSamples(rendererHelper,
+  function getFirstViewportReadySamples(rendererHelper,
       navIdToNavStartEvents) {
     const samples = [];
     // Want to measure the time from when navigation starts to when the load
@@ -147,8 +135,10 @@ tr.exportTo('tr.metrics.sh', function() {
     if (navigationStartEvent === undefined) return samples;
     const navStartToEventRange = tr.b.math.Range.fromExplicitRange(
         navigationStartEvent.start, pcEvent.start);
-    const networkEvents = getNetworkEventsInRange(
+    const networkEvents = EventFinderUtils.getNetworkEventsInRange(
         rendererHelper.process, navStartToEventRange);
+    // Main thread may be missing. See crbug.com/1059726 for an example.
+    if (rendererHelper.mainThread === undefined) return samples;
     const breakdownTree = tr.metrics.sh.generateWallClockTimeBreakdownTree(
         rendererHelper.mainThread, networkEvents, navStartToEventRange);
     samples.push({
@@ -164,7 +154,7 @@ tr.exportTo('tr.metrics.sh', function() {
     return samples;
   }
 
-  function getFirstViewportReadySamples(rendererHelper) {
+  function getAboveTheFoldLoadedToVisibleSamples(rendererHelper) {
     const samples = [];
     // Want to measure the time from when the document is visible to the time
     // when the load event fired for all non-ad resources.  This is done with
@@ -175,7 +165,7 @@ tr.exportTo('tr.metrics.sh', function() {
         rendererHelper, 'blink.user_timing', 'visible');
     if (pcEvent !== undefined && visibleEvent !== undefined) {
       samples.push({
-        value: pcEvent.start - visibleEvent.start,
+        value: Math.max(0.0, pcEvent.start - visibleEvent.start),
         diagnostics: {
           Start: new RelatedEventSet(visibleEvent),
           End: new RelatedEventSet(pcEvent)
@@ -185,6 +175,7 @@ tr.exportTo('tr.metrics.sh', function() {
     return samples;
   }
 
+  // Assume that this event has |event.arg.frame|.
   function findTimeToXEntries(
       category, eventName, rendererHelper, frameToNavStartEvents,
       navIdToNavStartEvents) {
@@ -226,7 +217,7 @@ tr.exportTo('tr.metrics.sh', function() {
     for (const { targetEvent, navigationStartEvent, url } of timeToXEntries) {
       const navStartToEventRange = tr.b.math.Range.fromExplicitRange(
           navigationStartEvent.start, targetEvent.start);
-      const networkEvents = getNetworkEventsInRange(
+      const networkEvents = EventFinderUtils.getNetworkEventsInRange(
           rendererHelper.process, navStartToEventRange);
       const breakdownTree = tr.metrics.sh.generateWallClockTimeBreakdownTree(
           rendererHelper.mainThread, networkEvents, navStartToEventRange);
@@ -273,11 +264,24 @@ tr.exportTo('tr.metrics.sh', function() {
     return samples;
   }
 
+  function findLayoutShiftSamples(rendererHelper) {
+    let sample;
+    EventFinderUtils.getSortedMainThreadEventsByFrame(rendererHelper,
+        'LayoutShift', 'loading').forEach((events) => {
+      // We want the final cumulative score, so look at the last event.
+      const evData = events.pop().args.data;
+      if (evData.is_main_frame) {
+        sample = {value: evData.cumulative_score};
+      }
+    });
+    return sample ? [sample] : [];
+  }
+
   function addFirstMeaningfulPaintSample(samples, rendererHelper,
       navigationStart, fmpMarkerEvent, url) {
     const navStartToFMPRange = tr.b.math.Range.fromExplicitRange(
         navigationStart.start, fmpMarkerEvent.start);
-    const networkEvents = getNetworkEventsInRange(
+    const networkEvents = EventFinderUtils.getNetworkEventsInRange(
         rendererHelper.process, navStartToFMPRange);
     const timeToFirstMeaningfulPaint = navStartToFMPRange.duration;
     const breakdownTree = tr.metrics.sh.generateWallClockTimeBreakdownTree(
@@ -353,7 +357,7 @@ tr.exportTo('tr.metrics.sh', function() {
     const navStartToEventTimeRange =
         tr.b.math.Range.fromExplicitRange(
             navigationStartTime, eventTimestamp);
-    const networkEvents = getNetworkEventsInRange(
+    const networkEvents = EventFinderUtils.getNetworkEventsInRange(
         rendererHelper.process, navStartToEventTimeRange);
     const breakdownTree = tr.metrics.sh.generateWallClockTimeBreakdownTree(
         rendererHelper.mainThread, networkEvents,
@@ -378,6 +382,82 @@ tr.exportTo('tr.metrics.sh', function() {
     };
   }
 
+  function getCandidateIndex(entry) {
+    return entry.targetEvent.args.data.candidateIndex;
+  }
+
+  function findLastCandidateForEachNavigation(timeToXEntries) {
+    const entryMap = new Map();
+    for (const e of timeToXEntries) {
+      const navStartEvent = e.navigationStartEvent;
+      if (!entryMap.has(navStartEvent)) {
+        entryMap.set(navStartEvent, []);
+      }
+      entryMap.get(navStartEvent).push(e);
+    }
+    const lastCandidates = [];
+    for (const timeToXEntriesByNavigation of entryMap.values()) {
+      let lastCandidate = timeToXEntriesByNavigation.shift();
+      for (const entry of timeToXEntriesByNavigation) {
+        if (getCandidateIndex(entry) > getCandidateIndex(lastCandidate)) {
+          lastCandidate = entry;
+        }
+      }
+      lastCandidates.push(lastCandidate);
+    }
+    return lastCandidates;
+  }
+
+  function findLargestTextPaintSamples(rendererHelper, frameToNavStartEvents,
+      navIdToNavStartEvents) {
+    const timeToPaintEntries = findTimeToXEntries('loading',
+        'LargestTextPaint::Candidate', rendererHelper, frameToNavStartEvents,
+        navIdToNavStartEvents);
+    const timeToPaintBlockingEntries = findTimeToXEntries('loading',
+        'LargestTextPaint::NoCandidate', rendererHelper, frameToNavStartEvents,
+        navIdToNavStartEvents);
+    const lastCandidateEvents =
+        findLastCandidateForEachNavigation(
+            timeToPaintEntries.concat(timeToPaintBlockingEntries))
+            .filter(event =>
+              event.targetEvent.title !== 'LargestTextPaint::NoCandidate');
+    return collectTimeToEvent(rendererHelper, lastCandidateEvents);
+  }
+
+  function findLargestImagePaintSamples(rendererHelper, frameToNavStartEvents,
+      navIdToNavStartEvents) {
+    const timeToPaintEntries = findTimeToXEntries('loading',
+        'LargestImagePaint::Candidate', rendererHelper, frameToNavStartEvents,
+        navIdToNavStartEvents);
+    const timeToPaintBlockingEntries = findTimeToXEntries('loading',
+        'LargestImagePaint::NoCandidate', rendererHelper, frameToNavStartEvents,
+        navIdToNavStartEvents);
+    const lastCandidateEvents =
+        findLastCandidateForEachNavigation(
+            timeToPaintEntries.concat(timeToPaintBlockingEntries))
+            .filter(event =>
+              event.targetEvent.title !== 'LargestImagePaint::NoCandidate');
+    return collectTimeToEvent(rendererHelper, lastCandidateEvents);
+  }
+
+  function findLargestContentfulPaintHistogramSamples(allBrowserEvents) {
+    const lcp = new tr.e.chrome.LargestContentfulPaint(allBrowserEvents);
+    const lcpSamples = lcp.findCandidates().map(candidate => {
+      const { durationInMilliseconds, size, type, inMainFrame,
+        mainFrameTreeNodeId } = candidate;
+      return {
+        value: durationInMilliseconds,
+        diagnostics: {
+          size: new tr.v.d.GenericSet([size]),
+          type: new tr.v.d.GenericSet([type]),
+          inMainFrame: new tr.v.d.GenericSet([inMainFrame]),
+          mainFrameTreeNodeId: new tr.v.d.GenericSet([mainFrameTreeNodeId]),
+        },
+      };
+    });
+    return lcpSamples;
+  }
+
   function collectLoadingMetricsForRenderer(rendererHelper) {
     const frameToNavStartEvents =
         EventFinderUtils.getSortedMainThreadEventsByFrame(
@@ -399,10 +479,18 @@ tr.exportTo('tr.metrics.sh', function() {
         'blink.user_timing', 'loadEventStart', rendererHelper,
         frameToNavStartEvents, navIdToNavStartEvents));
     const aboveTheFoldLoadedToVisibleSamples =
-        getAboveTheFoldLoadedToVisibleSamples(
-            rendererHelper, navIdToNavStartEvents);
+        getAboveTheFoldLoadedToVisibleSamples(rendererHelper);
     const firstViewportReadySamples = getFirstViewportReadySamples(
-        rendererHelper);
+        rendererHelper, navIdToNavStartEvents);
+    const largestImagePaintSamples = findLargestImagePaintSamples(
+        rendererHelper, frameToNavStartEvents, navIdToNavStartEvents);
+    const largestTextPaintSamples = findLargestTextPaintSamples(
+        rendererHelper, frameToNavStartEvents,
+        navIdToNavStartEvents);
+    const layoutShiftSamples = findLayoutShiftSamples(rendererHelper);
+    const navigationStartSamples = timeToFCPEntries.map(entry => {
+      return { value: entry.navigationStartEvent.start};
+    });
 
     return {
       frameToNavStartEvents,
@@ -412,6 +500,10 @@ tr.exportTo('tr.metrics.sh', function() {
       onLoadSamples,
       aboveTheFoldLoadedToVisibleSamples,
       firstViewportReadySamples,
+      largestImagePaintSamples,
+      largestTextPaintSamples,
+      layoutShiftSamples,
+      navigationStartSamples,
     };
   }
 
@@ -562,6 +654,37 @@ tr.exportTo('tr.metrics.sh', function() {
           description: 'Time from navigation to load for AMP pages only. ',
           summaryOptions: SUMMARY_OPTIONS,
         });
+    const largestImagePaintHistogram = histograms.createHistogram(
+        'largestImagePaint', timeDurationInMs_smallerIsBetter, [], {
+          binBoundaries: LOADING_METRIC_BOUNDARIES,
+          description: 'Time to Largest Image Paint',
+          summaryOptions: SUMMARY_OPTIONS,
+        });
+    const largestTextPaintHistogram = histograms.createHistogram(
+        'largestTextPaint', timeDurationInMs_smallerIsBetter, [], {
+          binBoundaries: LOADING_METRIC_BOUNDARIES,
+          description: 'Time to Largest Text Paint',
+          summaryOptions: SUMMARY_OPTIONS,
+        });
+    const largestContentfulPaintHistogram = histograms.createHistogram(
+        'largestContentfulPaint', timeDurationInMs_smallerIsBetter, [], {
+          binBoundaries: LOADING_METRIC_BOUNDARIES,
+          description: 'Time to Largest Contentful Paint',
+          summaryOptions: SUMMARY_OPTIONS,
+        });
+    const layoutShiftHistogram = histograms.createHistogram(
+        'mainFrameCumulativeLayoutShift', unitlessNumber_smallerIsBetter, [], {
+          binBoundaries: LAYOUT_SHIFT_SCORE_BOUNDARIES,
+          description: 'Main Frame Document Cumulative Layout Shift Score',
+          summaryOptions: SUMMARY_OPTIONS,
+        });
+    const navigationStartHistogram = histograms.createHistogram(
+        'navigationStart', timeDurationInMs_smallerIsBetter, [], {
+          binBoundaries: LOADING_METRIC_BOUNDARIES,
+          description: 'navigationStart',
+          summaryOptions: SUMMARY_OPTIONS,
+        });
+    tr.metrics.sh.rectsBasedSpeedIndexMetric(histograms, model);
 
     const chromeHelper = model.getOrCreateHelper(
         tr.model.helpers.ChromeModelHelper);
@@ -571,6 +694,11 @@ tr.exportTo('tr.metrics.sh', function() {
 
       const samplesSet =
           collectLoadingMetricsForRenderer(rendererHelper);
+
+      const lcpSamples = findLargestContentfulPaintHistogramSamples(
+          chromeHelper.browserHelper.mainThread.sliceGroup.slices);
+      addSamplesToHistogram(
+          lcpSamples, largestContentfulPaintHistogram, histograms);
 
       addSamplesToHistogram(
           samplesSet.firstPaintSamples, firstPaintHistogram, histograms);
@@ -591,6 +719,20 @@ tr.exportTo('tr.metrics.sh', function() {
       addSamplesToHistogram(
           samplesSet.firstViewportReadySamples,
           firstViewportReadyHistogram,
+          histograms);
+      addSamplesToHistogram(
+          samplesSet.largestImagePaintSamples,
+          largestImagePaintHistogram,
+          histograms);
+      addSamplesToHistogram(
+          samplesSet.largestTextPaintSamples,
+          largestTextPaintHistogram,
+          histograms);
+      addSamplesToHistogram(
+          samplesSet.layoutShiftSamples, layoutShiftHistogram, histograms);
+      addSamplesToHistogram(
+          samplesSet.navigationStartSamples,
+          navigationStartHistogram,
           histograms);
     }
 
@@ -617,7 +759,7 @@ tr.exportTo('tr.metrics.sh', function() {
 
   return {
     loadingMetric,
-    getNetworkEventsInRange,
+    createBreakdownDiagnostic
   };
 });
 </script>

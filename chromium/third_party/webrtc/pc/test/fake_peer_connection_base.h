@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "api/sctp_transport_interface.h"
 #include "pc/peer_connection_internal.h"
 
 namespace webrtc {
@@ -25,6 +26,8 @@ namespace webrtc {
 // FakePeerConnectionBase then overriding the interesting methods. This class
 // takes care of providing default implementations for all the pure virtual
 // functions specified in the interfaces.
+// TODO(nisse): Try to replace this with DummyPeerConnection, from
+// api/test/ ?
 class FakePeerConnectionBase : public PeerConnectionInternal {
  public:
   // PeerConnectionInterface implementation.
@@ -48,6 +51,11 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
   }
 
   bool RemoveTrack(RtpSenderInterface* sender) override { return false; }
+
+  RTCError RemoveTrackNew(
+      rtc::scoped_refptr<RtpSenderInterface> sender) override {
+    return RTCError(RTCErrorType::UNSUPPORTED_OPERATION);
+  }
 
   RTCErrorOr<rtc::scoped_refptr<RtpTransceiverInterface>> AddTransceiver(
       rtc::scoped_refptr<MediaStreamTrackInterface> track) override {
@@ -108,6 +116,10 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
 
   void ClearStatsCache() override {}
 
+  rtc::scoped_refptr<SctpTransportInterface> GetSctpTransport() const {
+    return nullptr;
+  }
+
   rtc::scoped_refptr<DataChannelInterface> CreateDataChannel(
       const std::string& label,
       const DataChannelInit* config) override {
@@ -139,6 +151,8 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
     return nullptr;
   }
 
+  void RestartIce() override {}
+
   void CreateOffer(CreateSessionDescriptionObserver* observer,
                    const RTCOfferAnswerOptions& options) override {}
 
@@ -158,14 +172,9 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
 
   RTCConfiguration GetConfiguration() override { return RTCConfiguration(); }
 
-  bool SetConfiguration(const PeerConnectionInterface::RTCConfiguration& config,
-                        RTCError* error) override {
-    return false;
-  }
-
-  bool SetConfiguration(
+  RTCError SetConfiguration(
       const PeerConnectionInterface::RTCConfiguration& config) override {
-    return false;
+    return RTCError();
   }
 
   bool AddIceCandidate(const IceCandidateInterface* candidate) override {
@@ -180,10 +189,6 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
   RTCError SetBitrate(const BitrateSettings& bitrate) override {
     return RTCError(RTCErrorType::UNSUPPORTED_OPERATION, "Not implemented");
   }
-
-  void SetBitrateAllocationStrategy(
-      std::unique_ptr<rtc::BitrateAllocationStrategy>
-          bitrate_allocation_strategy) override {}
 
   void SetAudioPlayout(bool playout) override {}
 
@@ -200,17 +205,26 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
     return IceConnectionState::kIceConnectionNew;
   }
 
+  IceConnectionState standardized_ice_connection_state() override {
+    return IceConnectionState::kIceConnectionNew;
+  }
+
+  PeerConnectionState peer_connection_state() override {
+    return PeerConnectionState::kNew;
+  }
+
   IceGatheringState ice_gathering_state() override {
     return IceGatheringState::kIceGatheringNew;
   }
 
-  bool StartRtcEventLog(rtc::PlatformFile file,
-                        int64_t max_size_bytes) override {
-    return false;
-  }
+  absl::optional<bool> can_trickle_ice_candidates() { return absl::nullopt; }
 
   bool StartRtcEventLog(std::unique_ptr<RtcEventLogOutput> output,
                         int64_t output_period_ms) override {
+    return false;
+  }
+
+  bool StartRtcEventLog(std::unique_ptr<RtcEventLogOutput> output) override {
     return false;
   }
 
@@ -234,11 +248,6 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
     return {};
   }
 
-  absl::string_view GetLocalTrackIdBySsrc(uint32_t ssrc) override { return {}; }
-  absl::string_view GetRemoteTrackIdBySsrc(uint32_t ssrc) override {
-    return {};
-  }
-
   sigslot::signal1<DataChannel*>& SignalDataChannelCreated() override {
     return SignalDataChannelCreated_;
   }
@@ -248,10 +257,6 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
   std::vector<rtc::scoped_refptr<DataChannel>> sctp_data_channels()
       const override {
     return {};
-  }
-
-  absl::optional<std::string> sctp_content_name() const override {
-    return absl::nullopt;
   }
 
   absl::optional<std::string> sctp_transport_name() const override {

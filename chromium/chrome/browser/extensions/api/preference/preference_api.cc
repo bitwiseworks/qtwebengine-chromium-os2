@@ -10,33 +10,31 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/memory/singleton.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/content_settings/content_settings_service.h"
 #include "chrome/browser/extensions/api/preference/preference_api_constants.h"
 #include "chrome/browser/extensions/api/preference/preference_helpers.h"
 #include "chrome/browser/extensions/api/proxy/proxy_api.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/net/prediction_options.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "components/autofill/core/common/autofill_prefs.h"
+#include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
+#include "components/embedder_support/pref_names.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
-#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/spellcheck/browser/pref_names.h"
 #include "components/translate/core/browser/translate_pref_names.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/extension_prefs.h"
@@ -45,6 +43,7 @@
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "media/media_buildflags.h"
@@ -81,7 +80,7 @@ const char kConversionErrorMessage[] =
     "properly.";
 
 const PrefMappingEntry kPrefMapping[] = {
-    {"spdy_proxy.enabled", prefs::kDataSaverEnabled,
+    {"spdy_proxy.enabled", data_reduction_proxy::prefs::kDataSaverEnabled,
      APIPermission::kDataReductionProxy, APIPermission::kDataReductionProxy},
     {"data_reduction.daily_original_length",
      data_reduction_proxy::prefs::kDailyHttpOriginalContentLength,
@@ -92,8 +91,9 @@ const PrefMappingEntry kPrefMapping[] = {
     {"data_usage_reporting.enabled",
      data_reduction_proxy::prefs::kDataUsageReportingEnabled,
      APIPermission::kDataReductionProxy, APIPermission::kDataReductionProxy},
-    {"alternateErrorPagesEnabled", prefs::kAlternateErrorPagesEnabled,
-     APIPermission::kPrivacy, APIPermission::kPrivacy},
+    {"alternateErrorPagesEnabled",
+     embedder_support::kAlternateErrorPagesEnabled, APIPermission::kPrivacy,
+     APIPermission::kPrivacy},
     {"autofillEnabled", autofill::prefs::kAutofillEnabledDeprecated,
      APIPermission::kPrivacy, APIPermission::kPrivacy},
     {"autofillAddressEnabled", autofill::prefs::kAutofillProfileEnabled,
@@ -151,6 +151,15 @@ const PrefMappingEntry kPrefMapping[] = {
     {"autoclick", ash::prefs::kAccessibilityAutoclickEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
+    {"caretHighlight", ash::prefs::kAccessibilityCaretHighlightEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"cursorHighlight", ash::prefs::kAccessibilityCursorHighlightEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"focusHighlight", ash::prefs::kAccessibilityFocusHighlightEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
     {"highContrast", ash::prefs::kAccessibilityHighContrastEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
@@ -160,10 +169,16 @@ const PrefMappingEntry kPrefMapping[] = {
     {"screenMagnifier", ash::prefs::kAccessibilityScreenMagnifierEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
+    {"selectToSpeak", ash::prefs::kAccessibilitySelectToSpeakEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
     {"spokenFeedback", ash::prefs::kAccessibilitySpokenFeedbackEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
     {"stickyKeys", ash::prefs::kAccessibilityStickyKeysEnabled,
+     APIPermission::kAccessibilityFeaturesRead,
+     APIPermission::kAccessibilityFeaturesModify},
+    {"switchAccess", ash::prefs::kAccessibilitySwitchAccessEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
     {"virtualKeyboard", ash::prefs::kAccessibilityVirtualKeyboardEnabled,
@@ -307,7 +322,7 @@ class PrefMapping {
   void RegisterPrefTransformer(
       const std::string& browser_pref,
       std::unique_ptr<PrefTransformerInterface> transformer) {
-    DCHECK(!base::ContainsKey(transformers_, browser_pref))
+    DCHECK(!base::Contains(transformers_, browser_pref))
         << "Trying to register pref transformer for " << browser_pref
         << " twice";
     transformers_[browser_pref] = std::move(transformer);
@@ -362,14 +377,15 @@ PreferenceEventRouter::PreferenceEventRouter(Profile* profile)
                    base::Bind(&PreferenceEventRouter::OnPrefChanged,
                               base::Unretained(this), registrar_.prefs()));
   }
-  notification_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CREATED,
-                              content::NotificationService::AllSources());
-  notification_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
-                              content::NotificationService::AllSources());
-  OnIncognitoProfileCreated(profile->GetOffTheRecordPrefs());
+  DCHECK(!profile_->IsOffTheRecord());
+  observed_profiles_.Add(profile_);
+  if (profile->HasOffTheRecordProfile())
+    OnOffTheRecordProfileCreated(profile->GetOffTheRecordProfile());
+  else
+    ObserveOffTheRecordPrefs(profile->GetReadOnlyOffTheRecordPrefs());
 }
 
-PreferenceEventRouter::~PreferenceEventRouter() { }
+PreferenceEventRouter::~PreferenceEventRouter() = default;
 
 void PreferenceEventRouter::OnPrefChanged(PrefService* pref_service,
                                           const std::string& browser_pref) {
@@ -421,33 +437,22 @@ void PreferenceEventRouter::OnPrefChanged(PrefService* pref_service,
       browser_pref);
 }
 
-void PreferenceEventRouter::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_PROFILE_CREATED: {
-      Profile* profile = content::Source<Profile>(source).ptr();
-      if (profile != profile_ && profile->GetOriginalProfile() == profile_) {
-        OnIncognitoProfileCreated(profile->GetPrefs());
-      }
-      break;
-    }
-    case chrome::NOTIFICATION_PROFILE_DESTROYED: {
-      Profile* profile = content::Source<Profile>(source).ptr();
-      if (profile != profile_ && profile->GetOriginalProfile() == profile_) {
-        // The real PrefService is about to be destroyed so we must make sure we
-        // get the "dummy" one.
-        OnIncognitoProfileCreated(profile_->GetReadOnlyOffTheRecordPrefs());
-      }
-      break;
-    }
-    default:
-      NOTREACHED();
+void PreferenceEventRouter::OnOffTheRecordProfileCreated(
+    Profile* off_the_record) {
+  observed_profiles_.Add(off_the_record);
+  ObserveOffTheRecordPrefs(off_the_record->GetPrefs());
+}
+
+void PreferenceEventRouter::OnProfileWillBeDestroyed(Profile* profile) {
+  observed_profiles_.Remove(profile);
+  if (profile->IsOffTheRecord()) {
+    // The real PrefService is about to be destroyed so we must make sure we
+    // get the "dummy" one.
+    ObserveOffTheRecordPrefs(profile_->GetReadOnlyOffTheRecordPrefs());
   }
 }
 
-void PreferenceEventRouter::OnIncognitoProfileCreated(PrefService* prefs) {
+void PreferenceEventRouter::ObserveOffTheRecordPrefs(PrefService* prefs) {
   incognito_registrar_ = std::make_unique<PrefChangeRegistrar>();
   incognito_registrar_->Init(prefs);
   for (const auto& pref : kPrefMapping) {
@@ -462,13 +467,13 @@ void PreferenceAPIBase::SetExtensionControlledPref(
     const std::string& extension_id,
     const std::string& pref_key,
     ExtensionPrefsScope scope,
-    base::Value* value) {
+    base::Value value) {
 #ifndef NDEBUG
   const PrefService::Preference* pref =
       extension_prefs()->pref_service()->FindPreference(pref_key);
   DCHECK(pref) << "Extension controlled preference key " << pref_key
                << " not registered.";
-  DCHECK_EQ(pref->GetType(), value->type())
+  DCHECK_EQ(pref->GetType(), value.type())
       << "Extension controlled preference " << pref_key << " has wrong type.";
 #endif
 
@@ -481,10 +486,10 @@ void PreferenceAPIBase::SetExtensionControlledPref(
                                                   extension_id,
                                                   scope_string);
     auto preference = update.Create();
-    preference->SetWithoutPathExpansion(pref_key, value->CreateDeepCopy());
+    preference->SetWithoutPathExpansion(pref_key, value.CreateDeepCopy());
   }
-  extension_pref_value_map()->SetExtensionPref(
-      extension_id, pref_key, scope, value);
+  extension_pref_value_map()->SetExtensionPref(extension_id, pref_key, scope,
+                                               std::move(value));
 }
 
 void PreferenceAPIBase::RemoveExtensionControlledPref(
@@ -797,14 +802,44 @@ ExtensionFunction::ResponseAction SetPreferenceFunction::Run() {
     // |SetExtensionControlledPref| takes ownership of the base::Value pointer.
     preference_api->SetExtensionControlledPref(
         extension_id(), autofill::prefs::kAutofillCreditCardEnabled, scope,
-        new base::Value(browser_pref_value->GetBool()));
+        base::Value(browser_pref_value->GetBool()));
     preference_api->SetExtensionControlledPref(
         extension_id(), autofill::prefs::kAutofillProfileEnabled, scope,
-        new base::Value(browser_pref_value->GetBool()));
+        base::Value(browser_pref_value->GetBool()));
+  }
+
+  // Whenever an extension takes control of the |kSafeBrowsingEnabled|
+  // preference, it must also set |kSafeBrowsingEnhanced| to false.
+  // See crbug.com/1064722 for more background.
+  //
+  // TODO(crbug.com/1064722): Consider extending
+  // chrome.privacy.services.safeBrowsingEnabled to a three-state enum.
+  if (prefs::kSafeBrowsingEnabled == browser_pref) {
+    preference_api->SetExtensionControlledPref(extension_id(),
+                                               prefs::kSafeBrowsingEnhanced,
+                                               scope, base::Value(false));
+  }
+
+  // Whenever an extension takes control of the |kBlockThirdPartyCookies|
+  // preference, we must also set |kCookieControlsMode|.
+  // See crbug.com/1065392 for more background.
+  //
+  // kCookieControlsMode offers an additional setting to only block third-party
+  // cookies in incognito mode that can't be selected by extensions.
+  // Instead they can use the preference api in incognito mode directly if they
+  // are permitted to run there.
+  if (browser_pref == prefs::kBlockThirdPartyCookies) {
+    preference_api->SetExtensionControlledPref(
+        extension_id(), prefs::kCookieControlsMode, scope,
+        base::Value(static_cast<int>(
+            browser_pref_value->GetBool()
+                ? content_settings::CookieControlsMode::kOn
+                : content_settings::CookieControlsMode::kOff)));
   }
 
   preference_api->SetExtensionControlledPref(
-      extension_id(), browser_pref, scope, browser_pref_value.release());
+      extension_id(), browser_pref, scope,
+      base::Value::FromUniquePtrValue(std::move(browser_pref_value)));
 
   return RespondNow(NoArguments());
 }
@@ -852,8 +887,30 @@ ExtensionFunction::ResponseAction ClearPreferenceFunction::Run() {
         Error(extensions::preference_api_constants::kPermissionErrorMessage,
               pref_key));
 
+  // Whenever an extension clears the |kBlockThirdPartyCookies| preference,
+  // it must also clear |kCookieControlsMode|.
+  // See crbug.com/1065392 for more background.
+  if (browser_pref == prefs::kBlockThirdPartyCookies) {
+    PreferenceAPI::Get(browser_context())
+        ->RemoveExtensionControlledPref(extension_id(),
+                                        prefs::kCookieControlsMode, scope);
+  }
+
   PreferenceAPI::Get(browser_context())
       ->RemoveExtensionControlledPref(extension_id(), browser_pref, scope);
+
+  // Whenever an extension clears the |kSafeBrowsingEnabled| preference,
+  // it must also clear |kSafeBrowsingEnhanced|. See crbug.com/1064722 for
+  // more background.
+  //
+  // TODO(crbug.com/1064722): Consider extending
+  // chrome.privacy.services.safeBrowsingEnabled to a three-state enum.
+  if (prefs::kSafeBrowsingEnabled == browser_pref) {
+    PreferenceAPI::Get(browser_context())
+        ->RemoveExtensionControlledPref(extension_id(),
+                                        prefs::kSafeBrowsingEnhanced, scope);
+  }
+
   return RespondNow(NoArguments());
 }
 

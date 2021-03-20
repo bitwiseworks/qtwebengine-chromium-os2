@@ -26,25 +26,25 @@
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 
 #include <limits>
+
 #include "base/auto_reset.h"
-#include "third_party/blink/public/platform/web_insecure_request_policy.h"
+#include "third_party/blink/public/common/security_context/insecure_request_policy.h"
+#include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/radio_node_list_or_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_event_listener.h"
-#include "third_party/blink/renderer/bindings/core/v8/usv_string_or_trusted_url.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_submit_event_init.h"
 #include "third_party/blink/renderer/core/dom/attribute.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/dom/node_lists_node_data.h"
-#include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/remote_frame.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
 #include "third_party/blink/renderer/core/html/custom/element_internals.h"
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
@@ -53,6 +53,7 @@
 #include "third_party/blink/renderer/core/html/forms/html_form_controls_collection.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/radio_node_list.h"
+#include "third_party/blink/renderer/core/html/forms/submit_event.h"
 #include "third_party/blink/renderer/core/html/html_collection.h"
 #include "third_party/blink/renderer/core/html/html_dialog_element.h"
 #include "third_party/blink/renderer/core/html/html_image_element.h"
@@ -63,16 +64,15 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/loader/form_submission.h"
 #include "third_party/blink/renderer/core/loader/mixed_content_checker.h"
-#include "third_party/blink/renderer/core/loader/navigation_scheduler.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
-using namespace html_names;
-
 HTMLFormElement::HTMLFormElement(Document& document)
-    : HTMLElement(kFormTag, document),
+    : HTMLElement(html_names::kFormTag, document),
       listed_elements_are_dirty_(false),
       image_elements_are_dirty_(false),
       has_elements_associated_by_parser_(false),
@@ -81,11 +81,8 @@ HTMLFormElement::HTMLFormElement(Document& document)
       is_in_reset_function_(false) {
   static unsigned next_nique_renderer_form_id = 0;
   unique_renderer_form_id_ = next_nique_renderer_form_id++;
-}
 
-HTMLFormElement* HTMLFormElement::Create(Document& document) {
   UseCounter::Count(document, WebFeature::kFormElement);
-  return MakeGarbageCollected<HTMLFormElement>(document);
 }
 
 HTMLFormElement::~HTMLFormElement() = default;
@@ -95,14 +92,7 @@ void HTMLFormElement::Trace(Visitor* visitor) {
   visitor->Trace(radio_button_group_scope_);
   visitor->Trace(listed_elements_);
   visitor->Trace(image_elements_);
-  visitor->Trace(planned_navigation_);
   HTMLElement::Trace(visitor);
-}
-
-const AttrNameToTrustedType& HTMLFormElement::GetCheckedAttributeTypes() const {
-  DEFINE_STATIC_LOCAL(AttrNameToTrustedType, attribute_map,
-                      ({{"action", SpecificTrustedType::kTrustedURL}}));
-  return attribute_map;
 }
 
 bool HTMLFormElement::MatchesValidityPseudoClasses() const {
@@ -120,7 +110,8 @@ bool HTMLFormElement::IsValidElement() {
 Node::InsertionNotificationRequest HTMLFormElement::InsertedInto(
     ContainerNode& insertion_point) {
   HTMLElement::InsertedInto(insertion_point);
-  LogAddElementIfIsolatedWorldAndInDocument("form", kMethodAttr, kActionAttr);
+  LogAddElementIfIsolatedWorldAndInDocument("form", html_names::kMethodAttr,
+                                            html_names::kActionAttr);
   if (insertion_point.isConnected())
     GetDocument().DidAssociateFormControl(this);
   return kInsertionDone;
@@ -190,14 +181,14 @@ HTMLElement* HTMLFormElement::item(unsigned index) {
   return elements()->item(index);
 }
 
-void HTMLFormElement::SubmitImplicitly(Event& event,
+void HTMLFormElement::SubmitImplicitly(const Event& event,
                                        bool from_implicit_submission_trigger) {
   int submission_trigger_count = 0;
   bool seen_default_button = false;
-  for (const auto& element : ListedElements()) {
-    if (!element->IsFormControlElement())
+  for (ListedElement* element : ListedElements()) {
+    auto* control = DynamicTo<HTMLFormControlElement>(element);
+    if (!control)
       continue;
-    HTMLFormControlElement* control = ToHTMLFormControlElement(element);
     if (!seen_default_button && control->CanBeSuccessfulSubmitButton()) {
       if (from_implicit_submission_trigger)
         seen_default_button = true;
@@ -214,7 +205,7 @@ void HTMLFormElement::SubmitImplicitly(Event& event,
     }
   }
   if (from_implicit_submission_trigger && submission_trigger_count == 1)
-    PrepareForSubmission(event, nullptr);
+    PrepareForSubmission(&event, nullptr);
 }
 
 bool HTMLFormElement::ValidateInteractively() {
@@ -232,11 +223,11 @@ bool HTMLFormElement::ValidateInteractively() {
 
   // Needs to update layout now because we'd like to call isFocusable(), which
   // has !layoutObject()->needsLayout() assertion.
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kFocus);
 
   // Focus on the first focusable control and show a validation message.
   for (const auto& unhandled : unhandled_invalid_controls) {
-    if (ToHTMLElement(unhandled)->IsFocusable()) {
+    if (unhandled->ValidationAnchorOrHostIsFocusable()) {
       unhandled->ShowValidationMessage();
       UseCounter::Count(GetDocument(),
                         WebFeature::kFormValidationShowedMessage);
@@ -246,35 +237,38 @@ bool HTMLFormElement::ValidateInteractively() {
   // Warn about all of unfocusable controls.
   if (GetDocument().GetFrame()) {
     for (const auto& unhandled : unhandled_invalid_controls) {
-      if (ToHTMLElement(unhandled)->IsFocusable())
+      if (unhandled->ValidationAnchorOrHostIsFocusable())
         continue;
       String message(
           "An invalid form control with name='%name' is not focusable.");
       message.Replace("%name", unhandled->GetName());
-      GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-          kRenderingMessageSource, kErrorMessageLevel, message));
+      GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+          mojom::ConsoleMessageSource::kRendering,
+          mojom::ConsoleMessageLevel::kError, message));
     }
   }
   return false;
 }
 
 void HTMLFormElement::PrepareForSubmission(
-    Event& event,
+    const Event* event,
     HTMLFormControlElement* submit_button) {
   LocalFrame* frame = GetDocument().GetFrame();
   if (!frame || is_submitting_ || in_user_js_submit_event_)
     return;
 
   if (!isConnected()) {
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kJSMessageSource, kWarningMessageLevel,
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::ConsoleMessageSource::kJavaScript,
+        mojom::ConsoleMessageLevel::kWarning,
         "Form submission canceled because the form is not connected"));
     return;
   }
 
-  if (GetDocument().IsSandboxed(kSandboxForms)) {
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kSecurityMessageSource, kErrorMessageLevel,
+  if (GetDocument().IsSandboxed(mojom::blink::WebSandboxFlags::kForms)) {
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::ConsoleMessageSource::kSecurity,
+        mojom::ConsoleMessageLevel::kError,
         "Blocked form submission to '" + attributes_.Action() +
             "' because the form's frame is sandboxed and the 'allow-forms' "
             "permission is not set."));
@@ -282,15 +276,16 @@ void HTMLFormElement::PrepareForSubmission(
   }
 
   // https://github.com/whatwg/html/issues/2253
-  for (const auto& element : ListedElements()) {
-    if (element->IsFormControlElement() &&
-        ToHTMLFormControlElement(element)->BlocksFormSubmission()) {
+  for (ListedElement* element : ListedElements()) {
+    auto* form_control_element = DynamicTo<HTMLFormControlElement>(element);
+    if (form_control_element && form_control_element->BlocksFormSubmission()) {
       UseCounter::Count(GetDocument(),
                         WebFeature::kFormSubmittedWithUnclosedFormControl);
       if (RuntimeEnabledFeatures::UnclosedFormControlIsInvalidEnabled()) {
-        String tag_name = ToHTMLFormControlElement(element)->tagName();
-        GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-            kSecurityMessageSource, kErrorMessageLevel,
+        String tag_name = To<HTMLFormControlElement>(element)->tagName();
+        GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+            mojom::ConsoleMessageSource::kSecurity,
+            mojom::ConsoleMessageLevel::kError,
             "Form submission failed, as the <" + tag_name +
                 "> element named "
                 "'" +
@@ -305,72 +300,108 @@ void HTMLFormElement::PrepareForSubmission(
     }
   }
 
-  bool skip_validation = !GetDocument().GetPage() || NoValidate();
-  if (submit_button && submit_button->FormNoValidate())
-    skip_validation = true;
-
-  UseCounter::Count(GetDocument(), WebFeature::kFormSubmissionStarted);
-  // Interactive validation must be done before dispatching the submit event.
-  if (!skip_validation && !ValidateInteractively())
-    return;
-
   bool should_submit;
   {
     base::AutoReset<bool> submit_event_handler_scope(&in_user_js_submit_event_,
                                                      true);
-    frame->Client()->DispatchWillSendSubmitEvent(this);
-    should_submit =
-        DispatchEvent(*Event::CreateCancelableBubble(
-            event_type_names::kSubmit)) == DispatchEventResult::kNotCanceled;
+
+    bool skip_validation = !GetDocument().GetPage() || NoValidate();
+    if (submit_button && submit_button->FormNoValidate())
+      skip_validation = true;
+
+    UseCounter::Count(GetDocument(), WebFeature::kFormSubmissionStarted);
+    // Interactive validation must be done before dispatching the submit event.
+    if (!skip_validation && !ValidateInteractively()) {
+      should_submit = false;
+    } else {
+      frame->Client()->DispatchWillSendSubmitEvent(this);
+      SubmitEventInit* submit_event_init = SubmitEventInit::Create();
+      submit_event_init->setBubbles(true);
+      submit_event_init->setCancelable(true);
+      submit_event_init->setSubmitter(
+          submit_button ? &submit_button->ToHTMLElement() : nullptr);
+      should_submit = DispatchEvent(*MakeGarbageCollected<SubmitEvent>(
+                          event_type_names::kSubmit, submit_event_init)) ==
+                      DispatchEventResult::kNotCanceled;
+    }
   }
   if (should_submit) {
-    planned_navigation_ = nullptr;
-    Submit(&event, submit_button);
+    ScheduleFormSubmission(event, submit_button);
   }
-  if (!planned_navigation_)
-    return;
-  base::AutoReset<bool> submit_scope(&is_submitting_, true);
-  ScheduleFormSubmission(planned_navigation_);
-  planned_navigation_ = nullptr;
 }
 
 void HTMLFormElement::submitFromJavaScript() {
-  Submit(nullptr, nullptr);
+  ScheduleFormSubmission(nullptr, nullptr);
+}
+
+void HTMLFormElement::requestSubmit(ExceptionState& exception_state) {
+  requestSubmit(nullptr, exception_state);
+}
+
+// https://html.spec.whatwg.org/multipage/forms.html#dom-form-requestsubmit
+void HTMLFormElement::requestSubmit(HTMLElement* submitter,
+                                    ExceptionState& exception_state) {
+  HTMLFormControlElement* control = nullptr;
+  // 1. If submitter was given, then:
+  if (submitter) {
+    // 1.1. If submitter is not a submit button, then throw a TypeError.
+    control = DynamicTo<HTMLFormControlElement>(submitter);
+    // button[type] is a subset of input[type]. So it's ok to compare button's
+    // type and input_type_names.
+    if (!control || (control->type() != input_type_names::kSubmit &&
+                     control->type() != input_type_names::kImage)) {
+      exception_state.ThrowTypeError(
+          "The specified element is not a submit button.");
+      return;
+    }
+    // 1.2. If submitter's form owner is not this form element, then throw a
+    // "NotFoundError" DOMException.
+    if (control->formOwner() != this) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kNotFoundError,
+          "The specified element is not owned by this form element.");
+      return;
+    }
+  }
+  // 3. Submit this form element, from submitter.
+  PrepareForSubmission(nullptr, control);
 }
 
 void HTMLFormElement::SubmitDialog(FormSubmission* form_submission) {
   for (Node* node = this; node; node = node->ParentOrShadowHostNode()) {
-    if (auto* dialog = ToHTMLDialogElementOrNull(*node)) {
+    if (auto* dialog = DynamicTo<HTMLDialogElement>(*node)) {
       dialog->close(form_submission->Result());
       return;
     }
   }
 }
 
-void HTMLFormElement::Submit(Event* event,
-                             HTMLFormControlElement* submit_button) {
+void HTMLFormElement::ScheduleFormSubmission(
+    const Event* event,
+    HTMLFormControlElement* submit_button) {
   LocalFrameView* view = GetDocument().View();
   LocalFrame* frame = GetDocument().GetFrame();
   if (!view || !frame || !frame->GetPage())
     return;
 
-  // https://html.spec.whatwg.org/multipage/forms.html#form-submission-algorithm
+  // https://html.spec.whatwg.org/C/#form-submission-algorithm
   // 2. If form document is not connected, has no associated browsing context,
   // or its active sandboxing flag set has its sandboxed forms browsing
   // context flag set, then abort these steps without doing anything.
   if (!isConnected()) {
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kJSMessageSource, kWarningMessageLevel,
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::ConsoleMessageSource::kJavaScript,
+        mojom::ConsoleMessageLevel::kWarning,
         "Form submission canceled because the form is not connected"));
     return;
   }
 
   if (is_constructing_entry_list_) {
-    DCHECK(RuntimeEnabledFeatures::FormDataEventEnabled());
-    GetDocument().AddConsoleMessage(
-        ConsoleMessage::Create(kJSMessageSource, kWarningMessageLevel,
-                               "Form submission canceled because the form is "
-                               "constructing entry list"));
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::ConsoleMessageSource::kJavaScript,
+        mojom::ConsoleMessageLevel::kWarning,
+        "Form submission canceled because the form is "
+        "constructing entry list"));
     return;
   }
 
@@ -386,11 +417,10 @@ void HTMLFormElement::Submit(Event* event,
     // event handler might add a submit button. We search for a submit
     // button again.
     // TODO(tkent): Do we really need to activate such submit button?
-    for (const auto& listed_element : ListedElements()) {
-      if (!listed_element->IsFormControlElement())
+    for (ListedElement* listed_element : ListedElements()) {
+      auto* control = DynamicTo<HTMLFormControlElement>(listed_element);
+      if (!control)
         continue;
-      HTMLFormControlElement* control =
-          ToHTMLFormControlElement(listed_element);
       DCHECK(!control->IsActivatedSubmit());
       if (control->IsSuccessfulSubmitButton()) {
         submit_button = control;
@@ -401,24 +431,90 @@ void HTMLFormElement::Submit(Event* event,
 
   FormSubmission* form_submission =
       FormSubmission::Create(this, attributes_, event, submit_button);
+  Frame* target_frame = form_submission->TargetFrame();
+
   // 'formdata' event handlers might disconnect the form.
-  if (RuntimeEnabledFeatures::FormDataEventEnabled() && !isConnected()) {
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kJSMessageSource, kWarningMessageLevel,
+  if (!isConnected()) {
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::ConsoleMessageSource::kJavaScript,
+        mojom::ConsoleMessageLevel::kWarning,
         "Form submission canceled because the form is not connected"));
     return;
   }
+
   if (form_submission->Method() == FormSubmission::kDialogMethod) {
     SubmitDialog(form_submission);
-  } else if (in_user_js_submit_event_) {
-    // Need to postpone the submission in order to make this cancelable by
-    // another submission request.
-    planned_navigation_ = form_submission;
-  } else {
-    // This runs JavaScript code if action attribute value is javascript:
-    // protocol.
-    ScheduleFormSubmission(form_submission);
+    return;
   }
+
+  DCHECK(form_submission->Method() == FormSubmission::kPostMethod ||
+         form_submission->Method() == FormSubmission::kGetMethod);
+  DCHECK(form_submission->Data());
+  DCHECK(form_submission->Form());
+  if (form_submission->Action().IsEmpty())
+    return;
+  if (GetDocument().IsSandboxed(mojom::blink::WebSandboxFlags::kForms)) {
+    // FIXME: This message should be moved off the console once a solution to
+    // https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kSecurity,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "Blocked form submission to '" +
+            form_submission->Action().ElidedString() +
+            "' because the form's frame is sandboxed and the 'allow-forms' "
+            "permission is not set."));
+    return;
+  }
+
+  if (!GetDocument().GetContentSecurityPolicy()->AllowFormAction(
+          form_submission->Action())) {
+    return;
+  }
+
+  UseCounter::Count(GetDocument(), WebFeature::kFormsSubmitted);
+  if (MixedContentChecker::IsMixedFormAction(GetDocument().GetFrame(),
+                                             form_submission->Action())) {
+    UseCounter::Count(GetDocument(), WebFeature::kMixedContentFormsSubmitted);
+  }
+  if (FastHasAttribute(html_names::kDisabledAttr)) {
+    UseCounter::Count(GetDocument(),
+                      WebFeature::kFormDisabledAttributePresentAndSubmit);
+  }
+
+  if (!target_frame)
+    return;
+
+  if (form_submission->Action().ProtocolIsJavaScript()) {
+    // For javascript urls, don't post a task to execute the form submission
+    // because we already get another task posted for it in
+    // Document::ProcessJavascriptUrl. If we post two tasks, the javascript will
+    // be run too late according to some tests.
+    form_submission->Navigate();
+    return;
+  }
+
+  FrameScheduler* scheduler = GetDocument().GetFrame()->GetFrameScheduler();
+
+  if (auto* target_local_frame = DynamicTo<LocalFrame>(target_frame)) {
+    if (!target_local_frame->IsNavigationAllowed())
+      return;
+
+    // Cancel parsing if the form submission is targeted at this frame.
+    if (target_local_frame == GetDocument().GetFrame() &&
+        !form_submission->Action().ProtocolIsJavaScript()) {
+      target_local_frame->GetDocument()->CancelParsing();
+    }
+
+    // Use the target frame's frame scheduler. If we can't due to targeting a
+    // RemoteFrame, then use the frame scheduler from the frame this form is in.
+    scheduler = target_local_frame->GetFrameScheduler();
+
+    // Cancel pending javascript url navigations for the target frame. This new
+    // form submission should take precedence over them.
+    target_local_frame->GetDocument()->CancelPendingJavaScriptUrls();
+  }
+
+  target_frame->ScheduleFormSubmission(scheduler, form_submission);
 }
 
 FormData* HTMLFormElement::ConstructEntryList(
@@ -433,95 +529,20 @@ FormData* HTMLFormElement::ConstructEntryList(
     submit_button->SetActivatedSubmit(true);
   for (ListedElement* control : ListedElements()) {
     DCHECK(control);
-    HTMLElement& element = ToHTMLElement(*control);
+    HTMLElement& element = control->ToHTMLElement();
     if (!element.IsDisabledFormControl())
       control->AppendToFormData(form_data);
-    if (auto* input = ToHTMLInputElementOrNull(element)) {
+    if (auto* input = DynamicTo<HTMLInputElement>(element)) {
       if (input->type() == input_type_names::kPassword &&
           !input->value().IsEmpty())
         form_data.SetContainsPasswordData(true);
     }
   }
-  if (RuntimeEnabledFeatures::FormDataEventEnabled())
-    DispatchEvent(*FormDataEvent::Create(form_data));
+  DispatchEvent(*MakeGarbageCollected<FormDataEvent>(form_data));
 
   if (submit_button)
     submit_button->SetActivatedSubmit(false);
   return &form_data;
-}
-
-void HTMLFormElement::ScheduleFormSubmission(FormSubmission* submission) {
-  DCHECK(submission->Method() == FormSubmission::kPostMethod ||
-         submission->Method() == FormSubmission::kGetMethod);
-  DCHECK(submission->Data());
-  DCHECK(submission->Form());
-  if (submission->Action().IsEmpty())
-    return;
-  if (GetDocument().IsSandboxed(kSandboxForms)) {
-    // FIXME: This message should be moved off the console once a solution to
-    // https://bugs.webkit.org/show_bug.cgi?id=103274 exists.
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kSecurityMessageSource, kErrorMessageLevel,
-        "Blocked form submission to '" + submission->Action().ElidedString() +
-            "' because the form's frame is sandboxed and the 'allow-forms' "
-            "permission is not set."));
-    return;
-  }
-
-  if (!GetDocument().GetContentSecurityPolicy()->AllowFormAction(
-          submission->Action())) {
-    return;
-  }
-
-  if (submission->Action().ProtocolIsJavaScript()) {
-    if (FastHasAttribute(kDisabledAttr)) {
-      UseCounter::Count(GetDocument(),
-                        WebFeature::kFormDisabledAttributePresentAndSubmit);
-    }
-    GetDocument().ProcessJavaScriptUrl(submission->Action(),
-                                       kCheckContentSecurityPolicy);
-    return;
-  }
-
-  Frame* target_frame = GetDocument().GetFrame()->FindFrameForNavigation(
-      submission->Target(), *GetDocument().GetFrame(),
-      submission->RequestURL());
-  if (!target_frame) {
-    target_frame = GetDocument().GetFrame();
-  } else {
-    submission->ClearTarget();
-  }
-  if (!target_frame->GetPage())
-    return;
-
-  UseCounter::Count(GetDocument(), WebFeature::kFormsSubmitted);
-  if (MixedContentChecker::IsMixedFormAction(GetDocument().GetFrame(),
-                                             submission->Action())) {
-    UseCounter::Count(GetDocument().GetFrame(),
-                      WebFeature::kMixedContentFormsSubmitted);
-  }
-  if (FastHasAttribute(kDisabledAttr)) {
-    UseCounter::Count(GetDocument(),
-                      WebFeature::kFormDisabledAttributePresentAndSubmit);
-  }
-
-  // TODO(lukasza): Investigate if the code below can uniformly handle remote
-  // and local frames (i.e. by calling virtual Frame::navigate from a timer).
-  // See also https://goo.gl/95d2KA.
-  if (target_frame->IsLocalFrame()) {
-    ToLocalFrame(target_frame)
-        ->GetNavigationScheduler()
-        .ScheduleFormSubmission(&GetDocument(), submission);
-  } else {
-    FrameLoadRequest frame_load_request =
-        submission->CreateFrameLoadRequest(&GetDocument());
-    frame_load_request.GetResourceRequest().SetHasUserGesture(
-        LocalFrame::HasTransientUserActivation(GetDocument().GetFrame()));
-    // TODO(dgozman): we lose information about triggering event and desired
-    // navigation policy here.
-    ToRemoteFrame(target_frame)
-        ->Navigate(frame_load_request, WebFrameLoadType::kStandard);
-  }
 }
 
 void HTMLFormElement::reset() {
@@ -540,11 +561,12 @@ void HTMLFormElement::reset() {
   // Copy the element list because |reset()| implementation can update DOM
   // structure.
   ListedElement::List elements(ListedElements());
-  for (const auto& element : elements) {
-    if (element->IsFormControlElement())
-      ToHTMLFormControlElement(element)->Reset();
-    else if (element->IsElementInternals())
-      CustomElement::EnqueueFormResetCallback(*ToHTMLElement(element));
+  for (ListedElement* element : elements) {
+    if (auto* html_form_element = DynamicTo<HTMLFormControlElement>(element)) {
+      html_form_element->Reset();
+    } else if (element->IsElementInternals()) {
+      CustomElement::EnqueueFormResetCallback(element->ToHTMLElement());
+    }
   }
 
   is_in_reset_function_ = false;
@@ -553,32 +575,33 @@ void HTMLFormElement::reset() {
 void HTMLFormElement::ParseAttribute(
     const AttributeModificationParams& params) {
   const QualifiedName& name = params.name;
-  if (name == kActionAttr) {
+  if (name == html_names::kActionAttr) {
     attributes_.ParseAction(params.new_value);
     LogUpdateAttributeIfIsolatedWorldAndInDocument("form", params);
 
     // If we're not upgrading insecure requests, and the new action attribute is
     // pointing to an insecure "action" location from a secure page it is marked
     // as "passive" mixed content.
-    if (GetDocument().GetInsecureRequestPolicy() & kUpgradeInsecureRequests)
+    if ((GetDocument().GetSecurityContext().GetInsecureRequestPolicy() &
+         mojom::blink::InsecureRequestPolicy::kUpgradeInsecureRequests) !=
+        mojom::blink::InsecureRequestPolicy::kLeaveInsecureRequestsAlone)
       return;
     KURL action_url = GetDocument().CompleteURL(
         attributes_.Action().IsEmpty() ? GetDocument().Url().GetString()
                                        : attributes_.Action());
     if (MixedContentChecker::IsMixedFormAction(GetDocument().GetFrame(),
                                                action_url)) {
-      UseCounter::Count(GetDocument().GetFrame(),
-                        WebFeature::kMixedContentFormPresent);
+      UseCounter::Count(GetDocument(), WebFeature::kMixedContentFormPresent);
     }
-  } else if (name == kTargetAttr) {
+  } else if (name == html_names::kTargetAttr) {
     attributes_.SetTarget(params.new_value);
-  } else if (name == kMethodAttr) {
+  } else if (name == html_names::kMethodAttr) {
     attributes_.UpdateMethodType(params.new_value);
-  } else if (name == kEnctypeAttr) {
+  } else if (name == html_names::kEnctypeAttr) {
     attributes_.UpdateEncodingType(params.new_value);
-  } else if (name == kAcceptCharsetAttr) {
+  } else if (name == html_names::kAcceptCharsetAttr) {
     attributes_.SetAcceptCharset(params.new_value);
-  } else if (name == kDisabledAttr) {
+  } else if (name == html_names::kDisabledAttr) {
     UseCounter::Count(GetDocument(), WebFeature::kFormDisabledAttributePresent);
   } else {
     HTMLElement::ParseAttribute(params);
@@ -588,23 +611,24 @@ void HTMLFormElement::ParseAttribute(
 void HTMLFormElement::Associate(ListedElement& e) {
   listed_elements_are_dirty_ = true;
   listed_elements_.clear();
-  if (ToHTMLElement(e).FastHasAttribute(kFormAttr))
+  if (e.ToHTMLElement().FastHasAttribute(html_names::kFormAttr))
     has_elements_associated_by_form_attribute_ = true;
 }
 
 void HTMLFormElement::Disassociate(ListedElement& e) {
   listed_elements_are_dirty_ = true;
   listed_elements_.clear();
-  RemoveFromPastNamesMap(ToHTMLElement(e));
+  RemoveFromPastNamesMap(e.ToHTMLElement());
 }
 
 bool HTMLFormElement::IsURLAttribute(const Attribute& attribute) const {
-  return attribute.GetName() == kActionAttr ||
+  return attribute.GetName() == html_names::kActionAttr ||
          HTMLElement::IsURLAttribute(attribute);
 }
 
 bool HTMLFormElement::HasLegalLinkAttribute(const QualifiedName& name) const {
-  return name == kActionAttr || HTMLElement::HasLegalLinkAttribute(name);
+  return name == html_names::kActionAttr ||
+         HTMLElement::HasLegalLinkAttribute(name);
 }
 
 void HTMLFormElement::Associate(HTMLImageElement& e) {
@@ -684,7 +708,7 @@ String HTMLFormElement::GetName() const {
 }
 
 bool HTMLFormElement::NoValidate() const {
-  return FastHasAttribute(kNovalidateAttr);
+  return FastHasAttribute(html_names::kNovalidateAttr);
 }
 
 String HTMLFormElement::action() const {
@@ -695,17 +719,12 @@ String HTMLFormElement::action() const {
   return action_url.GetString();
 }
 
-void HTMLFormElement::action(USVStringOrTrustedURL& result) const {
-  result.SetUSVString(action());
-}
-
-void HTMLFormElement::setAction(const USVStringOrTrustedURL& value,
-                                ExceptionState& exception_state) {
-  setAttribute(kActionAttr, value, exception_state);
+void HTMLFormElement::setAction(const AtomicString& value) {
+  setAttribute(html_names::kActionAttr, value);
 }
 
 void HTMLFormElement::setEnctype(const AtomicString& value) {
-  setAttribute(kEnctypeAttr, value);
+  setAttribute(html_names::kEnctypeAttr, value);
 }
 
 String HTMLFormElement::method() const {
@@ -713,14 +732,14 @@ String HTMLFormElement::method() const {
 }
 
 void HTMLFormElement::setMethod(const AtomicString& value) {
-  setAttribute(kMethodAttr, value);
+  setAttribute(html_names::kMethodAttr, value);
 }
 
 HTMLFormControlElement* HTMLFormElement::FindDefaultButton() const {
-  for (const auto& element : ListedElements()) {
-    if (!element->IsFormControlElement())
+  for (ListedElement* element : ListedElements()) {
+    auto* control = DynamicTo<HTMLFormControlElement>(element);
+    if (!control)
       continue;
-    HTMLFormControlElement* control = ToHTMLFormControlElement(element);
     if (control->CanBeSuccessfulSubmitButton())
       return control;
   }
@@ -738,17 +757,16 @@ bool HTMLFormElement::CheckInvalidControlsAndCollectUnhandled(
   const ListedElement::List& listed_elements = ListedElements();
   HeapVector<Member<ListedElement>> elements;
   elements.ReserveCapacity(listed_elements.size());
-  for (const auto& element : listed_elements)
+  for (ListedElement* element : listed_elements)
     elements.push_back(element);
   int invalid_controls_count = 0;
-  for (const auto& element : elements) {
+  for (ListedElement* element : elements) {
     if (element->Form() != this)
       continue;
     // TOOD(tkent): Virtualize checkValidity().
     bool should_check_validity = false;
-    if (element->IsFormControlElement()) {
-      should_check_validity =
-          ToHTMLFormControlElement(element)->IsSubmittableElement();
+    if (auto* html_form_element = DynamicTo<HTMLFormControlElement>(element)) {
+      should_check_validity = html_form_element->IsSubmittableElement();
     } else if (element->IsElementInternals()) {
       should_check_validity = true;
     }
@@ -773,15 +791,14 @@ Element* HTMLFormElement::ElementFromPastNamesMap(
 #if DCHECK_IS_ON()
   if (!element)
     return nullptr;
-  SECURITY_DCHECK(ToHTMLElement(element)->formOwner() == this);
-  if (IsHTMLImageElement(*element)) {
+  SECURITY_DCHECK(To<HTMLElement>(element)->formOwner() == this);
+  if (IsA<HTMLImageElement>(*element)) {
     SECURITY_DCHECK(ImageElements().Find(element) != kNotFound);
-  } else if (IsHTMLObjectElement(*element)) {
-    SECURITY_DCHECK(ListedElements().Find(ToHTMLObjectElement(element)) !=
-                    kNotFound);
+  } else if (auto* html_image_element = DynamicTo<HTMLObjectElement>(element)) {
+    SECURITY_DCHECK(ListedElements().Find(html_image_element) != kNotFound);
   } else {
-    SECURITY_DCHECK(ListedElements().Find(ToHTMLFormControlElement(element)) !=
-                    kNotFound);
+    SECURITY_DCHECK(ListedElements().Find(
+                        To<HTMLFormControlElement>(element)) != kNotFound);
   }
 #endif
   return element;
@@ -824,8 +841,8 @@ void HTMLFormElement::GetNamedElements(
 }
 
 bool HTMLFormElement::ShouldAutocomplete() const {
-  return !DeprecatedEqualIgnoringCase(FastGetAttribute(kAutocompleteAttr),
-                                      "off");
+  return !EqualIgnoringASCIICase(
+      FastGetAttribute(html_names::kAutocompleteAttr), "off");
 }
 
 void HTMLFormElement::FinishParsingChildren() {
@@ -854,14 +871,14 @@ void HTMLFormElement::AnonymousNamedGetter(
   DCHECK(!elements.IsEmpty());
 
   bool only_match_img =
-      !elements.IsEmpty() && IsHTMLImageElement(*elements.front());
+      !elements.IsEmpty() && IsA<HTMLImageElement>(*elements.front());
   if (only_match_img) {
     UseCounter::Count(GetDocument(),
                       WebFeature::kFormNameAccessForImageElement);
     // The following code has performance impact, but it should be small
     // because <img> access via <form> name getter is rarely used.
     for (auto& element : elements) {
-      if (IsHTMLImageElement(*element) && !element->IsDescendantOf(this)) {
+      if (IsA<HTMLImageElement>(*element) && !element->IsDescendantOf(this)) {
         UseCounter::Count(
             GetDocument(),
             WebFeature::kFormNameAccessForNonDescendantImageElement);
@@ -878,12 +895,13 @@ void HTMLFormElement::AnonymousNamedGetter(
 }
 
 void HTMLFormElement::InvalidateDefaultButtonStyle() const {
-  for (const auto& control : ListedElements()) {
-    if (!control->IsFormControlElement())
+  for (ListedElement* control : ListedElements()) {
+    auto* html_form_control = DynamicTo<HTMLFormControlElement>(control);
+    if (!html_form_control)
       continue;
-    if (ToHTMLFormControlElement(control)->CanBeSuccessfulSubmitButton()) {
-      ToHTMLFormControlElement(control)->PseudoStateChanged(
-          CSSSelector::kPseudoDefault);
+
+    if (html_form_control->CanBeSuccessfulSubmitButton()) {
+      html_form_control->PseudoStateChanged(CSSSelector::kPseudoDefault);
     }
   }
 }

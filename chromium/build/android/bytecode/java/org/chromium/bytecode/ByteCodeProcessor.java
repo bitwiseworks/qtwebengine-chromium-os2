@@ -18,6 +18,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -30,6 +31,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -44,9 +46,8 @@ import java.util.zip.ZipOutputStream;
  * Java application that takes in an input jar, performs a series of bytecode transformations,
  * and generates an output jar.
  *
- * Two types of transformations are performed:
- * 1) Enabling assertions via {@link AssertionEnablerClassAdapter}
- * 2) Providing support for custom resources via {@link CustomResourcesClassAdapter}
+ * One type of transformation are performed:
+ * 1) Providing support for custom resources via {@link CustomResourcesClassAdapter}
  */
 class ByteCodeProcessor {
     private static final String CLASS_FILE_SUFFIX = ".class";
@@ -54,7 +55,6 @@ class ByteCodeProcessor {
     private static final int BUFFER_SIZE = 16384;
     private static boolean sVerbose;
     private static boolean sIsPrebuilt;
-    private static boolean sShouldAssert;
     private static boolean sShouldUseCustomResources;
     private static boolean sShouldUseThreadAnnotations;
     private static boolean sShouldCheckClassPath;
@@ -110,20 +110,22 @@ class ByteCodeProcessor {
         }
         ClassVisitor chain = writer;
         /* DEBUGGING:
-         To see the bytecode for a specific class:
-           if (entry.getName().contains("YourClassName")) {
-             chain = new TraceClassVisitor(chain, new PrintWriter(System.out));
-           }
          To see objectweb.asm code that will generate bytecode for a given class:
-           java -cp "third_party/ow2_asm/lib/asm-5.0.1.jar:third_party/ow2_asm/lib/"\
-               "asm-util-5.0.1.jar:out/Debug/lib.java/jar_containing_yourclass.jar" \
-               org.objectweb.asm.util.ASMifier org.package.YourClassName
+
+         java -cp
+         "third_party/android_deps/libs/org_ow2_asm_asm/asm-7.0.jar:third_party/android_deps/libs/org_ow2_asm_asm_util/asm-util-7.0.jar:out/Debug/lib.java/jar_containing_yourclass.jar"
+         org.objectweb.asm.util.ASMifier org.package.YourClassName
+
+         See this pdf for more details: https://asm.ow2.io/asm4-guide.pdf
+
+         To see the bytecode for a specific class, uncomment this code with your class name:
+
+        if (entry.getName().contains("YOUR_CLASS_NAME")) {
+          chain = new TraceClassVisitor(chain, new PrintWriter(System.out));
+        }
         */
         if (sShouldUseThreadAnnotations) {
             chain = new ThreadAssertionClassAdapter(chain);
-        }
-        if (sShouldAssert) {
-            chain = new AssertionEnablerClassAdapter(chain);
         }
         if (sShouldUseCustomResources) {
             chain = new CustomResourcesClassAdapter(
@@ -172,13 +174,41 @@ class ByteCodeProcessor {
             throw new RuntimeException(ioException);
         }
 
-        if (sValidator.getNumClassPathErrors() > 0) {
-            System.err.println("Missing " + sValidator.getNumClassPathErrors()
-                    + " classes missing in direct classpath. To fix, add GN deps for:");
-            for (String s : sValidator.getClassPathMissingJars()) {
-                System.err.println(s);
+        if (sValidator.hasErrors()) {
+            System.err.println("Direct classpath is incomplete. To fix, add deps on the "
+                    + "GN target(s) that provide:");
+            for (Map.Entry<String, Map<String, Set<String>>> entry :
+                    sValidator.getErrors().entrySet()) {
+                printValidationError(System.err, entry.getKey(), entry.getValue());
             }
             System.exit(1);
+        }
+    }
+
+    private static void printValidationError(
+            PrintStream out, String jarName, Map<String, Set<String>> missingClasses) {
+        out.print(" * ");
+        out.println(jarName);
+        int i = 0;
+        final int numErrorsPerJar = 2;
+        // The list of missing classes is non-exhaustive because each class that fails to validate
+        // reports only the first missing class.
+        for (Map.Entry<String, Set<String>> entry : missingClasses.entrySet()) {
+            String missingClass = entry.getKey();
+            Set<String> filesThatNeededIt = entry.getValue();
+            out.print("     * ");
+            if (i == numErrorsPerJar) {
+                out.print(String.format("And %d more...", missingClasses.size() - numErrorsPerJar));
+                break;
+            }
+            out.print(missingClass.replace('/', '.'));
+            out.print(" (needed by ");
+            out.print(filesThatNeededIt.iterator().next().replace('/', '.'));
+            if (filesThatNeededIt.size() > 1) {
+                out.print(String.format(" and %d more", filesThatNeededIt.size() - 1));
+            }
+            out.println(")");
+            i++;
         }
     }
 
@@ -217,7 +247,6 @@ class ByteCodeProcessor {
         String outputJarPath = args[currIndex++];
         sVerbose = args[currIndex++].equals("--verbose");
         sIsPrebuilt = args[currIndex++].equals("--is-prebuilt");
-        sShouldAssert = args[currIndex++].equals("--enable-assert");
         sShouldUseCustomResources = args[currIndex++].equals("--enable-custom-resources");
         sShouldUseThreadAnnotations = args[currIndex++].equals("--enable-thread-annotations");
         sShouldCheckClassPath = args[currIndex++].equals("--enable-check-class-path");
@@ -242,6 +271,7 @@ class ByteCodeProcessor {
         sFullClassPathJarPaths.addAll(sdkJarPaths);
         sFullClassPathJarPaths.addAll(
                 Arrays.asList(Arrays.copyOfRange(args, currIndex, args.length)));
+
         sFullClassPathClassLoader = loadJars(sFullClassPathJarPaths);
         sFullClassPathJarPaths.removeAll(directClassPathJarPaths);
 

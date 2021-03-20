@@ -65,7 +65,7 @@
 #define OS_AIX 1
 #elif defined(__OS2__)
 #define OS_OS2 1
-#elif defined(__asmjs__)
+#elif defined(__asmjs__) || defined(__wasm__)
 #define OS_ASMJS
 #else
 #error Please add support for your platform in build/build_config.h
@@ -90,12 +90,6 @@
 
 #if defined(OS_WIN) || defined(OS_OS2)
 #define OS_DOSLIKE 1
-#endif
-
-// Use tcmalloc
-#if (defined(OS_WIN) || defined(OS_LINUX) || defined(OS_ANDROID)) && \
-    !defined(NO_TCMALLOC)
-#define USE_TCMALLOC 1
 #endif
 
 // Compiler detection.
@@ -151,7 +145,7 @@
 #define ARCH_CPU_ARM64 1
 #define ARCH_CPU_64_BITS 1
 #define ARCH_CPU_LITTLE_ENDIAN 1
-#elif defined(__pnacl__) || defined(__asmjs__)
+#elif defined(__pnacl__) || defined(__asmjs__) || defined(__wasm__)
 #define ARCH_CPU_32_BITS 1
 #define ARCH_CPU_LITTLE_ENDIAN 1
 #elif defined(__MIPSEL__)

@@ -25,7 +25,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_H_
 
+#include "cc/paint/node_id.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
+#include "third_party/blink/renderer/platform/fonts/font_fallback_iterator.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_list.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_priority.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
@@ -33,7 +35,7 @@
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/text/tab_size.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -52,8 +54,6 @@ namespace blink {
 struct CharacterRange;
 class FloatPoint;
 class FloatRect;
-class FontFallbackIterator;
-class FontData;
 class FontSelector;
 class ShapeCache;
 class TextRun;
@@ -65,7 +65,8 @@ class PLATFORM_EXPORT Font {
 
  public:
   Font();
-  Font(const FontDescription&);
+  explicit Font(const FontDescription&);
+  Font(const FontDescription&, FontSelector*);
   ~Font();
 
   Font(const Font&);
@@ -78,21 +79,30 @@ class PLATFORM_EXPORT Font {
     return font_description_;
   }
 
-  void Update(FontSelector*) const;
-
   enum CustomFontNotReadyAction {
     kDoNotPaintIfFontNotReady,
     kUseFallbackIfFontNotReady
   };
+
+  // TODO(layout-dev): Once zoom-for-dsf launches on Mac the device_scale_factor
+  // parameter can be removed from all of these methods.
+  // https://crbug.com/716231
   void DrawText(cc::PaintCanvas*,
                 const TextRunPaintInfo&,
                 const FloatPoint&,
                 float device_scale_factor,
                 const cc::PaintFlags&) const;
   void DrawText(cc::PaintCanvas*,
+                const TextRunPaintInfo&,
+                const FloatPoint&,
+                float device_scale_factor,
+                cc::NodeId node_id,
+                const cc::PaintFlags&) const;
+  void DrawText(cc::PaintCanvas*,
                 const NGTextFragmentPaintInfo&,
                 const FloatPoint&,
                 float device_scale_factor,
+                cc::NodeId node_id,
                 const cc::PaintFlags&) const;
   bool DrawBidiText(cc::PaintCanvas*,
                     const TextRunPaintInfo&,
@@ -112,6 +122,8 @@ class PLATFORM_EXPORT Font {
                          const FloatPoint&,
                          float device_scale_factor,
                          const cc::PaintFlags&) const;
+
+  FloatRect TextInkBounds(const NGTextFragmentPaintInfo&) const;
 
   struct TextIntercept {
     float begin_, end_;
@@ -171,6 +183,10 @@ class PLATFORM_EXPORT Font {
     return (PrimaryFont() ? PrimaryFont()->SpaceWidth() : 0) +
            GetFontDescription().LetterSpacing();
   }
+
+  // Compute the base tab width; the width when its position is zero.
+  float TabWidth(const SimpleFontData*, const TabSize&) const;
+  // Compute the tab width for the specified |position|.
   float TabWidth(const SimpleFontData*, const TabSize&, float position) const;
   float TabWidth(const TabSize& tab_size, float position) const {
     return TabWidth(PrimaryFont(), tab_size, position);
@@ -185,7 +201,6 @@ class PLATFORM_EXPORT Font {
   // loaded. This *should* not happen but in reality it does ever now and then
   // when, for whatever reason, the last resort font cannot be loaded.
   const SimpleFontData* PrimaryFont() const;
-  const FontData* FontDataAt(unsigned) const;
 
   // Access the shape cache associated with this particular font object.
   // Should *not* be retained across layout calls as it may become invalid.
@@ -197,8 +212,7 @@ class PLATFORM_EXPORT Font {
   bool CanShapeWordByWord() const;
 
   void SetCanShapeWordByWordForTesting(bool b) {
-    can_shape_word_by_word_ = b;
-    shape_word_by_word_computed_ = true;
+    EnsureFontFallbackList()->SetCanShapeWordByWordForTesting(b);
   }
 
   void ReportNotDefGlyph() const;
@@ -208,42 +222,39 @@ class PLATFORM_EXPORT Font {
 
   GlyphData GetEmphasisMarkGlyphData(const AtomicString&) const;
 
-  bool ComputeCanShapeWordByWord() const;
-
  public:
   FontSelector* GetFontSelector() const;
-  scoped_refptr<FontFallbackIterator> CreateFontFallbackIterator(
-      FontFallbackPriority) const;
+  FontFallbackIterator CreateFontFallbackIterator(
+      FontFallbackPriority fallback_priority) const {
+    EnsureFontFallbackList();
+    return FontFallbackIterator(font_description_, font_fallback_list_,
+                                fallback_priority);
+  }
 
   void WillUseFontData(const String& text) const;
 
   bool LoadingCustomFonts() const;
   bool IsFallbackValid() const;
 
- private:
   bool ShouldSkipDrawing() const {
     return font_fallback_list_ && font_fallback_list_->ShouldSkipDrawing();
   }
 
+ private:
+  FontFallbackList* EnsureFontFallbackList() const {
+    if (!font_fallback_list_)
+      font_fallback_list_ = FontFallbackList::Create(nullptr);
+    return font_fallback_list_.get();
+  }
+
   FontDescription font_description_;
   mutable scoped_refptr<FontFallbackList> font_fallback_list_;
-  mutable unsigned can_shape_word_by_word_ : 1;
-  mutable unsigned shape_word_by_word_computed_ : 1;
-
-  // For m_fontDescription & m_fontFallbackList access.
-  friend class CachingWordShaper;
 };
 
 inline Font::~Font() = default;
 
 inline const SimpleFontData* Font::PrimaryFont() const {
-  DCHECK(font_fallback_list_);
-  return font_fallback_list_->PrimarySimpleFontData(font_description_);
-}
-
-inline const FontData* Font::FontDataAt(unsigned index) const {
-  DCHECK(font_fallback_list_);
-  return font_fallback_list_->FontDataAt(font_description_, index);
+  return EnsureFontFallbackList()->PrimarySimpleFontData(font_description_);
 }
 
 inline FontSelector* Font::GetFontSelector() const {
@@ -251,22 +262,11 @@ inline FontSelector* Font::GetFontSelector() const {
 }
 
 inline float Font::TabWidth(const SimpleFontData* font_data,
-                            const TabSize& tab_size,
-                            float position) const {
+                            const TabSize& tab_size) const {
   if (!font_data)
     return GetFontDescription().LetterSpacing();
   float base_tab_width = tab_size.GetPixelSize(font_data->SpaceWidth());
-  if (!base_tab_width)
-    return GetFontDescription().LetterSpacing();
-  float distance_to_tab_stop = base_tab_width - fmodf(position, base_tab_width);
-
-  // Let the minimum width be the half of the space width so that it's always
-  // recognizable.  if the distance to the next tab stop is less than that,
-  // advance an additional tab stop.
-  if (distance_to_tab_stop < font_data->SpaceWidth() / 2)
-    distance_to_tab_stop += base_tab_width;
-
-  return distance_to_tab_stop;
+  return base_tab_width ? base_tab_width : GetFontDescription().LetterSpacing();
 }
 
 }  // namespace blink

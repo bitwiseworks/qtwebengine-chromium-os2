@@ -26,8 +26,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_SPEECH_SPEECH_SYNTHESIS_EVENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_SPEECH_SPEECH_SYNTHESIS_EVENT_H_
 
+#include "third_party/blink/renderer/bindings/modules/v8/v8_speech_synthesis_event_init.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
-#include "third_party/blink/renderer/modules/speech/speech_synthesis_event_init.h"
 #include "third_party/blink/renderer/modules/speech/speech_synthesis_utterance.h"
 
 namespace blink {
@@ -42,11 +42,13 @@ class SpeechSynthesisEvent : public Event {
   SpeechSynthesisEvent(const AtomicString& type,
                        SpeechSynthesisUtterance*,
                        unsigned char_index,
+                       unsigned char_length,
                        float elapsed_time,
                        const String& name);
 
   SpeechSynthesisUtterance* utterance() const { return utterance_; }
   unsigned charIndex() const { return char_index_; }
+  unsigned charLength() const { return char_length_; }
   float elapsedTime() const { return elapsed_time_; }
   const String& name() const { return name_; }
 
@@ -54,11 +56,12 @@ class SpeechSynthesisEvent : public Event {
     return event_interface_names::kSpeechSynthesisEvent;
   }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<SpeechSynthesisUtterance> utterance_;
   unsigned char_index_;
+  unsigned char_length_;
   float elapsed_time_;
   String name_;
 };

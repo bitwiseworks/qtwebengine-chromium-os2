@@ -2,11 +2,32 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.m.js';
+import 'chrome://resources/cr_elements/cr_icons_css.m.js';
+import 'chrome://resources/cr_elements/shared_vars_css.m.js';
+import './shared_style.js';
+import './strings.m.js';
+
+import {assert} from 'chrome://resources/js/assert.m.js';
+import {isMac} from 'chrome://resources/js/cr.m.js';
+import {focusWithoutInk} from 'chrome://resources/js/cr/ui/focus_without_ink.m.js';
+import {getFaviconForPageURL} from 'chrome://resources/js/icon.m.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {selectItem} from './actions.js';
+import {CommandManager} from './command_manager.js';
+import {Command, MenuSource} from './constants.js';
+import {StoreClient} from './store_client.js';
+import {BookmarkNode} from './types.js';
+
 Polymer({
   is: 'bookmarks-item',
 
+  _template: html`{__html_template__}`,
+
   behaviors: [
-    bookmarks.StoreClient,
+    StoreClient,
   ],
 
   properties: {
@@ -15,7 +36,7 @@ Polymer({
       observer: 'onItemIdChanged_',
     },
 
-    ironListTabIndex: String,
+    ironListTabIndex: Number,
 
     /** @private {BookmarkNode} */
     item_: {
@@ -30,11 +51,13 @@ Polymer({
     },
 
     /** @private */
-    isFolder_: Boolean,
-  },
+    isMultiSelect_: Boolean,
 
-  hostAttributes: {
-    'role': 'listitem',
+    /** @private */
+    isFolder_: Boolean,
+
+    /** @private */
+    lastTouchPoints_: Number,
   },
 
   observers: [
@@ -49,19 +72,25 @@ Polymer({
     'auxclick': 'onMiddleClick_',
     'mousedown': 'cancelMiddleMouseBehavior_',
     'mouseup': 'cancelMiddleMouseBehavior_',
+    'touchstart': 'onTouchStart_',
   },
 
   /** @override */
-  attached: function() {
-    this.watch('item_', (store) => store.nodes[this.itemId]);
+  attached() {
+    this.watch('item_', store => store.nodes[this.itemId]);
     this.watch(
-        'isSelectedItem_', (store) => !!store.selection.items.has(this.itemId));
+        'isSelectedItem_', store => store.selection.items.has(this.itemId));
+    this.watch('isMultiSelect_', store => store.selection.items.size > 1);
 
     this.updateFromStore();
   },
 
+  focusMenuButton() {
+    focusWithoutInk(this.$.menuButton);
+  },
+
   /** @return {BookmarksItemElement} */
-  getDropTarget: function() {
+  getDropTarget() {
     return this;
   },
 
@@ -69,9 +98,17 @@ Polymer({
    * @param {Event} e
    * @private
    */
-  onContextMenu_: function(e) {
+  onContextMenu_(e) {
     e.preventDefault();
     e.stopPropagation();
+
+    // Prevent context menu from appearing after a drag, but allow opening the
+    // context menu through 2 taps
+    if (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents &&
+        this.lastTouchPoints_ !== 2) {
+      return;
+    }
+
     this.focus();
     if (!this.isSelectedItem_) {
       this.selectThisItem_();
@@ -88,27 +125,24 @@ Polymer({
    * @param {Event} e
    * @private
    */
-  onMenuButtonClick_: function(e) {
+  onMenuButtonClick_(e) {
     e.stopPropagation();
     e.preventDefault();
-    this.selectThisItem_();
+
+    // Skip selecting the item if this item is part of a multi-selected group.
+    if (!this.isMultiSelectMenu_()) {
+      this.selectThisItem_();
+    }
+
     this.fire('open-command-menu', {
       targetElement: e.target,
       source: MenuSource.ITEM,
     });
   },
 
-  /**
-   * @param {Event} e
-   * @private
-   */
-  onMenuButtonDblClick_: function(e) {
-    e.stopPropagation();
-  },
-
   /** @private */
-  selectThisItem_: function() {
-    this.dispatch(bookmarks.actions.selectItem(this.itemId, this.getState(), {
+  selectThisItem_() {
+    this.dispatch(selectItem(this.itemId, this.getState(), {
       clear: true,
       range: false,
       toggle: false,
@@ -116,7 +150,7 @@ Polymer({
   },
 
   /** @private */
-  onItemIdChanged_: function() {
+  onItemIdChanged_() {
     // TODO(tsergeant): Add a histogram to measure whether this assertion fails
     // for real users.
     assert(this.getState().nodes[this.itemId]);
@@ -124,7 +158,7 @@ Polymer({
   },
 
   /** @private */
-  onItemChanged_: function() {
+  onItemChanged_() {
     this.isFolder_ = !this.item_.url;
     this.setAttribute(
         'aria-label',
@@ -136,12 +170,12 @@ Polymer({
    * @param {MouseEvent} e
    * @private
    */
-  onClick_: function(e) {
+  onClick_(e) {
     // Ignore double clicks so that Ctrl double-clicking an item won't deselect
     // the item before opening.
-    if (e.detail != 2) {
-      const addKey = cr.isMac ? e.metaKey : e.ctrlKey;
-      this.dispatch(bookmarks.actions.selectItem(this.itemId, this.getState(), {
+    if (e.detail !== 2) {
+      const addKey = isMac ? e.metaKey : e.ctrlKey;
+      this.dispatch(selectItem(this.itemId, this.getState(), {
         clear: !addKey,
         range: e.shiftKey,
         toggle: addKey && !e.shiftKey,
@@ -155,10 +189,10 @@ Polymer({
    * @private
    * @param {KeyboardEvent} e
    */
-  onKeydown_: function(e) {
-    if (e.key == 'ArrowLeft') {
+  onKeydown_(e) {
+    if (e.key === 'ArrowLeft') {
       this.focus();
-    } else if (e.key == 'ArrowRight') {
+    } else if (e.key === 'ArrowRight') {
       this.$.menuButton.focus();
     }
   },
@@ -167,12 +201,12 @@ Polymer({
    * @param {MouseEvent} e
    * @private
    */
-  onDblClick_: function(e) {
+  onDblClick_(e) {
     if (!this.isSelectedItem_) {
       this.selectThisItem_();
     }
 
-    const commandManager = bookmarks.CommandManager.getInstance();
+    const commandManager = CommandManager.getInstance();
     const itemSet = this.getState().selection.items;
     if (commandManager.canExecute(Command.OPEN, itemSet)) {
       commandManager.handle(Command.OPEN, itemSet);
@@ -183,8 +217,8 @@ Polymer({
    * @param {MouseEvent} e
    * @private
    */
-  onMiddleClick_: function(e) {
-    if (e.button != 1) {
+  onMiddleClick_(e) {
+    if (e.button !== 1) {
       return;
     }
 
@@ -193,7 +227,7 @@ Polymer({
       return;
     }
 
-    const commandManager = bookmarks.CommandManager.getInstance();
+    const commandManager = CommandManager.getInstance();
     const itemSet = this.getState().selection.items;
     const command = e.shiftKey ? Command.OPEN : Command.OPEN_NEW_TAB;
     if (commandManager.canExecute(command, itemSet)) {
@@ -202,13 +236,21 @@ Polymer({
   },
 
   /**
+   * @param {TouchEvent} e
+   * @private
+   */
+  onTouchStart_(e) {
+    this.lastTouchPoints_ = e.touches.length;
+  },
+
+  /**
    * Prevent default middle-mouse behavior. On Windows, this prevents autoscroll
    * (during mousedown), and on Linux this prevents paste (during mouseup).
    * @param {MouseEvent} e
    * @private
    */
-  cancelMiddleMouseBehavior_: function(e) {
-    if (e.button == 1) {
+  cancelMiddleMouseBehavior_(e) {
+    if (e.button === 1) {
       e.preventDefault();
     }
   },
@@ -217,14 +259,35 @@ Polymer({
    * @param {string} url
    * @private
    */
-  updateFavicon_: function(url) {
+  updateFavicon_(url) {
     this.$.icon.className = url ? 'website-icon' : 'folder-icon';
-    this.$.icon.style.backgroundImage = url ? cr.icon.getFavicon(url) : null;
+    this.$.icon.style.backgroundImage =
+        url ? getFaviconForPageURL(url, false) : '';
   },
 
-  /** @private */
-  getButtonAriaLabel_: function() {
+  /**
+   * @return {string}
+   * @private
+   */
+  getButtonAriaLabel_() {
+    if (!this.item_) {
+      return '';  // Item hasn't loaded, skip for now.
+    }
+
+    if (this.isMultiSelectMenu_()) {
+      return loadTimeData.getStringF('moreActionsMultiButtonAxLabel');
+    }
+
     return loadTimeData.getStringF(
         'moreActionsButtonAxLabel', this.item_.title);
-  }
+  },
+
+  /**
+   * This item is part of a group selection.
+   * @return {boolean}
+   * @private
+   */
+  isMultiSelectMenu_() {
+    return this.isSelectedItem_ && this.isMultiSelect_;
+  },
 });

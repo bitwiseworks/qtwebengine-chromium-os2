@@ -8,9 +8,8 @@
 #include "mojo/public/cpp/system/handle.h"
 #include "mojo/public/cpp/system/trap.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 
 namespace blink {
 
@@ -20,7 +19,7 @@ class V8MojoWatchCallback;
 
 class MojoWatcher final : public ScriptWrappable,
                           public ActiveScriptWrappable<MojoWatcher>,
-                          public ContextLifecycleObserver {
+                          public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(MojoWatcher);
 
@@ -35,13 +34,13 @@ class MojoWatcher final : public ScriptWrappable,
 
   MojoResult cancel();
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // ActiveScriptWrappable
   bool HasPendingActivity() const final;
 
-  // ContextLifecycleObserver
-  void ContextDestroyed(ExecutionContext*) final;
+  // ExecutionContextLifecycleObserver
+  void ContextDestroyed() final;
 
  private:
   friend class V8MojoWatcher;
@@ -53,7 +52,7 @@ class MojoWatcher final : public ScriptWrappable,
   void RunReadyCallback(MojoResult);
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  TraceWrapperMember<V8MojoWatchCallback> callback_;
+  Member<V8MojoWatchCallback> callback_;
   mojo::ScopedTrapHandle trap_handle_;
   mojo::Handle handle_;
 };

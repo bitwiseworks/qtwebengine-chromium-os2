@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-** This file contains routines used to translate between UTF-8,
+** This file contains routines used to translate between UTF-8, 
 ** UTF-16, UTF-16BE, and UTF-16LE.
 **
 ** Notes on UTF-8:
@@ -190,7 +190,7 @@ u32 sqlite3Utf8Read(
 /*
 ** If the TRANSLATE_TRACE macro is defined, the value of each Mem is
 ** printed on stderr on the way into and out of sqlite3VdbeMemTranslate().
-*/
+*/ 
 /* #define TRANSLATE_TRACE 1 */
 
 #ifndef SQLITE_OMIT_UTF16
@@ -200,11 +200,11 @@ u32 sqlite3Utf8Read(
 ** encoding, or if *pMem does not contain a string value.
 */
 SQLITE_NOINLINE int sqlite3VdbeMemTranslate(Mem *pMem, u8 desiredEnc){
-  int len;                    /* Maximum length of output string in bytes */
-  unsigned char *zOut;                  /* Output buffer */
-  unsigned char *zIn;                   /* Input iterator */
-  unsigned char *zTerm;                 /* End of input */
-  unsigned char *z;                     /* Output iterator */
+  sqlite3_int64 len;          /* Maximum length of output string in bytes */
+  unsigned char *zOut;        /* Output buffer */
+  unsigned char *zIn;         /* Input iterator */
+  unsigned char *zTerm;       /* End of input */
+  unsigned char *z;           /* Output iterator */
   unsigned int c;
 
   assert( pMem->db==0 || sqlite3_mutex_held(pMem->db->mutex) );
@@ -215,13 +215,15 @@ SQLITE_NOINLINE int sqlite3VdbeMemTranslate(Mem *pMem, u8 desiredEnc){
 
 #if defined(TRANSLATE_TRACE) && defined(SQLITE_DEBUG)
   {
-    char zBuf[100];
-    sqlite3VdbeMemPrettyPrint(pMem, zBuf);
-    fprintf(stderr, "INPUT:  %s\n", zBuf);
+    StrAccum acc;
+    char zBuf[1000];
+    sqlite3StrAccumInit(&acc, 0, zBuf, sizeof(zBuf), 0);  
+    sqlite3VdbeMemPrettyPrint(pMem, &acc);
+    fprintf(stderr, "INPUT:  %s\n", sqlite3StrAccumFinish(&acc));
   }
 #endif
 
-  /* If the translation is between UTF-16 little and big endian, then
+  /* If the translation is between UTF-16 little and big endian, then 
   ** all that is required is to swap the byte order. This case is handled
   ** differently from the others.
   */
@@ -253,14 +255,14 @@ SQLITE_NOINLINE int sqlite3VdbeMemTranslate(Mem *pMem, u8 desiredEnc){
     ** nul-terminator.
     */
     pMem->n &= ~1;
-    len = pMem->n * 2 + 1;
+    len = 2 * (sqlite3_int64)pMem->n + 1;
   }else{
     /* When converting from UTF-8 to UTF-16 the maximum growth is caused
     ** when a 1-byte UTF-8 character is translated into a 2-byte UTF-16
     ** character. Two bytes are required in the output buffer for the
     ** nul-terminator.
     */
-    len = pMem->n * 2 + 2;
+    len = 2 * (sqlite3_int64)pMem->n + 2;
   }
 
   /* Set zIn to point at the start of the input buffer and zTerm to point 1
@@ -299,13 +301,13 @@ SQLITE_NOINLINE int sqlite3VdbeMemTranslate(Mem *pMem, u8 desiredEnc){
     if( pMem->enc==SQLITE_UTF16LE ){
       /* UTF-16 Little-endian -> UTF-8 */
       while( zIn<zTerm ){
-        READ_UTF16LE(zIn, zIn<zTerm, c);
+        READ_UTF16LE(zIn, zIn<zTerm, c); 
         WRITE_UTF8(z, c);
       }
     }else{
       /* UTF-16 Big-endian -> UTF-8 */
       while( zIn<zTerm ){
-        READ_UTF16BE(zIn, zIn<zTerm, c);
+        READ_UTF16BE(zIn, zIn<zTerm, c); 
         WRITE_UTF8(z, c);
       }
     }
@@ -325,9 +327,11 @@ SQLITE_NOINLINE int sqlite3VdbeMemTranslate(Mem *pMem, u8 desiredEnc){
 translate_out:
 #if defined(TRANSLATE_TRACE) && defined(SQLITE_DEBUG)
   {
-    char zBuf[100];
-    sqlite3VdbeMemPrettyPrint(pMem, zBuf);
-    fprintf(stderr, "OUTPUT: %s\n", zBuf);
+    StrAccum acc;
+    char zBuf[1000];
+    sqlite3StrAccumInit(&acc, 0, zBuf, sizeof(zBuf), 0);  
+    sqlite3VdbeMemPrettyPrint(pMem, &acc);
+    fprintf(stderr, "OUTPUT: %s\n", sqlite3StrAccumFinish(&acc));
   }
 #endif
   return SQLITE_OK;
@@ -336,7 +340,7 @@ translate_out:
 
 #ifndef SQLITE_OMIT_UTF16
 /*
-** This routine checks for a byte-order mark at the beginning of the
+** This routine checks for a byte-order mark at the beginning of the 
 ** UTF-16 string stored in *pMem. If one is present, it is removed and
 ** the encoding of the Mem adjusted. This routine does not do any
 ** byte-swapping, it just sets Mem.enc appropriately.
@@ -359,7 +363,7 @@ int sqlite3VdbeMemHandleBom(Mem *pMem){
       bom = SQLITE_UTF16LE;
     }
   }
-
+  
   if( bom ){
     rc = sqlite3VdbeMemMakeWriteable(pMem);
     if( rc==SQLITE_OK ){
@@ -379,7 +383,7 @@ int sqlite3VdbeMemHandleBom(Mem *pMem){
 ** pZ is a UTF-8 encoded unicode string. If nByte is less than zero,
 ** return the number of unicode characters in pZ up to (but not including)
 ** the first 0x00 byte. If nByte is not less than zero, return the
-** number of unicode characters in the first nByte of pZ (or up to
+** number of unicode characters in the first nByte of pZ (or up to 
 ** the first 0x00, whichever comes first).
 */
 int sqlite3Utf8CharLen(const char *zIn, int nByte){
@@ -399,7 +403,7 @@ int sqlite3Utf8CharLen(const char *zIn, int nByte){
   return r;
 }
 
-/* This test function is not currently used by the automated test-suite.
+/* This test function is not currently used by the automated test-suite. 
 ** Hence it is only available in debug builds.
 */
 #if defined(SQLITE_TEST) && defined(SQLITE_DEBUG)
@@ -461,7 +465,7 @@ int sqlite3Utf16ByteLen(const void *zIn, int nChar){
   int c;
   unsigned char const *z = zIn;
   int n = 0;
-
+  
   if( SQLITE_UTF16NATIVE==SQLITE_UTF16BE ){
     while( n<nChar ){
       READ_UTF16BE(z, 1, c);

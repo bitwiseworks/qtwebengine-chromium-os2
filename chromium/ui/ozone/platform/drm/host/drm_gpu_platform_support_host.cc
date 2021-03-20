@@ -5,19 +5,18 @@
 #include "ui/ozone/platform/drm/host/drm_gpu_platform_support_host.h"
 
 #include <stddef.h>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 #include "ui/ozone/common/gpu/ozone_gpu_messages.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/host/drm_cursor.h"
 #include "ui/ozone/platform/drm/host/drm_display_host_manager.h"
-#include "ui/ozone/platform/drm/host/drm_overlay_candidates_host.h"
-#include "ui/ozone/platform/drm/host/drm_overlay_manager.h"
 #include "ui/ozone/platform/drm/host/gpu_thread_observer.h"
 
 namespace ui {
@@ -29,7 +28,7 @@ namespace {
 class CursorIPC : public DrmCursorProxy {
  public:
   CursorIPC(scoped_refptr<base::SingleThreadTaskRunner> send_runner,
-            const base::Callback<void(IPC::Message*)>& send_callback);
+            base::RepeatingCallback<void(IPC::Message*)> send_callback);
   ~CursorIPC() override;
 
   // DrmCursorProxy implementation.
@@ -45,14 +44,14 @@ class CursorIPC : public DrmCursorProxy {
   void Send(IPC::Message* message);
 
   scoped_refptr<base::SingleThreadTaskRunner> send_runner_;
-  base::Callback<void(IPC::Message*)> send_callback_;
+  base::RepeatingCallback<void(IPC::Message*)> send_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(CursorIPC);
 };
 
 CursorIPC::CursorIPC(scoped_refptr<base::SingleThreadTaskRunner> send_runner,
-                     const base::Callback<void(IPC::Message*)>& send_callback)
-    : send_runner_(send_runner), send_callback_(send_callback) {}
+                     base::RepeatingCallback<void(IPC::Message*)> send_callback)
+    : send_runner_(send_runner), send_callback_(std::move(send_callback)) {}
 
 CursorIPC::~CursorIPC() {}
 
@@ -89,13 +88,9 @@ DrmGpuPlatformSupportHost::DrmGpuPlatformSupportHost(DrmCursor* cursor)
     : ui_runner_(base::ThreadTaskRunnerHandle::IsSet()
                      ? base::ThreadTaskRunnerHandle::Get()
                      : nullptr),
-      cursor_(cursor),
-      weak_ptr_factory_(this) {
-  if (ui_runner_) {
+      cursor_(cursor) {
+  if (ui_runner_)
     weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
-  } else {
-    DCHECK(!features::IsMultiProcessMash());
-  }
 }
 
 DrmGpuPlatformSupportHost::~DrmGpuPlatformSupportHost() {}
@@ -118,6 +113,7 @@ bool DrmGpuPlatformSupportHost::IsConnected() {
 }
 
 void DrmGpuPlatformSupportHost::OnGpuServiceLaunched(
+    int host_id,
     scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_runner,
     GpuHostBindInterfaceCallback binder,
@@ -130,7 +126,7 @@ void DrmGpuPlatformSupportHost::OnGpuProcessLaunched(
     int host_id,
     scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
     scoped_refptr<base::SingleThreadTaskRunner> send_runner,
-    const base::Callback<void(IPC::Message*)>& send_callback) {
+    base::RepeatingCallback<void(IPC::Message*)> send_callback) {
   // If there was a task runner set during construction, prefer using that.
   if (!ui_runner_) {
     ui_runner_ = std::move(ui_runner);
@@ -141,7 +137,7 @@ void DrmGpuPlatformSupportHost::OnGpuProcessLaunched(
                "host_id", host_id);
   host_id_ = host_id;
   send_runner_ = std::move(send_runner);
-  send_callback_ = send_callback;
+  send_callback_ = std::move(send_callback);
 
   for (GpuThreadObserver& observer : gpu_thread_observers_)
     observer.OnGpuProcessLaunched();
@@ -165,20 +161,27 @@ void DrmGpuPlatformSupportHost::OnChannelDestroyed(int host_id) {
     for (GpuThreadObserver& observer : gpu_thread_observers_)
       observer.OnGpuThreadRetired();
   }
-
 }
 
 void DrmGpuPlatformSupportHost::OnMessageReceived(const IPC::Message& message) {
   DCHECK(ui_runner_);
-  if (ui_runner_->BelongsToCurrentThread()) {
-    if (OnMessageReceivedForDrmDisplayHostManager(message))
-      return;
-    OnMessageReceivedForDrmOverlayManager(message);
-  } else {
+  if (!ui_runner_->BelongsToCurrentThread()) {
     ui_runner_->PostTask(
         FROM_HERE, base::BindOnce(&DrmGpuPlatformSupportHost::OnMessageReceived,
                                   weak_ptr_, message));
+    return;
   }
+
+  IPC_BEGIN_MESSAGE_MAP(DrmGpuPlatformSupportHost, message)
+    IPC_MESSAGE_HANDLER(OzoneHostMsg_UpdateNativeDisplays,
+                        OnUpdateNativeDisplays)
+    IPC_MESSAGE_HANDLER(OzoneHostMsg_DisplayConfigured, OnDisplayConfigured)
+    IPC_MESSAGE_HANDLER(OzoneHostMsg_HDCPStateReceived, OnHDCPStateReceived)
+    IPC_MESSAGE_HANDLER(OzoneHostMsg_HDCPStateUpdated, OnHDCPStateUpdated)
+    IPC_MESSAGE_HANDLER(OzoneHostMsg_DisplayControlTaken, OnTakeDisplayControl)
+    IPC_MESSAGE_HANDLER(OzoneHostMsg_DisplayControlRelinquished,
+                        OnRelinquishDisplayControl)
+  IPC_END_MESSAGE_MAP()
 }
 
 bool DrmGpuPlatformSupportHost::Send(IPC::Message* message) {
@@ -214,25 +217,6 @@ void DrmGpuPlatformSupportHost::OnChannelEstablished() {
   // allowed to IPC messages (which are targeted to a specific window).
   cursor_->SetDrmCursorProxy(
       std::make_unique<CursorIPC>(send_runner_, send_callback_));
-}
-
-bool DrmGpuPlatformSupportHost::OnMessageReceivedForDrmDisplayHostManager(
-    const IPC::Message& message) {
-  bool handled = true;
-
-  IPC_BEGIN_MESSAGE_MAP(DrmGpuPlatformSupportHost, message)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_UpdateNativeDisplays,
-                        OnUpdateNativeDisplays)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_DisplayConfigured, OnDisplayConfigured)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_HDCPStateReceived, OnHDCPStateReceived)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_HDCPStateUpdated, OnHDCPStateUpdated)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_DisplayControlTaken, OnTakeDisplayControl)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_DisplayControlRelinquished,
-                        OnRelinquishDisplayControl)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-
-  return handled;
 }
 
 void DrmGpuPlatformSupportHost::OnUpdateNativeDisplays(
@@ -276,67 +260,24 @@ bool DrmGpuPlatformSupportHost::GpuRelinquishDisplayControl() {
   return Send(new OzoneGpuMsg_RelinquishDisplayControl());
 }
 
-bool DrmGpuPlatformSupportHost::GpuAddGraphicsDevice(const base::FilePath& path,
-                                                     base::ScopedFD fd) {
-  IPC::Message* message = new OzoneGpuMsg_AddGraphicsDevice(
-      path, base::FileDescriptor(std::move(fd)));
+bool DrmGpuPlatformSupportHost::GpuAddGraphicsDeviceOnUIThread(
+    const base::FilePath& path,
+    base::ScopedFD fd) {
+  return Send(new OzoneGpuMsg_AddGraphicsDevice(
+      path, base::FileDescriptor(std::move(fd))));
+}
 
-  // This function may be called from two places:
-  // - DrmDisplayHostManager::OnGpuProcessLaunched() invoked synchronously
-  //   by GpuProcessHost::Init() on IO thread, which is the same thread as
-  //   |send_runner_|. In this case we can synchronously send the IPC;
-  // - DrmDisplayHostManager::OnAddGraphicsDevice() on UI thread. In this
-  //   case we need to post the send task to IO thread.
-  if (send_runner_ && send_runner_->BelongsToCurrentThread()) {
-    DCHECK(!send_callback_.is_null());
-    send_callback_.Run(message);
-    return true;
-  }
-
-  return Send(message);
+void DrmGpuPlatformSupportHost::GpuAddGraphicsDeviceOnIOThread(
+    const base::FilePath& path,
+    base::ScopedFD fd) {
+  DCHECK(!send_callback_.is_null());
+  send_callback_.Run(new OzoneGpuMsg_AddGraphicsDevice(
+      path, base::FileDescriptor(std::move(fd))));
 }
 
 bool DrmGpuPlatformSupportHost::GpuRemoveGraphicsDevice(
     const base::FilePath& path) {
   return Send(new OzoneGpuMsg_RemoveGraphicsDevice(path));
-}
-
-// Overlays
-void DrmGpuPlatformSupportHost::RegisterHandlerForDrmOverlayManager(
-    DrmOverlayManager* handler) {
-  overlay_manager_ = handler;
-}
-
-void DrmGpuPlatformSupportHost::UnRegisterHandlerForDrmOverlayManager() {
-  overlay_manager_ = nullptr;
-}
-
-bool DrmGpuPlatformSupportHost::OnMessageReceivedForDrmOverlayManager(
-    const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(DrmGpuPlatformSupportHost, message)
-    IPC_MESSAGE_HANDLER(OzoneHostMsg_OverlayCapabilitiesReceived,
-                        OnOverlayResult)
-    // TODO(rjk): insert the extra
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
-}
-
-void DrmGpuPlatformSupportHost::OnOverlayResult(
-    gfx::AcceleratedWidget widget,
-    const std::vector<OverlayCheck_Params>& params,
-    const std::vector<OverlayCheckReturn_Params>& param_returns) {
-  auto candidates = CreateOverlaySurfaceCandidateListFrom(params);
-  auto returns = CreateOverlayStatusListFrom(param_returns);
-  overlay_manager_->GpuSentOverlayResult(widget, candidates, returns);
-}
-
-bool DrmGpuPlatformSupportHost::GpuCheckOverlayCapabilities(
-    gfx::AcceleratedWidget widget,
-    const OverlaySurfaceCandidateList& candidates) {
-  auto params = CreateParamsFromOverlaySurfaceCandidate(candidates);
-  return Send(new OzoneGpuMsg_CheckOverlayCapabilities(widget, params));
 }
 
 // DrmDisplayHost
@@ -380,8 +321,15 @@ bool DrmGpuPlatformSupportHost::GpuDestroyWindow(
   return Send(new OzoneGpuMsg_DestroyWindow(widget));
 }
 
-bool DrmGpuPlatformSupportHost::GpuCreateWindow(gfx::AcceleratedWidget widget) {
-  return Send(new OzoneGpuMsg_CreateWindow(widget));
+bool DrmGpuPlatformSupportHost::GpuSetPrivacyScreen(int64_t display_id,
+                                                    bool enabled) {
+  return Send(new OzoneGpuMsg_SetPrivacyScreen(display_id, enabled));
+}
+
+bool DrmGpuPlatformSupportHost::GpuCreateWindow(
+    gfx::AcceleratedWidget widget,
+    const gfx::Rect& initial_bounds) {
+  return Send(new OzoneGpuMsg_CreateWindow(widget, initial_bounds));
 }
 
 bool DrmGpuPlatformSupportHost::GpuWindowBoundsChanged(

@@ -43,10 +43,6 @@ class ViewportStyleResolver;
 class DocumentStyleSheetCollection final
     : public TreeScopeStyleSheetCollection {
  public:
-  static DocumentStyleSheetCollection* Create(TreeScope& tree_scope) {
-    return MakeGarbageCollected<DocumentStyleSheetCollection>(tree_scope);
-  }
-
   explicit DocumentStyleSheetCollection(TreeScope&);
 
   void UpdateActiveStyleSheets(StyleEngine& master_engine);
@@ -54,7 +50,7 @@ class DocumentStyleSheetCollection final
                           DocumentStyleSheetCollector&);
   void CollectViewportRules(ViewportStyleResolver&);
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     TreeScopeStyleSheetCollection::Trace(visitor);
   }
 

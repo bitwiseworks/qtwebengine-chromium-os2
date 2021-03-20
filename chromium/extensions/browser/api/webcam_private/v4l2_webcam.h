@@ -22,6 +22,7 @@ class V4L2Webcam : public Webcam {
  private:
   ~V4L2Webcam() override;
   bool EnsureLogitechCommandsMapped();
+  bool EnsureAverCommandsMapped();
   static bool SetWebcamParameter(int fd, uint32_t control_id, int value);
   static bool GetWebcamParameter(int fd,
                                  uint32_t control_id,
@@ -51,9 +52,15 @@ class V4L2Webcam : public Webcam {
              bool tilt,
              bool zoom,
              const SetPTZCompleteCallback& callback) override;
+
+  void SetHome(const SetPTZCompleteCallback& callback) override;
   void SetFocus(int value, const SetPTZCompleteCallback& callback) override;
   void SetAutofocusState(AutofocusState state,
                          const SetPTZCompleteCallback& callback) override;
+  void RestoreCameraPreset(int preset_number,
+                           const SetPTZCompleteCallback& callback) override;
+  void SetCameraPreset(int preset_number,
+                       const SetPTZCompleteCallback& callback) override;
 
   const std::string device_id_;
   base::ScopedFD fd_;

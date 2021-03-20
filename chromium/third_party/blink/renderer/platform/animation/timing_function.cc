@@ -12,7 +12,7 @@ String LinearTimingFunction::ToString() const {
   return "linear";
 }
 
-double LinearTimingFunction::Evaluate(double fraction, double) const {
+double LinearTimingFunction::Evaluate(double fraction) const {
   return fraction;
 }
 
@@ -79,9 +79,8 @@ String CubicBezierTimingFunction::ToString() const {
   }
 }
 
-double CubicBezierTimingFunction::Evaluate(double fraction,
-                                           double accuracy) const {
-  return bezier_->bezier().SolveWithEpsilon(fraction, accuracy);
+double CubicBezierTimingFunction::Evaluate(double fraction) const {
+  return bezier_->bezier().Solve(fraction);
 }
 
 void CubicBezierTimingFunction::Range(double* min_value,
@@ -112,11 +111,25 @@ String StepsTimingFunction::ToString() const {
     case StepPosition::START:
       position_string = "start";
       break;
-    case StepPosition::MIDDLE:
-      position_string = "middle";
-      break;
+
     case StepPosition::END:
       // do not specify step position in output
+      break;
+
+    case StepPosition::JUMP_BOTH:
+      position_string = "jump-both";
+      break;
+
+    case StepPosition::JUMP_END:
+      // do not specify step position in output
+      break;
+
+    case StepPosition::JUMP_NONE:
+      position_string = "jump-none";
+      break;
+
+    case StepPosition::JUMP_START:
+      position_string = "jump-start";
       break;
   }
 
@@ -136,33 +149,18 @@ void StepsTimingFunction::Range(double* min_value, double* max_value) const {
   *max_value = 1;
 }
 
-double StepsTimingFunction::Evaluate(double fraction, double) const {
-  return steps_->GetPreciseValue(fraction);
+double StepsTimingFunction::Evaluate(double fraction,
+                                     LimitDirection limit_direction) const {
+  return steps_->GetPreciseValue(fraction, limit_direction);
+}
+
+double StepsTimingFunction::Evaluate(double fraction) const {
+  NOTREACHED() << "Use Evaluate(fraction, limit_direction) instead.";
+  return steps_->GetPreciseValue(fraction, LimitDirection::RIGHT);
 }
 
 std::unique_ptr<cc::TimingFunction> StepsTimingFunction::CloneToCC() const {
   return steps_->Clone();
-}
-
-String FramesTimingFunction::ToString() const {
-  StringBuilder builder;
-  builder.Append("frames(");
-  builder.Append(String::NumberToStringECMAScript(this->NumberOfFrames()));
-  builder.Append(")");
-  return builder.ToString();
-}
-
-void FramesTimingFunction::Range(double* min_value, double* max_value) const {
-  *min_value = 0;
-  *max_value = 1;
-}
-
-double FramesTimingFunction::Evaluate(double fraction, double) const {
-  return frames_->GetPreciseValue(fraction);
-}
-
-std::unique_ptr<cc::TimingFunction> FramesTimingFunction::CloneToCC() const {
-  return frames_->Clone();
 }
 
 scoped_refptr<TimingFunction> CreateCompositorTimingFunctionFromCC(
@@ -208,7 +206,7 @@ bool operator==(const CubicBezierTimingFunction& lhs,
   if (rhs.GetType() != TimingFunction::Type::CUBIC_BEZIER)
     return false;
 
-  const CubicBezierTimingFunction& ctf = ToCubicBezierTimingFunction(rhs);
+  const auto& ctf = To<CubicBezierTimingFunction>(rhs);
   if ((lhs.GetEaseType() == CubicBezierTimingFunction::EaseType::CUSTOM) &&
       (ctf.GetEaseType() == CubicBezierTimingFunction::EaseType::CUSTOM))
     return (lhs.X1() == ctf.X1()) && (lhs.Y1() == ctf.Y1()) &&
@@ -221,17 +219,9 @@ bool operator==(const StepsTimingFunction& lhs, const TimingFunction& rhs) {
   if (rhs.GetType() != TimingFunction::Type::STEPS)
     return false;
 
-  const StepsTimingFunction& stf = ToStepsTimingFunction(rhs);
+  const auto& stf = To<StepsTimingFunction>(rhs);
   return (lhs.NumberOfSteps() == stf.NumberOfSteps()) &&
          (lhs.GetStepPosition() == stf.GetStepPosition());
-}
-
-bool operator==(const FramesTimingFunction& lhs, const TimingFunction& rhs) {
-  if (rhs.GetType() != TimingFunction::Type::FRAMES)
-    return false;
-
-  const FramesTimingFunction& ftf = ToFramesTimingFunction(rhs);
-  return lhs.NumberOfFrames() == ftf.NumberOfFrames();
 }
 
 // The generic operator== *must* come after the
@@ -239,20 +229,16 @@ bool operator==(const FramesTimingFunction& lhs, const TimingFunction& rhs) {
 bool operator==(const TimingFunction& lhs, const TimingFunction& rhs) {
   switch (lhs.GetType()) {
     case TimingFunction::Type::LINEAR: {
-      const LinearTimingFunction& linear = ToLinearTimingFunction(lhs);
+      const auto& linear = To<LinearTimingFunction>(lhs);
       return (linear == rhs);
     }
     case TimingFunction::Type::CUBIC_BEZIER: {
-      const CubicBezierTimingFunction& cubic = ToCubicBezierTimingFunction(lhs);
+      const auto& cubic = To<CubicBezierTimingFunction>(lhs);
       return (cubic == rhs);
     }
     case TimingFunction::Type::STEPS: {
-      const StepsTimingFunction& step = ToStepsTimingFunction(lhs);
+      const auto& step = To<StepsTimingFunction>(lhs);
       return (step == rhs);
-    }
-    case TimingFunction::Type::FRAMES: {
-      const FramesTimingFunction& frame = ToFramesTimingFunction(lhs);
-      return (frame == rhs);
     }
     default:
       NOTREACHED();

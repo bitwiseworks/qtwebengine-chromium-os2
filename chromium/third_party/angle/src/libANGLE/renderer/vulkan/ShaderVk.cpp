@@ -21,28 +21,46 @@ ShaderVk::ShaderVk(const gl::ShaderState &data) : ShaderImpl(data) {}
 
 ShaderVk::~ShaderVk() {}
 
-ShCompileOptions ShaderVk::prepareSourceAndReturnOptions(const gl::Context *context,
-                                                         std::stringstream *sourceStream,
-                                                         std::string *sourcePath)
+std::shared_ptr<WaitableCompileEvent> ShaderVk::compile(const gl::Context *context,
+                                                        gl::ShCompilerInstance *compilerInstance,
+                                                        ShCompileOptions options)
 {
-    *sourceStream << mData.getSource();
-
     ShCompileOptions compileOptions = SH_INITIALIZE_UNINITIALIZED_LOCALS;
 
     ContextVk *contextVk = vk::GetImpl(context);
 
-    if (contextVk->getFeatures().clampPointSize)
+    bool isWebGL = context->getExtensions().webglCompatibility;
+    if (isWebGL && mData.getShaderType() != gl::ShaderType::Compute)
+    {
+        compileOptions |= SH_INIT_OUTPUT_VARIABLES;
+    }
+
+    if (contextVk->getFeatures().clampPointSize.enabled)
     {
         compileOptions |= SH_CLAMP_POINT_SIZE;
     }
 
-    return compileOptions;
-}
+    if (contextVk->getFeatures().basicGLLineRasterization.enabled)
+    {
+        compileOptions |= SH_ADD_BRESENHAM_LINE_RASTER_EMULATION;
+    }
 
-bool ShaderVk::postTranslateCompile(gl::ShCompilerInstance *compiler, std::string *infoLog)
-{
-    // No work to do here.
-    return true;
+    if (contextVk->emulateSeamfulCubeMapSampling())
+    {
+        compileOptions |= SH_EMULATE_SEAMFUL_CUBE_MAP_SAMPLING;
+    }
+
+    if (contextVk->useOldRewriteStructSamplers())
+    {
+        compileOptions |= SH_USE_OLD_REWRITE_STRUCT_SAMPLERS;
+    }
+
+    if (!contextVk->getFeatures().enablePrecisionQualifiers.enabled)
+    {
+        compileOptions |= SH_IGNORE_PRECISION_QUALIFIERS;
+    }
+
+    return compileImpl(context, compilerInstance, mData.getSource(), compileOptions | options);
 }
 
 std::string ShaderVk::getDebugInfo() const

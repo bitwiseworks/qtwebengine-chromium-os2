@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/common/input/event_with_latency_info.h"
 #include "content/public/common/content_features.h"
@@ -18,10 +19,10 @@
 
 namespace content {
 
-class MockTouchpadPinchEventQueueClient : public TouchpadPinchEventQueueClient {
+class MockTouchpadPinchEventQueueClient {
  public:
   MockTouchpadPinchEventQueueClient() = default;
-  ~MockTouchpadPinchEventQueueClient() override = default;
+  ~MockTouchpadPinchEventQueueClient() = default;
 
   // TouchpadPinchEventQueueClient
   MOCK_METHOD1(SendMouseWheelEventForPinchImmediately,
@@ -32,7 +33,8 @@ class MockTouchpadPinchEventQueueClient : public TouchpadPinchEventQueueClient {
                     InputEventAckState ack_result));
 };
 
-class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
+class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool>,
+                                    public TouchpadPinchEventQueueClient {
  protected:
   TouchpadPinchEventQueueTest() : async_events_enabled_(GetParam()) {
     if (async_events_enabled_) {
@@ -42,7 +44,7 @@ class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
       scoped_feature_list_.InitAndDisableFeature(
           features::kTouchpadAsyncPinchEvents);
     }
-    queue_ = std::make_unique<TouchpadPinchEventQueue>(&mock_client_);
+    queue_ = std::make_unique<TouchpadPinchEventQueue>(this);
   }
   ~TouchpadPinchEventQueueTest() = default;
 
@@ -55,7 +57,7 @@ class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
         blink::WebInputEvent::kGesturePinchBegin,
         blink::WebInputEvent::kNoModifiers,
         blink::WebInputEvent::GetStaticTimeStampForTests(),
-        blink::kWebGestureDeviceTouchpad);
+        blink::WebGestureDevice::kTouchpad);
     event.SetPositionInWidget(gfx::PointF(1, 1));
     event.SetPositionInScreen(gfx::PointF(1, 1));
     event.SetNeedsWheelEvent(true);
@@ -67,7 +69,7 @@ class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
         blink::WebInputEvent::kGesturePinchEnd,
         blink::WebInputEvent::kNoModifiers,
         blink::WebInputEvent::GetStaticTimeStampForTests(),
-        blink::kWebGestureDeviceTouchpad);
+        blink::WebGestureDevice::kTouchpad);
     event.SetPositionInWidget(gfx::PointF(1, 1));
     event.SetPositionInScreen(gfx::PointF(1, 1));
     event.SetNeedsWheelEvent(true);
@@ -79,7 +81,7 @@ class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
         blink::WebInputEvent::kGesturePinchUpdate,
         blink::WebInputEvent::kNoModifiers,
         blink::WebInputEvent::GetStaticTimeStampForTests(),
-        blink::kWebGestureDeviceTouchpad);
+        blink::WebGestureDevice::kTouchpad);
     event.SetPositionInWidget(gfx::PointF(1, 1));
     event.SetPositionInScreen(gfx::PointF(1, 1));
     event.SetNeedsWheelEvent(true);
@@ -93,7 +95,7 @@ class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
         blink::WebInputEvent::kGestureDoubleTap,
         blink::WebInputEvent::kNoModifiers,
         blink::WebInputEvent::GetStaticTimeStampForTests(),
-        blink::kWebGestureDeviceTouchpad);
+        blink::WebGestureDevice::kTouchpad);
     event.SetPositionInWidget(gfx::PointF(1, 1));
     event.SetPositionInScreen(gfx::PointF(1, 1));
     event.data.tap.tap_count = 1;
@@ -101,18 +103,43 @@ class TouchpadPinchEventQueueTest : public testing::TestWithParam<bool> {
     QueueEvent(event);
   }
 
+  using HandleEventCallback =
+      base::OnceCallback<void(InputEventAckSource ack_source,
+                              InputEventAckState ack_result)>;
+
   void SendWheelEventAck(InputEventAckSource ack_source,
                          InputEventAckState ack_result) {
-    queue_->ProcessMouseWheelAck(ack_source, ack_result, ui::LatencyInfo());
+    std::move(callbacks_.front()).Run(ack_source, ack_result);
+    callbacks_.pop_front();
+  }
+
+  void SendMouseWheelEventForPinchImmediately(
+      const MouseWheelEventWithLatencyInfo& event,
+      MouseWheelEventHandledCallback callback) override {
+    mock_client_.SendMouseWheelEventForPinchImmediately(event);
+    callbacks_.emplace_back(base::BindOnce(
+        [](MouseWheelEventHandledCallback callback,
+           const MouseWheelEventWithLatencyInfo& event,
+           InputEventAckSource ack_source, InputEventAckState ack_result) {
+          std::move(callback).Run(event, ack_source, ack_result);
+        },
+        std::move(callback), event));
+  }
+
+  void OnGestureEventForPinchAck(const GestureEventWithLatencyInfo& event,
+                                 InputEventAckSource ack_source,
+                                 InputEventAckState ack_result) override {
+    mock_client_.OnGestureEventForPinchAck(event, ack_source, ack_result);
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
   testing::StrictMock<MockTouchpadPinchEventQueueClient> mock_client_;
   std::unique_ptr<TouchpadPinchEventQueue> queue_;
+  base::circular_deque<HandleEventCallback> callbacks_;
   const bool async_events_enabled_;
 };
 
-INSTANTIATE_TEST_CASE_P(, TouchpadPinchEventQueueTest, ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All, TouchpadPinchEventQueueTest, ::testing::Bool());
 
 MATCHER_P(EventHasType,
           type,
@@ -609,6 +636,42 @@ TEST_P(TouchpadPinchEventQueueTest, DoubleTap) {
   QueueDoubleTap();
   SendWheelEventAck(InputEventAckSource::MAIN_THREAD,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
+}
+
+// Ensure that ACKs are only processed when they match the event that is
+// currently awaiting an ACK.
+TEST_P(TouchpadPinchEventQueueTest, IgnoreNonMatchingEvents) {
+  ::testing::InSequence sequence;
+  EXPECT_CALL(mock_client_,
+              OnGestureEventForPinchAck(
+                  EventHasType(blink::WebInputEvent::kGesturePinchBegin),
+                  InputEventAckSource::BROWSER, INPUT_EVENT_ACK_STATE_IGNORED));
+  EXPECT_CALL(mock_client_,
+              SendMouseWheelEventForPinchImmediately(
+                  ::testing::AllOf(EventHasCtrlModifier(), EventIsBlocking())));
+  EXPECT_CALL(
+      mock_client_,
+      OnGestureEventForPinchAck(
+          EventHasType(blink::WebInputEvent::kGesturePinchUpdate),
+          InputEventAckSource::MAIN_THREAD, INPUT_EVENT_ACK_STATE_CONSUMED));
+
+  EXPECT_CALL(mock_client_,
+              SendMouseWheelEventForPinchImmediately(::testing::AllOf(
+                  EventHasCtrlModifier(), ::testing::Not(EventIsBlocking()))));
+
+  EXPECT_CALL(mock_client_,
+              OnGestureEventForPinchAck(
+                  EventHasType(blink::WebInputEvent::kGesturePinchEnd),
+                  InputEventAckSource::BROWSER, INPUT_EVENT_ACK_STATE_IGNORED));
+
+  QueuePinchBegin();
+  QueuePinchUpdate(1.23, false);
+  QueuePinchEnd();
+
+  SendWheelEventAck(InputEventAckSource::MAIN_THREAD,
+                    INPUT_EVENT_ACK_STATE_CONSUMED);
+  SendWheelEventAck(InputEventAckSource::BROWSER,
+                    INPUT_EVENT_ACK_STATE_IGNORED);
 }
 
 }  // namespace content

@@ -7,11 +7,12 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
+
 namespace media {
 namespace unittest_internal {
 
-MockCameraModule::MockCameraModule()
-    : mock_module_thread_("MockModuleThread"), binding_(this) {
+MockCameraModule::MockCameraModule() : mock_module_thread_("MockModuleThread") {
   mock_module_thread_.Start();
 }
 
@@ -24,9 +25,9 @@ MockCameraModule::~MockCameraModule() {
 
 void MockCameraModule::OpenDevice(
     int32_t camera_id,
-    cros::mojom::Camera3DeviceOpsRequest device_ops_request,
+    mojo::PendingReceiver<cros::mojom::Camera3DeviceOps> device_ops_receiver,
     OpenDeviceCallback callback) {
-  DoOpenDevice(camera_id, device_ops_request, callback);
+  DoOpenDevice(camera_id, std::move(device_ops_receiver), callback);
 }
 
 void MockCameraModule::GetNumberOfCameras(GetNumberOfCamerasCallback callback) {
@@ -39,10 +40,10 @@ void MockCameraModule::GetCameraInfo(int32_t camera_id,
 }
 
 void MockCameraModule::SetCallbacks(
-    cros::mojom::CameraModuleCallbacksPtr callbacks,
+    mojo::PendingRemote<cros::mojom::CameraModuleCallbacks> callbacks,
     SetCallbacksCallback callback) {
   DoSetCallbacks(callbacks, callback);
-  callbacks_ = std::move(callbacks);
+  callbacks_.Bind(std::move(callbacks));
   std::move(callback).Run(0);
 }
 
@@ -58,32 +59,52 @@ void MockCameraModule::SetTorchMode(int32_t camera_id,
   std::move(callback).Run(0);
 }
 
-cros::mojom::CameraModulePtrInfo MockCameraModule::GetInterfacePtrInfo() {
-  base::WaitableEvent done(base::WaitableEvent::ResetPolicy::MANUAL,
-                           base::WaitableEvent::InitialState::NOT_SIGNALED);
-  cros::mojom::CameraModulePtrInfo ptr_info;
+void MockCameraModule::GetVendorTagOps(
+    mojo::PendingReceiver<cros::mojom::VendorTagOps> vendor_tag_ops_receiver,
+    GetVendorTagOpsCallback callback) {
+  DoGetVendorTagOps(std::move(vendor_tag_ops_receiver), callback);
+  std::move(callback).Run();
+}
+
+void MockCameraModule::NotifyCameraDeviceChange(
+    int camera_id,
+    cros::mojom::CameraDeviceStatus status) {
   mock_module_thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::BindOnce(&MockCameraModule::BindOnThread, base::Unretained(this),
-                     base::Unretained(&done), base::Unretained(&ptr_info)));
+      base::BindOnce(&MockCameraModule::NotifyCameraDeviceChangeOnThread,
+                     base::Unretained(this), camera_id, status));
+}
+
+void MockCameraModule::NotifyCameraDeviceChangeOnThread(
+    int camera_id,
+    cros::mojom::CameraDeviceStatus status) {
+  callbacks_->CameraDeviceStatusChange(camera_id, status);
+}
+
+mojo::PendingRemote<cros::mojom::CameraModule>
+MockCameraModule::GetPendingRemote() {
+  base::WaitableEvent done(base::WaitableEvent::ResetPolicy::MANUAL,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
+  mojo::PendingRemote<cros::mojom::CameraModule> pending_remote;
+  mock_module_thread_.task_runner()->PostTask(
+      FROM_HERE, base::BindOnce(&MockCameraModule::BindOnThread,
+                                base::Unretained(this), base::Unretained(&done),
+                                base::Unretained(&pending_remote)));
   done.Wait();
-  return ptr_info;
+  return pending_remote;
 }
 
 void MockCameraModule::CloseBindingOnThread() {
-  if (binding_.is_bound()) {
-    binding_.Close();
+  receiver_.reset();
+  if (callbacks_.is_bound()) {
+    callbacks_.reset();
   }
 }
 
 void MockCameraModule::BindOnThread(
     base::WaitableEvent* done,
-    cros::mojom::CameraModulePtrInfo* ptr_info) {
-  cros::mojom::CameraModulePtr camera_module_ptr;
-  cros::mojom::CameraModuleRequest camera_module_request =
-      mojo::MakeRequest(&camera_module_ptr);
-  binding_.Bind(std::move(camera_module_request));
-  *ptr_info = camera_module_ptr.PassInterface();
+    mojo::PendingRemote<cros::mojom::CameraModule>* pending_remote) {
+  *pending_remote = receiver_.BindNewPipeAndPassRemote();
   done->Signal();
 }
 

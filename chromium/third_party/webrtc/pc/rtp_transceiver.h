@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "api/rtp_transceiver_interface.h"
+#include "pc/channel_interface.h"
+#include "pc/channel_manager.h"
 #include "pc/rtp_receiver.h"
 #include "pc/rtp_sender.h"
 
@@ -62,10 +64,14 @@ class RtpTransceiver final
   // Construct a Unified Plan-style RtpTransceiver with the given sender and
   // receiver. The media type will be derived from the media types of the sender
   // and receiver. The sender and receiver should have the same media type.
+  // |HeaderExtensionsToOffer| is used for initializing the return value of
+  // HeaderExtensionsToOffer().
   RtpTransceiver(
       rtc::scoped_refptr<RtpSenderProxyWithInternal<RtpSenderInternal>> sender,
       rtc::scoped_refptr<RtpReceiverProxyWithInternal<RtpReceiverInternal>>
-          receiver);
+          receiver,
+      cricket::ChannelManager* channel_manager,
+      std::vector<RtpHeaderExtensionCapability> HeaderExtensionsToOffer);
   ~RtpTransceiver() override;
 
   // Returns the Voice/VideoChannel set for this transceiver. May be null if
@@ -151,7 +157,15 @@ class RtpTransceiver final
   void set_created_by_addtrack(bool created_by_addtrack) {
     created_by_addtrack_ = created_by_addtrack;
   }
+  // If AddTrack has been called then transceiver can't be removed during
+  // rollback.
+  void set_reused_for_addtrack(bool reused_for_addtrack) {
+    reused_for_addtrack_ = reused_for_addtrack;
+  }
+
   bool created_by_addtrack() const { return created_by_addtrack_; }
+
+  bool reused_for_addtrack() const { return reused_for_addtrack_; }
 
   // Returns true if this transceiver has ever had the current direction set to
   // sendonly or sendrecv.
@@ -174,7 +188,13 @@ class RtpTransceiver final
   absl::optional<RtpTransceiverDirection> current_direction() const override;
   absl::optional<RtpTransceiverDirection> fired_direction() const override;
   void Stop() override;
-  void SetCodecPreferences(rtc::ArrayView<RtpCodecCapability> codecs) override;
+  RTCError SetCodecPreferences(
+      rtc::ArrayView<RtpCodecCapability> codecs) override;
+  std::vector<RtpCodecCapability> codec_preferences() const override {
+    return codec_preferences_;
+  }
+  std::vector<RtpHeaderExtensionCapability> HeaderExtensionsToOffer()
+      const override;
 
  private:
   void OnFirstPacketReceived(cricket::ChannelInterface* channel);
@@ -194,25 +214,34 @@ class RtpTransceiver final
   absl::optional<std::string> mid_;
   absl::optional<size_t> mline_index_;
   bool created_by_addtrack_ = false;
+  bool reused_for_addtrack_ = false;
   bool has_ever_been_used_to_send_ = false;
 
   cricket::ChannelInterface* channel_ = nullptr;
+  cricket::ChannelManager* channel_manager_ = nullptr;
+  std::vector<RtpCodecCapability> codec_preferences_;
+  std::vector<RtpHeaderExtensionCapability> HeaderExtensionsToOffer_;
 };
 
 BEGIN_SIGNALING_PROXY_MAP(RtpTransceiver)
 PROXY_SIGNALING_THREAD_DESTRUCTOR()
-PROXY_CONSTMETHOD0(cricket::MediaType, media_type);
-PROXY_CONSTMETHOD0(absl::optional<std::string>, mid);
-PROXY_CONSTMETHOD0(rtc::scoped_refptr<RtpSenderInterface>, sender);
-PROXY_CONSTMETHOD0(rtc::scoped_refptr<RtpReceiverInterface>, receiver);
-PROXY_CONSTMETHOD0(bool, stopped);
-PROXY_CONSTMETHOD0(RtpTransceiverDirection, direction);
-PROXY_METHOD1(void, SetDirection, RtpTransceiverDirection);
-PROXY_CONSTMETHOD0(absl::optional<RtpTransceiverDirection>, current_direction);
-PROXY_CONSTMETHOD0(absl::optional<RtpTransceiverDirection>, fired_direction);
-PROXY_METHOD0(void, Stop);
-PROXY_METHOD1(void, SetCodecPreferences, rtc::ArrayView<RtpCodecCapability>);
-END_PROXY_MAP();
+PROXY_CONSTMETHOD0(cricket::MediaType, media_type)
+PROXY_CONSTMETHOD0(absl::optional<std::string>, mid)
+PROXY_CONSTMETHOD0(rtc::scoped_refptr<RtpSenderInterface>, sender)
+PROXY_CONSTMETHOD0(rtc::scoped_refptr<RtpReceiverInterface>, receiver)
+PROXY_CONSTMETHOD0(bool, stopped)
+PROXY_CONSTMETHOD0(RtpTransceiverDirection, direction)
+PROXY_METHOD1(void, SetDirection, RtpTransceiverDirection)
+PROXY_CONSTMETHOD0(absl::optional<RtpTransceiverDirection>, current_direction)
+PROXY_CONSTMETHOD0(absl::optional<RtpTransceiverDirection>, fired_direction)
+PROXY_METHOD0(void, Stop)
+PROXY_METHOD1(webrtc::RTCError,
+              SetCodecPreferences,
+              rtc::ArrayView<RtpCodecCapability>)
+PROXY_CONSTMETHOD0(std::vector<RtpCodecCapability>, codec_preferences)
+PROXY_CONSTMETHOD0(std::vector<RtpHeaderExtensionCapability>,
+                   HeaderExtensionsToOffer)
+END_PROXY_MAP()
 
 }  // namespace webrtc
 

@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_BUBBLE_FOOTNOTE_CONTAINER_VIEW_H_
 #define UI_VIEWS_BUBBLE_FOOTNOTE_CONTAINER_VIEW_H_
 
+#include <memory>
+
 #include "ui/views/view.h"
 
 namespace views {
@@ -13,17 +15,25 @@ namespace views {
 // background with rounded corners at the bottom.
 class FootnoteContainerView : public View {
  public:
+  METADATA_HEADER(FootnoteContainerView);
+
   FootnoteContainerView(const gfx::Insets& margins,
-                        View* child_view,
+                        std::unique_ptr<View> child_view,
                         float corner_radius);
   ~FootnoteContainerView() override;
 
   void SetCornerRadius(float corner_radius);
 
   // View:
+  void OnThemeChanged() override;
   void ChildVisibilityChanged(View* child) override;
 
  private:
+  void ResetBackground();
+  void ResetBorder();
+
+  float corner_radius_;
+
   DISALLOW_IMPLICIT_CONSTRUCTORS(FootnoteContainerView);
 };
 

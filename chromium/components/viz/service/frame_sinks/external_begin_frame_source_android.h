@@ -20,13 +20,14 @@ class VIZ_SERVICE_EXPORT ExternalBeginFrameSourceAndroid
     : public ExternalBeginFrameSource,
       public ExternalBeginFrameSourceClient {
  public:
-  explicit ExternalBeginFrameSourceAndroid(uint32_t restart_id);
+  ExternalBeginFrameSourceAndroid(uint32_t restart_id, float refresh_rate);
   ~ExternalBeginFrameSourceAndroid() override;
 
   void OnVSync(JNIEnv* env,
                const base::android::JavaParamRef<jobject>& obj,
                jlong time_micros,
                jlong period_micros);
+  void UpdateRefreshRate(float refresh_rate) override;
 
  private:
   // ExternalBeginFrameSourceClient implementation.
@@ -34,8 +35,8 @@ class VIZ_SERVICE_EXPORT ExternalBeginFrameSourceAndroid
 
   void SetEnabled(bool enabled);
 
-  uint64_t next_sequence_number_ = BeginFrameArgs::kStartingFrameNumber;
   base::android::ScopedJavaGlobalRef<jobject> j_object_;
+  BeginFrameArgsGenerator begin_frame_args_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(ExternalBeginFrameSourceAndroid);
 };

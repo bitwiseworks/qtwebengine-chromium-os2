@@ -15,7 +15,6 @@
  */
 
 syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 package perfetto.protos;
 
 message ProcessTree {
@@ -47,6 +46,9 @@ message ProcessTree {
     // No longer used as of Apr 2018, when the dedicated |threads| field was
     // introduced in ProcessTree.
     repeated Thread threads_deprecated = 4 [deprecated = true];
+
+    // The uid for the process, as per /proc/pid/status.
+    optional int32 uid = 5;
   }
 
   // List of processes and threads in the client. These lists are incremental
@@ -58,4 +60,9 @@ message ProcessTree {
   // #2 { processes: [{pid: 20, ...}], threads: [{pid: 13, tgid: 10}] }
   repeated Process processes = 1;
   repeated Thread threads = 2;
+
+  // The time at which we finish collecting this process tree;
+  // the top-level packet timestamp is the time at which
+  // we begin collection.
+  optional uint64 collection_end_timestamp = 3;
 }

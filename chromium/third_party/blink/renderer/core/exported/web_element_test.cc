@@ -7,73 +7,15 @@
 #include <memory>
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_shadow_root_init.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
-#include "third_party/blink/renderer/core/dom/shadow_root_init.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 
 namespace blink {
-
-static const char kBlockWithContinuations[] =
-    "<head> <style> form {display: inline;} </style> </head>"
-    "<body>"
-    "  <form>"
-    "    <div id='testElement'>"
-    "      <input type='password' id='password'/>"
-    "    </div>"
-    "  </form>"
-    "</body>";
-
-static const char kEmptyBlock[] =
-    "<head> <style> form {display: inline;} </style> </head>"
-    "<body> <form id='testElement'> </form> </body>";
-
-static const char kEmptyInline[] =
-    "<body> <span id='testElement'> </span> </body>";
-
-static const char kBlockWithDisplayNone[] =
-    "<head> <style> form {display: none;} </style> </head>"
-    "<body>"
-    "  <form id='testElement'>"
-    "    <div>"
-    "      <input type='password' id='password'/>"
-    "    </div>"
-    "  </form>"
-    "</body>";
-
-static const char kBlockWithContent[] =
-    "<div id='testElement'>"
-    "  <div>Hello</div> "
-    "</div>";
-
-static const char kBlockWithText[] =
-    "<div id='testElement'>"
-    "  <div>Hello</div> "
-    "</div>";
-
-static const char kBlockWithEmptyZeroSizedSVG[] =
-    "<div id='testElement'>"
-    "  <svg height='0'><g><rect width='100' height='100'/></g></svg> "
-    "</div>";
-
-static const char kBlockWithInlines[] =
-    "<div id='testElement'>"
-    "  <span>Hello</span> "
-    "</div>";
-
-static const char kBlockWithEmptyInlines[] =
-    "<div id='testElement'>"
-    "  <span></span> "
-    "</div>";
-
-static const char kBlockWithEmptyFirstChild[] =
-    "<div id='testElement'>"
-    "  <div style='position: absolute'></div> "
-    "  <div style='position: absolute'>Hello</div> "
-    "</div>";
 
 class WebElementTest : public PageTestBase {
  protected:
@@ -82,53 +24,13 @@ class WebElementTest : public PageTestBase {
 };
 
 void WebElementTest::InsertHTML(String html) {
-  GetDocument().documentElement()->SetInnerHTMLFromString(html);
+  GetDocument().documentElement()->setInnerHTML(html);
 }
 
 WebElement WebElementTest::TestElement() {
   Element* element = GetDocument().getElementById("testElement");
   DCHECK(element);
   return WebElement(element);
-}
-
-TEST_F(WebElementTest, HasNonEmptyLayoutSize) {
-  GetDocument().SetCompatibilityMode(Document::kQuirksMode);
-  InsertHTML(kEmptyBlock);
-  EXPECT_FALSE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kEmptyInline);
-  EXPECT_FALSE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithDisplayNone);
-  EXPECT_FALSE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithEmptyInlines);
-  EXPECT_FALSE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithEmptyZeroSizedSVG);
-  EXPECT_FALSE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithContinuations);
-  EXPECT_TRUE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithInlines);
-  EXPECT_TRUE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithContent);
-  EXPECT_TRUE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithText);
-  EXPECT_TRUE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kEmptyBlock);
-  ShadowRoot& root = GetDocument()
-                         .getElementById("testElement")
-                         ->CreateV0ShadowRootForTesting();
-  root.SetInnerHTMLFromString("<div>Hello World</div>");
-  EXPECT_TRUE(TestElement().HasNonEmptyLayoutSize());
-
-  InsertHTML(kBlockWithEmptyFirstChild);
-  EXPECT_TRUE(TestElement().HasNonEmptyLayoutSize());
 }
 
 TEST_F(WebElementTest, IsEditable) {
@@ -191,13 +93,15 @@ TEST_F(WebElementTest, IsAutonomousCustomElement) {
   )JS");
   GetDocument().body()->appendChild(script);
   auto* v0typeext = GetDocument().body()->lastChild();
-  EXPECT_FALSE(WebElement(ToElement(v0typeext)).IsAutonomousCustomElement());
+  EXPECT_FALSE(WebElement(To<Element>(v0typeext)).IsAutonomousCustomElement());
   auto* v0autonomous = v0typeext->previousSibling();
-  EXPECT_TRUE(WebElement(ToElement(v0autonomous)).IsAutonomousCustomElement());
+  EXPECT_TRUE(
+      WebElement(To<Element>(v0autonomous)).IsAutonomousCustomElement());
   auto* v1builtin = v0autonomous->previousSibling();
-  EXPECT_FALSE(WebElement(ToElement(v1builtin)).IsAutonomousCustomElement());
+  EXPECT_FALSE(WebElement(To<Element>(v1builtin)).IsAutonomousCustomElement());
   auto* v1autonomous = v1builtin->previousSibling();
-  EXPECT_TRUE(WebElement(ToElement(v1autonomous)).IsAutonomousCustomElement());
+  EXPECT_TRUE(
+      WebElement(To<Element>(v1autonomous)).IsAutonomousCustomElement());
 }
 
 TEST_F(WebElementTest, ShadowRoot) {

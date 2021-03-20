@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -41,6 +42,7 @@ namespace blink {
 class AudioBus;
 class AudioBufferOptions;
 class ExceptionState;
+class SharedAudioBuffer;
 
 class MODULES_EXPORT AudioBuffer final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
@@ -63,12 +65,6 @@ class MODULES_EXPORT AudioBuffer final : public ScriptWrappable {
   static AudioBuffer* CreateUninitialized(unsigned number_of_channels,
                                           uint32_t number_of_frames,
                                           float sample_rate);
-
-  // Returns 0 if data is not a valid audio file.
-  static AudioBuffer* CreateFromAudioFileData(const void* data,
-                                              size_t data_size,
-                                              bool mix_to_mono,
-                                              float sample_rate);
 
   static AudioBuffer* CreateFromAudioBus(AudioBus*);
 
@@ -99,22 +95,24 @@ class MODULES_EXPORT AudioBuffer final : public ScriptWrappable {
                        ExceptionState&);
   void copyFromChannel(NotShared<DOMFloat32Array>,
                        int32_t channel_number,
-                       uint32_t start_in_channel,
+                       size_t buffer_offset,
                        ExceptionState&);
   void copyToChannel(NotShared<DOMFloat32Array>,
                      int32_t channel_number,
                      ExceptionState&);
   void copyToChannel(NotShared<DOMFloat32Array>,
                      int32_t channel_number,
-                     uint32_t start_in_channel,
+                     size_t buffer_offset,
                      ExceptionState&);
 
   void Zero();
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(channels_);
     ScriptWrappable::Trace(visitor);
   }
+
+  std::unique_ptr<SharedAudioBuffer> CreateSharedAudioBuffer();
 
  private:
   static DOMFloat32Array* CreateFloat32ArrayOrNull(
@@ -127,6 +125,30 @@ class MODULES_EXPORT AudioBuffer final : public ScriptWrappable {
   uint32_t length_;
 
   HeapVector<Member<DOMFloat32Array>> channels_;
+};
+
+// Shared data that audio threads can hold onto.
+class SharedAudioBuffer final {
+  USING_FAST_MALLOC(SharedAudioBuffer);
+
+ public:
+  explicit SharedAudioBuffer(AudioBuffer*);
+
+  unsigned numberOfChannels() const { return channels_.size(); }
+  uint32_t length() const { return length_; }
+  double duration() const {
+    return length() / static_cast<double>(sampleRate());
+  }
+  float sampleRate() const { return sample_rate_; }
+
+  const Vector<ArrayBufferContents>& channels() { return channels_; }
+
+  void Zero();
+
+ private:
+  float sample_rate_;
+  uint32_t length_;
+  Vector<ArrayBufferContents> channels_;
 };
 
 }  // namespace blink

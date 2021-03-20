@@ -6,13 +6,13 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_GEOMETRY_DOM_MATRIX_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/string_or_unrestricted_double_sequence.h"
-#include "third_party/blink/renderer/core/geometry/dom_matrix_2d_init.h"
-#include "third_party/blink/renderer/core/geometry/dom_matrix_init.h"
 #include "third_party/blink/renderer/core/geometry/dom_matrix_read_only.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
+
+class DOMMatrixInit;
 
 class CORE_EXPORT DOMMatrix : public DOMMatrixReadOnly {
   DEFINE_WRAPPERTYPEINFO();
@@ -38,57 +38,57 @@ class CORE_EXPORT DOMMatrix : public DOMMatrixReadOnly {
   template <typename T>
   DOMMatrix(T sequence, int size);
 
-  void setA(double value) { matrix_->SetM11(value); }
-  void setB(double value) { matrix_->SetM12(value); }
-  void setC(double value) { matrix_->SetM21(value); }
-  void setD(double value) { matrix_->SetM22(value); }
-  void setE(double value) { matrix_->SetM41(value); }
-  void setF(double value) { matrix_->SetM42(value); }
+  void setA(double value) { matrix_.SetM11(value); }
+  void setB(double value) { matrix_.SetM12(value); }
+  void setC(double value) { matrix_.SetM21(value); }
+  void setD(double value) { matrix_.SetM22(value); }
+  void setE(double value) { matrix_.SetM41(value); }
+  void setF(double value) { matrix_.SetM42(value); }
 
-  void setM11(double value) { matrix_->SetM11(value); }
-  void setM12(double value) { matrix_->SetM12(value); }
+  void setM11(double value) { matrix_.SetM11(value); }
+  void setM12(double value) { matrix_.SetM12(value); }
   void setM13(double value) {
-    matrix_->SetM13(value);
+    matrix_.SetM13(value);
     SetIs2D(!value);
   }
   void setM14(double value) {
-    matrix_->SetM14(value);
+    matrix_.SetM14(value);
     SetIs2D(!value);
   }
-  void setM21(double value) { matrix_->SetM21(value); }
-  void setM22(double value) { matrix_->SetM22(value); }
+  void setM21(double value) { matrix_.SetM21(value); }
+  void setM22(double value) { matrix_.SetM22(value); }
   void setM23(double value) {
-    matrix_->SetM23(value);
+    matrix_.SetM23(value);
     SetIs2D(!value);
   }
   void setM24(double value) {
-    matrix_->SetM24(value);
+    matrix_.SetM24(value);
     SetIs2D(!value);
   }
   void setM31(double value) {
-    matrix_->SetM31(value);
+    matrix_.SetM31(value);
     SetIs2D(!value);
   }
   void setM32(double value) {
-    matrix_->SetM32(value);
+    matrix_.SetM32(value);
     SetIs2D(!value);
   }
   void setM33(double value) {
-    matrix_->SetM33(value);
+    matrix_.SetM33(value);
     SetIs2D(value == 1);
   }
   void setM34(double value) {
-    matrix_->SetM34(value);
+    matrix_.SetM34(value);
     SetIs2D(!value);
   }
-  void setM41(double value) { matrix_->SetM41(value); }
-  void setM42(double value) { matrix_->SetM42(value); }
+  void setM41(double value) { matrix_.SetM41(value); }
+  void setM42(double value) { matrix_.SetM42(value); }
   void setM43(double value) {
-    matrix_->SetM43(value);
+    matrix_.SetM43(value);
     SetIs2D(!value);
   }
   void setM44(double value) {
-    matrix_->SetM44(value);
+    matrix_.SetM44(value);
     SetIs2D(value == 1);
   }
 

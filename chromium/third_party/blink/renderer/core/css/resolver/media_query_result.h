@@ -25,7 +25,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_MEDIA_QUERY_RESULT_H_
 
 #include "third_party/blink/renderer/core/css/media_query_exp.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
 
 namespace blink {
 
@@ -42,6 +41,22 @@ class MediaQueryResult {
 
  private:
   const MediaQueryExp expression_;
+  bool result_;
+};
+
+class MediaQuerySetResult {
+  DISALLOW_NEW();
+
+ public:
+  MediaQuerySetResult(const MediaQuerySet& media_queries, bool result)
+      : media_queries_(&media_queries), result_(result) {}
+
+  const MediaQuerySet& MediaQueries() const { return *media_queries_; }
+
+  bool Result() const { return result_; }
+
+ private:
+  scoped_refptr<const MediaQuerySet> media_queries_;
   bool result_;
 };
 

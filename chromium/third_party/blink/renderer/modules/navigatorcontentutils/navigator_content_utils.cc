@@ -29,24 +29,27 @@
 #include "base/stl_util.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
+#include "third_party/blink/renderer/modules/navigatorcontentutils/navigator_content_utils_client.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
-static HashSet<String>* g_scheme_whitelist;
+const char NavigatorContentUtils::kSupplementName[] = "NavigatorContentUtils";
 
-static void InitCustomSchemeHandlerWhitelist() {
-  g_scheme_whitelist = new HashSet<String>;
-  static const char* const kSchemes[] = {
-      "bitcoin", "geo",  "im",   "irc",         "ircs", "magnet", "mailto",
-      "mms",     "news", "nntp", "openpgp4fpr", "sip",  "sms",    "smsto",
-      "ssh",     "tel",  "urn",  "webcal",      "wtai", "xmpp",
-  };
-  for (size_t i = 0; i < base::size(kSchemes); ++i)
-    g_scheme_whitelist->insert(kSchemes[i]);
+static const HashSet<String>& SupportedSchemes() {
+  DEFINE_STATIC_LOCAL(
+      HashSet<String>, supported_schemes,
+      ({
+          "bitcoin", "geo",  "im",   "irc",         "ircs", "magnet", "mailto",
+          "mms",     "news", "nntp", "openpgp4fpr", "sip",  "sms",    "smsto",
+          "ssh",     "tel",  "urn",  "webcal",      "wtai", "xmpp",
+      }));
+  return supported_schemes;
 }
 
 static bool VerifyCustomHandlerURL(const Document& document,
@@ -77,6 +80,17 @@ static bool VerifyCustomHandlerURL(const Document& document,
     return false;
   }
 
+  // Although not required by the spec, the spec allows additional security
+  // checks. Bugs have arisen from allowing non-http/https URLs, e.g.
+  // https://crbug.com/971917 and it doesn't make a lot of sense to support
+  // them. We do need to allow extensions to continue using the API.
+  if (!kurl.ProtocolIsInHTTPFamily() && !kurl.ProtocolIs("chrome-extension")) {
+    exception_state.ThrowSecurityError(
+        "The scheme of the url provided must be 'https' or "
+        "'chrome-extension'.");
+    return false;
+  }
+
   // The specification says that the API throws SecurityError exception if the
   // URL's origin differs from the document's origin.
   if (!document.GetSecurityOrigin()->CanRequest(kurl)) {
@@ -88,48 +102,62 @@ static bool VerifyCustomHandlerURL(const Document& document,
   return true;
 }
 
-static bool IsSchemeWhitelisted(const String& scheme) {
-  if (!g_scheme_whitelist)
-    InitCustomSchemeHandlerWhitelist();
+// HTML5 requires that schemes with the |web+| prefix contain one or more
+// ASCII alphas after that prefix.
+static bool IsValidWebSchemeName(const String& protocol) {
+  if (protocol.length() < 5)
+    return false;
 
-  StringBuilder builder;
-  builder.Append(scheme.LowerASCII());
-
-  return g_scheme_whitelist->Contains(builder.ToString());
+  unsigned protocol_length = protocol.length();
+  for (unsigned i = 4; i < protocol_length; i++) {
+    char c = protocol[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static bool VerifyCustomHandlerScheme(const String& scheme,
                                       ExceptionState& exception_state) {
   if (!IsValidProtocol(scheme)) {
-    exception_state.ThrowSecurityError("The scheme '" + scheme +
-                                       "' is not valid protocol");
+    exception_state.ThrowSecurityError(
+        "The scheme name '" + scheme +
+        "' is not allowed by URI syntax (RFC3986).");
     return false;
   }
 
   if (scheme.StartsWith("web+")) {
-    // The specification requires that the length of scheme is at least five
-    // characteres (including 'web+' prefix).
-    if (scheme.length() >= 5)
+    if (IsValidWebSchemeName(scheme))
       return true;
-
-    exception_state.ThrowSecurityError("The scheme '" + scheme +
-                                       "' is less than five characters long.");
+    exception_state.ThrowSecurityError(
+        "The scheme name '" + scheme +
+        "' is not allowed. Schemes starting with 'web+' must be followed by "
+        "one or more ASCII letters.");
     return false;
   }
 
-  if (IsSchemeWhitelisted(scheme))
+  if (SupportedSchemes().Contains(scheme.LowerASCII()))
     return true;
 
   exception_state.ThrowSecurityError(
       "The scheme '" + scheme +
-      "' doesn't belong to the scheme whitelist. "
-      "Please prefix non-whitelisted schemes "
+      "' doesn't belong to the scheme allowlist. "
+      "Please prefix non-allowlisted schemes "
       "with the string 'web+'.");
   return false;
 }
 
-NavigatorContentUtils* NavigatorContentUtils::From(Navigator& navigator) {
-  return Supplement<Navigator>::From<NavigatorContentUtils>(navigator);
+NavigatorContentUtils& NavigatorContentUtils::From(Navigator& navigator,
+                                                   LocalFrame& frame) {
+  NavigatorContentUtils* navigator_content_utils =
+      Supplement<Navigator>::From<NavigatorContentUtils>(navigator);
+  if (!navigator_content_utils) {
+    navigator_content_utils = MakeGarbageCollected<NavigatorContentUtils>(
+        navigator, MakeGarbageCollected<NavigatorContentUtilsClient>(&frame));
+    ProvideTo(navigator, navigator_content_utils);
+  }
+  return *navigator_content_utils;
 }
 
 NavigatorContentUtils::~NavigatorContentUtils() = default;
@@ -140,26 +168,36 @@ void NavigatorContentUtils::registerProtocolHandler(
     const String& url,
     const String& title,
     ExceptionState& exception_state) {
-  if (!navigator.GetFrame())
+  LocalFrame* frame = navigator.GetFrame();
+  if (!frame)
     return;
-
-  Document* document = navigator.GetFrame()->GetDocument();
+  Document* document = frame->GetDocument();
   DCHECK(document);
+
+  // Per the HTML specification, exceptions for arguments must be surfaced in
+  // the order of the arguments.
+  if (!VerifyCustomHandlerScheme(scheme, exception_state))
+    return;
 
   if (!VerifyCustomHandlerURL(*document, url, exception_state))
     return;
 
-  if (!VerifyCustomHandlerScheme(scheme, exception_state))
-    return;
-
-  // Count usage; perhaps we can lock this to secure contexts.
+  // Count usage; perhaps we can forbid this from cross-origin subframes as
+  // proposed in https://crbug.com/977083.
+  UseCounter::Count(
+      *document, frame->IsCrossOriginToMainFrame()
+                     ? WebFeature::kRegisterProtocolHandlerCrossOriginSubframe
+                     : WebFeature::kRegisterProtocolHandlerSameOriginAsTop);
+  // Count usage. Context should now always be secure due to the same-origin
+  // check and the requirement that the calling context be secure.
   UseCounter::Count(*document,
                     document->IsSecureContext()
                         ? WebFeature::kRegisterProtocolHandlerSecureOrigin
                         : WebFeature::kRegisterProtocolHandlerInsecureOrigin);
 
-  NavigatorContentUtils::From(navigator)->Client()->RegisterProtocolHandler(
-      scheme, document->CompleteURL(url), title);
+  NavigatorContentUtils::From(navigator, *frame)
+      .Client()
+      ->RegisterProtocolHandler(scheme, document->CompleteURL(url), title);
 }
 
 void NavigatorContentUtils::unregisterProtocolHandler(
@@ -167,34 +205,26 @@ void NavigatorContentUtils::unregisterProtocolHandler(
     const String& scheme,
     const String& url,
     ExceptionState& exception_state) {
-  if (!navigator.GetFrame())
+  LocalFrame* frame = navigator.GetFrame();
+  if (!frame)
     return;
-
-  Document* document = navigator.GetFrame()->GetDocument();
+  Document* document = frame->GetDocument();
   DCHECK(document);
-
-  if (!VerifyCustomHandlerURL(*document, url, exception_state))
-    return;
 
   if (!VerifyCustomHandlerScheme(scheme, exception_state))
     return;
 
-  NavigatorContentUtils::From(navigator)->Client()->UnregisterProtocolHandler(
-      scheme, document->CompleteURL(url));
+  if (!VerifyCustomHandlerURL(*document, url, exception_state))
+    return;
+
+  NavigatorContentUtils::From(navigator, *frame)
+      .Client()
+      ->UnregisterProtocolHandler(scheme, document->CompleteURL(url));
 }
 
-void NavigatorContentUtils::Trace(blink::Visitor* visitor) {
+void NavigatorContentUtils::Trace(Visitor* visitor) {
   visitor->Trace(client_);
   Supplement<Navigator>::Trace(visitor);
-}
-
-const char NavigatorContentUtils::kSupplementName[] = "NavigatorContentUtils";
-
-void NavigatorContentUtils::ProvideTo(Navigator& navigator,
-                                      NavigatorContentUtilsClient* client) {
-  Supplement<Navigator>::ProvideTo(
-      navigator,
-      MakeGarbageCollected<NavigatorContentUtils>(navigator, client));
 }
 
 }  // namespace blink

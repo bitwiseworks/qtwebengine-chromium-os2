@@ -1,17 +1,26 @@
 #!/usr/bin/python
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 """Tests for mb.py."""
 
+from __future__ import print_function
+from __future__ import absolute_import
+
 import json
 import os
+import re
 import StringIO
 import sys
 import unittest
 
-import mb
+sys.path.insert(
+    0,
+    os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
+
+from mb import mb
 
 
 class FakeMBW(mb.MetaBuildWrapper):
@@ -21,19 +30,24 @@ class FakeMBW(mb.MetaBuildWrapper):
     # Override vars for test portability.
     if win32:
       self.chromium_src_dir = 'c:\\fake_src'
-      self.default_config = 'c:\\fake_src\\tools\\mb\\mb_config.pyl'
+      self.default_config_master = 'c:\\fake_src\\tools\\mb\\mb_config.pyl'
+
+      self.default_config_bucket = 'c:\\fake_src\\tools\\mb\\mb_config_bucket.pyl'  # pylint: disable=line-too-long
       self.default_isolate_map = ('c:\\fake_src\\testing\\buildbot\\'
                                   'gn_isolate_map.pyl')
       self.platform = 'win32'
       self.executable = 'c:\\python\\python.exe'
       self.sep = '\\'
+      self.cwd = 'c:\\fake_src\\out\\Default'
     else:
       self.chromium_src_dir = '/fake_src'
-      self.default_config = '/fake_src/tools/mb/mb_config.pyl'
+      self.default_config_master = '/fake_src/tools/mb/mb_config.pyl'
+      self.default_config_bucket = '/fake_src/tools/mb/mb_config_bucket.pyl'
       self.default_isolate_map = '/fake_src/testing/buildbot/gn_isolate_map.pyl'
       self.executable = '/usr/bin/python'
       self.platform = 'linux2'
       self.sep = '/'
+      self.cwd = '/fake_src/out/Default'
 
     self.files = {}
     self.calls = []
@@ -47,23 +61,25 @@ class FakeMBW(mb.MetaBuildWrapper):
     return '$HOME/%s' % path
 
   def Exists(self, path):
-    return self.files.get(path) is not None
+    return self.files.get(self._AbsPath(path)) is not None
 
   def MaybeMakeDirectory(self, path):
-    self.files[path] = True
+    abpath = self._AbsPath(path)
+    self.files[abpath] = True
 
   def PathJoin(self, *comps):
     return self.sep.join(comps)
 
   def ReadFile(self, path):
-    return self.files[path]
+    return self.files[self._AbsPath(path)]
 
   def WriteFile(self, path, contents, force_verbose=False):
     if self.args.dryrun or self.args.verbose or force_verbose:
       self.Print('\nWriting """\\\n%s""" to %s.\n' % (contents, path))
-    self.files[path] = contents
+    abpath = self._AbsPath(path)
+    self.files[abpath] = contents
 
-  def Call(self, cmd, env=None, buffer_output=True):
+  def Call(self, cmd, env=None, buffer_output=True, stdin=None):
     self.calls.append(cmd)
     if self.cmds:
       return self.cmds.pop(0)
@@ -82,13 +98,24 @@ class FakeMBW(mb.MetaBuildWrapper):
     return FakeFile(self.files)
 
   def RemoveFile(self, path):
-    del self.files[path]
+    abpath = self._AbsPath(path)
+    self.files[abpath] = None
 
   def RemoveDirectory(self, path):
-    self.rmdirs.append(path)
-    files_to_delete = [f for f in self.files if f.startswith(path)]
+    abpath = self._AbsPath(path)
+    self.rmdirs.append(abpath)
+    files_to_delete = [f for f in self.files if f.startswith(abpath)]
     for f in files_to_delete:
       self.files[f] = None
+
+  def _AbsPath(self, path):
+    if not ((self.platform == 'win32' and path.startswith('c:')) or
+            (self.platform != 'win32' and path.startswith('/'))):
+      path = self.PathJoin(self.cwd, path)
+    if self.sep == '\\':
+      return re.sub(r'\\+', r'\\', path)
+    else:
+      return re.sub('/+', '/', path)
 
 
 class FakeFile(object):
@@ -101,7 +128,7 @@ class FakeFile(object):
     self.buf += contents
 
   def close(self):
-     self.files[self.name] = self.buf
+    self.files[self.name] = self.buf
 
 
 TEST_CONFIG = """\
@@ -115,12 +142,65 @@ TEST_CONFIG = """\
       'fake_args_bot': '//build/args/bots/fake_master/fake_args_bot.gn',
       'fake_multi_phase': { 'phase_1': 'phase_1', 'phase_2': 'phase_2'},
       'fake_args_file': 'args_file_goma',
-      'fake_args_file_twice': 'args_file_twice',
+      'fake_ios_error': 'ios_error',
     },
   },
   'configs': {
     'args_file_goma': ['args_file', 'goma'],
-    'args_file_twice': ['args_file', 'args_file'],
+    'cros_chrome_sdk': ['cros_chrome_sdk'],
+    'rel_bot': ['rel', 'goma', 'fake_feature1'],
+    'debug_goma': ['debug', 'goma'],
+    'phase_1': ['phase_1'],
+    'phase_2': ['phase_2'],
+    'ios_error': ['error'],
+  },
+  'mixins': {
+    'cros_chrome_sdk': {
+      'cros_passthrough': True,
+    },
+    'error': {
+      'gn_args': 'error',
+    },
+    'fake_feature1': {
+      'gn_args': 'enable_doom_melon=true',
+    },
+    'goma': {
+      'gn_args': 'use_goma=true',
+    },
+    'args_file': {
+      'args_file': '//build/args/fake.gn',
+    },
+    'phase_1': {
+      'gn_args': 'phase=1',
+    },
+    'phase_2': {
+      'gn_args': 'phase=2',
+    },
+    'rel': {
+      'gn_args': 'is_debug=false',
+    },
+    'debug': {
+      'gn_args': 'is_debug=true',
+    },
+  },
+}
+"""
+
+TEST_CONFIG_BUCKET = """\
+{
+  'public_artifact_builders': {},
+  'buckets': {
+    'ci': {
+      'fake_builder': 'rel_bot',
+      'fake_debug_builder': 'debug_goma',
+      'fake_simplechrome_builder': 'cros_chrome_sdk',
+      'fake_args_bot': '//build/args/bots/fake_master/fake_args_bot.gn',
+      'fake_multi_phase': { 'phase_1': 'phase_1', 'phase_2': 'phase_2'},
+      'fake_args_file': 'args_file_goma',
+    }
+  },
+  'configs': {
+    'args_file_goma': ['args_file', 'goma'],
     'cros_chrome_sdk': ['cros_chrome_sdk'],
     'rel_bot': ['rel', 'goma', 'fake_feature1'],
     'debug_goma': ['debug', 'goma'],
@@ -156,6 +236,57 @@ TEST_CONFIG = """\
 }
 """
 
+# Same as previous config but with fake_debug_builder
+# and fake_simplechrome_builder configs swapped
+TEST_CONFIG_BUCKET_2 = """\
+{
+  'public_artifact_builders': {},
+  'buckets': {
+    'ci': {
+      'fake_builder': 'rel_bot',
+      'fake_debug_builder': 'cros_chrome_sdk',
+      'fake_simplechrome_builder': 'debug_goma',
+      'fake_args_bot': '//build/args/bots/fake_master/fake_args_bot.gn',
+      'fake_multi_phase': { 'phase_1': 'phase_1', 'phase_2': 'phase_2'},
+      'fake_args_file': 'args_file_goma',
+    }
+  },
+  'configs': {
+    'args_file_goma': ['args_file', 'goma'],
+    'cros_chrome_sdk': ['cros_chrome_sdk'],
+    'rel_bot': ['rel', 'goma', 'fake_feature1'],
+    'debug_goma': ['debug', 'goma'],
+    'phase_1': ['phase_1'],
+    'phase_2': ['phase_2'],
+  },
+  'mixins': {
+    'cros_chrome_sdk': {
+      'cros_passthrough': True,
+    },
+    'fake_feature1': {
+      'gn_args': 'enable_doom_melon=true',
+    },
+    'goma': {
+      'gn_args': 'use_goma=true',
+    },
+    'args_file': {
+      'args_file': '//build/args/fake.gn',
+    },
+    'phase_1': {
+      'gn_args': 'phase=1',
+    },
+    'phase_2': {
+      'gn_args': 'phase=2',
+    },
+    'rel': {
+      'gn_args': 'is_debug=false',
+    },
+    'debug': {
+      'gn_args': 'is_debug=true',
+    },
+  },
+}
+"""
 
 TEST_BAD_CONFIG = """\
 {
@@ -183,6 +314,119 @@ TEST_BAD_CONFIG = """\
 }
 """
 
+TEST_BAD_CONFIG_BUCKET = """\
+{
+  'public_artifact_builders': {
+      'fake_bucket_a': ['fake_builder_a', 'fake_builder_b'],
+  },
+  'configs': {
+    'rel_bot_1': ['rel', 'chrome_with_codecs'],
+    'rel_bot_2': ['rel', 'bad_nested_config'],
+  },
+  'buckets': {
+    'fake_bucket_a': {
+      'fake_builder_a': 'rel_bot_1',
+      'fake_builder_b': 'rel_bot_2',
+    },
+  },
+  'mixins': {
+    'chrome_with_codecs': {
+      'gn_args': 'proprietary_codecs=true',
+    },
+    'bad_nested_config': {
+      'mixins': ['chrome_with_codecs'],
+    },
+    'rel': {
+      'gn_args': 'is_debug=false',
+    },
+  },
+}
+"""
+
+
+TEST_ARGS_FILE_TWICE_CONFIG = """\
+{
+  'masters': {
+    'chromium': {},
+    'fake_master': {
+      'fake_args_file_twice': 'args_file_twice',
+    },
+  },
+  'configs': {
+    'args_file_twice': ['args_file', 'args_file'],
+  },
+  'mixins': {
+    'args_file': {
+      'args_file': '//build/args/fake.gn',
+    },
+  },
+}
+"""
+
+
+TEST_ARGS_FILE_TWICE_CONFIG_BUCKET = """\
+{
+  'public_artifact_builders': {},
+  'buckets': {
+    'chromium': {},
+    'fake_bucket': {
+      'fake_args_file_twice': 'args_file_twice',
+    },
+  },
+  'configs': {
+    'args_file_twice': ['args_file', 'args_file'],
+  },
+  'mixins': {
+    'args_file': {
+      'args_file': '//build/args/fake.gn',
+    },
+  },
+}
+"""
+
+TEST_DUP_CONFIG = """\
+{
+  'masters': {
+    'chromium': {},
+    'fake_master': {
+      'fake_builder': 'some_config',
+      'other_builder': 'some_other_config',
+    },
+  },
+  'configs': {
+    'some_config': ['args_file'],
+    'some_other_config': ['args_file'],
+  },
+  'mixins': {
+    'args_file': {
+      'args_file': '//build/args/fake.gn',
+    },
+  },
+}
+"""
+
+TEST_DUP_CONFIG_BUCKET = """\
+{
+  'public_artifact_builders': {},
+  'buckets': {
+    'ci': {},
+    'fake_bucket': {
+      'fake_builder': 'some_config',
+      'other_builder': 'some_other_config',
+    },
+  },
+  'configs': {
+    'some_config': ['args_file'],
+    'some_other_config': ['args_file'],
+  },
+  'mixins': {
+    'args_file': {
+      'args_file': '//build/args/fake.gn',
+    },
+  },
+}
+"""
+
 TRYSERVER_CONFIG = """\
 {
   'masters': {
@@ -205,7 +449,8 @@ TRYSERVER_CONFIG = """\
 class UnitTest(unittest.TestCase):
   def fake_mbw(self, files=None, win32=False):
     mbw = FakeMBW(win32=win32)
-    mbw.files.setdefault(mbw.default_config, TEST_CONFIG)
+    mbw.files.setdefault(mbw.default_config_master, TEST_CONFIG)
+    mbw.files.setdefault(mbw.default_config_bucket, TEST_CONFIG_BUCKET)
     mbw.files.setdefault(
       mbw.ToAbsPath('//testing/buildbot/gn_isolate_map.pyl'),
       '''{
@@ -234,7 +479,6 @@ class UnitTest(unittest.TestCase):
       actual_ret = mbw.Main(args)
     finally:
       os.environ = prev_env
-
     self.assertEqual(actual_ret, ret)
     if out is not None:
       self.assertEqual(mbw.out, out)
@@ -255,7 +499,7 @@ class UnitTest(unittest.TestCase):
              }'''}
 
     mbw = self.fake_mbw(files)
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+    mbw.Call = lambda cmd, env=None, buffer_output=True, stdin=None: (0, '', '')
 
     self.check(['analyze', '-c', 'debug_goma', '//out/Default',
                 '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
@@ -279,7 +523,7 @@ class UnitTest(unittest.TestCase):
              }'''}
 
     mbw = self.fake_mbw(files)
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+    mbw.Call = lambda cmd, env=None, buffer_output=True, stdin=None: (0, '', '')
 
     self.check(['analyze', '-c', 'debug_goma', '//out/Default',
                 '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
@@ -302,7 +546,7 @@ class UnitTest(unittest.TestCase):
              }'''}
 
     mbw = self.fake_mbw(files)
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+    mbw.Call = lambda cmd, env=None, buffer_output=True, stdin=None: (0, '', '')
 
     self.check(['analyze', '-c', 'debug_goma', '//out/Default',
                 '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
@@ -316,7 +560,7 @@ class UnitTest(unittest.TestCase):
     self.assertEqual(['all', 'foo_unittests'], out['compile_targets'])
 
   def test_analyze_handles_way_too_many_results(self):
-    too_many_files = ', '.join(['"//foo:foo%d"' % i for i in xrange(4 * 1024)])
+    too_many_files = ', '.join(['"//foo:foo%d"' % i for i in xrange(40 * 1024)])
     files = {'/tmp/in.json': '''{\
                "files": ["foo/foo_unittest.cc"],
                "test_targets": ["foo_unittests"],
@@ -329,7 +573,7 @@ class UnitTest(unittest.TestCase):
              }'''}
 
     mbw = self.fake_mbw(files)
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+    mbw.Call = lambda cmd, env=None, buffer_output=True, stdin=None: (0, '', '')
 
     self.check(['analyze', '-c', 'debug_goma', '//out/Default',
                 '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
@@ -383,13 +627,24 @@ class UnitTest(unittest.TestCase):
         ('import("//build/args/fake.gn")\n'
          'use_goma = true\n'))
 
+  def test_gen_args_file_twice_bucket(self):
     mbw = self.fake_mbw()
+    mbw.files[mbw.default_config_bucket] = TEST_ARGS_FILE_TWICE_CONFIG_BUCKET
+    self.check([
+        'gen', '-u', 'fake_bucket', '-b', 'fake_args_file_twice', '//out/Debug'
+    ],
+               mbw=mbw,
+               ret=1)
+
+  def test_gen_args_file_twice(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config_master] = TEST_ARGS_FILE_TWICE_CONFIG
     self.check(['gen', '-m', 'fake_master', '-b', 'fake_args_file_twice',
                 '//out/Debug'], mbw=mbw, ret=1)
 
   def test_gen_fails(self):
     mbw = self.fake_mbw()
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (1, '', '')
+    mbw.Call = lambda cmd, env=None, buffer_output=True, stdin=None: (1, '', '')
     self.check(['gen', '-c', 'debug_goma', '//out/Default'], mbw=mbw, ret=1)
 
   def test_gen_swarming(self):
@@ -402,11 +657,21 @@ class UnitTest(unittest.TestCase):
           "  'args': [],"
           "}}\n"
       ),
-      '/fake_src/out/Default/base_unittests.runtime_deps': (
-          "base_unittests\n"
-      ),
     }
+
     mbw = self.fake_mbw(files)
+
+    def fake_call(cmd, env=None, buffer_output=True, stdin=None):
+      del cmd
+      del env
+      del buffer_output
+      del stdin
+      mbw.files['/fake_src/out/Default/base_unittests.runtime_deps'] = (
+          'base_unittests\n')
+      return 0, '', ''
+
+    mbw.Call = fake_call
+
     self.check(['gen',
                 '-c', 'debug_goma',
                 '--swarming-targets-file', '/tmp/swarming_targets',
@@ -427,47 +692,30 @@ class UnitTest(unittest.TestCase):
           "  'args': [],"
           "}}\n"
       ),
-      'c:\\fake_src\out\Default\cc_perftests.exe.runtime_deps': (
-          "cc_perftests\n"
-      ),
     }
-    mbw = self.fake_mbw(files=files, win32=True)
-    self.check(['gen',
-                '-c', 'debug_goma',
-                '--swarming-targets-file', '/tmp/swarming_targets',
-                '--isolate-map-file',
-                '/fake_src/testing/buildbot/gn_isolate_map.pyl',
-                '//out/Default'], mbw=mbw, ret=0)
-    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests.isolate',
-                  mbw.files)
-    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests.isolated.gen.json',
-                  mbw.files)
+    mbw = self.fake_mbw(files=files)
 
-  def test_gen_fuzzer(self):
-    files = {
-      '/tmp/swarming_targets': 'cc_perftests_fuzzer\n',
-      '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
-          "{'cc_perftests_fuzzer': {"
-          "  'label': '//cc:cc_perftests_fuzzer',"
-          "  'type': 'fuzzer',"
-          "}}\n"
-      ),
-      'c:\\fake_src\out\Default\cc_perftests_fuzzer.exe.runtime_deps': (
-          "cc_perftests_fuzzer\n"
-      ),
-    }
-    mbw = self.fake_mbw(files=files, win32=True)
+    def fake_call(cmd, env=None, buffer_output=True, stdin=None):
+      del cmd
+      del env
+      del buffer_output
+      del stdin
+      mbw.files['/fake_src/out/Default/cc_perftests.runtime_deps'] = (
+          'cc_perftests\n')
+      return 0, '', ''
+
+    mbw.Call = fake_call
+
     self.check(['gen',
                 '-c', 'debug_goma',
                 '--swarming-targets-file', '/tmp/swarming_targets',
                 '--isolate-map-file',
                 '/fake_src/testing/buildbot/gn_isolate_map.pyl',
                 '//out/Default'], mbw=mbw, ret=0)
-    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests_fuzzer.isolate',
+    self.assertIn('/fake_src/out/Default/cc_perftests.isolate',
                   mbw.files)
-    self.assertIn(
-        'c:\\fake_src\\out\\Default\\cc_perftests_fuzzer.isolated.gen.json',
-        mbw.files)
+    self.assertIn('/fake_src/out/Default/cc_perftests.isolated.gen.json',
+                  mbw.files)
 
   def test_multiple_isolate_maps(self):
     files = {
@@ -486,11 +734,20 @@ class UnitTest(unittest.TestCase):
           "  'args': [],"
           "}}\n"
       ),
-      'c:\\fake_src\out\Default\cc_perftests.exe.runtime_deps': (
-          "cc_perftests\n"
-      ),
     }
-    mbw = self.fake_mbw(files=files, win32=True)
+    mbw = self.fake_mbw(files=files)
+
+    def fake_call(cmd, env=None, buffer_output=True, stdin=None):
+      del cmd
+      del env
+      del buffer_output
+      del stdin
+      mbw.files['/fake_src/out/Default/cc_perftests.runtime_deps'] = (
+          'cc_perftests_fuzzer\n')
+      return 0, '', ''
+
+    mbw.Call = fake_call
+
     self.check(['gen',
                 '-c', 'debug_goma',
                 '--swarming-targets-file', '/tmp/swarming_targets',
@@ -499,9 +756,9 @@ class UnitTest(unittest.TestCase):
                 '--isolate-map-file',
                 '/fake_src/testing/buildbot/gn_isolate_map2.pyl',
                 '//out/Default'], mbw=mbw, ret=0)
-    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests.isolate',
+    self.assertIn('/fake_src/out/Default/cc_perftests.isolate',
                   mbw.files)
-    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests.isolated.gen.json',
+    self.assertIn('/fake_src/out/Default/cc_perftests.isolated.gen.json',
                   mbw.files)
 
 
@@ -563,6 +820,51 @@ class UnitTest(unittest.TestCase):
     self.check(['isolate', '//out/Default', 'base_unittests'],
                files=files, ret=0)
 
+  def test_isolate_dir(self):
+    files = {
+      '/fake_src/out/Default/toolchain.ninja': "",
+      '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
+          "{'base_unittests': {"
+          "  'label': '//base:base_unittests',"
+          "  'type': 'raw',"
+          "  'args': [],"
+          "}}\n"
+      ),
+    }
+    mbw = self.fake_mbw(files=files)
+    mbw.cmds.append((0, '', ''))  # Result of `gn gen`
+    mbw.cmds.append((0, '', ''))  # Result of `autoninja`
+
+    # Result of `gn desc runtime_deps`
+    mbw.cmds.append((0, 'base_unitests\n../../test_data/\n', ''))
+    self.check(['isolate', '-c', 'debug_goma', '//out/Default',
+                'base_unittests'], mbw=mbw, ret=0, err='')
+
+  def test_isolate_generated_dir(self):
+    files = {
+      '/fake_src/out/Default/toolchain.ninja': "",
+      '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
+          "{'base_unittests': {"
+          "  'label': '//base:base_unittests',"
+          "  'type': 'raw',"
+          "  'args': [],"
+          "}}\n"
+      ),
+    }
+    mbw = self.fake_mbw(files=files)
+    mbw.cmds.append((0, '', ''))  # Result of `gn gen`
+    mbw.cmds.append((0, '', ''))  # Result of `autoninja`
+
+    # Result of `gn desc runtime_deps`
+    mbw.cmds.append((0, 'base_unitests\ntest_data/\n', ''))
+    expected_err = ('error: gn `data` items may not list generated directories;'
+                    ' list files in directory instead for:\n'
+                    '//out/Default/test_data/\n')
+    self.check(['isolate', '-c', 'debug_goma', '//out/Default',
+                'base_unittests'], mbw=mbw, ret=1)
+    self.assertEqual(mbw.out[-len(expected_err):], expected_err)
+
+
   def test_run(self):
     files = {
       '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
@@ -581,33 +883,49 @@ class UnitTest(unittest.TestCase):
 
   def test_run_swarmed(self):
     files = {
-      '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
-          "{'base_unittests': {"
-          "  'label': '//base:base_unittests',"
-          "  'type': 'raw',"
-          "  'args': [],"
-          "}}\n"
-      ),
-      '/fake_src/out/Default/base_unittests.runtime_deps': (
-          "base_unittests\n"
-      ),
+        '/fake_src/testing/buildbot/gn_isolate_map.pyl':
+        ("{'base_unittests': {"
+         "  'label': '//base:base_unittests',"
+         "  'type': 'raw',"
+         "  'args': [],"
+         "}}\n"),
+        '/fake_src/out/Default/base_unittests.runtime_deps':
+        ("base_unittests\n"),
+        '/fake_src/out/Default/base_unittests.archive.json':
+        ("{\"base_unittests\":\"fake_hash\"}"),
+        '/fake_src/third_party/depot_tools/cipd_manifest.txt':
+        ("# vpython\n"
+         "/some/vpython/pkg  git_revision:deadbeef\n"),
     }
 
-    def run_stub(cmd, **_kwargs):
-      if 'isolate.py' in cmd[1]:
-        return 0, 'fake_hash base_unittests', ''
-      else:
-        return 0, '', ''
-
     mbw = self.fake_mbw(files=files)
-    mbw.Run = run_stub
+    original_impl = mbw.ToSrcRelPath
+
+    def to_src_rel_path_stub(path):
+      if path.endswith('base_unittests.archive.json'):
+        return 'base_unittests.archive.json'
+      return original_impl(path)
+
+    mbw.ToSrcRelPath = to_src_rel_path_stub
+
     self.check(['run', '-s', '-c', 'debug_goma', '//out/Default',
                 'base_unittests'], mbw=mbw, ret=0)
     self.check(['run', '-s', '-c', 'debug_goma', '-d', 'os', 'Win7',
                 '//out/Default', 'base_unittests'], mbw=mbw, ret=0)
 
   def test_lookup(self):
-    self.check(['lookup', '-c', 'debug_goma'], ret=0)
+    self.check(['lookup', '-c', 'debug_goma'], ret=0,
+               out=('\n'
+                    'Writing """\\\n'
+                    'is_debug = true\n'
+                    'use_goma = true\n'
+                    '""" to _path_/args.gn.\n\n'
+                    '/fake_src/buildtools/linux64/gn gen _path_\n'))
+
+  def test_quiet_lookup(self):
+    self.check(['lookup', '-c', 'debug_goma', '--quiet'], ret=0,
+               out=('is_debug = true\n'
+                    'use_goma = true\n'))
 
   def test_lookup_goma_dir_expansion(self):
     self.check(['lookup', '-c', 'rel_bot', '-g', '/foo'], ret=0,
@@ -661,14 +979,67 @@ class UnitTest(unittest.TestCase):
                       '--phase', 'phase_2'], ret=0)
     self.assertIn('phase = 2', mbw.out)
 
+  def test_recursive_lookup(self):
+    files = {
+        '/fake_src/build/args/fake.gn': (
+          'enable_doom_melon = true\n'
+          'enable_antidoom_banana = true\n'
+        )
+    }
+    self.check(['lookup', '-m', 'fake_master', '-b', 'fake_args_file',
+                '--recursive'], files=files, ret=0,
+               out=('enable_antidoom_banana = true\n'
+                    'enable_doom_melon = true\n'
+                    'use_goma = true\n'))
+
+  def test_recursive_lookup_bucket(self):
+    files = {
+        '/fake_src/build/args/fake.gn': ('enable_doom_melon = true\n'
+                                         'enable_antidoom_banana = true\n')
+    }
+    self.check(['lookup', '-u', 'ci', '-b', 'fake_args_file', '--recursive'],
+               files=files,
+               ret=0,
+               out=('enable_antidoom_banana = true\n'
+                    'enable_doom_melon = true\n'
+                    'use_goma = true\n'))
+
   def test_validate(self):
     mbw = self.fake_mbw()
     self.check(['validate'], mbw=mbw, ret=0)
 
+  def test_validate_inconsistent(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config_bucket] = TEST_CONFIG_BUCKET_2
+    self.check(['validate'], mbw=mbw, ret=1)
+    self.assertIn('mb_config_buckets.pyl doesn\'t match', mbw.out)
+
   def test_bad_validate(self):
     mbw = self.fake_mbw()
-    mbw.files[mbw.default_config] = TEST_BAD_CONFIG
+    mbw.files[mbw.default_config_master] = TEST_BAD_CONFIG
+    self.check(['validate', '-f', mbw.default_config_master], mbw=mbw, ret=1)
+
+  def test_bad_validate_bucket(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config_bucket] = TEST_BAD_CONFIG_BUCKET
+    self.check(['validate', '-f', mbw.default_config_bucket], mbw=mbw, ret=1)
+
+  def test_duplicate_validate(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config_master] = TEST_DUP_CONFIG
     self.check(['validate'], mbw=mbw, ret=1)
+    self.assertIn(
+        'Duplicate configs detected. When evaluated fully, the '
+        'following configs are all equivalent: \'some_config\', '
+        '\'some_other_config\'.', mbw.out)
+
+  def test_duplicate_validate_bucket(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config_bucket] = TEST_DUP_CONFIG_BUCKET
+    self.check(['validate'], mbw=mbw, ret=1)
+    self.assertIn('Duplicate configs detected. When evaluated fully, the '
+                  'following configs are all equivalent: \'some_config\', '
+                  '\'some_other_config\'.', mbw.out)
 
   def test_build_command_unix(self):
     files = {
@@ -701,6 +1072,67 @@ class UnitTest(unittest.TestCase):
     self.check(['run', '//out/Default', 'base_unittests'], mbw=mbw, ret=0)
     self.assertIn(['autoninja.bat', '-C', 'out\\Default', 'base_unittests'],
                   mbw.calls)
+
+  def test_ios_error_config_with_ios_json(self):
+    """Ensures that ios_error config finds the correct iOS JSON file for args"""
+    files = {
+        '/fake_src/ios/build/bots/fake_master/fake_ios_error.json':
+        ('{"gn_args": ["is_debug=true"]}\n')
+    }
+    mbw = self.fake_mbw(files)
+    self.check(['lookup', '-m', 'fake_master', '-b', 'fake_ios_error'],
+               mbw=mbw,
+               ret=0,
+               out=('\n'
+                    'Writing """\\\n'
+                    'is_debug = true\n'
+                    '""" to _path_/args.gn.\n\n'
+                    '/fake_src/buildtools/linux64/gn gen _path_\n'))
+
+  def test_bot_definition_in_ios_json_only(self):
+    """Ensures that logic checks iOS JSON file for args
+
+    When builder definition is not present, ensure that ios/build/bots/ is
+    checked.
+    """
+    files = {
+        '/fake_src/ios/build/bots/fake_master/fake_ios_bot.json':
+        ('{"gn_args": ["is_debug=true"]}\n')
+    }
+    mbw = self.fake_mbw(files)
+    self.check(['lookup', '-m', 'fake_master', '-b', 'fake_ios_bot'],
+               mbw=mbw,
+               ret=0,
+               out=('\n'
+                    'Writing """\\\n'
+                    'is_debug = true\n'
+                    '""" to _path_/args.gn.\n\n'
+                    '/fake_src/buildtools/linux64/gn gen _path_\n'))
+
+  def test_ios_error_config_missing_json_definition(self):
+    """Ensures MBErr is thrown
+
+    Expect MBErr with 'No iOS definition ...' for iOS bots when the bot config
+    is ios_error, but there is no iOS JSON definition for it.
+    """
+    mbw = self.fake_mbw()
+    self.check(['lookup', '-m', 'fake_master', '-b', 'fake_ios_error'],
+               mbw=mbw,
+               ret=1)
+    self.assertIn('MBErr: No iOS definition was found.', mbw.out)
+
+  def test_bot_missing_definition(self):
+    """Ensures builder missing MBErr is thrown
+
+    Expect the original MBErr to be thrown for iOS bots when the bot definition
+    doesn't exist at all.
+    """
+    mbw = self.fake_mbw()
+    self.check(['lookup', '-m', 'fake_master', '-b', 'random_bot'],
+               mbw=mbw,
+               ret=1)
+    self.assertIn('MBErr: Builder name "random_bot"  not found under masters',
+                  mbw.out)
 
 
 if __name__ == '__main__':

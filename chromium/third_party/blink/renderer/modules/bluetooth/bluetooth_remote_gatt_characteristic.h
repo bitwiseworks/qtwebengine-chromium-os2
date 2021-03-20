@@ -5,10 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_BLUETOOTH_BLUETOOTH_REMOTE_GATT_CHARACTERISTIC_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BLUETOOTH_BLUETOOTH_REMOTE_GATT_CHARACTERISTIC_H_
 
-#include "mojo/public/cpp/bindings/associated_binding_set.h"
-#include "third_party/blink/public/platform/modules/bluetooth/web_bluetooth.mojom-blink.h"
+#include "mojo/public/cpp/bindings/associated_receiver_set.h"
+#include "third_party/blink/public/mojom/bluetooth/web_bluetooth.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_piece.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_data_view.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_remote_gatt_service.h"
@@ -21,7 +21,7 @@ namespace blink {
 
 class BluetoothCharacteristicProperties;
 class BluetoothDevice;
-class DOMException;
+class ExceptionState;
 class ExecutionContext;
 class ScriptPromise;
 class ScriptState;
@@ -37,7 +37,7 @@ class ScriptState;
 class BluetoothRemoteGATTCharacteristic final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<BluetoothRemoteGATTCharacteristic>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       public mojom::blink::WebBluetoothCharacteristicClient {
   USING_PRE_FINALIZER(BluetoothRemoteGATTCharacteristic, Dispose);
   DEFINE_WRAPPERTYPEINFO();
@@ -50,12 +50,6 @@ class BluetoothRemoteGATTCharacteristic final
       BluetoothRemoteGATTService*,
       BluetoothDevice*);
 
-  static BluetoothRemoteGATTCharacteristic* Create(
-      ExecutionContext*,
-      mojom::blink::WebBluetoothRemoteGATTCharacteristicPtr,
-      BluetoothRemoteGATTService*,
-      BluetoothDevice*);
-
   // Save value.
   void SetValue(DOMDataView*);
 
@@ -63,8 +57,8 @@ class BluetoothRemoteGATTCharacteristic final
   void RemoteCharacteristicValueChanged(
       const WTF::Vector<uint8_t>& value) override;
 
-  // ContextLifecycleObserver interface.
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver interface.
+  void ContextDestroyed() override;
 
   // USING_PRE_FINALIZER interface.
   // Called before the object gets garbage collected.
@@ -78,7 +72,7 @@ class BluetoothRemoteGATTCharacteristic final
   bool HasPendingActivity() const override;
 
   // Interface required by garbage collection.
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // IDL exposed interface:
   BluetoothRemoteGATTService* service() { return service_; }
@@ -92,13 +86,13 @@ class BluetoothRemoteGATTCharacteristic final
   ScriptPromise getDescriptors(ScriptState*,
                                const StringOrUnsignedLong& descriptor,
                                ExceptionState&);
-  ScriptPromise readValue(ScriptState*);
-  ScriptPromise writeValue(ScriptState*, const DOMArrayPiece&);
-  ScriptPromise startNotifications(ScriptState*);
-  ScriptPromise stopNotifications(ScriptState*);
+  ScriptPromise readValue(ScriptState*, ExceptionState&);
+  ScriptPromise writeValue(ScriptState*, const DOMArrayPiece&, ExceptionState&);
+  ScriptPromise startNotifications(ScriptState*, ExceptionState&);
+  ScriptPromise stopNotifications(ScriptState*, ExceptionState&);
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(characteristicvaluechanged,
-                                  kCharacteristicvaluechanged);
+                                  kCharacteristicvaluechanged)
 
  protected:
   // EventTarget overrides.
@@ -120,6 +114,7 @@ class BluetoothRemoteGATTCharacteristic final
                              mojom::blink::WebBluetoothResult);
 
   ScriptPromise GetDescriptorsImpl(ScriptState*,
+                                   ExceptionState&,
                                    mojom::blink::WebBluetoothGATTQueryQuantity,
                                    const String& descriptor_uuid = String());
 
@@ -132,15 +127,15 @@ class BluetoothRemoteGATTCharacteristic final
       base::Optional<Vector<mojom::blink::WebBluetoothRemoteGATTDescriptorPtr>>
           descriptors);
 
-  DOMException* CreateInvalidCharacteristicError();
+  String CreateInvalidCharacteristicErrorMessage();
 
   mojom::blink::WebBluetoothRemoteGATTCharacteristicPtr characteristic_;
   Member<BluetoothRemoteGATTService> service_;
   Member<BluetoothCharacteristicProperties> properties_;
   Member<DOMDataView> value_;
   Member<BluetoothDevice> device_;
-  mojo::AssociatedBindingSet<mojom::blink::WebBluetoothCharacteristicClient>
-      client_bindings_;
+  mojo::AssociatedReceiverSet<mojom::blink::WebBluetoothCharacteristicClient>
+      receivers_;
 };
 
 }  // namespace blink

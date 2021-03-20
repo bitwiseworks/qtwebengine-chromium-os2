@@ -2,25 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-(function() {
-
-'use strict';
+import {FittingType} from './constants.js';
 
 /**
  * Parses the open pdf parameters passed in the url to set initial viewport
  * settings for opening the pdf.
  */
-window.OpenPDFParamsParser = class {
+export class OpenPdfParamsParser {
   /**
-   * @param {function(Object)} postMessageCallback
+   * @param {function(string):void} getNamedDestinationCallback
    *     Function called to fetch information for a named destination.
    */
-  constructor(postMessageCallback) {
+  constructor(getNamedDestinationCallback) {
     /** @private {!Array<!Object>} */
     this.outstandingRequests_ = [];
 
-    /** @private {!function(Object)} */
-    this.postMessageCallback_ = postMessageCallback;
+    /** @private {!function(string):void} */
+    this.getNamedDestinationCallback_ = getNamedDestinationCallback;
   }
 
   /**
@@ -33,7 +31,7 @@ window.OpenPDFParamsParser = class {
    */
   parseZoomParam_(paramValue) {
     const paramValueSplit = paramValue.split(',');
-    if (paramValueSplit.length != 1 && paramValueSplit.length != 3) {
+    if (paramValueSplit.length !== 1 && paramValueSplit.length !== 3) {
       return {};
     }
 
@@ -44,7 +42,7 @@ window.OpenPDFParamsParser = class {
     }
 
     // Handle #zoom=scale.
-    if (paramValueSplit.length == 1) {
+    if (paramValueSplit.length === 1) {
       return {'zoom': zoomFactor};
     }
 
@@ -107,12 +105,12 @@ window.OpenPDFParamsParser = class {
     const params = {};
 
     const paramIndex = url.search('#');
-    if (paramIndex == -1) {
+    if (paramIndex === -1) {
       return params;
     }
 
     const paramTokens = url.substring(paramIndex + 1).split('&');
-    if ((paramTokens.length == 1) && (paramTokens[0].search('=') == -1)) {
+    if ((paramTokens.length === 1) && (paramTokens[0].search('=') === -1)) {
       // Handle the case of http://foo.com/bar#NAMEDDEST. This is not
       // explicitly mentioned except by example in the Adobe
       // "PDF Open Parameters" document.
@@ -122,7 +120,7 @@ window.OpenPDFParamsParser = class {
 
     for (const paramToken of paramTokens) {
       const keyValueSplit = paramToken.split('=');
-      if (keyValueSplit.length != 2) {
+      if (keyValueSplit.length !== 2) {
         continue;
       }
       params[keyValueSplit[0]] = keyValueSplit[1];
@@ -143,7 +141,7 @@ window.OpenPDFParamsParser = class {
     const params = this.parseUrlParams_(url);
     const uiParams = {toolbar: true};
 
-    if ('toolbar' in params && params['toolbar'] == 0) {
+    if ('toolbar' in params && params['toolbar'] === '0') {
       uiParams.toolbar = false;
     }
 
@@ -183,10 +181,7 @@ window.OpenPDFParamsParser = class {
 
     if (params.page === undefined && 'nameddest' in urlParams) {
       this.outstandingRequests_.push({callback: callback, params: params});
-      this.postMessageCallback_({
-        type: 'getNamedDestination',
-        namedDestination: urlParams['nameddest']
-      });
+      this.getNamedDestinationCallback_(urlParams['nameddest']);
     } else {
       callback(params);
     }
@@ -201,11 +196,9 @@ window.OpenPDFParamsParser = class {
    */
   onNamedDestinationReceived(pageNumber) {
     const outstandingRequest = this.outstandingRequests_.shift();
-    if (pageNumber != -1) {
+    if (pageNumber !== -1) {
       outstandingRequest.params.page = pageNumber;
     }
     outstandingRequest.callback(outstandingRequest.params);
   }
-};
-
-}());
+}

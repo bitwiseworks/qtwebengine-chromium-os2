@@ -4,8 +4,10 @@
 
 #include "third_party/blink/renderer/core/paint/document_marker_painter.h"
 
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
+#include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/paint/text_paint_style.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -80,7 +82,7 @@ sk_sp<PaintRecord> RecordMarker(Color blink_color) {
   flags.setAntiAlias(true);
   flags.setColor(color);
   flags.setShader(PaintShader::MakeLinearGradient(
-      pts, colors, nullptr, ARRAY_SIZE(colors), SkShader::kClamp_TileMode));
+      pts, colors, nullptr, base::size(colors), SkTileMode::kClamp));
   PaintRecorder recorder;
   recorder.beginRecording(kMarkerWidth, kMarkerHeight);
   recorder.getRecordingCanvas()->drawOval(SkRect::MakeWH(2 * kR, 2 * kR),
@@ -93,25 +95,8 @@ sk_sp<PaintRecord> RecordMarker(Color blink_color) {
 void DrawDocumentMarker(GraphicsContext& context,
                         const FloatPoint& pt,
                         float width,
-                        DocumentMarker::MarkerType marker_type,
-                        float zoom) {
-  DCHECK(marker_type == DocumentMarker::kSpelling ||
-         marker_type == DocumentMarker::kGrammar);
-
-  DEFINE_STATIC_LOCAL(
-      PaintRecord*, spelling_marker,
-      (RecordMarker(
-           LayoutTheme::GetTheme().PlatformSpellingMarkerUnderlineColor())
-           .release()));
-  DEFINE_STATIC_LOCAL(
-      PaintRecord*, grammar_marker,
-      (RecordMarker(
-           LayoutTheme::GetTheme().PlatformGrammarMarkerUnderlineColor())
-           .release()));
-  auto* const marker = marker_type == DocumentMarker::kSpelling
-                           ? spelling_marker
-                           : grammar_marker;
-
+                        float zoom,
+                        PaintRecord* const marker) {
   // Position already includes zoom and device scale factor.
   SkScalar origin_x = WebCoreFloatToSkScalar(pt.X());
   SkScalar origin_y = WebCoreFloatToSkScalar(pt.Y());
@@ -129,7 +114,7 @@ void DrawDocumentMarker(GraphicsContext& context,
   flags.setAntiAlias(true);
   flags.setShader(PaintShader::MakePaintRecord(
       sk_ref_sp(marker), FloatRect(0, 0, kMarkerWidth, kMarkerHeight),
-      SkShader::kRepeat_TileMode, SkShader::kClamp_TileMode, &local_matrix));
+      SkTileMode::kRepeat, SkTileMode::kClamp, &local_matrix));
 
   // Apply the origin translation as a global transform.  This ensures that the
   // shader local matrix depends solely on zoom => Skia can reuse the same
@@ -139,11 +124,11 @@ void DrawDocumentMarker(GraphicsContext& context,
   context.DrawRect(rect, flags);
 }
 
-}  // anonymous ns
+}  // namespace
 
 void DocumentMarkerPainter::PaintStyleableMarkerUnderline(
     GraphicsContext& context,
-    const LayoutPoint& box_origin,
+    const PhysicalOffset& box_origin,
     const StyleableMarker& marker,
     const ComputedStyle& style,
     const FloatRect& marker_rect,
@@ -183,22 +168,57 @@ void DocumentMarkerPainter::PaintStyleableMarkerUnderline(
       marker.UseTextColor()
           ? style.VisitedDependentColor(GetCSSPropertyWebkitTextFillColor())
           : marker.UnderlineColor();
-  context.SetStrokeColor(marker_color);
-
-  context.SetStrokeThickness(line_thickness);
-  context.DrawLineForText(
-      FloatPoint(
-          box_origin.X() + start,
-          (box_origin.Y() + logical_height.ToInt() - line_thickness).ToFloat()),
-      width);
+  if (marker.UnderlineStyle() !=
+      ui::mojom::ImeTextSpanUnderlineStyle::kSquiggle) {
+    context.SetStrokeColor(marker_color);
+    context.SetStrokeThickness(line_thickness);
+    // Set the style of the underline if there is any.
+    switch (marker.UnderlineStyle()) {
+      case ui::mojom::ImeTextSpanUnderlineStyle::kDash:
+        context.SetStrokeStyle(StrokeStyle::kDashedStroke);
+        break;
+      case ui::mojom::ImeTextSpanUnderlineStyle::kDot:
+        context.SetStrokeStyle(StrokeStyle::kDottedStroke);
+        break;
+      case ui::mojom::ImeTextSpanUnderlineStyle::kSolid:
+        context.SetStrokeStyle(StrokeStyle::kSolidStroke);
+        break;
+      case ui::mojom::ImeTextSpanUnderlineStyle::kNone:
+        context.SetStrokeStyle(StrokeStyle::kNoStroke);
+        break;
+      case ui::mojom::ImeTextSpanUnderlineStyle::kSquiggle:
+        // Wavy stroke style is not implemented in DrawLineForText so we handle
+        // it specially in the else condition below only for composition
+        // markers.
+        break;
+    }
+    context.DrawLineForText(
+        FloatPoint(box_origin.left + start,
+                   (box_origin.top + logical_height.ToInt() - line_thickness)
+                       .ToFloat()),
+        width);
+  } else {
+    // For wavy underline format we use this logic that is very similar to
+    // spelling/grammar squiggles format. Only applicable for composition
+    // markers for now.
+    if (marker.GetType() == DocumentMarker::kComposition) {
+      sk_sp<PaintRecord> composition_marker = (RecordMarker(marker_color));
+      DrawDocumentMarker(
+          context,
+          FloatPoint((box_origin.left + start).ToFloat(),
+                     (box_origin.top + logical_height.ToInt() - line_thickness)
+                         .ToFloat()),
+          width, line_thickness, composition_marker.get());
+    }
+  }
 }
 
 void DocumentMarkerPainter::PaintDocumentMarker(
     GraphicsContext& context,
-    const LayoutPoint& box_origin,
+    const PhysicalOffset& box_origin,
     const ComputedStyle& style,
     DocumentMarker::MarkerType marker_type,
-    const LayoutRect& local_rect) {
+    const PhysicalRect& local_rect) {
   // IMPORTANT: The misspelling underline is not considered when calculating the
   // text bounds, so we have to make sure to fit within those bounds.  This
   // means the top pixel(s) of the underline will overlap the bottom pixel(s) of
@@ -208,7 +228,7 @@ void DocumentMarkerPainter::PaintDocumentMarker(
   // place the underline at the bottom of the text, but in larger fonts that's
   // not so good so we pin to two pixels under the baseline.
   float zoom = style.EffectiveZoom();
-  int line_thickness = kMarkerHeight * zoom;
+  int line_thickness = static_cast<int>(ceilf(kMarkerHeight * zoom));
 
   const SimpleFontData* font_data = style.GetFont().PrimaryFont();
   DCHECK(font_data);
@@ -225,17 +245,32 @@ void DocumentMarkerPainter::PaintDocumentMarker(
     // prevent a big gap.
     underline_offset = baseline + 2 * zoom;
   }
+  DEFINE_STATIC_LOCAL(
+      PaintRecord*, spelling_marker,
+      (RecordMarker(
+           LayoutTheme::GetTheme().PlatformSpellingMarkerUnderlineColor())
+           .release()));
+  DEFINE_STATIC_LOCAL(
+      PaintRecord*, grammar_marker,
+      (RecordMarker(
+           LayoutTheme::GetTheme().PlatformGrammarMarkerUnderlineColor())
+           .release()));
+
+  auto* const marker = marker_type == DocumentMarker::kSpelling
+                           ? spelling_marker
+                           : grammar_marker;
   DrawDocumentMarker(context,
-                     FloatPoint((box_origin.X() + local_rect.X()).ToFloat(),
-                                (box_origin.Y() + underline_offset).ToFloat()),
-                     local_rect.Width().ToFloat(), marker_type, zoom);
+                     FloatPoint((box_origin.left + local_rect.X()).ToFloat(),
+                                (box_origin.top + underline_offset).ToFloat()),
+                     local_rect.Width().ToFloat(), zoom, marker);
 }
 
 TextPaintStyle DocumentMarkerPainter::ComputeTextPaintStyleFrom(
     const ComputedStyle& style,
-    const TextMatchMarker& marker) {
-  const Color text_color =
-      LayoutTheme::GetTheme().PlatformTextSearchColor(marker.IsActiveMatch());
+    const TextMarkerBase& marker,
+    bool in_forced_colors_mode) {
+  const Color text_color = LayoutTheme::GetTheme().PlatformTextSearchColor(
+      marker.IsActiveMatch(), in_forced_colors_mode, style.UsedColorScheme());
   if (style.VisitedDependentColor(GetCSSPropertyColor()) == text_color)
     return {};
 

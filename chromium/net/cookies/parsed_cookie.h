@@ -48,7 +48,10 @@ class NET_EXPORT ParsedCookie {
   const std::string& MaxAge() const { return pairs_[maxage_index_].second; }
   bool IsSecure() const { return secure_index_ != 0; }
   bool IsHttpOnly() const { return httponly_index_ != 0; }
-  CookieSameSite SameSite() const;
+  // Also spits out an enum value representing the string given as the SameSite
+  // attribute value, if |samesite_string| is non-null.
+  CookieSameSite SameSite(
+      CookieSameSiteString* samesite_string = nullptr) const;
   CookiePriority Priority() const;
 
   // Returns the number of attributes, for example, returning 2 for:
@@ -60,6 +63,9 @@ class NET_EXPORT ParsedCookie {
   // The functions return false in case an error occurred.
   // The cookie needs to be assigned a name/value before setting the other
   // attributes.
+  //
+  // TODO(chlily): Ideally, we can remove these mutators once we remove the
+  // single callsite.
   bool SetName(const std::string& name);
   bool SetValue(const std::string& value);
   bool SetPath(const std::string& path);

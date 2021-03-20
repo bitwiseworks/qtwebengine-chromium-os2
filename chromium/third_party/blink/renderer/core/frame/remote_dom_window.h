@@ -7,25 +7,23 @@
 
 #include "third_party/blink/renderer/core/frame/dom_window.h"
 #include "third_party/blink/renderer/core/frame/remote_frame.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
 class RemoteDOMWindow final : public DOMWindow {
  public:
-  static RemoteDOMWindow* Create(RemoteFrame& frame) {
-    return MakeGarbageCollected<RemoteDOMWindow>(frame);
-  }
-
   explicit RemoteDOMWindow(RemoteFrame&);
 
-  RemoteFrame* GetFrame() const { return ToRemoteFrame(DOMWindow::GetFrame()); }
+  RemoteFrame* GetFrame() const {
+    return To<RemoteFrame>(DOMWindow::GetFrame());
+  }
 
   // EventTarget overrides:
   ExecutionContext* GetExecutionContext() const override;
 
   // DOMWindow overrides:
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   void blur() override;
 
   void FrameDetached();
@@ -44,15 +42,15 @@ class RemoteDOMWindow final : public DOMWindow {
 
   void ForwardPostMessage(MessageEvent*,
                           scoped_refptr<const SecurityOrigin> target,
-                          Document* source,
-                          bool has_user_gesture);
+                          Document* source);
 };
 
-DEFINE_TYPE_CASTS(RemoteDOMWindow,
-                  DOMWindow,
-                  x,
-                  x->IsRemoteDOMWindow(),
-                  x.IsRemoteDOMWindow());
+template <>
+struct DowncastTraits<RemoteDOMWindow> {
+  static bool AllowFrom(const DOMWindow& window) {
+    return window.IsRemoteDOMWindow();
+  }
+};
 
 }  // namespace blink
 

@@ -4,7 +4,6 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_quic_stream.h"
 
 #include "base/containers/span.h"
-#include "base/metrics/histogram_macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -54,7 +53,9 @@ class RTCQuicStream::PendingWriteBufferedAmountPromise
 RTCQuicStream::RTCQuicStream(ExecutionContext* context,
                              RTCQuicTransport* transport,
                              QuicStreamProxy* stream_proxy)
-    : ContextClient(context), transport_(transport), proxy_(stream_proxy) {
+    : ExecutionContextClient(context),
+      transport_(transport),
+      proxy_(stream_proxy) {
   DCHECK(transport_);
   DCHECK(proxy_);
 }
@@ -97,19 +98,6 @@ uint32_t RTCQuicStream::maxWriteBufferedAmount() const {
   return kWriteBufferSize;
 }
 
-static ReadIntoResult GetReadIntoResult(uint32_t read_amount, bool read_fin) {
-  if (read_fin) {
-    if (read_amount > 0) {
-      return ReadIntoResult::kSomeDataWithFin;
-    }
-    return ReadIntoResult::kNoDataWithFin;
-  }
-  if (read_amount > 0) {
-    return ReadIntoResult::kSomeDataNoFin;
-  }
-  return ReadIntoResult::kNoDataNoFin;
-}
-
 RTCQuicStreamReadResult* RTCQuicStream::readInto(
     NotShared<DOMUint8Array> data,
     ExceptionState& exception_state) {
@@ -117,7 +105,7 @@ RTCQuicStreamReadResult* RTCQuicStream::readInto(
     return 0;
   }
   uint32_t read_amount = static_cast<uint32_t>(receive_buffer_.ReadInto(
-      base::make_span(data.View()->Data(), data.View()->length())));
+      base::make_span(data.View()->Data(), data.View()->lengthAsSizeT())));
   if (!received_fin_ && read_amount > 0) {
     proxy_->MarkReceivedDataConsumed(read_amount);
   }
@@ -131,34 +119,17 @@ RTCQuicStreamReadResult* RTCQuicStream::readInto(
       state_ = RTCQuicStreamState::kClosing;
     }
   }
-  UMA_HISTOGRAM_ENUMERATION("RTCQuicStream.ReadIntoResult",
-                            GetReadIntoResult(read_amount, read_fin_));
-  // Collects metrics for how large the read is. This histogram has a max of
-  // 24MB and 50 buckets.
-  UMA_HISTOGRAM_CUSTOM_COUNTS("RTCQuicStream.ReadIntoAmountBytes", read_amount,
-                              1, 24000000, 50);
   auto* result = RTCQuicStreamReadResult::Create();
   result->setAmount(read_amount);
   result->setFinished(read_fin_);
   return result;
 }
 
-static WriteUsage GetWriteUsage(uint32_t write_amount, bool write_fin) {
-  // It's not possible to write nothing.
-  DCHECK(write_amount > 0 || write_fin);
-  if (write_fin) {
-    if (write_amount > 0) {
-      return WriteUsage::kSomeDataWithFin;
-    }
-    return WriteUsage::kNoDataWithFin;
-  }
-  return WriteUsage::kSomeDataNoFin;
-}
-
 void RTCQuicStream::write(const RTCQuicStreamWriteParameters* data,
                           ExceptionState& exception_state) {
   bool finish = data->finish();
-  bool has_write_data = data->hasData() && data->data().View()->length() > 0;
+  bool has_write_data =
+      data->hasData() && data->data().View()->lengthAsSizeT() > 0;
   if (!has_write_data && !finish) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
@@ -171,26 +142,22 @@ void RTCQuicStream::write(const RTCQuicStreamWriteParameters* data,
   Vector<uint8_t> data_vector;
   if (has_write_data) {
     DOMUint8Array* write_data = data->data().View();
-    uint32_t remaining_write_buffer_size =
+    size_t remaining_write_buffer_size =
         kWriteBufferSize - writeBufferedAmount();
-    if (write_data->length() > remaining_write_buffer_size) {
+    if (write_data->lengthAsSizeT() > remaining_write_buffer_size) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kOperationError,
-          "The write data size of " + String::Number(write_data->length()) +
+          "The write data size of " +
+              String::Number(write_data->lengthAsSizeT()) +
               " bytes would exceed the remaining write buffer size of " +
               String::Number(remaining_write_buffer_size) + " bytes.");
       return;
     }
-    data_vector.resize(write_data->length());
-    memcpy(data_vector.data(), write_data->Data(), write_data->length());
-    write_buffered_amount_ += write_data->length();
+    data_vector.resize(static_cast<wtf_size_t>(write_data->lengthAsSizeT()));
+    memcpy(data_vector.data(), write_data->Data(), write_data->lengthAsSizeT());
+    write_buffered_amount_ +=
+        static_cast<uint32_t>(write_data->lengthAsSizeT());
   }
-  UMA_HISTOGRAM_ENUMERATION("RTCQuicStream.WriteUsage",
-                            GetWriteUsage(data_vector.size(), finish));
-  // Collects metrics for how large the write is. This histogram has a max of
-  // 24MB and 50 buckets.
-  UMA_HISTOGRAM_CUSTOM_COUNTS("RTCQuicStream.WriteAmountBytes",
-                              data_vector.size(), 1, 24000000, 50);
   proxy_->WriteData(std::move(data_vector), finish);
   if (finish) {
     wrote_fin_ = true;
@@ -225,8 +192,8 @@ ScriptPromise RTCQuicStream::waitForReadable(ScriptState* script_state,
         String::Number(kReadBufferSize) + ".");
     return ScriptPromise();
   }
-  ScriptPromiseResolver* promise_resolver =
-      ScriptPromiseResolver::Create(script_state);
+  auto* promise_resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = promise_resolver->Promise();
   if (received_fin_ || receive_buffer_.size() >= amount) {
     promise_resolver->Resolve();
@@ -245,8 +212,8 @@ ScriptPromise RTCQuicStream::waitForWriteBufferedAmountBelow(
   if (RaiseIfNotWritable(exception_state)) {
     return ScriptPromise();
   }
-  ScriptPromiseResolver* promise_resolver =
-      ScriptPromiseResolver::Create(script_state);
+  auto* promise_resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = promise_resolver->Promise();
   if (write_buffered_amount_ <= threshold) {
     promise_resolver->Resolve();
@@ -432,15 +399,15 @@ const AtomicString& RTCQuicStream::InterfaceName() const {
 }
 
 ExecutionContext* RTCQuicStream::GetExecutionContext() const {
-  return ContextClient::GetExecutionContext();
+  return ExecutionContextClient::GetExecutionContext();
 }
 
-void RTCQuicStream::Trace(blink::Visitor* visitor) {
+void RTCQuicStream::Trace(Visitor* visitor) {
   visitor->Trace(transport_);
   visitor->Trace(pending_read_buffered_amount_promises_);
   visitor->Trace(pending_write_buffered_amount_promises_);
   EventTargetWithInlineData::Trace(visitor);
-  ContextClient::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 }  // namespace blink

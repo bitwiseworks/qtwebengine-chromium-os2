@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/test_support.h"
 
 namespace {
 
@@ -54,7 +53,7 @@ TEST(CFXGlobalData, GetSafety) {
 
 TEST(CFXGlobalData, StoreReload) {
   TestDelegate delegate;
-  CFX_GlobalArray array;
+  std::vector<std::unique_ptr<CFX_KeyValue>> array;
   CFX_GlobalData* pInstance = CFX_GlobalData::GetRetainedInstance(&delegate);
   pInstance->SetGlobalVariableNumber("double", 2.0);
   pInstance->SetGlobalVariableString("string", "clams");

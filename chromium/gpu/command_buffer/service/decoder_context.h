@@ -154,6 +154,7 @@ class GPU_GLES2_EXPORT DecoderContext : public AsyncAPIInterface,
 
   //
   // Methods required by GLES2DecoderHelper.
+  // Only functional for GLES2 Decoders.
   //
   virtual gles2::ContextGroup* GetContextGroup() = 0;
   virtual gles2::ErrorState* GetErrorState() = 0;
@@ -192,6 +193,15 @@ class GPU_GLES2_EXPORT DecoderContext : public AsyncAPIInterface,
                                            unsigned format,
                                            int width,
                                            int height) = 0;
+  // Clears a level sub area of a compressed 3D texture.
+  // Returns false if a GL error should be generated.
+  virtual bool ClearCompressedTextureLevel3D(gles2::Texture* texture,
+                                             unsigned target,
+                                             int level,
+                                             unsigned format,
+                                             int width,
+                                             int height,
+                                             int depth) = 0;
   // Clears a level of a 3D texture.
   // Returns false if a GL error should be generated.
   virtual bool ClearLevel3D(gles2::Texture* texture,
@@ -219,6 +229,13 @@ class GPU_GLES2_EXPORT DecoderContext : public AsyncAPIInterface,
 
   // Restores texture states for a given service id.
   virtual void RestoreTextureState(unsigned service_id) = 0;
+
+  //
+  // Methods required by ImageDecodeAcceleratorStub
+  //
+  // Returns the ID of a RasterDecoder. This is not applicable to other
+  // implementations and it returns a negative number in that case.
+  virtual int GetRasterDecoderId() const = 0;
 };
 
 }  // namespace gpu

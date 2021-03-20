@@ -5,21 +5,20 @@
  * found in the LICENSE file.
  */
 
-#include "SkFontConfigInterface.h"
-#include "SkFontConfigTypeface.h"
-#include "SkFontDescriptor.h"
-#include "SkFontMgr.h"
-#include "SkFontMgr_FontConfigInterface.h"
-#include "SkFontStyle.h"
-#include "SkMakeUnique.h"
-#include "SkMutex.h"
-#include "SkString.h"
-#include "SkTypeface.h"
-#include "SkTypefaceCache.h"
-#include "SkResourceCache.h"
+#include "include/core/SkFontMgr.h"
+#include "include/core/SkFontStyle.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypeface.h"
+#include "include/ports/SkFontConfigInterface.h"
+#include "include/ports/SkFontMgr_FontConfigInterface.h"
+#include "include/private/SkMutex.h"
+#include "src/core/SkFontDescriptor.h"
+#include "src/core/SkResourceCache.h"
+#include "src/core/SkTypefaceCache.h"
+#include "src/ports/SkFontConfigTypeface.h"
 #include <new>
 
-SkStreamAsset* SkTypeface_FCI::onOpenStream(int* ttcIndex) const {
+std::unique_ptr<SkStreamAsset> SkTypeface_FCI::onOpenStream(int* ttcIndex) const {
     *ttcIndex =  this->getIdentity().fTTCIndex;
 
     if (fFontData) {
@@ -27,19 +26,19 @@ SkStreamAsset* SkTypeface_FCI::onOpenStream(int* ttcIndex) const {
         if (!stream) {
             return nullptr;
         }
-        return stream->duplicate().release();
+        return stream->duplicate();
     }
 
-    return fFCI->openStream(this->getIdentity());
+    return std::unique_ptr<SkStreamAsset>(fFCI->openStream(this->getIdentity()));
 }
 
 std::unique_ptr<SkFontData> SkTypeface_FCI::onMakeFontData() const {
     if (fFontData) {
-        return skstd::make_unique<SkFontData>(*fFontData);
+        return std::make_unique<SkFontData>(*fFontData);
     }
 
     const SkFontConfigInterface::FontIdentity& id = this->getIdentity();
-    return skstd::make_unique<SkFontData>(std::unique_ptr<SkStreamAsset>(fFCI->openStream(id)),
+    return std::make_unique<SkFontData>(std::unique_ptr<SkStreamAsset>(fFCI->openStream(id)),
                                           id.fTTCIndex, nullptr, 0);
 }
 
@@ -103,9 +102,8 @@ public:
 
 private:
     struct Result : public SkResourceCache::Rec {
-        Result(Request* request, SkTypeface* typeface)
-            : fRequest(request)
-            , fFace(SkSafeRef(typeface)) {}
+        Result(Request* request, sk_sp<SkTypeface> typeface)
+            : fRequest(request), fFace(std::move(typeface)) {}
         Result(Result&&) = default;
         Result& operator=(Result&&) = default;
 
@@ -124,20 +122,20 @@ public:
     SkFontRequestCache(size_t maxSize) : fCachedResults(maxSize) {}
 
     /** Takes ownership of request. It will be deleted when no longer needed. */
-    void add(SkTypeface* face, Request* request) {
-        fCachedResults.add(new Result(request, face));
+    void add(sk_sp<SkTypeface> face, Request* request) {
+        fCachedResults.add(new Result(request, std::move(face)));
     }
     /** Does not take ownership of request. */
-    SkTypeface* findAndRef(Request* request) {
-        SkTypeface* face = nullptr;
+    sk_sp<SkTypeface> findAndRef(Request* request) {
+        sk_sp<SkTypeface> face;
         fCachedResults.find(*request, [](const SkResourceCache::Rec& rec, void* context) -> bool {
             const Result& result = static_cast<const Result&>(rec);
-            SkTypeface** face = static_cast<SkTypeface**>(context);
+            sk_sp<SkTypeface>* face = static_cast<sk_sp<SkTypeface>*>(context);
 
-            *face = result.fFace.get();
+            *face = result.fFace;
             return true;
         }, &face);
-        return SkSafeRef(face);
+        return face;
     }
 };
 
@@ -174,7 +172,6 @@ public:
 protected:
     int onCountFamilies() const override {
         SK_ABORT("Not implemented.");
-        return 0;
     }
 
     void onGetFamilyName(int index, SkString* familyName) const override {
@@ -183,18 +180,16 @@ protected:
 
     SkFontStyleSet* onCreateStyleSet(int index) const override {
         SK_ABORT("Not implemented.");
-        return nullptr;
     }
 
     SkFontStyleSet* onMatchFamily(const char familyName[]) const override {
         SK_ABORT("Not implemented.");
-        return new SkFontStyleSet_FCI();
     }
 
     SkTypeface* onMatchFamilyStyle(const char requestedFamilyName[],
                                    const SkFontStyle& requestedStyle) const override
     {
-        SkAutoMutexAcquire ama(fMutex);
+        SkAutoMutexExclusive ama(fMutex);
 
         SkFontConfigInterface::FontIdentity identity;
         SkString outFamilyName;
@@ -206,25 +201,23 @@ protected:
         }
 
         // Check if a typeface with this FontIdentity is already in the FontIdentity cache.
-        SkTypeface* face = fTFCache.findByProcAndRef(find_by_FontIdentity, &identity);
+        sk_sp<SkTypeface> face = fTFCache.findByProcAndRef(find_by_FontIdentity, &identity);
         if (!face) {
-            face = SkTypeface_FCI::Create(fFCI, identity, std::move(outFamilyName), outStyle);
+            face.reset(SkTypeface_FCI::Create(fFCI, identity, std::move(outFamilyName), outStyle));
             // Add this FontIdentity to the FontIdentity cache.
             fTFCache.add(face);
         }
-        return face;
+        return face.release();
     }
 
     SkTypeface* onMatchFamilyStyleCharacter(const char familyName[], const SkFontStyle&,
                                             const char* bcp47[], int bcp47Count,
                                             SkUnichar character) const override {
         SK_ABORT("Not implemented.");
-        return nullptr;
     }
 
     SkTypeface* onMatchFaceStyle(const SkTypeface*, const SkFontStyle&) const override {
         SK_ABORT("Not implemented.");
-        return nullptr;
     }
 
     sk_sp<SkTypeface> onMakeFromData(sk_sp<SkData> data, int ttcIndex) const override {
@@ -249,7 +242,7 @@ protected:
             return nullptr;
         }
 
-        auto fontData = skstd::make_unique<SkFontData>(std::move(stream), ttcIndex, nullptr, 0);
+        auto fontData = std::make_unique<SkFontData>(std::move(stream), ttcIndex, nullptr, 0);
         return sk_sp<SkTypeface>(SkTypeface_FCI::Create(std::move(fontData), std::move(name),
                                                         style, isFixedPitch));
     }
@@ -279,7 +272,7 @@ protected:
         Scanner::computeAxisValues(axisDefinitions, args.getVariationDesignPosition(),
                                    axisValues, name);
 
-        auto fontData = skstd::make_unique<SkFontData>(std::move(stream),
+        auto fontData = std::make_unique<SkFontData>(std::move(stream),
                                                        args.getCollectionIndex(),
                                                        axisValues.get(),
                                                        axisDefinitions.count());
@@ -295,12 +288,12 @@ protected:
     sk_sp<SkTypeface> onLegacyMakeTypeface(const char requestedFamilyName[],
                                            SkFontStyle requestedStyle) const override
     {
-        SkAutoMutexAcquire ama(fMutex);
+        SkAutoMutexExclusive ama(fMutex);
 
         // Check if this request is already in the request cache.
         using Request = SkFontRequestCache::Request;
         std::unique_ptr<Request> request(Request::Create(requestedFamilyName, requestedStyle));
-        SkTypeface* face = fCache.findAndRef(request.get());
+        sk_sp<SkTypeface> face = fCache.findAndRef(request.get());
         if (face) {
             return sk_sp<SkTypeface>(face);
         }
@@ -317,14 +310,14 @@ protected:
         // Check if a typeface with this FontIdentity is already in the FontIdentity cache.
         face = fTFCache.findByProcAndRef(find_by_FontIdentity, &identity);
         if (!face) {
-            face = SkTypeface_FCI::Create(fFCI, identity, std::move(outFamilyName), outStyle);
+            face.reset(SkTypeface_FCI::Create(fFCI, identity, std::move(outFamilyName), outStyle));
             // Add this FontIdentity to the FontIdentity cache.
             fTFCache.add(face);
         }
         // Add this request to the request cache.
         fCache.add(face, request.release());
 
-        return sk_sp<SkTypeface>(face);
+        return face;
     }
 };
 

@@ -6,9 +6,11 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/device/generic_sensor/platform_sensor_provider.h"
+#include "services/device/generic_sensor/platform_sensor_util.h"
 #include "services/device/public/cpp/generic_sensor/platform_sensor_configuration.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading_shared_buffer_reader.h"
 
@@ -21,7 +23,7 @@ PlatformSensor::PlatformSensor(mojom::SensorType type,
       reading_buffer_(reading_buffer),
       type_(type),
       provider_(provider),
-      weak_factory_(this) {}
+      have_raw_reading_(false) {}
 
 PlatformSensor::~PlatformSensor() {
   if (provider_)
@@ -101,27 +103,42 @@ void PlatformSensor::RemoveClient(Client* client) {
 }
 
 bool PlatformSensor::GetLatestReading(SensorReading* result) {
-  if (!shared_buffer_reader_) {
-    shared_buffer_reader_ =
-        std::make_unique<SensorReadingSharedBufferReader>(reading_buffer_);
-  }
+  return SensorReadingSharedBufferReader::GetReading(reading_buffer_, result);
+}
 
-  return shared_buffer_reader_->GetReading(result);
+bool PlatformSensor::GetLatestRawReading(SensorReading* result) const {
+  base::AutoLock auto_lock(lock_);
+  if (!have_raw_reading_)
+    return false;
+  *result = last_raw_reading_;
+  return true;
 }
 
 void PlatformSensor::UpdateSharedBufferAndNotifyClients(
     const SensorReading& reading) {
   UpdateSharedBuffer(reading);
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&PlatformSensor::NotifySensorReadingChanged,
-                                    weak_factory_.GetWeakPtr()));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&PlatformSensor::NotifySensorReadingChanged,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void PlatformSensor::UpdateSharedBuffer(const SensorReading& reading) {
   ReadingBuffer* buffer = reading_buffer_;
   auto& seqlock = buffer->seqlock.value();
+
+  // Save the raw (non-rounded) reading for fusion sensors.
+  {
+    base::AutoLock auto_lock(lock_);
+    last_raw_reading_ = reading;
+    have_raw_reading_ = true;
+  }
+
+  // Round the reading to guard user privacy. See https://crbug.com/1018180.
+  SensorReading rounded_reading = reading;
+  RoundSensorReading(&rounded_reading, type_);
+
   seqlock.WriteBegin();
-  buffer->reading = reading;
+  buffer->reading = rounded_reading;
   seqlock.WriteEnd();
 }
 

@@ -29,6 +29,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_WEB_IDB_FACTORY_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_WEB_IDB_FACTORY_H_
 
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "third_party/blink/public/mojom/feature_observer/feature_observer.mojom-blink.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 
 namespace WTF {
@@ -46,14 +48,19 @@ class MODULES_EXPORT WebIDBFactory {
 
   virtual void GetDatabaseInfo(std::unique_ptr<WebIDBCallbacks>) = 0;
   virtual void GetDatabaseNames(std::unique_ptr<WebIDBCallbacks>) = 0;
-  virtual void Open(const WTF::String& name,
-                    long long version,
-                    long long transaction_id,
-                    std::unique_ptr<WebIDBCallbacks>,
-                    std::unique_ptr<WebIDBDatabaseCallbacks>) = 0;
+  virtual void Open(
+      const WTF::String& name,
+      int64_t version,
+      mojo::PendingAssociatedReceiver<mojom::blink::IDBTransaction>
+          transaction_receiver,
+      int64_t transaction_id,
+      std::unique_ptr<WebIDBCallbacks>,
+      std::unique_ptr<WebIDBDatabaseCallbacks>) = 0;
   virtual void DeleteDatabase(const WTF::String& name,
                               std::unique_ptr<WebIDBCallbacks>,
                               bool force_close) = 0;
+  virtual mojo::PendingRemote<mojom::blink::ObservedFeature>
+  GetObservedFeature() = 0;
 };
 
 }  // namespace blink

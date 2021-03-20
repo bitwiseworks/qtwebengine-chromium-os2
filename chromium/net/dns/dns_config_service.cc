@@ -11,19 +11,25 @@
 
 namespace net {
 
+// static
+const base::TimeDelta DnsConfigService::kInvalidationTimeout =
+    base::TimeDelta::FromMilliseconds(150);
+
 DnsConfigService::DnsConfigService()
     : watch_failed_(false),
       have_config_(false),
       have_hosts_(false),
       need_update_(false),
-      last_sent_empty_(true) {}
+      last_sent_empty_(true) {
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
 
 DnsConfigService::~DnsConfigService() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 void DnsConfigService::ReadConfig(const CallbackType& callback) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
   DCHECK(callback_.is_null());
   callback_ = callback;
@@ -31,7 +37,7 @@ void DnsConfigService::ReadConfig(const CallbackType& callback) {
 }
 
 void DnsConfigService::WatchConfig(const CallbackType& callback) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
   DCHECK(callback_.is_null());
   callback_ = callback;
@@ -39,8 +45,13 @@ void DnsConfigService::WatchConfig(const CallbackType& callback) {
   ReadNow();
 }
 
+void DnsConfigService::RefreshConfig() {
+  // Overridden on supported platforms.
+  NOTREACHED();
+}
+
 void DnsConfigService::InvalidateConfig() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   base::TimeTicks now = base::TimeTicks::Now();
   if (!last_invalidate_config_time_.is_null()) {
     UMA_HISTOGRAM_LONG_TIMES("AsyncDNS.ConfigNotifyInterval",
@@ -54,7 +65,7 @@ void DnsConfigService::InvalidateConfig() {
 }
 
 void DnsConfigService::InvalidateHosts() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   base::TimeTicks now = base::TimeTicks::Now();
   if (!last_invalidate_hosts_time_.is_null()) {
     UMA_HISTOGRAM_LONG_TIMES("AsyncDNS.HostsNotifyInterval",
@@ -68,7 +79,7 @@ void DnsConfigService::InvalidateHosts() {
 }
 
 void DnsConfigService::OnConfigRead(const DnsConfig& config) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(config.IsValid());
 
   bool changed = false;
@@ -89,7 +100,7 @@ void DnsConfigService::OnConfigRead(const DnsConfig& config) {
 }
 
 void DnsConfigService::OnHostsRead(const DnsHosts& hosts) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   bool changed = false;
   if (hosts != dns_config_.hosts) {
@@ -109,7 +120,7 @@ void DnsConfigService::OnHostsRead(const DnsHosts& hosts) {
 }
 
 void DnsConfigService::StartTimer() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (last_sent_empty_) {
     DCHECK(!timer_.IsRunning());
     return;  // No need to withdraw again.
@@ -121,20 +132,12 @@ void DnsConfigService::StartTimer() {
   // outage (when using the wrong config) but at the same time avoid
   // unnecessary Job aborts in HostResolverImpl. The signals come from multiple
   // sources so it might receive multiple events during a config change.
-
-  // DHCP and user-induced changes are on the order of seconds, so 150ms should
-  // not add perceivable delay. On the other hand, config readers should finish
-  // within 150ms with the rare exception of I/O block or extra large HOSTS.
-  const base::TimeDelta kTimeout = base::TimeDelta::FromMilliseconds(150);
-
-  timer_.Start(FROM_HERE,
-               kTimeout,
-               this,
+  timer_.Start(FROM_HERE, kInvalidationTimeout, this,
                &DnsConfigService::OnTimeout);
 }
 
 void DnsConfigService::OnTimeout() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!last_sent_empty_);
   // Indicate that even if there is no change in On*Read, we will need to
   // update the receiver when the config becomes complete.

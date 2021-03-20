@@ -35,11 +35,9 @@ class SVGViewElement final : public SVGElement,
   USING_GARBAGE_COLLECTED_MIXIN(SVGViewElement);
 
  public:
-  DECLARE_NODE_FACTORY(SVGViewElement);
-
   explicit SVGViewElement(Document&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void ParseAttribute(const AttributeModificationParams&) override;

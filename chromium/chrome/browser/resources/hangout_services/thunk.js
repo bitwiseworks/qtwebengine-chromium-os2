@@ -182,18 +182,13 @@ chrome.runtime.onMessageExternal.addListener(function(
           requestInfo, origin, doSendResponse);
       return true;
     } else if (method == 'logging.startEventLogging') {
-      const peerConnectionId = message['peerConnectionId'] || '';
+      const sessionId = message['sessionId'] || '';
       const maxLogSizeBytes = message['maxLogSizeBytes'] || 0;
       const outputPeriodMs = message['outputPeriodMs'] || -1;
       const webAppId = message['webAppId'] || 0;
       chrome.webrtcLoggingPrivate.startEventLogging(
-          requestInfo, origin, peerConnectionId, maxLogSizeBytes,
-          outputPeriodMs, webAppId, doSendResponse);
-      return true;
-    } else if (method == 'setAudioExperiments') {
-      const experiments = message['experiments'];
-      chrome.webrtcAudioPrivate.setAudioExperiments(
-          requestInfo, origin, experiments, doSendResponse);
+          requestInfo, origin, sessionId, maxLogSizeBytes, outputPeriodMs,
+          webAppId, doSendResponse);
       return true;
     } else if (method == 'getHardwarePlatformInfo') {
       chrome.enterprise.hardwarePlatform.getHardwarePlatformInfo(
@@ -237,9 +232,14 @@ function onChooseDesktopMediaPort(port) {
     if (method == 'chooseDesktopMedia') {
       const sources = message['sources'];
       let cancelId = null;
-      if (port.sender.tab) {
+      const tab = port.sender.tab;
+      if (tab) {
+        // Per crbug.com/425344, in order to allow an <iframe> on a different
+        // domain, to get desktop media, we need to set the tab.url to match
+        // the <iframe>, even though it doesn't really load the new url.
+        tab.url = port.sender.url;
         cancelId = chrome.desktopCapture.chooseDesktopMedia(
-            sources, port.sender.tab, sendResponse);
+            sources, tab, sendResponse);
       } else {
         const requestInfo = {};
         requestInfo['guestProcessId'] = port.sender.guestProcessId || 0;
@@ -251,7 +251,7 @@ function onChooseDesktopMediaPort(port) {
       port.onDisconnect.addListener(function() {
         // This method has no effect if called after the user has selected a
         // desktop media source, so it does not need to be conditional.
-        if (port.sender.tab) {
+        if (tab) {
           chrome.desktopCapture.cancelChooseDesktopMedia(cancelId);
         } else {
           chrome.webrtcDesktopCapturePrivate.cancelChooseDesktopMedia(cancelId);
@@ -287,7 +287,7 @@ function onProcessCpu(port) {
       } else if (process.type == 'gpu') {
         gpuProcessCpu = process.cpu;
       }
-      if (!!browserProcessCpu && !!gpuProcessCpu) {
+      if (browserProcessCpu && gpuProcessCpu) {
         break;
       }
     }

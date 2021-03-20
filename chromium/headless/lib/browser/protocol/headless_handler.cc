@@ -5,8 +5,8 @@
 #include "headless/lib/browser/protocol/headless_handler.h"
 
 #include "base/base_switches.h"
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/lazy_instance.h"
 #include "cc/base/switches.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/switches.h"
@@ -27,8 +27,6 @@ using HeadlessExperimental::ScreenshotParams;
 
 namespace {
 
-base::LazyInstance<std::set<HeadlessHandler*>>::Leaky g_instances =
-    LAZY_INSTANCE_INITIALIZER;
 
 enum class ImageEncoding { kPng, kJpeg };
 constexpr int kDefaultScreenshotQuality = 80;
@@ -57,7 +55,12 @@ void OnBeginFrameFinished(
     ImageEncoding encoding,
     int quality,
     bool has_damage,
-    std::unique_ptr<SkBitmap> bitmap) {
+    std::unique_ptr<SkBitmap> bitmap,
+    std::string error_message) {
+  if (!error_message.empty()) {
+    callback->sendFailure(Response::ServerError(std::move(error_message)));
+    return;
+  }
   if (!bitmap || bitmap->drawsNothing()) {
     callback->sendSuccess(has_damage, Maybe<protocol::Binary>());
     return;
@@ -67,26 +70,11 @@ void OnBeginFrameFinished(
 
 }  // namespace
 
-// static
-void HeadlessHandler::OnNeedsBeginFrames(
-    HeadlessWebContentsImpl* headless_contents,
-    bool needs_begin_frames) {
-  if (!g_instances.IsCreated())
-    return;
-  for (const HeadlessHandler* handler : g_instances.Get()) {
-    if (handler->enabled_ && handler->frontend_)
-      handler->frontend_->NeedsBeginFramesChanged(needs_begin_frames);
-  }
-}
-
-HeadlessHandler::HeadlessHandler(base::WeakPtr<HeadlessBrowserImpl> browser,
+HeadlessHandler::HeadlessHandler(HeadlessBrowserImpl* browser,
                                  content::WebContents* web_contents)
-    : DomainHandler(HeadlessExperimental::Metainfo::domainName, browser),
-      web_contents_(web_contents) {}
+    : browser_(browser), web_contents_(web_contents) {}
 
-HeadlessHandler::~HeadlessHandler() {
-  DCHECK(g_instances.Get().find(this) == g_instances.Get().end());
-}
+HeadlessHandler::~HeadlessHandler() {}
 
 void HeadlessHandler::Wire(UberDispatcher* dispatcher) {
   frontend_.reset(new HeadlessExperimental::Frontend(dispatcher->channel()));
@@ -94,19 +82,13 @@ void HeadlessHandler::Wire(UberDispatcher* dispatcher) {
 }
 
 Response HeadlessHandler::Enable() {
-  g_instances.Get().insert(this);
-  HeadlessWebContentsImpl* headless_contents =
-      HeadlessWebContentsImpl::From(browser().get(), web_contents_);
-  enabled_ = true;
-  if (headless_contents->needs_external_begin_frames() && frontend_)
+  if (frontend_)
     frontend_->NeedsBeginFramesChanged(true);
-  return Response::OK();
+  return Response::Success();
 }
 
 Response HeadlessHandler::Disable() {
-  enabled_ = false;
-  g_instances.Get().erase(this);
-  return Response::OK();
+  return Response::Success();
 }
 
 void HeadlessHandler::BeginFrame(Maybe<double> in_frame_time_ticks,
@@ -115,18 +97,20 @@ void HeadlessHandler::BeginFrame(Maybe<double> in_frame_time_ticks,
                                  Maybe<ScreenshotParams> screenshot,
                                  std::unique_ptr<BeginFrameCallback> callback) {
   HeadlessWebContentsImpl* headless_contents =
-      HeadlessWebContentsImpl::From(browser().get(), web_contents_);
+      HeadlessWebContentsImpl::From(browser_, web_contents_);
   if (!headless_contents->begin_frame_control_enabled()) {
-    callback->sendFailure(Response::Error(
+    callback->sendFailure(Response::ServerError(
         "Command is only supported if BeginFrameControl is enabled."));
     return;
   }
 
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           ::switches::kRunAllCompositorStagesBeforeDraw)) {
-    LOG(WARNING) << "BeginFrameControl commands are designed to be used with "
-                    "--run-all-compositor-stages-before-draw, see "
-                    "https://goo.gl/3zHXhB for more info.";
+    callback->sendFailure(
+        Response::ServerError("Command is only supported with "
+                              "--run-all-compositor-stages-before-draw, see "
+                              "https://goo.gl/3zHXhB for more info."));
+    return;
   }
 
   base::TimeTicks frame_time_ticks;
@@ -177,14 +161,6 @@ void HeadlessHandler::BeginFrame(Maybe<double> in_frame_time_ticks,
           "screenshot.quality has to be in range 0..100"));
       return;
     }
-  }
-
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ::switches::kRunAllCompositorStagesBeforeDraw) &&
-      headless_contents->HasPendingFrame()) {
-    LOG(WARNING) << "A BeginFrame is already in flight. In "
-                    "--run-all-compositor-stages-before-draw mode, only a "
-                    "single BeginFrame should be active at the same time.";
   }
 
   headless_contents->BeginFrame(

@@ -145,10 +145,10 @@ memory:
 
 ``` cpp
 mojo::ScopedSharedBufferMapping mapping = buffer->Map(64);
-static_cast<int*>(mapping.get()) = 42;
+static_cast<int*>(mapping.get())[0] = 42;
 
 mojo::ScopedSharedBufferMapping another_mapping = buffer->MapAtOffset(64, 4);
-static_cast<int*>(mapping.get()) = 43;
+static_cast<int*>(mapping.get())[0] = 43;
 ```
 
 When `mapping` and `another_mapping` are destroyed, they automatically unmap
@@ -243,7 +243,8 @@ class PipeReader {
     // NOTE: base::Unretained is safe because the callback can never be run
     // after SimpleWatcher destruction.
     watcher_.Watch(pipe_.get(), MOJO_HANDLE_SIGNAL_READABLE,
-                   base::Bind(&PipeReader::OnReadable, base::Unretained(this)));
+                   base::BindRepeating(&PipeReader::OnReadable,
+                                       base::Unretained(this)));
   }
 
   ~PipeReader() {}
@@ -367,9 +368,7 @@ wait_set.AddHandle(b.handle0.get(), MOJO_HANDLE_SIGNAL_READABLE);
 wait_set.AddEvent(&timeout_event);
 
 // Ensure the Wait() lasts no more than 5 seconds.
-bg_thread->task_runner()->PostDelayedTask(
-    FROM_HERE,
-    base::Bind([](base::WaitableEvent* e) { e->Signal(); }, &timeout_event);
+bg_thread->task_runner()->PostDelayedTask(FROM_HERE, base::BindOnce([](base::WaitableEvent* e) { e->Signal(); }, &timeout_event);
     base::TimeDelta::FromSeconds(5));
 
 base::WaitableEvent* ready_event = nullptr;
@@ -454,7 +453,7 @@ int main(int argc, char** argv) {
   mojo::core::Init();
   base::Thread ipc_thread("ipc!");
   ipc_thread.StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
+      base::Thread::Options(base::MessagePumpType::IO, 0));
   mojo::core::ScopedIPCSupport ipc_support(
       ipc_thread.task_runner(),
       mojo::core::ScopedIPCSupport::ShutdownPolicy::CLEAN);
@@ -481,22 +480,23 @@ message pipe handles as mojom interfaces. For example:
 // Process A
 mojo::OutgoingInvitation invitation;
 auto pipe = invitation->AttachMessagePipe("x");
-mojo::Binding<foo::mojom::Bar> binding(
+mojo::Receiver<foo::mojom::Bar> receiver(
     &bar_impl,
-    foo::mojom::BarRequest(std::move(pipe)));
+    mojo::PendingReceiver<foo::mojom::Bar>(std::move(pipe)));
 
 // Process B
 auto invitation = mojo::IncomingInvitation::Accept(...);
 auto pipe = invitation->ExtractMessagePipe("x");
-foo::mojom::BarPtr bar(foo::mojom::BarPtrInfo(std::move(pipe), 0));
+mojo::Remote<foo::mojom::Bar> bar(
+    mojo::PendingRemote<foo::mojom::Bar>(std::move(pipe), 0));
 
 // Will asynchronously invoke bar_impl.DoSomething() in process A.
 bar->DoSomething();
 ```
 
 And just to be sure, the usage here could be reversed: the invitation sender
-could just as well treat its pipe endpoint as a `BarPtr` while the receiver
-treats theirs as a `BarRequest` to be bound.
+could just as well treat its pipe endpoint as a `Remote<Bar>` while the receiver
+treats theirs as a `PendingReceiver<Bar>` to be bound.
 
 ### Process Networks
 Accepting an invitation admits the accepting process into the sender's connected

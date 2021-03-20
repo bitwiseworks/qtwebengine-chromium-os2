@@ -14,9 +14,9 @@
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -34,7 +34,7 @@ class SiteInstanceRenderProcessHostFactory : public RenderProcessHostFactory {
 
   RenderProcessHost* CreateRenderProcessHost(
       BrowserContext* browser_context,
-      SiteInstance* site_instance) const override {
+      SiteInstance* site_instance) override {
     processes_.push_back(
         std::make_unique<MockRenderProcessHost>(browser_context));
 
@@ -89,7 +89,7 @@ class ServiceWorkerProcessManagerTest : public testing::Test {
   }
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestBrowserContext> browser_context_;
   std::unique_ptr<ServiceWorkerProcessManager> process_manager_;
   GURL script_url_;
@@ -200,14 +200,11 @@ TEST_F(ServiceWorkerProcessManagerTest, AllocateWorkerProcess_InShutdown) {
 }
 
 // Tests that ServiceWorkerProcessManager uses
-// StoragePartitionImpl::site_for_service_worker() when it's set. This enables
-// finding the appropriate process when inside a StoragePartition for guests
-// (e.g., the <webview> tag). https://crbug.com/781313
+// StoragePartitionImpl::site_for_guest_service_worker() when it's set. This
+// enables finding the appropriate process when inside a StoragePartition for
+// guests (e.g., the <webview> tag). https://crbug.com/781313
 TEST_F(ServiceWorkerProcessManagerTest,
        AllocateWorkerProcess_StoragePartitionForGuests) {
-  const GURL kGuestSiteUrl =
-      GURL(std::string(content::kGuestScheme).append("://someapp/somepath"));
-
   // Allocate a process to a worker. It should use |script_url_| as the
   // site URL of the SiteInstance.
   {
@@ -225,23 +222,29 @@ TEST_F(ServiceWorkerProcessManagerTest,
     EXPECT_EQ(
         GURL("http://example.com"),
         render_process_host_factory_->last_site_instance_used()->GetSiteURL());
+    EXPECT_FALSE(
+        render_process_host_factory_->last_site_instance_used()->IsGuest());
 
     // Release the process.
     process_manager_->ReleaseWorkerProcess(kEmbeddedWorkerId);
   }
 
   // Now change ServiceWorkerProcessManager to use a StoragePartition with
-  // |site_for_service_worker| set. We must set |site_for_service_worker|
-  // manually since the production codepath in CreateRenderProcessHost() isn't
-  // hit here since we are using RenderProcessHostFactory.
+  // |site_for_guest_service_worker| set. We must set
+  // |site_for_guest_service_worker| manually since the production codepath in
+  // CreateRenderProcessHost() isn't hit here since we are using
+  // RenderProcessHostFactory.
+  const GURL kGuestSiteUrl("my-guest-scheme://someapp/somepath");
   scoped_refptr<SiteInstanceImpl> site_instance =
-      SiteInstanceImpl::CreateForURL(browser_context_.get(), kGuestSiteUrl);
+      SiteInstanceImpl::CreateForGuest(browser_context_.get(), kGuestSiteUrl);
+  EXPECT_TRUE(site_instance->IsGuest());
   // It'd be more realistic to create a non-default StoragePartition, but there
   // would be no added value to this test since MockRenderProcessHost is not
   // StoragePartition-aware.
   StoragePartitionImpl* storage_partition = static_cast<StoragePartitionImpl*>(
       BrowserContext::GetDefaultStoragePartition(browser_context_.get()));
-  storage_partition->set_site_for_service_worker(site_instance->GetSiteURL());
+  storage_partition->set_site_for_guest_service_worker(
+      site_instance->GetSiteURL());
   process_manager_->set_storage_partition(storage_partition);
 
   // Allocate a process to a worker. It should use kGuestSiteUrl instead of
@@ -257,6 +260,8 @@ TEST_F(ServiceWorkerProcessManagerTest,
     EXPECT_EQ(
         kGuestSiteUrl,
         render_process_host_factory_->last_site_instance_used()->GetSiteURL());
+    EXPECT_TRUE(
+        render_process_host_factory_->last_site_instance_used()->IsGuest());
 
     // Release the process.
     process_manager_->ReleaseWorkerProcess(kEmbeddedWorkerId);

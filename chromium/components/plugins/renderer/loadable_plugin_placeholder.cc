@@ -37,9 +37,9 @@ void LoadablePluginPlaceholder::BlockForPowerSaverPoster() {
   DCHECK(render_frame());
   render_frame()->RegisterPeripheralPlugin(
       url::Origin::Create(GURL(GetPluginParams().url)),
-      base::Bind(&LoadablePluginPlaceholder::MarkPluginEssential,
-                 weak_factory_.GetWeakPtr(),
-                 PluginInstanceThrottler::UNTHROTTLE_METHOD_BY_WHITELIST));
+      base::BindOnce(&LoadablePluginPlaceholder::MarkPluginEssential,
+                     weak_factory_.GetWeakPtr(),
+                     PluginInstanceThrottler::UNTHROTTLE_METHOD_BY_WHITELIST));
 }
 
 void LoadablePluginPlaceholder::SetPremadePlugin(
@@ -63,8 +63,7 @@ LoadablePluginPlaceholder::LoadablePluginPlaceholder(
       power_saver_enabled_(false),
       premade_throttler_(nullptr),
       allow_loading_(false),
-      finished_loading_(false),
-      weak_factory_(this) {}
+      finished_loading_(false) {}
 
 LoadablePluginPlaceholder::~LoadablePluginPlaceholder() {
 }

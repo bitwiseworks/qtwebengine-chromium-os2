@@ -32,6 +32,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_PROPERTIES_SVG_LIST_PROPERTY_TEAR_OFF_HELPER_H_
 
 #include "third_party/blink/renderer/core/svg/properties/svg_property_tear_off.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/type_traits.h"
 
 namespace blink {
@@ -68,13 +70,6 @@ class ListItemPropertyTraits {
 
     new_item->Bind(binding);
     return new_item->Target();
-  }
-
-  static ItemTearOffType* CreateTearOff(
-      ItemPropertyType* value,
-      SVGAnimatedPropertyBase* binding,
-      PropertyIsAnimValType property_is_anim_val) {
-    return ItemTearOffType::Create(value, binding, property_is_anim_val);
   }
 };
 
@@ -147,11 +142,12 @@ class SVGListPropertyTearOffHelper : public SVGPropertyTearOff<ListProperty> {
     return CreateItemTearOff(value);
   }
 
-  bool AnonymousIndexedSetter(uint32_t index,
-                              ItemTearOffType* item,
-                              ExceptionState& exception_state) {
+  IndexedPropertySetterResult AnonymousIndexedSetter(
+      uint32_t index,
+      ItemTearOffType* item,
+      ExceptionState& exception_state) {
     replaceItem(item, index, exception_state);
-    return true;
+    return IndexedPropertySetterResult::kIntercepted;
   }
 
   ItemTearOffType* removeItem(uint32_t index, ExceptionState& exception_state) {
@@ -196,10 +192,11 @@ class SVGListPropertyTearOffHelper : public SVGPropertyTearOff<ListProperty> {
       return nullptr;
 
     if (value->OwnerList() == ToDerived()->Target()) {
-      return ItemTraits::CreateTearOff(value, ToDerived()->GetBinding(),
-                                       ToDerived()->PropertyIsAnimVal());
+      return MakeGarbageCollected<ItemTearOffType>(
+          value, ToDerived()->GetBinding(), ToDerived()->PropertyIsAnimVal());
     }
-    return ItemTraits::CreateTearOff(value, nullptr, kPropertyIsNotAnimVal);
+    return MakeGarbageCollected<ItemTearOffType>(value, nullptr,
+                                                 kPropertyIsNotAnimVal);
   }
 
  private:

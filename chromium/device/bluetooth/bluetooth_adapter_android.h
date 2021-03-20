@@ -92,6 +92,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
       const base::android::JavaParamRef<jstring>& address,
       const base::android::JavaParamRef<jobject>&
           bluetooth_device_wrapper,  // Java Type: bluetoothDeviceWrapper
+      const base::android::JavaParamRef<jstring>& local_name,
       int32_t rssi,
       const base::android::JavaParamRef<jobjectArray>&
           advertised_uuids,  // Java Type: String[]
@@ -104,40 +105,38 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
           manufacturer_data_keys,  // Java Type: int[]
       const base::android::JavaParamRef<jobjectArray>&
           manufacturer_data_values  // Java Type: byte[]
-      );
+  );
 
  protected:
   BluetoothAdapterAndroid();
   ~BluetoothAdapterAndroid() override;
 
   // BluetoothAdapter:
+  base::WeakPtr<BluetoothAdapter> GetWeakPtr() override;
   bool SetPoweredImpl(bool powered) override;
-  void AddDiscoverySession(
-      BluetoothDiscoveryFilter* discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
-  void RemoveDiscoverySession(
-      BluetoothDiscoveryFilter* discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
-  void SetDiscoveryFilter(
+  void StartScanWithFilter(
       std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
+      DiscoverySessionResultCallback callback) override;
+  void UpdateFilter(std::unique_ptr<BluetoothDiscoveryFilter> discovery_filter,
+                    DiscoverySessionResultCallback callback) override;
+  void StopScan(DiscoverySessionResultCallback callback) override;
   void RemovePairingDelegateInternal(
       BluetoothDevice::PairingDelegate* pairing_delegate) override;
 
   void PurgeTimedOutDevices();
 
+  // Utility function used to create a Java object that represents the filter.
+  base::android::ScopedJavaLocalRef<jobject> CreateAndroidFilter(
+      const BluetoothDiscoveryFilter* discovery_filter);
+
   // Java object org.chromium.device.bluetooth.ChromeBluetoothAdapter.
   base::android::ScopedJavaGlobalRef<jobject> j_adapter_;
 
  private:
-  size_t num_discovery_sessions_ = 0;
-
+  FRIEND_TEST_ALL_PREFIXES(BluetoothAdapterAndroidTest, ScanFilterTest);
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<BluetoothAdapterAndroid> weak_ptr_factory_;
+  base::WeakPtrFactory<BluetoothAdapterAndroid> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothAdapterAndroid);
 };

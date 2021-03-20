@@ -20,14 +20,14 @@ void AudioBufferQueue::Clear() {
   frames_ = 0;
 }
 
-void AudioBufferQueue::Append(const scoped_refptr<AudioBuffer>& buffer_in) {
-  // Add the buffer to the queue. Inserting into deque invalidates all
-  // iterators, so point to the first buffer.
-  buffers_.push_back(buffer_in);
-
+void AudioBufferQueue::Append(scoped_refptr<AudioBuffer> buffer_in) {
   // Update the |frames_| counter since we have added frames.
   frames_ += buffer_in->frame_count();
   CHECK_GT(frames_, 0);  // make sure it doesn't overflow.
+
+  // Add the buffer to the queue. Inserting into deque invalidates all
+  // iterators, so point to the first buffer.
+  buffers_.push_back(std::move(buffer_in));
 }
 
 int AudioBufferQueue::ReadFrames(int frames,
@@ -71,12 +71,15 @@ int AudioBufferQueue::InternalRead(int frames,
            dest_frame_offset == dest->GetBitstreamFrames());
     DCHECK(!source_frame_offset);
 
-    scoped_refptr<AudioBuffer> buffer = buffers_.front();
+    const auto& buffer = buffers_.front();
     int taken = buffer->frame_count();
 
     // if |dest| is NULL, there's no need to copy.
-    if (dest)
+    if (dest) {
+      // We always copy a whole bitstream buffer. Make sure we have space.
+      CHECK_GE(frames, buffer->frame_count());
       buffer->ReadFrames(buffer->frame_count(), 0, dest_frame_offset, dest);
+    }
 
     if (advance_position) {
       // Update the appropriate values since |taken| frames have been copied

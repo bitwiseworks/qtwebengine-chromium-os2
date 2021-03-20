@@ -16,16 +16,14 @@
 #include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/macros.h"
-#include "base/unguessable_token.h"
-#include "storage/common/blob_storage/blob_storage_constants.h"
+#include "storage/browser/blob/blob_storage_constants.h"
 
 class GURL;
 
 namespace storage {
 class BlobEntry;
 
-// This class stores the blob data in the various states of construction, as
-// well as URL mappings to blob uuids.
+// This class stores the blob data in the various states of construction.
 // Implementation notes:
 // * When removing a uuid registration, we do not check for URL mappings to that
 //   uuid. The user must keep track of these.
@@ -51,39 +49,12 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobStorageRegistry {
   BlobEntry* GetEntry(const std::string& uuid);
   const BlobEntry* GetEntry(const std::string& uuid) const;
 
-  // Creates a url mapping from blob uuid to the given url. Returns false if
-  // the uuid isn't mapped to an entry or if there already is a map for the URL.
-  bool CreateUrlMapping(const GURL& url, const std::string& uuid);
-
-  // Removes the given URL mapping. Optionally populates a uuid string of the
-  // removed entry uuid. Returns false if the url isn't mapped.
-  bool DeleteURLMapping(const GURL& url, std::string* uuid);
-
-  // Returns if the url is mapped to a blob uuid.
-  bool IsURLMapped(const GURL& blob_url) const;
-
-  // Returns the entry from the given url, and optionally populates the uuid for
-  // that entry. Returns a nullptr if the mapping or entry doesn't exist.
-  BlobEntry* GetEntryFromURL(const GURL& url, std::string* uuid);
-
   size_t blob_count() const { return blob_map_.size(); }
-  size_t url_count() const { return url_to_uuid_.size(); }
-
-  void AddTokenMapping(const base::UnguessableToken& token,
-                       const GURL& url,
-                       const std::string& uuid);
-  void RemoveTokenMapping(const base::UnguessableToken& token);
-  bool GetTokenMapping(const base::UnguessableToken& token,
-                       GURL* url,
-                       std::string* uuid) const;
 
  private:
   friend class ViewBlobInternalsJob;
 
   std::unordered_map<std::string, std::unique_ptr<BlobEntry>> blob_map_;
-  std::map<GURL, std::string> url_to_uuid_;
-  std::map<base::UnguessableToken, std::pair<GURL, std::string>>
-      token_to_url_and_uuid_;
 
   DISALLOW_COPY_AND_ASSIGN(BlobStorageRegistry);
 };

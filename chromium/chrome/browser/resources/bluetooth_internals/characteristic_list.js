@@ -8,20 +8,20 @@
  */
 
 cr.define('characteristic_list', function() {
-  /** @const */ var ArrayDataModel = cr.ui.ArrayDataModel;
-  /** @const */ var ExpandableList = expandable_list.ExpandableList;
-  /** @const */ var ExpandableListItem = expandable_list.ExpandableListItem;
-  /** @const */ var Snackbar = snackbar.Snackbar;
-  /** @const */ var SnackbarType = snackbar.SnackbarType;
+  const ArrayDataModel = cr.ui.ArrayDataModel;
+  const ExpandableList = expandable_list.ExpandableList;
+  const ExpandableListItem = expandable_list.ExpandableListItem;
+  const Snackbar = snackbar.Snackbar;
+  const SnackbarType = snackbar.SnackbarType;
 
   /** Property names for the CharacteristicInfo fieldset */
-  var INFO_PROPERTY_NAMES = {
+  const INFO_PROPERTY_NAMES = {
     id: 'ID',
     'uuid.uuid': 'UUID',
   };
 
   /** Property names for the Properties fieldset. */
-  var PROPERTIES_PROPERTY_NAMES = {
+  const PROPERTIES_PROPERTY_NAMES = {
     broadcast: 'Broadcast',
     read: 'Read',
     write_without_response: 'Write Without Response',
@@ -51,7 +51,7 @@ cr.define('characteristic_list', function() {
    */
   function CharacteristicListItem(
       characteristicInfo, deviceAddress, serviceId) {
-    var listItem = new ExpandableListItem();
+    const listItem = new ExpandableListItem();
     listItem.__proto__ = CharacteristicListItem.prototype;
 
     /** @type {!bluetooth.mojom.CharacteristicInfo} */
@@ -73,7 +73,7 @@ cr.define('characteristic_list', function() {
      * two fieldsets for displaying property values.
      * @override
      */
-    decorate: function() {
+    decorate() {
       this.classList.add('characteristic-list-item');
 
       /** @private {!object_fieldset.ObjectFieldSet} */
@@ -88,7 +88,7 @@ cr.define('characteristic_list', function() {
       this.propertiesFieldSet_ = new object_fieldset.ObjectFieldSet();
       this.propertiesFieldSet_.setPropertyDisplayNames(
           PROPERTIES_PROPERTY_NAMES);
-      var Property = bluetooth.mojom.Property;
+      const Property = bluetooth.mojom.Property;
       this.propertiesFieldSet_.showAll = false;
       this.propertiesFieldSet_.setObject({
         broadcast: (this.info.properties & Property.BROADCAST) > 0,
@@ -128,29 +128,29 @@ cr.define('characteristic_list', function() {
       this.descriptorList_ = new descriptor_list.DescriptorList();
 
       // Create content for display in brief content container.
-      var characteristicHeaderText = document.createElement('div');
+      const characteristicHeaderText = document.createElement('div');
       characteristicHeaderText.textContent = 'Characteristic:';
 
-      var characteristicHeaderValue = document.createElement('div');
+      const characteristicHeaderValue = document.createElement('div');
       characteristicHeaderValue.textContent = this.info.uuid.uuid;
 
-      var characteristicHeader = document.createElement('div');
+      const characteristicHeader = document.createElement('div');
       characteristicHeader.appendChild(characteristicHeaderText);
       characteristicHeader.appendChild(characteristicHeaderValue);
       this.briefContent_.appendChild(characteristicHeader);
 
       // Create content for display in expanded content container.
-      var characteristicInfoHeader = document.createElement('h4');
+      const characteristicInfoHeader = document.createElement('h4');
       characteristicInfoHeader.textContent = 'Characteristic Info';
 
-      var characteristicDiv = document.createElement('div');
+      const characteristicDiv = document.createElement('div');
       characteristicDiv.classList.add('flex');
       characteristicDiv.appendChild(this.characteristicFieldSet_);
 
-      var propertiesHeader = document.createElement('h4');
+      const propertiesHeader = document.createElement('h4');
       propertiesHeader.textContent = 'Properties';
 
-      var propertiesBtn = document.createElement('button');
+      const propertiesBtn = document.createElement('button');
       propertiesBtn.textContent = 'Show All';
       propertiesBtn.classList.add('show-all-properties');
       propertiesBtn.addEventListener('click', () => {
@@ -161,17 +161,17 @@ cr.define('characteristic_list', function() {
       });
       propertiesHeader.appendChild(propertiesBtn);
 
-      var propertiesDiv = document.createElement('div');
+      const propertiesDiv = document.createElement('div');
       propertiesDiv.classList.add('flex');
       propertiesDiv.appendChild(this.propertiesFieldSet_);
 
-      var descriptorsHeader = document.createElement('h4');
+      const descriptorsHeader = document.createElement('h4');
       descriptorsHeader.textContent = 'Descriptors';
 
-      var infoDiv = document.createElement('div');
+      const infoDiv = document.createElement('div');
       infoDiv.classList.add('info-container');
 
-      var valueHeader = document.createElement('h4');
+      const valueHeader = document.createElement('h4');
       valueHeader.textContent = 'Value';
 
       infoDiv.appendChild(characteristicInfoHeader);
@@ -187,7 +187,7 @@ cr.define('characteristic_list', function() {
     },
 
     /** @override */
-    onExpandInternal: function(expanded) {
+    onExpandInternal(expanded) {
       this.descriptorList_.load(
           this.deviceAddress_, this.serviceId_, this.info.id);
     },
@@ -198,13 +198,13 @@ cr.define('characteristic_list', function() {
    * @constructor
    * @extends {expandable_list.ExpandableList}
    */
-  var CharacteristicList = cr.ui.define('list');
+  const CharacteristicList = cr.ui.define('list');
 
   CharacteristicList.prototype = {
     __proto__: ExpandableList.prototype,
 
     /** @override */
-    decorate: function() {
+    decorate() {
       ExpandableList.prototype.decorate.call(this);
 
       /** @private {?string} */
@@ -218,7 +218,7 @@ cr.define('characteristic_list', function() {
       this.setEmptyMessage('No Characteristics Found');
     },
 
-    createItem: function(data) {
+    createItem(data) {
       return new CharacteristicListItem(
           data, assert(this.deviceAddress_), assert(this.serviceId_));
     },
@@ -230,7 +230,7 @@ cr.define('characteristic_list', function() {
      * @param {string} deviceAddress
      * @param {string} serviceId
      */
-    load: function(deviceAddress, serviceId) {
+    load(deviceAddress, serviceId) {
       if (this.characteristicsRequested_ || !this.isSpinnerShowing()) {
         return;
       }

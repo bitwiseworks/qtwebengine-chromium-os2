@@ -142,29 +142,26 @@ void SetLinkUnderCursor(PP_Instance instance, const char* url) {
 }
 
 void GetV8ExternalSnapshotData(PP_Instance instance,
-                               const char** natives_data_out,
-                               int* natives_size_out,
                                const char** snapshot_data_out,
                                int* snapshot_size_out) {
   EnterInstanceAPI<PPB_PDF_API> enter(instance);
   if (enter.failed())
     return;
-  enter.functions()->GetV8ExternalSnapshotData(natives_data_out,
-      natives_size_out, snapshot_data_out, snapshot_size_out);
+  enter.functions()->GetV8ExternalSnapshotData(snapshot_data_out,
+                                               snapshot_size_out);
 }
 
 void SetAccessibilityViewportInfo(
     PP_Instance instance,
-    PP_PrivateAccessibilityViewportInfo* viewport_info) {
+    const PP_PrivateAccessibilityViewportInfo* viewport_info) {
   EnterInstanceAPI<PPB_PDF_API> enter(instance);
   if (enter.failed())
     return;
   enter.functions()->SetAccessibilityViewportInfo(viewport_info);
 }
 
-void SetAccessibilityDocInfo(
-    PP_Instance instance,
-    PP_PrivateAccessibilityDocInfo* doc_info) {
+void SetAccessibilityDocInfo(PP_Instance instance,
+                             const PP_PrivateAccessibilityDocInfo* doc_info) {
   EnterInstanceAPI<PPB_PDF_API> enter(instance);
   if (enter.failed())
     return;
@@ -173,13 +170,15 @@ void SetAccessibilityDocInfo(
 
 void SetAccessibilityPageInfo(
     PP_Instance instance,
-    PP_PrivateAccessibilityPageInfo* page_info,
-    PP_PrivateAccessibilityTextRunInfo text_runs[],
-    PP_PrivateAccessibilityCharInfo chars[]) {
+    const PP_PrivateAccessibilityPageInfo* page_info,
+    const PP_PrivateAccessibilityTextRunInfo text_runs[],
+    const PP_PrivateAccessibilityCharInfo chars[],
+    const PP_PrivateAccessibilityPageObjects* page_objects) {
   EnterInstanceAPI<PPB_PDF_API> enter(instance);
   if (enter.failed())
     return;
-  enter.functions()->SetAccessibilityPageInfo(page_info, text_runs, chars);
+  enter.functions()->SetAccessibilityPageInfo(page_info, text_runs, chars,
+                                              page_objects);
 }
 
 void SetCrashData(PP_Instance instance,
@@ -202,6 +201,13 @@ void SelectionChanged(PP_Instance instance,
   enter.functions()->SelectionChanged(*left, left_height, *right, right_height);
 }
 
+void SetPluginCanSave(PP_Instance instance, bool can_save) {
+  EnterInstanceAPI<PPB_PDF_API> enter(instance);
+  if (enter.failed())
+    return;
+  enter.functions()->SetPluginCanSave(can_save);
+}
+
 const PPB_PDF g_ppb_pdf_thunk = {
     &GetFontFileWithFallback,
     &GetFontTableForPrivateFontFile,
@@ -222,6 +228,7 @@ const PPB_PDF g_ppb_pdf_thunk = {
     &SetAccessibilityPageInfo,
     &SetCrashData,
     &SelectionChanged,
+    &SetPluginCanSave,
     &ShowAlertDialog,
     &ShowConfirmDialog,
     &ShowPromptDialog,

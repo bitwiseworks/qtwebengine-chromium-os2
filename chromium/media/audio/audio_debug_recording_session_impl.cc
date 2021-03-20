@@ -13,6 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "media/audio/audio_debug_recording_manager.h"
 #include "media/audio/audio_manager.h"
@@ -29,9 +30,9 @@ namespace media {
 namespace {
 
 #if defined(OS_WIN)
-#define IntToStringType base::IntToString16
+#define NumberToStringType base::NumberToString16
 #else
-#define IntToStringType base::IntToString
+#define NumberToStringType base::NumberToString
 #endif
 
 bool StreamTypeToStringType(AudioDebugRecordingStreamType stream_type,
@@ -58,7 +59,7 @@ void CreateWavFile(const base::FilePath& debug_recording_file_path,
     return;
   }
 
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
@@ -68,7 +69,7 @@ void CreateWavFile(const base::FilePath& debug_recording_file_path,
                                              base::File::FLAG_WRITE);
           },
           debug_recording_file_path.AddExtension(stream_type_str)
-              .AddExtension(IntToStringType(id))
+              .AddExtension(NumberToStringType(id))
               .AddExtension(FILE_PATH_LITERAL("wav"))),
       std::move(reply_callback));
 }

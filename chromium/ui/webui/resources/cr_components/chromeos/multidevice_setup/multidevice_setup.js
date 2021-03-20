@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.exportPath('multidevice_setup');
-
-/** @enum {string} */
-multidevice_setup.PageName = {
-  PASSWORD: 'password-page',
-  SUCCESS: 'setup-succeeded-page',
-  START: 'start-setup-page',
-};
-
 cr.define('multidevice_setup', function() {
-  const PageName = multidevice_setup.PageName;
+  /** @enum {string} */
+  const PageName = {
+    PASSWORD: 'password-page',
+    SUCCESS: 'setup-succeeded-page',
+    START: 'start-setup-page',
+  };
 
   const MultiDeviceSetup = Polymer({
     is: 'multidevice-setup',
@@ -27,12 +23,12 @@ cr.define('multidevice_setup', function() {
       delegate: Object,
 
       /**
-       * Text to be shown on the forward navigation button.
+       * ID of loadTimeData string to be shown on the forward navigation button.
        * @type {string|undefined}
        */
-      forwardButtonText: {
+      forwardButtonTextId: {
         type: String,
-        computed: 'getForwardButtonText_(visiblePage_)',
+        computed: 'getForwardButtonTextId_(visiblePage_)',
         notify: true,
       },
 
@@ -45,22 +41,23 @@ cr.define('multidevice_setup', function() {
       },
 
       /**
-       * Text to be shown on the cancel button.
+       * ID of loadTimeData string to be shown on the cancel button.
        * @type {string|undefined}
        */
-      cancelButtonText: {
+      cancelButtonTextId: {
         type: String,
-        computed: 'getCancelButtonText_(visiblePage_)',
+        computed: 'getCancelButtonTextId_(visiblePage_)',
         notify: true,
       },
 
       /**
-       * Text to be shown on the backward navigation button.
+       * ID of loadTimeData string to be shown on the backward navigation
+       * button.
        * @type {string|undefined}
        */
-      backwardButtonText: {
+      backwardButtonTextId: {
         type: String,
-        computed: 'getBackwardButtonText_(visiblePage_)',
+        computed: 'getBackwardButtonTextId_(visiblePage_)',
         notify: true,
       },
 
@@ -94,19 +91,23 @@ cr.define('multidevice_setup', function() {
       /**
        * Array of objects representing all potential MultiDevice hosts.
        *
-       * @private {!Array<!chromeos.multidevice.mojom.RemoteDevice>}
+       * @private {!Array<!chromeos.multideviceSetup.mojom.HostDevice>}
        */
       devices_: Array,
 
       /**
-       * Unique identifier for the currently selected host device.
+       * Unique identifier for the currently selected host device. This uses the
+       * device's Instance ID if it is available; otherwise, the device's legacy
+       * device ID is used.
+       * TODO(https://crbug.com/1019206): When v1 DeviceSync is turned off, only
+       * use Instance ID since all devices are guaranteed to have one.
        *
        * Undefined if the no list of potential hosts has been received from mojo
        * service.
        *
        * @private {string|undefined}
        */
-      selectedDeviceId_: String,
+      selectedInstanceIdOrLegacyDeviceId_: String,
 
       /**
        * Whether the password page reports that the forward button should be
@@ -120,38 +121,71 @@ cr.define('multidevice_setup', function() {
        * Provider of an interface to the MultiDeviceSetup Mojo service.
        * @private {!multidevice_setup.MojoInterfaceProvider}
        */
-      mojoInterfaceProvider_: Object
+      mojoInterfaceProvider_: Object,
+
+      /**
+       * Whether a shadow should appear over the button bar; the shadow is
+       * intended to appear when the contents are not scrolled to the bottom to
+       * indicate that more contents can be viewed below.
+       * @private
+       */
+      isScrolledToBottom_: {
+        type: Boolean,
+        value: false,
+      },
     },
 
     listeners: {
+      'scroll': 'onWindowContentUpdate_',
       'backward-navigation-requested': 'onBackwardNavigationRequested_',
       'cancel-requested': 'onCancelRequested_',
       'forward-navigation-requested': 'onForwardNavigationRequested_',
     },
 
     /** @override */
-    created: function() {
+    created() {
       this.mojoInterfaceProvider_ =
           multidevice_setup.MojoInterfaceProviderImpl.getInstance();
     },
 
     /** @override */
-    ready: function() {
+    ready() {
       this.addWebUIListener(
           'multidevice_setup.initializeSetupFlow',
           this.initializeSetupFlow.bind(this));
     },
 
-    initializeSetupFlow: function() {
-      this.mojoInterfaceProvider_.getInterfacePtr()
-          .getEligibleHostDevices()
+    /** @override */
+    attached() {
+      window.addEventListener(
+          'orientationchange', this.onWindowContentUpdate_.bind(this));
+      window.addEventListener('resize', this.onWindowContentUpdate_.bind(this));
+    },
+
+    /** @override */
+    detached() {
+      window.removeEventListener(
+          'orientationchange', this.onWindowContentUpdate_.bind(this));
+      window.removeEventListener(
+          'resize', this.onWindowContentUpdate_.bind(this));
+    },
+
+    updateLocalizedContent() {
+      this.$.ironPages.querySelectorAll('.ui-page')
+          .forEach(page => page.i18nUpdateLocale());
+    },
+
+    initializeSetupFlow() {
+      this.mojoInterfaceProvider_.getMojoServiceRemote()
+          .getEligibleActiveHostDevices()
           .then((responseParams) => {
-            if (responseParams.eligibleHostDevices.length == 0) {
+            if (responseParams.eligibleHostDevices.length === 0) {
               console.warn('Potential host list is empty.');
               return;
             }
 
             this.devices_ = responseParams.eligibleHostDevices;
+            this.fire('forward-button-focus-requested');
           })
           .catch((error) => {
             console.warn('Mojo service failure: ' + error);
@@ -159,21 +193,40 @@ cr.define('multidevice_setup', function() {
     },
 
     /** @private */
-    onCancelRequested_: function() {
+    onCancelRequested_() {
       this.exitSetupFlow_(false /* didUserCompleteSetup */);
     },
 
-    /** @private */
-    onBackwardNavigationRequested_: function() {
-      // The back button is only visible on the password page.
-      assert(this.visiblePageName == PageName.PASSWORD);
+    /**
+     * Called when contents are scrolled, the window is resized, or the window's
+     * orientation is updated.
+     * @private
+     */
+    onWindowContentUpdate_() {
+      // (scrollHeight - scrollTop) represents the visible height of the
+      // contents, not including scrollbars.
+      const visibleHeight = this.scrollHeight - this.scrollTop;
 
-      this.$$('password-page').clearPasswordTextInput();
-      this.visiblePageName = PageName.START;
+      // If these two heights are equal, the contents are scrolled to the
+      // bottom. Instead of using equality, we check that the difference is
+      // sufficiently small to account for fractional values due to browser
+      // zoom and/or display density.
+      this.isScrolledToBottom_ =
+          Math.abs(this.clientHeight - visibleHeight) < 1;
     },
 
     /** @private */
-    onForwardNavigationRequested_: function() {
+    onBackwardNavigationRequested_() {
+      // The back button is only visible on the password page.
+      assert(this.visiblePageName === PageName.PASSWORD);
+
+      this.$$('password-page').clearPasswordTextInput();
+      this.visiblePageName = PageName.START;
+      this.fire('forward-button-focus-requested');
+    },
+
+    /** @private */
+    onForwardNavigationRequested_() {
       if (this.forwardButtonDisabled) {
         return;
       }
@@ -187,7 +240,7 @@ cr.define('multidevice_setup', function() {
     },
 
     /** @private */
-    navigateForward_: function() {
+    navigateForward_() {
       switch (this.visiblePageName) {
         case PageName.PASSWORD:
           this.$$('password-page').clearPasswordTextInput();
@@ -199,6 +252,7 @@ cr.define('multidevice_setup', function() {
         case PageName.START:
           if (this.delegate.isPasswordRequiredToSetHost()) {
             this.visiblePageName = PageName.PASSWORD;
+            this.$$('password-page').focusPasswordTextInput();
           } else {
             this.setHostDevice_();
           }
@@ -207,15 +261,18 @@ cr.define('multidevice_setup', function() {
     },
 
     /** @private */
-    setHostDevice_: function() {
+    setHostDevice_() {
       // An authentication token must be set if a password is required.
-      assert(this.delegate.isPasswordRequiredToSetHost() == !!this.authToken_);
+      assert(this.delegate.isPasswordRequiredToSetHost() === !!this.authToken_);
 
-      let deviceId = /** @type {string} */ (this.selectedDeviceId_);
-      this.delegate.setHostDevice(deviceId, this.authToken_)
+      const instanceIdOrLegacyDeviceId =
+          /** @type {string} */ (this.selectedInstanceIdOrLegacyDeviceId_);
+      this.delegate.setHostDevice(instanceIdOrLegacyDeviceId, this.authToken_)
           .then((responseParams) => {
             if (!responseParams.success) {
-              console.warn('Failure setting host with device ID: ' + deviceId);
+              console.warn(
+                  'Failure setting host with ID: ' +
+                  instanceIdOrLegacyDeviceId);
               return;
             }
 
@@ -233,60 +290,63 @@ cr.define('multidevice_setup', function() {
     },
 
     /** @private */
-    onUserSubmittedPassword_: function() {
+    onUserSubmittedPassword_() {
       this.onForwardNavigationRequested_();
     },
 
     /**
-     * @return {string|undefined} The forward button text, which is undefined
-     *     if no button should be displayed.
+     * @return {string|undefined} The ID of loadTimeData string for the
+     *     forward button text, which is undefined if no button should be
+     *     displayed.
      * @private
      */
-    getForwardButtonText_: function() {
+    getForwardButtonTextId_() {
       if (!this.visiblePage_) {
         return undefined;
       }
-      return this.visiblePage_.forwardButtonText;
+      return this.visiblePage_.forwardButtonTextId;
     },
 
     /**
      * @return {boolean} Whether the forward button should be disabled.
      * @private
      */
-    shouldForwardButtonBeDisabled_: function() {
-      return (this.visiblePageName == PageName.PASSWORD) &&
+    shouldForwardButtonBeDisabled_() {
+      return (this.visiblePageName === PageName.PASSWORD) &&
           this.passwordPageForwardButtonDisabled_;
     },
 
     /**
-     * @return {string|undefined} The cancel button text, which is undefined
-     *     if no button should be displayed.
+     * @return {string|undefined} The ID of loadTimeData string for the
+     *     cancel button text, which is undefined if no button should be
+     *     displayed.
      * @private
      */
-    getCancelButtonText_: function() {
+    getCancelButtonTextId_() {
       if (!this.visiblePage_) {
         return undefined;
       }
-      return this.visiblePage_.cancelButtonText;
+      return this.visiblePage_.cancelButtonTextId;
     },
 
     /**
-     * @return {string|undefined} The backward button text, which is undefined
-     *     if no button should be displayed.
+     * @return {string|undefined} The ID of loadTimeData string for the
+     *     backward button text, which is undefined if no button should be
+     *     displayed.
      * @private
      */
-    getBackwardButtonText_: function() {
+    getBackwardButtonTextId_() {
       if (!this.visiblePage_) {
         return undefined;
       }
-      return this.visiblePage_.backwardButtonText;
+      return this.visiblePage_.backwardButtonTextId;
     },
 
     /**
      * @return {boolean}
      * @private
      */
-    shouldPasswordPageBeIncluded_: function() {
+    shouldPasswordPageBeIncluded_() {
       return this.delegate.isPasswordRequiredToSetHost();
     },
 
@@ -294,7 +354,7 @@ cr.define('multidevice_setup', function() {
      * @return {boolean}
      * @private
      */
-    shouldSetupSucceededPageBeIncluded_: function() {
+    shouldSetupSucceededPageBeIncluded_() {
       return !this.delegate.shouldExitSetupFlowAfterSettingHost();
     },
 
@@ -303,12 +363,13 @@ cr.define('multidevice_setup', function() {
      * @param {boolean} didUserCompleteSetup
      * @private
      */
-    exitSetupFlow_: function(didUserCompleteSetup) {
+    exitSetupFlow_(didUserCompleteSetup) {
       this.fire('setup-exited', {didUserCompleteSetup: didUserCompleteSetup});
     },
   });
 
   return {
     MultiDeviceSetup: MultiDeviceSetup,
+    PageName: PageName,
   };
 });

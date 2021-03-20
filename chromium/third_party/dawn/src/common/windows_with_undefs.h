@@ -26,6 +26,10 @@
 #include <windows.h>
 
 // Macros defined for ANSI / Unicode support
+#undef CreateWindow
 #undef GetMessage
+
+// Macros defined to produce compiler intrinsics
+#undef MemoryBarrier
 
 #endif  // COMMON_WINDOWS_WITH_UNDEFS_H_

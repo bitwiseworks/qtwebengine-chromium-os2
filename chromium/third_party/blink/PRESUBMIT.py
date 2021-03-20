@@ -4,13 +4,14 @@
 
 """Top-level presubmit script for Blink.
 
-See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
+See https://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into gcl.
 """
 
 import imp
 import inspect
 import os
+import re
 
 try:
     # pylint: disable=C0103
@@ -25,8 +26,10 @@ except IOError:
 
 
 _EXCLUDED_PATHS = (
-    # This directory is created and updated via a script.
-    r'^third_party[\\\/]blink[\\\/]tools[\\\/]blinkpy[\\\/]third_party[\\\/]wpt[\\\/]wpt[\\\/].*',
+    # These are third-party dependencies that we don't directly control.
+    r'^third_party[\\/]blink[\\/]tools[\\/]blinkpy[\\/]third_party[\\/]wpt[\\/]wpt[\\/].*',
+    r'^third_party[\\/]blink[\\/]web_tests[\\/]external[\\/]wpt[\\/]tools[\\/].*',
+    r'^third_party[\\/]blink[\\/]web_tests[\\/]external[\\/]wpt[\\/]resources[\\/]webidl2[\\/].*',
 )
 
 
@@ -35,31 +38,42 @@ def _CheckForWrongMojomIncludes(input_api, output_api):
     # headers, except in public where only -shared.h headers should be
     # used to avoid exporting Blink types outside Blink.
     def source_file_filter(path):
-        return input_api.FilterSourceFile(path,
-                                          black_list=[r'third_party/blink/common/', r'third_party/blink/public/common'])
+        return input_api.FilterSourceFile(
+            path,
+            black_list=[
+                r'third_party/blink/common/',
+                r'third_party/blink/public/common',
+                r'third_party/blink/renderer/platform/loader/fetch/url_loader',
+            ])
 
-    # The list of files that we specifically want to allow including
-    # -blink variant files (e.g. because it has #if INSIDE_BLINK).
-    allow_blink_files = [r'third_party/blink/public/platform/modules/service_worker/web_service_worker_request.h']
-
-    pattern = input_api.re.compile(r'#include\s+.+\.mojom(.*)\.h[>"]')
+    pattern = input_api.re.compile(r'#include\s+[<"](.+)\.mojom(.*)\.h[>"]')
     public_folder = input_api.os_path.normpath('third_party/blink/public/')
     non_blink_mojom_errors = []
     public_blink_mojom_errors = []
+
+    # Allow including specific non-blink interfaces that are used in the public C++ API.
+    # Adding to these allowed interfaces should meet the following conditions:
+    # - Its pros/cons is discussed and have consensus on platform-architecture-dev@ and/or
+    # - It uses POD types that will not import STL (or base string) types into blink
+    #   (such as no strings or vectors).
+    #
+    # So far, non-blink interfaces are allowed only for loading / loader
+    # interfaces so that we don't need type conversions to get through the
+    # boundary between Blink and non-Blink.
+    allowed_interfaces = (r'services/network/public/mojom/cross_origin_embedder_policy', r'services/network/public/mojom/fetch_api',
+                          r'services/network/public/mojom/load_timing_info',
+                          r'third_party/blink/public/mojom/worker/subresource_loader_updater')
+
     for f in input_api.AffectedFiles(file_filter=source_file_filter):
         for line_num, line in f.ChangedContents():
             error_list = None
-            # This is not super precise as we don't check endif, but allow
-            # including Blink variant mojom files if the file has
-            # '#if INSIDE_BLINK'.
             match = pattern.match(line)
-            if match:
-                if match.group(1) != '-shared':
-                    if f.LocalPath().startswith(public_folder) and \
-                            not f.LocalPath() in allow_blink_files:
+            if (match and match.group(1) not in allowed_interfaces):
+                if match.group(2) not in ('-shared', '-forward'):
+                    if f.LocalPath().startswith(public_folder):
                         error_list = public_blink_mojom_errors
-                    elif match.group(1) != '-blink':
-                        # Neither -shared.h, nor -blink.h.
+                    elif match.group(2) not in ('-blink', '-blink-forward', '-blink-test-utils'):
+                        # Neither -shared.h, -blink.h, -blink-forward.h nor -blink-test-utils.h.
                         error_list = non_blink_mojom_errors
 
             if error_list is not None:
@@ -70,13 +84,13 @@ def _CheckForWrongMojomIncludes(input_api, output_api):
     if non_blink_mojom_errors:
         results.append(output_api.PresubmitError(
             'Files that include non-Blink variant mojoms found. '
-            'You must include .mojom-blink.h or .mojom-shared.h instead:',
+            'You must include .mojom-blink.h, .mojom-forward.h or .mojom-shared.h instead:',
             non_blink_mojom_errors))
 
     if public_blink_mojom_errors:
         results.append(output_api.PresubmitError(
             'Public blink headers using Blink variant mojoms found. '
-            'You must include .mojom-shared.h instead:',
+            'You must include .mojom-forward.h or .mojom-shared.h instead:',
             public_blink_mojom_errors))
 
     return results
@@ -105,6 +119,10 @@ def _FilterPaths(input_api):
             and 'TestExpectations' not in file_path):
             continue
         if '/PRESUBMIT' in file_path:
+            continue
+        # Skip files that were generated by bison.
+        if re.search('third_party/blink/renderer/' +
+                     'core/xml/xpath_grammar_generated\.(cc|h)$', file_path):
             continue
         files.append(input_api.os_path.join('..', '..', file_path))
     return files
@@ -171,7 +189,10 @@ def _CheckForForbiddenChromiumCode(input_api, output_api):
                         path, error.line, error.identifier)
                     if error.advice:
                         msg += ". Advice: %s" % "\n".join(error.advice)
-                    results.append(output_api.PresubmitError(msg))
+                    if error.warning:
+                        results.append(output_api.PresubmitPromptWarning(msg))
+                    else:
+                        results.append(output_api.PresubmitError(msg))
     return results
 
 

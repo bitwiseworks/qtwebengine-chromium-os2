@@ -36,27 +36,16 @@
 
 namespace blink {
 
-RTCVoidRequestImpl* RTCVoidRequestImpl::Create(
-    ExecutionContext* context,
-    base::Optional<RTCSetSessionDescriptionOperation> operation,
-    RTCPeerConnection* requester,
-    V8VoidFunction* success_callback,
-    V8RTCPeerConnectionErrorCallback* error_callback) {
-  return MakeGarbageCollected<RTCVoidRequestImpl>(context, std::move(operation),
-                                                  requester, success_callback,
-                                                  error_callback);
-}
-
 RTCVoidRequestImpl::RTCVoidRequestImpl(
     ExecutionContext* context,
     base::Optional<RTCSetSessionDescriptionOperation> operation,
     RTCPeerConnection* requester,
     V8VoidFunction* success_callback,
     V8RTCPeerConnectionErrorCallback* error_callback)
-    : ContextLifecycleObserver(context),
+    : ExecutionContextLifecycleObserver(context),
       operation_(std::move(operation)),
-      success_callback_(ToV8PersistentCallbackFunction(success_callback)),
-      error_callback_(ToV8PersistentCallbackFunction(error_callback)),
+      success_callback_(success_callback),
+      error_callback_(error_callback),
       requester_(requester) {
   DCHECK(requester_);
 }
@@ -88,7 +77,7 @@ void RTCVoidRequestImpl::RequestFailed(const webrtc::RTCError& error) {
   Clear();
 }
 
-void RTCVoidRequestImpl::ContextDestroyed(ExecutionContext*) {
+void RTCVoidRequestImpl::ContextDestroyed() {
   Clear();
 }
 
@@ -98,12 +87,12 @@ void RTCVoidRequestImpl::Clear() {
   requester_.Clear();
 }
 
-void RTCVoidRequestImpl::Trace(blink::Visitor* visitor) {
+void RTCVoidRequestImpl::Trace(Visitor* visitor) {
   visitor->Trace(success_callback_);
   visitor->Trace(error_callback_);
   visitor->Trace(requester_);
   RTCVoidRequest::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

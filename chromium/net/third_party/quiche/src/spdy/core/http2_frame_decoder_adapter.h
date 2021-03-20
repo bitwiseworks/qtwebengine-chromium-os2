@@ -9,15 +9,17 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "net/third_party/quiche/src/http2/decoder/http2_frame_decoder.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_optional.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_optional.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_decoder_adapter.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_header_table.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_alt_svc_wire_format.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_headers_handler_interface.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string_piece.h"
 
 namespace spdy {
 
@@ -31,7 +33,7 @@ class ExtensionVisitorInterface;
 namespace http2 {
 
 // Adapts SpdyFramer interface to use Http2FrameDecoder.
-class SPDY_EXPORT_PRIVATE Http2DecoderAdapter
+class QUICHE_EXPORT_PRIVATE Http2DecoderAdapter
     : public http2::Http2FrameDecoderListener {
  public:
   // HTTP2 states.
@@ -74,6 +76,25 @@ class SPDY_EXPORT_PRIVATE Http2DecoderAdapter
     SPDY_INVALID_CONTROL_FRAME_SIZE,   // Control frame not sized to spec
     SPDY_OVERSIZED_PAYLOAD,            // Payload size was too large
 
+    // HttpDecoder or HttpDecoderAdapter error.
+    // See HpackDecodingError for description of each error code.
+    SPDY_HPACK_INDEX_VARINT_ERROR,
+    SPDY_HPACK_NAME_LENGTH_VARINT_ERROR,
+    SPDY_HPACK_VALUE_LENGTH_VARINT_ERROR,
+    SPDY_HPACK_NAME_TOO_LONG,
+    SPDY_HPACK_VALUE_TOO_LONG,
+    SPDY_HPACK_NAME_HUFFMAN_ERROR,
+    SPDY_HPACK_VALUE_HUFFMAN_ERROR,
+    SPDY_HPACK_MISSING_DYNAMIC_TABLE_SIZE_UPDATE,
+    SPDY_HPACK_INVALID_INDEX,
+    SPDY_HPACK_INVALID_NAME_INDEX,
+    SPDY_HPACK_DYNAMIC_TABLE_SIZE_UPDATE_NOT_ALLOWED,
+    SPDY_HPACK_INITIAL_DYNAMIC_TABLE_SIZE_UPDATE_IS_ABOVE_LOW_WATER_MARK,
+    SPDY_HPACK_DYNAMIC_TABLE_SIZE_UPDATE_IS_ABOVE_ACKNOWLEDGED_SETTING,
+    SPDY_HPACK_TRUNCATED_BLOCK,
+    SPDY_HPACK_FRAGMENT_TOO_LONG,
+    SPDY_HPACK_COMPRESSED_HEADER_SIZE_EXCEEDS_LIMIT,
+
     LAST_ERROR,  // Must be the last entry in the enum.
   };
 
@@ -94,6 +115,9 @@ class SPDY_EXPORT_PRIVATE Http2DecoderAdapter
   // Set extension callbacks to be called from the framer or decoder. Optional.
   // If called multiple times, only the last visitor will be used.
   void set_extension_visitor(spdy::ExtensionVisitorInterface* visitor);
+  spdy::ExtensionVisitorInterface* extension_visitor() const {
+    return extension_;
+  }
 
   // Set debug callbacks to be called from the framer. The debug visitor is
   // completely optional and need not be set in order for normal operation.
@@ -245,11 +269,11 @@ class SPDY_EXPORT_PRIVATE Http2DecoderAdapter
 
   // Amount of trailing padding. Currently used just as an indicator of whether
   // OnPadLength has been called.
-  Http2Optional<size_t> opt_pad_length_;
+  quiche::QuicheOptional<size_t> opt_pad_length_;
 
   // Temporary buffers for the AltSvc fields.
-  Http2String alt_svc_origin_;
-  Http2String alt_svc_value_;
+  std::string alt_svc_origin_;
+  std::string alt_svc_value_;
 
   // Listener used if we transition to an error state; the listener ignores all
   // the callbacks.
@@ -340,7 +364,7 @@ namespace spdy {
 //      been delivered for the control frame.
 // During step 2, if the visitor is not interested in accepting the header data,
 // it should return a no-op implementation of SpdyHeadersHandlerInterface.
-class SPDY_EXPORT_PRIVATE SpdyFramerVisitorInterface {
+class QUICHE_EXPORT_PRIVATE SpdyFramerVisitorInterface {
  public:
   virtual ~SpdyFramerVisitorInterface() {}
 
@@ -376,7 +400,8 @@ class SPDY_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   // Called when padding length field is received on a DATA frame.
   // |stream_id| The stream receiving data.
   // |value| The value of the padding length field.
-  virtual void OnStreamPadLength(SpdyStreamId stream_id, size_t value) {}
+  virtual void OnStreamPadLength(SpdyStreamId /*stream_id*/, size_t /*value*/) {
+  }
 
   // Called when padding is received (the trailing octets, not pad_len field) on
   // a DATA frame.
@@ -468,7 +493,7 @@ class SPDY_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   // Called when an ALTSVC frame has been parsed.
   virtual void OnAltSvc(
       SpdyStreamId /*stream_id*/,
-      SpdyStringPiece /*origin*/,
+      quiche::QuicheStringPiece /*origin*/,
       const SpdyAltSvcWireFormat::AlternativeServiceVector& /*altsvc_vector*/) {
   }
 
@@ -490,7 +515,7 @@ class SPDY_EXPORT_PRIVATE SpdyFramerVisitorInterface {
   virtual bool OnUnknownFrame(SpdyStreamId stream_id, uint8_t frame_type) = 0;
 };
 
-class SPDY_EXPORT_PRIVATE ExtensionVisitorInterface {
+class QUICHE_EXPORT_PRIVATE ExtensionVisitorInterface {
  public:
   virtual ~ExtensionVisitorInterface() {}
 

@@ -35,14 +35,12 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/events/add_event_listener_options_resolved.h"
-#include "third_party/blink/renderer/core/dom/events/event_listener_options.h"
 #include "third_party/blink/renderer/core/dom/events/registered_event_listener.h"
-#include "third_party/blink/renderer/platform/bindings/script_wrappable_visitor.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 
 namespace blink {
 
+class EventListenerOptions;
 class EventTarget;
 
 using EventListenerVector = HeapVector<RegisteredEventListener, 1>;
@@ -56,6 +54,7 @@ class CORE_EXPORT EventListenerMap final {
   bool IsEmpty() const { return entries_.IsEmpty(); }
   bool Contains(const AtomicString& event_type) const;
   bool ContainsCapturing(const AtomicString& event_type) const;
+  bool ContainsJSBasedEventListeners(const AtomicString& event_type) const;
 
   void Clear();
   bool Add(const AtomicString& event_type,
@@ -83,9 +82,7 @@ class CORE_EXPORT EventListenerMap final {
   //  - HeapVector is much more space efficient than HeapHashMap.
   //  - An EventTarget rarely has event listeners for many event types, and
   //    HeapVector is faster in such cases.
-  HeapVector<std::pair<AtomicString, TraceWrapperMember<EventListenerVector>>,
-             2>
-      entries_;
+  HeapVector<std::pair<AtomicString, Member<EventListenerVector>>, 2> entries_;
 
 #if DCHECK_IS_ON()
   int active_iterator_count_ = 0;

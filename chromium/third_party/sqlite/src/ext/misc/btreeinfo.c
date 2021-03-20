@@ -31,7 +31,7 @@
 ** );
 **
 ** The first 5 fields are taken directly from the sqlite_master table.
-** Considering only the first 5 fields, the only difference between
+** Considering only the first 5 fields, the only difference between 
 ** this virtual table and the sqlite_master table is that this virtual
 ** table omits all entries that have a 0 or NULL rowid - in other words
 ** it omits triggers and views.
@@ -56,7 +56,7 @@
 **       WHERE type='table'
 **       ORDER BY nEntry DESC, name;
 **
-** Show the names of all WITHOUT ROWID tables:
+** Show the names of all WITHOUT ROWID tables: 
 **
 **      SELECT name FROM sqlite_btreeinfo
 **       WHERE type='table' AND NOT hasRowid;
@@ -116,7 +116,7 @@ static int binfoConnect(
 ){
   BinfoTable *pTab = 0;
   int rc = SQLITE_OK;
-  rc = sqlite3_declare_vtab(db,
+  rc = sqlite3_declare_vtab(db, 
       "CREATE TABLE x(\n"
       " type TEXT,\n"
       " name TEXT,\n"
@@ -226,7 +226,7 @@ static int binfoEof(sqlite3_vtab_cursor *pCursor){
 /* Position a cursor back to the beginning.
 */
 static int binfoFilter(
-  sqlite3_vtab_cursor *pCursor,
+  sqlite3_vtab_cursor *pCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -279,7 +279,7 @@ static int binfoCompute(sqlite3 *db, int pgno, BinfoCursor *pCsr){
   int nCell;
   int iCell;
 
-  rc = sqlite3_prepare_v2(db,
+  rc = sqlite3_prepare_v2(db, 
            "SELECT data FROM sqlite_dbpage('main') WHERE pgno=?1", -1,
            &pStmt, 0);
   if( rc ) return rc;
@@ -293,7 +293,7 @@ static int binfoCompute(sqlite3 *db, int pgno, BinfoCursor *pCsr){
     }
     pCsr->szPage = pgsz = sqlite3_column_bytes(pStmt, 0);
     aData = (unsigned char*)sqlite3_column_blob(pStmt, 0);
-    if( aData==0 ){
+    if( aData==0 ){    
       rc = SQLITE_NOMEM;
       break;
     }
@@ -329,8 +329,8 @@ static int binfoCompute(sqlite3 *db, int pgno, BinfoCursor *pCsr){
 
 /* Return a column for the sqlite_btreeinfo table */
 static int binfoColumn(
-  sqlite3_vtab_cursor *pCursor,
-  sqlite3_context *ctx,
+  sqlite3_vtab_cursor *pCursor, 
+  sqlite3_context *ctx, 
   int i
 ){
   BinfoCursor *pCsr = (BinfoCursor *)pCursor;
@@ -420,8 +420,8 @@ int sqlite3BinfoRegister(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_btreeinfo_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   SQLITE_EXTENSION_INIT2(pApi);

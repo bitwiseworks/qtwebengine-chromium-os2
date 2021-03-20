@@ -5,15 +5,14 @@
  * found in the LICENSE file.
  */
 
-#include "gl/GrGLPathRendering.h"
-#include "gl/GrGLUtil.h"
-#include "gl/GrGLGpu.h"
-
-#include "GrGLPath.h"
-#include "GrGLPathRendering.h"
-
-#include "SkStream.h"
-#include "SkTypeface.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkTypeface.h"
+#include "src/gpu/GrProgramInfo.h"
+#include "src/gpu/GrRenderTargetProxy.h"
+#include "src/gpu/gl/GrGLGpu.h"
+#include "src/gpu/gl/GrGLPath.h"
+#include "src/gpu/gl/GrGLPathRendering.h"
+#include "src/gpu/gl/GrGLUtil.h"
 
 #define GL_CALL(X) GR_GL_CALL(this->gpu()->glInterface(), X)
 #define GL_CALL_RET(RET, X) GR_GL_CALL_RET(this->gpu()->glInterface(), RET, X)
@@ -22,12 +21,12 @@
 // implementation. The call has a result value, and thus waiting for the call completion is needed.
 static const GrGLsizei kPathIDPreallocationAmount = 65536;
 
-GR_STATIC_ASSERT(0 == GrPathRendering::kNone_PathTransformType);
-GR_STATIC_ASSERT(1 == GrPathRendering::kTranslateX_PathTransformType);
-GR_STATIC_ASSERT(2 == GrPathRendering::kTranslateY_PathTransformType);
-GR_STATIC_ASSERT(3 == GrPathRendering::kTranslate_PathTransformType);
-GR_STATIC_ASSERT(4 == GrPathRendering::kAffine_PathTransformType);
-GR_STATIC_ASSERT(GrPathRendering::kAffine_PathTransformType == GrPathRendering::kLast_PathTransformType);
+static_assert(0 == GrPathRendering::kNone_PathTransformType, "");
+static_assert(1 == GrPathRendering::kTranslateX_PathTransformType, "");
+static_assert(2 == GrPathRendering::kTranslateY_PathTransformType, "");
+static_assert(3 == GrPathRendering::kTranslate_PathTransformType, "");
+static_assert(4 == GrPathRendering::kAffine_PathTransformType, "");
+static_assert(GrPathRendering::kAffine_PathTransformType == GrPathRendering::kLast_PathTransformType, "");
 
 #ifdef SK_DEBUG
 
@@ -88,20 +87,19 @@ void GrGLPathRendering::onStencilPath(const StencilPathArgs& args, const GrPath*
     gpu->flushColorWrite(false);
 
     GrGLRenderTarget* rt = static_cast<GrGLRenderTarget*>(args.fProxy->peekRenderTarget());
-    SkISize size = SkISize::Make(rt->width(), rt->height());
-    this->setProjectionMatrix(*args.fViewMatrix, size, args.fProxy->origin());
-    gpu->flushScissor(*args.fScissor, rt->getViewport(), args.fProxy->origin());
-    gpu->flushHWAAState(rt, args.fUseHWAA, true);
+    SkISize dimensions = rt->dimensions();
+    this->setProjectionMatrix(*args.fViewMatrix, dimensions, args.fOrigin);
+    gpu->flushScissor(*args.fScissor, rt->width(), rt->height(), args.fOrigin);
+    gpu->flushHWAAState(rt, args.fUseHWAA);
     gpu->flushRenderTarget(rt);
 
     const GrGLPath* glPath = static_cast<const GrGLPath*>(path);
 
     this->flushPathStencilSettings(*args.fStencil);
-    SkASSERT(!fHWPathStencilSettings.isTwoSided());
 
-    GrGLenum fillMode =
-        gr_stencil_op_to_gl_path_rendering_fill_mode(fHWPathStencilSettings.front().fPassOp);
-    GrGLint writeMask = fHWPathStencilSettings.front().fWriteMask;
+    GrGLenum fillMode = gr_stencil_op_to_gl_path_rendering_fill_mode(
+            fHWPathStencilSettings.singleSidedFace().fPassOp);
+    GrGLint writeMask = fHWPathStencilSettings.singleSidedFace().fWriteMask;
 
     if (glPath->shouldFill()) {
         GL_CALL(StencilFillPath(glPath->pathID(), fillMode, writeMask));
@@ -111,22 +109,15 @@ void GrGLPathRendering::onStencilPath(const StencilPathArgs& args, const GrPath*
     }
 }
 
-void GrGLPathRendering::onDrawPath(const GrPrimitiveProcessor& primProc,
-                                   const GrPipeline& pipeline,
-                                   const GrPipeline::FixedDynamicState& fixedDynamicState,
-                                   const GrStencilSettings& stencilPassSettings,
+void GrGLPathRendering::onDrawPath(const GrStencilSettings& stencilPassSettings,
                                    const GrPath* path) {
-    if (!this->gpu()->flushGLState(primProc, pipeline, &fixedDynamicState, nullptr, 1, false)) {
-        return;
-    }
     const GrGLPath* glPath = static_cast<const GrGLPath*>(path);
 
     this->flushPathStencilSettings(stencilPassSettings);
-    SkASSERT(!fHWPathStencilSettings.isTwoSided());
 
-    GrGLenum fillMode =
-        gr_stencil_op_to_gl_path_rendering_fill_mode(fHWPathStencilSettings.front().fPassOp);
-    GrGLint writeMask = fHWPathStencilSettings.front().fWriteMask;
+    GrGLenum fillMode = gr_stencil_op_to_gl_path_rendering_fill_mode(
+            fHWPathStencilSettings.singleSidedFace().fPassOp);
+    GrGLint writeMask = fHWPathStencilSettings.singleSidedFace().fWriteMask;
 
     if (glPath->shouldStroke()) {
         if (glPath->shouldFill()) {
@@ -174,7 +165,7 @@ void GrGLPathRendering::setProjectionMatrix(const SkMatrix& matrix,
 
     if (renderTargetOrigin == fHWProjectionMatrixState.fRenderTargetOrigin &&
         renderTargetSize == fHWProjectionMatrixState.fRenderTargetSize &&
-        matrix.cheapEqualTo(fHWProjectionMatrixState.fViewMatrix)) {
+        SkMatrixPriv::CheapEqual(matrix, fHWProjectionMatrixState.fViewMatrix)) {
         return;
     }
 
@@ -183,7 +174,7 @@ void GrGLPathRendering::setProjectionMatrix(const SkMatrix& matrix,
     fHWProjectionMatrixState.fRenderTargetOrigin = renderTargetOrigin;
 
     float glMatrix[4 * 4];
-    fHWProjectionMatrixState.getRTAdjustedGLMatrix<4>(glMatrix);
+    fHWProjectionMatrixState.getRTAdjustedGLMatrix(glMatrix);
     SkDEBUGCODE(verify_floats(glMatrix, SK_ARRAY_COUNT(glMatrix)));
     GL_CALL(MatrixLoadf(GR_GL_PATH_PROJECTION, glMatrix));
 }
@@ -243,18 +234,19 @@ void GrGLPathRendering::deletePaths(GrGLuint path, GrGLsizei range) {
 }
 
 void GrGLPathRendering::flushPathStencilSettings(const GrStencilSettings& stencilSettings) {
+    SkASSERT(!stencilSettings.isTwoSided());
     if (fHWPathStencilSettings != stencilSettings) {
         SkASSERT(stencilSettings.isValid());
         // Just the func, ref, and mask is set here. The op and write mask are params to the call
         // that draws the path to the SB (glStencilFillPath)
-        uint16_t ref = stencilSettings.front().fRef;
-        GrStencilTest test = stencilSettings.front().fTest;
-        uint16_t testMask = stencilSettings.front().fTestMask;
+        uint16_t ref = stencilSettings.singleSidedFace().fRef;
+        GrStencilTest test = stencilSettings.singleSidedFace().fTest;
+        uint16_t testMask = stencilSettings.singleSidedFace().fTestMask;
 
         if (!fHWPathStencilSettings.isValid() ||
-            ref != fHWPathStencilSettings.front().fRef ||
-            test != fHWPathStencilSettings.front().fTest ||
-            testMask != fHWPathStencilSettings.front().fTestMask) {
+            ref != fHWPathStencilSettings.singleSidedFace().fRef ||
+            test != fHWPathStencilSettings.singleSidedFace().fTest ||
+            testMask != fHWPathStencilSettings.singleSidedFace().fTestMask) {
             GL_CALL(PathStencilFunc(GrToGLStencilFunc(test), ref, testMask));
         }
         fHWPathStencilSettings = stencilSettings;

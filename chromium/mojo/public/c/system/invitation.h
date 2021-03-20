@@ -48,7 +48,7 @@ struct MOJO_ALIGNAS(8) MojoProcessErrorDetails {
   // See |MojoProcessErrorFlags|.
   MojoProcessErrorFlags flags;
 };
-MOJO_STATIC_ASSERT(sizeof(MojoProcessErrorDetails) == 24,
+MOJO_STATIC_ASSERT(sizeof(struct MojoProcessErrorDetails) == 24,
                    "MojoProcessErrorDetails has wrong size.");
 
 // An opaque process handle value which must be provided when sending an
@@ -63,7 +63,7 @@ struct MOJO_ALIGNAS(8) MojoPlatformProcessHandle {
   // POSIX systems, it's a PID.
   uint64_t value;
 };
-MOJO_STATIC_ASSERT(sizeof(MojoPlatformProcessHandle) == 16,
+MOJO_STATIC_ASSERT(sizeof(struct MojoPlatformProcessHandle) == 16,
                    "MojoPlatformProcesHandle has wrong size.");
 
 // Enumeration indicating the type of transport over which an invitation will be
@@ -88,6 +88,20 @@ typedef uint32_t MojoInvitationTransportType;
 #define MOJO_INVITATION_TRANSPORT_TYPE_CHANNEL_SERVER \
   ((MojoInvitationTransportType)1)
 
+// Similar to CHANNEL transport. Normally with a CHANNEL transport, the inviting
+// client sends a secondary sync channel to the invited client, and the invited
+// client synchronously waits for this before it can accept the invitation.
+//
+// With this transport type, the invited client creates its own sync channel and
+// sends the remote endpoint to the inviting client to be passed along to the
+// broker. This allows acceptance of incoming invitations to avoid blocking
+// operations, making both sides of the channel initialization process fully
+// asynchronous.
+//
+// Not supported in all platform sandbox configurations.
+#define MOJO_INVITATION_TRANSPORT_TYPE_CHANNEL_ASYNC \
+  ((MojoInvitationTransportType)2)
+
 // A transport endpoint over which an invitation may be sent or received via
 // |MojoSendInvitation()| or |MojoAcceptInvitation()| respectively.
 struct MOJO_ALIGNAS(8) MojoInvitationTransportEndpoint {
@@ -110,7 +124,7 @@ struct MOJO_ALIGNAS(8) MojoInvitationTransportEndpoint {
   //     descriptor.
   MOJO_POINTER_FIELD(const struct MojoPlatformHandle*, platform_handles);
 };
-MOJO_STATIC_ASSERT(sizeof(MojoInvitationTransportEndpoint) == 24,
+MOJO_STATIC_ASSERT(sizeof(struct MojoInvitationTransportEndpoint) == 24,
                    "MojoInvitationTransportEndpoint has wrong size.");
 
 // Flags passed to |MojoCreateInvitation()| via |MojoCreateInvitationOptions|.
@@ -127,7 +141,7 @@ struct MOJO_ALIGNAS(8) MojoCreateInvitationOptions {
   // See |MojoCreateInvitationFlags|.
   MojoCreateInvitationFlags flags;
 };
-MOJO_STATIC_ASSERT(sizeof(MojoCreateInvitationOptions) == 8,
+MOJO_STATIC_ASSERT(sizeof(struct MojoCreateInvitationOptions) == 8,
                    "MojoCreateInvitationOptions has wrong size");
 
 // Flags passed to |MojoAttachMessagePipeToInvitation()| via
@@ -146,7 +160,7 @@ struct MOJO_ALIGNAS(8) MojoAttachMessagePipeToInvitationOptions {
   // See |MojoAttachMessagePipeToInvitationFlags|.
   MojoAttachMessagePipeToInvitationFlags flags;
 };
-MOJO_STATIC_ASSERT(sizeof(MojoAttachMessagePipeToInvitationOptions) == 8,
+MOJO_STATIC_ASSERT(sizeof(struct MojoAttachMessagePipeToInvitationOptions) == 8,
                    "MojoAttachMessagePipeToInvitationOptions has wrong size");
 
 // Flags passed to |MojoExtractMessagePipeFromInvitation()| via
@@ -166,7 +180,7 @@ struct MOJO_ALIGNAS(8) MojoExtractMessagePipeFromInvitationOptions {
   MojoExtractMessagePipeFromInvitationFlags flags;
 };
 MOJO_STATIC_ASSERT(
-    sizeof(MojoExtractMessagePipeFromInvitationOptions) == 8,
+    sizeof(struct MojoExtractMessagePipeFromInvitationOptions) == 8,
     "MojoExtractMessagePipeFromInvitationOptions has wrong size");
 
 // Flags passed to |MojoSendInvitation()| via |MojoSendInvitationOptions|.
@@ -202,7 +216,7 @@ struct MOJO_ALIGNAS(8) MojoSendInvitationOptions {
   MOJO_POINTER_FIELD(const char*, isolated_connection_name);
   uint32_t isolated_connection_name_length;
 };
-MOJO_STATIC_ASSERT(sizeof(MojoSendInvitationOptions) == 24,
+MOJO_STATIC_ASSERT(sizeof(struct MojoSendInvitationOptions) == 24,
                    "MojoSendInvitationOptions has wrong size");
 
 // Flags passed to |MojoAcceptInvitation()| via |MojoAcceptInvitationOptions|.
@@ -215,6 +229,17 @@ typedef uint32_t MojoAcceptInvitationFlags;
 // |MOJO_SEND_INVITATION_FLAG_ISOLATED| for details.
 #define MOJO_ACCEPT_INVITATION_FLAG_ISOLATED ((MojoAcceptInvitationFlags)1)
 
+// The transport endpoint used to accept this invitation should be leaked, i.e.
+// never closed until it's implicitly closed on process death. This exists to
+// support adaptation of legacy code to Mojo IPC so that, e.g., a broken pipe
+// can be used as a reliable indication of remote process death.
+//
+// This flag should generally not be used unless strictly necessary, and it is
+// unsafe to use in any situation where a process may accept multiple
+// invitations over the course of its lifetime.
+#define MOJO_ACCEPT_INVITATION_FLAG_LEAK_TRANSPORT_ENDPOINT \
+  ((MojoAcceptInvitationFlags)2)
+
 // Options passed to |MojoAcceptInvitation()|.
 struct MOJO_ALIGNAS(8) MojoAcceptInvitationOptions {
   // The size of this structure, used for versioning.
@@ -223,7 +248,7 @@ struct MOJO_ALIGNAS(8) MojoAcceptInvitationOptions {
   // See |MojoAcceptInvitationFlags|.
   MojoAcceptInvitationFlags flags;
 };
-MOJO_STATIC_ASSERT(sizeof(MojoAcceptInvitationOptions) == 8,
+MOJO_STATIC_ASSERT(sizeof(struct MojoAcceptInvitationOptions) == 8,
                    "MojoAcceptInvitationOptions has wrong size");
 
 #ifdef __cplusplus

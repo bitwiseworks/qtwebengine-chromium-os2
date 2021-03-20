@@ -4,6 +4,7 @@
 
 #include "extensions/browser/guest_view/web_view/web_ui/web_ui_url_fetcher.h"
 
+#include "base/bind.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_ui_url_loader_factory.h"
 #include "net/base/load_flags.h"
@@ -55,8 +56,7 @@ void WebUIURLFetcher::Start() {
         })");
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url_;
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SAVE_COOKIES | net::LOAD_DO_NOT_SEND_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   fetcher_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                               traffic_annotation);
   fetcher_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(

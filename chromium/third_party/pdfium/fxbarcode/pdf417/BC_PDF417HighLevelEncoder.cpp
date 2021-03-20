@@ -52,11 +52,11 @@ constexpr int8_t kPunctuation[128] = {
     -1, -1, -1, -1, -1, -1, -1, -1, -1, 26, 21, 27, 9,  -1};
 
 bool IsAlphaUpperOrSpace(wchar_t ch) {
-  return ch == ' ' || (ch >= 'A' && ch <= 'Z');
+  return ch == ' ' || FXSYS_IsUpperASCII(ch);
 }
 
 bool IsAlphaLowerOrSpace(wchar_t ch) {
-  return ch == ' ' || (ch >= 'a' && ch <= 'z');
+  return ch == ' ' || FXSYS_IsLowerASCII(ch);
 }
 
 bool IsMixed(wchar_t ch) {
@@ -121,9 +121,8 @@ Optional<WideString> CBC_PDF417HighLevelEncoder::EncodeHighLevel(
           return {};
 
         size_t b_value = b.value();
-        if (b_value == 0) {
+        if (b_value == 0)
           b_value = 1;
-        }
         if (b_value == 1 && encodingMode == EncodingMode::kText) {
           EncodeBinary(byteArr, p, 1, EncodingMode::kText, &sb);
         } else {
@@ -252,7 +251,7 @@ CBC_PDF417HighLevelEncoder::SubMode CBC_PDF417HighLevelEncoder::EncodeText(
   return submode;
 }
 
-void CBC_PDF417HighLevelEncoder::EncodeBinary(const std::vector<uint8_t>& bytes,
+void CBC_PDF417HighLevelEncoder::EncodeBinary(pdfium::span<const uint8_t> bytes,
                                               size_t startpos,
                                               size_t count,
                                               EncodingMode startmode,
@@ -296,7 +295,7 @@ void CBC_PDF417HighLevelEncoder::EncodeNumeric(const WideString& msg,
   while (idx < count) {
     WideString tmp;
     size_t len = 44 < count - idx ? 44 : count - idx;
-    ByteString part = (L'1' + msg.Mid(startpos + idx, len)).ToUTF8();
+    ByteString part = (L'1' + msg.Substr(startpos + idx, len)).ToUTF8();
     BigInteger bigint = stringToBigInteger(part.c_str());
     do {
       int32_t c = (bigint % num900).toInt();

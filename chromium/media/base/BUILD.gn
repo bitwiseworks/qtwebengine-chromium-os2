@@ -28,6 +28,11 @@ jumbo_source_set("base") {
     visibility += [ "//media/base/mac" ]
   }
 
+  if (is_android) {
+    visibility +=
+        [ "//gpu/command_buffer/service:android_texture_owner_unittests" ]
+  }
+
   sources = [
     "android_overlay_config.cc",
     "android_overlay_config.h",
@@ -55,6 +60,10 @@ jumbo_source_set("base") {
     "audio_fifo.h",
     "audio_hash.cc",
     "audio_hash.h",
+    "audio_power_monitor.cc",
+    "audio_power_monitor.h",
+    "audio_processing.cc",
+    "audio_processing.h",
     "audio_pull_fifo.cc",
     "audio_pull_fifo.h",
     "audio_push_fifo.cc",
@@ -78,6 +87,7 @@ jumbo_source_set("base") {
     "bit_reader_core.h",
     "bitstream_buffer.cc",
     "bitstream_buffer.h",
+    "buffering_state.cc",
     "buffering_state.h",
     "byte_queue.cc",
     "byte_queue.h",
@@ -104,6 +114,8 @@ jumbo_source_set("base") {
     "channel_mixer.h",
     "channel_mixing_matrix.cc",
     "channel_mixing_matrix.h",
+    "color_plane_layout.cc",
+    "color_plane_layout.h",
     "container_names.cc",
     "container_names.h",
     "content_decryption_module.cc",
@@ -142,6 +154,10 @@ jumbo_source_set("base") {
     "fallback_video_decoder.h",
     "feedback_signal_accumulator.h",
     "flinging_controller.h",
+    "format_utils.cc",
+    "format_utils.h",
+    "frame_rate_estimator.cc",
+    "frame_rate_estimator.h",
     "hdr_metadata.cc",
     "hdr_metadata.h",
     "key_system_names.cc",
@@ -165,13 +181,22 @@ jumbo_source_set("base") {
     "media_export.h",
     "media_log.cc",
     "media_log.h",
-    "media_log_event.h",
+    "media_log_events.cc",
+    "media_log_events.h",
+    "media_log_message_levels.cc",
+    "media_log_message_levels.h",
+    "media_log_properties.cc",
+    "media_log_properties.h",
+    "media_log_record.h",
+    "media_log_type_enforcement.h",
     "media_observer.cc",
     "media_observer.h",
     "media_permission.cc",
     "media_permission.h",
     "media_resource.cc",
     "media_resource.h",
+    "media_serializers.h",
+    "media_serializers_base.h",
     "media_status.cc",
     "media_status.h",
     "media_status_observer.h",
@@ -181,12 +206,16 @@ jumbo_source_set("base") {
     "media_track.h",
     "media_tracks.cc",
     "media_tracks.h",
+    "media_types.cc",
     "media_types.h",
     "media_url_demuxer.cc",
     "media_url_demuxer.h",
+    "media_url_params.cc",
     "media_url_params.h",
     "media_util.cc",
     "media_util.h",
+    "memory_dump_provider_proxy.cc",
+    "memory_dump_provider_proxy.h",
     "mime_util.cc",
     "mime_util.h",
     "mime_util_internal.cc",
@@ -217,6 +246,7 @@ jumbo_source_set("base") {
     "reentrancy_checker.h",
     "renderer.cc",
     "renderer.h",
+    "renderer_client.cc",
     "renderer_client.h",
     "renderer_factory.cc",
     "renderer_factory.h",
@@ -233,8 +263,17 @@ jumbo_source_set("base") {
     "serial_runner.h",
     "silent_sink_suspender.cc",
     "silent_sink_suspender.h",
+    "simple_sync_token_client.cc",
+    "simple_sync_token_client.h",
+    "simple_watch_timer.cc",
+    "simple_watch_timer.h",
     "sinc_resampler.cc",
     "sinc_resampler.h",
+    "speech_recognition_client.h",
+    "status.cc",
+    "status.h",
+    "status_codes.cc",
+    "status_codes.h",
     "stream_parser.cc",
     "stream_parser.h",
     "stream_parser_buffer.cc",
@@ -280,10 +319,10 @@ jumbo_source_set("base") {
     "video_frame_pool.h",
     "video_renderer.cc",
     "video_renderer.h",
-    "video_rotation.cc",
-    "video_rotation.h",
     "video_thumbnail_decoder.cc",
     "video_thumbnail_decoder.h",
+    "video_transformation.cc",
+    "video_transformation.h",
     "video_types.cc",
     "video_types.h",
     "video_util.cc",
@@ -301,19 +340,20 @@ jumbo_source_set("base") {
     ":video_facing",
     "//media:media_buildflags",
     "//media:shared_memory_support",
-    "//third_party/libaom:av1_buildflags",
     "//ui/gfx:color_space",
   ]
   deps = [
     "//base/allocator:buildflags",
+    "//components/system_media_controls/linux/buildflags",
     "//gpu/command_buffer/common",
-    "//skia",
+    "//gpu/ipc/common:common",
     "//third_party/libyuv",
     "//third_party/widevine/cdm:headers",
     "//ui/display:display",
     "//ui/events:events_base",
     "//url:url",
   ]
+
   libs = []
   configs += [
     "//build/config:precompiled_headers",
@@ -377,19 +417,25 @@ jumbo_source_set("base") {
     public_deps += [ "//media/base/win:d3d11" ]
   }
 
-  if (is_chromecast) {
+  if (is_chromecast || is_fuchsia) {
     sources += [ "demuxer_memory_limit_low.cc" ]
   } else if (is_android) {
     sources += [ "demuxer_memory_limit_android.cc" ]
   } else {
     sources += [ "demuxer_memory_limit_default.cc" ]
   }
+
+  if (enable_media_drm_storage) {
+    sources += [
+      "media_drm_key_type.h",
+      "media_drm_storage.cc",
+      "media_drm_storage.h",
+    ]
+  }
 }
 
 source_set("video_facing") {
-  sources = [
-    "video_facing.h",
-  ]
+  sources = [ "video_facing.h" ]
 }
 
 if (is_android) {
@@ -426,7 +472,6 @@ static_library("test_support") {
     "fake_single_thread_task_runner.h",
     "fake_text_track_stream.cc",
     "fake_text_track_stream.h",
-    "gmock_callback_support.h",
     "mock_audio_renderer_sink.cc",
     "mock_audio_renderer_sink.h",
     "mock_demuxer_host.cc",
@@ -446,9 +491,7 @@ static_library("test_support") {
   # Do not add any other //media deps except this; this ensures other
   # test_support targets all use the same //media component to avoid duplicate
   # and undefined symbol issues on Windows.
-  public_deps = [
-    "//media",
-  ]
+  public_deps = [ "//media" ]
 
   deps = [
     "//base",
@@ -478,6 +521,7 @@ source_set("unit_tests") {
     "audio_latency_unittest.cc",
     "audio_parameters_unittest.cc",
     "audio_point_unittest.cc",
+    "audio_power_monitor_unittest.cc",
     "audio_pull_fifo_unittest.cc",
     "audio_push_fifo_unittest.cc",
     "audio_renderer_mixer_input_unittest.cc",
@@ -501,9 +545,10 @@ source_set("unit_tests") {
     "fake_demuxer_stream_unittest.cc",
     "fallback_video_decoder_unittest.cc",
     "feedback_signal_accumulator_unittest.cc",
-    "gmock_callback_support_unittest.cc",
+    "frame_rate_estimator_unittest.cc",
     "key_systems_unittest.cc",
     "media_log_unittest.cc",
+    "media_serializers_unittest.cc",
     "media_url_demuxer_unittest.cc",
     "mime_util_unittest.cc",
     "moving_average_unittest.cc",
@@ -517,6 +562,7 @@ source_set("unit_tests") {
     "serial_runner_unittest.cc",
     "silent_sink_suspender_unittest.cc",
     "sinc_resampler_unittest.cc",
+    "status_unittest.cc",
     "stream_parser_unittest.cc",
     "subsample_entry_unittest.cc",
     "supported_types_unittest.cc",
@@ -545,9 +591,9 @@ source_set("unit_tests") {
   ]
   deps = [
     "//base/test:test_support",
+    "//components/viz/common",
     "//gpu/command_buffer/common",
     "//media:test_support",
-    "//skia",
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/libyuv",
@@ -561,6 +607,14 @@ source_set("unit_tests") {
 
   if (is_linux || is_win) {
     sources += [ "keyboard_event_counter_unittest.cc" ]
+  }
+  if (is_win) {
+    sources += [ "win/dxgi_device_scope_handle_unittest.cc" ]
+    deps += [ "//media/base/win:media_foundation_util" ]
+    libs = [
+      "d3d11.lib",
+      "mfplat.lib",
+    ]
   }
 }
 
@@ -589,9 +643,7 @@ source_set("perftests") {
 }
 
 fuzzer_test("media_bit_reader_fuzzer") {
-  sources = [
-    "bit_reader_fuzzertest.cc",
-  ]
+  sources = [ "bit_reader_fuzzertest.cc" ]
   deps = [
     "//base",
     "//media:test_support",
@@ -599,9 +651,7 @@ fuzzer_test("media_bit_reader_fuzzer") {
 }
 
 fuzzer_test("media_container_names_fuzzer") {
-  sources = [
-    "container_names_fuzzertest.cc",
-  ]
+  sources = [ "container_names_fuzzertest.cc" ]
   deps = [
     "//base",
     "//media:test_support",

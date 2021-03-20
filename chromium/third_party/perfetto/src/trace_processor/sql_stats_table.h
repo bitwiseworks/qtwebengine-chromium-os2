@@ -20,7 +20,7 @@
 #include <limits>
 #include <memory>
 
-#include "src/trace_processor/table.h"
+#include "src/trace_processor/sqlite/sqlite_table.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -30,13 +30,41 @@ class TraceStorage;
 
 // A virtual table that allows to introspect performances of the SQL engine
 // for the kMaxLogEntries queries.
-class SqlStatsTable : public Table {
+class SqlStatsTable : public SqliteTable {
  public:
   enum Column {
     kQuery = 0,
     kTimeQueued = 1,
     kTimeStarted = 2,
-    kTimeEnded = 3,
+    kTimeFirstNext = 3,
+    kTimeEnded = 4,
+  };
+
+  // Implementation of the SQLite cursor interface.
+  class Cursor : public SqliteTable::Cursor {
+   public:
+    Cursor(SqlStatsTable* storage);
+    ~Cursor() override;
+
+    // Implementation of SqliteTable::Cursor.
+    int Filter(const QueryConstraints&,
+               sqlite3_value**,
+               FilterHistory) override;
+    int Next() override;
+    int Eof() override;
+    int Column(sqlite3_context*, int N) override;
+
+   private:
+    Cursor(Cursor&) = delete;
+    Cursor& operator=(const Cursor&) = delete;
+
+    Cursor(Cursor&&) noexcept = default;
+    Cursor& operator=(Cursor&&) = default;
+
+    size_t row_ = 0;
+    size_t num_rows_ = 0;
+    const TraceStorage* storage_ = nullptr;
+    SqlStatsTable* table_ = nullptr;
   };
 
   SqlStatsTable(sqlite3*, const TraceStorage* storage);
@@ -44,29 +72,11 @@ class SqlStatsTable : public Table {
   static void RegisterTable(sqlite3* db, const TraceStorage* storage);
 
   // Table implementation.
-  base::Optional<Table::Schema> Init(int, const char* const*) override;
-  std::unique_ptr<Table::Cursor> CreateCursor(const QueryConstraints&,
-                                              sqlite3_value**) override;
+  util::Status Init(int, const char* const*, Schema*) override;
+  std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
   int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
 
  private:
-  // Implementation of the SQLite cursor interface.
-  class Cursor : public Table::Cursor {
-   public:
-    Cursor(const TraceStorage* storage);
-    ~Cursor() override;
-
-    // Implementation of Table::Cursor.
-    int Next() override;
-    int Eof() override;
-    int Column(sqlite3_context*, int N) override;
-
-   private:
-    size_t row_ = 0;
-    size_t num_rows_ = 0;
-    const TraceStorage* const storage_;
-  };
-
   const TraceStorage* const storage_;
 };
 

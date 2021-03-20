@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -17,7 +17,7 @@
 namespace gfx {
 class ImageSkia;
 class Rect;
-}
+}  // namespace gfx
 
 namespace views {
 class BubbleDialogDelegateView;
@@ -32,9 +32,7 @@ class VIEWS_EXPORT WidgetDelegate {
   WidgetDelegate();
 
   // Sets the return value of CanActivate(). Default is true.
-  void set_can_activate(bool can_activate) {
-    can_activate_ = can_activate;
-  }
+  void SetCanActivate(bool can_activate);
 
   // Called whenever the widget's position changes.
   virtual void OnWidgetMove();
@@ -45,6 +43,9 @@ class VIEWS_EXPORT WidgetDelegate {
   // Called when the work area (the desktop area minus task bars,
   // menu bars, etc.) changes in size.
   virtual void OnWorkAreaChanged();
+
+  // Called when the widget's initialization is complete.
+  virtual void OnWidgetInitialized() {}
 
   // Called when the window has been requested to close, after all other checks
   // have run. Returns whether the window should be allowed to close (default is
@@ -71,9 +72,6 @@ class VIEWS_EXPORT WidgetDelegate {
   // Returns true if the window can be minimized.
   virtual bool CanMinimize() const;
 
-  // Returns a bitmask of ws::mojom::kResizeBehavior values.
-  virtual int32_t GetResizeBehavior() const;
-
   // Returns true if the window can be activated.
   virtual bool CanActivate() const;
 
@@ -81,7 +79,7 @@ class VIEWS_EXPORT WidgetDelegate {
   // ui::MODAL_TYPE_NONE (not modal).
   virtual ui::ModalType GetModalType() const;
 
-  virtual ax::mojom::Role GetAccessibleWindowRole() const;
+  virtual ax::mojom::Role GetAccessibleWindowRole();
 
   // Returns the title to be read with screen readers.
   virtual base::string16 GetAccessibleWindowTitle() const;
@@ -91,6 +89,9 @@ class VIEWS_EXPORT WidgetDelegate {
 
   // Returns true if the window should show a title in the title bar.
   virtual bool ShouldShowWindowTitle() const;
+
+  // Returns true if the title text should be centered. Default is false.
+  virtual bool ShouldCenterWindowTitleText() const;
 
   // Returns true if the window should show a close button in the title bar.
   virtual bool ShouldShowCloseButton() const;
@@ -131,13 +132,22 @@ class VIEWS_EXPORT WidgetDelegate {
   // Default is true.
   virtual bool ShouldRestoreWindowSize() const;
 
-  // Called when the window closes. The delegate MUST NOT delete itself during
-  // this call, since it can be called afterwards. See DeleteDelegate().
+  // Hooks for the end of the Widget/Window lifecycle. As of this writing, these
+  // callbacks happen like so:
+  //   1. Client code calls Widget::CloseWithReason()
+  //   2. WidgetDelegate::WindowWillClose() is called
+  //   3. NativeWidget teardown (maybe async) starts OR the operating system
+  //      abruptly closes the backing native window
+  //   4. WidgetDelegate::WindowClosing() is called
+  //   5. NativeWidget teardown completes, Widget teardown starts
+  //   6. WidgetDelegate::DeleteDelegate() is called
+  //   7. Widget teardown finishes, Widget is deleted
+  // At step 3, the "maybe async" is controlled by whether the close is done via
+  // Close() or CloseNow().
+  // Important note: for OS-initiated window closes, steps 1 and 2 don't happen
+  // - i.e, WindowWillClose() is never invoked.
+  virtual void WindowWillClose() {}
   virtual void WindowClosing() {}
-
-  // Called when the window is destroyed. No events must be sent or received
-  // after this point. The delegate can use this opportunity to delete itself at
-  // this time if necessary.
   virtual void DeleteDelegate() {}
 
   // Called when the user begins/ends to change the bounds of the window.
@@ -213,8 +223,7 @@ class VIEWS_EXPORT WidgetDelegate {
 // view's hierarchy and is expected to be deleted on DeleteDelegate call.
 class VIEWS_EXPORT WidgetDelegateView : public WidgetDelegate, public View {
  public:
-  // Internal class name.
-  static const char kViewClassName[];
+  METADATA_HEADER(WidgetDelegateView);
 
   WidgetDelegateView();
   ~WidgetDelegateView() override;
@@ -224,9 +233,6 @@ class VIEWS_EXPORT WidgetDelegateView : public WidgetDelegate, public View {
   Widget* GetWidget() override;
   const Widget* GetWidget() const override;
   views::View* GetContentsView() override;
-
-  // View:
-  const char* GetClassName() const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WidgetDelegateView);

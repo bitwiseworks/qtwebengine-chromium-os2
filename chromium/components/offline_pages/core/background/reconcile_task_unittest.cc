@@ -8,6 +8,7 @@
 #include <set>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
@@ -23,20 +24,20 @@ namespace offline_pages {
 namespace {
 // Data for request 1.
 const int64_t kRequestId1 = 17;
-const GURL kUrl1("https://google.com");
 const ClientId kClientId1("bookmark", "1234");
 // Data for request 2.
 const int64_t kRequestId2 = 42;
-const GURL kUrl2("http://nytimes.com");
 const ClientId kClientId2("bookmark", "5678");
 const bool kUserRequested = true;
 
-// Default request
-const SavePageRequest kEmptyRequest(0UL,
-                                    GURL(""),
-                                    ClientId("", ""),
-                                    base::Time(),
-                                    true);
+// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
+// function.
+GURL Url1() {
+  return GURL("https://google.com");
+}
+GURL Url2() {
+  return GURL("http://nytimes.com");
+}
 
 class ReconcileTaskTest : public RequestQueueTaskTestBase {
  public:
@@ -45,7 +46,9 @@ class ReconcileTaskTest : public RequestQueueTaskTestBase {
 
   void SetUp() override;
 
-  void AddRequestDone(ItemActionStatus status);
+  static void AddRequestDone(AddRequestResult result) {
+    ASSERT_EQ(AddRequestResult::SUCCESS, result);
+  }
 
   void GetRequestsCallback(
       bool success,
@@ -78,10 +81,6 @@ void ReconcileTaskTest::SetUp() {
   InitializeStore();
 }
 
-void ReconcileTaskTest::AddRequestDone(ItemActionStatus status) {
-  ASSERT_EQ(ItemActionStatus::SUCCESS, status);
-}
-
 void ReconcileTaskTest::GetRequestsCallback(
     bool success,
     std::vector<std::unique_ptr<SavePageRequest>> requests) {
@@ -101,10 +100,10 @@ void ReconcileTaskTest::QueueRequests(const SavePageRequest& request1,
   DeviceConditions conditions;
   std::set<int64_t> disabled_requests;
   // Add test requests on the Queue.
-  store_.AddRequest(request1, base::BindOnce(&ReconcileTaskTest::AddRequestDone,
-                                             base::Unretained(this)));
-  store_.AddRequest(request2, base::BindOnce(&ReconcileTaskTest::AddRequestDone,
-                                             base::Unretained(this)));
+  store_.AddRequest(request1, RequestQueue::AddOptions(),
+                    base::BindOnce(&ReconcileTaskTest::AddRequestDone));
+  store_.AddRequest(request2, RequestQueue::AddOptions(),
+                    base::BindOnce(&ReconcileTaskTest::AddRequestDone));
 
   // Pump the loop to give the async queue the opportunity to do the adds.
   PumpLoop();
@@ -119,16 +118,16 @@ void ReconcileTaskTest::MakeTask() {
 TEST_F(ReconcileTaskTest, Reconcile) {
   base::Time creation_time = OfflineTimeNow();
   // Request2 will be expired, request1 will be current.
-  SavePageRequest request1(kRequestId1, kUrl1, kClientId1, creation_time,
+  SavePageRequest request1(kRequestId1, Url1(), kClientId1, creation_time,
                            kUserRequested);
   request1.set_request_state(SavePageRequest::RequestState::PAUSED);
-  SavePageRequest request2(kRequestId2, kUrl2, kClientId2, creation_time,
+  SavePageRequest request2(kRequestId2, Url2(), kClientId2, creation_time,
                            kUserRequested);
   request2.set_request_state(SavePageRequest::RequestState::OFFLINING);
   QueueRequests(request1, request2);
 
   // Initiate cleanup.
-  task()->Run();
+  task()->Execute(base::DoNothing());
   PumpLoop();
 
   // See what is left in the queue, should be just the other request.
@@ -154,16 +153,16 @@ TEST_F(ReconcileTaskTest, Reconcile) {
 TEST_F(ReconcileTaskTest, NothingToReconcile) {
   base::Time creation_time = OfflineTimeNow();
   // Request2 will be expired, request1 will be current.
-  SavePageRequest request1(kRequestId1, kUrl1, kClientId1, creation_time,
+  SavePageRequest request1(kRequestId1, Url1(), kClientId1, creation_time,
                            kUserRequested);
   request1.set_request_state(SavePageRequest::RequestState::PAUSED);
-  SavePageRequest request2(kRequestId2, kUrl2, kClientId2, creation_time,
+  SavePageRequest request2(kRequestId2, Url2(), kClientId2, creation_time,
                            kUserRequested);
   request2.set_request_state(SavePageRequest::RequestState::AVAILABLE);
   QueueRequests(request1, request2);
 
   // Initiate cleanup.
-  task()->Run();
+  task()->Execute(base::DoNothing());
   PumpLoop();
 
   // See what is left in the queue, should be just the other request.

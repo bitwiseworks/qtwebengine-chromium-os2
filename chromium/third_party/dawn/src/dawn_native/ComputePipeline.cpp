@@ -14,36 +14,23 @@
 
 #include "dawn_native/ComputePipeline.h"
 
+#include "common/HashUtils.h"
 #include "dawn_native/Device.h"
 
 namespace dawn_native {
 
-    MaybeError ValidateComputePipelineDescriptor(DeviceBase*,
+    MaybeError ValidateComputePipelineDescriptor(DeviceBase* device,
                                                  const ComputePipelineDescriptor* descriptor) {
         if (descriptor->nextInChain != nullptr) {
             return DAWN_VALIDATION_ERROR("nextInChain must be nullptr");
         }
 
-        if (descriptor->module == nullptr) {
-            return DAWN_VALIDATION_ERROR("module cannot be null");
+        if (descriptor->layout != nullptr) {
+            DAWN_TRY(device->ValidateObject(descriptor->layout));
         }
 
-        if (descriptor->layout == nullptr) {
-            return DAWN_VALIDATION_ERROR("layout cannot be null");
-        }
-
-        if (descriptor->entryPoint != std::string("main")) {
-            return DAWN_VALIDATION_ERROR("Currently the entry point has to be main()");
-        }
-
-        if (descriptor->module->GetExecutionModel() != dawn::ShaderStage::Compute) {
-            return DAWN_VALIDATION_ERROR("Setting module with wrong execution model");
-        }
-
-        if (!descriptor->module->IsCompatibleWithPipelineLayout(descriptor->layout)) {
-            return DAWN_VALIDATION_ERROR("Stage not compatible with layout");
-        }
-
+        DAWN_TRY(ValidateProgrammableStageDescriptor(
+            device, &descriptor->computeStage, descriptor->layout, SingleShaderStage::Compute));
         return {};
     }
 
@@ -51,8 +38,37 @@ namespace dawn_native {
 
     ComputePipelineBase::ComputePipelineBase(DeviceBase* device,
                                              const ComputePipelineDescriptor* descriptor)
-        : PipelineBase(device, descriptor->layout, dawn::ShaderStageBit::Compute) {
-        ExtractModuleData(dawn::ShaderStage::Compute, descriptor->module);
+        : PipelineBase(device, descriptor->layout, wgpu::ShaderStage::Compute),
+          mModule(descriptor->computeStage.module),
+          mEntryPoint(descriptor->computeStage.entryPoint) {
+    }
+
+    ComputePipelineBase::ComputePipelineBase(DeviceBase* device, ObjectBase::ErrorTag tag)
+        : PipelineBase(device, tag) {
+    }
+
+    ComputePipelineBase::~ComputePipelineBase() {
+        // Do not uncache the actual cached object if we are a blueprint
+        if (IsCachedReference()) {
+            GetDevice()->UncacheComputePipeline(this);
+        }
+    }
+
+    // static
+    ComputePipelineBase* ComputePipelineBase::MakeError(DeviceBase* device) {
+        return new ComputePipelineBase(device, ObjectBase::kError);
+    }
+
+    size_t ComputePipelineBase::HashFunc::operator()(const ComputePipelineBase* pipeline) const {
+        size_t hash = 0;
+        HashCombine(&hash, pipeline->mModule.Get(), pipeline->mEntryPoint, pipeline->GetLayout());
+        return hash;
+    }
+
+    bool ComputePipelineBase::EqualityFunc::operator()(const ComputePipelineBase* a,
+                                                       const ComputePipelineBase* b) const {
+        return a->mModule.Get() == b->mModule.Get() && a->mEntryPoint == b->mEntryPoint &&
+               a->GetLayout() == b->GetLayout();
     }
 
 }  // namespace dawn_native

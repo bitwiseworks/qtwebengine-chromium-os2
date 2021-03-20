@@ -36,7 +36,7 @@ namespace extensions {
 namespace {
 #if defined(OS_WIN) || defined(OS_MACOSX)
 // Prepopulated id hardcoded in test_extension.
-const int kTestExtensionPrepopulatedId = 1;
+const int kTestExtensionPrepopulatedId = 3;
 // TemplateURLData with search engines settings from test extension manifest.
 // chrome/test/data/extensions/settings_override/manifest.json
 std::unique_ptr<TemplateURLData> TestExtensionSearchEngine(PrefService* prefs) {
@@ -101,8 +101,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverrideStartupPagesSettings) {
   SessionStartupPref::SetStartupPref(prefs, startup_pref);
 
   const extensions::Extension* extension = LoadExtensionWithInstallParam(
-      test_data_dir_.AppendASCII("settings_override"),
-      kFlagEnableFileAccess,
+      test_data_dir_.AppendASCII("settings_override"), kFlagEnableFileAccess,
       "10");
   ASSERT_TRUE(extension);
   startup_pref = SessionStartupPref::GetStartupPref(prefs);
@@ -190,7 +189,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverridenDSEPersists) {
 
   std::string new_tab_url_ext = ext_turl.new_tab_url_ref().ReplaceSearchTerms(
       TemplateURLRef::SearchTermsArgs(base::string16()),
-      UIThreadSearchTermsData(profile));
+      UIThreadSearchTermsData());
 
   EXPECT_EQ(new_tab_url_ext, search::GetNewTabPageURL(profile).spec());
 

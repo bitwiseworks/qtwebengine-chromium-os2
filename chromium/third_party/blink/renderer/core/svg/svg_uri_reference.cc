@@ -25,6 +25,7 @@
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/xlink_names.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -46,12 +47,12 @@ class SVGElementReferenceObserver : public IdTargetObserver {
 }
 
 SVGURIReference::SVGURIReference(SVGElement* element)
-    : href_(SVGAnimatedHref::Create(element)) {
+    : href_(MakeGarbageCollected<SVGAnimatedHref>(element)) {
   DCHECK(element);
   href_->AddToPropertyMap(element);
 }
 
-void SVGURIReference::Trace(blink::Visitor* visitor) {
+void SVGURIReference::Trace(Visitor* visitor) {
   visitor->Trace(href_);
 }
 
@@ -123,7 +124,7 @@ Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
 Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
                                         SVGElement& context_element,
                                         const String& href_string) {
-  TreeScope& tree_scope = context_element.GetTreeScope();
+  TreeScope& tree_scope = context_element.OriginatingTreeScope();
   AtomicString id = FragmentIdentifierFromIRIString(href_string, tree_scope);
   return ObserveTarget(
       observer, tree_scope, id,

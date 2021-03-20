@@ -8,6 +8,7 @@
 #include <map>
 #include <set>
 
+#include "base/time/time.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
@@ -15,10 +16,14 @@
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
+namespace base {
+class Clock;
+}
+
 namespace blink {
 
-class ConsoleLogger;
-class FetchContext;
+class DetachableConsoleLogger;
+class DetachableResourceFetcherProperties;
 
 // Client interface to use the throttling/scheduling functionality that
 // ResourceLoadScheduler provides.
@@ -28,11 +33,7 @@ class PLATFORM_EXPORT ResourceLoadSchedulerClient
   // Called when the request is granted to run.
   virtual void Run() = 0;
 
-  // Called to obtain a ConsoleLogger instance.
-  // TODO(yhirano): Remove this once https://crbug.com/855189 is fixed.
-  virtual ConsoleLogger* GetConsoleLogger() = 0;
-
-  void Trace(blink::Visitor* visitor) override {}
+  void Trace(Visitor* visitor) override {}
 };
 
 // ResourceLoadScheduler provides a unified per-frame infrastructure to schedule
@@ -81,10 +82,8 @@ class PLATFORM_EXPORT ResourceLoadSchedulerClient
 //     minutes, all throttleable resource loading requests are throttled
 //     indefinitely (i.e., threshold is zero in such a circumstance).
 class PLATFORM_EXPORT ResourceLoadScheduler final
-    : public GarbageCollectedFinalized<ResourceLoadScheduler>,
+    : public GarbageCollected<ResourceLoadScheduler>,
       public FrameScheduler::Observer {
-  WTF_MAKE_NONCOPYABLE(ResourceLoadScheduler);
-
  public:
   // An option to use in calling Request(). If kCanNotBeStoppedOrThrottled is
   // specified, the request should be granted and Run() should be called
@@ -153,10 +152,12 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
       std::numeric_limits<size_t>::max();
 
   ResourceLoadScheduler(ThrottlingPolicy initial_throttling_poilcy,
-                        FetchContext*);
+                        const DetachableResourceFetcherProperties&,
+                        FrameScheduler*,
+                        DetachableConsoleLogger& console_logger);
   ~ResourceLoadScheduler() override;
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   // Changes the policy from |kTight| to |kNormal|. This function can be called
   // multiple times, and does nothing when the scheduler is already working with
@@ -199,10 +200,12 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
   }
   void SetOutstandingLimitForTesting(size_t tight_limit, size_t normal_limit);
 
-  void OnNetworkQuiet();
-
   // FrameScheduler::Observer overrides:
   void OnLifecycleStateChanged(scheduler::SchedulingLifecycleState) override;
+
+  // The caller is the owner of the |clock|. The |clock| must outlive the
+  // ResourceLoadScheduler.
+  void SetClockForTesting(const base::Clock* clock);
 
  private:
   class TrafficMonitor;
@@ -242,7 +245,7 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
           priority(priority),
           intra_priority(intra_priority) {}
 
-    void Trace(blink::Visitor* visitor) { visitor->Trace(client); }
+    void Trace(Visitor* visitor) { visitor->Trace(client); }
 
     Member<ResourceLoadSchedulerClient> client;
     ThrottleOption option;
@@ -258,10 +261,9 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
   // Gets the highest priority pending request that is allowed to be run.
   bool GetNextPendingRequest(ClientId* id);
 
-  // Returns whether we can throttle a request with the given client info based
+  // Returns whether we can throttle a request with the given option based
   // on life cycle state.
-  bool IsClientDelayable(const ClientIdWithPriority& info,
-                         ThrottleOption option) const;
+  bool IsClientDelayable(ThrottleOption option) const;
 
   // Generates the next ClientId.
   ClientId GenerateClientId();
@@ -272,12 +274,14 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
   // Grants a client to run,
   void Run(ClientId, ResourceLoadSchedulerClient*, bool throttleable);
 
-  size_t GetOutstandingLimit() const;
+  size_t GetOutstandingLimit(ResourceLoadPriority priority) const;
 
   void ShowConsoleMessageIfNeeded();
 
+  const Member<const DetachableResourceFetcherProperties>
+      resource_fetcher_properties_;
+
   // A flag to indicate an internal running state.
-  // TODO(toyoshim): We may want to use enum once we start to have more states.
   bool is_shutdown_ = false;
 
   ThrottlingPolicy policy_ = ThrottlingPolicy::kNormal;
@@ -303,20 +307,8 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
 
   HashSet<ClientId> running_throttleable_requests_;
 
-  // Largest number of running requests seen so far.
-  unsigned maximum_running_requests_seen_ = 0;
-
   // Holds a flag to omit repeating console messages.
   bool is_console_info_shown_ = false;
-
-  enum class ThrottlingHistory {
-    kInitial,
-    kThrottled,
-    kNotThrottled,
-    kPartiallyThrottled,
-    kStopped,
-  };
-  ThrottlingHistory throttling_history_ = ThrottlingHistory::kInitial;
 
   scheduler::SchedulingLifecycleState frame_scheduler_lifecycle_state_ =
       scheduler::SchedulingLifecycleState::kNotThrottled;
@@ -330,18 +322,22 @@ class PLATFORM_EXPORT ResourceLoadScheduler final
            std::set<ClientIdWithPriority, ClientIdWithPriority::Compare>>
       pending_requests_;
 
-  // Remembers times when the top request in each queue is processed.
-  std::map<ThrottleOption, base::TimeTicks> pending_queue_update_times_;
+  // Remembers elapsed times in seconds when the top request in each queue is
+  // processed.
+  std::map<ThrottleOption, base::Time> pending_queue_update_times_;
 
   // Holds an internal class instance to monitor and report traffic.
   std::unique_ptr<TrafficMonitor> traffic_monitor_;
 
-  // Holds FetchContext reference to contact FrameScheduler.
-  Member<FetchContext> context_;
-
   // Handle to throttling observer.
   std::unique_ptr<FrameScheduler::LifecycleObserverHandle>
       scheduler_observer_handle_;
+
+  const Member<DetachableConsoleLogger> console_logger_;
+
+  const base::Clock* clock_;
+
+  DISALLOW_COPY_AND_ASSIGN(ResourceLoadScheduler);
 };
 
 }  // namespace blink

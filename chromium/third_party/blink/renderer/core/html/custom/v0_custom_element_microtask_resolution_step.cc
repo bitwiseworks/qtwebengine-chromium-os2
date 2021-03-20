@@ -35,15 +35,6 @@
 
 namespace blink {
 
-V0CustomElementMicrotaskResolutionStep*
-V0CustomElementMicrotaskResolutionStep::Create(
-    V0CustomElementRegistrationContext* context,
-    Element* element,
-    const V0CustomElementDescriptor& descriptor) {
-  return MakeGarbageCollected<V0CustomElementMicrotaskResolutionStep>(
-      context, element, descriptor);
-}
-
 V0CustomElementMicrotaskResolutionStep::V0CustomElementMicrotaskResolutionStep(
     V0CustomElementRegistrationContext* context,
     Element* element,
@@ -68,7 +59,7 @@ void V0CustomElementMicrotaskResolutionStep::Trace(Visitor* visitor) {
 #if !defined(NDEBUG)
 void V0CustomElementMicrotaskResolutionStep::Show(unsigned indent) {
   fprintf(stderr, "%*sResolution: ", indent, "");
-  element_->OuterHTMLAsString().Show();
+  element_->outerHTML().Show();
 }
 #endif
 

@@ -32,12 +32,17 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TESTING_DUMMY_PAGE_HOLDER_H_
 
 #include <memory>
+
+#include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/macros.h"
+#include "base/time/default_tick_clock.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -46,8 +51,6 @@ class IntSize;
 class LocalFrame;
 class LocalFrameView;
 class Settings;
-
-typedef void (*FrameSettingOverrideFunction)(Settings&);
 
 // Creates a dummy Page, LocalFrame, and LocalFrameView whose clients are all
 // no-op.
@@ -66,11 +69,13 @@ class DummyPageHolder {
   USING_FAST_MALLOC(DummyPageHolder);
 
  public:
-  static std::unique_ptr<DummyPageHolder> Create(
+  DummyPageHolder(
       const IntSize& initial_view_size = IntSize(),
       Page::PageClients* = nullptr,
       LocalFrameClient* = nullptr,
-      FrameSettingOverrideFunction = nullptr);
+      base::OnceCallback<void(Settings&)> setting_overrider =
+          base::NullCallback(),
+      const base::TickClock* clock = base::DefaultTickClock::GetInstance());
   ~DummyPageHolder();
 
   Page& GetPage() const;
@@ -79,12 +84,12 @@ class DummyPageHolder {
   Document& GetDocument() const;
 
  private:
-  DummyPageHolder(const IntSize& initial_view_size,
-                  Page::PageClients*,
-                  LocalFrameClient*,
-                  FrameSettingOverrideFunction setting_overrider);
-
   Persistent<Page> page_;
+
+  // Unit tests need to run with a mock theme enabled. This is necessitated
+  // particularly by Android on which unit tests run without a platform theme
+  // engine.
+  ScopedMockOverlayScrollbars enable_mock_scrollbars_;
 
   // The LocalFrame is accessed from worker threads by unit tests
   // (ThreadableLoaderTest), hence we need to allow cross-thread

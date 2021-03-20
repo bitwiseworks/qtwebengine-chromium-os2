@@ -79,17 +79,6 @@ class IdlSchemaTest(unittest.TestCase):
         'c': {'name': 'c', 'type': 'string'}},
       getType(self.idl_basics, 'MyType1')['properties'])
 
-  def testIOThreadFunc(self):
-    schema = self.idl_basics
-
-    func = getFunction(schema, 'function32')
-    self.assertTrue(func is not None)
-    self.assertTrue(func['forIOThread'])
-
-    func = getFunction(schema, 'function1')
-    self.assertTrue(func is not None)
-    self.assertTrue('forIOThread' not in func)
-
   def testMemberOrdering(self):
     self.assertEquals(
         ['x', 'y', 'z', 'a', 'b', 'c'],
@@ -150,6 +139,25 @@ class IdlSchemaTest(unittest.TestCase):
     self.assertTrue(enum_with_nodoc is not None)
     self.assertTrue(enum_with_nodoc['nodoc'])
 
+  def testNoDocOnEnumValue(self):
+    schema = self.idl_basics
+    expected = {
+        'enum': [{
+            'name': 'name1'
+        }, {
+            'name': 'name2',
+            'nodoc': True,
+            'description': 'comment2'
+        }, {
+            'name': 'name3',
+            'description': 'comment3'
+        }],
+        'type': 'string',
+        'id': 'EnumTypeWithNoDocValue',
+        'description': ''
+    }
+    self.assertEquals(expected, getType(schema, expected['id']))
+
   def testInternalNamespace(self):
     idl_basics  = self.idl_basics
     self.assertEquals('idl_basics', idl_basics['namespace'])
@@ -198,6 +206,17 @@ class IdlSchemaTest(unittest.TestCase):
                       schema['namespace'])
     expected = None
     self.assertEquals(expected, schema['platforms'])
+
+  def testGenerateErrorMessages(self):
+    schema = idl_schema.Load('test/idl_generate_error_messages.idl')[0]
+    self.assertEquals('idl_generate_error_messages', schema['namespace'])
+    self.assertTrue(schema['compiler_options'].get('generate_error_messages',
+                    False))
+
+    schema = idl_schema.Load('test/idl_basics.idl')[0]
+    self.assertEquals('idl_basics', schema['namespace'])
+    self.assertFalse(schema['compiler_options'].get('generate_error_messages',
+                     False))
 
   def testSpecificImplementNamespace(self):
     schema = idl_schema.Load('test/idl_namespace_specific_implement.idl')[0]

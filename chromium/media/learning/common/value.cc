@@ -4,7 +4,7 @@
 
 #include "media/learning/common/value.h"
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 
 namespace media {
 namespace learning {
@@ -21,7 +21,15 @@ Value::Value(const char* x) {
 
 Value::Value(const std::string& x) : value_(base::PersistentHash(x)) {}
 
+Value::Value(bool x) : value_(static_cast<int>(x)) {}
+
 Value::Value(const Value& other) : value_(other.value_) {}
+
+Value::Value(Value&& rhs) noexcept = default;
+
+Value& Value::operator=(const Value& rhs) = default;
+
+Value& Value::operator=(Value&& rhs) noexcept = default;
 
 bool Value::operator==(const Value& rhs) const {
   return value_ == rhs.value_;
@@ -37,6 +45,10 @@ bool Value::operator<(const Value& rhs) const {
 
 bool Value::operator>(const Value& rhs) const {
   return value_ > rhs.value_;
+}
+
+bool Value::operator>=(const Value& rhs) const {
+  return value_ >= rhs.value_;
 }
 
 std::ostream& operator<<(std::ostream& out, const Value& value) {

@@ -15,7 +15,6 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/value_store/value_store_factory.h"
 #include "extensions/common/extension.h"
 
@@ -42,7 +41,7 @@ class StateStore::DelayedTaskQueue {
 
   // Queues up a task for invoking once we're ready. Invokes immediately if
   // we're already ready.
-  void InvokeWhenReady(const base::Closure& task);
+  void InvokeWhenReady(base::OnceClosure task);
 
   // Marks us ready, and invokes all pending tasks.
   void SetReady();
@@ -52,22 +51,22 @@ class StateStore::DelayedTaskQueue {
 
  private:
   bool ready_;
-  std::vector<base::Closure> pending_tasks_;
+  std::vector<base::OnceClosure> pending_tasks_;
 };
 
-void StateStore::DelayedTaskQueue::InvokeWhenReady(const base::Closure& task) {
+void StateStore::DelayedTaskQueue::InvokeWhenReady(base::OnceClosure task) {
   if (ready_) {
-    task.Run();
+    std::move(task).Run();
   } else {
-    pending_tasks_.push_back(task);
+    pending_tasks_.push_back(std::move(task));
   }
 }
 
 void StateStore::DelayedTaskQueue::SetReady() {
   ready_ = true;
 
-  for (size_t i = 0; i < pending_tasks_.size(); ++i)
-    pending_tasks_[i].Run();
+  for (base::OnceClosure& task : pending_tasks_)
+    std::move(task).Run();
   pending_tasks_.clear();
 }
 
@@ -76,8 +75,7 @@ StateStore::StateStore(content::BrowserContext* context,
                        ValueStoreFrontend::BackendType backend_type,
                        bool deferred_load)
     : store_(new ValueStoreFrontend(store_factory, backend_type)),
-      task_queue_(new DelayedTaskQueue()),
-      extension_registry_observer_(this) {
+      task_queue_(new DelayedTaskQueue()) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(context));
 
   if (deferred_load) {
@@ -107,8 +105,8 @@ void StateStore::GetExtensionValue(const std::string& extension_id,
                                    const std::string& key,
                                    ReadCallback callback) {
   task_queue_->InvokeWhenReady(
-      base::Bind(&ValueStoreFrontend::Get, base::Unretained(store_.get()),
-                 GetFullKey(extension_id, key), callback));
+      base::BindOnce(&ValueStoreFrontend::Get, base::Unretained(store_.get()),
+                     GetFullKey(extension_id, key), std::move(callback)));
 }
 
 void StateStore::SetExtensionValue(const std::string& extension_id,
@@ -118,15 +116,15 @@ void StateStore::SetExtensionValue(const std::string& extension_id,
     observer.WillSetExtensionValue(extension_id, key);
 
   task_queue_->InvokeWhenReady(
-      base::Bind(&ValueStoreFrontend::Set, base::Unretained(store_.get()),
-                 GetFullKey(extension_id, key), base::Passed(&value)));
+      base::BindOnce(&ValueStoreFrontend::Set, base::Unretained(store_.get()),
+                     GetFullKey(extension_id, key), std::move(value)));
 }
 
 void StateStore::RemoveExtensionValue(const std::string& extension_id,
                                       const std::string& key) {
-  task_queue_->InvokeWhenReady(base::Bind(&ValueStoreFrontend::Remove,
-                                          base::Unretained(store_.get()),
-                                          GetFullKey(extension_id, key)));
+  task_queue_->InvokeWhenReady(base::BindOnce(&ValueStoreFrontend::Remove,
+                                              base::Unretained(store_.get()),
+                                              GetFullKey(extension_id, key)));
 }
 
 void StateStore::AddObserver(TestObserver* observer) {
@@ -181,16 +179,16 @@ void StateStore::InitAfterDelay() {
     return;
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&StateStore::Init, AsWeakPtr()),
+      FROM_HERE, base::BindOnce(&StateStore::Init, AsWeakPtr()),
       base::TimeDelta::FromSeconds(kInitDelaySeconds));
 }
 
 void StateStore::RemoveKeysForExtension(const std::string& extension_id) {
   for (auto key = registered_keys_.begin(); key != registered_keys_.end();
        ++key) {
-    task_queue_->InvokeWhenReady(base::Bind(&ValueStoreFrontend::Remove,
-                                            base::Unretained(store_.get()),
-                                            GetFullKey(extension_id, *key)));
+    task_queue_->InvokeWhenReady(base::BindOnce(
+        &ValueStoreFrontend::Remove, base::Unretained(store_.get()),
+        GetFullKey(extension_id, *key)));
   }
 }
 

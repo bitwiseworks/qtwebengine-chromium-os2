@@ -12,6 +12,7 @@
 
 #include "base/logging.h"
 #include "base/strings/char_traits.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "components/viz/service/display/static_geometry_binding.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -394,6 +395,7 @@ std::string FragmentShader::GetShaderString() const {
     precision = TEX_COORD_PRECISION_MEDIUM;
   std::string shader = GetShaderSource();
   SetBlendModeFunctions(&shader);
+  SetRoundedCornerFunctions(&shader);
   SetFragmentSamplerType(sampler_type_, &shader);
   SetFragmentTexCoordPrecision(precision, &shader);
   return shader;
@@ -449,15 +451,16 @@ void FragmentShader::Init(GLES2Interface* context,
       uniforms.push_back("color");
       break;
   }
-  if (color_conversion_mode_ == COLOR_CONVERSION_MODE_LUT) {
-    uniforms.push_back("lut_texture");
-    uniforms.push_back("lut_size");
-  }
   if (has_output_color_matrix_)
     uniforms.emplace_back("output_color_matrix");
 
   if (has_tint_color_matrix_)
     uniforms.emplace_back("tint_color_matrix");
+
+  if (has_rounded_corner_) {
+    uniforms.emplace_back("roundedCornerRect");
+    uniforms.emplace_back("roundedCornerRadius");
+  }
 
   locations.resize(uniforms.size());
 
@@ -510,10 +513,6 @@ void FragmentShader::Init(GLES2Interface* context,
       color_location_ = locations[index++];
       break;
   }
-  if (color_conversion_mode_ == COLOR_CONVERSION_MODE_LUT) {
-    lut_texture_location_ = locations[index++];
-    lut_size_location_ = locations[index++];
-  }
 
   if (has_output_color_matrix_)
     output_color_matrix_location_ = locations[index++];
@@ -521,7 +520,120 @@ void FragmentShader::Init(GLES2Interface* context,
   if (has_tint_color_matrix_)
     tint_color_matrix_location_ = locations[index++];
 
+  if (has_rounded_corner_) {
+    rounded_corner_rect_location_ = locations[index++];
+    rounded_corner_radius_location_ = locations[index++];
+  }
+
   DCHECK_EQ(index, locations.size());
+}
+
+void FragmentShader::SetRoundedCornerFunctions(
+    std::string* shader_string) const {
+  if (!has_rounded_corner_)
+    return;
+
+  static constexpr base::StringPiece kUniforms = SHADER0([]() {
+    uniform vec4 roundedCornerRect;
+    uniform vec4 roundedCornerRadius;
+  });
+
+  static constexpr base::StringPiece kFunctionRcUtility = SHADER0([]() {
+    // Returns a vector of size 4. Each component of a vector is set to 1 or 0
+    // representing whether |rcCoord| is a part of the respective corner or
+    // not.
+    // The component ordering is:
+    //     [Top left, Top right, Bottom right, Bottom left]
+    vec4 IsCorner(vec2 rcCoord) {
+      // Top left corner
+      if (rcCoord.x < roundedCornerRadius.x &&
+          rcCoord.y < roundedCornerRadius.x) {
+        return vec4(1.0, 0.0, 0.0, 0.0);
+      }
+
+      // Top right corner
+      if (rcCoord.x > roundedCornerRect.z - roundedCornerRadius.y &&
+          rcCoord.y < roundedCornerRadius.y) {
+        return vec4(0.0, 1.0, 0.0, 0.0);
+      }
+
+      // Bottom right corner
+      if (rcCoord.x > roundedCornerRect.z - roundedCornerRadius.z &&
+          rcCoord.y > roundedCornerRect.w - roundedCornerRadius.z) {
+        return vec4(0.0, 0.0, 1.0, 0.0);
+      }
+
+      // Bottom left corner
+      if (rcCoord.x < roundedCornerRadius.w &&
+          rcCoord.y > roundedCornerRect.w - roundedCornerRadius.w) {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+      }
+      return vec4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    // Returns the center of the rounded corner. |corner| holds the info on
+    // which corner the center is requested for.
+    vec2 GetCenter(vec4 corner, float radius) {
+      if (corner.x == 1.0) {
+        // Top left corner
+        return vec2(radius, radius);
+      } else if (corner.y == 1.0) {
+        // Top right corner
+        return vec2(roundedCornerRect.z - radius, radius);
+      } else if (corner.z == 1.0) {
+        // Bottom right corner
+        return vec2(roundedCornerRect.z - radius, roundedCornerRect.w - radius);
+      } else {
+        // Bottom left corner
+        return vec2(radius, roundedCornerRect.w - radius);
+      }
+    }
+  });
+
+  static constexpr base::StringPiece kFunctionApplyRoundedCorner =
+      SHADER0([]() {
+        vec4 ApplyRoundedCorner(vec4 src) {
+          vec2 rcCoord = gl_FragCoord.xy - roundedCornerRect.xy;
+
+          vec4 isCorner = IsCorner(rcCoord);
+
+          // Get the radius to use based on the corner this fragment lies in.
+          float r = dot(isCorner, roundedCornerRadius);
+
+          // If the radius is 0, then there is no rounded corner here. We can do
+          // an early return.
+          if (r == 0.0)
+            return src;
+
+          // Vector to the corner's center this fragment is in.
+          // Due to precision errors on android, this variable requires a highp.
+          // See https://crbug.com/1009322
+          RoundedCornerPrecision vec2 cornerCenter = GetCenter(isCorner, r);
+
+          // Vector from the center of the corner to the current fragment center
+          vec2 cxy = rcCoord - cornerCenter;
+
+          // Compute the distance of the fragment's center from the corner's
+          // center.
+          float fragDst = length(cxy);
+
+          float alpha = smoothstep(r - 1.0, r + 1.0, fragDst);
+          return vec4(0.0) * alpha + src * (1.0 - alpha);
+        }
+      });
+
+  std::string shader;
+  shader.reserve(shader_string->size() + 2048);
+  shader += "precision mediump float;";
+  shader +=
+      "\n#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+      "  #define RoundedCornerPrecision highp\n"
+      "#else\n"
+      "  #define RoundedCornerPrecision mediump\n"
+      "#endif\n";
+  base::StrAppend(&shader, {kUniforms, kFunctionRcUtility,
+                            kFunctionApplyRoundedCorner, *shader_string});
+  *shader_string = std::move(shader);
 }
 
 void FragmentShader::SetBlendModeFunctions(std::string* shader_string) const {
@@ -566,9 +678,8 @@ void FragmentShader::SetBlendModeFunctions(std::string* shader_string) const {
   shader += "precision mediump float;";
   AppendHelperFunctions(&shader);
   AppendBlendFunction(&shader);
-  kUniforms.AppendToString(&shader);
-  function_apply_blend_mode.AppendToString(&shader);
-  shader += *shader_string;
+  base::StrAppend(&shader,
+                  {kUniforms, function_apply_blend_mode, *shader_string});
   *shader_string = std::move(shader);
 }
 
@@ -716,25 +827,27 @@ void FragmentShader::AppendHelperFunctions(std::string* buffer) const {
   switch (blend_mode_) {
     case BLEND_MODE_OVERLAY:
     case BLEND_MODE_HARD_LIGHT:
-      kFunctionHardLight.AppendToString(buffer);
+      buffer->append(kFunctionHardLight.data(), kFunctionHardLight.size());
       return;
     case BLEND_MODE_COLOR_DODGE:
-      kFunctionColorDodgeComponent.AppendToString(buffer);
+      buffer->append(kFunctionColorDodgeComponent.data(),
+                     kFunctionColorDodgeComponent.size());
       return;
     case BLEND_MODE_COLOR_BURN:
-      kFunctionColorBurnComponent.AppendToString(buffer);
+      buffer->append(kFunctionColorBurnComponent.data(),
+                     kFunctionColorBurnComponent.size());
       return;
     case BLEND_MODE_SOFT_LIGHT:
-      kFunctionSoftLightComponentPosDstAlpha.AppendToString(buffer);
+      buffer->append(kFunctionSoftLightComponentPosDstAlpha.data(),
+                     kFunctionSoftLightComponentPosDstAlpha.size());
       return;
     case BLEND_MODE_HUE:
     case BLEND_MODE_SATURATION:
-      kFunctionLum.AppendToString(buffer);
-      kFunctionSat.AppendToString(buffer);
+      base::StrAppend(buffer, {kFunctionLum, kFunctionSat});
       return;
     case BLEND_MODE_COLOR:
     case BLEND_MODE_LUMINOSITY:
-      kFunctionLum.AppendToString(buffer);
+      buffer->append(kFunctionLum.data(), kFunctionLum.size());
       return;
     default:
       return;
@@ -745,8 +858,8 @@ void FragmentShader::AppendBlendFunction(std::string* buffer) const {
   *buffer +=
       "vec4 Blend(vec4 src, vec4 dst) {"
       "    vec4 result;";
-  GetBlendFunctionBodyForAlpha().AppendToString(buffer);
-  GetBlendFunctionBodyForRGB().AppendToString(buffer);
+  base::StrAppend(
+      buffer, {GetBlendFunctionBodyForAlpha(), GetBlendFunctionBodyForRGB()});
   *buffer +=
       "    return result;"
       "}";
@@ -917,29 +1030,6 @@ std::string FragmentShader::GetShaderSource() const {
 
   // Apply color conversion.
   switch (color_conversion_mode_) {
-    case COLOR_CONVERSION_MODE_LUT:
-      HDR("uniform sampler2D lut_texture;");
-      HDR("uniform float lut_size;");
-      HDR("vec4 LUT(sampler2D sampler, vec3 pos, float size) {");
-      HDR("  pos *= size - 1.0;");
-      HDR("  // Select layer");
-      HDR("  float layer = min(floor(pos.z), size - 2.0);");
-      HDR("  // Compress the xy coordinates so they stay within");
-      HDR("  // [0.5 .. 31.5] / N (assuming a LUT size of 17^3)");
-      HDR("  pos.xy = (pos.xy + vec2(0.5)) / size;");
-      HDR("  pos.y = (pos.y + layer) / size;");
-      HDR("  return mix(LutLookup(sampler, pos.xy),");
-      HDR("             LutLookup(sampler, pos.xy + vec2(0, 1.0 / size)),");
-      HDR("             pos.z - layer);");
-      HDR("}");
-      // Un-premultiply by alpha.
-      if (premultiply_alpha_mode_ != NON_PREMULTIPLIED_ALPHA) {
-        SRC("// un-premultiply alpha");
-        SRC("if (texColor.a > 0.0) texColor.rgb /= texColor.a;");
-      }
-      SRC("texColor.rgb = LUT(lut_texture, texColor.xyz, lut_size).xyz;");
-      SRC("texColor.rgb *= texColor.a;");
-      break;
     case COLOR_CONVERSION_MODE_SHADER:
       header += color_transform_->GetShaderSource();
       // Un-premultiply by alpha.
@@ -997,12 +1087,6 @@ std::string FragmentShader::GetShaderSource() const {
     HDR("uniform vec4 background_color;");
     SRC("// Apply uniform background color blending");
     SRC("texColor += background_color * (1.0 - texColor.a);");
-  }
-
-  // Apply swizzle.
-  if (swizzle_mode_ == DO_SWIZZLE) {
-    SRC("// Apply swizzle");
-    SRC("texColor = texColor.bgra;\n");
   }
 
   // Finally apply the output color matrix to texColor.
@@ -1070,6 +1154,10 @@ std::string FragmentShader::GetShaderSource() const {
       }
       break;
   }
+
+  if (has_rounded_corner_)
+    SRC("gl_FragColor = ApplyRoundedCorner(gl_FragColor);");
+
   source += "}\n";
 
   return header + source;

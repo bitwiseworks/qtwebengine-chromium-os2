@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <utility>
 #include <vector>
 
 #include "base/macros.h"
@@ -37,9 +38,14 @@ class MEDIA_EXPORT MovingAverage {
   // Resets the state of the class to its initial post-construction state.
   void Reset();
 
-  size_t count() const { return count_; }
+  uint64_t count() const { return count_; }
 
   base::TimeDelta max() const { return max_; }
+
+  size_t depth() const { return depth_; }
+
+  // |first| is min, |second| is max of all samples in the window.
+  std::pair<base::TimeDelta, base::TimeDelta> GetMinAndMax();
 
  private:
   // Maximum number of elements allowed in the average.

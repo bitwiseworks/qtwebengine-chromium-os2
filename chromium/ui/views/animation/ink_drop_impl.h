@@ -64,15 +64,15 @@ class VIEWS_EXPORT InkDropImpl : public InkDrop,
   // can configure inkdrops created by parent classes.
   void SetAutoHighlightMode(AutoHighlightMode auto_highlight_mode);
 
-  const base::Optional<int>& hover_highlight_fade_duration_ms() const {
-    return hover_highlight_fade_duration_ms_;
+  const base::Optional<base::TimeDelta>& hover_highlight_fade_duration() const {
+    return hover_highlight_fade_duration_;
   }
 
   // InkDrop:
   void HostSizeChanged(const gfx::Size& new_size) override;
   InkDropState GetTargetInkDropState() const override;
   void AnimateToState(InkDropState ink_drop_state) override;
-  void SetHoverHighlightFadeDurationMs(int duration_ms) override;
+  void SetHoverHighlightFadeDuration(base::TimeDelta duration) override;
   void UseDefaultHoverHighlightFadeDuration() override;
   void SnapToActivated() override;
   void SnapToHidden() override;
@@ -106,7 +106,7 @@ class VIEWS_EXPORT InkDropImpl : public InkDrop,
   // anywhere else may be a sign that a new state should exist.
   class HighlightState {
    public:
-    virtual ~HighlightState() {}
+    virtual ~HighlightState() = default;
 
     // Called when |this| becomes the current state. Allows subclasses to
     // perform any work that should not be done in the constructor. It is ok for
@@ -171,12 +171,10 @@ class VIEWS_EXPORT InkDropImpl : public InkDrop,
     std::unique_ptr<HighlightState> CreateStartState();
 
     std::unique_ptr<HighlightState> CreateHiddenState(
-        base::TimeDelta animation_duration,
-        bool explode);
+        base::TimeDelta animation_duration);
 
     std::unique_ptr<HighlightState> CreateVisibleState(
-        base::TimeDelta animation_duration,
-        bool explode);
+        base::TimeDelta animation_duration);
 
     InkDropImpl* ink_drop() { return ink_drop_; }
 
@@ -244,11 +242,8 @@ class VIEWS_EXPORT InkDropImpl : public InkDrop,
 
   // Enables or disables the highlight state based on |should_highlight| and if
   // an animation is triggered it will be scheduled to have the given
-  // |animation_duration|. If |explode| is true the highlight will expand as it
-  // fades out. |explode| is ignored when |should_higlight| is true.
-  void SetHighlight(bool should_highlight,
-                    base::TimeDelta animation_duration,
-                    bool explode);
+  // |animation_duration|.
+  void SetHighlight(bool should_highlight, base::TimeDelta animation_duration);
 
   // Returns true if |this| the highlight should be visible based on the
   // hover/focus status.
@@ -311,7 +306,7 @@ class VIEWS_EXPORT InkDropImpl : public InkDrop,
   std::unique_ptr<HighlightState> highlight_state_;
 
   // Overrides the default hover highlight fade durations when set.
-  base::Optional<int> hover_highlight_fade_duration_ms_;
+  base::Optional<base::TimeDelta> hover_highlight_fade_duration_;
 
   // Used to ensure highlight state transitions are not triggered when exiting
   // the current state.

@@ -18,13 +18,11 @@ namespace rx
 class WindowSurfaceVkAndroid : public WindowSurfaceVk
 {
   public:
-    WindowSurfaceVkAndroid(const egl::SurfaceState &surfaceState,
-                           EGLNativeWindowType window,
-                           EGLint width,
-                           EGLint height);
+    WindowSurfaceVkAndroid(const egl::SurfaceState &surfaceState, EGLNativeWindowType window);
 
   private:
     angle::Result createSurfaceVk(vk::Context *context, gl::Extents *extentsOut) override;
+    angle::Result getCurrentWindowSize(vk::Context *context, gl::Extents *extentsOut) override;
 };
 
 }  // namespace rx

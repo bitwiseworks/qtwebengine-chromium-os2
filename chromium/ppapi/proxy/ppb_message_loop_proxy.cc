@@ -83,7 +83,7 @@ int32_t MessageLoopResource::AttachToCurrentThread() {
     if (slot->Get())
       return PP_ERROR_INPROGRESS;
   }
-  // TODO(dmichael) check that the current thread can support a message loop.
+  // TODO(dmichael) check that the current thread can support a task executor.
 
   // Take a ref to the MessageLoop on behalf of the TLS. Note that this is an
   // internal ref and not a plugin ref so the plugin can't accidentally
@@ -91,13 +91,12 @@ int32_t MessageLoopResource::AttachToCurrentThread() {
   AddRef();
   slot->Set(this);
 
-  loop_.reset(new base::MessageLoop);
+  single_thread_task_executor_.reset(new base::SingleThreadTaskExecutor);
   task_runner_ = base::ThreadTaskRunnerHandle::Get();
 
-  // Post all pending work to the message loop.
-  for (size_t i = 0; i < pending_tasks_.size(); i++) {
-    const TaskInfo& info = pending_tasks_[i];
-    PostClosure(info.from_here, info.closure, info.delay_ms);
+  // Post all pending work to the task executor.
+  for (auto& info : pending_tasks_) {
+    PostClosure(info.from_here, std::move(info.closure), info.delay_ms);
   }
   pending_tasks_.clear();
 
@@ -116,14 +115,14 @@ int32_t MessageLoopResource::Run() {
 
   nested_invocations_++;
   CallWhileUnlocked(
-      base::Bind(&base::RunLoop::Run, base::Unretained(run_loop_)));
+      base::BindOnce(&base::RunLoop::Run, base::Unretained(run_loop_)));
   nested_invocations_--;
 
   run_loop_ = previous_run_loop;
 
   if (should_destroy_ && nested_invocations_ == 0) {
-    task_runner_ = NULL;
-    loop_.reset();
+    task_runner_.reset();
+    single_thread_task_executor_.reset();
     destroyed_ = true;
   }
   return PP_OK;
@@ -169,10 +168,10 @@ MessageLoopResource* MessageLoopResource::GetCurrent() {
 }
 
 void MessageLoopResource::DetachFromThread() {
-  // Note that the message loop must be destroyed on the thread it was created
+  // Note that the task executor must be destroyed on the thread it was created
   // on.
-  task_runner_ = NULL;
-  loop_.reset();
+  task_runner_.reset();
+  single_thread_task_executor_.reset();
 
   // Cancel out the AddRef in AttachToCurrentThread().
   Release();
@@ -188,17 +187,17 @@ bool MessageLoopResource::IsCurrent() const {
 }
 
 void MessageLoopResource::PostClosure(const base::Location& from_here,
-                                      const base::Closure& closure,
+                                      base::OnceClosure closure,
                                       int64_t delay_ms) {
   if (task_runner_.get()) {
-    task_runner_->PostDelayedTask(from_here, closure,
+    task_runner_->PostDelayedTask(from_here, std::move(closure),
                                   base::TimeDelta::FromMilliseconds(delay_ms));
   } else {
     TaskInfo info;
     info.from_here = FROM_HERE;
-    info.closure = closure;
+    info.closure = std::move(closure);
     info.delay_ms = delay_ms;
-    pending_tasks_.push_back(info);
+    pending_tasks_.push_back(std::move(info));
   }
 }
 

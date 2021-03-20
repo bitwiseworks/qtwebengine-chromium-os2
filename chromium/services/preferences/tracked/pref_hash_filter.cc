@@ -53,18 +53,17 @@ PrefHashFilter::PrefHashFilter(
     StoreContentsPair external_validation_hash_store_pair,
     const std::vector<prefs::mojom::TrackedPreferenceMetadataPtr>&
         tracked_preferences,
-    prefs::mojom::ResetOnLoadObserverPtr reset_on_load_observer,
+    mojo::PendingRemote<prefs::mojom::ResetOnLoadObserver>
+        reset_on_load_observer,
     prefs::mojom::TrackedPreferenceValidationDelegate* delegate,
-    size_t reporting_ids_count,
-    bool report_super_mac_validity)
+    size_t reporting_ids_count)
     : pref_hash_store_(std::move(pref_hash_store)),
       external_validation_hash_store_pair_(
           external_validation_hash_store_pair.first
               ? base::make_optional(
                     std::move(external_validation_hash_store_pair))
               : base::nullopt),
-      reset_on_load_observer_(std::move(reset_on_load_observer)),
-      report_super_mac_validity_(report_super_mac_validity) {
+      reset_on_load_observer_(std::move(reset_on_load_observer)) {
   DCHECK(pref_hash_store_);
   DCHECK_GE(reporting_ids_count, tracked_preferences.size());
   // Verify that, if |external_validation_hash_store_pair_| is present, both its
@@ -112,7 +111,7 @@ void PrefHashFilter::RegisterProfilePrefs(
   // See GetResetTime for why this is a StringPref and not Int64Pref.
   registry->RegisterStringPref(
       user_prefs::kPreferenceResetTime,
-      base::Int64ToString(base::Time().ToInternalValue()));
+      base::NumberToString(base::Time().ToInternalValue()));
 }
 
 // static
@@ -211,7 +210,7 @@ void PrefHashFilter::OnStoreDeletionFromDisk() {
 }
 
 void PrefHashFilter::FinalizeFilterOnLoad(
-    const PostFilterOnLoadCallback& post_filter_on_load_callback,
+    PostFilterOnLoadCallback post_filter_on_load_callback,
     std::unique_ptr<base::DictionaryValue> pref_store_contents,
     bool prefs_altered) {
   DCHECK(pref_store_contents);
@@ -234,11 +233,6 @@ void PrefHashFilter::FinalizeFilterOnLoad(
     CleanupDeprecatedTrackedPreferences(pref_store_contents.get(),
                                         hash_store_transaction.get());
 
-    if (report_super_mac_validity_) {
-      UMA_HISTOGRAM_BOOLEAN("Settings.HashesDictionaryTrusted",
-                            hash_store_transaction->IsSuperMACValid());
-    }
-
     for (auto it = tracked_paths_.begin(); it != tracked_paths_.end(); ++it) {
       if (it->second->EnforceAndReport(
               pref_store_contents.get(), hash_store_transaction.get(),
@@ -254,7 +248,7 @@ void PrefHashFilter::FinalizeFilterOnLoad(
   if (did_reset) {
     pref_store_contents->SetString(
         user_prefs::kPreferenceResetTime,
-        base::Int64ToString(base::Time::Now().ToInternalValue()));
+        base::NumberToString(base::Time::Now().ToInternalValue()));
     FilterUpdate(user_prefs::kPreferenceResetTime);
 
     if (reset_on_load_observer_)
@@ -265,8 +259,8 @@ void PrefHashFilter::FinalizeFilterOnLoad(
   UMA_HISTOGRAM_TIMES("Settings.FilterOnLoadTime",
                       base::TimeTicks::Now() - checkpoint);
 
-  post_filter_on_load_callback.Run(std::move(pref_store_contents),
-                                   prefs_altered);
+  std::move(post_filter_on_load_callback)
+      .Run(std::move(pref_store_contents), prefs_altered);
 }
 
 // static
@@ -320,8 +314,8 @@ void PrefHashFilter::FlushToExternalStore(
 PrefFilter::OnWriteCallbackPair PrefHashFilter::GetOnWriteSynchronousCallbacks(
     base::DictionaryValue* pref_store_contents) {
   if (changed_paths_.empty() || !external_validation_hash_store_pair_) {
-    return std::make_pair(base::Closure(),
-                          base::Callback<void(bool success)>());
+    return std::make_pair(base::OnceClosure(),
+                          base::OnceCallback<void(bool success)>());
   }
 
   std::unique_ptr<base::DictionaryValue> changed_paths_macs =
@@ -368,8 +362,8 @@ PrefFilter::OnWriteCallbackPair PrefHashFilter::GetOnWriteSynchronousCallbacks(
   base::DictionaryValue* raw_changed_paths_macs = changed_paths_macs.get();
 
   return std::make_pair(
-      base::Bind(&ClearFromExternalStore, base::Unretained(raw_contents),
-                 base::Unretained(raw_changed_paths_macs)),
-      base::Bind(&FlushToExternalStore, base::Passed(&hash_store_contents_copy),
-                 base::Passed(&changed_paths_macs)));
+      base::BindOnce(&ClearFromExternalStore, base::Unretained(raw_contents),
+                     base::Unretained(raw_changed_paths_macs)),
+      base::BindOnce(&FlushToExternalStore, std::move(hash_store_contents_copy),
+                     std::move(changed_paths_macs)));
 }

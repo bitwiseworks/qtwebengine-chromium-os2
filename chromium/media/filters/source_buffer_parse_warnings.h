@@ -15,11 +15,14 @@ namespace media {
 enum class SourceBufferParseWarning {
   kKeyframeTimeGreaterThanDependant,  // Reported up to once per track.
   kMuxedSequenceMode,                 // Reported up to once per SourceBuffer.
+
+  // Reported up to once per FrameProcessor::ProcessFrames():
+  kGroupEndTimestampDecreaseWithinMediaSegment,
 };
 
 // For reporting telemetry of a non-fatal SourceBufferParseWarning.
 using SourceBufferParseWarningCB =
-    base::Callback<void(SourceBufferParseWarning)>;
+    base::RepeatingCallback<void(SourceBufferParseWarning)>;
 
 }  // namespace media
 

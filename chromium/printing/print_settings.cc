@@ -23,22 +23,29 @@ const std::string& GetAgent() {
 }
 
 #if defined(USE_CUPS)
-void GetColorModelForMode(
-    int color_mode, std::string* color_setting_name, std::string* color_value) {
+void GetColorModelForMode(int color_mode,
+                          std::string* color_setting_name,
+                          std::string* color_value) {
 #if defined(OS_MACOSX)
   constexpr char kCUPSColorMode[] = "ColorMode";
   constexpr char kCUPSColorModel[] = "ColorModel";
   constexpr char kCUPSPrintoutMode[] = "PrintoutMode";
   constexpr char kCUPSProcessColorModel[] = "ProcessColorModel";
+  constexpr char kCUPSInk[] = "Ink";
   constexpr char kCUPSBrotherMonoColor[] = "BRMonoColor";
   constexpr char kCUPSBrotherPrintQuality[] = "BRPrintQuality";
+  constexpr char kCUPSSharpARCMode[] = "ARCMode";
+  constexpr char kCUPSXeroxXRXColor[] = "XRXColor";
 #else
   constexpr char kCUPSColorMode[] = "cups-ColorMode";
   constexpr char kCUPSColorModel[] = "cups-ColorModel";
   constexpr char kCUPSPrintoutMode[] = "cups-PrintoutMode";
   constexpr char kCUPSProcessColorModel[] = "cups-ProcessColorModel";
+  constexpr char kCUPSInk[] = "cups-Ink";
   constexpr char kCUPSBrotherMonoColor[] = "cups-BRMonoColor";
   constexpr char kCUPSBrotherPrintQuality[] = "cups-BRPrintQuality";
+  constexpr char kCUPSSharpARCMode[] = "cups-ARCMode";
+  constexpr char kCUPSXeroxXRXColor[] = "cups-XRXColor";
 #endif  // defined(OS_MACOSX)
 
   color_setting_name->assign(kCUPSColorModel);
@@ -128,6 +135,30 @@ void GetColorModelForMode(
       color_setting_name->assign(kCUPSBrotherPrintQuality);
       color_value->assign(kBlack);
       break;
+    case EPSON_INK_COLOR:
+      color_setting_name->assign(kCUPSInk);
+      color_value->assign(kColor);
+      break;
+    case EPSON_INK_MONO:
+      color_setting_name->assign(kCUPSInk);
+      color_value->assign(kMono);
+      break;
+    case SHARP_ARCMODE_CMCOLOR:
+      color_setting_name->assign(kCUPSSharpARCMode);
+      color_value->assign(kSharpCMColor);
+      break;
+    case SHARP_ARCMODE_CMBW:
+      color_setting_name->assign(kCUPSSharpARCMode);
+      color_value->assign(kSharpCMBW);
+      break;
+    case XEROX_XRXCOLOR_AUTOMATIC:
+      color_setting_name->assign(kCUPSXeroxXRXColor);
+      color_value->assign(kXeroxAutomatic);
+      break;
+    case XEROX_XRXCOLOR_BW:
+      color_setting_name->assign(kCUPSXeroxXRXColor);
+      color_value->assign(kXeroxBW);
+      break;
     default:
       color_value->assign(kGrayscale);
       break;
@@ -135,14 +166,52 @@ void GetColorModelForMode(
 }
 #endif  // defined(USE_CUPS)
 
-bool IsColorModelSelected(int color_mode) {
-  return (color_mode != GRAY && color_mode != BLACK &&
-          color_mode != PRINTOUTMODE_NORMAL_GRAY &&
-          color_mode != COLORMODE_MONOCHROME &&
-          color_mode != PROCESSCOLORMODEL_GREYSCALE &&
-          color_mode != BROTHER_CUPS_MONO &&
-          color_mode != BROTHER_BRSCRIPT3_BLACK &&
-          color_mode != HP_COLOR_BLACK);
+base::Optional<bool> IsColorModelSelected(int color_mode) {
+  if (color_mode <= UNKNOWN_COLOR_MODEL || color_mode > COLOR_MODEL_LAST) {
+    NOTREACHED();
+    return base::nullopt;
+  }
+
+  ColorModel color_model = static_cast<ColorModel>(color_mode);
+  switch (color_model) {
+    case COLOR:
+    case CMYK:
+    case CMY:
+    case KCMY:
+    case CMY_K:
+    case RGB:
+    case RGB16:
+    case RGBA:
+    case COLORMODE_COLOR:
+    case HP_COLOR_COLOR:
+    case PRINTOUTMODE_NORMAL:
+    case PROCESSCOLORMODEL_CMYK:
+    case PROCESSCOLORMODEL_RGB:
+    case BROTHER_CUPS_COLOR:
+    case BROTHER_BRSCRIPT3_COLOR:
+    case EPSON_INK_COLOR:
+    case SHARP_ARCMODE_CMCOLOR:
+    case XEROX_XRXCOLOR_AUTOMATIC:
+      return true;
+    case GRAY:
+    case BLACK:
+    case GRAYSCALE:
+    case COLORMODE_MONOCHROME:
+    case HP_COLOR_BLACK:
+    case PRINTOUTMODE_NORMAL_GRAY:
+    case PROCESSCOLORMODEL_GREYSCALE:
+    case BROTHER_CUPS_MONO:
+    case BROTHER_BRSCRIPT3_BLACK:
+    case EPSON_INK_MONO:
+    case SHARP_ARCMODE_CMBW:
+    case XEROX_XRXCOLOR_BW:
+      return false;
+    case UNKNOWN_COLOR_MODEL:
+      // The default case is excluded from this switch statement to ensure that
+      // all ColorModel values are determinantly handled.
+      NOTREACHED();
+      return base::nullopt;
+  }
 }
 
 // Global SequenceNumber used for generating unique cookie values.
@@ -151,8 +220,6 @@ static base::AtomicSequenceNumber cookie_seq;
 PrintSettings::PrintSettings() {
   Clear();
 }
-
-PrintSettings::PrintSettings(const PrintSettings& other) = default;
 
 PrintSettings::~PrintSettings() = default;
 
@@ -182,6 +249,12 @@ void PrintSettings::Clear() {
 #endif
   is_modifiable_ = true;
   pages_per_sheet_ = 1;
+#if defined(OS_CHROMEOS)
+  send_user_info_ = false;
+  username_.clear();
+  pin_value_.clear();
+  advanced_settings_.clear();
+#endif  // defined(OS_CHROMEOS)
 }
 
 void PrintSettings::SetPrinterPrintableArea(
@@ -240,22 +313,16 @@ void PrintSettings::SetPrinterPrintableArea(
     case CUSTOM_MARGINS: {
       margins.header = 0;
       margins.footer = 0;
-      margins.top = ConvertUnitDouble(
-          requested_custom_margins_in_points_.top,
-          kPointsPerInch,
-          units_per_inch);
-      margins.bottom = ConvertUnitDouble(
-          requested_custom_margins_in_points_.bottom,
-          kPointsPerInch,
-          units_per_inch);
-      margins.left = ConvertUnitDouble(
-          requested_custom_margins_in_points_.left,
-          kPointsPerInch,
-          units_per_inch);
-      margins.right = ConvertUnitDouble(
-          requested_custom_margins_in_points_.right,
-          kPointsPerInch,
-          units_per_inch);
+      margins.top = ConvertUnitDouble(requested_custom_margins_in_points_.top,
+                                      kPointsPerInch, units_per_inch);
+      margins.bottom =
+          ConvertUnitDouble(requested_custom_margins_in_points_.bottom,
+                            kPointsPerInch, units_per_inch);
+      margins.left = ConvertUnitDouble(requested_custom_margins_in_points_.left,
+                                       kPointsPerInch, units_per_inch);
+      margins.right =
+          ConvertUnitDouble(requested_custom_margins_in_points_.right,
+                            kPointsPerInch, units_per_inch);
       break;
     }
     default: {

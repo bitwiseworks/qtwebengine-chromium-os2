@@ -39,18 +39,20 @@ class CONTENT_EXPORT WebUIImpl : public WebUI,
   // Called when a RenderFrame is reused for the same WebUI type (i.e. reload).
   void RenderFrameReused(RenderFrameHost* render_frame_host);
 
-  // Called when the owning RenderFrameHost has started swapping out.
-  void RenderFrameHostSwappingOut();
+  // Called when the owning RenderFrameHost has started unloading.
+  void RenderFrameHostUnloading();
 
   // WebUI implementation:
-  WebContents* GetWebContents() const override;
-  WebUIController* GetController() const override;
+  WebContents* GetWebContents() override;
+  WebUIController* GetController() override;
   void SetController(std::unique_ptr<WebUIController> controller) override;
-  float GetDeviceScaleFactor() const override;
-  const base::string16& GetOverriddenTitle() const override;
+  float GetDeviceScaleFactor() override;
+  const base::string16& GetOverriddenTitle() override;
   void OverrideTitle(const base::string16& title) override;
-  int GetBindings() const override;
+  int GetBindings() override;
   void SetBindings(int bindings) override;
+  const std::vector<std::string>& GetRequestableSchemes() override;
+  void AddRequestableScheme(const char* scheme) override;
   void AddMessageHandler(std::unique_ptr<WebUIMessageHandler> handler) override;
   void RegisterMessageCallback(base::StringPiece message,
                                const MessageCallback& callback) override;
@@ -103,6 +105,9 @@ class CONTENT_EXPORT WebUIImpl : public WebUI,
   base::string16 overridden_title_;  // Defaults to empty string.
   int bindings_;  // The bindings from BindingsPolicy that should be enabled for
                   // this page.
+
+  // The URL schemes that can be requested by this document.
+  std::vector<std::string> requestable_schemes_;
 
   // The WebUIMessageHandlers we own.
   std::vector<std::unique_ptr<WebUIMessageHandler>> handlers_;

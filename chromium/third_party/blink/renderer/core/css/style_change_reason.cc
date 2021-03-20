@@ -14,29 +14,29 @@ namespace style_change_reason {
 const char kActiveStylesheetsUpdate[] = "ActiveStylesheetsUpdate";
 const char kAnimation[] = "Animation";
 const char kAttribute[] = "Attribute";
-const char kCleanupPlaceholderStyles[] = "CleanupPlaceholderStyles";
 const char kControlValue[] = "ControlValue";
 const char kControl[] = "Control";
 const char kDeclarativeContent[] = "Extension declarativeContent.css";
 const char kDesignMode[] = "DesignMode";
+const char kDisplayLock[] = "DisplayLock";
 const char kFindInvisible[] = "FindInvisible";
+const char kFlatTreeChange[] = "FlatTreeChange";
 const char kFontSizeChange[] = "FontSizeChange";
 const char kFonts[] = "Fonts";
 const char kFrame[] = "Frame";
 const char kFullscreen[] = "Fullscreen";
 const char kInheritedStyleChangeFromParentFrame[] =
     "InheritedStyleChangeFromParentFrame";
-const char kInline[] = "Inline";
 const char kInlineCSSStyleMutated[] =
     "Inline CSS style declaration was mutated";
 const char kInspector[] = "Inspector";
 const char kLanguage[] = "Language";
 const char kInvisibleChange[] = "InvisibleChange";
+const char kLazyReattach[] = "LazyReattach";
 const char kLinkColorChange[] = "LinkColorChange";
 const char kPlatformColorChange[] = "PlatformColorChange";
+const char kPluginChanged[] = "Plugin Changed";
 const char kPolicyViolation[] = "Feature Policy Violation";
-const char kPropagateInheritChangeToDistributedNodes[] =
-    "PropagateInheritChangeToDistributedNodes";
 const char kPropertyRegistration[] = "PropertyRegistration";
 const char kPropertyUnregistration[] = "PropertyUnregistration";
 const char kPseudoClass[] = "PseudoClass";
@@ -46,6 +46,7 @@ const char kSettings[] = "Settings";
 const char kShadow[] = "Shadow";
 const char kStyleInvalidator[] = "StyleInvalidator";
 const char kStyleSheetChange[] = "StyleSheetChange";
+const char kUseFallback[] = "UseFallback";
 const char kViewportUnits[] = "ViewportUnits";
 const char kVisitedLink[] = "VisitedLink";
 const char kVisuallyOrdered[] = "VisuallyOrdered";

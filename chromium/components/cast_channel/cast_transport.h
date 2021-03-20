@@ -14,9 +14,9 @@
 #include "base/threading/thread_checker.h"
 #include "components/cast_channel/cast_channel_enum.h"
 #include "components/cast_channel/logger.h"
-#include "net/base/completion_callback.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/ip_endpoint.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace net {
 class DrainableIOBuffer;
@@ -27,7 +27,8 @@ class Socket;
 }  // namespace net
 
 namespace cast_channel {
-class CastMessage;
+
+using ::cast::channel::CastMessage;
 class MessageFramer;
 
 class CastTransport {
@@ -56,7 +57,7 @@ class CastTransport {
   // |callback|: Callback to be invoked when the write operation has finished.
   // Virtual for testing.
   virtual void SendMessage(const CastMessage& message,
-                           const net::CompletionCallback& callback) = 0;
+                           net::CompletionOnceCallback callback) = 0;
 
   // Initializes the reading state machine and starts reading from the
   // underlying socket.
@@ -102,7 +103,7 @@ class CastTransportImpl : public CastTransport {
 
   // CastTransport interface.
   void SendMessage(const CastMessage& message,
-                   const net::CompletionCallback& callback) override;
+                   net::CompletionOnceCallback callback) override;
   void Start() override;
   void SetReadDelegate(std::unique_ptr<Delegate> delegate) override;
 
@@ -112,15 +113,15 @@ class CastTransportImpl : public CastTransport {
   struct WriteRequest {
     explicit WriteRequest(const std::string& namespace_,
                           const std::string& payload,
-                          const net::CompletionCallback& callback);
-    WriteRequest(const WriteRequest& other);
+                          net::CompletionOnceCallback callback);
+    WriteRequest(WriteRequest&& other);
     ~WriteRequest();
 
     // Namespace of the serialized message.
     std::string message_namespace;
     // Write completion callback, invoked when the operation has completed or
     // failed.
-    net::CompletionCallback callback;
+    net::CompletionOnceCallback callback;
     // Buffer with outgoing data.
     scoped_refptr<net::DrainableIOBuffer> io_buffer;
   };

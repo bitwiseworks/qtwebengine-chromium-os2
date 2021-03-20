@@ -24,14 +24,22 @@ class DisplayVkAndroid : public DisplayVk
     bool isValidNativeWindow(EGLNativeWindowType window) const override;
 
     SurfaceImpl *createWindowSurfaceVk(const egl::SurfaceState &state,
-                                       EGLNativeWindowType window,
-                                       EGLint width,
-                                       EGLint height) override;
+                                       EGLNativeWindowType window) override;
 
     egl::ConfigSet generateConfigs() override;
     bool checkConfigSupport(egl::Config *config) override;
 
-    const char *getWSIName() const override;
+    egl::Error validateImageClientBuffer(const gl::Context *context,
+                                         EGLenum target,
+                                         EGLClientBuffer clientBuffer,
+                                         const egl::AttributeMap &attribs) const override;
+
+    ExternalImageSiblingImpl *createExternalImageSibling(const gl::Context *context,
+                                                         EGLenum target,
+                                                         EGLClientBuffer buffer,
+                                                         const egl::AttributeMap &attribs) override;
+
+    const char *getWSIExtension() const override;
 };
 
 }  // namespace rx

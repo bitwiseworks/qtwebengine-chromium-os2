@@ -14,8 +14,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
-#include "components/safe_browsing/db/metadata.pb.h"
-#include "components/safe_browsing/db/util.h"
+#include "components/safe_browsing/core/db/metadata.pb.h"
+#include "components/safe_browsing/core/db/util.h"
 
 namespace safe_browsing {
 namespace {
@@ -163,6 +163,10 @@ int GetThreatSeverity(JavaThreatTypes threat_type) {
       return 3;
     case JAVA_THREAT_TYPE_BILLING:
       return 4;
+    case JAVA_THREAT_TYPE_CSD_ALLOWLIST:
+      return 5;
+    case JAVA_THREAT_TYPE_HIGH_CONFIDENCE_ALLOWLIST:
+      return 6;
     case JAVA_THREAT_TYPE_MAX_VALUE:
       return std::numeric_limits<int>::max();
   }
@@ -207,7 +211,8 @@ UmaRemoteCallResult ParseJsonFromGMSCore(const std::string& metadata_str,
     return UMA_STATUS_JSON_EMPTY;
 
   // Pick out the "matches" list.
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(metadata_str);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadDeprecated(metadata_str);
   const base::ListValue* matches = nullptr;
   if (!value.get() || !value->is_dict() ||
       !(static_cast<base::DictionaryValue*>(value.get()))

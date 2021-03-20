@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
@@ -33,13 +34,6 @@ namespace {
 const int kDelayOneMinute = 60;
 const int kDelayOneHour = kDelayOneMinute * 60;
 
-// Enables using JSON as an update client protocol encoding instead of XML.
-//
-// The JSON implementation is available behind a flag:
-// --enable-features=UpdateClientUseJSON
-const base::Feature kFeatureUpdateClientUseJSON{
-    "UpdateClientUseJSON", base::FEATURE_DISABLED_BY_DEFAULT};
-
 }  // namespace
 
 ConfiguratorImpl::ConfiguratorImpl(
@@ -58,12 +52,12 @@ ConfiguratorImpl::ConfiguratorImpl(
   }
 }
 
-ConfiguratorImpl::~ConfiguratorImpl() {}
+ConfiguratorImpl::~ConfiguratorImpl() = default;
 
 int ConfiguratorImpl::InitialDelay() const {
   if (initial_delay_)
     return initial_delay_;
-  return fast_update_ ? 10 : (6 * kDelayOneMinute);
+  return fast_update_ ? 10 : kDelayOneMinute;
 }
 
 int ConfiguratorImpl::NextCheckDelay() const {
@@ -82,12 +76,8 @@ std::vector<GURL> ConfiguratorImpl::UpdateUrl() const {
   if (url_source_override_.is_valid())
     return {GURL(url_source_override_)};
 
-  std::vector<GURL> urls =
-      base::FeatureList::IsEnabled(kFeatureUpdateClientUseJSON)
-          ? std::vector<GURL>{GURL(kUpdaterJSONDefaultUrl),
-                              GURL(kUpdaterJSONFallbackUrl)}
-          : std::vector<GURL>{GURL(kUpdaterDefaultUrl),
-                              GURL(kUpdaterFallbackUrl)};
+  std::vector<GURL> urls{GURL(kUpdaterJSONDefaultUrl),
+                         GURL(kUpdaterJSONFallbackUrl)};
   if (require_encryption_)
     update_client::RemoveUnsecureUrls(&urls);
 
@@ -131,13 +121,6 @@ bool ConfiguratorImpl::EnabledCupSigning() const {
   return true;
 }
 
-std::vector<uint8_t> ConfiguratorImpl::GetRunActionKeyHash() const {
-  return std::vector<uint8_t>{0x5f, 0x94, 0xe0, 0x3c, 0x64, 0x30, 0x9f, 0xbc,
-                              0xfe, 0x00, 0x9a, 0x27, 0x3e, 0x52, 0xbf, 0xa5,
-                              0x84, 0xb9, 0xb3, 0x75, 0x07, 0x29, 0xde, 0xfa,
-                              0x32, 0x76, 0xd9, 0x93, 0xb5, 0xa3, 0xce, 0x02};
-}
-
 // The default implementation for most embedders returns an empty string.
 // Desktop embedders, such as the Windows component updater can provide a
 // meaningful implementation for this function.
@@ -147,14 +130,7 @@ std::string ConfiguratorImpl::GetAppGuid() const {
 
 std::unique_ptr<update_client::ProtocolHandlerFactory>
 ConfiguratorImpl::GetProtocolHandlerFactory() const {
-  if (base::FeatureList::IsEnabled(kFeatureUpdateClientUseJSON))
-    return std::make_unique<update_client::ProtocolHandlerFactoryJSON>();
-  return std::make_unique<update_client::ProtocolHandlerFactoryXml>();
-}
-
-update_client::RecoveryCRXElevator ConfiguratorImpl::GetRecoveryCRXElevator()
-    const {
-  return {};
+  return std::make_unique<update_client::ProtocolHandlerFactoryJSON>();
 }
 
 }  // namespace component_updater

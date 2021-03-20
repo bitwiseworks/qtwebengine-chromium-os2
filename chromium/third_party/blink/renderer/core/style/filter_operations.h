@@ -70,12 +70,10 @@ class CORE_EXPORT FilterOperations {
   bool HasFilterThatAffectsOpacity() const;
   bool HasFilterThatMovesPixels() const;
 
-  bool HasBlurOrReferenceFilter() const;
-
   void AddClient(SVGResourceClient&) const;
   void RemoveClient(SVGResourceClient&) const;
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   FilterOperationVector operations_;
@@ -85,21 +83,13 @@ class CORE_EXPORT FilterOperations {
 class FilterOperationsWrapper
     : public GarbageCollected<FilterOperationsWrapper> {
  public:
-  static FilterOperationsWrapper* Create() {
-    return MakeGarbageCollected<FilterOperationsWrapper>();
-  }
-
-  static FilterOperationsWrapper* Create(const FilterOperations& operations) {
-    return MakeGarbageCollected<FilterOperationsWrapper>(operations);
-  }
-
   FilterOperationsWrapper() = default;
   explicit FilterOperationsWrapper(const FilterOperations& operations)
       : operations_(operations) {}
 
   const FilterOperations& Operations() const { return operations_; }
 
-  void Trace(blink::Visitor* visitor) { visitor->Trace(operations_); }
+  void Trace(Visitor* visitor) { visitor->Trace(operations_); }
 
  private:
   FilterOperations operations_;

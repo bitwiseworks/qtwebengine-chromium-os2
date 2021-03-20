@@ -8,9 +8,9 @@ declare_args() {
 
 angle_root = "../externals/angle2"
 
-import("../third_party.gni")
 import("$angle_root/src/compiler.gni")
 import("$angle_root/src/libGLESv2.gni")
+import("../third_party.gni")
 
 third_party("angle2") {
   public_include_dirs = [ "$angle_root/include" ]
@@ -57,19 +57,32 @@ config("common") {
 
     # Allow noexcept, even though we build without exceptions
     cflags_cc += [ "/wd4577" ]
-    if (is_clang) {
-      # utilities.cpp includes an 'unsigned long' <= UINT_MAX check
-      cflags_cc += [ "-Wno-tautological-constant-compare" ]
+
+    # Warnings are just noise if we're not maintaining the code.
+    if (is_win) {
+      cflags = [ "/w" ]
+    } else {
+      cflags = [ "-w" ]
     }
   }
 }
 
-copy("commit_id") {
-  sources = [
-    "$angle_root/src/commit.h",
-  ]
-  outputs = [
-    "$root_gen_dir/angle2/id/commit.h",
+commit_id_output_file = "$root_gen_dir/angle2/commit.h"
+action("commit_id") {
+  script = "$angle_root/src/commit_id.py"
+  outputs = [ commit_id_output_file ]
+
+  # Add ANGLE git as a dependency if it is available.
+  angle_git_is_present =
+      exec_script("$angle_root/src/commit_id.py", [ "check" ], "value") == 1
+  if (angle_git_is_present) {
+    # commit id should depend on angle's HEAD revision
+    inputs = [ "$angle_root/.git/HEAD" ]
+  }
+
+  args = [
+    "gen",
+    rebase_path(commit_id_output_file, root_build_dir),
   ]
 }
 
@@ -80,19 +93,18 @@ shared_library("libGLESv2") {
     "LIBANGLE_IMPLEMENTATION",
     "LIBGLESV2_IMPLEMENTATION",
   ]
-  deps = [
-    ":commit_id",
-  ]
+  deps = [ ":commit_id" ]
   libs = []
-  sources = rebase_path(
+  sources =
+      rebase_path(
           angle_preprocessor_sources + angle_translator_sources +
               angle_translator_essl_sources + angle_translator_glsl_sources +
               angle_translator_hlsl_sources + libangle_sources +
-              libangle_common_sources + libangle_image_util_sources +
-              libglesv2_sources + libangle_gl_sources +
-              angle_system_utils_sources,
+              libangle_headers + libangle_common_sources +
+              libangle_image_util_sources + libglesv2_sources +
+              libangle_gl_sources + angle_system_utils_sources + xxhash_sources,
           ".",
-          angle_root)
+          angle_root) + [ "$angle_root/src/libANGLE/FrameCapture_mock.cpp" ]
   if (is_win) {
     sources += [ "$angle_root/src/libGLESv2/libGLESv2_autogen.def" ]
   }
@@ -102,7 +114,8 @@ shared_library("libGLESv2") {
       "Xi",
       "Xext",
     ]
-    sources += rebase_path(libangle_gl_glx_sources, ".", angle_root) +
+    sources += rebase_path(libangle_gl_glx_sources + libangle_gl_egl_sources +
+                               libangle_gl_egl_dl_sources, ".", angle_root) +
                [ "$angle_root/src/third_party/libXNVCtrl/NVCtrl.c" ]
   } else if (is_win) {
     defines += [
@@ -116,6 +129,7 @@ shared_library("libGLESv2") {
                     angle_root)
     libs += [
       "d3d9.lib",
+      "dxgi.lib",
       "dxguid.lib",
       "gdi32.lib",
       "user32.lib",
@@ -130,9 +144,7 @@ shared_library("libEGL") {
   configs += [ ":common" ]
   configs -= [ "//gn:warnings" ]
   defines = [ "LIBEGL_IMPLEMENTATION" ]
-  deps = [
-    ":libGLESv2",
-  ]
+  deps = [ ":libGLESv2" ]
   sources = rebase_path(libegl_sources, ".", angle_root)
   if (is_win) {
     sources += [ "$angle_root/src/libEGL/libEGL.def" ]

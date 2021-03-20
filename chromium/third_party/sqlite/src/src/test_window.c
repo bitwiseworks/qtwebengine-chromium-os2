@@ -37,8 +37,8 @@ struct TestWindowCtx {
 
 static void doTestWindowStep(
   int bInverse,
-  sqlite3_context *ctx,
-  int nArg,
+  sqlite3_context *ctx, 
+  int nArg, 
   sqlite3_value **apArg
 ){
   int i;
@@ -105,15 +105,15 @@ static void doTestWindowFinalize(int bValue, sqlite3_context *ctx){
 }
 
 static void testWindowStep(
-  sqlite3_context *ctx,
-  int nArg,
+  sqlite3_context *ctx, 
+  int nArg, 
   sqlite3_value **apArg
 ){
   doTestWindowStep(0, ctx, nArg, apArg);
 }
 static void testWindowInverse(
-  sqlite3_context *ctx,
-  int nArg,
+  sqlite3_context *ctx, 
+  int nArg, 
   sqlite3_value **apArg
 ){
   doTestWindowStep(1, ctx, nArg, apArg);
@@ -223,8 +223,8 @@ static int SQLITE_TCLAPI test_create_window_misuse(
 ** xStep for sumint().
 */
 static void sumintStep(
-  sqlite3_context *ctx,
-  int nArg,
+  sqlite3_context *ctx, 
+  int nArg, 
   sqlite3_value *apArg[]
 ){
   sqlite3_int64 *pInt;
@@ -244,8 +244,8 @@ static void sumintStep(
 ** xInverse for sumint().
 */
 static void sumintInverse(
-  sqlite3_context *ctx,
-  int nArg,
+  sqlite3_context *ctx, 
+  int nArg, 
   sqlite3_value *apArg[]
 ){
   sqlite3_int64 *pInt;

@@ -74,10 +74,8 @@ void CPDF_PageRenderCache::ClearImageCacheEntry(CPDF_Stream* pStream) {
 
 bool CPDF_PageRenderCache::StartGetCachedBitmap(
     const RetainPtr<CPDF_Image>& pImage,
-    bool bStdCS,
-    uint32_t GroupFamily,
-    bool bLoadMask,
-    CPDF_RenderStatus* pRenderStatus) {
+    const CPDF_RenderStatus* pRenderStatus,
+    bool bStdCS) {
   CPDF_Stream* pStream = pImage->GetStream();
   const auto it = m_ImageCache.find(pStream);
   m_bCurFindCache = it != m_ImageCache.end();
@@ -87,17 +85,16 @@ bool CPDF_PageRenderCache::StartGetCachedBitmap(
     m_pCurImageCacheEntry = pdfium::MakeUnique<CPDF_ImageCacheEntry>(
         m_pPage->GetDocument(), pImage);
   }
-  CPDF_DIBBase::LoadState ret = m_pCurImageCacheEntry->StartGetCachedBitmap(
-      pRenderStatus->GetFormResource(), m_pPage->m_pPageResources.Get(), bStdCS,
-      GroupFamily, bLoadMask, pRenderStatus);
-  if (ret == CPDF_DIBBase::LoadState::kContinue)
+  CPDF_DIB::LoadState ret = m_pCurImageCacheEntry->StartGetCachedBitmap(
+      m_pPage->m_pPageResources.Get(), pRenderStatus, bStdCS);
+  if (ret == CPDF_DIB::LoadState::kContinue)
     return true;
 
   m_nTimeCount++;
   if (!m_bCurFindCache)
     m_ImageCache[pStream] = m_pCurImageCacheEntry.Release();
 
-  if (ret == CPDF_DIBBase::LoadState::kFail)
+  if (ret == CPDF_DIB::LoadState::kFail)
     m_nCacheSize += m_pCurImageCacheEntry->EstimateSize();
 
   return false;
@@ -118,7 +115,8 @@ bool CPDF_PageRenderCache::Continue(PauseIndicatorIface* pPause,
   return false;
 }
 
-void CPDF_PageRenderCache::ResetBitmap(const RetainPtr<CPDF_Image>& pImage) {
+void CPDF_PageRenderCache::ResetBitmapForImage(
+    const RetainPtr<CPDF_Image>& pImage) {
   CPDF_ImageCacheEntry* pEntry;
   CPDF_Stream* pStream = pImage->GetStream();
   const auto it = m_ImageCache.find(pStream);
@@ -127,6 +125,6 @@ void CPDF_PageRenderCache::ResetBitmap(const RetainPtr<CPDF_Image>& pImage) {
 
   pEntry = it->second.get();
   m_nCacheSize -= pEntry->EstimateSize();
-  pEntry->Reset(nullptr);
+  pEntry->Reset();
   m_nCacheSize += pEntry->EstimateSize();
 }

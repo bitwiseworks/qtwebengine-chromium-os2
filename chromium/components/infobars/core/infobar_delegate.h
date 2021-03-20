@@ -9,16 +9,12 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "ui/base/window_open_disposition.h"
+#include "url/gurl.h"
 
 class ConfirmInfoBarDelegate;
 class HungRendererInfoBarDelegate;
-class InsecureContentInfoBarDelegate;
-class NativeAppInfoBarDelegate;
 class PopupBlockedInfoBarDelegate;
-class RegisterProtocolHandlerInfoBarDelegate;
-class ScreenCaptureInfoBarDelegate;
 class ThemeInstalledInfoBarDelegate;
-class ThreeDAPIInfoBarDelegate;
 
 #if defined(OS_ANDROID)
 namespace offline_pages {
@@ -69,7 +65,7 @@ class InfoBarDelegate {
   enum InfoBarIdentifier {
     INVALID = -1,
     TEST_INFOBAR = 0,
-    APP_BANNER_INFOBAR_DELEGATE = 1,
+    // Removed: APP_BANNER_INFOBAR_DELEGATE = 1,
     // Removed: APP_BANNER_INFOBAR_DELEGATE_DESKTOP = 2,
     // Removed: ANDROID_DOWNLOAD_MANAGER_DUPLICATE_INFOBAR_DELEGATE = 3,
     DUPLICATE_DOWNLOAD_INFOBAR_DELEGATE_ANDROID = 4,
@@ -136,7 +132,7 @@ class InfoBarDelegate {
     AUTOFILL_CREDIT_CARD_FILLING_INFOBAR_DELEGATE_ANDROID = 65,
     ADS_BLOCKED_INFOBAR_DELEGATE_ANDROID = 66,
     INSTANT_APPS_INFOBAR_DELEGATE_ANDROID = 67,
-    DATA_REDUCTION_PROXY_PREVIEW_INFOBAR_DELEGATE = 68,
+    // Removed: DATA_REDUCTION_PROXY_PREVIEW_INFOBAR_DELEGATE = 68,
     SCREEN_CAPTURE_INFOBAR_DELEGATE_ANDROID = 69,
     GROUPED_PERMISSION_INFOBAR_DELEGATE_ANDROID = 70,
     OFFLINE_PAGE_INFOBAR_DELEGATE_ANDROID = 71,
@@ -149,16 +145,23 @@ class InfoBarDelegate {
     SURVEY_INFOBAR_ANDROID = 78,
     NEAR_OOM_INFOBAR_ANDROID = 79,
     INSTALLABLE_AMBIENT_BADGE_INFOBAR_DELEGATE = 80,
-    PAGE_LOAD_CAPPING_INFOBAR_DELEGATE = 81,
+    // Removed: PAGE_LOAD_CAPPING_INFOBAR_DELEGATE = 81,
     DOWNLOAD_PROGRESS_INFOBAR_ANDROID = 82,
     AR_CORE_UPGRADE_ANDROID = 83,
     BLOATED_RENDERER_INFOBAR_DELEGATE = 84,
-    SUPERVISED_USERS_DEPRECATED_INFOBAR_DELEGATE = 85,
+    // Removed: SUPERVISED_USERS_DEPRECATED_INFOBAR_DELEGATE = 85,
     NEAR_OOM_REDUCTION_INFOBAR_ANDROID = 86,
     LITE_PAGE_PREVIEWS_INFOBAR = 87,
     MODULE_INSTALL_FAILURE_INFOBAR_ANDROID = 88,
     INLINE_UPDATE_READY_INFOBAR_ANDROID = 89,
     INLINE_UPDATE_FAILED_INFOBAR_ANDROID = 90,
+    FLASH_DEPRECATION_INFOBAR_DELEGATE = 91,
+    SEND_TAB_TO_SELF_INFOBAR_DELEGATE = 92,
+    TAB_SHARING_INFOBAR_DELEGATE = 93,
+    SAFETY_TIP_INFOBAR_DELEGATE = 94,
+    SMS_RECEIVER_INFOBAR_DELEGATE = 95,
+    KNOWN_INTERCEPTION_DISCLOSURE_INFOBAR_DELEGATE = 96,
+    SYNC_ERROR_INFOBAR_DELEGATE_ANDROID = 97,
   };
 
   // Describes navigation events, used to decide whether infobars should be
@@ -172,6 +175,8 @@ class InfoBarDelegate {
     bool did_replace_entry;
     bool is_reload;
     bool is_redirect;
+    // True if the navigation was caused by a form submission.
+    bool is_form_submission = false;
   };
 
   // Value to use when the InfoBar has no icon to show.
@@ -183,7 +188,7 @@ class InfoBarDelegate {
 
   // Returns a unique value identifying the infobar.
   // New implementers must append a new value to the InfoBarIdentifier enum here
-  // and in histograms.xml.
+  // and in histograms/enums.xml.
   virtual InfoBarIdentifier GetIdentifier() const = 0;
 
   virtual InfoBarAutomationType GetInfoBarAutomationType() const;
@@ -205,6 +210,13 @@ class InfoBarDelegate {
   // resource bundle as its icon.
   virtual gfx::Image GetIcon() const;
 
+  // Returns the text of the link to be displayed, if any. Otherwise returns
+  // an empty string.
+  virtual base::string16 GetLinkText() const;
+
+  // Returns the URL the link should navigate to.
+  virtual GURL GetLinkURL() const;
+
   // Returns true if the supplied |delegate| is equal to this one. Equality is
   // left to the implementation to define. This function is called by the
   // InfoBarManager when determining whether or not a delegate should be
@@ -219,20 +231,31 @@ class InfoBarDelegate {
   // can override this function.
   virtual bool ShouldExpire(const NavigationDetails& details) const;
 
+  // Called when the link (if any) is clicked; if this function returns true,
+  // the infobar is then immediately closed. The default implementation opens
+  // the URL returned by GetLinkURL(), above, and returns false. Subclasses MUST
+  // NOT return true if in handling this call something triggers the infobar to
+  // begin closing.
+  //
+  // The |disposition| specifies how the resulting document should be loaded
+  // (based on the event flags present when the link was clicked).
+  virtual bool LinkClicked(WindowOpenDisposition disposition);
+
   // Called when the user clicks on the close button to dismiss the infobar.
   virtual void InfoBarDismissed();
+
+  // Returns true if the InfoBar has a close button; true by default.
+  virtual bool IsCloseable() const;
+
+  // Returns true if the InfoBar should animate when showing or hiding; true by
+  // default.
+  virtual bool ShouldAnimate() const;
 
   // Type-checking downcast routines:
   virtual ConfirmInfoBarDelegate* AsConfirmInfoBarDelegate();
   virtual HungRendererInfoBarDelegate* AsHungRendererInfoBarDelegate();
-  virtual InsecureContentInfoBarDelegate* AsInsecureContentInfoBarDelegate();
-  virtual NativeAppInfoBarDelegate* AsNativeAppInfoBarDelegate();
   virtual PopupBlockedInfoBarDelegate* AsPopupBlockedInfoBarDelegate();
-  virtual RegisterProtocolHandlerInfoBarDelegate*
-      AsRegisterProtocolHandlerInfoBarDelegate();
-  virtual ScreenCaptureInfoBarDelegate* AsScreenCaptureInfoBarDelegate();
   virtual ThemeInstalledInfoBarDelegate* AsThemePreviewInfobarDelegate();
-  virtual ThreeDAPIInfoBarDelegate* AsThreeDAPIInfoBarDelegate();
   virtual translate::TranslateInfoBarDelegate* AsTranslateInfoBarDelegate();
 #if defined(OS_ANDROID)
   virtual offline_pages::OfflinePageInfoBarDelegate*

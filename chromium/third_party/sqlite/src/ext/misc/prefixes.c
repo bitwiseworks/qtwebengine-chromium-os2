@@ -79,6 +79,7 @@ static int prefixesConnect(
     *ppVtab = (sqlite3_vtab*)pNew;
     if( pNew==0 ) return SQLITE_NOMEM;
     memset(pNew, 0, sizeof(*pNew));
+    sqlite3_vtab_config(db, SQLITE_VTAB_INNOCUOUS);
   }
   return rc;
 }
@@ -137,7 +138,7 @@ static int prefixesColumn(
   switch( i ){
     case 0:
       sqlite3_result_text(ctx, pCur->zStr, pCur->nStr - (int)pCur->iRowid,
-                          0);
+                          0); 
       break;
     default:
       sqlite3_result_text(ctx, pCur->zStr, pCur->nStr, 0);
@@ -168,11 +169,11 @@ static int prefixesEof(sqlite3_vtab_cursor *cur){
 /*
 ** This method is called to "rewind" the prefixes_cursor object back
 ** to the first row of output.  This method is always called at least
-** once prior to any call to prefixesColumn() or prefixesRowid() or
+** once prior to any call to prefixesColumn() or prefixesRowid() or 
 ** prefixesEof().
 */
 static int prefixesFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -199,7 +200,7 @@ static int prefixesBestIndex(
   sqlite3_vtab *tab,
   sqlite3_index_info *pIdxInfo
 ){
-  /* Search for a usable equality constraint against column 1
+  /* Search for a usable equality constraint against column 1 
   ** (original_string) and use it if at all possible */
   int i;
   const struct sqlite3_index_constraint *p;
@@ -220,7 +221,7 @@ static int prefixesBestIndex(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** virtual table.
 */
 static sqlite3_module prefixesModule = {
@@ -264,7 +265,7 @@ static sqlite3_module prefixesModule = {
 
 /*
 ** Implementation of function prefix_length(). This function accepts two
-** strings as arguments and returns the length in characters (not bytes),
+** strings as arguments and returns the length in characters (not bytes), 
 ** of the longest prefix shared by the two strings. For example:
 **
 **   prefix_length('abcdxxx', 'abcyy') == 3
@@ -302,8 +303,8 @@ static void prefixLengthFunc(
 __declspec(dllexport)
 #endif
 int sqlite3_prefixes_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

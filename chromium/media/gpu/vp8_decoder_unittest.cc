@@ -38,7 +38,7 @@ class MockVP8Accelerator : public VP8Decoder::VP8Accelerator {
   MOCK_METHOD2(SubmitDecode,
                bool(scoped_refptr<VP8Picture> pic,
                     const Vp8ReferenceFrameVector& reference_frames));
-  MOCK_METHOD1(OutputPicture, bool(const scoped_refptr<VP8Picture>& pic));
+  MOCK_METHOD1(OutputPicture, bool(scoped_refptr<VP8Picture> pic));
 };
 
 // Test VP8Decoder by feeding different VP8 frame sequences and making sure it
@@ -80,7 +80,7 @@ void VP8DecoderTest::SetUp() {
 
 void VP8DecoderTest::DecodeFirstIFrame() {
   ASSERT_EQ(AcceleratedVideoDecoder::kRanOutOfStreamData, Decode(kNullFrame));
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode(kIFrame));
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode(kIFrame));
   EXPECT_EQ(kVideoSize, decoder_->GetPicSize());
   EXPECT_LE(kRequiredNumOfPictures, decoder_->GetRequiredNumOfPictures());
 }
@@ -100,15 +100,27 @@ void VP8DecoderTest::CompleteToDecodeFirstIFrame() {
 AcceleratedVideoDecoder::DecodeResult VP8DecoderTest::Decode(
     std::string input_frame_file) {
   std::string bitstream;
+  scoped_refptr<DecoderBuffer> buffer;
   if (!input_frame_file.empty()) {
     auto input_file = GetTestDataFilePath(input_frame_file);
     EXPECT_TRUE(base::ReadFileToString(input_file, &bitstream));
-    decoder_->SetStream(bitstream_id_++,
-                        reinterpret_cast<const uint8_t*>(bitstream.data()),
-                        bitstream.size());
+    buffer = DecoderBuffer::CopyFrom(
+        reinterpret_cast<const uint8_t*>(bitstream.data()), bitstream.size());
+    EXPECT_NE(buffer.get(), nullptr);
+    decoder_->SetStream(bitstream_id_++, *buffer);
   }
 
-  return decoder_->Decode();
+  AcceleratedVideoDecoder::DecodeResult result = decoder_->Decode();
+  if (input_frame_file.empty())
+    return result;
+  // Since |buffer| is destroyed in this function, Decode() must consume the
+  // buffer by this Decode(). That happens if the return value is
+  // kRanOutOfStreamData, kConfigChange , or kDecodeError (on failure).
+  EXPECT_TRUE(result ==
+                  AcceleratedVideoDecoder::DecodeResult::kRanOutOfStreamData ||
+              result == AcceleratedVideoDecoder::DecodeResult::kConfigChange ||
+              result == AcceleratedVideoDecoder::DecodeResult::kDecodeError);
+  return result;
 }
 
 // Test Cases

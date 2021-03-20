@@ -21,17 +21,21 @@
 
 namespace dawn_native { namespace vulkan {
 
-    class SwapChain : public SwapChainBase {
+    class Device;
+
+    class SwapChain : public OldSwapChainBase {
       public:
-        SwapChain(SwapChainBuilder* builder);
+        static SwapChain* Create(Device* device, const SwapChainDescriptor* descriptor);
         ~SwapChain();
 
       protected:
+        SwapChain(Device* device, const SwapChainDescriptor* descriptor);
+
         TextureBase* GetNextTextureImpl(const TextureDescriptor* descriptor) override;
-        void OnBeforePresent(TextureBase* texture) override;
+        MaybeError OnBeforePresent(TextureBase* texture) override;
 
       private:
-        dawn::TextureUsageBit mTextureUsage;
+        wgpu::TextureUsage mTextureUsage;
     };
 
 }}  // namespace dawn_native::vulkan

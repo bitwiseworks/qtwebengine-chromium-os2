@@ -33,14 +33,12 @@ class SVGPathElement final : public SVGGeometryElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGPathElement);
-
   explicit SVGPathElement(Document&);
 
   Path AsPath() const override;
   Path AttributePath() const;
 
-  float getTotalLength() override;
+  float getTotalLength(ExceptionState&) override;
   SVGPointTearOff* getPointAtLength(float distance) override;
 
   SVGAnimatedPath* GetPath() const { return path_.Get(); }
@@ -51,7 +49,7 @@ class SVGPathElement final : public SVGGeometryElement {
 
   FloatRect GetBBox() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   const StylePath* GetStylePath() const;

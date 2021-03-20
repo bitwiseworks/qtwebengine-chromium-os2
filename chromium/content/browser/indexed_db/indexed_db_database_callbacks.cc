@@ -4,46 +4,44 @@
 
 #include "content/browser/indexed_db/indexed_db_database_callbacks.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/task/post_task.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
 #include "content/browser/indexed_db/indexed_db_dispatcher_host.h"
 #include "content/browser/indexed_db/indexed_db_transaction.h"
-#include "content/public/browser/browser_task_traits.h"
 
 using blink::mojom::IDBDatabaseCallbacksAssociatedPtrInfo;
 
 namespace content {
 
-class IndexedDBDatabaseCallbacks::IOThreadHelper {
- public:
-  explicit IOThreadHelper(IDBDatabaseCallbacksAssociatedPtrInfo callbacks_info);
-  ~IOThreadHelper();
-
-  void SendForcedClose();
-  void SendVersionChange(int64_t old_version, int64_t new_version);
-  void SendAbort(int64_t transaction_id, const IndexedDBDatabaseError& error);
-  void SendComplete(int64_t transaction_id);
-  void SendChanges(blink::mojom::IDBObserverChangesPtr changes);
-  void OnConnectionError();
-
- private:
-  blink::mojom::IDBDatabaseCallbacksAssociatedPtr callbacks_;
-
-  DISALLOW_COPY_AND_ASSIGN(IOThreadHelper);
-};
-
 IndexedDBDatabaseCallbacks::IndexedDBDatabaseCallbacks(
     scoped_refptr<IndexedDBContextImpl> context,
-    IDBDatabaseCallbacksAssociatedPtrInfo callbacks_info)
-    : indexed_db_context_(std::move(context)),
-      io_helper_(new IOThreadHelper(std::move(callbacks_info))) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DETACH_FROM_SEQUENCE(sequence_checker_);
+    mojo::PendingAssociatedRemote<blink::mojom::IDBDatabaseCallbacks>
+        callbacks_remote,
+    base::SequencedTaskRunner* idb_runner)
+    : indexed_db_context_(std::move(context)) {
+  DCHECK(idb_runner->RunsTasksInCurrentSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!callbacks_remote.is_valid())
+    return;
+  callbacks_.Bind(std::move(callbacks_remote));
+  // |callbacks_| is owned by |this|, so if |this| is destroyed, then
+  // |callbacks_| will also be destroyed.  While |callbacks_| is otherwise
+  // alive, |this| will always be valid.
+  callbacks_.set_disconnect_handler(base::BindOnce(
+      &IndexedDBDatabaseCallbacks::OnConnectionError, base::Unretained(this)));
 }
 
 IndexedDBDatabaseCallbacks::~IndexedDBDatabaseCallbacks() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // Transfer |context_| ownership to a new task to prevent re-entrancy through
+  // IndexedDBFactory::ContextDestroyed.
+  base::SequencedTaskRunnerHandle::Get()->ReleaseSoon(
+      FROM_HERE, std::move(indexed_db_context_));
 }
 
 void IndexedDBDatabaseCallbacks::OnForcedClose() {
@@ -51,10 +49,8 @@ void IndexedDBDatabaseCallbacks::OnForcedClose() {
   if (complete_)
     return;
 
-  DCHECK(io_helper_);
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                           base::BindOnce(&IOThreadHelper::SendForcedClose,
-                                          base::Unretained(io_helper_.get())));
+  if (callbacks_)
+    callbacks_->ForcedClose();
   complete_ = true;
 }
 
@@ -64,11 +60,8 @@ void IndexedDBDatabaseCallbacks::OnVersionChange(int64_t old_version,
   if (complete_)
     return;
 
-  DCHECK(io_helper_);
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                           base::BindOnce(&IOThreadHelper::SendVersionChange,
-                                          base::Unretained(io_helper_.get()),
-                                          old_version, new_version));
+  if (callbacks_)
+    callbacks_->VersionChange(old_version, new_version);
 }
 
 void IndexedDBDatabaseCallbacks::OnAbort(
@@ -78,11 +71,8 @@ void IndexedDBDatabaseCallbacks::OnAbort(
   if (complete_)
     return;
 
-  DCHECK(io_helper_);
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                           base::BindOnce(&IOThreadHelper::SendAbort,
-                                          base::Unretained(io_helper_.get()),
-                                          transaction.id(), error));
+  if (callbacks_)
+    callbacks_->Abort(transaction.id(), error.code(), error.message());
 }
 
 void IndexedDBDatabaseCallbacks::OnComplete(
@@ -92,66 +82,19 @@ void IndexedDBDatabaseCallbacks::OnComplete(
     return;
 
   indexed_db_context_->TransactionComplete(transaction.database()->origin());
-  DCHECK(io_helper_);
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(&IOThreadHelper::SendComplete,
-                     base::Unretained(io_helper_.get()), transaction.id()));
+  if (callbacks_)
+    callbacks_->Complete(transaction.id());
 }
 
 void IndexedDBDatabaseCallbacks::OnDatabaseChange(
     blink::mojom::IDBObserverChangesPtr changes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(io_helper_);
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(&IOThreadHelper::SendChanges,
-                     base::Unretained(io_helper_.get()), std::move(changes)));
-}
-
-IndexedDBDatabaseCallbacks::IOThreadHelper::IOThreadHelper(
-    IDBDatabaseCallbacksAssociatedPtrInfo callbacks_info) {
-  if (!callbacks_info.is_valid())
-    return;
-  callbacks_.Bind(std::move(callbacks_info));
-  callbacks_.set_connection_error_handler(base::BindOnce(
-      &IOThreadHelper::OnConnectionError, base::Unretained(this)));
-}
-
-IndexedDBDatabaseCallbacks::IOThreadHelper::~IOThreadHelper() {}
-
-void IndexedDBDatabaseCallbacks::IOThreadHelper::SendForcedClose() {
-  if (callbacks_)
-    callbacks_->ForcedClose();
-}
-
-void IndexedDBDatabaseCallbacks::IOThreadHelper::SendVersionChange(
-    int64_t old_version,
-    int64_t new_version) {
-  if (callbacks_)
-    callbacks_->VersionChange(old_version, new_version);
-}
-
-void IndexedDBDatabaseCallbacks::IOThreadHelper::SendAbort(
-    int64_t transaction_id,
-    const IndexedDBDatabaseError& error) {
-  if (callbacks_)
-    callbacks_->Abort(transaction_id, error.code(), error.message());
-}
-
-void IndexedDBDatabaseCallbacks::IOThreadHelper::SendComplete(
-    int64_t transaction_id) {
-  if (callbacks_)
-    callbacks_->Complete(transaction_id);
-}
-
-void IndexedDBDatabaseCallbacks::IOThreadHelper::SendChanges(
-    blink::mojom::IDBObserverChangesPtr changes) {
   if (callbacks_)
     callbacks_->Changes(std::move(changes));
 }
 
-void IndexedDBDatabaseCallbacks::IOThreadHelper::OnConnectionError() {
+void IndexedDBDatabaseCallbacks::OnConnectionError() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   callbacks_.reset();
 }
 

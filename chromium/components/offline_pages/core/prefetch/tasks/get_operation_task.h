@@ -24,22 +24,28 @@ class GetOperationTask : public Task {
  public:
   using OperationResultList = std::unique_ptr<std::vector<std::string>>;
 
+  // This is a repeating version of PrefetchRequestFinishedCallback as it may be
+  // called more than once when multiple requests are placed.
+  using GetOperationFinishedCallback =
+      base::RepeatingCallback<void(PrefetchRequestStatus status,
+                                   const std::string& operation_name,
+                                   const std::vector<RenderPageInfo>& pages)>;
+
   GetOperationTask(PrefetchStore* store,
                    PrefetchNetworkRequestFactory* request_factory,
-                   PrefetchRequestFinishedCallback callback);
+                   GetOperationFinishedCallback callback);
   ~GetOperationTask() override;
 
+ private:
   // Task implementation.
   void Run() override;
-
- private:
   void StartGetOperationRequests(OperationResultList list);
 
   PrefetchStore* prefetch_store_;
   PrefetchNetworkRequestFactory* request_factory_;
-  PrefetchRequestFinishedCallback callback_;
+  GetOperationFinishedCallback callback_;
 
-  base::WeakPtrFactory<GetOperationTask> weak_factory_;
+  base::WeakPtrFactory<GetOperationTask> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GetOperationTask);
 };

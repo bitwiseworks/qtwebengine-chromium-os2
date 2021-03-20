@@ -13,14 +13,15 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/test_completion_callback.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/proxy_resolution/configured_proxy_resolution_service.h"
 #include "net/proxy_resolution/mock_proxy_resolver.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
-#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/socket/client_socket_pool_manager.h"
 #include "net/socket/socket_test_util.h"
 #include "net/test/gtest_util.h"
@@ -40,7 +41,7 @@ class TestURLRequestContextWithProxy : public net::TestURLRequestContext {
       net::ClientSocketFactory* client_socket_factory)
       : TestURLRequestContext(true) {
     context_storage_.set_proxy_resolution_service(
-        net::ProxyResolutionService::CreateFixedFromPacResult(
+        net::ConfiguredProxyResolutionService::CreateFixedFromPacResult(
             pac_result, TRAFFIC_ANNOTATION_FOR_TESTS));
     // net::MockHostResolver maps all hosts to localhost.
     auto host_resolver = std::make_unique<net::MockHostResolver>();
@@ -70,15 +71,15 @@ class ProxyResolvingClientSocketTest
     base::RunLoop().RunUntilIdle();
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   TestURLRequestContextWithProxy context_with_proxy_;
   net::MockClientSocketFactory mock_client_socket_factory_;
   const bool use_tls_;
 };
 
-INSTANTIATE_TEST_CASE_P(/* no prefix */,
-                        ProxyResolvingClientSocketTest,
-                        ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All,
+                         ProxyResolvingClientSocketTest,
+                         ::testing::Bool());
 
 // Tests that the global socket pool limit
 // (ClientSocketPoolManager::max_sockets_per_group) doesn't apply to this
@@ -214,8 +215,7 @@ TEST_P(ProxyResolvingClientSocketTest, ConnectToProxy) {
       // ProxyResolvingClientSocket::GetPeerAddress() hides the ip of the
       // proxy, so call private member to make sure address is correct.
       EXPECT_EQ(net::ERR_NAME_NOT_RESOLVED, status);
-      status =
-          socket->socket_handle_->socket()->GetPeerAddress(&actual_remote_addr);
+      status = socket->socket_->GetPeerAddress(&actual_remote_addr);
     }
     EXPECT_EQ(net::OK, status);
     EXPECT_EQ(remote_addr.ToString(), actual_remote_addr.ToString());
@@ -317,8 +317,7 @@ TEST_P(ProxyResolvingClientSocketTest, ReadWriteErrors) {
       // ProxyResolvingClientSocket::GetPeerAddress() hides the ip of the
       // proxy, so call private member to make sure address is correct.
       EXPECT_EQ(net::ERR_NAME_NOT_RESOLVED, status);
-      status =
-          socket->socket_handle_->socket()->GetPeerAddress(&actual_remote_addr);
+      status = socket->socket_->GetPeerAddress(&actual_remote_addr);
     }
     EXPECT_EQ(net::OK, status);
     EXPECT_EQ(remote_addr.ToString(), actual_remote_addr.ToString());
@@ -411,8 +410,8 @@ TEST_P(ProxyResolvingClientSocketTest, ResetSocketAfterTunnelAuth) {
   int status = socket->Connect(callback.callback());
   EXPECT_THAT(callback.GetResult(status),
               net::test::IsError(net::ERR_PROXY_AUTH_REQUESTED));
-  // Make sure |socket_handle_| is closed appropriately.
-  EXPECT_FALSE(socket->socket_handle_->socket());
+  // Make sure |socket_| is closed appropriately.
+  EXPECT_FALSE(socket->socket_);
 }
 
 TEST_P(ProxyResolvingClientSocketTest, MultiroundAuth) {
@@ -467,16 +466,16 @@ TEST_P(ProxyResolvingClientSocketTest, MultiroundAuth) {
           ->GetSession()
           ->http_auth_cache();
 
-  auth_cache->Add(GURL("http://bad:99"), "test_realm",
-                  net::HttpAuth::AUTH_SCHEME_BASIC,
-                  "Basic realm=\"test_realm\"",
+  auth_cache->Add(GURL("http://bad:99"), net::HttpAuth::AUTH_PROXY,
+                  "test_realm", net::HttpAuth::AUTH_SCHEME_BASIC,
+                  net::NetworkIsolationKey(), "Basic realm=\"test_realm\"",
                   net::AuthCredentials(base::ASCIIToUTF16("user"),
                                        base::ASCIIToUTF16("password")),
                   std::string());
 
-  auth_cache->Add(GURL("http://bad:99"), "test_realm2",
-                  net::HttpAuth::AUTH_SCHEME_BASIC,
-                  "Basic realm=\"test_realm2\"",
+  auth_cache->Add(GURL("http://bad:99"), net::HttpAuth::AUTH_PROXY,
+                  "test_realm2", net::HttpAuth::AUTH_SCHEME_BASIC,
+                  net::NetworkIsolationKey(), "Basic realm=\"test_realm2\"",
                   net::AuthCredentials(base::ASCIIToUTF16("user2"),
                                        base::ASCIIToUTF16("password2")),
                   std::string());
@@ -531,9 +530,9 @@ TEST_P(ProxyResolvingClientSocketTest, ReusesHTTPAuthCache_Lookup) {
   // We are adding these credentials at an empty path so that it won't be picked
   // up by the preemptive authentication step and will only be picked up via
   // origin + realm + scheme lookup.
-  auth_cache->Add(GURL("http://bad:99"), "test_realm",
-                  net::HttpAuth::AUTH_SCHEME_BASIC,
-                  "Basic realm=\"test_realm\"",
+  auth_cache->Add(GURL("http://bad:99"), net::HttpAuth::AUTH_PROXY,
+                  "test_realm", net::HttpAuth::AUTH_SCHEME_BASIC,
+                  net::NetworkIsolationKey(), "Basic realm=\"test_realm\"",
                   net::AuthCredentials(base::ASCIIToUTF16("user"),
                                        base::ASCIIToUTF16("password")),
                   std::string());
@@ -565,9 +564,9 @@ TEST_P(ProxyResolvingClientSocketTest, FactoryUsesLatestHTTPAuthCache) {
   // We are adding these credentials at an empty path so that it won't be picked
   // up by the preemptive authentication step and will only be picked up via
   // origin + realm + scheme lookup.
-  auth_cache->Add(GURL("http://bad:99"), "test_realm",
-                  net::HttpAuth::AUTH_SCHEME_BASIC,
-                  "Basic realm=\"test_realm\"",
+  auth_cache->Add(GURL("http://bad:99"), net::HttpAuth::AUTH_PROXY,
+                  "test_realm", net::HttpAuth::AUTH_SCHEME_BASIC,
+                  net::NetworkIsolationKey(), "Basic realm=\"test_realm\"",
                   net::AuthCredentials(base::ASCIIToUTF16("user"),
                                        base::ASCIIToUTF16("password")),
                   std::string());
@@ -629,9 +628,9 @@ TEST_P(ProxyResolvingClientSocketTest, ReusesHTTPAuthCache_Preemptive) {
           ->GetSession()
           ->http_auth_cache();
 
-  auth_cache->Add(GURL("http://bad:99"), "test_realm",
-                  net::HttpAuth::AUTH_SCHEME_BASIC,
-                  "Basic realm=\"test_realm\"",
+  auth_cache->Add(GURL("http://bad:99"), net::HttpAuth::AUTH_PROXY,
+                  "test_realm", net::HttpAuth::AUTH_SCHEME_BASIC,
+                  net::NetworkIsolationKey(), "Basic realm=\"test_realm\"",
                   net::AuthCredentials(base::ASCIIToUTF16("user"),
                                        base::ASCIIToUTF16("password")),
                   "/");
@@ -687,7 +686,7 @@ TEST_P(ProxyResolvingClientSocketTest, URLSanitized) {
       std::make_unique<net::MockAsyncProxyResolverFactory>(false);
   net::MockAsyncProxyResolverFactory* proxy_resolver_factory_raw =
       proxy_resolver_factory.get();
-  net::ProxyResolutionService service(
+  net::ConfiguredProxyResolutionService service(
       std::make_unique<net::ProxyConfigServiceFixed>(
           net::ProxyConfigWithAnnotation(proxy_config,
                                          TRAFFIC_ANNOTATION_FOR_TESTS)),
@@ -730,7 +729,7 @@ TEST_P(ProxyResolvingClientSocketTest,
       std::make_unique<net::MockAsyncProxyResolverFactory>(false);
   net::MockAsyncProxyResolverFactory* proxy_resolver_factory_raw =
       proxy_resolver_factory.get();
-  net::ProxyResolutionService service(
+  net::ConfiguredProxyResolutionService service(
       std::make_unique<net::ProxyConfigServiceFixed>(
           net::ProxyConfigWithAnnotation(proxy_config,
                                          TRAFFIC_ANNOTATION_FOR_TESTS)),
@@ -763,7 +762,7 @@ TEST_P(ProxyResolvingClientSocketTest, NoSupportedProxies) {
   proxy_config.proxy_rules().ParseFromString("quic://foopy:8080");
   auto proxy_resolver_factory =
       std::make_unique<net::MockAsyncProxyResolverFactory>(false);
-  net::ProxyResolutionService service(
+  net::ConfiguredProxyResolutionService service(
       std::make_unique<net::ProxyConfigServiceFixed>(
           net::ProxyConfigWithAnnotation(proxy_config,
                                          TRAFFIC_ANNOTATION_FOR_TESTS)),
@@ -793,7 +792,7 @@ class ReconsiderProxyAfterErrorTest
 
   ~ReconsiderProxyAfterErrorTest() override {}
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   net::MockClientSocketFactory mock_client_socket_factory_;
   TestURLRequestContextWithProxy context_with_proxy_;
   const bool use_tls_;
@@ -817,8 +816,8 @@ const int kProxyTestMockErrors[] = {net::ERR_PROXY_CONNECTION_FAILED,
                                     net::ERR_PROXY_CERTIFICATE_INVALID,
                                     net::ERR_SSL_PROTOCOL_ERROR};
 
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     ReconsiderProxyAfterErrorTest,
     testing::Combine(testing::Bool(),
                      testing::Bool(),

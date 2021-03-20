@@ -112,7 +112,7 @@ bool ImageDecoderWrapper::Decode(ImageDecoderFactory* factory,
 
   // For multi-frame image decoders, we need to know how many frames are
   // in that image in order to release the decoder when all frames are
-  // decoded. frameCount() is reliable only if all data is received and set in
+  // decoded. FrameCount() is reliable only if all data is received and set in
   // decoder, particularly with GIF.
   if (all_data_received_)
     *frame_count = decoder->FrameCount();
@@ -127,7 +127,7 @@ bool ImageDecoderWrapper::Decode(ImageDecoderFactory* factory,
   {
     // This trace event is important since it is used by telemetry scripts to
     // measure the decode time.
-    TRACE_EVENT0("blink", "ImageFrameGenerator::decode");
+    TRACE_EVENT0("blink,benchmark", "ImageFrameGenerator::decode");
     frame = decoder->DecodeFrameBufferAtIndex(frame_index_);
   }
   // SetMemoryAllocator() can try to access decoder's data, so we have to
@@ -287,6 +287,7 @@ std::unique_ptr<ImageDecoder> ImageDecoderWrapper::CreateDecoderWithData(
   // The newly created decoder just grabbed the data.  No need to reset it.
   return ImageDecoder::Create(data_, all_data_received_, alpha_option_,
                               decoding_option_, decoder_color_behavior_,
+                              ImageDecoder::OverrideAllowDecodeToYuv::kDeny,
                               scaled_size_);
 }
 

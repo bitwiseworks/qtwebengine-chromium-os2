@@ -294,7 +294,7 @@ foreach b $boolean_options {
 #endif
 }]
 }
-
+  
 foreach v $value_options {
   set name [trim_name $v]
   set options($name) [subst {

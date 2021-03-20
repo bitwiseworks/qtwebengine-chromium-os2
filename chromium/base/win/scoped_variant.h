@@ -6,6 +6,7 @@
 #define BASE_WIN_SCOPED_VARIANT_H_
 
 #include <windows.h>
+
 #include <oleauto.h>
 #include <stdint.h>
 
@@ -42,8 +43,15 @@ class BASE_EXPORT ScopedVariant {
 
   // Creates a new integral type variant and assigns the value to
   // VARIANT.lVal (32 bit sized field).
-  // NOTE: VT_BOOL constructs here as VARIANT.boolVal.
-  explicit ScopedVariant(int value, VARTYPE vt = VT_I4);
+  explicit ScopedVariant(long value, VARTYPE vt = VT_I4);
+
+  // Creates a new integral type variant for the int type and assigns the value
+  // to VARIANT.lVal (32 bit sized field).
+  explicit ScopedVariant(int value);
+
+  // Creates a new boolean (VT_BOOL) variant and assigns the value to
+  // VARIANT.boolVal.
+  explicit ScopedVariant(bool value);
 
   // Creates a new double-precision type variant.  |vt| must be either VT_R8
   // or VT_DATE.
@@ -61,11 +69,12 @@ class BASE_EXPORT ScopedVariant {
   // Copies the variant.
   explicit ScopedVariant(const VARIANT& var);
 
+  // Moves the wrapped variant into another ScopedVariant.
+  ScopedVariant(ScopedVariant&& var);
+
   ~ScopedVariant();
 
-  inline VARTYPE type() const {
-    return var_.vt;
-  }
+  inline VARTYPE type() const { return var_.vt; }
 
   // Give ScopedVariant ownership over an already allocated VARIANT.
   void Reset(const VARIANT& var = kEmptyVariant);
@@ -126,6 +135,9 @@ class BASE_EXPORT ScopedVariant {
   // over that.
   const VARIANT* ptr() const { return &var_; }
 
+  // Moves the ScopedVariant to another instance.
+  ScopedVariant& operator=(ScopedVariant&& var);
+
   // Like other scoped classes (e.g. scoped_refptr, ScopedBstr,
   // Microsoft::WRL::ComPtr) we support the assignment operator for the type we
   // wrap.
@@ -143,9 +155,7 @@ class BASE_EXPORT ScopedVariant {
 
   // Allows the ScopedVariant instance to be passed to functions either by value
   // or by const reference.
-  operator const VARIANT&() const {
-    return var_;
-  }
+  operator const VARIANT&() const { return var_; }
 
   // Used as a debug check to see if we're leaking anything.
   static bool IsLeakableVarType(VARTYPE vt);

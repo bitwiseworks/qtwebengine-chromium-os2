@@ -5,11 +5,11 @@
 
 '''Unit tests for grit.node.message'''
 
+from __future__ import print_function
 
 import os
 import sys
 import unittest
-import StringIO
 
 if __name__ == '__main__':
   sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
@@ -97,6 +97,17 @@ class MessageUnittest(unittest.TestCase):
     msg.SetReplaceEllipsis(True)
     content = msg.Translate('en')
     self.failUnlessEqual(u'A...B.... %s\u2026 B\u2026 C\u2026', content)
+
+  def testRemoveByteOrderMark(self):
+    root = util.ParseGrdForUnittest(u'''
+        <messages>
+        <message name="IDS_HAS_BOM" desc="">
+        \uFEFFThis\uFEFF i\uFEFFs OK\uFEFF
+        </message>
+        </messages>''')
+    msg, = root.GetChildrenOfType(message.MessageNode)
+    content = msg.Translate('en')
+    self.failUnlessEqual(u'This is OK', content)
 
   def testPlaceholderHasTooManyExamples(self):
     try:

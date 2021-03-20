@@ -23,12 +23,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://dvcs.w3.org/hg/speech-api/raw-file/tip/webspeechapi.html#speechrecognitionevent
+// https://w3c.github.io/speech-api/#speechrecognitionevent
 
 [
-    NoInterfaceObject,
-    Constructor(DOMString type, optional SpeechRecognitionEventInit initDict)
+    LegacyWindowAlias=webkitSpeechRecognitionEvent,
+    LegacyWindowAlias_Measure,
+    LegacyWindowAlias_RuntimeEnabled=ScriptedSpeechRecognition,
+    NoInterfaceObject
 ] interface SpeechRecognitionEvent : Event {
+    constructor(DOMString type, optional SpeechRecognitionEventInit initDict = {});
     readonly attribute unsigned long resultIndex;
     readonly attribute SpeechRecognitionResultList? results;
 

@@ -14,10 +14,12 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/sequence_checker.h"
 #include "base/strings/string16.h"
 #include "components/bookmarks/browser/bookmark_client.h"
 #include "components/bookmarks/browser/bookmark_node.h"
@@ -83,30 +85,49 @@ class BookmarkModel : public BookmarkUndoProvider,
             const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner);
 
   // Returns true if the model finished loading.
-  bool loaded() const { return loaded_; }
+  bool loaded() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return loaded_;
+  }
 
   // Returns the object responsible for tracking loading.
-  ModelLoader* model_loader() { return model_loader_.get(); }
+  scoped_refptr<ModelLoader> model_loader();
 
   // Returns the root node. The 'bookmark bar' node and 'other' node are
   // children of the root node.
-  const BookmarkNode* root_node() const { return root_; }
+  const BookmarkNode* root_node() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return root_;
+  }
 
   // Returns the 'bookmark bar' node. This is NULL until loaded.
-  const BookmarkNode* bookmark_bar_node() const { return bookmark_bar_node_; }
+  const BookmarkNode* bookmark_bar_node() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return bookmark_bar_node_;
+  }
 
   // Returns the 'other' node. This is NULL until loaded.
-  const BookmarkNode* other_node() const { return other_node_; }
+  const BookmarkNode* other_node() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return other_node_;
+  }
 
   // Returns the 'mobile' node. This is NULL until loaded.
-  const BookmarkNode* mobile_node() const { return mobile_node_; }
+  const BookmarkNode* mobile_node() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return mobile_node_;
+  }
 
-  bool is_root_node(const BookmarkNode* node) const { return node == root_; }
+  bool is_root_node(const BookmarkNode* node) const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return node == root_;
+  }
 
   // Returns whether the given |node| is one of the permanent nodes - root node,
   // 'bookmark bar' node, 'other' node or 'mobile' node, or one of the root
   // nodes supplied by the |client_|.
   bool is_permanent_node(const BookmarkNode* node) const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     return node && (node == root_ || node->parent() == root_);
   }
 
@@ -126,7 +147,8 @@ class BookmarkModel : public BookmarkUndoProvider,
   bool IsDoingExtensiveChanges() const { return extensive_changes_ > 0; }
 
   // Removes |node| from the model and deletes it. Removing a folder node
-  // recursively removes all nodes. Observers are notified immediately.
+  // recursively removes all nodes. Observers are notified immediately. |node|
+  // must not be a permanent node.
   void Remove(const BookmarkNode* node);
 
   // Removes all the non-permanent bookmark nodes that are editable by the user.
@@ -137,12 +159,12 @@ class BookmarkModel : public BookmarkUndoProvider,
   // Moves |node| to |new_parent| and inserts it at the given |index|.
   void Move(const BookmarkNode* node,
             const BookmarkNode* new_parent,
-            int index);
+            size_t index);
 
   // Inserts a copy of |node| into |new_parent| at |index|.
   void Copy(const BookmarkNode* node,
             const BookmarkNode* new_parent,
-            int index);
+            size_t index);
 
   // Returns the favicon for |node|. If the favicon has not yet been loaded,
   // a load will be triggered and the observer of the model notified when done.
@@ -173,51 +195,41 @@ class BookmarkModel : public BookmarkUndoProvider,
   const BookmarkNode* GetMostRecentlyAddedUserNodeForURL(const GURL& url);
 
   // Returns true if there are bookmarks, otherwise returns false.
-  // This method is thread safe.
   bool HasBookmarks();
 
   // Returns true is there is no user created bookmarks or folders.
   bool HasNoUserCreatedBookmarksOrFolders();
 
   // Returns true if the specified URL is bookmarked.
-  //
-  // If not on the main thread you *must* invoke BlockTillLoaded first.
   bool IsBookmarked(const GURL& url);
 
   // Returns, by reference in |bookmarks|, the set of bookmarked urls and their
   // titles. This returns the unique set of URLs. For example, if two bookmarks
   // reference the same URL only one entry is added not matter the titles are
   // same or not.
-  //
-  // If not on the main thread you *must* invoke BlockTillLoaded first.
   void GetBookmarks(std::vector<UrlAndTitle>* urls);
 
-  // Adds a new folder node at the specified position.
-  const BookmarkNode* AddFolder(const BookmarkNode* parent,
-                                int index,
-                                const base::string16& title);
-
-  // Adds a new folder with meta info.
-  const BookmarkNode* AddFolderWithMetaInfo(
+  // Adds a new folder node at the specified position with the given |guid| and
+  // |meta_info|. If a GUID is provided, it must be a valid version 4 GUID,
+  // otherwise a new one is generated to replace it.
+  const BookmarkNode* AddFolder(
       const BookmarkNode* parent,
-      int index,
+      size_t index,
       const base::string16& title,
-      const BookmarkNode::MetaInfoMap* meta_info);
+      const BookmarkNode::MetaInfoMap* meta_info = nullptr,
+      base::Optional<std::string> guid = base::nullopt);
 
-  // Adds a url at the specified position.
-  const BookmarkNode* AddURL(const BookmarkNode* parent,
-                             int index,
-                             const base::string16& title,
-                             const GURL& url);
-
-  // Adds a url with a specific creation date and meta info.
-  const BookmarkNode* AddURLWithCreationTimeAndMetaInfo(
+  // Adds a url at the specified position with the given |creation_time|,
+  // |meta_info| and |guid|. If a GUID is provided, it must be a valid version 4
+  // GUID, otherwise a new one is generated to replace it.
+  const BookmarkNode* AddURL(
       const BookmarkNode* parent,
-      int index,
+      size_t index,
       const base::string16& title,
       const GURL& url,
-      const base::Time& creation_time,
-      const BookmarkNode::MetaInfoMap* meta_info);
+      const BookmarkNode::MetaInfoMap* meta_info = nullptr,
+      base::Optional<base::Time> creation_time = base::nullopt,
+      base::Optional<std::string> guid = base::nullopt);
 
   // Sorts the children of |parent|, notifying observers by way of the
   // BookmarkNodeChildrenReordered method.
@@ -265,14 +277,6 @@ class BookmarkModel : public BookmarkUndoProvider,
     return expanded_state_tracker_.get();
   }
 
-  // Sets the visibility of one of the permanent nodes (unless the node must
-  // always be visible, see |BookmarkClient::IsPermanentNodeVisible| for more
-  // details). This is set by sync.
-  void SetPermanentNodeVisible(BookmarkNode::Type type, bool value);
-
-  // Returns the permanent node of type |type|.
-  const BookmarkPermanentNode* PermanentNode(BookmarkNode::Type type);
-
   // Sets/deletes meta info of |node|.
   void SetNodeMetaInfo(const BookmarkNode* node,
                        const std::string& key,
@@ -292,10 +296,6 @@ class BookmarkModel : public BookmarkUndoProvider,
     return non_cloned_keys_;
   }
 
-  // Sets the sync transaction version of |node|.
-  void SetNodeSyncTransactionVersion(const BookmarkNode* node,
-                                     int64_t sync_transaction_version);
-
   // Notify BookmarkModel that the favicons for the given page URLs (e.g.
   // http://www.google.com) and the given icon URL (e.g.
   // http://www.google.com/favicon.ico) have changed. It is valid to call
@@ -309,6 +309,10 @@ class BookmarkModel : public BookmarkUndoProvider,
 
   void SetUndoDelegate(BookmarkUndoDelegate* undo_delegate);
 
+  base::WeakPtr<BookmarkModel> AsWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
  private:
   friend class BookmarkCodecTest;
   friend class BookmarkModelFaviconTest;
@@ -318,7 +322,7 @@ class BookmarkModel : public BookmarkUndoProvider,
 
   // BookmarkUndoProvider:
   void RestoreRemovedNode(const BookmarkNode* parent,
-                          int index,
+                          size_t index,
                           std::unique_ptr<BookmarkNode> node) override;
 
   // Notifies the observers for adding every descedent of |node|.
@@ -328,7 +332,7 @@ class BookmarkModel : public BookmarkUndoProvider,
   // the node is a url, its url is added to removed_urls.
   //
   // This does NOT delete the node.
-  void RemoveNode(BookmarkNode* node);
+  void RemoveNodeFromIndexRecursive(BookmarkNode* node);
 
   // Called when done loading. Updates internal state and notifies observers.
   void DoneLoading(std::unique_ptr<BookmarkLoadDetails> details);
@@ -336,14 +340,14 @@ class BookmarkModel : public BookmarkUndoProvider,
   // Adds the |node| at |parent| in the specified |index| and notifies its
   // observers.
   BookmarkNode* AddNode(BookmarkNode* parent,
-                        int index,
+                        size_t index,
                         std::unique_ptr<BookmarkNode> node);
 
   // Adds |node| to |index_| and recursisvely invokes this for all children.
   void AddNodeToIndexRecursive(BookmarkNode* node);
 
   // Returns true if the parent and index are valid.
-  bool IsValidIndex(const BookmarkNode* parent, int index, bool allow_end);
+  bool IsValidIndex(const BookmarkNode* parent, size_t index, bool allow_end);
 
   // Notification that a favicon has finished loading. If we can decode the
   // favicon, FaviconLoaded is invoked.
@@ -408,7 +412,12 @@ class BookmarkModel : public BookmarkUndoProvider,
   // Reads/writes bookmarks to disk.
   std::unique_ptr<BookmarkStorage> store_;
 
-  std::unique_ptr<TitledUrlIndex> index_;
+  std::unique_ptr<TitledUrlIndex> titled_url_index_;
+
+#if DCHECK_IS_ON()
+  // GUID index used to verify uniqueness in DCHECK-enabled builds.
+  std::set<std::string> guid_index_;
+#endif  // DCHECK_IS_ON()
 
   // Owned by |model_loader_|.
   // WARNING: in some tests this does *not* refer to
@@ -428,6 +437,8 @@ class BookmarkModel : public BookmarkUndoProvider,
   std::unique_ptr<BookmarkUndoDelegate> empty_undo_delegate_;
 
   scoped_refptr<ModelLoader> model_loader_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<BookmarkModel> weak_factory_{this};
 

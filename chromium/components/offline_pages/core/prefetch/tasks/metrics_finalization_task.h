@@ -23,15 +23,14 @@ class MetricsFinalizationTask : public Task {
   explicit MetricsFinalizationTask(PrefetchStore* prefetch_store);
   ~MetricsFinalizationTask() override;
 
+ private:
   // Task implementation.
   void Run() override;
-
- private:
   void MetricsFinalized(bool result);
 
   PrefetchStore* prefetch_store_;
 
-  base::WeakPtrFactory<MetricsFinalizationTask> weak_factory_;
+  base::WeakPtrFactory<MetricsFinalizationTask> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(MetricsFinalizationTask);
 };
 

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <functional>
+
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
@@ -16,8 +19,8 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "storage/browser/blob/blob_memory_controller.h"
+#include "storage/browser/blob/blob_storage_constants.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/common/blob_storage/blob_storage_constants.h"
 
 namespace content {
 namespace {
@@ -59,10 +62,9 @@ class BlobStorageBrowserTest : public ContentBrowserTest {
   }
 
   void SetBlobLimits() {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&SetBlobLimitsOnIO, GetBlobContext(),
-                       base::ConstRef(limits_)));
+    base::PostTask(FROM_HERE, {BrowserThread::IO},
+                   base::BindOnce(&SetBlobLimitsOnIO, GetBlobContext(),
+                                  std::cref(limits_)));
   }
 
   void SimpleTest(const GURL& test_url, bool incognito = false) {
@@ -98,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(BlobStorageBrowserTest, BlobCombinations) {
 
   auto blob_context = GetBlobContext();
   base::RunLoop loop;
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO}, base::BindLambdaForTesting([&]() {
         const storage::BlobMemoryController& memory_controller =
             blob_context->context()->memory_controller();
@@ -106,11 +108,11 @@ IN_PROC_BROWSER_TEST_F(BlobStorageBrowserTest, BlobCombinations) {
         // Since this is basically random, we just check bounds.
         EXPECT_LT(0u, memory_controller.memory_usage());
         EXPECT_LT(0ul, memory_controller.disk_usage());
-        EXPECT_GT(memory_controller.disk_usage(),
+        EXPECT_GE(memory_controller.disk_usage(),
                   static_cast<uint64_t>(memory_controller.memory_usage()));
-        EXPECT_GT(limits_.max_blob_in_memory_space,
+        EXPECT_GE(limits_.max_blob_in_memory_space,
                   memory_controller.memory_usage());
-        EXPECT_GT(limits_.effective_max_disk_space,
+        EXPECT_GE(limits_.effective_max_disk_space,
                   memory_controller.disk_usage());
 
         loop.Quit();

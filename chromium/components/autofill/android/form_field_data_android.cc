@@ -6,8 +6,8 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "components/autofill/android/jni_headers/FormFieldData_jni.h"
 #include "components/autofill/core/common/autofill_util.h"
-#include "jni/FormFieldData_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -56,7 +56,8 @@ ScopedJavaLocalRef<jobject> FormFieldDataAndroid::GetJavaPeer() {
         field_ptr_->should_autocomplete, jplaceholder, jtype, jid,
         joption_values, joption_contents, IsCheckable(field_ptr_->check_status),
         IsChecked(field_ptr_->check_status), field_ptr_->max_length,
-        jheuristic_type);
+        jheuristic_type, field_ptr_->bounds.x(), field_ptr_->bounds.y(),
+        field_ptr_->bounds.right(), field_ptr_->bounds.bottom());
     java_ref_ = JavaObjectWeakGlobalRef(env, obj);
   }
   return obj;

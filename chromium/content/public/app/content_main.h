@@ -30,7 +30,7 @@ namespace content {
 class BrowserMainParts;
 class ContentMainDelegate;
 
-using CreatedMainPartsClosure = base::Callback<void(BrowserMainParts*)>;
+using CreatedMainPartsClosure = base::OnceCallback<void(BrowserMainParts*)>;
 
 struct ContentMainParams {
   explicit ContentMainParams(ContentMainDelegate* delegate)
@@ -51,7 +51,7 @@ struct ContentMainParams {
 
   // Used by browser_tests. If non-null BrowserMain schedules this task to run
   // on the MessageLoop. It's owned by the test code.
-  base::Closure* ui_task = nullptr;
+  base::OnceClosure* ui_task = nullptr;
 
   // Used by InProcessBrowserTest. If non-null this is Run() after
   // BrowserMainParts has been created and before PreEarlyInitialization().
@@ -70,6 +70,11 @@ struct ContentMainParams {
 // This should only be called once before ContentMainRunner actually running.
 // The ownership of |delegate| is transferred.
 CONTENT_EXPORT void SetContentMainDelegate(ContentMainDelegate* delegate);
+
+// In browser tests, ContentMain.java is not run either, and the browser test
+// harness does not run ContentMain() at all. It does need to make use of the
+// delegate though while replacing ContentMain().
+CONTENT_EXPORT ContentMainDelegate* GetContentMainDelegateForTesting();
 #else
 // ContentMain should be called from the embedder's main() function to do the
 // initial setup for every process. The embedder has a chance to customize

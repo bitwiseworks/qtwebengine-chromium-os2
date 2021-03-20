@@ -84,24 +84,28 @@ class GCM_EXPORT MCSClient {
     SEND_STATUS_COUNT
   };
 
-  // Callback for MCSClient's error conditions.
+  // Callback for MCSClient's error conditions. A repeating callback is used
+  // because occasionally multiple errors are reported, see crbug.com/1039598
+  // for more context.
   // TODO(fgorski): Keeping it as a callback with intention to add meaningful
   // error information.
-  typedef base::Callback<void()> ErrorCallback;
+  using ErrorCallback = base::RepeatingClosure;
   // Callback when a message is received.
-  typedef base::Callback<void(const MCSMessage& message)>
-      OnMessageReceivedCallback;
+  using OnMessageReceivedCallback =
+      base::RepeatingCallback<void(const MCSMessage& message)>;
   // Callback when a message is sent (and receipt has been acknowledged by
   // the MCS endpoint).
-  typedef base::Callback<void(int64_t user_serial_number,
-                              const std::string& app_id,
-                              const std::string& message_id,
-                              MessageSendStatus status)> OnMessageSentCallback;
+  using OnMessageSentCallback =
+      base::RepeatingCallback<void(int64_t user_serial_number,
+                                   const std::string& app_id,
+                                   const std::string& message_id,
+                                   MessageSendStatus status)>;
 
   MCSClient(const std::string& version_string,
             base::Clock* clock,
             ConnectionFactory* connection_factory,
             GCMStore* gcm_store,
+            scoped_refptr<base::SequencedTaskRunner> io_task_runner,
             GCMStatsRecorder* recorder);
   virtual ~MCSClient();
 
@@ -297,6 +301,8 @@ class GCM_EXPORT MCSClient {
   // The GCM persistent store. Not owned.
   GCMStore* gcm_store_;
 
+  const scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
+
   // Manager to handle triggering/detecting heartbeats.
   HeartbeatManager heartbeat_manager_;
 
@@ -306,7 +312,7 @@ class GCM_EXPORT MCSClient {
   // Recorder that records GCM activities for debugging purpose. Not owned.
   GCMStatsRecorder* recorder_;
 
-  base::WeakPtrFactory<MCSClient> weak_ptr_factory_;
+  base::WeakPtrFactory<MCSClient> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MCSClient);
 };

@@ -4215,6 +4215,7 @@ static int winShmMap(
     rc = winOpenSharedMemory(pDbFd);
     if( rc!=SQLITE_OK ) return rc;
     pShm = pDbFd->pShm;
+    assert( pShm!=0 );
   }
   pShmNode = pShm->pShmNode;
 
@@ -4517,6 +4518,7 @@ static int winFetch(sqlite3_file *fd, i64 iOff, int nAmt, void **pp){
       }
     }
     if( pFd->mmapSize >= iOff+nAmt ){
+      assert( pFd->pMapRegion!=0 );
       *pp = &((u8 *)pFd->pMapRegion)[iOff];
       pFd->nFetchOut++;
     }
@@ -6128,14 +6130,6 @@ int sqlite3_os_end(void){
 #endif
 
   return SQLITE_OK;
-}
-
-CHROMIUM_SQLITE_API
-void chromium_sqlite3_initialize_win_sqlite3_file(sqlite3_file* file, HANDLE handle) {
-  winFile* winSQLite3File = (winFile*)file;
-  memset(file, 0, sizeof(*file));
-  winSQLite3File->pMethod = &winIoMethod;
-  winSQLite3File->h = handle;
 }
 
 #endif /* SQLITE_OS_WIN */

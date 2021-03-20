@@ -4,6 +4,7 @@
 
 #include "google_apis/gcm/engine/gcm_registration_request_handler.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "google_apis/gcm/base/gcm_util.h"
 
@@ -18,29 +19,24 @@ const char kSenderKey[] = "sender";
 
 GCMRegistrationRequestHandler::GCMRegistrationRequestHandler(
     const std::string& senders)
-    : senders_(senders) {
-}
+    : senders_(senders) {}
 
 GCMRegistrationRequestHandler::~GCMRegistrationRequestHandler() {}
 
-void GCMRegistrationRequestHandler::BuildRequestBody(std::string* body){
+void GCMRegistrationRequestHandler::BuildRequestBody(std::string* body) {
   BuildFormEncoding(kSenderKey, senders_, body);
 }
 
-void GCMRegistrationRequestHandler::ReportUMAs(
-    RegistrationRequest::Status status,
-    int retry_count,
-    base::TimeDelta complete_time) {
-  UMA_HISTOGRAM_ENUMERATION("GCM.RegistrationRequestStatus",
-                            status,
+void GCMRegistrationRequestHandler::ReportStatusToUMA(
+    RegistrationRequest::Status status) {
+  UMA_HISTOGRAM_ENUMERATION("GCM.RegistrationRequestStatus", status,
                             RegistrationRequest::STATUS_COUNT);
+}
 
-  // Other UMAs are only reported when the request succeeds.
-  if (status != RegistrationRequest::SUCCESS)
-    return;
-
-  UMA_HISTOGRAM_COUNTS_1M("GCM.RegistrationRetryCount", retry_count);
-  UMA_HISTOGRAM_TIMES("GCM.RegistrationCompleteTime", complete_time);
+void GCMRegistrationRequestHandler::ReportNetErrorCodeToUMA(
+    int net_error_code) {
+  base::UmaHistogramSparse("GCM.RegistrationRequest.NetErrorCode",
+                           std::abs(net_error_code));
 }
 
 }  // namespace gcm

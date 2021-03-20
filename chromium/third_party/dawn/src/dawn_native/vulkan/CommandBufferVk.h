@@ -15,24 +15,40 @@
 #ifndef DAWNNATIVE_VULKAN_COMMANDBUFFERVK_H_
 #define DAWNNATIVE_VULKAN_COMMANDBUFFERVK_H_
 
+#include "dawn_native/CommandAllocator.h"
 #include "dawn_native/CommandBuffer.h"
+#include "dawn_native/Error.h"
 
 #include "common/vulkan_platform.h"
 
+namespace dawn_native {
+    struct BeginRenderPassCmd;
+    struct TextureCopy;
+}  // namespace dawn_native
+
 namespace dawn_native { namespace vulkan {
 
-    class RenderPassDescriptor;
+    struct CommandRecordingContext;
+    class Device;
 
     class CommandBuffer : public CommandBufferBase {
       public:
-        CommandBuffer(CommandBufferBuilder* builder);
+        static CommandBuffer* Create(CommandEncoder* encoder,
+                                     const CommandBufferDescriptor* descriptor);
         ~CommandBuffer();
 
-        void RecordCommands(VkCommandBuffer commands);
+        MaybeError RecordCommands(CommandRecordingContext* recordingContext);
 
       private:
-        void RecordComputePass(VkCommandBuffer commands);
-        void RecordRenderPass(VkCommandBuffer commands, RenderPassDescriptor* renderPass);
+        CommandBuffer(CommandEncoder* encoder, const CommandBufferDescriptor* descriptor);
+
+        void RecordComputePass(CommandRecordingContext* recordingContext);
+        MaybeError RecordRenderPass(CommandRecordingContext* recordingContext,
+                                    BeginRenderPassCmd* renderPass);
+        void RecordCopyImageWithTemporaryBuffer(CommandRecordingContext* recordingContext,
+                                                const TextureCopy& srcCopy,
+                                                const TextureCopy& dstCopy,
+                                                const Extent3D& copySize);
 
         CommandIterator mCommands;
     };

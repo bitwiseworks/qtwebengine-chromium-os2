@@ -6,8 +6,11 @@
 #define CC_ANIMATION_SCROLL_TIMELINE_H_
 
 #include "base/optional.h"
+#include "base/time/time.h"
 #include "cc/animation/animation_export.h"
-#include "cc/trees/element_id.h"
+#include "cc/animation/animation_timeline.h"
+#include "cc/animation/keyframe_model.h"
+#include "cc/paint/element_id.h"
 
 namespace cc {
 
@@ -18,8 +21,12 @@ class ScrollTree;
 //
 // This is the compositor-side representation of the web concept expressed in
 // https://wicg.github.io/scroll-animations/#scrolltimeline-interface.
-class CC_ANIMATION_EXPORT ScrollTimeline {
+class CC_ANIMATION_EXPORT ScrollTimeline : public AnimationTimeline {
  public:
+  // cc does not know about writing modes. The ScrollDirection below is
+  // converted using blink::scroll_timeline_util::ConvertOrientation which takes
+  // the spec-compliant ScrollDirection enumeration.
+  // https://drafts.csswg.org/scroll-animations/#scrolldirection-enumeration
   enum ScrollDirection {
     ScrollUp,
     ScrollDown,
@@ -31,27 +38,40 @@ class CC_ANIMATION_EXPORT ScrollTimeline {
                  ScrollDirection direction,
                  base::Optional<double> start_scroll_offset,
                  base::Optional<double> end_scroll_offset,
-                 double time_range);
-  virtual ~ScrollTimeline();
+                 double time_range,
+                 int animation_timeline_id);
+
+  static scoped_refptr<ScrollTimeline> Create(
+      base::Optional<ElementId> scroller_id,
+      ScrollDirection direction,
+      base::Optional<double> start_scroll_offset,
+      base::Optional<double> end_scroll_offset,
+      double time_range);
 
   // Create a copy of this ScrollTimeline intended for the impl thread in the
   // compositor.
-  std::unique_ptr<ScrollTimeline> CreateImplInstance() const;
+  scoped_refptr<AnimationTimeline> CreateImplInstance() const override;
 
-  // Calculate the current time of the ScrollTimeline. This is either a double
-  // value or std::numeric_limits<double>::quiet_NaN() if the current time is
-  // unresolved.
-  virtual double CurrentTime(const ScrollTree& scroll_tree,
-                             bool is_active_tree) const;
+  // ScrollTimeline is active if the scroll node exists in active or pending
+  // scroll tree.
+  virtual bool IsActive(const ScrollTree& scroll_tree,
+                        bool is_active_tree) const;
 
-  void SetScrollerId(base::Optional<ElementId> scroller_id);
-  void UpdateStartAndEndScrollOffsets(
+  // Calculate the current time of the ScrollTimeline. This is either a
+  // base::TimeTicks value or base::nullopt if the current time is unresolved.
+  // The internal calculations are performed using doubles and the result is
+  // converted to base::TimeTicks. This limits the precision to 1us.
+  virtual base::Optional<base::TimeTicks> CurrentTime(
+      const ScrollTree& scroll_tree,
+      bool is_active_tree) const;
+
+  void UpdateScrollerIdAndScrollOffsets(
+      base::Optional<ElementId> scroller_id,
       base::Optional<double> start_scroll_offset,
       base::Optional<double> end_scroll_offset);
 
-  void PushPropertiesTo(ScrollTimeline* impl_timeline);
-
-  void PromoteScrollTimelinePendingToActive();
+  void PushPropertiesTo(AnimationTimeline* impl_timeline) override;
+  void ActivateTimeline() override;
 
   base::Optional<ElementId> GetActiveIdForTest() const { return active_id_; }
   base::Optional<ElementId> GetPendingIdForTest() const { return pending_id_; }
@@ -64,6 +84,11 @@ class CC_ANIMATION_EXPORT ScrollTimeline {
   }
   double GetTimeRangeForTest() const { return time_range_; }
 
+  bool IsScrollTimeline() const override;
+
+ protected:
+  ~ScrollTimeline() override;
+
  private:
   // The scroller which this ScrollTimeline is based on. The same underlying
   // scroll source may have different ids in the pending and active tree (see
@@ -75,6 +100,9 @@ class CC_ANIMATION_EXPORT ScrollTimeline {
   // it should base its current time on, and where the origin point is.
   ScrollDirection direction_;
 
+  // These define the total range of the scroller that the ScrollTimeline is
+  // active within. If not set they default to the beginning/end of the scroller
+  // respectively, respecting the current |direction_|.
   base::Optional<double> start_scroll_offset_;
   base::Optional<double> end_scroll_offset_;
 
@@ -83,6 +111,11 @@ class CC_ANIMATION_EXPORT ScrollTimeline {
   // spec for details.
   double time_range_;
 };
+
+inline ScrollTimeline* ToScrollTimeline(AnimationTimeline* timeline) {
+  DCHECK(timeline->IsScrollTimeline());
+  return static_cast<ScrollTimeline*>(timeline);
+}
 
 }  // namespace cc
 

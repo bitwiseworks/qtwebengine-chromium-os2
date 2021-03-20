@@ -32,7 +32,7 @@ static FILE *memtraceOut;
 /* Methods that trace memory allocations */
 static void *memtraceMalloc(int n){
   if( memtraceOut ){
-    fprintf(memtraceOut, "MEMTRACE: allocate %d bytes\n",
+    fprintf(memtraceOut, "MEMTRACE: allocate %d bytes\n", 
             memtraceBase.xRoundup(n));
   }
   return memtraceBase.xMalloc(n);

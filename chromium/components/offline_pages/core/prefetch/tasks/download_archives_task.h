@@ -26,10 +26,7 @@ class PrefetchStore;
 class DownloadArchivesTask : public Task {
  public:
   // Maximum number of parallel downloads.
-  static const int kMaxConcurrentDownloads;
-
-  // Maximum number of parallel downloads when limitless prefetching is enabled.
-  static const int kMaxConcurrentDownloadsForLimitless;
+  static constexpr int kMaxConcurrentDownloads = 2;
 
   // Represents item to be downloaded as a result of running the task.
   struct DownloadItem {
@@ -50,9 +47,8 @@ class DownloadArchivesTask : public Task {
                        PrefService* prefs);
   ~DownloadArchivesTask() override;
 
-  void Run() override;
-
  private:
+  void Run() override;
   void SendItemsToPrefetchDownloader(
       std::unique_ptr<ItemsToDownload> items_to_download);
 
@@ -63,7 +59,7 @@ class DownloadArchivesTask : public Task {
 
   PrefService* prefs_;
 
-  base::WeakPtrFactory<DownloadArchivesTask> weak_ptr_factory_;
+  base::WeakPtrFactory<DownloadArchivesTask> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DownloadArchivesTask);
 };

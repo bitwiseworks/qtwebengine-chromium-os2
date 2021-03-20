@@ -28,12 +28,12 @@
 
 #include "third_party/blink/renderer/modules/accessibility/ax_image_map_link.h"
 
-#include "SkMatrix44.h"
 #include "third_party/blink/renderer/core/aom/accessible_node.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_layout_object.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/platform/graphics/path.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 
 namespace blink {
 
@@ -42,11 +42,6 @@ AXImageMapLink::AXImageMapLink(HTMLAreaElement* area,
     : AXNodeObject(area, ax_object_cache) {}
 
 AXImageMapLink::~AXImageMapLink() = default;
-
-AXImageMapLink* AXImageMapLink::Create(HTMLAreaElement* area,
-                                       AXObjectCacheImpl& ax_object_cache) {
-  return MakeGarbageCollected<AXImageMapLink>(area, ax_object_cache);
-}
 
 HTMLMapElement* AXImageMapLink::MapElement() const {
   HTMLAreaElement* area = AreaElement();
@@ -72,6 +67,12 @@ ax::mojom::Role AXImageMapLink::RoleValue() const {
   if (!aria_role.IsEmpty())
     return AXObject::AriaRoleToWebCoreRole(aria_role);
 
+  // https://www.w3.org/TR/html-aam-1.0/#html-element-role-mappings
+  // <area> tags without an href should be treated as static text.
+  KURL url = Url();
+  if (url.IsNull() || url.IsEmpty())
+    return ax::mojom::Role::kStaticText;
+
   return ax::mojom::Role::kLink;
 }
 
@@ -85,7 +86,7 @@ Element* AXImageMapLink::ActionElement() const {
 }
 
 Element* AXImageMapLink::AnchorElement() const {
-  return GetNode() ? ToElement(GetNode()) : nullptr;
+  return To<Element>(GetNode());
 }
 
 KURL AXImageMapLink::Url() const {
@@ -109,8 +110,8 @@ void AXImageMapLink::GetRelativeBounds(AXObject** out_container,
     return;
 
   LayoutObject* layout_object;
-  if (parent_ && parent_->IsAXLayoutObject())
-    layout_object = ToAXLayoutObject(parent_)->GetLayoutObject();
+  if (auto* ax_object = DynamicTo<AXLayoutObject>(parent_.Get()))
+    layout_object = ax_object->GetLayoutObject();
   else
     layout_object = map->GetLayoutObject();
 
@@ -121,7 +122,7 @@ void AXImageMapLink::GetRelativeBounds(AXObject** out_container,
   *out_container = AXObjectCache().GetOrCreate(layout_object);
 }
 
-void AXImageMapLink::Trace(blink::Visitor* visitor) {
+void AXImageMapLink::Trace(Visitor* visitor) {
   AXNodeObject::Trace(visitor);
 }
 

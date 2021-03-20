@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/browser/payments/payment_app_content_unittest_base.h"
@@ -16,7 +17,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/payments/payment_app.mojom.h"
-#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -39,15 +40,23 @@ void GetAllPaymentAppsCallback(PaymentAppProvider::PaymentApps* out_apps,
   *out_apps = std::move(apps);
 }
 
+void CaptureCanMakePaymentResult(
+    base::OnceClosure callback,
+    bool* out_payment_event_result,
+    payments::mojom::CanMakePaymentResponsePtr response) {
+  *out_payment_event_result = response->can_make_payment;
+  std::move(callback).Run();
+}
+
 void InvokePaymentAppCallback(
     bool* called,
     payments::mojom::PaymentHandlerResponsePtr response) {
   *called = true;
 }
 
-void PaymentEventResultCallback(base::OnceClosure callback,
-                                bool* out_payment_event_result,
-                                bool payment_event_result) {
+void CaptureAbortResult(base::OnceClosure callback,
+                        bool* out_payment_event_result,
+                        bool payment_event_result) {
   *out_payment_event_result = payment_event_result;
   std::move(callback).Run();
 }
@@ -88,31 +97,38 @@ class PaymentAppProviderTest : public PaymentAppContentUnitTestBase {
   }
 
   void InvokePaymentApp(int64_t registration_id,
+                        const url::Origin& sw_origin,
                         payments::mojom::PaymentRequestEventDataPtr event_data,
                         PaymentAppProvider::InvokePaymentAppCallback callback) {
     PaymentAppProviderImpl::GetInstance()->InvokePaymentApp(
-        browser_context(), registration_id, std::move(event_data),
+        browser_context(), registration_id, sw_origin, std::move(event_data),
         std::move(callback));
     base::RunLoop().RunUntilIdle();
   }
 
   void CanMakePayment(int64_t registration_id,
+                      const url::Origin& sw_origin,
+                      const std::string& payment_request_id,
                       payments::mojom::CanMakePaymentEventDataPtr event_data,
-                      PaymentAppProvider::PaymentEventResultCallback callback) {
+                      PaymentAppProvider::CanMakePaymentCallback callback) {
     PaymentAppProviderImpl::GetInstance()->CanMakePayment(
-        browser_context(), registration_id, std::move(event_data),
-        std::move(callback));
+        browser_context(), registration_id, sw_origin, payment_request_id,
+        std::move(event_data), std::move(callback));
   }
 
   void AbortPayment(int64_t registration_id,
-                    PaymentAppProvider::PaymentEventResultCallback callback) {
+                    const url::Origin& sw_origin,
+                    const std::string& payment_request_id,
+                    PaymentAppProvider::AbortCallback callback) {
     PaymentAppProviderImpl::GetInstance()->AbortPayment(
-        browser_context(), registration_id, std::move(callback));
+        browser_context(), registration_id, sw_origin, payment_request_id,
+        std::move(callback));
   }
 
   void OnClosingOpenedWindow() {
     PaymentAppProviderImpl::GetInstance()->OnClosingOpenedWindow(
-        browser_context());
+        browser_context(), payments::mojom::PaymentEventResponseType::
+                               PAYMENT_HANDLER_WINDOW_CLOSING);
     base::RunLoop().RunUntilIdle();
   }
 
@@ -135,8 +151,9 @@ TEST_F(PaymentAppProviderTest, AbortPaymentTest) {
 
   bool payment_aborted = false;
   base::RunLoop loop;
-  AbortPayment(last_sw_registration_id(),
-               base::BindOnce(&PaymentEventResultCallback, loop.QuitClosure(),
+  AbortPayment(last_sw_registration_id(), url::Origin::Create(apps[0]->scope),
+               "id",
+               base::BindOnce(&CaptureAbortResult, loop.QuitClosure(),
                               &payment_aborted));
   loop.Run();
   ASSERT_TRUE(payment_aborted);
@@ -157,16 +174,18 @@ TEST_F(PaymentAppProviderTest, CanMakePaymentTest) {
 
   payments::mojom::CanMakePaymentEventDataPtr event_data =
       payments::mojom::CanMakePaymentEventData::New();
-  payments::mojom::PaymentMethodDataPtr methodData =
+  payments::mojom::PaymentMethodDataPtr method_data =
       payments::mojom::PaymentMethodData::New();
-  methodData->supported_method = "test-method";
-  event_data->method_data.push_back(std::move(methodData));
+  method_data->supported_method = "test-method";
+  event_data->method_data.push_back(std::move(method_data));
 
   bool can_make_payment = false;
   base::RunLoop loop;
-  CanMakePayment(last_sw_registration_id(), std::move(event_data),
-                 base::BindOnce(&PaymentEventResultCallback, loop.QuitClosure(),
-                                &can_make_payment));
+  CanMakePayment(last_sw_registration_id(),
+                 url::Origin::Create(GURL("https://example.com")), "id",
+                 std::move(event_data),
+                 base::BindOnce(&CaptureCanMakePaymentResult,
+                                loop.QuitClosure(), &can_make_payment));
   loop.Run();
   ASSERT_TRUE(can_make_payment);
 }
@@ -201,7 +220,9 @@ TEST_F(PaymentAppProviderTest, InvokePaymentAppTest) {
   event_data->total = payments::mojom::PaymentCurrencyAmount::New();
 
   bool called = false;
-  InvokePaymentApp(bobpay_registration_id, std::move(event_data),
+  InvokePaymentApp(bobpay_registration_id,
+                   url::Origin::Create(GURL("https://bobpay.com")),
+                   std::move(event_data),
                    base::BindOnce(&InvokePaymentAppCallback, &called));
   ASSERT_TRUE(called);
 }
@@ -304,7 +325,9 @@ TEST_F(PaymentAppProviderTest, AbortPaymentWhenClosingOpenedWindow) {
   SetNoPaymentRequestResponseImmediately();
 
   bool called = false;
-  InvokePaymentApp(bobpay_registration_id, std::move(event_data),
+  InvokePaymentApp(bobpay_registration_id,
+                   url::Origin::Create(GURL("https://bobpay.com")),
+                   std::move(event_data),
                    base::BindOnce(&InvokePaymentAppCallback, &called));
   ASSERT_FALSE(called);
 

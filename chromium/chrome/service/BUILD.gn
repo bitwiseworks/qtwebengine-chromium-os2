@@ -4,7 +4,6 @@
 
 import("//build/config/features.gni")
 import("//printing/buildflags/buildflags.gni")
-import("//services/catalog/public/tools/catalog.gni")
 
 assert(!is_chromeos)
 
@@ -62,7 +61,6 @@ static_library("service") {
     "//chrome/common",
     "//chrome/services/printing/public/mojom",
     "//components/cloud_devices/common",
-    "//components/data_use_measurement/core",
     "//components/network_session_configurator/browser",
     "//components/printing/common",
     "//content/public/app:service_manifests",
@@ -74,12 +72,10 @@ static_library("service") {
     "//printing",
     "//services/network/public/cpp",
     "//skia",
-    "//third_party/webrtc_overrides",
+    "//third_party/webrtc_overrides:webrtc_component",
   ]
 
-  public_deps = [
-    "//chrome/common:service_process_mojom",
-  ]
+  public_deps = [ "//chrome/common:service_process_mojom" ]
 
   if (use_cups) {
     sources += [ "cloud_print/print_system_cups.cc" ]
@@ -88,6 +84,7 @@ static_library("service") {
     sources += [
       "service_utility_process_host.cc",
       "service_utility_process_host.h",
+      "service_utility_process_host_receiver_bindings.cc",
     ]
   }
 }

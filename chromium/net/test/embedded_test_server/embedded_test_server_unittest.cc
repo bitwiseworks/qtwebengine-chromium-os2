@@ -7,14 +7,17 @@
 #include <tuple>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/test_completion_callback.h"
@@ -28,7 +31,7 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
 #include "net/test/gtest_util.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
@@ -79,10 +82,12 @@ class TestConnectionListener
 
   // Get called from the EmbeddedTestServer thread to be notified that
   // a connection was accepted.
-  void AcceptedSocket(const net::StreamSocket& connection) override {
+  std::unique_ptr<StreamSocket> AcceptedSocket(
+      std::unique_ptr<StreamSocket> connection) override {
     base::AutoLock lock(lock_);
     ++socket_accepted_count_;
-    task_runner_->PostTask(FROM_HERE, accept_loop_.QuitClosure());
+    accept_loop_.Quit();
+    return connection;
   }
 
   // Get called from the EmbeddedTestServer thread to be notified that
@@ -119,7 +124,7 @@ class TestConnectionListener
 class EmbeddedTestServerTest
     : public testing::TestWithParam<EmbeddedTestServer::Type>,
       public URLFetcherDelegate,
-      public WithScopedTaskEnvironment {
+      public WithTaskEnvironment {
  public:
   EmbeddedTestServerTest()
       : num_responses_received_(0),
@@ -128,13 +133,13 @@ class EmbeddedTestServerTest
 
   void SetUp() override {
     base::Thread::Options thread_options;
-    thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
+    thread_options.message_pump_type = base::MessagePumpType::IO;
     ASSERT_TRUE(io_thread_.StartWithOptions(thread_options));
 
-    request_context_getter_ =
-        new TestURLRequestContextGetter(io_thread_.task_runner());
+    request_context_getter_ = base::MakeRefCounted<TestURLRequestContextGetter>(
+        io_thread_.task_runner());
 
-    server_.reset(new EmbeddedTestServer(GetParam()));
+    server_ = std::make_unique<EmbeddedTestServer>(GetParam());
     server_->SetConnectionListener(&connection_listener_);
   }
 
@@ -171,11 +176,11 @@ class EmbeddedTestServerTest
     request_absolute_url_ = request.GetURL();
 
     if (request_absolute_url_.path() == path) {
-      std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+      auto http_response = std::make_unique<BasicHttpResponse>();
       http_response->set_code(code);
       http_response->set_content(content);
       http_response->set_content_type(content_type);
-      return std::move(http_response);
+      return http_response;
     }
 
     return nullptr;
@@ -310,13 +315,13 @@ TEST_P(EmbeddedTestServerTest, DefaultNotFoundResponse) {
 TEST_P(EmbeddedTestServerTest, ConnectionListenerAccept) {
   ASSERT_TRUE(server_->Start());
 
-  TestNetLog net_log;
+  RecordingTestNetLog net_log;
   net::AddressList address_list;
   EXPECT_TRUE(server_->GetAddressList(&address_list));
 
   std::unique_ptr<StreamSocket> socket =
       ClientSocketFactory::GetDefaultFactory()->CreateTransportClientSocket(
-          address_list, NULL, &net_log, NetLogSource());
+          address_list, nullptr, &net_log, NetLogSource());
   TestCompletionCallback callback;
   ASSERT_THAT(callback.GetResult(socket->Connect(callback.callback())), IsOk());
 
@@ -410,25 +415,25 @@ class CancelRequestDelegate : public TestDelegate {
 
 class InfiniteResponse : public BasicHttpResponse {
  public:
-  InfiniteResponse() : weak_ptr_factory_(this) {}
+  InfiniteResponse() {}
 
   void SendResponse(const SendBytesCallback& send,
-                    const SendCompleteCallback& done) override {
+                    SendCompleteCallback done) override {
     send.Run(ToResponseString(),
-             base::Bind(&InfiniteResponse::SendInfinite,
-                        weak_ptr_factory_.GetWeakPtr(), send));
+             base::BindOnce(&InfiniteResponse::SendInfinite,
+                            weak_ptr_factory_.GetWeakPtr(), send));
   }
 
  private:
   void SendInfinite(const SendBytesCallback& send) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(send, "echo",
-                   base::Bind(&InfiniteResponse::SendInfinite,
-                              weak_ptr_factory_.GetWeakPtr(), send)));
+        base::BindOnce(send, "echo",
+                       base::BindOnce(&InfiniteResponse::SendInfinite,
+                                      weak_ptr_factory_.GetWeakPtr(), send)));
   }
 
-  base::WeakPtrFactory<InfiniteResponse> weak_ptr_factory_;
+  base::WeakPtrFactory<InfiniteResponse> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InfiniteResponse);
 };
@@ -493,10 +498,10 @@ TEST_P(EmbeddedTestServerTest, GetCertificate) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(EmbeddedTestServerTestInstantiation,
-                        EmbeddedTestServerTest,
-                        testing::Values(EmbeddedTestServer::TYPE_HTTP,
-                                        EmbeddedTestServer::TYPE_HTTPS));
+INSTANTIATE_TEST_SUITE_P(EmbeddedTestServerTestInstantiation,
+                         EmbeddedTestServerTest,
+                         testing::Values(EmbeddedTestServer::TYPE_HTTP,
+                                         EmbeddedTestServer::TYPE_HTTPS));
 
 // Below test exercises EmbeddedTestServer's ability to cope with the situation
 // where there is no MessageLoop available on the thread at EmbeddedTestServer
@@ -506,7 +511,7 @@ typedef std::tuple<bool, bool, EmbeddedTestServer::Type> ThreadingTestParams;
 
 class EmbeddedTestServerThreadingTest
     : public testing::TestWithParam<ThreadingTestParams>,
-      public WithScopedTaskEnvironment {};
+      public WithTaskEnvironment {};
 
 class EmbeddedTestServerThreadingTestDelegate
     : public base::PlatformThread::Delegate,
@@ -522,16 +527,11 @@ class EmbeddedTestServerThreadingTestDelegate
 
   // base::PlatformThread::Delegate:
   void ThreadMain() override {
-    scoped_refptr<base::SingleThreadTaskRunner> io_thread_runner;
-    base::Thread io_thread("io_thread");
-    base::Thread::Options thread_options;
-    thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
-    ASSERT_TRUE(io_thread.StartWithOptions(thread_options));
-    io_thread_runner = io_thread.task_runner();
-
-    std::unique_ptr<base::MessageLoop> loop;
-    if (message_loop_present_on_initialize_)
-      loop.reset(new base::MessageLoopForIO);
+    std::unique_ptr<base::SingleThreadTaskExecutor> executor;
+    if (message_loop_present_on_initialize_) {
+      executor = std::make_unique<base::SingleThreadTaskExecutor>(
+          base::MessagePumpType::IO);
+    }
 
     // Create the test server instance.
     EmbeddedTestServer server(type_);
@@ -540,14 +540,18 @@ class EmbeddedTestServerThreadingTestDelegate
     ASSERT_TRUE(server.Start());
 
     // Make a request and wait for the reply.
-    if (!loop)
-      loop.reset(new base::MessageLoopForIO);
+    if (!executor) {
+      executor = std::make_unique<base::SingleThreadTaskExecutor>(
+          base::MessagePumpType::IO);
+    }
 
     std::unique_ptr<URLFetcher> fetcher =
         URLFetcher::Create(server.GetURL("/test?q=foo"), URLFetcher::GET, this,
                            TRAFFIC_ANNOTATION_FOR_TESTS);
-    fetcher->SetRequestContext(
-        new TestURLRequestContextGetter(loop->task_runner()));
+    auto test_context_getter =
+        base::MakeRefCounted<TestURLRequestContextGetter>(
+            executor->task_runner());
+    fetcher->SetRequestContext(test_context_getter.get());
     base::RunLoop run_loop;
     quit_run_loop_ = run_loop.QuitClosure();
     fetcher->Start();
@@ -556,7 +560,7 @@ class EmbeddedTestServerThreadingTestDelegate
 
     // Shut down.
     if (message_loop_present_on_shutdown_)
-      loop.reset();
+      executor.reset();
 
     ASSERT_TRUE(server.ShutdownAndWaitUntilComplete());
   }
@@ -588,7 +592,7 @@ TEST_P(EmbeddedTestServerThreadingTest, RunTest) {
   base::PlatformThread::Join(thread_handle);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     EmbeddedTestServerThreadingTestInstantiation,
     EmbeddedTestServerThreadingTest,
     testing::Combine(testing::Bool(),

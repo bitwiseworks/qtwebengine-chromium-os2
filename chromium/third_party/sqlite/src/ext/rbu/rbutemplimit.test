@@ -30,7 +30,7 @@ proc setup_databases {} {
     CREATE INDEX i1c ON t1(c);
     CREATE INDEX i2b ON t2(b);
     CREATE INDEX i2c ON t2(c);
-
+  
     -- Create a large RBU database.
     --
     ATTACH 'test.db2' AS rbu;
@@ -65,6 +65,7 @@ proc step_rbu_cachesize {target rbu stepsize cachesize temp_limit} {
   while 1 {
     sqlite3rbu rbu $target $rbu
     rbu temp_size_limit $temp_limit
+    if { [rbu temp_size_limit -1]!=$temp_limit } { error "round trip problem!" }
     sqlite3_exec_nr [rbu db 1] "PRAGMA cache_size = $cachesize"
     for {set i 0} {$i < $stepsize} {incr i} {
       set rc [rbu step]
@@ -86,7 +87,7 @@ do_test 1.1.1 {
 
 do_test 1.1.2 { llength [array names ::A] } 3
 
-do_test 1.1.3 {
+do_test 1.1.3 { 
   foreach {a0 a1 a2} [lsort -integer [array names ::A]] {}
   list [expr $a0==0]                         \
        [expr $a1>1048576] [expr $a1<1200000] \

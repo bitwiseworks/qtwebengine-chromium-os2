@@ -11,12 +11,12 @@
 #include "base/bind_helpers.h"
 #include "base/containers/circular_deque.h"
 #include "base/format_macros.h"
+#include "base/hash/md5.h"
 #include "base/macros.h"
-#include "base/md5.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
+#include "base/test/task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "media/base/audio_buffer.h"
@@ -133,12 +133,13 @@ class AudioDecoderTest
         last_decode_status_(DecodeStatus::DECODE_ERROR) {
     switch (decoder_type_) {
       case FFMPEG:
-        decoder_.reset(
-            new FFmpegAudioDecoder(message_loop_.task_runner(), &media_log_));
+        decoder_.reset(new FFmpegAudioDecoder(
+            task_environment_.GetMainThreadTaskRunner(), &media_log_));
         break;
 #if defined(OS_ANDROID)
       case MEDIA_CODEC:
-        decoder_.reset(new MediaCodecAudioDecoder(message_loop_.task_runner()));
+        decoder_.reset(new MediaCodecAudioDecoder(
+            task_environment_.GetMainThreadTaskRunner()));
         break;
 #endif
     }
@@ -208,7 +209,8 @@ class AudioDecoderTest
 
     AudioDecoderConfig config;
     ASSERT_TRUE(AVCodecContextToAudioDecoderConfig(
-        reader_->codec_context_for_testing(), Unencrypted(), &config));
+        reader_->codec_context_for_testing(), EncryptionScheme::kUnencrypted,
+        &config));
 
 #if defined(OS_ANDROID) && BUILDFLAG(USE_PROPRIETARY_CODECS)
     // MEDIA_CODEC type requires config->extra_data() for AAC codec. For ADTS
@@ -223,7 +225,7 @@ class AudioDecoderTest
                     &channel_layout, nullptr, nullptr, &extra_data),
                 0);
       config.Initialize(kCodecAAC, kSampleFormatS16, channel_layout,
-                        sample_rate, extra_data, Unencrypted(),
+                        sample_rate, extra_data, EncryptionScheme::kUnencrypted,
                         base::TimeDelta(), 0);
       ASSERT_FALSE(config.extra_data().empty());
     }
@@ -245,7 +247,12 @@ class AudioDecoderTest
   void InitializeDecoderWithResult(const AudioDecoderConfig& config,
                                    bool success) {
     decoder_->Initialize(
-        config, nullptr, NewExpectedBoolCB(success),
+        config, nullptr,
+        base::BindOnce(
+            [](bool success, Status status) {
+              EXPECT_EQ(status.is_ok(), success);
+            },
+            success),
         base::Bind(&AudioDecoderTest::OnDecoderOutput, base::Unretained(this)),
         base::DoNothing());
     base::RunLoop().RunUntilIdle();
@@ -277,8 +284,8 @@ class AudioDecoderTest
   void Reset() {
     ASSERT_FALSE(pending_reset_);
     pending_reset_ = true;
-    decoder_->Reset(
-        base::Bind(&AudioDecoderTest::ResetFinished, base::Unretained(this)));
+    decoder_->Reset(base::BindOnce(&AudioDecoderTest::ResetFinished,
+                                   base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
     ASSERT_FALSE(pending_reset_);
   }
@@ -289,9 +296,9 @@ class AudioDecoderTest
     ASSERT_TRUE(reader_->SeekForTesting(seek_time));
   }
 
-  void OnDecoderOutput(const scoped_refptr<AudioBuffer>& buffer) {
+  void OnDecoderOutput(scoped_refptr<AudioBuffer> buffer) {
     EXPECT_FALSE(buffer->end_of_stream());
-    decoded_audio_.push_back(buffer);
+    decoded_audio_.push_back(std::move(buffer));
   }
 
   void DecodeFinished(const base::Closure& quit_closure, DecodeStatus status) {
@@ -363,7 +370,7 @@ class AudioDecoderTest
     // Generate a lossy hash of the audio used for comparison across platforms.
     AudioHash audio_hash;
     audio_hash.Update(output.get(), output->frames());
-    EXPECT_TRUE(audio_hash.IsEquivalent(sample_info.hash, 0.02))
+    EXPECT_TRUE(audio_hash.IsEquivalent(sample_info.hash, 0.03))
         << "Audio hashes differ. Expected: " << sample_info.hash
         << " Actual: " << audio_hash.ToString();
 
@@ -392,7 +399,7 @@ class AudioDecoderTest
   // that the decoder can be reinitialized with different parameters.
   TestParams params_;
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   NullMediaLog media_log_;
   scoped_refptr<DecoderBuffer> data_;
@@ -642,15 +649,15 @@ TEST_P(AudioDecoderTest, NoTimestamp) {
   EXPECT_EQ(DecodeStatus::DECODE_ERROR, last_decode_status());
 }
 
-INSTANTIATE_TEST_CASE_P(FFmpeg,
-                        AudioDecoderTest,
-                        Combine(Values(FFMPEG), ValuesIn(kFFmpegTestParams)));
+INSTANTIATE_TEST_SUITE_P(FFmpeg,
+                         AudioDecoderTest,
+                         Combine(Values(FFMPEG), ValuesIn(kFFmpegTestParams)));
 
 #if defined(OS_ANDROID)
-INSTANTIATE_TEST_CASE_P(MediaCodec,
-                        AudioDecoderTest,
-                        Combine(Values(MEDIA_CODEC),
-                                ValuesIn(kMediaCodecTestParams)));
+INSTANTIATE_TEST_SUITE_P(MediaCodec,
+                         AudioDecoderTest,
+                         Combine(Values(MEDIA_CODEC),
+                                 ValuesIn(kMediaCodecTestParams)));
 #endif  // defined(OS_ANDROID)
 
 }  // namespace media

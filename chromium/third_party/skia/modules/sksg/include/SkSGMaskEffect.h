@@ -8,7 +8,7 @@
 #ifndef SkSGMaskEffect_DEFINED
 #define SkSGMaskEffect_DEFINED
 
-#include "SkSGEffectNode.h"
+#include "modules/sksg/include/SkSGEffectNode.h"
 
 namespace sksg {
 
@@ -18,13 +18,15 @@ namespace sksg {
  */
 class MaskEffect final : public EffectNode {
 public:
-    enum class Mode {
-        kNormal,
-        kInvert
+    enum class Mode : uint32_t {
+        kAlphaNormal,
+        kAlphaInvert,
+        kLumaNormal,
+        kLumaInvert,
     };
 
     static sk_sp<MaskEffect> Make(sk_sp<RenderNode> child, sk_sp<RenderNode> mask,
-                                  Mode mode = Mode::kNormal) {
+                                  Mode mode = Mode::kAlphaNormal) {
         return (child && mask)
             ? sk_sp<MaskEffect>(new MaskEffect(std::move(child), std::move(mask), mode))
             : nullptr;
@@ -36,6 +38,7 @@ protected:
     MaskEffect(sk_sp<RenderNode>, sk_sp<RenderNode> mask, Mode);
 
     void onRender(SkCanvas*, const RenderContext*) const override;
+    const RenderNode* onNodeAt(const SkPoint&)     const override;
 
     SkRect onRevalidate(InvalidationController*, const SkMatrix&) override;
 

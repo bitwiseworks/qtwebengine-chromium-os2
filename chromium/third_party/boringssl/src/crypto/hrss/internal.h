@@ -36,11 +36,22 @@ struct poly3 {
   struct poly2 s, a;
 };
 
-OPENSSL_EXPORT void HRSS_poly2_rotr_consttime(struct poly2 *p, size_t bits);
 OPENSSL_EXPORT void HRSS_poly3_mul(struct poly3 *out, const struct poly3 *x,
                                    const struct poly3 *y);
 OPENSSL_EXPORT void HRSS_poly3_invert(struct poly3 *out,
                                       const struct poly3 *in);
+
+// On x86-64, we can use the AVX2 code from [HRSS]. (The authors have given
+// explicit permission for this and signed a CLA.) However it's 57KB of object
+// code, so it's not used if |OPENSSL_SMALL| is defined.
+#if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && \
+    defined(OPENSSL_X86_64) && defined(OPENSSL_LINUX)
+#define POLY_RQ_MUL_ASM
+// poly_Rq_mul is defined in assembly. Inputs and outputs must be 16-byte-
+// aligned.
+extern void poly_Rq_mul(uint16_t r[N + 3], const uint16_t a[N + 3],
+                        const uint16_t b[N + 3]);
+#endif
 
 
 #if defined(__cplusplus)

@@ -19,6 +19,14 @@ To use in a random python file in the build:
 Where the sequence of parameters to join is the relative path from your source
 file to the build directory."""
 
+import os
+import re
+import sys
+
+
+IMPORT_RE = re.compile(r'^import\("//(\S+)"\)')
+
+
 class GNException(Exception):
   pass
 
@@ -29,14 +37,14 @@ def ToGNString(value, allow_dicts = True):
   allow_dicts indicates if this function will allow converting dictionaries
   to GN scopes. This is only possible at the top level, you can't nest a
   GN scope in a list, so this should be set to False for recursive calls."""
-  if isinstance(value, basestring):
+  if isinstance(value, str):
     if value.find('\n') >= 0:
       raise GNException("Trying to print a string with a newline in it.")
     return '"' + \
         value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$') + \
         '"'
 
-  if isinstance(value, unicode):
+  if sys.version_info.major < 3 and isinstance(value, unicode):
     return ToGNString(value.encode('utf-8'))
 
   if isinstance(value, bool):
@@ -52,7 +60,7 @@ def ToGNString(value, allow_dicts = True):
       raise GNException("Attempting to recursively print a dictionary.")
     result = ""
     for key in sorted(value):
-      if not isinstance(key, basestring):
+      if not isinstance(key, str) and not isinstance(key, unicode):
         raise GNException("Dictionary key is not a string.")
       result += "%s = %s\n" % (key, ToGNString(value[key], False))
     return result
@@ -167,6 +175,31 @@ class GNValueParser(object):
   def IsDone(self):
     return self.cur == len(self.input)
 
+  def ReplaceImports(self):
+    """Replaces import(...) lines with the contents of the imports.
+
+    Recurses on itself until there are no imports remaining, in the case of
+    nested imports.
+    """
+    lines = self.input.splitlines()
+    if not any(line.startswith('import(') for line in lines):
+      return
+    for line in lines:
+      if not line.startswith('import('):
+        continue
+      regex_match = IMPORT_RE.match(line)
+      if not regex_match:
+        raise GNException('Not a valid import string: %s' % line)
+      import_path = os.path.join(
+          os.path.dirname(__file__), os.pardir, regex_match.group(1))
+      with open(import_path) as f:
+        imported_args = f.read()
+      self.input = self.input.replace(line, imported_args)
+    # Call ourselves again if we've just replaced an import() with additional
+    # imports.
+    self.ReplaceImports()
+
+
   def ConsumeWhitespace(self):
     while not self.IsDone() and self.input[self.cur] in ' \t\n':
       self.cur += 1
@@ -215,6 +248,7 @@ class GNValueParser(object):
     """
     d = {}
 
+    self.ReplaceImports()
     self.ConsumeWhitespace()
     self.ConsumeComment()
     while not self.IsDone():

@@ -6,12 +6,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_SVG_SHAPE_PAINTER_H_
 
 #include "third_party/blink/renderer/platform/graphics/paint/paint_flags.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/skia/include/core/SkPath.h"
 
 namespace blink {
 
-class FloatRect;
 class GraphicsContext;
 class LayoutSVGResourceMarker;
 class LayoutSVGShape;
@@ -28,12 +27,12 @@ class SVGShapePainter {
   void Paint(const PaintInfo&);
 
  private:
-  void FillShape(GraphicsContext&, const PaintFlags&, SkPath::FillType);
+  void FillShape(GraphicsContext&, const PaintFlags&, SkPathFillType);
   void StrokeShape(GraphicsContext&, const PaintFlags&);
 
-  void PaintMarkers(const PaintInfo&, const FloatRect& bounding_box);
+  void PaintMarkers(const PaintInfo&);
   void PaintMarker(const PaintInfo&,
-                   const LayoutSVGResourceMarker&,
+                   LayoutSVGResourceMarker&,
                    const MarkerPosition&,
                    float stroke_width);
 

@@ -37,14 +37,10 @@ namespace blink {
 class LayoutObject;
 
 class CORE_EXPORT LayoutImageResource
-    : public GarbageCollectedFinalized<LayoutImageResource> {
+    : public GarbageCollected<LayoutImageResource> {
  public:
   LayoutImageResource();
   virtual ~LayoutImageResource();
-
-  static LayoutImageResource* Create() {
-    return MakeGarbageCollected<LayoutImageResource>();
-  }
 
   virtual void Initialize(LayoutObject*);
   virtual void Shutdown();
@@ -66,7 +62,7 @@ class CORE_EXPORT LayoutImageResource
   // the "broken image".
   void UseBrokenImage();
 
-  virtual bool ImageHasRelativeSize() const;
+  virtual bool HasIntrinsicSize() const;
 
   virtual FloatSize ImageSize(float multiplier) const;
   // Default size is effective when this is LayoutImageResourceStyleImage.
@@ -74,7 +70,7 @@ class CORE_EXPORT LayoutImageResource
                                              const LayoutSize&) const;
   virtual WrappedImagePtr ImagePtr() const { return cached_image_.Get(); }
 
-  virtual void Trace(blink::Visitor* visitor) { visitor->Trace(cached_image_); }
+  virtual void Trace(Visitor* visitor) { visitor->Trace(cached_image_); }
 
  protected:
   // Device scale factor for the associated LayoutObject.

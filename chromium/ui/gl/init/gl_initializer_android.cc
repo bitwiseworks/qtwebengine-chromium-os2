@@ -62,16 +62,12 @@ bool InitializeStaticNativeEGLInternal() {
   return true;
 }
 
-bool InitializeStaticEGLInternal() {
+bool InitializeStaticEGLInternal(GLImplementation implementation) {
   bool initialized = false;
 
 #if BUILDFLAG(USE_STATIC_ANGLE)
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  // Use ANGLE if it is requested via the --use-gl=angle flag and it is
-  // statically linked
-  if (command_line->GetSwitchValueASCII(switches::kUseGL) ==
-      kGLImplementationANGLEName) {
+  // Use ANGLE if it is requested and it is statically linked
+  if (implementation == kGLImplementationEGLANGLE) {
     initialized = InitializeStaticANGLEEGLInternal();
   }
 #endif  // BUILDFLAG(USE_STATIC_ANGLE)
@@ -84,7 +80,7 @@ bool InitializeStaticEGLInternal() {
     return false;
   }
 
-  SetGLImplementation(kGLImplementationEGLGLES2);
+  SetGLImplementation(implementation);
 
   InitializeStaticGLBindingsGL();
   InitializeStaticGLBindingsEGL();
@@ -97,7 +93,9 @@ bool InitializeStaticEGLInternal() {
 bool InitializeGLOneOffPlatform() {
   switch (GetGLImplementation()) {
     case kGLImplementationEGLGLES2:
-      if (!GLSurfaceEGL::InitializeOneOff(EGL_DEFAULT_DISPLAY)) {
+    case kGLImplementationEGLANGLE:
+      if (!GLSurfaceEGL::InitializeOneOff(
+              EGLDisplayPlatform(EGL_DEFAULT_DISPLAY))) {
         LOG(ERROR) << "GLSurfaceEGL::InitializeOneOff failed.";
         return false;
       }
@@ -115,7 +113,8 @@ bool InitializeStaticGLBindings(GLImplementation implementation) {
 
   switch (implementation) {
     case kGLImplementationEGLGLES2:
-      return InitializeStaticEGLInternal();
+    case kGLImplementationEGLANGLE:
+      return InitializeStaticEGLInternal(implementation);
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       SetGLImplementation(implementation);
@@ -126,11 +125,6 @@ bool InitializeStaticGLBindings(GLImplementation implementation) {
   }
 
   return false;
-}
-
-void InitializeDebugGLBindings() {
-  InitializeDebugGLBindingsEGL();
-  InitializeDebugGLBindingsGL();
 }
 
 void ShutdownGLPlatform() {

@@ -15,13 +15,16 @@
 #ifndef DAWNNATIVE_D3D12_D3D12PLATFORM_H_
 #define DAWNNATIVE_D3D12_D3D12PLATFORM_H_
 
+#include <d3d11_2.h>
+#include <d3d11on12.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <wrl.h>
 
-#if defined(DAWN_ENABLE_ASSERTS)
-#    include <dxgidebug.h>
-#endif  // defined(DAWN_ENABLE_ASSERTS)
+// DXProgrammableCapture.h takes a dependency on other platform header
+// files, so it must be defined after them.
+#include <DXProgrammableCapture.h>
+#include <dxgidebug.h>
 
 using Microsoft::WRL::ComPtr;
 

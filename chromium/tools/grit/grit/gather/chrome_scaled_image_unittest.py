@@ -5,6 +5,13 @@
 
 '''Unit tests for ChromeScaledImage.'''
 
+from __future__ import print_function
+
+import os
+import sys
+if __name__ == '__main__':
+  sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                               '../..')))
 
 import re
 import struct
@@ -27,20 +34,23 @@ _OUTFILETYPES = [
 
 
 _PNG_HEADER = (
-    '\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52'
-    '\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90\x77\x53'
-    '\xde')
+    b'\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52'
+    b'\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90\x77\x53'
+    b'\xde')
 _PNG_FOOTER = (
-    '\x00\x00\x00\x0c\x49\x44\x41\x54\x18\x57\x63\xf8\xff\xff\x3f\x00'
-    '\x05\xfe\x02\xfe\xa7\x35\x81\x84\x00\x00\x00\x00\x49\x45\x4e\x44'
-    '\xae\x42\x60\x82')
+    b'\x00\x00\x00\x0c\x49\x44\x41\x54\x18\x57\x63\xf8\xff\xff\x3f\x00'
+    b'\x05\xfe\x02\xfe\xa7\x35\x81\x84\x00\x00\x00\x00\x49\x45\x4e\x44'
+    b'\xae\x42\x60\x82')
 
 
 def _MakePNG(chunks):
-  pack_int32 = struct.Struct('>i').pack
-  chunks = [pack_int32(len(payload)) + type + payload + pack_int32(zlib.crc32(type + payload))
+  # Python 3 changed the return value of zlib.crc32 to an unsigned int.
+  format = 'i' if sys.version_info.major < 3 else 'I'
+  pack_int32 = struct.Struct('>' + format).pack
+  chunks = [pack_int32(len(payload)) + type + payload +
+            pack_int32(zlib.crc32(type + payload))
             for type, payload in chunks]
-  return _PNG_HEADER + ''.join(chunks) + _PNG_FOOTER
+  return _PNG_HEADER + b''.join(chunks) + _PNG_FOOTER
 
 
 def _GetFilesInPak(pakname):
@@ -54,8 +64,8 @@ def _GetFilesInRc(rcname, tmp_dir, contents):
   '''
   data = util.ReadFile(rcname, util.BINARY).decode('utf-16')
   contents = dict((tmp_dir.GetPath(k), v) for k, v in contents.items())
-  return set(contents[m.group(1)]
-             for m in re.finditer(ur'(?m)^\w+\s+BINDATA\s+"([^"]+)"$', data))
+  return set(contents[os.path.normpath(m.group(1))]
+             for m in re.finditer(r'(?m)^\w+\s+BINDATA\s+"([^"]+)"$', data))
 
 
 def _MakeFallbackAttr(fallback):
@@ -79,14 +89,15 @@ def _If(expr, *body):
   return '<if expr="%s">\n%s\n</if>' % (expr, '\n'.join(body))
 
 
-def _RunBuildTest(self, structures, inputs, expected_outputs, skip_rc=False, layout_fallback=''):
+def _RunBuildTest(self, structures, inputs, expected_outputs, skip_rc=False,
+                  layout_fallback=''):
   outputs = '\n'.join('<output filename="out/%s%s" type="%s" context="%s"%s />'
                               % (context, ext, type, context, layout_fallback)
                       for ext, type in _OUTFILETYPES
                       for context in expected_outputs)
 
   infiles = {
-    'in/in.grd': '''<?xml version="1.0" encoding="UTF-8"?>
+      'in/in.grd': ('''<?xml version="1.0" encoding="UTF-8"?>
       <grit latest_public_release="0" current_release="1">
         <outputs>
           %s
@@ -95,13 +106,15 @@ def _RunBuildTest(self, structures, inputs, expected_outputs, skip_rc=False, lay
           %s
         </release>
       </grit>
-      ''' % (outputs, structures),
+      ''' % (outputs, structures)).encode('utf-8'),
   }
   for pngpath, pngdata in inputs.items():
-    infiles['in/' + pngpath] = pngdata
+    normpath = os.path.normpath('in/' + pngpath)
+    infiles[normpath] = pngdata
   class Options(object):
     pass
-  with util.TempDir(infiles) as tmp_dir:
+
+  with util.TempDir(infiles, mode='wb') as tmp_dir:
     with tmp_dir.AsCurrentDir():
       options = Options()
       options.input = tmp_dir.GetPath('in/in.grd')
@@ -119,9 +132,9 @@ def _RunBuildTest(self, structures, inputs, expected_outputs, skip_rc=False, lay
 
 class ChromeScaledImageUnittest(unittest.TestCase):
   def testNormalFallback(self):
-    d123a = _MakePNG([('AbCd', '')])
-    t123a = _MakePNG([('EfGh', '')])
-    d123b = _MakePNG([('IjKl', '')])
+    d123a = _MakePNG([(b'AbCd', b'')])
+    t123a = _MakePNG([(b'EfGh', b'')])
+    d123b = _MakePNG([(b'IjKl', b'')])
     _RunBuildTest(self,
         _Structures(None,
             _Structure('IDR_A', 'a.png'),
@@ -136,19 +149,19 @@ class ChromeScaledImageUnittest(unittest.TestCase):
         })
 
   def testNormalFallbackFailure(self):
-    self.assertRaises(exception.FileNotFound,
-        _RunBuildTest, self,
-            _Structures(None,
-                _Structure('IDR_A', 'a.png'),
-            ),
-            {'default_100_percent/a.png': _MakePNG([('AbCd', '')]),
-             'tactile_100_percent/a.png': _MakePNG([('EfGh', '')]),
-            },
-            {'tactile_123_percent': 'should fail before using this'})
+    self.assertRaises(
+        exception.FileNotFound, _RunBuildTest, self,
+        _Structures(
+            None,
+            _Structure('IDR_A', 'a.png'),
+        ), {
+            'default_100_percent/a.png': _MakePNG([(b'AbCd', b'')]),
+            'tactile_100_percent/a.png': _MakePNG([(b'EfGh', b'')]),
+        }, {'tactile_123_percent': 'should fail before using this'})
 
   def testLowresFallback(self):
-    png = _MakePNG([('Abcd', '')])
-    png_with_csCl = _MakePNG([('csCl', ''),('Abcd', '')])
+    png = _MakePNG([(b'Abcd', b'')])
+    png_with_csCl = _MakePNG([(b'csCl', b''), (b'Abcd', b'')])
     for outer in (None, False, True):
       for inner in (None, False, True):
         args = (
@@ -175,9 +188,9 @@ class ChromeScaledImageUnittest(unittest.TestCase):
             {'tactile_123_percent': 'should fail before using this'})
 
   def testNoFallbackToDefaultLayout(self):
-    d123a = _MakePNG([('AbCd', '')])
-    t123a = _MakePNG([('EfGh', '')])
-    d123b = _MakePNG([('IjKl', '')])
+    d123a = _MakePNG([(b'AbCd', b'')])
+    t123a = _MakePNG([(b'EfGh', b'')])
+    d123b = _MakePNG([(b'IjKl', b'')])
     _RunBuildTest(self,
         _Structures(None,
             _Structure('IDR_A', 'a.png'),
@@ -191,3 +204,6 @@ class ChromeScaledImageUnittest(unittest.TestCase):
          'tactile_123_percent': set([t123a]),
         },
         layout_fallback=' fallback_to_default_layout="false"')
+
+if __name__ == '__main__':
+  unittest.main()

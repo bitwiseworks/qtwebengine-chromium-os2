@@ -5,10 +5,10 @@
 * found in the LICENSE file.
 */
 
-#include "GrVkImageView.h"
-#include "GrVkGpu.h"
-#include "GrVkSamplerYcbcrConversion.h"
-#include "GrVkUtil.h"
+#include "src/gpu/vk/GrVkGpu.h"
+#include "src/gpu/vk/GrVkImageView.h"
+#include "src/gpu/vk/GrVkSamplerYcbcrConversion.h"
+#include "src/gpu/vk/GrVkUtil.h"
 
 const GrVkImageView* GrVkImageView::Create(GrVkGpu* gpu, VkImage image, VkFormat format,
                                            Type viewType, uint32_t miplevels,
@@ -19,7 +19,7 @@ const GrVkImageView* GrVkImageView::Create(GrVkGpu* gpu, VkImage image, VkFormat
     GrVkSamplerYcbcrConversion* ycbcrConversion = nullptr;
 
     if (ycbcrInfo.isValid()) {
-        SkASSERT(gpu->vkCaps().supportsYcbcrConversion() && format == VK_FORMAT_UNDEFINED);
+        SkASSERT(gpu->vkCaps().supportsYcbcrConversion() && format == ycbcrInfo.fFormat);
 
         ycbcrConversion =
                 gpu->resourceProvider().findOrCreateCompatibleSamplerYcbcrConversion(ycbcrInfo);
@@ -52,26 +52,20 @@ const GrVkImageView* GrVkImageView::Create(GrVkGpu* gpu, VkImage image, VkFormat
         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
     }
 
-    VkResult err = GR_VK_CALL(gpu->vkInterface(), CreateImageView(gpu->device(), &viewInfo,
-                                                                  nullptr, &imageView));
+    VkResult err;
+    GR_VK_CALL_RESULT(gpu, err, CreateImageView(gpu->device(), &viewInfo, nullptr, &imageView));
     if (err) {
         return nullptr;
     }
 
-    return new GrVkImageView(imageView, ycbcrConversion);
+    return new GrVkImageView(gpu, imageView, ycbcrConversion);
 }
 
-void GrVkImageView::freeGPUData(GrVkGpu* gpu) const {
-    GR_VK_CALL(gpu->vkInterface(), DestroyImageView(gpu->device(), fImageView, nullptr));
+void GrVkImageView::freeGPUData() const {
+    GR_VK_CALL(fGpu->vkInterface(), DestroyImageView(fGpu->device(), fImageView, nullptr));
 
     if (fYcbcrConversion) {
-        fYcbcrConversion->unref(gpu);
-    }
-}
-
-void GrVkImageView::abandonGPUData() const {
-    if (fYcbcrConversion) {
-        fYcbcrConversion->unrefAndAbandon();
+        fYcbcrConversion->unref();
     }
 }
 

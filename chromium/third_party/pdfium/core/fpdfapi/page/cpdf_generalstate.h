@@ -10,8 +10,8 @@
 #include "constants/transparency.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_string.h"
+#include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/shared_copy_on_write.h"
-#include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/fx_dib.h"
 
 class CPDF_Object;
@@ -80,17 +80,18 @@ class CPDF_GeneralState {
  private:
   class StateData final : public Retainable {
    public:
-    StateData();
-    StateData(const StateData& that);
-    ~StateData() override;
+    template <typename T, typename... Args>
+    friend RetainPtr<T> pdfium::MakeRetain(Args&&... args);
+
+    RetainPtr<StateData> Clone() const;
 
     ByteString m_BlendMode = pdfium::transparency::kNormal;
     BlendMode m_BlendType = BlendMode::kNormal;
-    UnownedPtr<CPDF_Object> m_pSoftMask;
+    RetainPtr<CPDF_Object> m_pSoftMask;
     CFX_Matrix m_SMaskMatrix;
     float m_StrokeAlpha = 1.0f;
     float m_FillAlpha = 1.0f;
-    UnownedPtr<const CPDF_Object> m_pTR;
+    RetainPtr<const CPDF_Object> m_pTR;
     RetainPtr<CPDF_TransferFunc> m_pTransferFunc;
     CFX_Matrix m_Matrix;
     int m_RenderIntent = 0;
@@ -100,11 +101,16 @@ class CPDF_GeneralState {
     bool m_StrokeOP = false;
     bool m_FillOP = false;
     int m_OPMode = 0;
-    UnownedPtr<const CPDF_Object> m_pBG;
-    UnownedPtr<const CPDF_Object> m_pUCR;
-    UnownedPtr<const CPDF_Object> m_pHT;
+    RetainPtr<const CPDF_Object> m_pBG;
+    RetainPtr<const CPDF_Object> m_pUCR;
+    RetainPtr<const CPDF_Object> m_pHT;
     float m_Flatness = 1.0f;
     float m_Smoothness = 0.0f;
+
+   private:
+    StateData();
+    StateData(const StateData& that);
+    ~StateData() override;
   };
 
   SharedCopyOnWrite<StateData> m_Ref;

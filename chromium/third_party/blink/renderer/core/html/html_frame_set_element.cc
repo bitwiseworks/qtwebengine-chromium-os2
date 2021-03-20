@@ -31,18 +31,16 @@
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html/html_collection.h"
 #include "third_party/blink/renderer/core/html/html_frame_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_frame_set.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
-using namespace html_names;
-
-inline HTMLFrameSetElement::HTMLFrameSetElement(Document& document)
-    : HTMLElement(kFramesetTag, document),
+HTMLFrameSetElement::HTMLFrameSetElement(Document& document)
+    : HTMLElement(html_names::kFramesetTag, document),
       border_(6),
       border_set_(false),
       border_color_set_(false),
@@ -50,13 +48,12 @@ inline HTMLFrameSetElement::HTMLFrameSetElement(Document& document)
       frameborder_set_(false),
       noresize_(false) {
   SetHasCustomStyleCallbacks();
+  UseCounter::Count(document, WebFeature::kHTMLFrameSetElement);
 }
-
-DEFINE_NODE_FACTORY(HTMLFrameSetElement)
 
 bool HTMLFrameSetElement::IsPresentationAttribute(
     const QualifiedName& name) const {
-  if (name == kBordercolorAttr)
+  if (name == html_names::kBordercolorAttr)
     return true;
   return HTMLElement::IsPresentationAttribute(name);
 }
@@ -65,8 +62,8 @@ void HTMLFrameSetElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
     MutableCSSPropertyValueSet* style) {
-  if (name == kBordercolorAttr)
-    AddHTMLColorToStyle(style, CSSPropertyBorderColor, value);
+  if (name == html_names::kBordercolorAttr)
+    AddHTMLColorToStyle(style, CSSPropertyID::kBorderColor, value);
   else
     HTMLElement::CollectStyleForPresentationAttribute(name, value, style);
 }
@@ -75,140 +72,145 @@ void HTMLFrameSetElement::ParseAttribute(
     const AttributeModificationParams& params) {
   const QualifiedName& name = params.name;
   const AtomicString& value = params.new_value;
-  if (name == kRowsAttr) {
+  if (name == html_names::kRowsAttr) {
     if (!value.IsNull()) {
       row_lengths_ = ParseListOfDimensions(value.GetString());
       SetNeedsStyleRecalc(kSubtreeStyleChange,
                           StyleChangeReasonForTracing::FromAttribute(name));
     }
-  } else if (name == kColsAttr) {
+  } else if (name == html_names::kColsAttr) {
     if (!value.IsNull()) {
       col_lengths_ = ParseListOfDimensions(value.GetString());
       SetNeedsStyleRecalc(kSubtreeStyleChange,
                           StyleChangeReasonForTracing::FromAttribute(name));
     }
-  } else if (name == kFrameborderAttr) {
+  } else if (name == html_names::kFrameborderAttr) {
     if (!value.IsNull()) {
-      if (DeprecatedEqualIgnoringCase(value, "no") ||
-          DeprecatedEqualIgnoringCase(value, "0")) {
+      if (EqualIgnoringASCIICase(value, "no") ||
+          EqualIgnoringASCIICase(value, "0")) {
         frameborder_ = false;
         frameborder_set_ = true;
-      } else if (DeprecatedEqualIgnoringCase(value, "yes") ||
-                 DeprecatedEqualIgnoringCase(value, "1")) {
+      } else if (EqualIgnoringASCIICase(value, "yes") ||
+                 EqualIgnoringASCIICase(value, "1")) {
         frameborder_set_ = true;
       }
     } else {
       frameborder_ = false;
       frameborder_set_ = false;
     }
-  } else if (name == kNoresizeAttr) {
+  } else if (name == html_names::kNoresizeAttr) {
     noresize_ = true;
-  } else if (name == kBorderAttr) {
+  } else if (name == html_names::kBorderAttr) {
     if (!value.IsNull()) {
       border_ = value.ToInt();
       border_set_ = true;
     } else {
       border_set_ = false;
     }
-  } else if (name == kBordercolorAttr) {
+  } else if (name == html_names::kBordercolorAttr) {
     border_color_set_ = !value.IsEmpty();
-  } else if (name == kOnafterprintAttr) {
+  } else if (name == html_names::kOnafterprintAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kAfterprint,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnbeforeprintAttr) {
+  } else if (name == html_names::kOnbeforeprintAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kBeforeprint,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnloadAttr) {
+  } else if (name == html_names::kOnloadAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kLoad,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnbeforeunloadAttr) {
+  } else if (name == html_names::kOnbeforeunloadAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kBeforeunload,
         CreateAttributeEventListener(
             GetDocument().GetFrame(), name, value,
             JSEventHandler::HandlerType::kOnBeforeUnloadEventHandler));
-  } else if (name == kOnunloadAttr) {
+  } else if (name == html_names::kOnunloadAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kUnload,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnpagehideAttr) {
+  } else if (name == html_names::kOnpagehideAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kPagehide,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnpageshowAttr) {
+  } else if (name == html_names::kOnpageshowAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kPageshow,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnblurAttr) {
+  } else if (name == html_names::kOnblurAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kBlur,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnerrorAttr) {
+  } else if (name == html_names::kOnerrorAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kError,
         CreateAttributeEventListener(
             GetDocument().GetFrame(), name, value,
             JSEventHandler::HandlerType::kOnErrorEventHandler));
-  } else if (name == kOnfocusAttr) {
+  } else if (name == html_names::kOnfocusAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kFocus,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnfocusinAttr) {
+  } else if (name == html_names::kOnfocusinAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kFocusin,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnfocusoutAttr) {
+  } else if (name == html_names::kOnfocusoutAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kFocusout,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
   } else if (RuntimeEnabledFeatures::OrientationEventEnabled() &&
-             name == kOnorientationchangeAttr) {
+             name == html_names::kOnorientationchangeAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kOrientationchange,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnhashchangeAttr) {
+  } else if (name == html_names::kOnhashchangeAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kHashchange,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnmessageAttr) {
+  } else if (name == html_names::kOnmessageAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kMessage,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnresizeAttr) {
+  } else if (name == html_names::kOnresizeAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kResize,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnscrollAttr) {
+  } else if (name == html_names::kOnscrollAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kScroll,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnstorageAttr) {
+  } else if (name == html_names::kOnstorageAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kStorage,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnonlineAttr) {
+  } else if (name == html_names::kOnonlineAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kOnline,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnofflineAttr) {
+  } else if (name == html_names::kOnofflineAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kOffline,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnpopstateAttr) {
+  } else if (name == html_names::kOnpopstateAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kPopstate,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (name == kOnlanguagechangeAttr) {
+  } else if (name == html_names::kOnlanguagechangeAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kLanguagechange,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
-  } else if (RuntimeEnabledFeatures::PortalsEnabled() &&
-             name == kOnportalactivateAttr) {
+  } else if (RuntimeEnabledFeatures::PortalsEnabled(&GetDocument()) &&
+             name == html_names::kOnportalactivateAttr) {
     GetDocument().SetWindowAttributeEventListener(
         event_type_names::kPortalactivate,
+        CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
+  } else if (RuntimeEnabledFeatures::TimeZoneChangeEventEnabled() &&
+             name == html_names::kOntimezonechangeAttr) {
+    GetDocument().SetWindowAttributeEventListener(
+        event_type_names::kTimezonechange,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value));
   } else {
     HTMLElement::ParseAttribute(params);
@@ -222,10 +224,11 @@ bool HTMLFrameSetElement::LayoutObjectIsNeeded(
 }
 
 LayoutObject* HTMLFrameSetElement::CreateLayoutObject(
-    const ComputedStyle& style) {
-  if (style.HasContent())
-    return LayoutObject::CreateObject(this, style);
-  return new LayoutFrameSet(this);
+    const ComputedStyle& style,
+    LegacyLayout legacy) {
+  if (style.ContentBehavesAsNormal())
+    return new LayoutFrameSet(this);
+  return LayoutObject::CreateObject(this, style, legacy);
 }
 
 void HTMLFrameSetElement::AttachLayoutTree(AttachContext& context) {
@@ -249,9 +252,10 @@ void HTMLFrameSetElement::AttachLayoutTree(AttachContext& context) {
 }
 
 void HTMLFrameSetElement::DefaultEventHandler(Event& evt) {
-  if (evt.IsMouseEvent() && !noresize_ && GetLayoutObject() &&
+  auto* mouse_event = DynamicTo<MouseEvent>(evt);
+  if (mouse_event && !noresize_ && GetLayoutObject() &&
       GetLayoutObject()->IsFrameSet()) {
-    if (ToLayoutFrameSet(GetLayoutObject())->UserResize(ToMouseEvent(evt))) {
+    if (ToLayoutFrameSet(GetLayoutObject())->UserResize(*mouse_event)) {
       evt.SetDefaultHandled();
       return;
     }
@@ -268,8 +272,7 @@ Node::InsertionNotificationRequest HTMLFrameSetElement::InsertedInto(
   }
   return HTMLElement::InsertedInto(insertion_point);
 }
-
-void HTMLFrameSetElement::WillRecalcStyle(StyleRecalcChange) {
+void HTMLFrameSetElement::WillRecalcStyle(const StyleRecalcChange) {
   if (NeedsStyleRecalc() && GetLayoutObject()) {
     GetLayoutObject()->SetNeedsLayoutAndFullPaintInvalidation(
         layout_invalidation_reason::kStyleChange);

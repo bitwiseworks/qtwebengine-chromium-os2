@@ -21,12 +21,12 @@
 #include "media/base/android/android_util.h"
 #include "media/base/android/media_crypto_context.h"
 #include "media/base/android/media_crypto_context_impl.h"
-#include "media/base/android/media_drm_storage.h"
 #include "media/base/android/media_drm_storage_bridge.h"
 #include "media/base/cdm_context.h"
 #include "media/base/cdm_promise.h"
 #include "media/base/cdm_promise_adapter.h"
 #include "media/base/content_decryption_module.h"
+#include "media/base/media_drm_storage.h"
 #include "media/base/media_export.h"
 #include "media/base/player_tracker.h"
 #include "media/base/provision_fetcher.h"
@@ -78,6 +78,10 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
   // supported or not. If false, per-device provisioning is used.
   static bool IsPerOriginProvisioningSupported();
 
+  // Returns true if this device supports per-application provisioning, false
+  // otherwise.
+  static bool IsPerApplicationProvisioningSupported();
+
   static bool IsPersistentLicenseTypeSupported(const std::string& key_system);
 
   // Returns the list of the platform-supported key system names that
@@ -96,7 +100,7 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
       const std::string& key_system,
       const std::string& origin_id,
       SecurityLevel security_level,
-      const CreateFetcherCB& create_fetcher_cb);
+      CreateFetcherCB create_fetcher_cb);
 
   // ContentDecryptionModule implementation.
   void SetServerCertificate(
@@ -143,8 +147,8 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
   //
   // Note: RegisterPlayer() should be called before SetMediaCryptoReadyCB() to
   // avoid missing any new key notifications.
-  int RegisterPlayer(const base::Closure& new_key_cb,
-                     const base::Closure& cdm_unset_cb) override;
+  int RegisterPlayer(base::RepeatingClosure new_key_cb,
+                     base::RepeatingClosure cdm_unset_cb) override;
   void UnregisterPlayer(int registration_id) override;
 
   // Helper function to determine whether a secure decoder is required for the
@@ -162,7 +166,7 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
   // The registered callbacks will be fired on |task_runner_|. The caller
   // should make sure that the callbacks are posted to the correct thread.
   // TODO(xhwang): Move this up to be close to RegisterPlayer().
-  void SetMediaCryptoReadyCB(const MediaCryptoReadyCB& media_crypto_ready_cb);
+  void SetMediaCryptoReadyCB(MediaCryptoReadyCB media_crypto_ready_cb);
 
   // All the OnXxx functions below are called from Java. The implementation must
   // only do minimal work and then post tasks to avoid reentrancy issues.
@@ -252,7 +256,7 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
       SecurityLevel security_level,
       bool requires_media_crypto,
       std::unique_ptr<MediaDrmStorageBridge> storage,
-      const CreateFetcherCB& create_fetcher_cb,
+      CreateFetcherCB create_fetcher_cb,
       const SessionMessageCB& session_message_cb,
       const SessionClosedCB& session_closed_cb,
       const SessionKeysChangeCB& session_keys_change_cb,
@@ -349,7 +353,7 @@ class MEDIA_EXPORT MediaDrmBridge : public ContentDecryptionModule,
   MediaCryptoContextImpl media_crypto_context_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<MediaDrmBridge> weak_factory_;
+  base::WeakPtrFactory<MediaDrmBridge> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaDrmBridge);
 };

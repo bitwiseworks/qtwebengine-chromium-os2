@@ -46,15 +46,14 @@ namespace base {
 //
 // Constructors (inputs need not be sorted):
 //   flat_set(InputIterator first, InputIterator last,
-//            FlatContainerDupes = KEEP_FIRST_OF_DUPES,
 //            const Compare& compare = Compare());
 //   flat_set(const flat_set&);
 //   flat_set(flat_set&&);
-//   flat_set(std::vector<Key>,
-//            FlatContainerDupes = KEEP_FIRST_OF_DUPES,
+//   flat_set(const std::vector<Key>& items,
+//            const Compare& compare = Compare());
+//   flat_set(std::vector<Key>&& items,
 //            const Compare& compare = Compare());  // Re-use storage.
 //   flat_set(std::initializer_list<value_type> ilist,
-//            FlatContainerDupes = KEEP_FIRST_OF_DUPES,
 //            const Compare& comp = Compare());
 //
 // Assignment functions:
@@ -90,12 +89,15 @@ namespace base {
 // Insert and accessor functions:
 //   pair<iterator, bool> insert(const key_type&);
 //   pair<iterator, bool> insert(key_type&&);
-//   void                 insert(InputIterator first, InputIterator last,
-//                               FlatContainerDupes = KEEP_FIRST_OF_DUPES);
+//   void                 insert(InputIterator first, InputIterator last);
 //   iterator             insert(const_iterator hint, const key_type&);
 //   iterator             insert(const_iterator hint, key_type&&);
 //   pair<iterator, bool> emplace(Args&&...);
 //   iterator             emplace_hint(const_iterator, Args&&...);
+//
+// Underlying type functions:
+//   underlying_type      extract() &&;
+//   void                 replace(underlying_type&&);
 //
 // Erase functions:
 //   iterator erase(iterator);

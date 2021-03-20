@@ -43,7 +43,7 @@
 namespace blink {
 
 class KURL;
-class SharedBuffer;
+class SystemClipboard;
 class WebDragData;
 
 enum class PasteMode;
@@ -51,7 +51,7 @@ enum class PasteMode;
 // A data object for holding data that would be in a clipboard or moved
 // during a drag-n-drop operation. This is the data that WebCore is aware
 // of and is not specific to a platform.
-class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
+class CORE_EXPORT DataObject : public GarbageCollected<DataObject>,
                                public Supplementable<DataObject> {
   USING_GARBAGE_COLLECTED_MIXIN(DataObject);
 
@@ -63,7 +63,7 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
     virtual void OnItemListChanged() = 0;
   };
 
-  static DataObject* CreateFromClipboard(PasteMode);
+  static DataObject* CreateFromClipboard(SystemClipboard*, PasteMode);
   static DataObject* CreateFromString(const String&);
   static DataObject* Create();
   static DataObject* Create(WebDragData);
@@ -74,7 +74,7 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
   // DataTransferItemList support.
   uint32_t length() const;
   DataObjectItem* Item(uint32_t index);
-  // FIXME: Implement V8DataTransferItemList::indexedPropertyDeleter to get this
+  // TODO: Implement V8DataTransferItemList::indexedPropertyDeleter to get this
   // called.
   void DeleteItem(uint32_t index);
   void ClearAll();
@@ -124,7 +124,7 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
   // whenever the underlying item_list_ changes.
   void AddObserver(Observer*);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   WebDragData ToWebDragData();
 

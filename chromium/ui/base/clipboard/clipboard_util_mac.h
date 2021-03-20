@@ -10,15 +10,15 @@
 #include "base/component_export.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/ref_counted.h"
-#include "ui/base/clipboard/clipboard_types.h"
+#include "ui/base/clipboard/clipboard_buffer.h"
 
 namespace ui {
 
 // A publicly-used UTI for the name of a URL. It really should be in a system
 // header but isn't.
-COMPONENT_EXPORT(BASE_CLIPBOARD) extern NSString* const kUTTypeURLName;
+COMPONENT_EXPORT(UI_BASE_CLIPBOARD) extern NSString* const kUTTypeURLName;
 
-class COMPONENT_EXPORT(BASE_CLIPBOARD) UniquePasteboard
+class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) UniquePasteboard
     : public base::RefCounted<UniquePasteboard> {
  public:
   UniquePasteboard();
@@ -31,7 +31,7 @@ class COMPONENT_EXPORT(BASE_CLIPBOARD) UniquePasteboard
   base::scoped_nsobject<NSPasteboard> pasteboard_;
 };
 
-class COMPONENT_EXPORT(BASE_CLIPBOARD) ClipboardUtil {
+class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) ClipboardUtil {
  public:
   // Returns an NSPasteboardItem that represents the given |url|.
   // |url| must not be nil.
@@ -70,8 +70,8 @@ class COMPONENT_EXPORT(BASE_CLIPBOARD) ClipboardUtil {
                                           NSArray** urls,
                                           NSArray** titles);
 
-  // Gets the NSPasteboard specified from the clipboard type.
-  static NSPasteboard* PasteboardFromType(ui::ClipboardType type);
+  // Gets the NSPasteboard specified from the clipboard buffer.
+  static NSPasteboard* PasteboardFromBuffer(ClipboardBuffer buffer);
 
   // If there is RTF data on the pasteboard, returns an HTML version of it.
   // Otherwise returns nil.

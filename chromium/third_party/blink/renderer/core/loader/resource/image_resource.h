@@ -31,7 +31,6 @@
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/timer.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -87,10 +86,10 @@ class CORE_EXPORT ImageResource final
 
   scoped_refptr<const SharedBuffer> ResourceBuffer() const override;
   void NotifyStartLoad() override;
-  void ResponseReceived(const ResourceResponse&,
-                        std::unique_ptr<WebDataConsumerHandle>) override;
+  void ResponseReceived(const ResourceResponse&) override;
   void AppendData(const char*, size_t) override;
-  void Finish(TimeTicks finish_time, base::SingleThreadTaskRunner*) override;
+  void Finish(base::TimeTicks finish_time,
+              base::SingleThreadTaskRunner*) override;
   void FinishAsError(const ResourceError&,
                      base::SingleThreadTaskRunner*) override;
 
@@ -111,7 +110,7 @@ class CORE_EXPORT ImageResource final
   void OnMemoryDump(WebMemoryDumpLevelOfDetail,
                     WebProcessMemoryDump*) const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   enum class MultipartParsingState : uint8_t {
@@ -173,7 +172,7 @@ class CORE_EXPORT ImageResource final
   };
   PlaceholderOption placeholder_option_;
 
-  TimeTicks last_flush_time_;
+  base::TimeTicks last_flush_time_;
 
   bool is_during_finish_as_error_ = false;
 

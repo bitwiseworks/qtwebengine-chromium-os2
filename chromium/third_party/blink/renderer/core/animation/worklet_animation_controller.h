@@ -33,7 +33,7 @@ class WorkletAnimationBase;
 // For more details on AnimationWorklet, see the spec:
 // https://wicg.github.io/animation-worklet
 class CORE_EXPORT WorkletAnimationController
-    : public GarbageCollectedFinalized<WorkletAnimationController>,
+    : public GarbageCollected<WorkletAnimationController>,
       public MutatorClient {
  public:
   WorkletAnimationController(Document*);
@@ -58,15 +58,13 @@ class CORE_EXPORT WorkletAnimationController
 
   void SetMutationUpdate(
       std::unique_ptr<AnimationWorkletOutput> output) override;
-  void NotifyAnimationsPending() override {}
-  void NotifyAnimationsReady() override {}
 
   void SynchronizeAnimatorName(const String& animator_name) override;
   // Returns true if the animator with given name is registered in
   // AnimationWorkletGlobalScope.
   bool IsAnimatorRegistered(const String& animator_name) const;
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   void MutateAnimations();

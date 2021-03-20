@@ -6,15 +6,17 @@
 
 #include <cstdint>
 
-#include "base/logging.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_flags.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_string_utils.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_str_cat.h"
 
 namespace http2 {
 
 DecodeStatus HpackBlockDecoder::Decode(DecodeBuffer* db) {
   if (!before_entry_) {
-    DVLOG(2) << "HpackBlockDecoder::Decode resume entry, db->Remaining="
-             << db->Remaining();
+    HTTP2_DVLOG(2) << "HpackBlockDecoder::Decode resume entry, db->Remaining="
+                   << db->Remaining();
     DecodeStatus status = entry_decoder_.Resume(db, listener_);
     switch (status) {
       case DecodeStatus::kDecodeDone:
@@ -24,13 +26,14 @@ DecodeStatus HpackBlockDecoder::Decode(DecodeBuffer* db) {
         DCHECK_EQ(0u, db->Remaining());
         return DecodeStatus::kDecodeInProgress;
       case DecodeStatus::kDecodeError:
+        HTTP2_CODE_COUNT_N(decompress_failure_3, 1, 23);
         return DecodeStatus::kDecodeError;
     }
   }
   DCHECK(before_entry_);
   while (db->HasData()) {
-    DVLOG(2) << "HpackBlockDecoder::Decode start entry, db->Remaining="
-             << db->Remaining();
+    HTTP2_DVLOG(2) << "HpackBlockDecoder::Decode start entry, db->Remaining="
+                   << db->Remaining();
     DecodeStatus status = entry_decoder_.Start(db, listener_);
     switch (status) {
       case DecodeStatus::kDecodeDone:
@@ -40,6 +43,7 @@ DecodeStatus HpackBlockDecoder::Decode(DecodeBuffer* db) {
         before_entry_ = false;
         return DecodeStatus::kDecodeInProgress;
       case DecodeStatus::kDecodeError:
+        HTTP2_CODE_COUNT_N(decompress_failure_3, 2, 23);
         return DecodeStatus::kDecodeError;
     }
     DCHECK(false);
@@ -48,11 +52,11 @@ DecodeStatus HpackBlockDecoder::Decode(DecodeBuffer* db) {
   return DecodeStatus::kDecodeDone;
 }
 
-Http2String HpackBlockDecoder::DebugString() const {
-  return Http2StrCat("HpackBlockDecoder(", entry_decoder_.DebugString(),
-                     ", listener@",
-                     Http2Hex(reinterpret_cast<intptr_t>(listener_)),
-                     (before_entry_ ? ", between entries)" : ", in an entry)"));
+std::string HpackBlockDecoder::DebugString() const {
+  return quiche::QuicheStrCat(
+      "HpackBlockDecoder(", entry_decoder_.DebugString(), ", listener@",
+      Http2Hex(reinterpret_cast<intptr_t>(listener_)),
+      (before_entry_ ? ", between entries)" : ", in an entry)"));
 }
 
 std::ostream& operator<<(std::ostream& out, const HpackBlockDecoder& v) {

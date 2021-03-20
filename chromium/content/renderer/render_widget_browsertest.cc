@@ -6,16 +6,19 @@
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "content/common/visual_properties.h"
+#include "content/common/widget_messages.h"
 #include "content/public/renderer/render_frame_visitor.h"
 #include "content/public/test/render_view_test.h"
 #include "content/renderer/render_frame_proxy.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
 #include "content/renderer/render_widget.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/public/web/web_frame_widget.h"
 #include "third_party/blink/public/web/web_input_method_controller.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_range.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "ui/base/ime/text_input_type.h"
 
 namespace content {
@@ -23,11 +26,15 @@ namespace content {
 class RenderWidgetTest : public RenderViewTest {
  protected:
   RenderWidget* widget() {
-    return static_cast<RenderViewImpl*>(view_)->GetWidget();
+    auto* view_impl = static_cast<RenderViewImpl*>(view_);
+    return view_impl->GetMainRenderFrame()->GetLocalRootRenderWidget();
   }
 
-  void OnSynchronizeVisualProperties(const VisualProperties& params) {
-    widget()->OnSynchronizeVisualProperties(params);
+  void OnSynchronizeVisualProperties(
+      const VisualProperties& visual_properties) {
+    WidgetMsg_UpdateVisualProperties msg(widget()->routing_id(),
+                                         visual_properties);
+    widget()->OnMessageReceived(msg);
   }
 
   void GetCompositionRange(gfx::Range* range) {
@@ -47,18 +54,33 @@ class RenderWidgetTest : public RenderViewTest {
   ui::TextInputType GetTextInputType() { return widget()->GetTextInputType(); }
 
   void SetFocus(bool focused) { widget()->OnSetFocus(focused); }
+
+  gfx::PointF GetCenterPointOfElement(const blink::WebString& id) {
+    auto rect =
+        GetMainFrame()->GetDocument().GetElementById(id).BoundsInViewport();
+    return gfx::PointF(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  }
+
+  // Returns Compositor scrolling ElementId for a given id. If id is empty it
+  // returns the document scrolling ElementId.
+  uint64_t GetCompositorElementId(const blink::WebString& id = "") {
+    blink::WebNode node;
+    if (id.IsEmpty())
+      node = GetMainFrame()->GetDocument();
+    else
+      node = GetMainFrame()->GetDocument().GetElementById(id);
+    return node.ScrollingElementIdForTesting();
+  }
 };
 
 TEST_F(RenderWidgetTest, OnSynchronizeVisualProperties) {
-  widget()->DidNavigate();
+  widget()->DidNavigate(ukm::SourceId(42), GURL(""));
   // The initial bounds is empty, so setting it to the same thing should do
   // nothing.
   VisualProperties visual_properties;
   visual_properties.screen_info = ScreenInfo();
   visual_properties.new_size = gfx::Size();
-  visual_properties.compositor_viewport_pixel_size = gfx::Size();
-  visual_properties.top_controls_height = 0.f;
-  visual_properties.browser_controls_shrink_blink_size = false;
+  visual_properties.compositor_viewport_pixel_rect = gfx::Rect();
   visual_properties.is_fullscreen_granted = false;
   OnSynchronizeVisualProperties(visual_properties);
 
@@ -74,11 +96,11 @@ TEST_F(RenderWidgetTest, OnSynchronizeVisualProperties) {
   visual_properties.local_surface_id_allocation =
       local_surface_id_allocator.GetCurrentLocalSurfaceIdAllocation();
   visual_properties.new_size = size;
-  visual_properties.compositor_viewport_pixel_size = size;
+  visual_properties.compositor_viewport_pixel_rect = gfx::Rect(size);
   OnSynchronizeVisualProperties(visual_properties);
 
   // Clear the flag.
-  widget()->DidCommitCompositorFrame();
+  widget()->DidCommitCompositorFrame(base::TimeTicks());
   widget()->DidCommitAndDrawCompositorFrame();
 
   // Setting the same size again should not send the ack.
@@ -86,7 +108,7 @@ TEST_F(RenderWidgetTest, OnSynchronizeVisualProperties) {
 
   // Resetting the rect to empty should not send the ack.
   visual_properties.new_size = gfx::Size();
-  visual_properties.compositor_viewport_pixel_size = gfx::Size();
+  visual_properties.compositor_viewport_pixel_rect = gfx::Rect();
   visual_properties.local_surface_id_allocation = base::nullopt;
   OnSynchronizeVisualProperties(visual_properties);
 
@@ -101,12 +123,12 @@ TEST_F(RenderWidgetTest, OnSynchronizeVisualProperties) {
 
 class RenderWidgetInitialSizeTest : public RenderWidgetTest {
  protected:
-  std::unique_ptr<VisualProperties> InitialVisualProperties() override {
-    std::unique_ptr<VisualProperties> initial_visual_properties(
-        new VisualProperties());
-    initial_visual_properties->new_size = initial_size_;
-    initial_visual_properties->compositor_viewport_pixel_size = initial_size_;
-    initial_visual_properties->local_surface_id_allocation =
+  VisualProperties InitialVisualProperties() override {
+    VisualProperties initial_visual_properties;
+    initial_visual_properties.new_size = initial_size_;
+    initial_visual_properties.compositor_viewport_pixel_rect =
+        gfx::Rect(initial_size_);
+    initial_visual_properties.local_surface_id_allocation =
         local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation();
     return initial_visual_properties;
   }
@@ -115,7 +137,116 @@ class RenderWidgetInitialSizeTest : public RenderWidgetTest {
   viz::ParentLocalSurfaceIdAllocator local_surface_id_allocator_;
 };
 
-TEST_F(RenderWidgetTest, HitTestAPI) {
+TEST_F(RenderWidgetTest, CompositorIdHitTestAPI) {
+  LoadHTML(
+      R"HTML(
+      <style>
+        body { padding: 0; margin: 0; }
+      </style>
+
+      <div id='green' style='background:green; height:50px; margin-top:50px;'>
+      </div>
+
+      <div id='red' style='background:red; height:50px; overflow-y:scroll'>
+        <div style='height:200px'>long content</div>
+      </div>
+
+      <div id='blue' style='background:blue; height:50px; overflow:hidden'>
+        <div style='height:200px'>long content</div>
+      </div>
+
+      <div style='height:50px; overflow-y:scroll'>
+        <div id='yellow' style='height:50px; width:200px; position:fixed;
+        background:yellow;'>position fixed</div>
+        <div style='height:200px; background: black'>long content</div>
+      </div>
+
+      <div id='cyan-parent' style='height:50px; overflow:scroll'>
+        <div id='cyan' style='background:cyan; height:100px; overflow:scroll'>
+          <div style='height:200px'>long content</div>
+        </div>
+      </div>
+      )HTML");
+
+  float scale_factors[] = {1, 1.5, 2};
+
+  for (float factor : scale_factors) {
+    view_->GetWebView()->SetPageScaleFactor(factor);
+
+    // Hit the root
+    EXPECT_EQ(GetCompositorElementId(),
+              widget()
+                  ->GetHitTestResultAtPoint(gfx::PointF(10, 10))
+                  .GetScrollableContainerId());
+
+    // Hit non-scrollable div
+    EXPECT_EQ(GetCompositorElementId(),
+              widget()
+                  ->GetHitTestResultAtPoint(GetCenterPointOfElement("green"))
+                  .GetScrollableContainerId());
+
+    // Hit scrollable div
+    EXPECT_EQ(GetCompositorElementId("red"),
+              widget()
+                  ->GetHitTestResultAtPoint(GetCenterPointOfElement("red"))
+                  .GetScrollableContainerId());
+
+    // Hit overflow:hidden div
+    EXPECT_EQ(GetCompositorElementId(),
+              widget()
+                  ->GetHitTestResultAtPoint(GetCenterPointOfElement("blue"))
+                  .GetScrollableContainerId());
+
+    // Hit position fixed div
+    EXPECT_EQ(GetCompositorElementId(),
+              widget()
+                  ->GetHitTestResultAtPoint(GetCenterPointOfElement("yellow"))
+                  .GetScrollableContainerId());
+
+    // Hit inner scroller inside another scroller
+    EXPECT_EQ(
+        GetCompositorElementId("cyan"),
+        widget()
+            ->GetHitTestResultAtPoint(GetCenterPointOfElement("cyan-parent"))
+            .GetScrollableContainerId());
+  }
+}
+
+TEST_F(RenderWidgetTest, CompositorIdHitTestAPIWithImplicitRootScroller) {
+  blink::WebRuntimeFeatures::EnableOverlayScrollbars(true);
+  blink::WebRuntimeFeatures::EnableImplicitRootScroller(true);
+
+  LoadHTML(
+      R"HTML(
+      <style>
+      html,body {
+        width: 100%;
+        height: 100%;
+        margin: 0px;
+      }
+      #scroller {
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+      }
+      </style>
+
+      <div id='scroller'>
+        <div style='height:3000px; background:red;'>very long content</div>
+      </div>
+      <div id='white' style='position:absolute; top:100px; left:50px;
+        height:50px; background:white;'>some more content</div>
+      )HTML");
+  // Hit sibling of a implicit root scroller node
+  EXPECT_EQ(GetMainFrame()
+                ->GetDocument()
+                .GetVisualViewportScrollingElementIdForTesting(),
+            widget()
+                ->GetHitTestResultAtPoint(GetCenterPointOfElement("white"))
+                .GetScrollableContainerId());
+}
+
+TEST_F(RenderWidgetTest, FrameSinkIdHitTestAPI) {
   LoadHTML(
       "<body style='padding: 0px; margin: 0px'>"
       "<div style='background: green; padding: 100px; margin: 0px;'>"
@@ -221,6 +352,29 @@ TEST_F(RenderWidgetTest, PageFocusIme) {
   CommitText(text);
   EXPECT_EQ("hello world",
             GetInputMethodController()->TextInputInfo().value.Utf8());
+}
+
+// Tests that the value of VisualProperties::is_pinch_gesture_active is
+// not propagated to the LayerTreeHost when properties are synced for main
+// frame.
+TEST_F(RenderWidgetTest, ActivePinchGestureUpdatesLayerTreeHost) {
+  auto* layer_tree_host = widget()->layer_tree_host();
+  EXPECT_FALSE(layer_tree_host->is_external_pinch_gesture_active_for_testing());
+  content::VisualProperties visual_properties;
+
+  // Sync visual properties on a mainframe RenderWidget.
+  visual_properties.is_pinch_gesture_active = true;
+  {
+    WidgetMsg_UpdateVisualProperties msg(widget()->routing_id(),
+                                         visual_properties);
+    widget()->OnMessageReceived(msg);
+  }
+  // We do not expect the |is_pinch_gesture_active| value to propagate to the
+  // LayerTreeHost for the main-frame. Since GesturePinch events are handled
+  // directly by the layer tree for the main frame, it already knows whether or
+  // not a pinch gesture is active, and so we shouldn't propagate this
+  // information to the layer tree for a main-frame's widget.
+  EXPECT_FALSE(layer_tree_host->is_external_pinch_gesture_active_for_testing());
 }
 
 }  // namespace content

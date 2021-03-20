@@ -10,6 +10,11 @@ import os
 import string
 import sys
 
+# Import apk_operations even though this script doesn't use it so that
+# targets that depend on the wrapper scripts will rebuild when apk_operations
+# or its deps change.
+sys.path.insert(1, os.path.join(os.path.dirname(__file__), os.pardir))
+import apk_operations  # pylint: disable=unused-import
 from util import build_utils
 
 SCRIPT_TEMPLATE = string.Template("""\
@@ -27,9 +32,11 @@ def main():
   sys.path.append(resolve(${WRAPPED_SCRIPT_DIR}))
   import apk_operations
 
+  additional_apk_paths = [resolve(p) for p in ${ADDITIONAL_APK_PATHS}]
   apk_operations.RunForBundle(output_directory=resolve(${OUTPUT_DIR}),
                               bundle_path=resolve(${BUNDLE_PATH}),
                               bundle_apks_path=resolve(${BUNDLE_APKS_PATH}),
+                              additional_apk_paths=additional_apk_paths,
                               aapt2_path=resolve(${AAPT2_PATH}),
                               keystore_path=resolve(${KEYSTORE_PATH}),
                               keystore_password=${KEYSTORE_PASSWORD},
@@ -37,7 +44,8 @@ def main():
                               package_name=${PACKAGE_NAME},
                               command_line_flags_file=${FLAGS_FILE},
                               proguard_mapping_path=resolve(${MAPPING_PATH}),
-                              target_cpu=${TARGET_CPU})
+                              target_cpu=${TARGET_CPU},
+                              system_image_locales=${SYSTEM_IMAGE_LOCALES})
 
 if __name__ == '__main__':
   sys.exit(main())
@@ -51,6 +59,12 @@ def main(args):
                       help='Output path for executable script.')
   parser.add_argument('--bundle-path', required=True)
   parser.add_argument('--bundle-apks-path', required=True)
+  parser.add_argument(
+      '--additional-apk-path',
+      action='append',
+      dest='additional_apk_paths',
+      default=[],
+      help='Paths to APKs to be installed prior to --apk-path.')
   parser.add_argument('--package-name', required=True)
   parser.add_argument('--aapt2-path', required=True)
   parser.add_argument('--keystore-path', required=True)
@@ -59,6 +73,7 @@ def main(args):
   parser.add_argument('--command-line-flags-file')
   parser.add_argument('--proguard-mapping-path')
   parser.add_argument('--target-cpu')
+  parser.add_argument('--system-image-locales')
   args = parser.parse_args(args)
 
   def relativize(path):
@@ -69,21 +84,36 @@ def main(args):
 
   wrapped_script_dir = os.path.join(os.path.dirname(__file__), os.path.pardir)
   wrapped_script_dir = relativize(wrapped_script_dir)
-
   with open(args.script_output_path, 'w') as script:
     script_dict = {
-        'WRAPPED_SCRIPT_DIR': repr(wrapped_script_dir),
-        'OUTPUT_DIR': repr(relativize('.')),
-        'BUNDLE_PATH': repr(relativize(args.bundle_path)),
-        'BUNDLE_APKS_PATH': repr(relativize(args.bundle_apks_path)),
-        'PACKAGE_NAME': repr(args.package_name),
-        'AAPT2_PATH': repr(relativize(args.aapt2_path)),
-        'KEYSTORE_PATH': repr(relativize(args.keystore_path)),
-        'KEYSTORE_PASSWORD': repr(args.keystore_password),
-        'KEY_NAME': repr(args.key_name),
-        'MAPPING_PATH': repr(relativize(args.proguard_mapping_path)),
-        'FLAGS_FILE': repr(args.command_line_flags_file),
-        'TARGET_CPU': repr(args.target_cpu),
+        'WRAPPED_SCRIPT_DIR':
+        repr(wrapped_script_dir),
+        'OUTPUT_DIR':
+        repr(relativize('.')),
+        'BUNDLE_PATH':
+        repr(relativize(args.bundle_path)),
+        'BUNDLE_APKS_PATH':
+        repr(relativize(args.bundle_apks_path)),
+        'ADDITIONAL_APK_PATHS':
+        [relativize(p) for p in args.additional_apk_paths],
+        'PACKAGE_NAME':
+        repr(args.package_name),
+        'AAPT2_PATH':
+        repr(relativize(args.aapt2_path)),
+        'KEYSTORE_PATH':
+        repr(relativize(args.keystore_path)),
+        'KEYSTORE_PASSWORD':
+        repr(args.keystore_password),
+        'KEY_NAME':
+        repr(args.key_name),
+        'MAPPING_PATH':
+        repr(relativize(args.proguard_mapping_path)),
+        'FLAGS_FILE':
+        repr(args.command_line_flags_file),
+        'TARGET_CPU':
+        repr(args.target_cpu),
+        'SYSTEM_IMAGE_LOCALES':
+        repr(build_utils.ParseGnList(args.system_image_locales)),
     }
     script.write(SCRIPT_TEMPLATE.substitute(script_dict))
   os.chmod(args.script_output_path, 0750)

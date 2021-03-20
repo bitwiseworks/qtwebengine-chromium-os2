@@ -3,7 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/json/json_reader.h"
+#include "base/json/json_writer.h"
 #include "base/values.h"
+
+namespace base {
 
 // Entry point for LibFuzzer.
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
@@ -15,15 +18,28 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   std::unique_ptr<char[]> input(new char[size - 1]);
   memcpy(input.get(), data, size - 1);
 
-  base::StringPiece input_string(input.get(), size - 1);
+  StringPiece input_string(input.get(), size - 1);
 
   const int options = data[size - 1];
 
-  int error_code, error_line, error_column;
-  std::string error_message;
-  base::JSONReader::ReadAndReturnError(input_string, options, &error_code,
-                                       &error_message, &error_line,
-                                       &error_column);
+  JSONReader::ValueWithError json_val =
+      JSONReader::ReadAndReturnValueWithError(input_string, options);
+  CHECK((json_val.error_code == JSONReader::JSON_NO_ERROR) ==
+        json_val.value.has_value());
+
+  if (json_val.value) {
+    // Check that the value can be serialized and deserialized back to an
+    // equivalent |Value|.
+    const Value& value = json_val.value.value();
+    std::string serialized;
+    CHECK(JSONWriter::Write(value, &serialized));
+
+    Optional<Value> deserialized = JSONReader::Read(StringPiece(serialized));
+    CHECK(deserialized);
+    CHECK(value.Equals(&deserialized.value()));
+  }
 
   return 0;
 }
+
+}  // namespace base

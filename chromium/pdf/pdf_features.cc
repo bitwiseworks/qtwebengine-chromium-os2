@@ -7,11 +7,30 @@
 namespace chrome_pdf {
 namespace features {
 
-const base::Feature kSaveEditedPDFForm{"SaveEditedPDFForm",
-                                       base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kAccessiblePDFForm = {"AccessiblePDFForm",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kPDFAnnotations{"PDFAnnotations",
-                                    base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kAccessiblePDFHighlight = {
+    "AccessiblePDFHighlight", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kPDFAnnotations = {"PDFAnnotations",
+#if defined(OS_CHROMEOS)
+                                       base::FEATURE_ENABLED_BY_DEFAULT
+#else
+                                       base::FEATURE_DISABLED_BY_DEFAULT
+#endif  // defined(OS_CHROMEOS)
+};
+
+const base::Feature kPDFTwoUpView = {"PDFTwoUpView",
+                                     base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSaveEditedPDFForm = {"SaveEditedPDFForm",
+#if defined(OS_CHROMEOS)
+                                          base::FEATURE_ENABLED_BY_DEFAULT
+#else
+                                          base::FEATURE_DISABLED_BY_DEFAULT
+#endif  // defined(OS_CHROMEOS)
+};
 
 }  // namespace features
 }  // namespace chrome_pdf

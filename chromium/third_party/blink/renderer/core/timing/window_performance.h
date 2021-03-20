@@ -32,9 +32,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_WINDOW_PERFORMANCE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_WINDOW_PERFORMANCE_H_
 
-#include "third_party/blink/public/platform/web_layer_tree_view.h"
+#include "third_party/blink/public/web/web_swap_result.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/frame/performance_monitor.h"
 #include "third_party/blink/renderer/core/timing/memory_info.h"
 #include "third_party/blink/renderer/core/timing/performance.h"
@@ -51,10 +51,6 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   friend class WindowPerformanceTest;
 
  public:
-  static WindowPerformance* Create(LocalDOMWindow* window) {
-    return MakeGarbageCollected<WindowPerformance>(window);
-  }
-
   explicit WindowPerformance(LocalDOMWindow*);
   ~WindowPerformance() override;
 
@@ -65,30 +61,39 @@ class CORE_EXPORT WindowPerformance final : public Performance,
 
   MemoryInfo* memory() const override;
 
-  bool shouldYield() const override;
-
-  void UpdateLongTaskInstrumentation() override;
-
-  bool ShouldBufferEntries();
-
   bool FirstInputDetected() const { return !!first_input_timing_; }
 
   // This method creates a PerformanceEventTiming and if needed creates a swap
   // promise to calculate the |duration| attribute when such promise is
   // resolved.
   void RegisterEventTiming(const AtomicString& event_type,
-                           TimeTicks start_time,
-                           TimeTicks processing_start,
-                           TimeTicks processing_end,
+                           base::TimeTicks start_time,
+                           base::TimeTicks processing_start,
+                           base::TimeTicks processing_end,
                            bool cancelable);
 
   void AddElementTiming(const AtomicString& name,
-                        const IntRect& rect,
-                        TimeTicks timestamp);
+                        const String& url,
+                        const FloatRect& rect,
+                        base::TimeTicks start_time,
+                        base::TimeTicks load_time,
+                        const AtomicString& identifier,
+                        const IntSize& intrinsic_size,
+                        const AtomicString& id,
+                        Element*);
 
-  void AddLayoutJankFraction(double jank_fraction);
+  void AddLayoutShiftValue(double value,
+                           bool input_detected,
+                           base::TimeTicks input_timestamp);
 
-  void Trace(blink::Visitor*) override;
+  void OnLargestContentfulPaintUpdated(base::TimeTicks paint_time,
+                                       uint64_t paint_size,
+                                       base::TimeTicks load_time,
+                                       const AtomicString& id,
+                                       const String& url,
+                                       Element*);
+
+  void Trace(Visitor*) override;
 
  private:
   PerformanceNavigationTiming* CreateNavigationTimingInstance() override;
@@ -99,19 +104,16 @@ class CORE_EXPORT WindowPerformance final : public Performance,
       LocalFrame* observer_frame);
 
   // PerformanceMonitor::Client implementation.
-  void ReportLongTask(
-      base::TimeTicks start_time,
-      base::TimeTicks end_time,
-      ExecutionContext* task_context,
-      bool has_multiple_contexts,
-      const SubTaskAttribution::EntriesVector& sub_task_attributions) override;
+  void ReportLongTask(base::TimeTicks start_time,
+                      base::TimeTicks end_time,
+                      ExecutionContext* task_context,
+                      bool has_multiple_contexts) override;
 
   void BuildJSONValue(V8ObjectBuilder&) const override;
 
   // Method called once swap promise is resolved. It will add all event timings
   // that have not been added since the last swap promise.
-  void ReportEventTimings(WebLayerTreeView::SwapResult result,
-                          TimeTicks timestamp);
+  void ReportEventTimings(WebSwapResult result, base::TimeTicks timestamp);
 
   void DispatchFirstInputTiming(PerformanceEventTiming* entry);
 

@@ -43,7 +43,6 @@ LayoutMultiColumnFlowThread::LayoutMultiColumnFlowThread()
     : last_set_worked_on_(nullptr),
       column_count_(1),
       column_heights_changed_(false),
-      progression_is_inline_(true),
       is_being_evacuated_(false) {
   SetIsInsideFlowThread(true);
 }
@@ -80,9 +79,10 @@ LayoutMultiColumnSet* LayoutMultiColumnFlowThread::LastMultiColumnSet() const {
 }
 
 static inline bool IsMultiColumnContainer(const LayoutObject& object) {
-  if (!object.IsLayoutBlockFlow())
+  auto* block_flow = DynamicTo<LayoutBlockFlow>(object);
+  if (!block_flow)
     return false;
-  return ToLayoutBlockFlow(object).MultiColumnFlowThread();
+  return block_flow->MultiColumnFlowThread();
 }
 
 // Return true if there's nothing that prevents the specified object from being
@@ -102,13 +102,13 @@ static inline bool IsMultiColumnContainer(const LayoutObject& object) {
 // spanners inside objects that don't support fragmentation.
 static inline bool CanContainSpannerInParentFragmentationContext(
     const LayoutObject& object) {
-  if (!object.IsLayoutBlockFlow())
+  const auto* block_flow = DynamicTo<LayoutBlockFlow>(object);
+  if (!block_flow)
     return false;
-  const LayoutBlockFlow& block_flow = ToLayoutBlockFlow(object);
-  return !block_flow.CreatesNewFormattingContext() &&
-         !block_flow.StyleRef().CanContainFixedPositionObjects(false) &&
-         block_flow.GetPaginationBreakability() != LayoutBox::kForbidBreaks &&
-         !IsMultiColumnContainer(block_flow);
+  return !block_flow->CreatesNewFormattingContext() &&
+         !block_flow->StyleRef().CanContainFixedPositionObjects(false) &&
+         block_flow->GetPaginationBreakability() != LayoutBox::kForbidBreaks &&
+         !IsMultiColumnContainer(*block_flow);
 }
 
 static inline bool HasAnyColumnSpanners(
@@ -332,7 +332,7 @@ LayoutUnit LayoutMultiColumnFlowThread::MaxColumnLogicalHeight() const {
   const LayoutBlockFlow* multicol_block = MultiColumnBlockFlow();
   const Length& logical_max_height =
       multicol_block->StyleRef().LogicalMaxHeight();
-  if (!logical_max_height.IsMaxSizeNone()) {
+  if (!logical_max_height.IsNone()) {
     LayoutUnit resolved_logical_max_height =
         multicol_block->ComputeContentLogicalHeight(
             kMaxSize, logical_max_height, LayoutUnit(-1));
@@ -393,7 +393,7 @@ LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtOffset(
 LayoutSize LayoutMultiColumnFlowThread::FlowThreadTranslationAtPoint(
     const LayoutPoint& flow_thread_point,
     CoordinateSpaceConversion mode) const {
-  LayoutPoint flipped_point = FlipForWritingMode(flow_thread_point);
+  LayoutPoint flipped_point = DeprecatedFlipForWritingMode(flow_thread_point);
   LayoutUnit block_offset =
       IsHorizontalWritingMode() ? flipped_point.Y() : flipped_point.X();
 
@@ -611,7 +611,7 @@ bool LayoutMultiColumnFlowThread::RemoveSpannerPlaceholderIfNoLongerValid(
   // We may have a new containing block, since we're no longer a spanner. Mark
   // it for relayout.
   spanner_object_in_flow_thread->ContainingBlock()
-      ->SetNeedsLayoutAndPrefWidthsRecalc(
+      ->SetNeedsLayoutAndIntrinsicWidthsRecalc(
           layout_invalidation_reason::kColumnsChanged);
 
   // Now generate a column set for this ex-spanner, if needed and none is there
@@ -623,11 +623,6 @@ bool LayoutMultiColumnFlowThread::RemoveSpannerPlaceholderIfNoLongerValid(
 
 LayoutMultiColumnFlowThread* LayoutMultiColumnFlowThread::EnclosingFlowThread(
     AncestorSearchConstraint constraint) const {
-  if (IsLayoutPagedFlowThread()) {
-    // Paged overflow containers should never be fragmented by enclosing
-    // fragmentation contexts. They are to be treated as unbreakable content.
-    return nullptr;
-  }
   if (!MultiColumnBlockFlow()->IsInsideFlowThread())
     return nullptr;
   return ToLayoutMultiColumnFlowThread(
@@ -662,8 +657,6 @@ void LayoutMultiColumnFlowThread::AppendNewFragmentainerGroupIfNeeded(
     // We should never create additional fragmentainer groups unless we're in a
     // nested fragmentation context.
     DCHECK(EnclosingFragmentationContext());
-
-    DCHECK(!IsLayoutPagedFlowThread());
 
     // We have run out of columns here, so we need to add at least one more row
     // to hold more columns.
@@ -736,7 +729,7 @@ void LayoutMultiColumnFlowThread::CalculateColumnHeightAvailable() {
   // have a definite height when they in fact don't.
   LayoutBlockFlow* container = MultiColumnBlockFlow();
   LayoutUnit column_height;
-  if (container->HasDefiniteLogicalHeight() || container->IsLayoutView()) {
+  if (container->HasDefiniteLogicalHeight() || IsA<LayoutView>(container)) {
     LogicalExtentComputedValues computed_values;
     container->ComputeLogicalHeight(LayoutUnit(), container->LogicalTop(),
                                     computed_values);
@@ -1339,26 +1332,33 @@ void LayoutMultiColumnFlowThread::ToggleSpannersInSubtree(
   }
 }
 
-void LayoutMultiColumnFlowThread::ComputePreferredLogicalWidths() {
-  LayoutFlowThread::ComputePreferredLogicalWidths();
-
+MinMaxSizes LayoutMultiColumnFlowThread::PreferredLogicalWidths() const {
   // The min/max intrinsic widths calculated really tell how much space elements
   // need when laid out inside the columns. In order to eventually end up with
   // the desired column width, we need to convert them to values pertaining to
   // the multicol container.
-  const ComputedStyle* multicol_style = MultiColumnBlockFlow()->Style();
+  auto* flow = MultiColumnBlockFlow();
+  const ComputedStyle* multicol_style = flow->Style();
   LayoutUnit column_count(
       multicol_style->HasAutoColumnCount() ? 1 : multicol_style->ColumnCount());
-  LayoutUnit column_width;
   LayoutUnit gap_extra((column_count - 1) *
                        ColumnGap(*multicol_style, LayoutUnit()));
+  MinMaxSizes sizes;
+
+  if (flow->HasOverrideIntrinsicContentLogicalWidth()) {
+    sizes = flow->OverrideIntrinsicContentLogicalWidth();
+  } else if (flow->ShouldApplySizeContainment()) {
+    sizes = LayoutUnit();
+  } else {
+    sizes = LayoutFlowThread::PreferredLogicalWidths();
+  }
+
+  LayoutUnit column_width;
   if (multicol_style->HasAutoColumnWidth()) {
-    min_preferred_logical_width_ =
-        min_preferred_logical_width_ * column_count + gap_extra;
+    sizes.min_size = sizes.min_size * column_count + gap_extra;
   } else {
     column_width = LayoutUnit(multicol_style->ColumnWidth());
-    min_preferred_logical_width_ =
-        std::min(min_preferred_logical_width_, column_width);
+    sizes.min_size = std::min(sizes.min_size, column_width);
   }
   // Note that if column-count is auto here, we should resolve it to calculate
   // the maximum intrinsic width, instead of pretending that it's 1. The only
@@ -1366,9 +1366,9 @@ void LayoutMultiColumnFlowThread::ComputePreferredLogicalWidths() {
   // appropriate time or place for layout. The good news is that if height is
   // unconstrained and there are no explicit breaks, the resolved column-count
   // really should be 1.
-  max_preferred_logical_width_ =
-      std::max(max_preferred_logical_width_, column_width) * column_count +
-      gap_extra;
+  sizes.max_size =
+      std::max(sizes.max_size, column_width) * column_count + gap_extra;
+  return sizes;
 }
 
 void LayoutMultiColumnFlowThread::ComputeLogicalHeight(

@@ -5,12 +5,29 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "sk_tool_utils.h"
-#include "SkCanvas.h"
-#include "SkFont.h"
-#include "SkGradientShader.h"
-#include "SkHighContrastFilter.h"
+#include "gm/gm.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkColorFilter.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontTypes.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkShader.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTileMode.h"
+#include "include/core/SkTypeface.h"
+#include "include/core/SkTypes.h"
+#include "include/effects/SkGradientShader.h"
+#include "include/effects/SkHighContrastFilter.h"
+#include "tools/ToolUtils.h"
+
+#include <stdio.h>
+#include <string.h>
 
 using InvertStyle = SkHighContrastConfig::InvertStyle;
 
@@ -22,9 +39,9 @@ static void draw_label(SkCanvas* canvas, const SkHighContrastConfig& config) {
     char labelBuffer[256];
     const char* invertStr =
         (config.fInvertStyle == InvertStyle::kInvertBrightness ?
-             "InvBrightness" :
+             "InvBright" :
             (config.fInvertStyle == InvertStyle::kInvertLightness ?
-                 "InvLightness" : "NoInvert"));
+                 "InvLight" : "NoInvert"));
 
     snprintf(labelBuffer, sizeof(labelBuffer), "%s%s contrast=%.1f",
              config.fGrayscale ? "Gray " : "",
@@ -32,14 +49,14 @@ static void draw_label(SkCanvas* canvas, const SkHighContrastConfig& config) {
              config.fContrast);
 
     SkFont font;
-    font.setTypeface(sk_tool_utils::create_portable_typeface());
-    font.setSize(0.05f);
-    font.setEdging(SkFont::Edging::kAlias);
+    font.setTypeface(ToolUtils::create_portable_typeface());
+    font.setSize(0.075f);
+    font.setEdging(SkFont::Edging::kAntiAlias);
 
     size_t len = strlen(labelBuffer);
 
-    SkScalar width = font.measureText(labelBuffer, len, kUTF8_SkTextEncoding);
-    canvas->drawSimpleText(labelBuffer, len, kUTF8_SkTextEncoding, 0.5f - width / 2, 0.16f, font, SkPaint());
+    SkScalar width = font.measureText(labelBuffer, len, SkTextEncoding::kUTF8);
+    canvas->drawSimpleText(labelBuffer, len, SkTextEncoding::kUTF8, 0.5f - width / 2, 0.16f, font, SkPaint());
 }
 
 static void draw_scene(SkCanvas* canvas, const SkHighContrastConfig& config) {
@@ -73,14 +90,14 @@ static void draw_scene(SkCanvas* canvas, const SkHighContrastConfig& config) {
     SkScalar    pos[] = { 0.2f, 0.8f };
     paint.setShader(SkGradientShader::MakeLinear(
         pts, colors, pos,
-        SK_ARRAY_COUNT(colors), SkShader::kClamp_TileMode));
+        SK_ARRAY_COUNT(colors), SkTileMode::kClamp));
     canvas->drawRect(bounds, paint);
 
     bounds = SkRect::MakeLTRB(0.1f, 0.6f, 0.9f, 0.8f);
     SkColor colors2[] = { SK_ColorGREEN, SK_ColorWHITE };
     paint.setShader(SkGradientShader::MakeLinear(
         pts, colors2, pos,
-        SK_ARRAY_COUNT(colors2), SkShader::kClamp_TileMode));
+        SK_ARRAY_COUNT(colors2), SkTileMode::kClamp));
     canvas->drawRect(bounds, paint);
 
     canvas->restore();
@@ -99,10 +116,10 @@ public:
         fFilter = SkHighContrastFilter::Make(fConfig);
         fGr1 = SkGradientShader::MakeLinear(
             g1Points, g1Colors, pos, SK_ARRAY_COUNT(g1Colors),
-            SkShader::kClamp_TileMode);
+            SkTileMode::kClamp);
         fGr2 = SkGradientShader::MakeLinear(
             g2Points, g2Colors, pos, SK_ARRAY_COUNT(g2Colors),
-            SkShader::kClamp_TileMode);
+            SkTileMode::kClamp);
     }
 
 protected:
@@ -112,7 +129,7 @@ protected:
     }
 
     SkISize onISize() override {
-        return SkISize::Make(600, 420);
+        return SkISize::Make(800, 420);
     }
 
     void onDraw(SkCanvas* canvas) override {

@@ -23,7 +23,7 @@ MockInputRouterClient::MockInputRouterClient()
       in_flight_event_count_(0),
       filter_state_(INPUT_EVENT_ACK_STATE_NOT_CONSUMED),
       filter_input_event_called_(false),
-      white_listed_touch_action_(cc::kTouchActionAuto) {}
+      white_listed_touch_action_(cc::TouchAction::kAuto) {}
 
 MockInputRouterClient::~MockInputRouterClient() {}
 
@@ -63,7 +63,7 @@ void MockInputRouterClient::ForwardGestureEventWithLatencyInfo(
     input_router_->SendGestureEvent(
         GestureEventWithLatencyInfo(gesture_event, latency_info));
 
-  if (gesture_event.SourceDevice() != blink::kWebGestureDeviceTouchpad)
+  if (gesture_event.SourceDevice() != blink::WebGestureDevice::kTouchpad)
     return;
 
   if (gesture_event.GetType() == WebInputEvent::kGestureScrollBegin) {
@@ -86,6 +86,14 @@ bool MockInputRouterClient::IsWheelScrollInProgress() {
   return is_wheel_scroll_in_progress_;
 }
 
+bool MockInputRouterClient::IsAutoscrollInProgress() {
+  return false;
+}
+
+gfx::Size MockInputRouterClient::GetRootWidgetViewportSize() {
+  return gfx::Size(1920, 1080);
+}
+
 bool MockInputRouterClient::GetAndResetFilterEventCalled() {
   bool filter_input_event_called = filter_input_event_called_;
   filter_input_event_called_ = false;
@@ -100,7 +108,7 @@ ui::DidOverscrollParams MockInputRouterClient::GetAndResetOverscroll() {
 
 cc::TouchAction MockInputRouterClient::GetAndResetWhiteListedTouchAction() {
   cc::TouchAction white_listed_touch_action = white_listed_touch_action_;
-  white_listed_touch_action_ = cc::kTouchActionAuto;
+  white_listed_touch_action_ = cc::TouchAction::kAuto;
   return white_listed_touch_action;
 }
 

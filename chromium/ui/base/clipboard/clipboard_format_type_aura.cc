@@ -12,11 +12,10 @@ namespace {
 constexpr char kMimeTypeFilename[] = "chromium/filename";
 }
 
-// I would love for the ClipboardFormatType to really be a wrapper around an X11
-// ::Atom, but there are a few problems. Chromeos unit tests spawn a new X11
-// server for each test, so Atom numeric values don't persist across tests. We
-// could still maybe deal with that if we didn't have static accessor methods
-// everywhere.
+// TODO(huangdarwin): Investigate creating a new clipboard_format_type_x11 as a
+// wrapper around an X11 ::Atom. This wasn't possible in the past, because unit
+// tests spawned a new X11 server for each test, meaning Atom numeric values
+// didn't persist across tests.
 ClipboardFormatType::ClipboardFormatType() = default;
 
 ClipboardFormatType::~ClipboardFormatType() = default;
@@ -32,6 +31,10 @@ std::string ClipboardFormatType::Serialize() const {
 ClipboardFormatType ClipboardFormatType::Deserialize(
     const std::string& serialization) {
   return ClipboardFormatType(serialization);
+}
+
+std::string ClipboardFormatType::GetName() const {
+  return Serialize();
 }
 
 bool ClipboardFormatType::operator<(const ClipboardFormatType& other) const {
@@ -57,11 +60,6 @@ const ClipboardFormatType& ClipboardFormatType::GetUrlType() {
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetUrlWType() {
-  return ClipboardFormatType::GetUrlType();
-}
-
-// static
 const ClipboardFormatType& ClipboardFormatType::GetMozUrlType() {
   static base::NoDestructor<ClipboardFormatType> type(kMimeTypeMozillaURL);
   return *type;
@@ -74,19 +72,9 @@ const ClipboardFormatType& ClipboardFormatType::GetPlainTextType() {
 }
 
 // static
-const ClipboardFormatType& ClipboardFormatType::GetPlainTextWType() {
-  return ClipboardFormatType::GetPlainTextType();
-}
-
-// static
 const ClipboardFormatType& ClipboardFormatType::GetFilenameType() {
   static base::NoDestructor<ClipboardFormatType> type(kMimeTypeFilename);
   return *type;
-}
-
-// static
-const ClipboardFormatType& ClipboardFormatType::GetFilenameWType() {
-  return ClipboardFormatType::GetFilenameType();
 }
 
 // static

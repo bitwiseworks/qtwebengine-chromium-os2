@@ -36,10 +36,12 @@
  * Target_frame[y][x] = Source_frame[ ymap[y][x] ][ [xmap[y][x] ];
  */
 
+#include "libavutil/colorspace.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 #include "avfilter.h"
+#include "drawutils.h"
 #include "formats.h"
 #include "framesync.h"
 #include "internal.h"
@@ -47,9 +49,14 @@
 
 typedef struct RemapContext {
     const AVClass *class;
+    int format;
+
     int nb_planes;
     int nb_components;
     int step;
+    uint8_t fill_rgba[4];
+    int fill_color[4];
+
     FFFrameSync fs;
 
     int (*remap_slice)(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs);
@@ -59,6 +66,10 @@ typedef struct RemapContext {
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 
 static const AVOption remap_options[] = {
+    { "format", "set output format", OFFSET(format), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, "format" },
+        { "color",  "", 0, AV_OPT_TYPE_CONST, {.i64=0},   .flags = FLAGS, .unit = "format" },
+        { "gray",   "", 0, AV_OPT_TYPE_CONST, {.i64=1},   .flags = FLAGS, .unit = "format" },
+    { "fill", "set the color of the unmapped pixels", OFFSET(fill_rgba), AV_OPT_TYPE_COLOR, {.str="black"}, .flags = FLAGS },
     { NULL }
 };
 
@@ -73,6 +84,7 @@ typedef struct ThreadData {
 
 static int query_formats(AVFilterContext *ctx)
 {
+    RemapContext *s = ctx->priv;
     static const enum AVPixelFormat pix_fmts[] = {
         AV_PIX_FMT_YUVA444P,
         AV_PIX_FMT_YUV444P,
@@ -82,12 +94,15 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRAP,
         AV_PIX_FMT_YUV444P9, AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUV444P12,
         AV_PIX_FMT_YUV444P14, AV_PIX_FMT_YUV444P16,
-        AV_PIX_FMT_YUVA444P9, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P16,
+        AV_PIX_FMT_YUVA444P9, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P12, AV_PIX_FMT_YUVA444P16,
         AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10, AV_PIX_FMT_GBRP12,
         AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
         AV_PIX_FMT_GBRAP10, AV_PIX_FMT_GBRAP12, AV_PIX_FMT_GBRAP16,
         AV_PIX_FMT_RGB48, AV_PIX_FMT_BGR48,
         AV_PIX_FMT_RGBA64, AV_PIX_FMT_BGRA64,
+        AV_PIX_FMT_NONE
+    };
+    static const enum AVPixelFormat gray_pix_fmts[] = {
         AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY9,
         AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12,
         AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16,
@@ -100,7 +115,7 @@ static int query_formats(AVFilterContext *ctx)
     AVFilterFormats *pix_formats = NULL, *map_formats = NULL;
     int ret;
 
-    if (!(pix_formats = ff_make_format_list(pix_fmts)) ||
+    if (!(pix_formats = ff_make_format_list(s->format ? gray_pix_fmts : pix_fmts)) ||
         !(map_formats = ff_make_format_list(map_fmts))) {
         ret = AVERROR(ENOMEM);
         goto fail;
@@ -130,7 +145,8 @@ fail:
 static int remap_planar##bits##_##name##_slice(AVFilterContext *ctx, void *arg,             \
                                                int jobnr, int nb_jobs)                      \
 {                                                                                           \
-    const ThreadData *td = (ThreadData*)arg;                                                \
+    RemapContext *s = ctx->priv;                                                            \
+    const ThreadData *td = arg;                                                             \
     const AVFrame *in  = td->in;                                                            \
     const AVFrame *xin = td->xin;                                                           \
     const AVFrame *yin = td->yin;                                                           \
@@ -148,13 +164,14 @@ static int remap_planar##bits##_##name##_slice(AVFilterContext *ctx, void *arg, 
         const int slinesize  = in->linesize[plane] / div;                                   \
         const uint16_t *xmap = (const uint16_t *)xin->data[0] + slice_start * xlinesize;    \
         const uint16_t *ymap = (const uint16_t *)yin->data[0] + slice_start * ylinesize;    \
+        const int color = s->fill_color[plane];                                             \
                                                                                             \
         for (y = slice_start; y < slice_end; y++) {                                         \
             for (x = 0; x < out->width; x++) {                                              \
                 if (ymap[x] < in->height && xmap[x] < in->width) {                          \
                     dst[x] = src[ymap[x] * slinesize + xmap[x]];                            \
                 } else {                                                                    \
-                    dst[x] = 0;                                                             \
+                    dst[x] = color;                                                         \
                 }                                                                           \
             }                                                                               \
             dst  += dlinesize;                                                              \
@@ -179,7 +196,8 @@ DEFINE_REMAP_PLANAR_FUNC(nearest, 16, 2)
 static int remap_packed##bits##_##name##_slice(AVFilterContext *ctx, void *arg,             \
                                                int jobnr, int nb_jobs)                      \
 {                                                                                           \
-    const ThreadData *td = (ThreadData*)arg;                                                \
+    RemapContext *s = ctx->priv;                                                            \
+    const ThreadData *td = arg;                                                             \
     const AVFrame *in  = td->in;                                                            \
     const AVFrame *xin = td->xin;                                                           \
     const AVFrame *yin = td->yin;                                                           \
@@ -203,7 +221,7 @@ static int remap_packed##bits##_##name##_slice(AVFilterContext *ctx, void *arg, 
                 if (ymap[x] < in->height && xmap[x] < in->width) {                          \
                     dst[x * step + c] = src[ymap[x] * slinesize + xmap[x] * step + c];      \
                 } else {                                                                    \
-                    dst[x * step + c] = 0;                                                  \
+                    dst[x * step + c] = s->fill_color[c];                                   \
                 }                                                                           \
             }                                                                               \
         }                                                                                   \
@@ -223,11 +241,28 @@ static int config_input(AVFilterLink *inlink)
     AVFilterContext *ctx = inlink->dst;
     RemapContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
+    int depth = desc->comp[0].depth;
+    int is_rgb = !!(desc->flags & AV_PIX_FMT_FLAG_RGB);
+    int factor = 1 << (depth - 8);
+    uint8_t rgba_map[4];
 
+    ff_fill_rgba_map(rgba_map, inlink->format);
     s->nb_planes = av_pix_fmt_count_planes(inlink->format);
     s->nb_components = desc->nb_components;
 
-    if (desc->comp[0].depth == 8) {
+    if (is_rgb) {
+        s->fill_color[rgba_map[0]] = s->fill_rgba[0] * factor;
+        s->fill_color[rgba_map[1]] = s->fill_rgba[1] * factor;
+        s->fill_color[rgba_map[2]] = s->fill_rgba[2] * factor;
+        s->fill_color[rgba_map[3]] = s->fill_rgba[3] * factor;
+    } else {
+        s->fill_color[0] = RGB_TO_Y_BT709(s->fill_rgba[0], s->fill_rgba[1], s->fill_rgba[2]) * factor;
+        s->fill_color[1] = RGB_TO_U_BT709(s->fill_rgba[0], s->fill_rgba[1], s->fill_rgba[2], 0) * factor;
+        s->fill_color[2] = RGB_TO_V_BT709(s->fill_rgba[0], s->fill_rgba[1], s->fill_rgba[2], 0) * factor;
+        s->fill_color[3] = s->fill_rgba[3] * factor;
+    }
+
+    if (depth == 8) {
         if (s->nb_planes > 1 || s->nb_components == 1) {
             s->remap_slice = remap_planar8_nearest_slice;
         } else {
@@ -279,7 +314,7 @@ static int process_frame(FFFrameSync *fs)
         td.step = s->step;
         ctx->internal->execute(ctx, s->remap_slice, &td, NULL, FFMIN(outlink->h, ff_filter_get_nb_threads(ctx)));
     }
-    out->pts = av_rescale_q(in->pts, s->fs.time_base, outlink->time_base);
+    out->pts = av_rescale_q(s->fs.pts, s->fs.time_base, outlink->time_base);
 
     return ff_filter_frame(outlink, out);
 }
@@ -305,7 +340,6 @@ static int config_output(AVFilterLink *outlink)
 
     outlink->w = xlink->w;
     outlink->h = xlink->h;
-    outlink->time_base = srclink->time_base;
     outlink->sample_aspect_ratio = srclink->sample_aspect_ratio;
     outlink->frame_rate = srclink->frame_rate;
 
@@ -329,7 +363,10 @@ static int config_output(AVFilterLink *outlink)
     s->fs.opaque   = s;
     s->fs.on_event = process_frame;
 
-    return ff_framesync_configure(&s->fs);
+    ret = ff_framesync_configure(&s->fs);
+    outlink->time_base = s->fs.time_base;
+
+    return ret;
 }
 
 static int activate(AVFilterContext *ctx)

@@ -21,8 +21,7 @@ namespace blink {
 // Currently, the only strong references to this class are from individual lazy
 // properties, so after an entire lazy sheet is parsed, the extra memory should
 // be released.
-class CSSLazyParsingState
-    : public GarbageCollectedFinalized<CSSLazyParsingState> {
+class CSSLazyParsingState final : public GarbageCollected<CSSLazyParsingState> {
  public:
   CSSLazyParsingState(const CSSParserContext*,
                       const String& sheet_text,
@@ -31,7 +30,7 @@ class CSSLazyParsingState
   const CSSParserContext* Context();
   const String& SheetText() const { return sheet_text_; }
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   Member<const CSSParserContext> context_;

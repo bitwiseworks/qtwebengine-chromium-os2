@@ -91,11 +91,14 @@ class CONTENT_EXPORT TtsController {
   // and another utterance is in progress, adds it to the end of the queue.
   // Otherwise, interrupts any current utterance and speaks this one
   // immediately.
-  virtual void SpeakOrEnqueue(TtsUtterance* utterance) = 0;
+  virtual void SpeakOrEnqueue(std::unique_ptr<TtsUtterance> utterance) = 0;
 
   // Stop all utterances and flush the queue. Implies leaving pause mode
   // as well.
   virtual void Stop() = 0;
+
+  // Stops the current utterance if it matches the given |source_url|.
+  virtual void Stop(const GURL& source_url) = 0;
 
   // Pause the speech queue. Some engines may support pausing in the middle
   // of an utterance.
@@ -107,10 +110,12 @@ class CONTENT_EXPORT TtsController {
   // Handle events received from the speech engine. Events are forwarded to
   // the callback function, and in addition, completion and error events
   // trigger finishing the current utterance and starting the next one, if
-  // any.
+  // any. If the |char_index| or |length| are not available, the speech engine
+  // should pass -1.
   virtual void OnTtsEvent(int utterance_id,
                           TtsEventType event_type,
                           int char_index,
+                          int length,
                           const std::string& error_message) = 0;
 
   // Return a list of all available voices, including the native voice,
@@ -145,6 +150,10 @@ class CONTENT_EXPORT TtsController {
   // Visible for testing.
   virtual void SetTtsPlatform(TtsPlatform* tts_platform) = 0;
   virtual int QueueSize() = 0;
+
+  virtual void StripSSML(
+      const std::string& utterance,
+      base::OnceCallback<void(const std::string&)> callback) = 0;
 
  protected:
   virtual ~TtsController() {}

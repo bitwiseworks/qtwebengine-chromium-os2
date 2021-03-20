@@ -57,6 +57,11 @@ LayoutState::LayoutState(LayoutBox& layout_object,
   height_offset_for_table_footers_ = next_->HeightOffsetForTableFooters();
   layout_object.View()->PushLayoutState(*this);
 
+  if (const AtomicString& named_page = layout_object.StyleRef().Page())
+    page_name_ = named_page;
+  else
+    page_name_ = next_->page_name_;
+
   if (layout_object.IsLayoutFlowThread()) {
     // Entering a new pagination context.
     pagination_offset_ = LayoutSize();
@@ -87,9 +92,9 @@ LayoutState::LayoutState(LayoutBox& layout_object,
   if (LayoutObject* container = layout_object.Container()) {
     if (container->StyleRef().HasInFlowPosition() &&
         container->IsLayoutInline()) {
-      pagination_offset_ +=
-          ToLayoutInline(container)->OffsetForInFlowPositionedInline(
-              layout_object);
+      pagination_offset_ += ToLayoutInline(container)
+                                ->OffsetForInFlowPositionedInline(layout_object)
+                                .ToLayoutSize();
     }
   }
 
@@ -105,7 +110,7 @@ LayoutState::LayoutState(LayoutObject& root)
       next_(root.View()->GetLayoutState()),
       layout_object_(root) {
   DCHECK(!next_);
-  DCHECK(!root.IsLayoutView());
+  DCHECK(!IsA<LayoutView>(root));
   root.View()->PushLayoutState(*this);
 }
 
@@ -114,14 +119,6 @@ LayoutState::~LayoutState() {
     DCHECK_EQ(layout_object_.View()->GetLayoutState(), this);
     layout_object_.View()->PopLayoutState();
   }
-}
-
-LayoutUnit LayoutState::PageLogicalOffset(
-    const LayoutBox& child,
-    const LayoutUnit& child_logical_offset) const {
-  if (child.IsHorizontalWritingMode())
-    return pagination_offset_.Height() + child_logical_offset;
-  return pagination_offset_.Width() + child_logical_offset;
 }
 
 }  // namespace blink

@@ -5,8 +5,11 @@
 #ifndef V8_PARSING_EXPRESSION_SCOPE_H_
 #define V8_PARSING_EXPRESSION_SCOPE_H_
 
+#include <utility>
+
 #include "src/ast/scopes.h"
-#include "src/message-template.h"
+#include "src/common/message-template.h"
+#include "src/objects/function-kind.h"
 #include "src/parsing/scanner.h"
 #include "src/zone/zone.h"  // For ScopedPtrList.
 
@@ -40,20 +43,52 @@ class VariableProxy;
 template <typename Types>
 class ExpressionScope {
  public:
-  typedef typename Types::Impl ParserT;
-  typedef typename Types::Expression ExpressionT;
+  using ParserT = typename Types::Impl;
+  using ExpressionT = typename Types::Expression;
 
   VariableProxy* NewVariable(const AstRawString* name,
                              int pos = kNoSourcePosition) {
     VariableProxy* result = parser_->NewRawVariable(name, pos);
     if (CanBeExpression()) {
       AsExpressionParsingScope()->TrackVariable(result);
-    } else if (type_ == kParameterDeclaration) {
-      AsParameterDeclarationParsingScope()->Declare(result);
     } else {
-      return AsVariableDeclarationParsingScope()->Declare(result);
+      Variable* var = Declare(name, pos);
+      if (IsVarDeclaration() && !parser()->scope()->is_declaration_scope()) {
+        // Make sure we'll properly resolve the variable since we might be in a
+        // with or catch scope. In those cases the proxy isn't guaranteed to
+        // refer to the declared variable, so consider it unresolved.
+        parser()->scope()->AddUnresolved(result);
+      } else {
+        DCHECK_NOT_NULL(var);
+        result->BindTo(var);
+      }
     }
     return result;
+  }
+
+  void MergeVariableList(
+      ScopedList<std::pair<VariableProxy*, int>>* variable_list) {
+    if (!CanBeExpression()) return;
+    // Merged variables come from a CanBeDeclaration expression scope, and
+    // weren't added as unresolved references to the variable scope yet. Add
+    // them to the variable scope on the boundary where it becomes clear they
+    // aren't declarations. We explicitly delay declaring the variables up to
+    // that point to avoid trying to add them to the unresolved list multiple
+    // times, e.g., for (((a))).
+    if (!CanBeDeclaration()) {
+      for (auto& proxy_initializer_pair : *variable_list) {
+        VariableProxy* proxy = proxy_initializer_pair.first;
+        this->parser()->scope()->AddUnresolved(proxy);
+      }
+    }
+    variable_list->MergeInto(AsExpressionParsingScope()->variable_list());
+  }
+
+  Variable* Declare(const AstRawString* name, int pos = kNoSourcePosition) {
+    if (type_ == kParameterDeclaration) {
+      return AsParameterDeclarationParsingScope()->Declare(name, pos);
+    }
+    return AsVariableDeclarationParsingScope()->Declare(name, pos);
   }
 
   void MarkIdentifierAsAssigned() {
@@ -65,6 +100,12 @@ class ExpressionScope {
     if (!CanBeExpression()) return;
     AsExpressionParsingScope()->ValidatePattern(expression, begin, end);
     AsExpressionParsingScope()->ClearExpressionError();
+  }
+
+  void ValidateAsExpression() {
+    if (!CanBeExpression()) return;
+    AsExpressionParsingScope()->ValidateExpression();
+    AsExpressionParsingScope()->ClearPatternError();
   }
 
   // Record async arrow parameters errors in all ambiguous async arrow scopes in
@@ -92,6 +133,16 @@ class ExpressionScope {
       if (scope == nullptr) return;
     }
     Report(loc, message);
+  }
+
+  void RecordThisUse() {
+    ExpressionScope* scope = this;
+    do {
+      if (scope->IsArrowHeadParsingScope()) {
+        scope->AsArrowHeadParsingScope()->RecordThisUse();
+      }
+      scope = scope->parent();
+    } while (scope != nullptr);
   }
 
   void RecordPatternError(const Scanner::Location& loc,
@@ -139,14 +190,25 @@ class ExpressionScope {
     AsExpressionParsingScope()->RecordExpressionError(loc, message);
   }
 
-  void RecordLexicalDeclarationError(const Scanner::Location& loc,
-                                     MessageTemplate message) {
-    if (IsLexicalDeclaration()) Report(loc, message);
-  }
-
   void RecordNonSimpleParameter() {
     if (!IsArrowHeadParsingScope()) return;
     AsArrowHeadParsingScope()->RecordNonSimpleParameter();
+  }
+
+  bool IsCertainlyDeclaration() const {
+    return base::IsInRange(type_, kParameterDeclaration, kLexicalDeclaration);
+  }
+
+  int SetInitializers(int variable_index, int peek_position) {
+    if (CanBeExpression()) {
+      return AsExpressionParsingScope()->SetInitializers(variable_index,
+                                                         peek_position);
+    }
+    return variable_index;
+  }
+
+  bool has_possible_arrow_parameter_in_scope_chain() const {
+    return has_possible_arrow_parameter_in_scope_chain_;
   }
 
  protected:
@@ -177,7 +239,11 @@ class ExpressionScope {
         type_(type),
         has_possible_parameter_in_scope_chain_(
             CanBeParameterDeclaration() ||
-            (parent_ && parent_->has_possible_parameter_in_scope_chain_)) {
+            (parent_ && parent_->has_possible_parameter_in_scope_chain_)),
+        has_possible_arrow_parameter_in_scope_chain_(
+            CanBeArrowParameterDeclaration() ||
+            (parent_ &&
+             parent_->has_possible_arrow_parameter_in_scope_chain_)) {
     parser->expression_scope_ = this;
   }
 
@@ -197,22 +263,21 @@ class ExpressionScope {
 #endif
 
   bool CanBeExpression() const {
-    return IsInRange(type_, kExpression, kMaybeAsyncArrowParameterDeclaration);
+    return base::IsInRange(type_, kExpression,
+                           kMaybeAsyncArrowParameterDeclaration);
   }
   bool CanBeDeclaration() const {
-    return IsInRange(type_, kMaybeArrowParameterDeclaration,
-                     kLexicalDeclaration);
-  }
-  bool IsCertainlyDeclaration() const {
-    return IsInRange(type_, kParameterDeclaration, kLexicalDeclaration);
+    return base::IsInRange(type_, kMaybeArrowParameterDeclaration,
+                           kLexicalDeclaration);
   }
   bool IsVariableDeclaration() const {
-    return IsInRange(type_, kVarDeclaration, kLexicalDeclaration);
+    return base::IsInRange(type_, kVarDeclaration, kLexicalDeclaration);
   }
   bool IsLexicalDeclaration() const { return type_ == kLexicalDeclaration; }
   bool IsAsyncArrowHeadParsingScope() const {
     return type_ == kMaybeAsyncArrowParameterDeclaration;
   }
+  bool IsVarDeclaration() const { return type_ == kVarDeclaration; }
 
  private:
   friend class AccumulationScope<Types>;
@@ -235,13 +300,17 @@ class ExpressionScope {
   }
 
   bool IsArrowHeadParsingScope() const {
-    return IsInRange(type_, kMaybeArrowParameterDeclaration,
-                     kMaybeAsyncArrowParameterDeclaration);
+    return base::IsInRange(type_, kMaybeArrowParameterDeclaration,
+                           kMaybeAsyncArrowParameterDeclaration);
   }
   bool IsCertainlyPattern() const { return IsCertainlyDeclaration(); }
   bool CanBeParameterDeclaration() const {
-    return IsInRange(type_, kMaybeArrowParameterDeclaration,
-                     kParameterDeclaration);
+    return base::IsInRange(type_, kMaybeArrowParameterDeclaration,
+                           kParameterDeclaration);
+  }
+  bool CanBeArrowParameterDeclaration() const {
+    return base::IsInRange(type_, kMaybeArrowParameterDeclaration,
+                           kMaybeAsyncArrowParameterDeclaration);
   }
   bool IsCertainlyParameterDeclaration() const {
     return type_ == kParameterDeclaration;
@@ -251,6 +320,7 @@ class ExpressionScope {
   ExpressionScope<Types>* parent_;
   ScopeType type_;
   bool has_possible_parameter_in_scope_chain_;
+  bool has_possible_arrow_parameter_in_scope_chain_;
 
   DISALLOW_COPY_AND_ASSIGN(ExpressionScope);
 };
@@ -259,9 +329,9 @@ class ExpressionScope {
 template <typename Types>
 class VariableDeclarationParsingScope : public ExpressionScope<Types> {
  public:
-  typedef typename Types::Impl ParserT;
-  typedef class ExpressionScope<Types> ExpressionScopeT;
-  typedef typename ExpressionScopeT::ScopeType ScopeType;
+  using ParserT = typename Types::Impl;
+  using ExpressionScopeT = ExpressionScope<Types>;
+  using ScopeType = typename ExpressionScopeT::ScopeType;
 
   VariableDeclarationParsingScope(ParserT* parser, VariableMode mode,
                                   ZonePtrList<const AstRawString>* names)
@@ -271,21 +341,22 @@ class VariableDeclarationParsingScope : public ExpressionScope<Types> {
         mode_(mode),
         names_(names) {}
 
-  VariableProxy* Declare(VariableProxy* proxy) {
+  Variable* Declare(const AstRawString* name, int pos) {
     VariableKind kind = NORMAL_VARIABLE;
     bool was_added;
-    this->parser()->DeclareVariable(
-        proxy, kind, mode_, Variable::DefaultInitializationFlag(mode_),
-        this->parser()->scope(), &was_added, proxy->position());
+    Variable* var = this->parser()->DeclareVariable(
+        name, kind, mode_, Variable::DefaultInitializationFlag(mode_),
+        this->parser()->scope(), &was_added, pos);
     if (was_added &&
         this->parser()->scope()->num_var() > kMaxNumFunctionLocals) {
       this->parser()->ReportMessage(MessageTemplate::kTooManyVariables);
     }
-    if (names_) names_->Add(proxy->raw_name(), this->parser()->zone());
+    if (names_) names_->Add(name, this->parser()->zone());
     if (this->IsLexicalDeclaration()) {
-      if (this->parser()->IsLet(proxy->raw_name())) {
-        this->parser()->ReportMessageAt(proxy->location(),
-                                        MessageTemplate::kLetInLexicalBinding);
+      if (this->parser()->IsLet(name)) {
+        this->parser()->ReportMessageAt(
+            Scanner::Location(pos, pos + name->length()),
+            MessageTemplate::kLetInLexicalBinding);
       }
     } else {
       if (this->parser()->loop_nesting_depth() > 0) {
@@ -306,18 +377,11 @@ class VariableDeclarationParsingScope : public ExpressionScope<Types> {
         //
         // This also handles marking of loop variables in for-in and for-of
         // loops, as determined by loop-nesting-depth.
-        proxy->set_is_assigned();
-      }
-
-      // Make sure we'll properly resolve the variable since we might be in a
-      // with or catch scope. In those cases the assignment isn't guaranteed to
-      // write to the variable declared above.
-      if (!this->parser()->scope()->is_declaration_scope()) {
-        proxy =
-            this->parser()->NewUnresolved(proxy->raw_name(), proxy->position());
+        DCHECK_NOT_NULL(var);
+        var->SetMaybeAssigned();
       }
     }
-    return proxy;
+    return var;
   }
 
  private:
@@ -335,23 +399,24 @@ class VariableDeclarationParsingScope : public ExpressionScope<Types> {
 template <typename Types>
 class ParameterDeclarationParsingScope : public ExpressionScope<Types> {
  public:
-  typedef typename Types::Impl ParserT;
-  typedef class ExpressionScope<Types> ExpressionScopeT;
-  typedef typename ExpressionScopeT::ScopeType ScopeType;
+  using ParserT = typename Types::Impl;
+  using ExpressionScopeT = ExpressionScope<Types>;
+  using ScopeType = typename ExpressionScopeT::ScopeType;
 
   explicit ParameterDeclarationParsingScope(ParserT* parser)
       : ExpressionScopeT(parser, ExpressionScopeT::kParameterDeclaration) {}
 
-  void Declare(VariableProxy* proxy) {
+  Variable* Declare(const AstRawString* name, int pos) {
     VariableKind kind = PARAMETER_VARIABLE;
     VariableMode mode = VariableMode::kVar;
     bool was_added;
-    this->parser()->DeclareVariable(
-        proxy, kind, mode, Variable::DefaultInitializationFlag(mode),
-        this->parser()->scope(), &was_added, proxy->position());
+    Variable* var = this->parser()->DeclareVariable(
+        name, kind, mode, Variable::DefaultInitializationFlag(mode),
+        this->parser()->scope(), &was_added, pos);
     if (!has_duplicate() && !was_added) {
-      duplicate_loc_ = proxy->location();
+      duplicate_loc_ = Scanner::Location(pos, pos + name->length());
     }
+    return var;
   }
 
   bool has_duplicate() const { return duplicate_loc_.IsValid(); }
@@ -374,13 +439,13 @@ class ParameterDeclarationParsingScope : public ExpressionScope<Types> {
 template <typename Types>
 class ExpressionParsingScope : public ExpressionScope<Types> {
  public:
-  typedef typename Types::Impl ParserT;
-  typedef typename Types::Expression ExpressionT;
-  typedef class ExpressionScope<Types> ExpressionScopeT;
-  typedef typename ExpressionScopeT::ScopeType ScopeType;
+  using ParserT = typename Types::Impl;
+  using ExpressionT = typename Types::Expression;
+  using ExpressionScopeT = ExpressionScope<Types>;
+  using ScopeType = typename ExpressionScopeT::ScopeType;
 
-  ExpressionParsingScope(ParserT* parser,
-                         ScopeType type = ExpressionScopeT::kExpression)
+  explicit ExpressionParsingScope(
+      ParserT* parser, ScopeType type = ExpressionScopeT::kExpression)
       : ExpressionScopeT(parser, type),
         variable_list_(parser->variable_buffer()),
         has_async_arrow_in_scope_chain_(
@@ -420,8 +485,7 @@ class ExpressionParsingScope : public ExpressionScope<Types> {
     }
     this->mark_verified();
     return this->parser()->RewriteInvalidReferenceExpression(
-        expression, beg_pos, end_pos, MessageTemplate::kInvalidLhsInFor,
-        kSyntaxError);
+        expression, beg_pos, end_pos, MessageTemplate::kInvalidLhsInFor);
   }
 
   void RecordExpressionError(const Scanner::Location& loc,
@@ -442,8 +506,8 @@ class ExpressionParsingScope : public ExpressionScope<Types> {
       ExpressionScopeT::Report(Scanner::Location(begin, end),
                                MessageTemplate::kInvalidDestructuringTarget);
     }
-    for (int i = 0; i < variable_list_.length(); i++) {
-      variable_list_.at(i)->set_is_assigned();
+    for (auto& variable_initializer_pair : variable_list_) {
+      variable_initializer_pair.first->set_is_assigned();
     }
   }
 
@@ -455,18 +519,46 @@ class ExpressionParsingScope : public ExpressionScope<Types> {
     clear(kExpressionIndex);
   }
 
+  void ClearPatternError() {
+    DCHECK(verified_);
+#ifdef DEBUG
+    verified_ = false;
+#endif
+    clear(kPatternIndex);
+  }
+
   void TrackVariable(VariableProxy* variable) {
     if (!this->CanBeDeclaration()) {
       this->parser()->scope()->AddUnresolved(variable);
     }
-    variable_list_.Add(variable);
+    variable_list_.Add({variable, kNoSourcePosition});
   }
 
   void MarkIdentifierAsAssigned() {
     // It's possible we're parsing a syntax error. In that case it's not
     // guaranteed that there's a variable in the list.
     if (variable_list_.length() == 0) return;
-    variable_list_.at(variable_list_.length() - 1)->set_is_assigned();
+    variable_list_.at(variable_list_.length() - 1).first->set_is_assigned();
+  }
+
+  int SetInitializers(int first_variable_index, int position) {
+    int len = variable_list_.length();
+    if (len == 0) return 0;
+
+    int end = len - 1;
+    // Loop backwards and abort as soon as we see one that's already set to
+    // avoid a loop on expressions like a,b,c,d,e,f,g (outside of an arrowhead).
+    // TODO(delphick): Look into removing this loop.
+    for (int i = end; i >= first_variable_index &&
+                      variable_list_.at(i).second == kNoSourcePosition;
+         --i) {
+      variable_list_.at(i).second = position;
+    }
+    return end;
+  }
+
+  ScopedList<std::pair<VariableProxy*, int>>* variable_list() {
+    return &variable_list_;
   }
 
  protected:
@@ -479,8 +571,6 @@ class ExpressionParsingScope : public ExpressionScope<Types> {
   }
 
   void ValidatePattern() { Validate(kPatternIndex); }
-
-  ScopedPtrList<VariableProxy>* variable_list() { return &variable_list_; }
 
  private:
   friend class AccumulationScope<Types>;
@@ -526,7 +616,7 @@ class ExpressionParsingScope : public ExpressionScope<Types> {
   bool verified_ = false;
 #endif
 
-  ScopedPtrList<VariableProxy> variable_list_;
+  ScopedList<std::pair<VariableProxy*, int>> variable_list_;
   MessageTemplate messages_[kNumberOfErrors];
   Scanner::Location locations_[kNumberOfErrors];
   bool has_async_arrow_in_scope_chain_;
@@ -546,7 +636,7 @@ class ExpressionParsingScope : public ExpressionScope<Types> {
 template <typename Types>
 class AccumulationScope {
  public:
-  typedef typename Types::Impl ParserT;
+  using ParserT = typename Types::Impl;
 
   static const int kNumberOfErrors =
       ExpressionParsingScope<Types>::kNumberOfErrors;
@@ -554,14 +644,8 @@ class AccumulationScope {
     if (!scope->CanBeExpression()) return;
     scope_ = scope->AsExpressionParsingScope();
     for (int i = 0; i < kNumberOfErrors; i++) {
-      // If the underlying scope is already invalid at the start, stop
-      // accumulating. That means an error was found outside of an
-      // accumulating path.
-      if (!scope_->is_valid(i)) {
-        scope_ = nullptr;
-        break;
-      }
       copy(i);
+      scope_->clear(i);
     }
   }
 
@@ -627,8 +711,8 @@ class AccumulationScope {
 template <typename Types>
 class ArrowHeadParsingScope : public ExpressionParsingScope<Types> {
  public:
-  typedef typename Types::Impl ParserT;
-  typedef typename ExpressionScope<Types>::ScopeType ScopeType;
+  using ParserT = typename Types::Impl;
+  using ScopeType = typename ExpressionScope<Types>::ScopeType;
 
   ArrowHeadParsingScope(ParserT* parser, FunctionKind kind)
       : ExpressionParsingScope<Types>(
@@ -649,35 +733,48 @@ class ArrowHeadParsingScope : public ExpressionParsingScope<Types> {
     // references.
     this->parser()->next_arrow_function_info_.ClearStrictParameterError();
     ExpressionParsingScope<Types>::ValidateExpression();
-    for (int i = 0; i < this->variable_list()->length(); i++) {
-      this->parser()->scope()->AddUnresolved(this->variable_list()->at(i));
-    }
+    this->parent()->MergeVariableList(this->variable_list());
   }
 
   DeclarationScope* ValidateAndCreateScope() {
     DCHECK(!this->is_verified());
+    DeclarationScope* result = this->parser()->NewFunctionScope(kind());
     if (declaration_error_location.IsValid()) {
       ExpressionScope<Types>::Report(declaration_error_location,
                                      declaration_error_message);
+      return result;
     }
     this->ValidatePattern();
 
-    DeclarationScope* result = this->parser()->NewFunctionScope(kind());
     if (!has_simple_parameter_list_) result->SetHasNonSimpleParameters();
     VariableKind kind = PARAMETER_VARIABLE;
     VariableMode mode =
         has_simple_parameter_list_ ? VariableMode::kVar : VariableMode::kLet;
-    for (int i = 0; i < this->variable_list()->length(); i++) {
-      VariableProxy* proxy = this->variable_list()->at(i);
+    for (auto& proxy_initializer_pair : *this->variable_list()) {
+      VariableProxy* proxy = proxy_initializer_pair.first;
+      int initializer_position = proxy_initializer_pair.second;
+      // Default values for parameters will have been parsed as assignments so
+      // clear the is_assigned bit as they are not actually assignments.
+      proxy->clear_is_assigned();
       bool was_added;
-      this->parser()->DeclareVariable(proxy, kind, mode,
-                                      Variable::DefaultInitializationFlag(mode),
-                                      result, &was_added, proxy->position());
+      this->parser()->DeclareAndBindVariable(proxy, kind, mode, result,
+                                             &was_added, initializer_position);
       if (!was_added) {
         ExpressionScope<Types>::Report(proxy->location(),
                                        MessageTemplate::kParamDupe);
       }
     }
+
+#ifdef DEBUG
+    if (!this->has_error()) {
+      for (auto declaration : *result->declarations()) {
+        DCHECK_NE(declaration->var()->initializer_position(),
+                  kNoSourcePosition);
+      }
+    }
+#endif  // DEBUG
+
+    if (uses_this_) result->UsesThis();
     return result;
   }
 
@@ -689,6 +786,7 @@ class ArrowHeadParsingScope : public ExpressionParsingScope<Types> {
   }
 
   void RecordNonSimpleParameter() { has_simple_parameter_list_ = false; }
+  void RecordThisUse() { uses_this_ = true; }
 
  private:
   FunctionKind kind() const {
@@ -700,6 +798,7 @@ class ArrowHeadParsingScope : public ExpressionParsingScope<Types> {
   Scanner::Location declaration_error_location = Scanner::Location::invalid();
   MessageTemplate declaration_error_message = MessageTemplate::kNone;
   bool has_simple_parameter_list_ = true;
+  bool uses_this_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ArrowHeadParsingScope);
 };

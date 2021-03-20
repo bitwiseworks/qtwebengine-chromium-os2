@@ -28,23 +28,21 @@
 #include "third_party/blink/renderer/core/svg/svg_fe_func_r_element.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/filters/fe_component_transfer.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
-inline SVGFEComponentTransferElement::SVGFEComponentTransferElement(
-    Document& document)
+SVGFEComponentTransferElement::SVGFEComponentTransferElement(Document& document)
     : SVGFilterPrimitiveStandardAttributes(svg_names::kFEComponentTransferTag,
                                            document),
-      in1_(SVGAnimatedString::Create(this, svg_names::kInAttr)) {
+      in1_(MakeGarbageCollected<SVGAnimatedString>(this, svg_names::kInAttr)) {
   AddToPropertyMap(in1_);
 }
 
-void SVGFEComponentTransferElement::Trace(blink::Visitor* visitor) {
+void SVGFEComponentTransferElement::Trace(Visitor* visitor) {
   visitor->Trace(in1_);
   SVGFilterPrimitiveStandardAttributes::Trace(visitor);
 }
-
-DEFINE_NODE_FACTORY(SVGFEComponentTransferElement)
 
 void SVGFEComponentTransferElement::SvgAttributeChanged(
     const QualifiedName& attr_name) {
@@ -71,18 +69,18 @@ FilterEffect* SVGFEComponentTransferElement::Build(
 
   for (SVGElement* element = Traversal<SVGElement>::FirstChild(*this); element;
        element = Traversal<SVGElement>::NextSibling(*element)) {
-    if (auto* func_r = ToSVGFEFuncRElementOrNull(*element))
+    if (auto* func_r = DynamicTo<SVGFEFuncRElement>(*element))
       red = func_r->TransferFunction();
-    else if (auto* func_g = ToSVGFEFuncGElementOrNull(*element))
+    else if (auto* func_g = DynamicTo<SVGFEFuncGElement>(*element))
       green = func_g->TransferFunction();
-    else if (auto* func_b = ToSVGFEFuncBElementOrNull(*element))
+    else if (auto* func_b = DynamicTo<SVGFEFuncBElement>(*element))
       blue = func_b->TransferFunction();
-    else if (auto* func_a = ToSVGFEFuncAElementOrNull(*element))
+    else if (auto* func_a = DynamicTo<SVGFEFuncAElement>(*element))
       alpha = func_a->TransferFunction();
   }
 
-  FilterEffect* effect =
-      FEComponentTransfer::Create(filter, red, green, blue, alpha);
+  auto* effect = MakeGarbageCollected<FEComponentTransfer>(filter, red, green,
+                                                           blue, alpha);
   effect->InputEffects().push_back(input1);
   return effect;
 }

@@ -19,10 +19,13 @@
 #include <stdlib.h>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/tracing/core/data_source_config.h"
+#include "perfetto/tracing/core/trace_config.h"
+
+#include "protos/perfetto/config/ftrace/ftrace_config.gen.h"
 
 namespace perfetto {
 namespace {
-using protos::TraceConfig;
 using ValueUnit = std::pair<uint64_t, std::string>;
 using UnitMultipler = std::pair<const char*, uint64_t>;
 
@@ -117,17 +120,20 @@ bool CreateConfigFromOptions(const ConfigOptions& options,
 
   config->set_duration_ms(static_cast<unsigned int>(duration_ms));
   config->set_max_file_size_bytes(max_file_size_kb * 1024);
+  config->set_flush_period_ms(30 * 1000);
   if (max_file_size_kb)
     config->set_write_into_file(true);
   config->add_buffers()->set_size_kb(static_cast<unsigned int>(buffer_size_kb));
   auto* ds_config = config->add_data_sources()->mutable_config();
   ds_config->set_name("linux.ftrace");
+  protos::gen::FtraceConfig ftrace_cfg;
   for (const auto& evt : ftrace_events)
-    ds_config->mutable_ftrace_config()->add_ftrace_events(evt);
+    ftrace_cfg.add_ftrace_events(evt);
   for (const auto& cat : atrace_categories)
-    ds_config->mutable_ftrace_config()->add_atrace_categories(cat);
+    ftrace_cfg.add_atrace_categories(cat);
   for (const auto& app : atrace_apps)
-    ds_config->mutable_ftrace_config()->add_atrace_apps(app);
+    ftrace_cfg.add_atrace_apps(app);
+  ds_config->set_ftrace_config_raw(ftrace_cfg.SerializeAsString());
 
   auto* ps_config = config->add_data_sources()->mutable_config();
   ps_config->set_name("linux.process_stats");

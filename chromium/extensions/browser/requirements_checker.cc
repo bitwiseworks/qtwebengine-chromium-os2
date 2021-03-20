@@ -22,7 +22,7 @@ namespace extensions {
 
 RequirementsChecker::RequirementsChecker(
     scoped_refptr<const Extension> extension)
-    : PreloadCheck(extension), weak_ptr_factory_(this) {}
+    : PreloadCheck(extension) {}
 
 RequirementsChecker::~RequirementsChecker() {}
 
@@ -39,11 +39,12 @@ void RequirementsChecker::Start(ResultCallback callback) {
 
   callback_ = std::move(callback);
   if (requirements.webgl) {
-    webgl_checker_ = content::GpuFeatureChecker::Create(
-        gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL,
-        base::Bind(&RequirementsChecker::VerifyWebGLAvailability,
-                   weak_ptr_factory_.GetWeakPtr()));
-    webgl_checker_->CheckGpuFeatureAvailability();
+    scoped_refptr<content::GpuFeatureChecker> webgl_checker =
+        content::GpuFeatureChecker::Create(
+            gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL,
+            base::BindOnce(&RequirementsChecker::VerifyWebGLAvailability,
+                           weak_ptr_factory_.GetWeakPtr()));
+    webgl_checker->CheckGpuFeatureAvailability();
   } else {
     PostRunCallback();
   }
@@ -77,9 +78,9 @@ void RequirementsChecker::PostRunCallback() {
   // to maintain the assumption in
   // ExtensionService::LoadExtensionsFromCommandLineFlag(). Remove these helper
   // functions after crbug.com/708354 is addressed.
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::Bind(&RequirementsChecker::RunCallback,
-                                      weak_ptr_factory_.GetWeakPtr()));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&RequirementsChecker::RunCallback,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void RequirementsChecker::RunCallback() {

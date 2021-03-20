@@ -5,16 +5,6 @@
 // Custom binding for the omnibox API. Only injected into the v8 contexts
 // for extensions which have permission for the omnibox API.
 
-var binding = apiBridge || require('binding').Binding.create('omnibox');
-
-var registerArgumentMassager = bindingUtil ?
-    $Function.bind(bindingUtil.registerEventArgumentMassager, bindingUtil) :
-    require('event_bindings').registerArgumentMassager;
-
-var sendRequest = bindingUtil ?
-    $Function.bind(bindingUtil.sendRequest, bindingUtil) :
-    require('sendRequest').sendRequest;
-
 // Remove invalid characters from |text| so that it is suitable to use
 // for |AutocompleteMatch::contents|.
 function sanitizeString(text, shouldTrim) {
@@ -56,16 +46,16 @@ function parseOmniboxDescription(input) {
   function walk(node) {
     for (var i = 0, child; child = node.childNodes[i]; i++) {
       // Append text nodes to our description.
-      if (child.nodeType == Node.TEXT_NODE) {
-        var shouldTrim = result.description.length == 0;
+      if (child.nodeType === Node.TEXT_NODE) {
+        var shouldTrim = result.description.length === 0;
         result.description += sanitizeString(child.nodeValue, shouldTrim);
         continue;
       }
 
       // Process and descend into a subset of recognized tags.
-      if (child.nodeType == Node.ELEMENT_NODE &&
-          (child.nodeName == 'dim' || child.nodeName == 'match' ||
-           child.nodeName == 'url')) {
+      if (child.nodeType === Node.ELEMENT_NODE &&
+          (child.nodeName === 'dim' || child.nodeName === 'match' ||
+           child.nodeName === 'url')) {
         var style = {
           'type': child.nodeName,
           'offset': result.description.length
@@ -86,23 +76,22 @@ function parseOmniboxDescription(input) {
   return result;
 }
 
-binding.registerCustomHook(function(bindingsAPI) {
+apiBridge.registerCustomHook(function(bindingsAPI) {
   var apiFunctions = bindingsAPI.apiFunctions;
 
-  apiFunctions.setUpdateArgumentsPreValidate('setDefaultSuggestion',
-                                             function(suggestResult) {
-    if (suggestResult.content != undefined) {  // null, etc.
-      throw new Error(
-          'setDefaultSuggestion cannot contain the "content" field');
-    }
-    return [suggestResult];
-  });
+  apiFunctions.setUpdateArgumentsPreValidate(
+      'setDefaultSuggestion', function(suggestResult) {
+        if (suggestResult.content != null) {
+          throw new Error(
+              'setDefaultSuggestion cannot contain the "content" field');
+        }
+        return [suggestResult];
+      });
 
   apiFunctions.setHandleRequest('setDefaultSuggestion', function(details) {
     var parseResult = parseOmniboxDescription(details.description);
-    sendRequest('omnibox.setDefaultSuggestion', [parseResult],
-                bindingUtil ? undefined : this.definition.parameters,
-                undefined);
+    bindingUtil.sendRequest('omnibox.setDefaultSuggestion', [parseResult],
+                            undefined);
   });
 
   apiFunctions.setUpdateArgumentsPostValidate(
@@ -119,7 +108,8 @@ binding.registerCustomHook(function(bindingsAPI) {
   });
 });
 
-registerArgumentMassager('omnibox.onInputChanged', function(args, dispatch) {
+bindingUtil.registerEventArgumentMassager('omnibox.onInputChanged',
+                                          function(args, dispatch) {
   var text = args[0];
   var requestId = args[1];
   var suggestCallback = function(suggestions) {
@@ -127,6 +117,3 @@ registerArgumentMassager('omnibox.onInputChanged', function(args, dispatch) {
   };
   dispatch([text, suggestCallback]);
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

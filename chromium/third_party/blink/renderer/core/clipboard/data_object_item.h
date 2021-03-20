@@ -34,14 +34,16 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 
 namespace blink {
 
-class CORE_EXPORT DataObjectItem
-    : public GarbageCollectedFinalized<DataObjectItem> {
+class SystemClipboard;
+
+class CORE_EXPORT DataObjectItem final
+    : public GarbageCollected<DataObjectItem> {
  public:
   enum ItemKind { kStringKind, kFileKind };
 
@@ -61,11 +63,15 @@ class CORE_EXPORT DataObjectItem
       const KURL&,
       const String& file_extension,
       const AtomicString& content_disposition);
-  static DataObjectItem* CreateFromClipboard(const String& type,
+  static DataObjectItem* CreateFromClipboard(SystemClipboard* system_clipboard,
+                                             const String& type,
                                              uint64_t sequence_number);
 
-  DataObjectItem(ItemKind, const String& type);
-  DataObjectItem(ItemKind, const String& type, uint64_t sequence_number);
+  DataObjectItem(ItemKind kind, const String& type);
+  DataObjectItem(ItemKind,
+                 const String& type,
+                 uint64_t sequence_number,
+                 SystemClipboard* system_clipboard);
 
   ItemKind Kind() const { return kind_; }
   String GetType() const { return type_; }
@@ -83,7 +89,7 @@ class CORE_EXPORT DataObjectItem
   bool HasFileSystemId() const;
   String FileSystemId() const;
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   enum DataSource {
@@ -103,8 +109,11 @@ class CORE_EXPORT DataObjectItem
   String title_;
   KURL base_url_;
 
-  uint64_t sequence_number_;  // Only valid when m_source == PasteboardSource
-  String file_system_id_;     // Only valid when m_file is backed by FileEntry.
+  uint64_t sequence_number_;  // Only valid when |source_| == PasteboardSource.
+  String file_system_id_;     // Only valid when |file_| is backed by FileEntry.
+
+  // Access to the global system clipboard.
+  Member<SystemClipboard> system_clipboard_;
 };
 
 }  // namespace blink

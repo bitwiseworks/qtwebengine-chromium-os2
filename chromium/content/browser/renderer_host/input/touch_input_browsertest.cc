@@ -10,7 +10,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "components/viz/common/features.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -27,7 +26,7 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/hit_test_region_observer.h"
 #include "content/shell/browser/shell.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/latency/latency_info.h"
 
 using blink::WebInputEvent;
@@ -110,7 +109,7 @@ class TouchInputBrowserTest : public ContentBrowserTest {
   }
   void LoadURL() {
     const GURL data_url(kTouchEventDataURL);
-    NavigateToURL(shell(), data_url);
+    EXPECT_TRUE(NavigateToURL(shell(), data_url));
 
     RenderWidgetHostImpl* host = GetWidgetHost();
     // Wait to confirm a frame was generated from the navigation.
@@ -126,10 +125,8 @@ class TouchInputBrowserTest : public ContentBrowserTest {
     frame_observer.WaitForAnyFrameSubmission();
 #endif
 
-    if (features::IsVizHitTestingEnabled()) {
-      HitTestRegionObserver observer(host->GetFrameSinkId());
-      observer.WaitForHitTestData();
-    }
+    HitTestRegionObserver observer(host->GetFrameSinkId());
+    observer.WaitForHitTestData();
   }
 
   void SetUpCommandLine(base::CommandLine* cmd) override {

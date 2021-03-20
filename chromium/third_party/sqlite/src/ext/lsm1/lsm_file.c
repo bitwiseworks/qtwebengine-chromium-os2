@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-**
+** 
 ** NORMAL DATABASE FILE FORMAT
 **
 ** The following database file format concepts are used by the code in
@@ -18,20 +18,20 @@
 ** Pages:
 **
 **   A database file is divided into pages. The first 8KB of the file consists
-**   of two 4KB meta-pages. The meta-page size is not configurable. The
+**   of two 4KB meta-pages. The meta-page size is not configurable. The 
 **   remainder of the file is made up of database pages. The default database
 **   page size is 4KB. Database pages are aligned to page-size boundaries,
 **   so if the database page size is larger than 8KB there is a gap between
 **   the end of the meta pages and the start of the database pages.
 **
 **   Database pages are numbered based on their position in the file. Page N
-**   begins at byte offset ((N-1)*pgsz). This means that page 1 does not
-**   exist - since it would always overlap with the meta pages. If the
+**   begins at byte offset ((N-1)*pgsz). This means that page 1 does not 
+**   exist - since it would always overlap with the meta pages. If the 
 **   page-size is (say) 512 bytes, then the first usable page in the database
 **   is page 33.
 **
 **   It is assumed that the first two meta pages and the data that follows
-**   them are located on different disk sectors. So that if a power failure
+**   them are located on different disk sectors. So that if a power failure 
 **   while writing to a meta page there is no risk of damage to the other
 **   meta page or any other part of the database file. TODO: This may need
 **   to be revisited.
@@ -42,22 +42,22 @@
 **   1MB. When writing to the database file, an attempt is made to write data
 **   in contiguous block-sized chunks.
 **
-**   The first and last page on each block are special in that they are 4
-**   bytes smaller than all other pages. This is because the last four bytes
+**   The first and last page on each block are special in that they are 4 
+**   bytes smaller than all other pages. This is because the last four bytes 
 **   of space on the first and last pages of each block are reserved for
 **   pointers to other blocks (i.e. a 32-bit block number).
 **
 ** Runs:
 **
-**   A run is a sequence of pages that the upper layer uses to store a
-**   sorted array of database keys (and accompanying data - values, FC
+**   A run is a sequence of pages that the upper layer uses to store a 
+**   sorted array of database keys (and accompanying data - values, FC 
 **   pointers and so on). Given a page within a run, it is possible to
 **   navigate to the next page in the run as follows:
 **
-**     a) if the current page is not the last in a block, the next page
+**     a) if the current page is not the last in a block, the next page 
 **        in the run is located immediately after the current page, OR
 **
-**     b) if the current page is the last page in a block, the next page
+**     b) if the current page is the last page in a block, the next page 
 **        in the run is the first page on the block identified by the
 **        block pointer stored in the last 4 bytes of the current block.
 **
@@ -65,13 +65,13 @@
 **   using the block pointer embedded in the last 4 bytes of the first page
 **   of each block as required.
 **
-**   The upper layer is responsible for identifying by page number the
+**   The upper layer is responsible for identifying by page number the 
 **   first and last page of any run that it needs to navigate - there are
 **   no "end-of-run" markers stored or identified by this layer. This is
-**   necessary as clients reading different database snapshots may access
+**   necessary as clients reading different database snapshots may access 
 **   different subsets of a run.
 **
-** THE LOG FILE
+** THE LOG FILE 
 **
 ** This file opens and closes the log file. But it does not contain any
 ** logic related to the log file format. Instead, it exports the following
@@ -91,8 +91,8 @@
 ** The file still begins with two 4KB meta-pages (which are never compressed).
 ** It is still divided into blocks.
 **
-** The first and last four bytes of each block are reserved for 32-bit
-** pointer values. Similar to the way four bytes are carved from the end of
+** The first and last four bytes of each block are reserved for 32-bit 
+** pointer values. Similar to the way four bytes are carved from the end of 
 ** the first and last page of each block in uncompressed databases. From
 ** the point of view of the upper layer, all pages are the same size - this
 ** is different from the uncompressed format where the first and last pages
@@ -104,7 +104,7 @@
 **       in bytes. The most significant bit of each byte of the size field
 **       is always set. The remaining 7 bits are used to store a 21-bit
 **       integer value (in big-endian order - the first byte in the field
-**       contains the most significant 7 bits). Since the maximum allowed
+**       contains the most significant 7 bits). Since the maximum allowed 
 **       size of a compressed page image is (2^17 - 1) bytes, there are
 **       actually 4 unused bits in the size field.
 **
@@ -141,11 +141,11 @@
 **         Block of 2 free bytes: 0x02 0x02
 **         A single free byte:    0x01
 **
-**     * For 6 or more bytes of empty space, a record similar to a
+**     * For 6 or more bytes of empty space, a record similar to a 
 **       compressed page record is added to the segment. A padding record
-**       is distinguished from a compressed page record by the most
+**       is distinguished from a compressed page record by the most 
 **       significant bit of the second byte of the size field, which is
-**       cleared instead of set.
+**       cleared instead of set. 
 */
 #include "lsmInt.h"
 
@@ -169,7 +169,7 @@
 ** populated by read() calls.
 **
 ** pFree:
-**   The head of a singly-linked list that containing currently unused Page
+**   The head of a singly-linked list that containing currently unused Page 
 **   structures suitable for use as mmap-page handles. Connected by the
 **   Page.pFreeNext pointers.
 **
@@ -187,11 +187,11 @@
 **   the page contents, it calls lsmFsPagePersist() to assign a page number
 **   to it. At this point it is likely that N pages have been written to the
 **   segment, the (N+1)th page is still outstanding and the b-tree page is
-**   assigned page number (N+2). To avoid writing page (N+2) before page
+**   assigned page number (N+2). To avoid writing page (N+2) before page 
 **   (N+1), the recently completed b-tree page is held in the singly linked
-**   list headed by pWaiting until page (N+1) has been written.
+**   list headed by pWaiting until page (N+1) has been written. 
 **
-**   Function lsmFsFlushWaiting() is responsible for eventually writing
+**   Function lsmFsFlushWaiting() is responsible for eventually writing 
 **   waiting pages to disk.
 **
 ** apHash/nHash:
@@ -299,8 +299,8 @@ struct MetaPage {
   FileSystem *pFS;                /* FileSystem that owns this page */
 };
 
-/*
-** Values for LsmPage.flags
+/* 
+** Values for LsmPage.flags 
 */
 #define PAGE_DIRTY   0x00000001   /* Set if page is dirty */
 #define PAGE_FREE    0x00000002   /* Set if Page.aData requires lsmFree() */
@@ -314,7 +314,7 @@ struct MetaPage {
 
 /*
 ** If NDEBUG is not defined, set a breakpoint in function lsmIoerrBkpt()
-** to catch IO errors (any error returned by a VFS method).
+** to catch IO errors (any error returned by a VFS method). 
 */
 #ifndef NDEBUG
 static void lsmIoerrBkpt(void){
@@ -373,20 +373,20 @@ int lsmEnvOpen(lsm_env *pEnv, const char *zFile, int flags, lsm_file **ppNew){
 }
 
 static int lsmEnvRead(
-  lsm_env *pEnv,
-  lsm_file *pFile,
-  lsm_i64 iOff,
-  void *pRead,
+  lsm_env *pEnv, 
+  lsm_file *pFile, 
+  lsm_i64 iOff, 
+  void *pRead, 
   int nRead
 ){
   return IOERR_WRAPPER( pEnv->xRead(pFile, iOff, pRead, nRead) );
 }
 
 static int lsmEnvWrite(
-  lsm_env *pEnv,
-  lsm_file *pFile,
-  lsm_i64 iOff,
-  const void *pWrite,
+  lsm_env *pEnv, 
+  lsm_file *pFile, 
+  lsm_i64 iOff, 
+  const void *pWrite, 
   int nWrite
 ){
   return IOERR_WRAPPER( pEnv->xWrite(pFile, iOff, (void *)pWrite, nWrite) );
@@ -413,8 +413,8 @@ static int lsmEnvUnlink(lsm_env *pEnv, const char *zDel){
 }
 
 static int lsmEnvRemap(
-  lsm_env *pEnv,
-  lsm_file *pFile,
+  lsm_env *pEnv, 
+  lsm_file *pFile, 
   i64 szMin,
   void **ppMap,
   i64 *pszMap
@@ -428,20 +428,20 @@ int lsmEnvLock(lsm_env *pEnv, lsm_file *pFile, int iLock, int eLock){
 }
 
 int lsmEnvTestLock(
-  lsm_env *pEnv,
-  lsm_file *pFile,
-  int iLock,
-  int nLock,
+  lsm_env *pEnv, 
+  lsm_file *pFile, 
+  int iLock, 
+  int nLock, 
   int eLock
 ){
   return pEnv->xTestLock(pFile, iLock, nLock, eLock);
 }
 
 int lsmEnvShmMap(
-  lsm_env *pEnv,
-  lsm_file *pFile,
-  int iChunk,
-  int sz,
+  lsm_env *pEnv, 
+  lsm_file *pFile, 
+  int iChunk, 
+  int sz, 
   void **ppOut
 ){
   return pEnv->xShmMap(pFile, iChunk, sz, ppOut);
@@ -537,7 +537,7 @@ static int fsMmapPage(FileSystem *pFS, LsmPgno iReal){
 }
 
 /*
-** Given that there are currently nHash slots in the hash table, return
+** Given that there are currently nHash slots in the hash table, return 
 ** the hash key for file iFile, page iPg.
 */
 static int fsHashKey(int nHash, LsmPgno iPg){
@@ -579,8 +579,8 @@ int lsmFsOpenLog(lsm_db *db, int *pbOpen){
   int rc = LSM_OK;
   FileSystem *pFS = db->pFS;
 
-  if( 0==pFS->fdLog ){
-    pFS->fdLog = fsOpenFile(pFS, db->bReadonly, 1, &rc);
+  if( 0==pFS->fdLog ){ 
+    pFS->fdLog = fsOpenFile(pFS, db->bReadonly, 1, &rc); 
 
     if( rc==LSM_IOERR_NOENT && db->bReadonly ){
       rc = LSM_OK;
@@ -783,7 +783,7 @@ void lsmFsClose(FileSystem *pFS){
 }
 
 /*
-** This function is called when closing a database handle (i.e. lsm_close())
+** This function is called when closing a database handle (i.e. lsm_close()) 
 ** if there exist other connections to the same database within this process.
 ** In that case the file-descriptor open on the database file is not closed
 ** when the FileSystem object is destroyed, as this would cause any POSIX
@@ -794,10 +794,10 @@ void lsmFsClose(FileSystem *pFS){
 ** This function returns a pointer to an object that can be linked into
 ** the list described above. The returned object now 'owns' the database
 ** file descriptr, so that when the FileSystem object is destroyed, it
-** will not be closed.
+** will not be closed. 
 **
-** This function may be called at most once in the life-time of a
-** FileSystem object. The results of any operations involving the database
+** This function may be called at most once in the life-time of a 
+** FileSystem object. The results of any operations involving the database 
 ** file descriptor are undefined once this function has been called.
 **
 ** None of this is necessary on non-POSIX systems. But we do it anyway in
@@ -813,8 +813,8 @@ LsmFile *lsmFsDeferClose(FileSystem *pFS){
 }
 
 /*
-** Allocate a buffer and populate it with the output of the xFileid()
-** method of the database file handle. If successful, set *ppId to point
+** Allocate a buffer and populate it with the output of the xFileid() 
+** method of the database file handle. If successful, set *ppId to point 
 ** to the buffer and *pnId to the number of bytes in the buffer and return
 ** LSM_OK. Otherwise, set *ppId and *pnId to zero and return an LSM
 ** error code.
@@ -857,7 +857,7 @@ int lsmFsBlockSize(FileSystem *pFS){
 }
 
 /*
-** Configure the nominal page-size used by this file-system. Actual
+** Configure the nominal page-size used by this file-system. Actual 
 ** pages may be smaller or larger than this value.
 */
 void lsmFsSetPageSize(FileSystem *pFS, int nPgsz){
@@ -866,7 +866,7 @@ void lsmFsSetPageSize(FileSystem *pFS, int nPgsz){
 }
 
 /*
-** Configure the block-size used by this file-system.
+** Configure the block-size used by this file-system. 
 */
 void lsmFsSetBlockSize(FileSystem *pFS, int nBlocksize){
   pFS->nBlocksize = nBlocksize;
@@ -904,7 +904,7 @@ static LsmPgno fsFirstPageOnBlock(FileSystem *pFS, int iBlock){
 ** numbered starting from 1.
 **
 ** For a compressed database, page numbers are byte offsets. The first
-** page on each block is the byte offset of the byte immediately before
+** page on each block is the byte offset of the byte immediately before 
 ** the 4-byte "next block" pointer at the end of each block.
 */
 static LsmPgno fsLastPageOnBlock(FileSystem *pFS, int iBlock){
@@ -917,7 +917,7 @@ static LsmPgno fsLastPageOnBlock(FileSystem *pFS, int iBlock){
 }
 
 /*
-** Return the block number of the block that page iPg is located on.
+** Return the block number of the block that page iPg is located on. 
 ** Blocks are numbered starting from 1.
 */
 static int fsPageToBlock(FileSystem *pFS, LsmPgno iPg){
@@ -953,7 +953,7 @@ static int fsIsFirst(FileSystem *pFS, LsmPgno iPg){
 }
 
 /*
-** Given a page reference, return a pointer to the buffer containing the
+** Given a page reference, return a pointer to the buffer containing the 
 ** pages contents. If parameter pnData is not NULL, set *pnData to the size
 ** of the buffer in bytes before returning.
 */
@@ -1070,12 +1070,12 @@ static Page *fsPageFindInHash(FileSystem *pFS, LsmPgno iPg, int *piHash){
 }
 
 /*
-** Allocate and return a non-mmap Page object. If there are already
-** nCacheMax such Page objects outstanding, try to recycle an existing
+** Allocate and return a non-mmap Page object. If there are already 
+** nCacheMax such Page objects outstanding, try to recycle an existing 
 ** Page instead.
 */
 static int fsPageBuffer(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Page **ppOut
 ){
   int rc = LSM_OK;
@@ -1115,12 +1115,12 @@ static int fsPageBuffer(
 }
 
 /*
-** Assuming *pRc is initially LSM_OK, attempt to ensure that the
+** Assuming *pRc is initially LSM_OK, attempt to ensure that the 
 ** memory-mapped region is at least iSz bytes in size. If it is not already,
 ** iSz bytes in size, extend it and update the pointers associated with any
 ** outstanding Page objects.
 **
-** If *pRc is not LSM_OK when this function is called, it is a no-op.
+** If *pRc is not LSM_OK when this function is called, it is a no-op. 
 ** Otherwise, *pRc is set to an lsm error code if an error occurs, or
 ** left unmodified otherwise.
 **
@@ -1220,7 +1220,7 @@ LsmPgno lsmFsRedirectPage(FileSystem *pFS, Redirect *pRedir, LsmPgno iPg){
 static int fsPageGet(FileSystem *, Segment *, LsmPgno, int, Page **, int *);
 
 /*
-** Parameter iBlock is a database file block. This function reads the value
+** Parameter iBlock is a database file block. This function reads the value 
 ** stored in the blocks "next block" pointer and stores it in *piNext.
 ** LSM_OK is returned if everything is successful, or an LSM error code
 ** otherwise.
@@ -1233,7 +1233,7 @@ static int fsBlockNext(
 ){
   int rc;
   int iRead;                      /* Read block from here */
-
+  
   if( pSeg ){
     iRead = fsRedirectBlock(pSeg->pRedirect, iBlock);
   }else{
@@ -1314,7 +1314,7 @@ static int fsReadData(
 }
 
 /*
-** Parameter iBlock is a database file block. This function reads the value
+** Parameter iBlock is a database file block. This function reads the value 
 ** stored in the blocks "previous block" pointer and stores it in *piPrev.
 ** LSM_OK is returned if everything is successful, or an LSM error code
 ** otherwise.
@@ -1372,10 +1372,10 @@ static int getRecordSize(u8 *aBuf, int *pbFree){
 ** Return LSM_OK if successful or an lsm error code if an error occurs.
 */
 static int fsSubtractOffset(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Segment *pSeg,
-  i64 iOff,
-  int iSub,
+  i64 iOff, 
+  int iSub, 
   i64 *piRes
 ){
   i64 iStart;
@@ -1406,10 +1406,10 @@ static int fsSubtractOffset(
 ** Return LSM_OK if successful or an lsm error code if an error occurs.
 */
 static int fsAddOffset(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Segment *pSeg,
-  i64 iOff,
-  int iAdd,
+  i64 iOff, 
+  int iAdd, 
   i64 *piRes
 ){
   i64 iEob;
@@ -1510,8 +1510,8 @@ static int fsReadPagedata(
         }
         if( rc==LSM_OK ){
           int n = pFS->nPagesize;
-          rc = p->xUncompress(p->pCtx,
-              (char *)pPg->aData, &n,
+          rc = p->xUncompress(p->pCtx, 
+              (char *)pPg->aData, &n, 
               (const char *)pFS->aIBuffer, pPg->nCompress
           );
           if( rc==LSM_OK && n!=pPg->pFS->nPagesize ){
@@ -1546,7 +1546,7 @@ static int fsPageGet(
   int iHash;
   int rc = LSM_OK;
 
-  /* In most cases iReal is the same as iPg. Except, if pSeg->pRedirect is
+  /* In most cases iReal is the same as iPg. Except, if pSeg->pRedirect is 
   ** not NULL, and the block containing iPg has been redirected, then iReal
   ** is the page number after redirection.  */
   LsmPgno iReal = lsmFsRedirectPage(pFS, (pSeg ? pSeg->pRedirect : 0), iPg);
@@ -1628,7 +1628,7 @@ static int fsPageGet(
     }
 
     assert( (rc==LSM_OK && (p || (pnSpace && *pnSpace)))
-         || (rc!=LSM_OK && p==0)
+         || (rc!=LSM_OK && p==0) 
     );
   }
 
@@ -1687,9 +1687,9 @@ int lsmFsReadSyncedId(lsm_db *db, int iMeta, i64 *piVal){
 ** and iLast, inclusive, and pRun is not equal to pIgnore.
 */
 static int fsRunEndsBetween(
-  Segment *pRun,
-  Segment *pIgnore,
-  LsmPgno iFirst,
+  Segment *pRun, 
+  Segment *pIgnore, 
+  LsmPgno iFirst, 
   LsmPgno iLast
 ){
   return (pRun!=pIgnore && (
@@ -1703,9 +1703,9 @@ static int fsRunEndsBetween(
 ** which the first or last page is between iFirst and iLast, inclusive.
 */
 static int fsLevelEndsBetween(
-  Level *pLevel,
-  Segment *pIgnore,
-  LsmPgno iFirst,
+  Level *pLevel, 
+  Segment *pIgnore, 
+  LsmPgno iFirst, 
   LsmPgno iLast
 ){
   int i;
@@ -1744,7 +1744,7 @@ static int fsFreeBlock(
   iFirst = fsFirstPageOnBlock(pFS, iBlk);
   iLast = fsLastPageOnBlock(pFS, iBlk);
 
-  /* Check if any other run in the snapshot has a start or end page
+  /* Check if any other run in the snapshot has a start or end page 
   ** within this block. If there is such a run, return early. */
   for(pLevel=lsmDbSnapshotLevel(pSnapshot); pLevel; pLevel=pLevel->pNext){
     if( fsLevelEndsBetween(pLevel, pIgnore, iFirst, iLast) ){
@@ -1770,7 +1770,7 @@ static int fsFreeBlock(
 ** Delete or otherwise recycle the blocks currently occupied by run pDel.
 */
 int lsmFsSortedDelete(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Snapshot *pSnapshot,
   int bZero,                      /* True to zero the Segment structure */
   Segment *pDel
@@ -1812,9 +1812,9 @@ int lsmFsSortedDelete(
 ** in aPgno[] fall on block iBlk, return 0.
 */
 static LsmPgno firstOnBlock(
-  FileSystem *pFS,
-  int iBlk,
-  LsmPgno *aPgno,
+  FileSystem *pFS, 
+  int iBlk, 
+  LsmPgno *aPgno, 
   int nPgno
 ){
   LsmPgno iRet = 0;
@@ -1831,7 +1831,7 @@ static LsmPgno firstOnBlock(
 #ifndef NDEBUG
 /*
 ** Return true if page iPg, which is a part of segment p, lies on
-** a redirected block.
+** a redirected block. 
 */
 static int fsPageRedirects(FileSystem *pFS, Segment *p, LsmPgno iPg){
   return (iPg!=0 && iPg!=lsmFsRedirectPage(pFS, p->pRedirect, iPg));
@@ -1839,7 +1839,7 @@ static int fsPageRedirects(FileSystem *pFS, Segment *p, LsmPgno iPg){
 
 /*
 ** Return true if the second argument is not NULL and any of the first
-** last or root pages lie on a redirected block.
+** last or root pages lie on a redirected block. 
 */
 static int fsSegmentRedirects(FileSystem *pFS, Segment *p){
   return (p && (
@@ -1858,7 +1858,7 @@ static int fsSegmentRedirects(FileSystem *pFS, Segment *p){
 */
 void lsmFsGobble(
   lsm_db *pDb,
-  Segment *pRun,
+  Segment *pRun, 
   LsmPgno *aPgno,
   int nPgno
 ){
@@ -1942,9 +1942,9 @@ static int fsNextPageOffset(
 ** *piPrev is undefined.
 */
 static int fsGetPageBefore(
-  FileSystem *pFS,
-  Segment *pSeg,
-  LsmPgno iPg,
+  FileSystem *pFS, 
+  Segment *pSeg, 
+  LsmPgno iPg, 
   LsmPgno *piPrev
 ){
   u8 aSz[3];
@@ -1973,8 +1973,8 @@ static int fsGetPageBefore(
 
 /*
 ** The first argument to this function is a valid reference to a database
-** file page that is part of a sorted run. If parameter eDir is -1, this
-** function attempts to locate and load the previous page in the same run.
+** file page that is part of a sorted run. If parameter eDir is -1, this 
+** function attempts to locate and load the previous page in the same run. 
 ** Or, if eDir is +1, it attempts to find the next page in the same run.
 ** The results of passing an eDir value other than positive or negative one
 ** are undefined.
@@ -1986,10 +1986,10 @@ static int fsGetPageBefore(
 ** is assumed that the next or previous page, as requested, exists.
 **
 ** If the previous/next page does exist and is successfully loaded, *ppNext
-** is set to point to it and LSM_OK is returned. Otherwise, if an error
+** is set to point to it and LSM_OK is returned. Otherwise, if an error 
 ** occurs, *ppNext is set to NULL and and lsm error code returned.
 **
-** Page references returned by this function should be released by the
+** Page references returned by this function should be released by the 
 ** caller using lsmFsPageRelease().
 */
 int lsmFsDbPageNext(Segment *pRun, Page *pPg, int eDir, Page **ppNext){
@@ -2091,11 +2091,11 @@ static LsmPgno findAppendPoint(FileSystem *pFS, Level *pLvl){
 
 /*
 ** Append a page to the left-hand-side of pLvl. Set the ref-count to 1 and
-** return a pointer to it. The page is writable until either
+** return a pointer to it. The page is writable until either 
 ** lsmFsPagePersist() is called on it or the ref-count drops to zero.
 */
 int lsmFsSortedAppend(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Snapshot *pSnapshot,
   Level *pLvl,
   int bDefer,
@@ -2159,7 +2159,7 @@ int lsmFsSortedAppend(
     rc = fsPageGet(pFS, 0, iApp, 1, &pPg, 0);
     assert( rc==LSM_OK || pPg==0 );
 
-    /* If this is the first or last page of a block, fill in the pointer
+    /* If this is the first or last page of a block, fill in the pointer 
      ** value at the end of the new page. */
     if( rc==LSM_OK ){
       p->nSize++;
@@ -2181,7 +2181,7 @@ int lsmFsSortedAppend(
 
 /*
 ** Mark the segment passed as the second argument as finished. Once a segment
-** is marked as finished it is not possible to append any further pages to
+** is marked as finished it is not possible to append any further pages to 
 ** it.
 **
 ** Return LSM_OK if successful or an lsm error code if an error occurs.
@@ -2193,7 +2193,7 @@ int lsmFsSortedFinish(FileSystem *pFS, Segment *p){
 
     /* Check if the last page of this run happens to be the last of a block.
     ** If it is, then an extra block has already been allocated for this run.
-    ** Shift this extra block back to the free-block list.
+    ** Shift this extra block back to the free-block list. 
     **
     ** Otherwise, add the first free page in the last block used by the run
     ** to the lAppend list.
@@ -2236,7 +2236,7 @@ int lsmFsDbPageGet(FileSystem *pFS, Segment *pSeg, LsmPgno iPg, Page **ppPg){
 }
 
 /*
-** Obtain a reference to the last page in the segment passed as the
+** Obtain a reference to the last page in the segment passed as the 
 ** second argument.
 **
 ** Return LSM_OK if successful, or an lsm error code if an error occurs.
@@ -2266,7 +2266,7 @@ int lsmFsDbPageLast(FileSystem *pFS, Segment *pSeg, Page **ppPg){
 ** and *ppPg populated with the new page reference. The reference should
 ** be released by the caller using lsmFsPageRelease().
 **
-** Otherwise, if an error occurs, *ppPg is set to NULL and an LSM error
+** Otherwise, if an error occurs, *ppPg is set to NULL and an LSM error 
 ** code is returned.
 */
 int lsmFsMetaPageGet(
@@ -2353,7 +2353,7 @@ u8 *lsmFsMetaPageData(MetaPage *pPg, int *pnData){
 }
 
 /*
-** Return true if page is currently writable. This is used in assert()
+** Return true if page is currently writable. This is used in assert() 
 ** statements only.
 */
 #ifndef NDEBUG
@@ -2363,7 +2363,7 @@ int lsmFsPageWritable(Page *pPg){
 #endif
 
 /*
-** This is called when block iFrom is being redirected to iTo. If page
+** This is called when block iFrom is being redirected to iTo. If page 
 ** number (*piPg) lies on block iFrom, then calculate the equivalent
 ** page on block iTo and set *piPg to this value before returning.
 */
@@ -2383,9 +2383,9 @@ static void fsMovePage(
 }
 
 /*
-** Copy the contents of block iFrom to block iTo.
+** Copy the contents of block iFrom to block iTo. 
 **
-** It is safe to assume that there are no outstanding references to pages
+** It is safe to assume that there are no outstanding references to pages 
 ** on block iTo. And that block iFrom is not currently being written. In
 ** other words, the data can be read and written directly.
 */
@@ -2397,7 +2397,7 @@ int lsmFsMoveBlock(FileSystem *pFS, Segment *pSeg, int iTo, int iFrom){
 
   i64 iFromOff = (i64)(iFrom-1) * pFS->nBlocksize;
   i64 iToOff = (i64)(iTo-1) * pFS->nBlocksize;
-
+  
   assert( iTo!=1 );
   assert( iFrom>iTo );
 
@@ -2553,8 +2553,8 @@ static LsmPgno fsAppendData(
 }
 
 /*
-** This function is only called in compressed database mode. It
-** compresses the contents of page pPg and writes the result to the
+** This function is only called in compressed database mode. It 
+** compresses the contents of page pPg and writes the result to the 
 ** buffer at pFS->aOBuffer. The size of the compressed data is stored in
 ** pPg->nCompress.
 **
@@ -2568,8 +2568,8 @@ static int fsCompressIntoBuffer(FileSystem *pFS, Page *pPg){
   assert( pPg->nData==pFS->nPagesize );
 
   pPg->nCompress = pFS->nBuffer;
-  return p->xCompress(p->pCtx,
-      (char *)pFS->aOBuffer, &pPg->nCompress,
+  return p->xCompress(p->pCtx, 
+      (char *)pFS->aOBuffer, &pPg->nCompress, 
       (const char *)pPg->aData, pPg->nData
   );
 }
@@ -2591,7 +2591,7 @@ static int fsCompressIntoBuffer(FileSystem *pFS, Page *pPg){
 ** output variables is undefined.
 */
 static int fsAppendPage(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Segment *pSeg,
   LsmPgno *piNew,
   int *piPrev,
@@ -2715,7 +2715,7 @@ int lsmFsPagePersist(Page *pPg){
         /* No page number has been assigned yet. This occurs with pages used
         ** in the b-tree hierarchy. They were not assigned page numbers when
         ** they were created as doing so would cause this call to
-        ** lsmFsPagePersist() to write an out-of-order page. Instead a page
+        ** lsmFsPagePersist() to write an out-of-order page. Instead a page 
         ** number is assigned here so that the page data will be appended
         ** to the current segment.
         */
@@ -2797,13 +2797,13 @@ int lsmFsPagePersist(Page *pPg){
 ** databases, it adds a padding record to the segment passed as the third
 ** argument.
 **
-** The size of the padding records is selected so that the last byte
-** written is the last byte of a disk sector. This means that if a
+** The size of the padding records is selected so that the last byte 
+** written is the last byte of a disk sector. This means that if a 
 ** snapshot is taken and checkpointed, subsequent worker processes will
 ** not write to any sector that contains checkpointed data.
 */
 int lsmFsSortedPadding(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Snapshot *pSnapshot,
   Segment *pSeg
 ){
@@ -2838,7 +2838,7 @@ int lsmFsSortedPadding(
       fsAppendData(pFS, pSeg, aBuf, nPad, &rc);
     }
 
-    assert( rc!=LSM_OK
+    assert( rc!=LSM_OK 
         || pSeg->iLastPg==fsLastPageOnPagesBlock(pFS, pSeg->iLastPg)
         || ((pSeg->iLastPg + 1) % pFS->szSector)==0
     );
@@ -2871,8 +2871,8 @@ int lsmFsPageRelease(Page *pPg){
       rc = lsmFsPagePersist(pPg);
       pFS->nOut--;
 
-      assert( pPg->pFS->pCompress
-           || fsIsFirst(pPg->pFS, pPg->iPg)==0
+      assert( pPg->pFS->pCompress 
+           || fsIsFirst(pPg->pFS, pPg->iPg)==0 
            || (pPg->flags & PAGE_HASPREV)
       );
       pPg->aData -= (pPg->flags & PAGE_HASPREV);
@@ -2910,16 +2910,16 @@ int lsmFsNWrite(FileSystem *pFS){ return pFS->nWrite; }
 /*
 ** Return a copy of the environment pointer used by the file-system object.
 */
-lsm_env *lsmFsEnv(FileSystem *pFS){
-  return pFS->pEnv;
+lsm_env *lsmFsEnv(FileSystem *pFS){ 
+  return pFS->pEnv; 
 }
 
 /*
 ** Return a copy of the environment pointer used by the file-system object
 ** to which this page belongs.
 */
-lsm_env *lsmPageEnv(Page *pPg) {
-  return pPg->pFS->pEnv;
+lsm_env *lsmPageEnv(Page *pPg) { 
+  return pPg->pFS->pEnv; 
 }
 
 /*
@@ -2966,14 +2966,14 @@ static Segment *findSegment(Snapshot *pWorker, LsmPgno iFirst){
 
 /*
 ** This function implements the lsm_info(LSM_INFO_ARRAY_STRUCTURE) request.
-** If successful, *pzOut is set to point to a nul-terminated string
+** If successful, *pzOut is set to point to a nul-terminated string 
 ** containing the array structure and LSM_OK is returned. The caller should
 ** eventually free the string using lsmFree().
 **
 ** If an error occurs, *pzOut is set to NULL and an LSM error code returned.
 */
 int lsmInfoArrayStructure(
-  lsm_db *pDb,
+  lsm_db *pDb, 
   int bBlock,                     /* True for block numbers only */
   LsmPgno iFirst,
   char **pzOut
@@ -3006,7 +3006,7 @@ int lsmInfoArrayStructure(
     LsmString str;
     int iBlk;
     int iLastBlk;
-
+   
     iBlk = fsPageToBlock(pFS, pArray->iFirst);
     iLastBlk = fsPageToBlock(pFS, pArray->iLastPg);
 
@@ -3038,9 +3038,9 @@ int lsmInfoArrayStructure(
 }
 
 int lsmFsSegmentContainsPg(
-  FileSystem *pFS,
-  Segment *pSeg,
-  LsmPgno iPg,
+  FileSystem *pFS, 
+  Segment *pSeg, 
+  LsmPgno iPg, 
   int *pbRes
 ){
   Redirect *pRedir = pSeg->pRedirect;
@@ -3063,7 +3063,7 @@ int lsmFsSegmentContainsPg(
 
 /*
 ** This function implements the lsm_info(LSM_INFO_ARRAY_PAGES) request.
-** If successful, *pzOut is set to point to a nul-terminated string
+** If successful, *pzOut is set to point to a nul-terminated string 
 ** containing the array structure and LSM_OK is returned. The caller should
 ** eventually free the string using lsmFree().
 **
@@ -3149,7 +3149,7 @@ int lsmInfoArrayPages(lsm_db *pDb, LsmPgno iFirst, char **pzOut){
 ** Helper function for lsmFsIntegrityCheck()
 */
 static void checkBlocks(
-  FileSystem *pFS,
+  FileSystem *pFS, 
   Segment *pSeg,
   int bExtra,                     /* If true, count the "next" block if any */
   int nUsed,
@@ -3175,14 +3175,14 @@ static void checkBlocks(
         aUsed[iBlk-1] |= INTEGRITY_CHECK_USED;
 
         /* If the first page of this block is also part of the segment,
-        ** set the flag to indicate that the first page of iBlk is in use.
+        ** set the flag to indicate that the first page of iBlk is in use.  
         */
         if( fsFirstPageOnBlock(pFS, iBlk)==pSeg->iFirst || iBlk!=iFirstBlk ){
           assert( (aUsed[iBlk-1] & INTEGRITY_CHECK_FIRST_PG)==0 );
           aUsed[iBlk-1] |= INTEGRITY_CHECK_FIRST_PG;
         }
 
-        /* Unless the sorted run finishes before the last page on this block,
+        /* Unless the sorted run finishes before the last page on this block, 
         ** the last page of this block is also in use.  */
         if( iBlk!=iLastBlk || bLastIsLastOnBlock ){
           assert( (aUsed[iBlk-1] & INTEGRITY_CHECK_LAST_PG)==0 );
@@ -3257,7 +3257,7 @@ int lsmFsIntegrityCheck(lsm_db *pDb){
   Snapshot *pWorker = pDb->pWorker;
   int nBlock = pWorker->nBlock;
 
-#if 0
+#if 0 
   static int nCall = 0;
   nCall++;
   printf("%d calls\n", nCall);

@@ -4,11 +4,11 @@
 
 #include "third_party/blink/renderer/modules/webaudio/stereo_panner_node.h"
 
+#include "third_party/blink/renderer/bindings/modules/v8/v8_stereo_panner_options.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
-#include "third_party/blink/renderer/modules/webaudio/stereo_panner_options.h"
 #include "third_party/blink/renderer/platform/audio/stereo_panner.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -53,25 +53,31 @@ void StereoPannerHandler::Process(uint32_t frames_to_process) {
     return;
   }
 
-  AudioBus* input_bus = Input(0).Bus();
+  scoped_refptr<AudioBus> input_bus = Input(0).Bus();
   if (!input_bus) {
     output_bus->Zero();
     return;
   }
 
-  if (pan_->HasSampleAccurateValues()) {
+  bool is_sample_accurate = pan_->HasSampleAccurateValuesTimeline();
+
+  if (is_sample_accurate && pan_->IsAudioRate()) {
     // Apply sample-accurate panning specified by AudioParam automation.
     DCHECK_LE(frames_to_process, sample_accurate_pan_values_.size());
-    if (frames_to_process <= sample_accurate_pan_values_.size()) {
-      float* pan_values = sample_accurate_pan_values_.Data();
-      pan_->CalculateSampleAccurateValues(pan_values, frames_to_process);
-      stereo_panner_->PanWithSampleAccurateValues(
-          input_bus, output_bus, pan_values, frames_to_process);
-    }
-  } else {
-    stereo_panner_->PanToTargetValue(input_bus, output_bus, pan_->Value(),
-                                     frames_to_process);
+    float* pan_values = sample_accurate_pan_values_.Data();
+    pan_->CalculateSampleAccurateValues(pan_values, frames_to_process);
+    stereo_panner_->PanWithSampleAccurateValues(input_bus.get(), output_bus,
+                                                pan_values, frames_to_process);
+    return;
   }
+
+  // The pan value is not sample-accurate or not a-rate.  In this case, we have
+  // a fixed pan value for the render and just need to incorporate any inputs to
+  // the value, if any.
+  float pan_value = is_sample_accurate ? pan_->FinalValue() : pan_->Value();
+
+  stereo_panner_->PanToTargetValue(input_bus.get(), output_bus, pan_value,
+                                   frames_to_process);
 }
 
 void StereoPannerHandler::ProcessOnlyAudioParams(uint32_t frames_to_process) {
@@ -85,7 +91,7 @@ void StereoPannerHandler::Initialize() {
   if (IsInitialized())
     return;
 
-  stereo_panner_ = StereoPanner::Create(Context()->sampleRate());
+  stereo_panner_ = std::make_unique<StereoPanner>(Context()->sampleRate());
 
   AudioHandler::Initialize();
 }
@@ -105,7 +111,7 @@ void StereoPannerHandler::SetChannelCount(unsigned channel_count,
   } else {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        ExceptionMessages::IndexOutsideRange<unsigned long>(
+        ExceptionMessages::IndexOutsideRange<uint32_t>(
             "channelCount", channel_count, 1,
             ExceptionMessages::kInclusiveBound, 2,
             ExceptionMessages::kInclusiveBound));
@@ -143,7 +149,8 @@ void StereoPannerHandler::SetChannelCountMode(const String& mode,
 StereoPannerNode::StereoPannerNode(BaseAudioContext& context)
     : AudioNode(context),
       pan_(AudioParam::Create(context,
-                              kParamTypeStereoPannerPan,
+                              Uuid(),
+                              AudioParamHandler::kParamTypeStereoPannerPan,
                               0,
                               AudioParamHandler::AutomationRate::kAudio,
                               AudioParamHandler::AutomationRateMode::kVariable,
@@ -156,11 +163,6 @@ StereoPannerNode::StereoPannerNode(BaseAudioContext& context)
 StereoPannerNode* StereoPannerNode::Create(BaseAudioContext& context,
                                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   return MakeGarbageCollected<StereoPannerNode>(context);
 }
@@ -180,13 +182,23 @@ StereoPannerNode* StereoPannerNode::Create(BaseAudioContext* context,
   return node;
 }
 
-void StereoPannerNode::Trace(blink::Visitor* visitor) {
+void StereoPannerNode::Trace(Visitor* visitor) {
   visitor->Trace(pan_);
   AudioNode::Trace(visitor);
 }
 
 AudioParam* StereoPannerNode::pan() const {
   return pan_;
+}
+
+void StereoPannerNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+  GraphTracer().DidCreateAudioParam(pan_);
+}
+
+void StereoPannerNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioParam(pan_);
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

@@ -6,11 +6,13 @@
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_REMOTE_FRAME_CLIENT_H_
 
 #include "cc/paint/paint_canvas.h"
-#include "third_party/blink/public/platform/web_focus_type.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
+#include "third_party/blink/public/mojom/input/focus_type.mojom-shared.h"
+#include "third_party/blink/public/platform/viewport_intersection_state.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_touch_action.h"
 #include "third_party/blink/public/web/web_dom_message_event.h"
-#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_remote_frame.h"
 
 namespace blink {
 class WebURLRequest;
@@ -25,42 +27,26 @@ class WebRemoteFrameClient {
   // and release any resources associated with it.
   virtual void FrameDetached(DetachType) {}
 
-  // Notifies the remote frame to check whether it is done loading, after one
-  // of its children finishes loading.
-  virtual void CheckCompleted() {}
-
   // Notifies the embedder that a postMessage was issued to a remote frame.
   virtual void ForwardPostMessage(WebLocalFrame* source_frame,
                                   WebRemoteFrame* target_frame,
                                   WebSecurityOrigin target_origin,
-                                  WebDOMMessageEvent,
-                                  bool has_user_gesture) {}
+                                  WebDOMMessageEvent) {}
 
   // A remote frame was asked to start a navigation.
   virtual void Navigate(const WebURLRequest& request,
                         bool should_replace_current_entry,
                         bool is_opener_navigation,
-                        bool prevent_sandboxed_download,
+                        bool initiator_frame_has_download_sandbox_flag,
+                        bool blocking_downloads_in_sandbox_enabled,
+                        bool initiator_frame_is_ad,
                         mojo::ScopedMessagePipeHandle blob_url_token) {}
 
   virtual void FrameRectsChanged(const WebRect& local_frame_rect,
                                  const WebRect& screen_space_rect) {}
 
   virtual void UpdateRemoteViewportIntersection(
-      const WebRect& viewport_intersection,
-      bool occluded_or_obscured) {}
-
-  virtual void VisibilityChanged(bool visible) {}
-
-  // Set or clear the inert property on the remote frame.
-  virtual void SetIsInert(bool) {}
-
-  // Set inherited effective touch action on the remote frame.
-  virtual void SetInheritedEffectiveTouchAction(blink::WebTouchAction) {}
-
-  // Toggles render throttling for the remote frame.
-  virtual void UpdateRenderThrottlingStatus(bool is_throttled,
-                                            bool subtree_throttled) {}
+      const ViewportIntersectionState& intersection_state) {}
 
   // This frame updated its opener to another frame.
   virtual void DidChangeOpener(WebFrame* opener) {}
@@ -68,10 +54,7 @@ class WebRemoteFrameClient {
   // Continue sequential focus navigation in this frame.  This is called when
   // the |source| frame is searching for the next focusable element (e.g., in
   // response to <tab>) and encounters a remote frame.
-  virtual void AdvanceFocus(WebFocusType type, WebLocalFrame* source) {}
-
-  // This frame was focused by another frame.
-  virtual void FrameFocused() {}
+  virtual void AdvanceFocus(mojom::FocusType type, WebLocalFrame* source) {}
 
   // Returns token to be used as a frame id in the devtools protocol.
   // It is derived from the content's devtools_frame_token, is

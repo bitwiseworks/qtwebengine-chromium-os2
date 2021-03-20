@@ -24,8 +24,11 @@
 #include <string>
 #include <unordered_set>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/format_macros.h"
 #include "base/guid.h"
+#include "base/i18n/case_conversion.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -35,6 +38,7 @@
 #include "components/history/core/browser/download_row.h"
 #include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/history_database.h"
+#include "components/history/core/browser/keyword_search_term.h"
 #include "components/history/core/browser/page_usage_data.h"
 #include "components/history/core/test/history_backend_db_base_test.h"
 #include "components/history/core/test/test_history_database.h"
@@ -1387,8 +1391,8 @@ TEST_F(HistoryBackendDBTest, MigratePresentations) {
   // Re-open the db, triggering migration.
   CreateBackendAndDatabase();
 
-  std::vector<std::unique_ptr<PageUsageData>> results = db_->QuerySegmentUsage(
-      segment_time, 10, base::Callback<bool(const GURL&)>());
+  std::vector<std::unique_ptr<PageUsageData>> results =
+      db_->QuerySegmentUsage(segment_time, 10, base::NullCallback());
   ASSERT_EQ(1u, results.size());
   EXPECT_EQ(url, results[0]->GetURL());
   EXPECT_EQ(segment_id, results[0]->GetID());
@@ -1534,9 +1538,8 @@ TEST_F(HistoryBackendDBTest, MigrateVisitSegmentNames) {
   // Re-open the db, triggering migration.
   CreateBackendAndDatabase();
 
-  std::vector<std::unique_ptr<PageUsageData>> results =
-      db_->QuerySegmentUsage(segment_time, /*max_result_count=*/10,
-                             base::Callback<bool(const GURL&)>());
+  std::vector<std::unique_ptr<PageUsageData>> results = db_->QuerySegmentUsage(
+      segment_time, /*max_result_count=*/10, base::NullCallback());
   ASSERT_EQ(1u, results.size());
   EXPECT_THAT(results[0]->GetURL(), testing::AnyOf(url1, url2));
   EXPECT_THAT(results[0]->GetTitle(), testing::AnyOf(title1, title2));
@@ -1698,6 +1701,44 @@ TEST_F(HistoryBackendDBTest,
   EXPECT_FALSE(visit_row.incremented_omnibox_typed_score);
 }
 
+// Tests that the migration code correctly replaces the lower_term column in the
+// keyword search terms table which normalized_term which contains the
+// normalized search term during migration to version 42.
+TEST_F(HistoryBackendDBTest, MigrateKeywordSearchTerms) {
+  ASSERT_NO_FATAL_FAILURE(CreateDBVersion(41));
+
+  const KeywordID keyword_id = 12;
+  const URLID url_id = 34;
+  const base::string16 term = base::ASCIIToUTF16("WEEKLY  NEWS  ");
+  const base::string16 lower_term = base::i18n::ToLower(term);
+  const base::string16 normalized_term =
+      base::CollapseWhitespace(lower_term, false);
+
+  sql::Database db;
+  ASSERT_TRUE(db.Open(history_dir_.Append(kHistoryFilename)));
+  sql::Statement insert_statement(
+      db.GetUniqueStatement("INSERT INTO keyword_search_terms (keyword_id, "
+                            "url_id, lower_term, term) VALUES (?,?,?,?)"));
+  insert_statement.BindInt64(0, keyword_id);
+  insert_statement.BindInt64(1, url_id);
+  insert_statement.BindString16(2, lower_term);
+  insert_statement.BindString16(3, term);
+  ASSERT_TRUE(insert_statement.Run());
+
+  // Re-open the db, triggering migration.
+  CreateBackendAndDatabase();
+
+  // The version should have been updated.
+  ASSERT_GE(HistoryDatabase::GetCurrentVersion(), 42);
+
+  history::KeywordSearchTermRow keyword_search_term_row;
+  ASSERT_TRUE(db_->GetKeywordSearchTermRow(url_id, &keyword_search_term_row));
+  EXPECT_EQ(keyword_id, keyword_search_term_row.keyword_id);
+  EXPECT_EQ(url_id, keyword_search_term_row.url_id);
+  EXPECT_EQ(term, keyword_search_term_row.term);
+  EXPECT_EQ(normalized_term, keyword_search_term_row.normalized_term);
+}
+
 // Test to verify the left-over typed_url sync metadata gets cleared correctly
 // during migration to version 41.
 TEST_F(HistoryBackendDBTest, MigrateTypedURLLeftoverMetadata) {
@@ -1840,7 +1881,7 @@ TEST_F(HistoryBackendDBTest, QuerySegmentUsage) {
 
   // Without a filter, the "file://" URL should win.
   std::vector<std::unique_ptr<PageUsageData>> results =
-      db_->QuerySegmentUsage(time, 1, base::Callback<bool(const GURL&)>());
+      db_->QuerySegmentUsage(time, 1, base::NullCallback());
   ASSERT_EQ(1u, results.size());
   EXPECT_EQ(url1, results[0]->GetURL());
   EXPECT_EQ(segment_id1, results[0]->GetID());
@@ -1848,7 +1889,7 @@ TEST_F(HistoryBackendDBTest, QuerySegmentUsage) {
   // With the filter, the "file://" URL should be filtered out, so the "http://"
   // URL should win instead.
   std::vector<std::unique_ptr<PageUsageData>> results2 =
-      db_->QuerySegmentUsage(time, 1, base::Bind(&FilterURL));
+      db_->QuerySegmentUsage(time, 1, base::BindRepeating(&FilterURL));
   ASSERT_EQ(1u, results2.size());
   EXPECT_EQ(url2, results2[0]->GetURL());
   EXPECT_EQ(segment_id2, results2[0]->GetID());

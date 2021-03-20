@@ -46,6 +46,8 @@
 #include "third_party/blink/renderer/core/editing/markers/spelling_marker_list_impl.h"
 #include "third_party/blink/renderer/core/editing/markers/suggestion_marker.h"
 #include "third_party/blink/renderer/core/editing/markers/suggestion_marker_list_impl.h"
+#include "third_party/blink/renderer/core/editing/markers/text_fragment_marker.h"
+#include "third_party/blink/renderer/core/editing/markers/text_fragment_marker_list_impl.h"
 #include "third_party/blink/renderer/core/editing/markers/text_match_marker.h"
 #include "third_party/blink/renderer/core/editing/markers/text_match_marker_list_impl.h"
 #include "third_party/blink/renderer/core/editing/position.h"
@@ -54,10 +56,6 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
-
-#ifndef NDEBUG
-#include <stdio.h>
-#endif
 
 namespace blink {
 
@@ -78,6 +76,8 @@ DocumentMarker::MarkerTypeIndex MarkerTypeToMarkerIndex(
       return DocumentMarker::kActiveSuggestionMarkerIndex;
     case DocumentMarker::kSuggestion:
       return DocumentMarker::kSuggestionMarkerIndex;
+    case DocumentMarker::kTextFragment:
+      return DocumentMarker::kTextFragmentMarkerIndex;
   }
 
   NOTREACHED();
@@ -98,6 +98,8 @@ DocumentMarkerList* CreateListForType(DocumentMarker::MarkerType type) {
       return MakeGarbageCollected<SuggestionMarkerListImpl>();
     case DocumentMarker::kTextMatch:
       return MakeGarbageCollected<TextMatchMarkerListImpl>();
+    case DocumentMarker::kTextFragment:
+      return MakeGarbageCollected<TextFragmentMarkerListImpl>();
   }
 
   NOTREACHED();
@@ -148,7 +150,7 @@ DocumentMarkerController::DocumentMarkerController(Document& document)
 void DocumentMarkerController::Clear() {
   markers_.clear();
   possibly_existing_marker_types_ = DocumentMarker::MarkerTypes();
-  SetContext(nullptr);
+  SetDocument(nullptr);
 }
 
 void DocumentMarkerController::AddSpellingMarker(const EphemeralRange& range,
@@ -171,10 +173,16 @@ void DocumentMarkerController::AddTextMatchMarker(
     const EphemeralRange& range,
     TextMatchMarker::MatchStatus match_status) {
   DCHECK(!document_->NeedsLayoutTreeUpdate());
-  AddMarkerInternal(range, [match_status](int start_offset, int end_offset) {
-    return MakeGarbageCollected<TextMatchMarker>(start_offset, end_offset,
-                                                 match_status);
-  });
+  AddMarkerInternal(
+      range,
+      [match_status](int start_offset, int end_offset) {
+        return MakeGarbageCollected<TextMatchMarker>(start_offset, end_offset,
+                                                     match_status);
+      },
+      // Since we've already determined to have a match in the given range (via
+      // FindBuffer), we can ignore the display lock for the purposes of finding
+      // where to put the marker.
+      TextIteratorBehavior::Builder().SetIgnoresDisplayLock(true).Build());
   // Don't invalidate tickmarks here. TextFinder invalidates tickmarks using a
   // throttling algorithm. crbug.com/6819.
 }
@@ -182,27 +190,35 @@ void DocumentMarkerController::AddTextMatchMarker(
 void DocumentMarkerController::AddCompositionMarker(
     const EphemeralRange& range,
     Color underline_color,
-    ws::mojom::ImeTextSpanThickness thickness,
+    ui::mojom::ImeTextSpanThickness thickness,
+    ui::mojom::ImeTextSpanUnderlineStyle underline_style,
+    Color text_color,
     Color background_color) {
   DCHECK(!document_->NeedsLayoutTreeUpdate());
-  AddMarkerInternal(range, [underline_color, thickness, background_color](
-                               int start_offset, int end_offset) {
-    return MakeGarbageCollected<CompositionMarker>(
-        start_offset, end_offset, underline_color, thickness, background_color);
-  });
+  AddMarkerInternal(range,
+                    [underline_color, thickness, underline_style, text_color,
+                     background_color](int start_offset, int end_offset) {
+                      return MakeGarbageCollected<CompositionMarker>(
+                          start_offset, end_offset, underline_color, thickness,
+                          underline_style, text_color, background_color);
+                    });
 }
 
 void DocumentMarkerController::AddActiveSuggestionMarker(
     const EphemeralRange& range,
     Color underline_color,
-    ws::mojom::ImeTextSpanThickness thickness,
+    ui::mojom::ImeTextSpanThickness thickness,
+    ui::mojom::ImeTextSpanUnderlineStyle underline_style,
+    Color text_color,
     Color background_color) {
   DCHECK(!document_->NeedsLayoutTreeUpdate());
-  AddMarkerInternal(range, [underline_color, thickness, background_color](
-                               int start_offset, int end_offset) {
-    return MakeGarbageCollected<ActiveSuggestionMarker>(
-        start_offset, end_offset, underline_color, thickness, background_color);
-  });
+  AddMarkerInternal(range,
+                    [underline_color, thickness, underline_style, text_color,
+                     background_color](int start_offset, int end_offset) {
+                      return MakeGarbageCollected<ActiveSuggestionMarker>(
+                          start_offset, end_offset, underline_color, thickness,
+                          underline_style, text_color, background_color);
+                    });
 }
 
 void DocumentMarkerController::AddSuggestionMarker(
@@ -212,6 +228,14 @@ void DocumentMarkerController::AddSuggestionMarker(
   AddMarkerInternal(range, [&properties](int start_offset, int end_offset) {
     return MakeGarbageCollected<SuggestionMarker>(start_offset, end_offset,
                                                   properties);
+  });
+}
+
+void DocumentMarkerController::AddTextFragmentMarker(
+    const EphemeralRange& range) {
+  DCHECK(!document_->NeedsLayoutTreeUpdate());
+  AddMarkerInternal(range, [](int start_offset, int end_offset) {
+    return MakeGarbageCollected<TextFragmentMarker>(start_offset, end_offset);
   });
 }
 
@@ -227,11 +251,12 @@ void DocumentMarkerController::RemoveMarkers(
       return;
     DCHECK(!markers_.IsEmpty());
     const Node& node = marked_text.CurrentContainer();
-    if (!node.IsTextNode())
+    auto* text_node = DynamicTo<Text>(node);
+    if (!text_node)
       continue;
     int start_offset = marked_text.StartOffsetInCurrentContainer();
     int end_offset = marked_text.EndOffsetInCurrentContainer();
-    RemoveMarkersInternal(ToText(node), start_offset, end_offset - start_offset,
+    RemoveMarkersInternal(*text_node, start_offset, end_offset - start_offset,
                           marker_types);
   }
 }
@@ -247,8 +272,10 @@ void DocumentMarkerController::RemoveMarkersInRange(
 
 void DocumentMarkerController::AddMarkerInternal(
     const EphemeralRange& range,
-    std::function<DocumentMarker*(int, int)> create_marker_from_offsets) {
-  for (TextIterator marked_text(range.StartPosition(), range.EndPosition());
+    std::function<DocumentMarker*(int, int)> create_marker_from_offsets,
+    const TextIteratorBehavior& iterator_behavior) {
+  for (TextIterator marked_text(range.StartPosition(), range.EndPosition(),
+                                iterator_behavior);
        !marked_text.AtEnd(); marked_text.Advance()) {
     const int start_offset_in_current_container =
         marked_text.StartOffsetInCurrentContainer();
@@ -266,13 +293,13 @@ void DocumentMarkerController::AddMarkerInternal(
 
     // Ignore text emitted by TextIterator for non-text nodes (e.g. implicit
     // newlines)
-    const Node& node = marked_text.CurrentContainer();
-    if (!node.IsTextNode())
+    const auto* text_node = DynamicTo<Text>(marked_text.CurrentContainer());
+    if (!text_node)
       continue;
 
     DocumentMarker* const new_marker = create_marker_from_offsets(
         start_offset_in_current_container, end_offset_in_current_container);
-    AddMarkerToNode(ToText(node), new_marker);
+    AddMarkerToNode(*text_node, new_marker);
   }
 }
 
@@ -281,7 +308,7 @@ void DocumentMarkerController::AddMarkerToNode(const Text& text,
   DCHECK_GE(text.length(), new_marker->EndOffset());
   possibly_existing_marker_types_ = possibly_existing_marker_types_.Add(
       DocumentMarker::MarkerTypes(new_marker->GetType()));
-  SetContext(document_);
+  SetDocument(document_);
 
   Member<MarkerLists>& markers =
       markers_.insert(&text, nullptr).stored_value->value;
@@ -384,7 +411,7 @@ void DocumentMarkerController::RemoveMarkersInternal(
     markers_.erase(&text);
     if (markers_.IsEmpty()) {
       possibly_existing_marker_types_ = DocumentMarker::MarkerTypes();
-      SetContext(nullptr);
+      SetDocument(nullptr);
     }
   }
 
@@ -423,15 +450,16 @@ DocumentMarker* DocumentMarkerController::FirstMarkerAroundPosition(
   const unsigned end_offset = end.ComputeOffsetInContainerNode();
 
   for (const Node& node : EphemeralRangeInFlatTree(start, end).Nodes()) {
-    if (!node.IsTextNode())
+    auto* text_node = DynamicTo<Text>(node);
+    if (!text_node)
       continue;
 
     const unsigned start_range_offset = node == start_node ? start_offset : 0;
     const unsigned end_range_offset =
-        node == end_node ? end_offset : ToText(node).length();
+        node == end_node ? end_offset : text_node->length();
 
     DocumentMarker* const found_marker = FirstMarkerIntersectingOffsetRange(
-        ToText(node), start_range_offset, end_range_offset, types);
+        *text_node, start_range_offset, end_range_offset, types);
     if (found_marker)
       return found_marker;
   }
@@ -459,7 +487,8 @@ DocumentMarker* DocumentMarkerController::FirstMarkerIntersectingEphemeralRange(
   if (start_container != end_container)
     return nullptr;
 
-  if (!start_container->IsTextNode())
+  auto* text_node = DynamicTo<Text>(start_container);
+  if (!text_node)
     return nullptr;
 
   const unsigned start_offset =
@@ -467,8 +496,8 @@ DocumentMarker* DocumentMarkerController::FirstMarkerIntersectingEphemeralRange(
   const unsigned end_offset =
       range.EndPosition().ComputeOffsetInContainerNode();
 
-  return FirstMarkerIntersectingOffsetRange(ToText(*start_container),
-                                            start_offset, end_offset, types);
+  return FirstMarkerIntersectingOffsetRange(*text_node, start_offset,
+                                            end_offset, types);
 }
 
 DocumentMarker* DocumentMarkerController::FirstMarkerIntersectingOffsetRange(
@@ -505,11 +534,12 @@ DocumentMarker* DocumentMarkerController::FirstMarkerIntersectingOffsetRange(
   return nullptr;
 }
 
-HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>
+HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>
 DocumentMarkerController::MarkersIntersectingRange(
     const EphemeralRangeInFlatTree& range,
     DocumentMarker::MarkerTypes types) {
-  HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>> node_marker_pairs;
+  HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>
+      node_marker_pairs;
   if (!PossiblyHasMarkers(types))
     return node_marker_pairs;
 
@@ -523,9 +553,10 @@ DocumentMarkerController::MarkersIntersectingRange(
       range.EndPosition().ComputeOffsetInContainerNode();
 
   for (Node& node : range.Nodes()) {
-    if (!node.IsTextNode())
+    auto* text_node = DynamicTo<Text>(node);
+    if (!text_node)
       continue;
-    MarkerLists* const markers = markers_.at(&ToText(node));
+    MarkerLists* const markers = markers_.at(text_node);
     if (!markers)
       continue;
 
@@ -536,7 +567,7 @@ DocumentMarkerController::MarkersIntersectingRange(
 
       const unsigned start_offset =
           node == range_start_container ? range_start_offset : 0;
-      const unsigned max_character_offset = ToCharacterData(node).length();
+      const unsigned max_character_offset = To<CharacterData>(node).length();
       const unsigned end_offset =
           node == range_end_container ? range_end_offset : max_character_offset;
 
@@ -550,7 +581,7 @@ DocumentMarkerController::MarkersIntersectingRange(
       const DocumentMarkerVector& markers_from_this_list =
           list->MarkersIntersectingRange(start_offset, end_offset);
       for (DocumentMarker* marker : markers_from_this_list)
-        node_marker_pairs.push_back(std::make_pair(&node, marker));
+        node_marker_pairs.push_back(std::make_pair(&To<Text>(node), marker));
     }
   }
 
@@ -678,6 +709,10 @@ DocumentMarkerVector DocumentMarkerController::ComputeMarkersToPaint(
   return markers_to_paint;
 }
 
+bool DocumentMarkerController::PossiblyHasTextMatchMarkers() const {
+  return PossiblyHasMarkers(DocumentMarker::kTextMatch);
+}
+
 Vector<IntRect> DocumentMarkerController::LayoutRectsForTextMatchMarkers() {
   DCHECK(!document_->View()->NeedsLayout());
   DCHECK(!document_->NeedsLayoutTreeUpdate());
@@ -701,7 +736,7 @@ Vector<IntRect> DocumentMarkerController::LayoutRectsForTextMatchMarkers() {
         ListForType(markers, DocumentMarker::kTextMatch);
     if (!list)
       continue;
-    result.AppendVector(ToTextMatchMarkerListImpl(list)->LayoutRects(node));
+    result.AppendVector(To<TextMatchMarkerListImpl>(list)->LayoutRects(node));
   }
 
   return result;
@@ -713,11 +748,8 @@ static void InvalidatePaintForTickmarks(const Node& node) {
 }
 
 void DocumentMarkerController::InvalidateRectsForTextMatchMarkersInNode(
-    const Node& node) {
-  // TODO(yoichio): Make this function to take Text instead of Node.
-  if (!node.IsTextNode())
-    return;
-  MarkerLists* markers = markers_.at(&ToText(node));
+    const Text& node) {
+  MarkerLists* markers = markers_.at(&node);
 
   const DocumentMarkerList* const marker_list =
       ListForType(markers, DocumentMarker::kTextMatch);
@@ -727,7 +759,7 @@ void DocumentMarkerController::InvalidateRectsForTextMatchMarkersInNode(
   const HeapVector<Member<DocumentMarker>>& markers_in_list =
       marker_list->GetMarkers();
   for (auto& marker : markers_in_list)
-    ToTextMatchMarker(marker)->Invalidate();
+    To<TextMatchMarker>(marker.Get())->Invalidate();
 
   InvalidatePaintForTickmarks(node);
 }
@@ -739,15 +771,15 @@ void DocumentMarkerController::InvalidateRectsForAllTextMatchMarkers() {
   }
 }
 
-void DocumentMarkerController::DidProcessMarkerMap(Visitor* visitor) {
+void DocumentMarkerController::DidProcessMarkerMap(const WeakCallbackInfo&) {
   if (markers_.IsEmpty())
     Clear();
 }
 
-void DocumentMarkerController::Trace(blink::Visitor* visitor) {
+void DocumentMarkerController::Trace(Visitor* visitor) {
   // Note: To make |DidProcessMarkerMap()| called after weak members callback
   // of |markers_|, we should register it before tracing |markers_|.
-  visitor->template RegisterWeakMembers<
+  visitor->template RegisterWeakCallbackMethod<
       DocumentMarkerController, &DocumentMarkerController::DidProcessMarkerMap>(
       this);
   visitor->Trace(markers_);
@@ -777,8 +809,8 @@ void DocumentMarkerController::RemoveSpellingMarkersUnderWords(
       DocumentMarkerList* const list = ListForType(markers, type);
       if (!list)
         continue;
-      if (ToSpellCheckMarkerListImpl(list)->RemoveMarkersUnderWords(text.data(),
-                                                                    words)) {
+      if (To<SpellCheckMarkerListImpl>(list)->RemoveMarkersUnderWords(
+              text.data(), words)) {
         InvalidatePaintForNode(text);
       }
     }
@@ -789,19 +821,19 @@ void DocumentMarkerController::RemoveSuggestionMarkerInRangeOnFinish(
     const EphemeralRangeInFlatTree& range) {
   // MarkersIntersectingRange() might be expensive. In practice, we hope we will
   // only check one node for composing range.
-  const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>&
+  const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
       node_marker_pairs = MarkersIntersectingRange(
           range, DocumentMarker::MarkerTypes::Suggestion());
   for (const auto& node_marker_pair : node_marker_pairs) {
-    SuggestionMarker* suggestion_marker =
-        ToSuggestionMarker(node_marker_pair.second);
+    auto* suggestion_marker =
+        To<SuggestionMarker>(node_marker_pair.second.Get());
     if (suggestion_marker->NeedsRemovalOnFinishComposing()) {
-      const Text& text = ToText(*node_marker_pair.first);
+      const Text& text = *node_marker_pair.first;
       DocumentMarkerList* const list =
           ListForType(markers_.at(&text), DocumentMarker::kSuggestion);
       // RemoveMarkerByTag() might be expensive. In practice, we have at most
       // one suggestion marker needs to be removed.
-      ToSuggestionMarkerListImpl(list)->RemoveMarkerByTag(
+      To<SuggestionMarkerListImpl>(list)->RemoveMarkerByTag(
           suggestion_marker->Tag());
       InvalidatePaintForNode(text);
     }
@@ -811,8 +843,8 @@ void DocumentMarkerController::RemoveSuggestionMarkerInRangeOnFinish(
 void DocumentMarkerController::RemoveSuggestionMarkerByTag(const Text& text,
                                                            int32_t marker_tag) {
   MarkerLists* markers = markers_.at(&text);
-  SuggestionMarkerListImpl* const list = ToSuggestionMarkerListImpl(
-      ListForType(markers, DocumentMarker::kSuggestion));
+  auto* const list = To<SuggestionMarkerListImpl>(
+      ListForType(markers, DocumentMarker::kSuggestion).Get());
   if (!list->RemoveMarkerByTag(marker_tag))
     return;
   InvalidatePaintForNode(text);
@@ -835,7 +867,7 @@ void DocumentMarkerController::RemoveMarkersOfTypes(
 
   if (PossiblyHasMarkers(DocumentMarker::MarkerTypes::AllBut(marker_types)))
     return;
-  SetContext(nullptr);
+  SetDocument(nullptr);
 }
 
 void DocumentMarkerController::RemoveMarkersFromList(
@@ -872,7 +904,7 @@ void DocumentMarkerController::RemoveMarkersFromList(
   }
 
   if (needs_repainting) {
-    const Node& node = *iterator->key;
+    const Text& node = *iterator->key;
     InvalidatePaintForNode(node);
     InvalidatePaintForTickmarks(node);
   }
@@ -881,7 +913,7 @@ void DocumentMarkerController::RemoveMarkersFromList(
     markers_.erase(iterator);
     if (markers_.IsEmpty()) {
       possibly_existing_marker_types_ = DocumentMarker::MarkerTypes();
-      SetContext(nullptr);
+      SetDocument(nullptr);
     }
   }
 }
@@ -927,22 +959,22 @@ bool DocumentMarkerController::SetTextMatchMarkersActive(
 
   bool marker_found = false;
   for (Node& node : range.Nodes()) {
+    auto* text_node = DynamicTo<Text>(node);
+    if (!text_node)
+      continue;
     int start_offset = node == start_container ? container_start_offset : 0;
     int end_offset = node == end_container ? container_end_offset : INT_MAX;
     marker_found |=
-        SetTextMatchMarkersActive(&node, start_offset, end_offset, active);
+        SetTextMatchMarkersActive(*text_node, start_offset, end_offset, active);
   }
   return marker_found;
 }
 
-bool DocumentMarkerController::SetTextMatchMarkersActive(const Node* node,
+bool DocumentMarkerController::SetTextMatchMarkersActive(const Text& text,
                                                          unsigned start_offset,
                                                          unsigned end_offset,
                                                          bool active) {
-  // TODO(yoichio): Make this function to take Text instead of Node.
-  if (!node->IsTextNode())
-    return false;
-  MarkerLists* markers = markers_.at(ToText(node));
+  MarkerLists* markers = markers_.at(&text);
   if (!markers)
     return false;
 
@@ -951,21 +983,21 @@ bool DocumentMarkerController::SetTextMatchMarkersActive(const Node* node,
   if (!list)
     return false;
 
-  bool doc_dirty = ToTextMatchMarkerListImpl(list)->SetTextMatchMarkersActive(
+  bool doc_dirty = To<TextMatchMarkerListImpl>(list)->SetTextMatchMarkersActive(
       start_offset, end_offset, active);
 
   if (!doc_dirty)
     return false;
-  InvalidatePaintForNode(*node);
+  InvalidatePaintForNode(text);
   return true;
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void DocumentMarkerController::ShowMarkers() const {
   StringBuilder builder;
   for (auto& node_iterator : markers_) {
     const Text* node = node_iterator.key;
-    builder.Append(String::Format("%p", node));
+    builder.AppendFormat("%p", node);
     MarkerLists* markers = markers_.at(node);
     for (DocumentMarker::MarkerType type : DocumentMarker::MarkerTypes::All()) {
       DocumentMarkerList* const list = ListForType(markers, type);
@@ -975,23 +1007,19 @@ void DocumentMarkerController::ShowMarkers() const {
       const HeapVector<Member<DocumentMarker>>& markers_in_list =
           list->GetMarkers();
       for (const DocumentMarker* marker : markers_in_list) {
-        builder.Append(" ");
-        builder.AppendNumber(marker->GetType());
-        builder.Append(":[");
-        builder.AppendNumber(marker->StartOffset());
-        builder.Append(":");
-        builder.AppendNumber(marker->EndOffset());
-        builder.Append("](");
-        builder.AppendNumber(type == DocumentMarker::kTextMatch
-                                 ? ToTextMatchMarker(marker)->IsActiveMatch()
-                                 : 0);
-        builder.Append(")");
+        bool is_active_match = false;
+        if (auto* text_match = DynamicTo<TextMatchMarker>(marker))
+          is_active_match = text_match->IsActiveMatch();
+
+        builder.AppendFormat(
+            " %u:[%u:%u](%d)", static_cast<uint32_t>(marker->GetType()),
+            marker->StartOffset(), marker->EndOffset(), is_active_match);
       }
     }
     builder.Append("\n");
   }
   LOG(INFO) << markers_.size() << " nodes have markers:\n"
-            << builder.ToString().Utf8().data();
+            << builder.ToString().Utf8();
 }
 #endif
 
@@ -1003,9 +1031,10 @@ void DocumentMarkerController::DidUpdateCharacterData(CharacterData* node,
   if (!PossiblyHasMarkers(DocumentMarker::MarkerTypes::All()))
     return;
   DCHECK(!markers_.IsEmpty());
-  if (!node->IsTextNode())
+  auto* text_node = DynamicTo<Text>(node);
+  if (!text_node)
     return;
-  MarkerLists* markers = markers_.at(ToText(node));
+  MarkerLists* markers = markers_.at(text_node);
   if (!markers)
     return;
 
@@ -1022,13 +1051,13 @@ void DocumentMarkerController::DidUpdateCharacterData(CharacterData* node,
     return;
   if (!node->GetLayoutObject())
     return;
-  InvalidateRectsForTextMatchMarkersInNode(*node);
+  InvalidateRectsForTextMatchMarkersInNode(*text_node);
   InvalidatePaintForNode(*node);
 }
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void showDocumentMarkers(const blink::DocumentMarkerController* controller) {
   if (controller)
     controller->ShowMarkers();

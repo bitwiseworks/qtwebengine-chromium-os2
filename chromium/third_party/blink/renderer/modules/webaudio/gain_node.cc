@@ -23,12 +23,13 @@
  * DAMAGE.
  */
 
+#include "third_party/blink/renderer/modules/webaudio/gain_node.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_gain_options.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
-#include "third_party/blink/renderer/modules/webaudio/gain_node.h"
-#include "third_party/blink/renderer/modules/webaudio/gain_options.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 
 namespace blink {
 
@@ -55,6 +56,9 @@ scoped_refptr<GainHandler> GainHandler::Create(AudioNode& node,
 }
 
 void GainHandler::Process(uint32_t frames_to_process) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("webaudio.audionode"),
+               "GainHandler::Process");
+
   // FIXME: for some cases there is a nice optimization to avoid processing
   // here, and let the gain change happen in the summing junction input of the
   // AudioNode we're connected to.  Then we can avoid all of the following:
@@ -65,26 +69,31 @@ void GainHandler::Process(uint32_t frames_to_process) {
   if (!IsInitialized() || !Input(0).IsConnected()) {
     output_bus->Zero();
   } else {
-    AudioBus* input_bus = Input(0).Bus();
+    scoped_refptr<AudioBus> input_bus = Input(0).Bus();
 
-    if (gain_->HasSampleAccurateValues()) {
+    bool is_sample_accurate = gain_->HasSampleAccurateValuesTimeline();
+
+    if (is_sample_accurate && gain_->IsAudioRate()) {
       // Apply sample-accurate gain scaling for precise envelopes, grain
       // windows, etc.
       DCHECK_LE(frames_to_process, sample_accurate_gain_values_.size());
-      if (frames_to_process <= sample_accurate_gain_values_.size()) {
-        float* gain_values = sample_accurate_gain_values_.Data();
-        gain_->CalculateSampleAccurateValues(gain_values, frames_to_process);
-        output_bus->CopyWithSampleAccurateGainValuesFrom(
-            *input_bus, gain_values, frames_to_process);
-      }
+      float* gain_values = sample_accurate_gain_values_.Data();
+      gain_->CalculateSampleAccurateValues(gain_values, frames_to_process);
+      output_bus->CopyWithSampleAccurateGainValuesFrom(*input_bus, gain_values,
+                                                       frames_to_process);
+
+      return;
+    }
+
+    // The gain is not sample-accurate or not a-rate.  In this case, we have a
+    // fixed gain for the render and just need to incorporate any inputs to the
+    // gain, if any.
+    float gain = is_sample_accurate ? gain_->FinalValue() : gain_->Value();
+
+    if (gain == 0) {
+      output_bus->Zero();
     } else {
-      // Apply the gain.
-      if (gain_->Value() == 0) {
-        // If the gain is 0, just zero the bus and set the silence hint.
-        output_bus->Zero();
-      } else {
-        output_bus->CopyWithGainFrom(*input_bus, gain_->Value());
-      }
+      output_bus->CopyWithGainFrom(*input_bus, gain);
     }
   }
 }
@@ -111,8 +120,6 @@ void GainHandler::CheckNumberOfChannelsForInput(AudioNodeInput* input) {
 
   DCHECK(input);
   DCHECK_EQ(input, &this->Input(0));
-  if (input != &this->Input(0))
-    return;
 
   unsigned number_of_channels = input->NumberOfChannels();
 
@@ -137,7 +144,8 @@ GainNode::GainNode(BaseAudioContext& context)
     : AudioNode(context),
       gain_(AudioParam::Create(
           context,
-          kParamTypeGainGain,
+          Uuid(),
+          AudioParamHandler::kParamTypeGainGain,
           1.0,
           AudioParamHandler::AutomationRate::kAudio,
           AudioParamHandler::AutomationRateMode::kVariable)) {
@@ -148,11 +156,6 @@ GainNode::GainNode(BaseAudioContext& context)
 GainNode* GainNode::Create(BaseAudioContext& context,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   return MakeGarbageCollected<GainNode>(context);
 }
@@ -176,9 +179,19 @@ AudioParam* GainNode::gain() const {
   return gain_;
 }
 
-void GainNode::Trace(blink::Visitor* visitor) {
+void GainNode::Trace(Visitor* visitor) {
   visitor->Trace(gain_);
   AudioNode::Trace(visitor);
+}
+
+void GainNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+  GraphTracer().DidCreateAudioParam(gain_);
+}
+
+void GainNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioParam(gain_);
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

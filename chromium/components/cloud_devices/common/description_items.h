@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_CLOUD_DEVICES_COMMON_CAPABILITY_INTERFACES_H_
-#define COMPONENTS_CLOUD_DEVICES_COMMON_CAPABILITY_INTERFACES_H_
+#ifndef COMPONENTS_CLOUD_DEVICES_COMMON_DESCRIPTION_ITEMS_H_
+#define COMPONENTS_CLOUD_DEVICES_COMMON_DESCRIPTION_ITEMS_H_
 
 // Defines common templates that could be used to create device specific
 // capabilities and print tickets.
@@ -11,6 +11,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
@@ -18,10 +19,6 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
 #include "components/cloud_devices/common/cloud_device_description.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace cloud_devices {
 
@@ -35,10 +32,10 @@ namespace cloud_devices {
 //   static std::string GetItemPath();
 //
 //   // Loads ticket item. Returns false if failed.
-//   static bool Load(const base::DictionaryValue& dict, ContentType* option);
+//   static bool Load(const base::Value& dict, ContentType* option);
 //
 //   // Saves ticket item.
-//   static void Save(ContentType option, base::DictionaryValue* dict);
+//   static void Save(ContentType option, base::Value* dict);
 
 // Represents a CDD capability that is stored as a JSON list
 // Ex: "<CAPABILITY_NAME>": [ {<VALUE>}, {<VALUE>}, {<VALUE>} ]
@@ -48,6 +45,7 @@ template <class Option, class Traits>
 class ListCapability {
  public:
   ListCapability();
+  ListCapability(ListCapability&& other);
   ~ListCapability();
 
   bool LoadFrom(const CloudDeviceDescription& description);
@@ -64,13 +62,13 @@ class ListCapability {
   const Option& operator[](size_t i) const { return options_[i]; }
 
   bool Contains(const Option& option) const {
-    return base::ContainsValue(options_, option);
+    return base::Contains(options_, option);
   }
 
-  void AddOption(const Option& option) { options_.push_back(option); }
+  void AddOption(Option&& option) { options_.emplace_back(std::move(option)); }
 
  private:
-  typedef std::vector<Option> OptionVector;
+  using OptionVector = std::vector<Option>;
   OptionVector options_;
 
   DISALLOW_COPY_AND_ASSIGN(ListCapability);
@@ -85,10 +83,18 @@ template <class Option, class Traits>
 class SelectionCapability {
  public:
   SelectionCapability();
+  SelectionCapability(SelectionCapability&& other);
   ~SelectionCapability();
+
+  SelectionCapability& operator=(SelectionCapability&& other);
+
+  bool operator==(const SelectionCapability& other) const;
 
   bool LoadFrom(const CloudDeviceDescription& description);
   void SaveTo(CloudDeviceDescription* description) const;
+
+  bool LoadFrom(const base::Value& dict);
+  void SaveTo(base::Value* dict) const;
 
   void Reset() {
     options_.clear();
@@ -104,7 +110,7 @@ class SelectionCapability {
   const Option& operator[](size_t i) const { return options_[i]; }
 
   bool Contains(const Option& option) const {
-    return base::ContainsValue(options_, option);
+    return base::Contains(options_, option);
   }
 
   const Option& GetDefault() const {
@@ -162,8 +168,8 @@ class BooleanCapability {
 template <class Traits>
 class EmptyCapability {
  public:
-  EmptyCapability() {};
-  ~EmptyCapability() {};
+  EmptyCapability() {}
+  ~EmptyCapability() {}
 
   bool LoadFrom(const CloudDeviceDescription& description);
   void SaveTo(CloudDeviceDescription* description) const;
@@ -228,4 +234,4 @@ class TicketItem {
 
 }  // namespace cloud_devices
 
-#endif  // COMPONENTS_CLOUD_DEVICES_COMMON_CAPABILITY_INTERFACES_H_
+#endif  // COMPONENTS_CLOUD_DEVICES_COMMON_DESCRIPTION_ITEMS_H_

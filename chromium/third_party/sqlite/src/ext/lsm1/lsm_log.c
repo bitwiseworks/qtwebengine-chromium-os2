@@ -45,17 +45,17 @@
 **   Checksums are found in two types of log records: LOG_COMMIT and
 **   LOG_CKSUM records. In order to recover content from a log, a client
 **   reads each record from the start of the log, calculating a checksum as
-**   it does. Each time a LOG_COMMIT or LOG_CKSUM is encountered, the
-**   recovery process verifies that the checksum stored in the log
+**   it does. Each time a LOG_COMMIT or LOG_CKSUM is encountered, the 
+**   recovery process verifies that the checksum stored in the log 
 **   matches the calculated checksum. If it does not, the recovery process
 **   can stop reading the log.
 **
-**   If a recovery process reads records (other than COMMIT or CKSUM)
+**   If a recovery process reads records (other than COMMIT or CKSUM) 
 **   consisting of at least LSM_CKSUM_MAXDATA bytes, then the next record in
 **   the log must be either a LOG_CKSUM or LOG_COMMIT record. If it is
 **   not, the recovery process also stops reading the log.
 **
-**   To recover the log file, it must be read twice. The first time to
+**   To recover the log file, it must be read twice. The first time to 
 **   determine the location of the last valid commit record. And the second
 **   time to load data into the in-memory tree.
 **
@@ -66,11 +66,11 @@
 **   If the log file were never deleted or wrapped, it would be possible to
 **   read it from start to end each time is required recovery (i.e each time
 **   the number of database clients changes from 0 to 1). Effectively reading
-**   the entire history of the database each time. This would quickly become
+**   the entire history of the database each time. This would quickly become 
 **   inefficient. Additionally, since the log file would grow without bound,
 **   it wastes storage space.
 **
-**   Instead, part of each checkpoint written into the database file contains
+**   Instead, part of each checkpoint written into the database file contains 
 **   a log offset (and other information required to read the log starting at
 **   at this offset) at which to begin recovery. Offset $O.
 **
@@ -92,11 +92,11 @@
 **   Each of them are located at the beginning of the file. As records are
 **   added to the log, region 2 grows, so that the log consists of a zero
 **   byte region 1, followed by a zero byte region 0, followed by an N byte
-**   region 2. After one or more checkpoints have been written to disk,
+**   region 2. After one or more checkpoints have been written to disk, 
 **   the start point of region 2 is moved to $O. For example:
 **
 **     A) ||.........|--2--|....
-**
+**   
 **   (both regions 0 and 1 are 0 bytes in size at offset 0).
 **
 **   Eventually, the log wraps around to write new records into the start.
@@ -117,18 +117,18 @@
 **     C) |---1---|..|--0--|.|-2-|
 **
 **   In this state records are appended to region 2 until checkpoints have
-**   contracted regions 0 AND 1 UNTil they are both zero bytes in size. They
-**   are then shifted to the start of the log file, leaving the system in
+**   contracted regions 0 AND 1 UNTil they are both zero bytes in size. They 
+**   are then shifted to the start of the log file, leaving the system in 
 **   the equivalent of state A above.
 **
 **   Alternatively, state B may transition directly to state A if the size
-**   of region 0 is reduced to zero bytes before region 2 threatens to
+**   of region 0 is reduced to zero bytes before region 2 threatens to 
 **   encroach upon it.
 **
 ** LOG_PAD1 & LOG_PAD2 RECORDS
 **
 **   PAD1 and PAD2 records may appear in a log file at any point. They allow
-**   a process writing the log file align the beginning of transactions with
+**   a process writing the log file align the beginning of transactions with 
 **   the beginning of disk sectors, which increases robustness.
 **
 ** RECORD FORMATS:
@@ -147,15 +147,15 @@
 **   LOG_JUMP:   * A single 0x04 byte.
 **               * Absolute file offset to jump to, encoded as a varint.
 **
-**   LOG_WRITE:  * A single 0x06 or 0x07 byte,
-**               * The number of bytes in the key, encoded as a varint,
-**               * The number of bytes in the value, encoded as a varint,
+**   LOG_WRITE:  * A single 0x06 or 0x07 byte, 
+**               * The number of bytes in the key, encoded as a varint, 
+**               * The number of bytes in the value, encoded as a varint, 
 **               * If the first byte was 0x07, an 8 byte checksum.
 **               * The key data,
 **               * The value data.
 **
-**   LOG_DELETE: * A single 0x08 or 0x09 byte,
-**               * The number of bytes in the key, encoded as a varint,
+**   LOG_DELETE: * A single 0x08 or 0x09 byte, 
+**               * The number of bytes in the key, encoded as a varint, 
 **               * If the first byte was 0x09, an 8 byte checksum.
 **               * The key data.
 **
@@ -165,7 +165,7 @@
 **
 **   The checksum is calculated using two 32-bit unsigned integers, s0 and
 **   s1. The initial value for both is 42. It is updated each time a record
-**   is written into the log file by treating the encoded (binary) record as
+**   is written into the log file by treating the encoded (binary) record as 
 **   an array of 32-bit little-endian integers. Then, if x[] is the integer
 **   array, updating the checksum accumulators as follows:
 **
@@ -232,13 +232,13 @@ struct LogWriter {
 };
 
 /*
-** Return the result of interpreting the first 4 bytes in buffer aIn as
+** Return the result of interpreting the first 4 bytes in buffer aIn as 
 ** a 32-bit unsigned little-endian integer.
 */
 static u32 getU32le(u8 *aIn){
-  return ((u32)aIn[3] << 24)
-       + ((u32)aIn[2] << 16)
-       + ((u32)aIn[1] << 8)
+  return ((u32)aIn[3] << 24) 
+       + ((u32)aIn[2] << 16) 
+       + ((u32)aIn[1] << 8) 
        + ((u32)aIn[0]);
 }
 
@@ -279,7 +279,7 @@ static void logCksumUnaligned(
 }
 
 /*
-** Update pLog->cksum0 and pLog->cksum1 so that the first nBuf bytes in the
+** Update pLog->cksum0 and pLog->cksum1 so that the first nBuf bytes in the 
 ** write buffer (pLog->buf) are included in the checksum.
 */
 static void logUpdateCksum(LogWriter *pLog, int nBuf){
@@ -288,7 +288,7 @@ static void logUpdateCksum(LogWriter *pLog, int nBuf){
   assert( (nBuf % 8)==0 || nBuf==pLog->buf.n );
   if( nBuf>pLog->iCksumBuf ){
     logCksumUnaligned(
-        &pLog->buf.z[pLog->iCksumBuf], nBuf-pLog->iCksumBuf,
+        &pLog->buf.z[pLog->iCksumBuf], nBuf-pLog->iCksumBuf, 
         &pLog->cksum0, &pLog->cksum1
     );
   }
@@ -323,8 +323,8 @@ static int logReclaimSpace(lsm_db *pDb){
     i64 iSyncedId;
 
     /* Read the snapshot-id of the snapshot stored on meta-page iMeta. Note
-    ** that in theory, the value read is untrustworthy (due to a race
-    ** condition - see comments above lsmFsReadSyncedId()). So it is only
+    ** that in theory, the value read is untrustworthy (due to a race 
+    ** condition - see comments above lsmFsReadSyncedId()). So it is only 
     ** ever used to conclude that no log space can be reclaimed. If it seems
     ** to indicate that it may be possible to reclaim log space, a
     ** second call to lsmCheckpointSynced() (which does return trustworthy
@@ -354,7 +354,7 @@ static int logReclaimSpace(lsm_db *pDb){
 
 /*
 ** This function is called when a write-transaction is first opened. It
-** is assumed that the caller is holding the client-mutex when it is
+** is assumed that the caller is holding the client-mutex when it is 
 ** called.
 **
 ** Before returning, this function allocates the LogWriter object that
@@ -386,15 +386,15 @@ int lsmLogBegin(lsm_db *pDb){
   }
 
   if( rc==LSM_OK ){
-    /* The following call detects whether or not a new snapshot has been
+    /* The following call detects whether or not a new snapshot has been 
     ** synced into the database file. If so, it updates the contents of
     ** the pDb->treehdr.log structure to reclaim any space in the log
-    ** file that is no longer required.
+    ** file that is no longer required. 
     **
-    ** TODO: Calling this every transaction is overkill. And since the
+    ** TODO: Calling this every transaction is overkill. And since the 
     ** call has to read and checksum a snapshot from the database file,
     ** it is expensive. It would be better to figure out a way so that
-    ** this is only called occasionally - say for every 32KB written to
+    ** this is only called occasionally - say for every 32KB written to 
     ** the log file.
     */
     rc = logReclaimSpace(pDb);
@@ -418,9 +418,9 @@ int lsmLogBegin(lsm_db *pDb){
   **
   **   1) Regions 0 and 1 are both zero bytes in size and region 2 begins
   **      at a file offset greater than LSM_MIN_LOGWRAP. In this case, wrap
-  **      around to the start and write data into the start of the log file.
+  **      around to the start and write data into the start of the log file. 
   **
-  **   2) Region 1 is zero bytes in size and region 2 occurs earlier in the
+  **   2) Region 1 is zero bytes in size and region 2 occurs earlier in the 
   **      file than region 0. In this case, append data to region 2, but
   **      remember to jump over region 1 if required.
   **
@@ -435,11 +435,11 @@ int lsmLogBegin(lsm_db *pDb){
   pNew->cksum1 = pDb->treehdr.log.cksum1;
 
   if( aReg[0].iEnd==0 && aReg[1].iEnd==0 && aReg[2].iStart>=LSM_MIN_LOGWRAP ){
-    /* Case 1. Wrap around to the start of the file. Write an LSM_LOG_JUMP
+    /* Case 1. Wrap around to the start of the file. Write an LSM_LOG_JUMP 
     ** into the log file in this case. Pad it out to 8 bytes using a PAD2
     ** record so that the checksums can be updated immediately.  */
-    u8 aJump[] = {
-      LSM_LOG_PAD2, 0x04, 0x00, 0x00, 0x00, 0x00, LSM_LOG_JUMP, 0x00
+    u8 aJump[] = { 
+      LSM_LOG_PAD2, 0x04, 0x00, 0x00, 0x00, 0x00, LSM_LOG_JUMP, 0x00 
     };
 
     lsmStringBinAppend(&pNew->buf, aJump, sizeof(aJump));
@@ -517,10 +517,10 @@ static int jumpIfRequired(
   ** jump region before writing the LSM_LOG_WRITE or DELETE record. This
   ** is necessary if there is insufficient room between the current offset
   ** and the jump region to fit the new WRITE/DELETE record and the largest
-  ** possible JUMP record with up to 7 bytes of padding (a total of 17
+  ** possible JUMP record with up to 7 bytes of padding (a total of 17 
   ** bytes).  */
   if( (pLog->jump.iStart > (pLog->iOff + pLog->buf.n))
-   && (pLog->jump.iStart < (pLog->iOff + pLog->buf.n + (nReq + 17)))
+   && (pLog->jump.iStart < (pLog->iOff + pLog->buf.n + (nReq + 17))) 
   ){
     int rc;                       /* Return code */
     i64 iJump;                    /* Offset to jump to */
@@ -533,9 +533,9 @@ static int jumpIfRequired(
     aJump[0] = LSM_LOG_JUMP;
     nJump = 1 + lsmVarintPut64(&aJump[1], iJump);
 
-    /* Adding padding to the contents of the buffer so that it will be a
+    /* Adding padding to the contents of the buffer so that it will be a 
     ** multiple of 8 bytes in size after the JUMP record is appended. This
-    ** is not strictly required, it just makes the keeping the running
+    ** is not strictly required, it just makes the keeping the running 
     ** checksum up to date in this file a little simpler.  */
     nPad = (pLog->buf.n + nJump) % 8;
     if( nPad ){
@@ -598,7 +598,7 @@ static int logFlush(lsm_db *pDb, int eType){
   int rc;
   int nReq;
   LogWriter *pLog = pDb->pLogWriter;
-
+  
   assert( eType==LSM_LOG_COMMIT );
   assert( pLog );
 
@@ -653,7 +653,7 @@ static int logFlush(lsm_db *pDb, int eType){
 }
 
 /*
-** Append an LSM_LOG_WRITE (if nVal>=0) or LSM_LOG_DELETE (if nVal<0)
+** Append an LSM_LOG_WRITE (if nVal>=0) or LSM_LOG_DELETE (if nVal<0) 
 ** record to the database log.
 */
 int lsmLogWrite(
@@ -694,7 +694,7 @@ int lsmLogWrite(
   }
   if( rc==LSM_OK ){
     u8 *a = (u8 *)&pLog->buf.z[pLog->buf.n];
-
+    
     /* Write the record header - the type byte followed by either 1 (for
     ** DELETE) or 2 (for WRITE) varints.  */
     assert( LSM_LOG_WRITE_CKSUM == (LSM_LOG_WRITE | 0x0001) );
@@ -794,9 +794,9 @@ int lsmInfoLogStructure(lsm_db *pDb, char **pzVal){
   int rc = LSM_OK;
   char *zVal = 0;
 
-  /* If there is no read or write transaction open, read the latest
+  /* If there is no read or write transaction open, read the latest 
   ** tree-header from shared-memory to report on. If necessary, update
-  ** it based on the contents of the database header.
+  ** it based on the contents of the database header.  
   **
   ** No locks are taken here - these are passive read operations only.
   */
@@ -807,8 +807,8 @@ int lsmInfoLogStructure(lsm_db *pDb, char **pzVal){
 
   if( rc==LSM_OK ){
     DbLog *pLog = &pDb->treehdr.log;
-    zVal = lsmMallocPrintf(pDb->pEnv,
-        "%d %d %d %d %d %d",
+    zVal = lsmMallocPrintf(pDb->pEnv, 
+        "%d %d %d %d %d %d", 
         (int)pLog->aRegion[0].iStart, (int)pLog->aRegion[0].iEnd,
         (int)pLog->aRegion[1].iStart, (int)pLog->aRegion[1].iEnd,
         (int)pLog->aRegion[2].iStart, (int)pLog->aRegion[2].iEnd
@@ -896,7 +896,7 @@ static void logReaderBlob(
 }
 
 static void logReaderVarint(
-  LogReader *p,
+  LogReader *p, 
   LsmString *pBuf,
   int *piVal,                     /* OUT: Value read from log */
   int *pRc                        /* IN/OUT: Error code */
@@ -995,9 +995,9 @@ int lsmLogRecover(lsm_db *pDb){
   lsmStringInit(&buf1, pDb->pEnv);
   lsmStringInit(&buf2, pDb->pEnv);
 
-  /* The outer for() loop runs at most twice. The first iteration is to
-  ** count the number of committed transactions in the log. The second
-  ** iterates through those transactions and updates the in-memory tree
+  /* The outer for() loop runs at most twice. The first iteration is to 
+  ** count the number of committed transactions in the log. The second 
+  ** iterates through those transactions and updates the in-memory tree 
   ** structure with their contents.  */
   if( bOpen ){
     for(iPass=0; iPass<2 && rc==LSM_OK; iPass++){
@@ -1037,7 +1037,7 @@ int lsmLogRecover(lsm_db *pDb){
 
             logReaderBlob(&reader, &buf1, nKey, 0, &rc);
             logReaderBlob(&reader, &buf2, nVal, &aVal, &rc);
-            if( iPass==1 && rc==LSM_OK ){
+            if( iPass==1 && rc==LSM_OK ){ 
               if( eType==LSM_LOG_WRITE || eType==LSM_LOG_WRITE_CKSUM ){
                 rc = lsmTreeInsert(pDb, (u8 *)buf1.z, nKey, aVal, nVal);
               }else{
@@ -1060,7 +1060,7 @@ int lsmLogRecover(lsm_db *pDb){
             if( bEof ) break;
 
             logReaderBlob(&reader, &buf1, nKey, &aKey, &rc);
-            if( iPass==1 && rc==LSM_OK ){
+            if( iPass==1 && rc==LSM_OK ){ 
               rc = lsmTreeInsert(pDb, aKey, nKey, NULL, -1);
             }
             break;

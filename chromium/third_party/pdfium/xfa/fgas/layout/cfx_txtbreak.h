@@ -15,7 +15,7 @@
 #include "xfa/fgas/layout/cfx_char.h"
 
 class CFGAS_GEFont;
-class FXTEXT_CHARPOS;
+class TextCharPos;
 
 #define FX_TXTCHARSTYLE_ArabicShadda 0x0020
 #define FX_TXTCHARSTYLE_OddBidiLevel 0x0040
@@ -69,7 +69,7 @@ class CFX_TxtBreak final : public CFX_Break {
   void SetCombWidth(float fCombWidth);
   CFX_BreakType EndBreak(CFX_BreakType dwStatus);
 
-  size_t GetDisplayPos(const Run* pTxtRun, FXTEXT_CHARPOS* pCharPos) const;
+  size_t GetDisplayPos(const Run* pTxtRun, TextCharPos* pCharPos) const;
   std::vector<CFX_RectF> GetCharRects(const Run* pTxtRun, bool bCharBBox) const;
   CFX_BreakType AppendChar(wchar_t wch);
 
@@ -81,7 +81,7 @@ class CFX_TxtBreak final : public CFX_Break {
   CFX_BreakType AppendChar_Others(CFX_Char* pCurChar);
 
   void ResetContextCharStyles();
-  bool EndBreak_SplitLine(CFX_BreakLine* pNextLine, bool bAllChars);
+  void EndBreak_SplitLine(CFX_BreakLine* pNextLine, bool bAllChars);
   void EndBreak_BidiLine(std::deque<FX_TPO>* tpos, CFX_BreakType dwStatus);
   void EndBreak_Alignment(const std::deque<FX_TPO>& tpos,
                           bool bAllChars,

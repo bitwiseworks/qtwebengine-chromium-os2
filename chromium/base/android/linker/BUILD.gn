@@ -9,7 +9,12 @@ assert(is_android)
 
 shared_library("chromium_android_linker") {
   sources = [
+    "legacy_linker_jni.cc",
+    "legacy_linker_jni.h",
     "linker_jni.cc",
+    "linker_jni.h",
+    "modern_linker_jni.cc",
+    "modern_linker_jni.h",
   ]
 
   # The NDK contains the crazy_linker here:
@@ -23,6 +28,14 @@ shared_library("chromium_android_linker") {
   # Export JNI symbols.
   configs -= [ "//build/config/android:hide_all_but_jni_onload" ]
   configs += [ "//build/config/android:hide_all_but_jni" ]
+
+  # Disable coverage to avoid linker issue.
+  configs -= [ "//build/config/coverage:default_coverage" ]
+
+  # Disable orderfile instrumentation. Code in this target is in a different
+  # .so, cannot call unexported instrumentation functions from another one (link
+  # time error).
+  configs -= [ "//build/config/android:default_orderfile_instrumentation" ]
 
   # Avoid linking libc++ and support libraries, to avoid 100 kiB of
   # un-necessary code.

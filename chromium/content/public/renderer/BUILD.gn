@@ -10,13 +10,9 @@ import("//ppapi/buildflags/buildflags.gni")
 # See //content/BUILD.gn for how this works.
 group("renderer") {
   if (is_component_build) {
-    public_deps = [
-      "//content",
-    ]
+    public_deps = [ "//content" ]
   } else {
-    public_deps = [
-      ":renderer_sources",
-    ]
+    public_deps = [ ":renderer_sources" ]
   }
 }
 
@@ -30,7 +26,6 @@ target(link_target_type, "renderer_sources") {
   visibility = [ "//content/*" ]
 
   sources = [
-    "associated_resource_fetcher.h",
     "browser_plugin_delegate.cc",
     "browser_plugin_delegate.h",
     "chrome_object_extensions_utils.cc",
@@ -40,9 +35,8 @@ target(link_target_type, "renderer_sources") {
     "context_menu_client.h",
     "document_state.cc",
     "document_state.h",
-    "fixed_received_data.cc",
-    "fixed_received_data.h",
     "pepper_plugin_instance.h",
+    "plugin_ax_tree_source.h",
     "plugin_instance_throttler.h",
     "render_accessibility.h",
     "render_frame.h",
@@ -63,7 +57,6 @@ target(link_target_type, "renderer_sources") {
     "renderer_ppapi_host.h",
     "request_peer.h",
     "resource_dispatcher_delegate.h",
-    "resource_fetcher.h",
     "seccomp_sandbox_status_android.h",
     "url_loader_throttle_provider.h",
     "v8_value_converter.h",
@@ -77,9 +70,7 @@ target(link_target_type, "renderer_sources") {
 
   configs += [ "//content:content_implementation" ]
 
-  public_deps = [
-    "//media",
-  ]
+  public_deps = [ "//media" ]
 
   deps = [
     "//content/public/child:child_sources",
@@ -93,6 +84,7 @@ target(link_target_type, "renderer_sources") {
     "//ppapi/c",
     "//skia",
     "//third_party/blink/public:blink_headers",
+    "//third_party/blink/public/common",
     "//third_party/widevine/cdm:headers",
     "//ui/base",
     "//ui/base/ime",
@@ -112,28 +104,9 @@ target(link_target_type, "renderer_sources") {
   }
 
   if (enable_webrtc) {
-    sources += [
-      "media_stream_audio_renderer.h",
-      "media_stream_audio_sink.cc",
-      "media_stream_audio_sink.h",
-      "media_stream_renderer_factory.h",
-      "media_stream_sink.h",
-      "media_stream_utils.cc",
-      "media_stream_utils.h",
-      "media_stream_video_renderer.h",
-      "media_stream_video_sink.cc",
-      "media_stream_video_sink.h",
-      "webrtc_log_message_delegate.h",
-    ]
     deps += [
-      "//content/public/common:buildflags",
-      "//content/public/common:feature_h264_with_openh264_ffmpeg",
-      "//third_party/webrtc_overrides",
+      "//third_party/webrtc_overrides:webrtc_component",
     ]
-  }
-
-  if (enable_plugins) {
-    sources += [ "plugin_instance_throttler.h" ]
   }
 
   if (enable_library_cdms) {

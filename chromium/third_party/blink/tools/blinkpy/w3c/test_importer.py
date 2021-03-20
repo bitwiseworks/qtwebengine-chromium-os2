@@ -17,10 +17,10 @@ import json
 import logging
 import re
 
-from blinkpy.common.net.buildbot import current_build_link
 from blinkpy.common.net.git_cl import GitCL
 from blinkpy.common.net.network_transaction import NetworkTimeout
 from blinkpy.common.path_finder import PathFinder
+from blinkpy.common.system.executive import ScriptError
 from blinkpy.common.system.log_utils import configure_logging
 from blinkpy.w3c.chromium_exportable_commits import exportable_commits_over_last_n_commits
 from blinkpy.w3c.common import read_credentials, is_testharness_baseline, is_file_exportable, WPT_GH_URL
@@ -31,8 +31,9 @@ from blinkpy.w3c.test_copier import TestCopier
 from blinkpy.w3c.wpt_expectations_updater import WPTExpectationsUpdater
 from blinkpy.w3c.wpt_github import WPTGitHub
 from blinkpy.w3c.wpt_manifest import WPTManifest, BASE_MANIFEST_NAME
-from blinkpy.web_tests.models.test_expectations import TestExpectations, TestExpectationParser
 from blinkpy.web_tests.port.base import Port
+from blinkpy.web_tests.models.test_expectations import TestExpectations
+
 
 # Settings for how often to check try job results and how long to wait.
 POLL_DELAY_SECONDS = 2 * 60
@@ -262,7 +263,14 @@ class TestImporter(object):
             return True
 
         _log.error('Cannot submit CL; aborting.')
-        self.git_cl.run(['set-close'])
+        try:
+            self.git_cl.run(['set-close'])
+        except ScriptError as e:
+            if e.output and 'Conflict: change is merged' in e.output:
+                _log.error('CL is already merged; treating as success.')
+                return True
+            else:
+                raise e
         return False
 
     def blink_try_bots(self):
@@ -454,7 +462,7 @@ class TestImporter(object):
         self.fs.remove(dest)
 
     def _upload_patchset(self, message):
-        self.git_cl.run(['upload', '-f', '-t', message, '--gerrit'])
+        self.git_cl.run(['upload', '-f', '-t', message])
 
     def _upload_cl(self):
         _log.info('Uploading change list.')
@@ -469,7 +477,6 @@ class TestImporter(object):
         self.git_cl.run([
             'upload',
             '-f',
-            '--gerrit',
             '--message-file', temp_path,
             '--tbrs', sheriff_email,
             # Note: we used to CC all the directory owners, but have stopped
@@ -494,10 +501,6 @@ class TestImporter(object):
         """
         # TODO(robertma): Add a method in Git for getting the commit body.
         description = self.chromium_git.run(['log', '-1', '--format=%B'])
-        build_link = current_build_link(self.host)
-        if build_link:
-            description += 'Build: %s\n\n' % build_link
-
         description += (
             'Note to sheriffs: This CL imports external tests and adds\n'
             'expectations for those tests; if this CL is large and causes\n'
@@ -540,6 +543,9 @@ class TestImporter(object):
             username = self._fetch_ecosystem_infra_sheriff_username()
         except (IOError, KeyError, ValueError) as error:
             _log.error('Exception while fetching current sheriff: %s', error)
+        if username in ['kyleju']:
+            _log.warning('Cannot TBR by %s: not a committer', username)
+            username = ''
         return username or TBR_FALLBACK
 
     def _fetch_ecosystem_infra_sheriff_username(self):
@@ -582,30 +588,35 @@ class TestImporter(object):
         """
         port = self.host.port_factory.get()
         for path, file_contents in port.all_expectations_dict().iteritems():
-            parser = TestExpectationParser(port, all_tests=None, is_lint_mode=False)
-            expectation_lines = parser.parse(path, file_contents)
-            self._update_single_test_expectations_file(path, expectation_lines, deleted_tests, renamed_tests)
+            self._update_single_test_expectations_file(port, path, file_contents, deleted_tests, renamed_tests)
 
-    def _update_single_test_expectations_file(self, path, expectation_lines, deleted_tests, renamed_tests):
+    def _update_single_test_expectations_file(self, port, path, file_contents, deleted_tests, renamed_tests):
         """Updates a single test expectations file."""
-        # FIXME: This won't work for removed or renamed directories with test
-        # expectations that are directories rather than individual tests.
+        test_expectations = TestExpectations(port, expectations_dict={path: file_contents})
+
         new_lines = []
-        changed_lines = []
-        for expectation_line in expectation_lines:
-            if expectation_line.name in deleted_tests:
+        for line in test_expectations.get_updated_lines(path):
+            # if a test is a glob type expectation or empty line or comment then add it to the updated
+            # expectations file without modifications
+            if not line.test or line.is_glob:
+                new_lines.append(line.to_string())
                 continue
-            if expectation_line.name in renamed_tests:
-                expectation_line.name = renamed_tests[expectation_line.name]
-                # Upon parsing the file, a "path does not exist" warning is expected
-                # to be there for tests that have been renamed, and if there are warnings,
-                # then the original string is used. If the warnings are reset, then the
-                # expectation line is re-serialized when output.
-                expectation_line.warnings = []
-                changed_lines.append(expectation_line)
-            new_lines.append(expectation_line)
-        new_file_contents = TestExpectations.list_to_string(new_lines, reconstitute_only_these=changed_lines)
-        self.host.filesystem.write_text_file(path, new_file_contents)
+            test_name = line.test
+            if self.finder.is_webdriver_test_path(test_name):
+                root_test_file, subtest_suffix = port.split_webdriver_test_name(test_name)
+            else:
+                root_test_file = test_name
+            if root_test_file in deleted_tests:
+                continue
+            if root_test_file in renamed_tests:
+                if self.finder.is_webdriver_test_path(root_test_file):
+                    renamed_test = renamed_tests[root_test_file]
+                    test_name = port.add_webdriver_subtest_suffix(renamed_test, subtest_suffix)
+                else:
+                    test_name = renamed_tests[root_test_file]
+            line.test = test_name
+            new_lines.append(line.to_string())
+        self.host.filesystem.write_text_file(path, '\n'.join(new_lines) + '\n')
 
     def _list_deleted_tests(self):
         """List of web tests that have been deleted."""

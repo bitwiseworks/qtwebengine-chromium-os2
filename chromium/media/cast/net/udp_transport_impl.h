@@ -24,10 +24,6 @@
 #include "net/socket/diff_serv_code_point.h"
 #include "net/socket/udp_socket.h"
 
-namespace net {
-class NetLog;
-}  // namespace net
-
 namespace media {
 namespace cast {
 
@@ -46,19 +42,17 @@ class UdpTransportImpl final : public PacketTransport, public UdpTransport {
   // address of the first packet received.
   // |send_buffer_size| specifies the size of the socket send buffer.
   UdpTransportImpl(
-      net::NetLog* net_log,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_thread_proxy,
       const net::IPEndPoint& local_end_point,
       const net::IPEndPoint& remote_end_point,
-      const CastTransportStatusCallback& status_callback);
+      CastTransportStatusCallback status_callback);
   ~UdpTransportImpl() final;
 
   // PacketTransport implementations.
   bool SendPacket(PacketRef packet, const base::RepeatingClosure& cb) final;
   int64_t GetBytesSent() final;
   // Start receiving packets. Packets are submitted to |packet_receiver|.
-  void StartReceiving(
-      const PacketReceiverCallbackWithStatus& packet_receiver) final;
+  void StartReceiving(PacketReceiverCallbackWithStatus packet_receiver) final;
   void StopReceiving() final;
 
   // UdpTransport implementations.
@@ -141,7 +135,7 @@ class UdpTransportImpl final : public PacketTransport, public UdpTransport {
   std::unique_ptr<UdpPacketPipeReader> reader_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<UdpTransportImpl> weak_factory_;
+  base::WeakPtrFactory<UdpTransportImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UdpTransportImpl);
 };

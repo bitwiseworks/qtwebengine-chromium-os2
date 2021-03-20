@@ -18,6 +18,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/numerics/clamped_math.h"
 #include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -26,12 +27,14 @@
 #include "net/base/address_list.h"
 #include "net/base/expiring_cache.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/net_errors.h"
 #include "net/base/net_export.h"
+#include "net/base/network_isolation_key.h"
 #include "net/dns/dns_util.h"
+#include "net/dns/esni_content.h"
 #include "net/dns/host_resolver_source.h"
 #include "net/dns/public/dns_query_type.h"
 #include "net/log/net_log_capture_mode.h"
-#include "net/log/net_log_parameters_callback.h"
 
 namespace base {
 class ListValue;
@@ -47,27 +50,36 @@ class NET_EXPORT HostCache {
     Key(const std::string& hostname,
         DnsQueryType dns_query_type,
         HostResolverFlags host_resolver_flags,
-        HostResolverSource host_resolver_source);
-    Key(const std::string& hostname,
-        AddressFamily address_family,
-        HostResolverFlags host_resolver_flags);
+        HostResolverSource host_resolver_source,
+        const NetworkIsolationKey& network_isolation_key);
     Key();
+    Key(const Key& key);
+    Key(Key&& key);
+
+    // This is a helper used in comparing keys. The order of comparisons of
+    // |Key| fields is arbitrary, but the tuple is constructed with
+    // |dns_query_type| and |host_resolver_flags| before |hostname| under the
+    // assumption that integer comparisons are faster than string comparisons.
+    auto GetTuple(const Key* key) const {
+      return std::tie(key->dns_query_type, key->host_resolver_flags,
+                      key->hostname, key->host_resolver_source,
+                      key->network_isolation_key, key->secure);
+    }
+
+    bool operator==(const Key& other) const {
+      return GetTuple(this) == GetTuple(&other);
+    }
 
     bool operator<(const Key& other) const {
-      // The order of comparisons of |Key| fields is arbitrary, thus
-      // |dns_query_type| and |host_resolver_flags| are compared before
-      // |hostname| under assumption that integer comparisons are faster than
-      // string comparisons.
-      return std::tie(dns_query_type, host_resolver_flags, hostname,
-                      host_resolver_source) <
-             std::tie(other.dns_query_type, other.host_resolver_flags,
-                      other.hostname, other.host_resolver_source);
+      return GetTuple(this) < GetTuple(&other);
     }
 
     std::string hostname;
-    DnsQueryType dns_query_type;
-    HostResolverFlags host_resolver_flags;
-    HostResolverSource host_resolver_source;
+    DnsQueryType dns_query_type = DnsQueryType::UNSPECIFIED;
+    HostResolverFlags host_resolver_flags = 0;
+    HostResolverSource host_resolver_source = HostResolverSource::ANY;
+    NetworkIsolationKey network_isolation_key;
+    bool secure = false;
   };
 
   struct NET_EXPORT EntryStaleness {
@@ -127,6 +139,10 @@ class NET_EXPORT HostCache {
     Entry& operator=(Entry&& entry);
 
     int error() const { return error_; }
+    bool did_complete() const {
+      return error_ != ERR_NETWORK_CHANGED &&
+             error_ != ERR_HOST_RESOLVER_QUEUE_TOO_LARGE;
+    }
     void set_error(int error) { error_ = error; }
     const base::Optional<AddressList>& addresses() const { return addresses_; }
     void set_addresses(const base::Optional<AddressList>& addresses) {
@@ -145,6 +161,10 @@ class NET_EXPORT HostCache {
     void set_hostnames(base::Optional<std::vector<HostPortPair>> hostnames) {
       hostnames_ = std::move(hostnames);
     }
+    const base::Optional<EsniContent>& esni_data() const { return esni_data_; }
+    void set_esni_data(base::Optional<EsniContent> esni_data) {
+      esni_data_ = std::move(esni_data);
+    }
     Source source() const { return source_; }
     bool has_ttl() const { return ttl_ >= base::TimeDelta(); }
     base::TimeDelta ttl() const { return ttl_; }
@@ -157,15 +177,19 @@ class NET_EXPORT HostCache {
     int network_changes() const { return network_changes_; }
 
     // Merge |front| and |back|, representing results from multiple
-    // transactions for the same overal host resolution query. On merging result
-    // lists, result elements from |front| will be merged in front of elements
-    // from |back|. Fields that cannot be merged take precedence from |front|.
+    // transactions for the same overall host resolution query.
+    //
+    // - When merging result hostname and text record lists, result
+    // elements from |front| will be merged in front of elements from |back|.
+    // - Merging address lists deduplicates addresses and sorts them in a stable
+    // manner by (breaking ties by continuing down the list):
+    //   1. Addresses with associated ESNI keys precede addresses without
+    //   2. IPv6 addresses precede IPv4 addresses
+    // - Fields that cannot be merged take precedence from |front|.
     static Entry MergeEntries(Entry front, Entry back);
 
-    // Creates a callback for use with the NetLog that returns a Value
-    // representation of the entry.  The callback must be destroyed before
-    // |this| is.
-    NetLogParametersCallback CreateNetLogCallback() const;
+    // Creates a value representation of the entry for use with NetLog.
+    base::Value NetLogParams() const;
 
     // Creates a copy of |this| with the port of all address and hostname values
     // set to |port| if the current port is 0. Preserves any non-zero ports.
@@ -183,6 +207,7 @@ class NET_EXPORT HostCache {
           const base::Optional<AddressList>& addresses,
           base::Optional<std::vector<std::string>>&& text_results,
           base::Optional<std::vector<HostPortPair>>&& hostnames,
+          base::Optional<EsniContent>&& esni_data,
           Source source,
           base::TimeTicks expires,
           int network_changes);
@@ -194,6 +219,7 @@ class NET_EXPORT HostCache {
     void SetResult(std::vector<HostPortPair> hostnames) {
       hostnames_ = std::move(hostnames);
     }
+    void SetResult(EsniContent esni_data) { esni_data_ = std::move(esni_data); }
 
     int total_hits() const { return total_hits_; }
     int stale_hits() const { return stale_hits_; }
@@ -204,27 +230,43 @@ class NET_EXPORT HostCache {
                       int network_changes,
                       EntryStaleness* out) const;
 
-    std::unique_ptr<base::Value> NetLogCallback(
-        NetLogCaptureMode capture_mode) const;
+    // Combines the addresses of |source| with those already stored,
+    // resulting in the following order:
+    //
+    // 1. IPv6 addresses associated with ESNI keys
+    // 2. IPv4 addresses associated with ESNI keys
+    // 3. IPv6 addresses not associated with ESNI keys
+    // 4. IPv4 addresses not associated with ESNI keys
+    //
+    // - Conducts the merge in a stable fashion (other things equal, addresses
+    // from |*this| will precede those from |source|, and addresses earlier in
+    // one entry's list will precede other addresses from later in the same
+    // list).
+    // - Deduplicates the entries during the merge so that |*this|'s
+    // address list will not contain duplicates after the call.
+    void MergeAddressesFrom(const HostCache::Entry& source);
+
     base::DictionaryValue GetAsValue(bool include_staleness) const;
 
     // The resolve results for this entry.
-    int error_;
+    int error_ = ERR_FAILED;
     base::Optional<AddressList> addresses_;
     base::Optional<std::vector<std::string>> text_records_;
     base::Optional<std::vector<HostPortPair>> hostnames_;
+    base::Optional<EsniContent> esni_data_;
     // Where results were obtained (e.g. DNS lookup, hosts file, etc).
-    Source source_;
+    Source source_ = SOURCE_UNKNOWN;
     // TTL obtained from the nameserver. Negative if unknown.
-    base::TimeDelta ttl_;
+    base::TimeDelta ttl_ = base::TimeDelta::FromSeconds(-1);
 
     base::TimeTicks expires_;
     // Copied from the cache's network_changes_ when the entry is set; can
     // later be compared to it to see if the entry was received on the current
     // network.
-    int network_changes_;
-    int total_hits_;
-    int stale_hits_;
+    int network_changes_ = -1;
+    // Use clamped math to cap hit counts at INT_MAX.
+    base::ClampedNumeric<int> total_hits_ = 0;
+    base::ClampedNumeric<int> stale_hits_ = 0;
   };
 
   // Interface for interacting with persistent storage, to be provided by the
@@ -238,21 +280,29 @@ class NET_EXPORT HostCache {
 
   using EntryMap = std::map<Key, Entry>;
 
+  // A HostCache::EntryStaleness representing a non-stale (fresh) cache entry.
+  static const HostCache::EntryStaleness kNotStale;
+
   // Constructs a HostCache that stores up to |max_entries|.
   explicit HostCache(size_t max_entries);
 
   ~HostCache();
 
-  // Returns a pointer to the entry for |key|, which is valid at time
-  // |now|. If there is no such entry, returns NULL.
-  const Entry* Lookup(const Key& key, base::TimeTicks now);
+  // Returns a pointer to the matching (key, entry) pair, which is valid at time
+  // |now|. If |ignore_secure| is true, ignores the secure field in |key| when
+  // looking for a match. If there is no matching entry, returns NULL.
+  const std::pair<const Key, Entry>* Lookup(const Key& key,
+                                            base::TimeTicks now,
+                                            bool ignore_secure = false);
 
-  // Returns a pointer to the entry for |key|, whether it is valid or stale at
-  // time |now|. Fills in |stale_out| with information about how stale it is.
-  // If there is no entry for |key| at all, returns NULL.
-  const Entry* LookupStale(const Key& key,
-                           base::TimeTicks now,
-                           EntryStaleness* stale_out);
+  // Returns a pointer to the matching (key, entry) pair, whether it is valid or
+  // stale at time |now|. Fills in |stale_out| with information about how stale
+  // it is. If |ignore_secure| is true, ignores the secure field in |key| when
+  // looking for a match. If there is no matching entry, returns NULL.
+  const std::pair<const Key, Entry>* LookupStale(const Key& key,
+                                                 base::TimeTicks now,
+                                                 EntryStaleness* stale_out,
+                                                 bool ignore_secure = false);
 
   // Overwrites or creates an entry for |key|.
   // |entry| is the value to set, |now| is the current time
@@ -263,17 +313,18 @@ class NET_EXPORT HostCache {
            base::TimeDelta ttl);
 
   // Checks whether an entry exists for |hostname|.
-  // If so, returns true and writes the source (e.g. DNS, HOSTS file, etc.) to
-  // |source_out| and the staleness to |stale_out| (if they are not null).
-  // It tries using two common address_family and host_resolver_flag
+  // If so, returns the matching key and writes the source (e.g. DNS, HOSTS
+  // file, etc.) to |source_out| and the staleness to |stale_out| (if they are
+  // not null). It tries using two common address_family and host_resolver_flag
   // combinations when performing lookups in the cache; this means false
-  // negatives are possible, but unlikely.
-  bool HasEntry(base::StringPiece hostname,
-                HostCache::Entry::Source* source_out,
-                HostCache::EntryStaleness* stale_out);
+  // negatives are possible, but unlikely. It also ignores the secure field
+  // while searching for matches. If no entry exists, returns nullptr.
+  const HostCache::Key* GetMatchingKey(base::StringPiece hostname,
+                                       HostCache::Entry::Source* source_out,
+                                       HostCache::EntryStaleness* stale_out);
 
   // Marks all entries as stale on account of a network change.
-  void OnNetworkChange();
+  void Invalidate();
 
   void set_persistence_delegate(PersistenceDelegate* delegate);
 
@@ -286,11 +337,17 @@ class NET_EXPORT HostCache {
 
   // Clears hosts matching |host_filter| from the cache.
   void ClearForHosts(
-      const base::Callback<bool(const std::string&)>& host_filter);
+      const base::RepeatingCallback<bool(const std::string&)>& host_filter);
 
   // Fills the provided base::ListValue with the contents of the cache for
   // serialization. |entry_list| must be non-null and will be cleared before
-  // adding the cache contents.
+  // adding the cache contents. Entries with ephemeral NetworkIsolationKeys will
+  // not be written to the resulting list.
+  //
+  // TODO(mmenke): This is used both in combination with RestoreFromListValue()
+  // and for NetLog. Update the NetLogViewer's display to handle
+  // NetworkIsolationKeys, and add some way for to get a result with ephemeral
+  // NIKs included.
   void GetAsListValue(base::ListValue* entry_list,
                       bool include_staleness) const;
   // Takes a base::ListValue representing cache entries and stores them in the
@@ -319,7 +376,26 @@ class NET_EXPORT HostCache {
   enum LookupOutcome : int;
   enum EraseReason : int;
 
-  Entry* LookupInternal(const Key& key);
+  // Returns the result that is least stale, based on the number of network
+  // changes since the result was cached. If the results are equally stale,
+  // prefers a securely retrieved result. Returns nullptr if both results are
+  // nullptr.
+  static std::pair<const HostCache::Key, HostCache::Entry>*
+  GetLessStaleMoreSecureResult(
+      base::TimeTicks now,
+      std::pair<const HostCache::Key, HostCache::Entry>* result1,
+      std::pair<const HostCache::Key, HostCache::Entry>* result2);
+
+  // Returns matching key and entry from cache and nullptr if no match. Ignores
+  // the secure field in |initial_key| if |ignore_secure| is true.
+  std::pair<const Key, Entry>* LookupInternalIgnoringFields(
+      const Key& initial_key,
+      base::TimeTicks now,
+      bool ignore_secure);
+
+  // Returns matching key and entry from cache and nullptr if no match. An exact
+  // match for |key| is required.
+  std::pair<const Key, Entry>* LookupInternal(const Key& key);
 
   // Returns true if this HostCache can contain no entries.
   bool caching_is_disabled() const { return max_entries_ == 0; }

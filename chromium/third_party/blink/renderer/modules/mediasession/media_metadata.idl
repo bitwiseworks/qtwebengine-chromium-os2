@@ -5,11 +5,10 @@
 // https://wicg.github.io/mediasession/#the-mediametadata-interface
 
 [
-    ConstructorCallWith=ScriptState,
-    Constructor(optional MediaMetadataInit metadata),
-    RaisesException=Constructor,
+    Exposed=Window,
     RuntimeEnabled=MediaSession
 ] interface MediaMetadata {
+    [CallWith=ScriptState, RaisesException] constructor(optional MediaMetadataInit init = {});
     attribute DOMString title;
     attribute DOMString artist;
     attribute DOMString album;

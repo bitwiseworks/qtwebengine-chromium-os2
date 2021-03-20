@@ -11,6 +11,7 @@
     "AccessibleNode",
     "Animation",
     "Clipboard",
+    "EditContext",
     "FontFaceSet",
     "MediaQueryList",
     "BroadcastChannel",
@@ -30,6 +31,7 @@
     "OffscreenCanvas",
     "EventSource",
     "Performance",
+    "PortalHost",
     {
       name: "VisualViewport",
       ImplementedAs: "DOMVisualViewport",

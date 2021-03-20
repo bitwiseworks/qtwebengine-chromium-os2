@@ -47,10 +47,9 @@ class HTMLImportsController;
 // Owning imported Document lifetime. It also implements RawResourceClient
 // to feed fetched bytes to the DocumentParser of the imported
 // document.  HTMLImportLoader is owned by HTMLImportsController.
-class HTMLImportLoader final
-    : public GarbageCollectedFinalized<HTMLImportLoader>,
-      public RawResourceClient,
-      public DocumentParserClient {
+class HTMLImportLoader final : public GarbageCollected<HTMLImportLoader>,
+                               public RawResourceClient,
+                               public DocumentParserClient {
   USING_GARBAGE_COLLECTED_MIXIN(HTMLImportLoader);
 
  public:
@@ -61,10 +60,6 @@ class HTMLImportLoader final
     kStateLoaded,
     kStateError
   };
-
-  static HTMLImportLoader* Create(HTMLImportsController* controller) {
-    return MakeGarbageCollected<HTMLImportLoader>(controller);
-  }
 
   HTMLImportLoader(HTMLImportsController*);
   ~HTMLImportLoader() final;
@@ -87,9 +82,8 @@ class HTMLImportLoader final
   bool ShouldBlockScriptExecution() const;
 
   // Tells the loader that all of the import's stylesheets finished
-  // loading.
-  // Called by Document::didRemoveAllPendingStylesheet.
-  void DidRemoveAllPendingStylesheet();
+  // loading. Called by Document::DidRemoveAllPendingStylesheets.
+  void DidRemoveAllPendingStylesheets();
 
   V0CustomElementSyncMicrotaskQueue* MicrotaskQueue() const;
 
@@ -97,9 +91,7 @@ class HTMLImportLoader final
 
  private:
   // RawResourceClient overrides:
-  void ResponseReceived(Resource*,
-                        const ResourceResponse&,
-                        std::unique_ptr<WebDataConsumerHandle>) final;
+  void ResponseReceived(Resource*, const ResourceResponse&) final;
   void DataReceived(Resource*, const char* data, size_t length) final;
   void NotifyFinished(Resource*) final;
   String DebugName() const final { return "HTMLImportLoader"; }

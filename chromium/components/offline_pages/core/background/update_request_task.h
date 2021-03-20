@@ -25,10 +25,9 @@ class UpdateRequestTask : public Task {
                     RequestQueueStore::UpdateCallback callback);
   ~UpdateRequestTask() override;
 
+ protected:
   // TaskQueue::Task implementation.
   void Run() override;
-
- protected:
   // Step 1. Reading the requests.
   void ReadRequest();
   // Step 2. Work is done in the implementation step.
@@ -56,7 +55,7 @@ class UpdateRequestTask : public Task {
   // Callback to complete the task.
   RequestQueueStore::UpdateCallback callback_;
 
-  base::WeakPtrFactory<UpdateRequestTask> weak_ptr_factory_;
+  base::WeakPtrFactory<UpdateRequestTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(UpdateRequestTask);
 };
 

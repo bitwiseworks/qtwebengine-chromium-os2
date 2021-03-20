@@ -7,10 +7,10 @@
 #include "base/bind.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/scoped_blocking_call.h"
+#include "base/threading/scoped_blocking_call_internal.h"
 #include "base/threading/thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace WTF {
 namespace {

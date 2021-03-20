@@ -13,14 +13,15 @@
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/root_frame_viewport.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_table.h"
 #include "third_party/blink/renderer/core/layout/line/inline_text_box.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
@@ -43,7 +44,7 @@ ScrollAnchor::~ScrollAnchor() = default;
 void ScrollAnchor::SetScroller(ScrollableArea* scroller) {
   DCHECK_NE(scroller_, scroller);
   DCHECK(scroller);
-  DCHECK(scroller->IsRootFrameViewport() || scroller->IsLocalFrameView() ||
+  DCHECK(scroller->IsRootFrameViewport() ||
          scroller->IsPaintLayerScrollableArea());
   scroller_ = scroller;
   ClearSelf();
@@ -80,26 +81,28 @@ static LayoutPoint CornerPointOfRect(LayoutRect rect, Corner which_corner) {
 // Bounds of the LayoutObject relative to the scroller's visible content rect.
 static LayoutRect RelativeBounds(const LayoutObject* layout_object,
                                  const ScrollableArea* scroller) {
-  LayoutRect local_bounds;
+  PhysicalRect local_bounds;
   if (layout_object->IsBox()) {
-    local_bounds = ToLayoutBox(layout_object)->BorderBoxRect();
+    local_bounds = ToLayoutBox(layout_object)->PhysicalBorderBoxRect();
     if (!layout_object->HasOverflowClip()) {
-      // borderBoxRect doesn't include overflow content and floats.
+      // BorderBoxRect doesn't include overflow content and floats.
       LayoutUnit max_y =
-          std::max(local_bounds.MaxY(),
+          std::max(local_bounds.Bottom(),
                    ToLayoutBox(layout_object)->LayoutOverflowRect().MaxY());
-      if (layout_object->IsLayoutBlockFlow() &&
-          ToLayoutBlockFlow(layout_object)->ContainsFloats()) {
+      auto* layout_block_flow = DynamicTo<LayoutBlockFlow>(layout_object);
+      if (layout_block_flow && layout_block_flow->ContainsFloats()) {
         // Note that lowestFloatLogicalBottom doesn't include floating
         // grandchildren.
-        max_y = std::max(
-            max_y,
-            ToLayoutBlockFlow(layout_object)->LowestFloatLogicalBottom());
+        max_y = std::max(max_y, layout_block_flow->LowestFloatLogicalBottom());
       }
-      local_bounds.ShiftMaxYEdgeTo(max_y);
+      local_bounds.ShiftBottomEdgeTo(max_y);
     }
   } else if (layout_object->IsText()) {
-    local_bounds.Unite(ToLayoutText(layout_object)->LinesBoundingBox());
+    const auto* text = ToLayoutText(layout_object);
+    // TODO(kojii): |PhysicalLinesBoundingBox()| cannot compute, and thus
+    // returns (0, 0) when changes are made that |DeleteLineBoxes()| or clear
+    // |SetPaintFragment()|, e.g., |SplitFlow()|. crbug.com/965352
+    local_bounds.Unite(text->PhysicalLinesBoundingBox());
   } else {
     // Only LayoutBox and LayoutText are supported.
     NOTREACHED();
@@ -153,7 +156,7 @@ static const AtomicString UniqueClassnameAmongSiblings(Element* element) {
     if (sibling_element->HasClass() && sibling_element != element) {
       const SpaceSplitString& class_names = sibling_element->ClassNames();
       for (wtf_size_t i = 0; i < class_names.size(); ++i) {
-        classname_filter->Add(class_names[i]);
+        classname_filter->Add(class_names[i].Impl()->ExistingHash());
       }
     }
   }
@@ -163,7 +166,7 @@ static const AtomicString UniqueClassnameAmongSiblings(Element* element) {
     // MayContain allows for false positives, but a false positive is relatively
     // harmless; it just means we have to choose a different classname, or in
     // the worst case a different selector.
-    if (!classname_filter->MayContain(class_names[i])) {
+    if (!classname_filter->MayContain(class_names[i].Impl()->ExistingHash())) {
       return class_names[i];
     }
   }
@@ -228,7 +231,7 @@ static const String ComputeUniqueSelector(Node* anchor_node) {
   SCOPED_BLINK_UMA_HISTOGRAM_TIMER(
       "Layout.ScrollAnchor.TimeToComputeAnchorNodeSelector");
 
-  std::vector<String> selector_list;
+  Vector<String> selector_list;
   for (Element* element = ElementTraversal::FirstAncestorOrSelf(*anchor_node);
        element; element = ElementTraversal::FirstAncestor(*element)) {
     selector_list.push_back(UniqueSimpleSelectorAmongSiblings(element));
@@ -289,6 +292,15 @@ ScrollAnchor::ExamineResult ScrollAnchor::Examine(
   LayoutRect visible_rect =
       ScrollerLayoutBox(scroller_)->OverflowClipRect(LayoutPoint());
 
+  const ComputedStyle* style = ScrollerLayoutBox(scroller_)->Style();
+  LayoutRectOutsets scroll_padding(
+      MinimumValueForLength(style->ScrollPaddingTop(), visible_rect.Height()),
+      MinimumValueForLength(style->ScrollPaddingRight(), visible_rect.Width()),
+      MinimumValueForLength(style->ScrollPaddingBottom(),
+                            visible_rect.Height()),
+      MinimumValueForLength(style->ScrollPaddingLeft(), visible_rect.Width()));
+  visible_rect.Contract(scroll_padding);
+
   bool occupies_space =
       candidate_rect.Width() > 0 && candidate_rect.Height() > 0;
   if (occupies_space && visible_rect.Intersects(candidate_rect)) {
@@ -332,9 +344,9 @@ bool ScrollAnchor::FindAnchorRecursive(LayoutObject* candidate) {
 
   // Make a separate pass to catch positioned descendants with a static DOM
   // parent that we skipped over (crbug.com/692701).
-  if (candidate->IsLayoutBlock()) {
+  if (auto* layouy_block = DynamicTo<LayoutBlock>(candidate)) {
     if (TrackedLayoutBoxListHashSet* positioned_descendants =
-            ToLayoutBlock(candidate)->PositionedObjects()) {
+            layouy_block->PositionedObjects()) {
       for (LayoutBox* descendant : *positioned_descendants) {
         if (descendant->Parent() != candidate) {
           if (FindAnchorRecursive(descendant))
@@ -398,10 +410,10 @@ void ScrollAnchor::NotifyBeforeLayout() {
       ComputeScrollAnchorDisablingStyleChanged();
 
   LocalFrameView* frame_view = ScrollerLayoutBox(scroller_)->GetFrameView();
-  ScrollableArea* owning_scroller =
-      scroller_->IsRootFrameViewport()
-          ? &ToRootFrameViewport(scroller_)->LayoutViewport()
-          : scroller_.Get();
+  auto* root_frame_viewport = DynamicTo<RootFrameViewport>(scroller_.Get());
+  ScrollableArea* owning_scroller = root_frame_viewport
+                                        ? &root_frame_viewport->LayoutViewport()
+                                        : scroller_.Get();
   frame_view->EnqueueScrollAnchoringAdjustment(owning_scroller);
   queued_ = true;
 }
@@ -451,7 +463,8 @@ void ScrollAnchor::Adjust() {
   }
 
   scroller_->SetScrollOffset(
-      scroller_->GetScrollOffset() + FloatSize(adjustment), kAnchoringScroll);
+      scroller_->GetScrollOffset() + FloatSize(adjustment),
+      mojom::blink::ScrollType::kAnchoring);
 
   // Update UMA metric.
   DEFINE_STATIC_LOCAL(EnumerationHistogram, adjusted_offset_histogram,
@@ -526,13 +539,15 @@ bool ScrollAnchor::RestoreAnchor(const SerializedAnchor& serialized_anchor) {
     ScrollOffset delta =
         ScrollOffset(RoundedIntSize(serialized_anchor.relative_offset));
     desired_offset -= delta;
-    scroller_->SetScrollOffset(desired_offset, kAnchoringScroll);
+    scroller_->SetScrollOffset(desired_offset,
+                               mojom::blink::ScrollType::kAnchoring);
     FindAnchor();
 
     // If the above FindAnchor call failed, reset the scroll position and try
     // again with the next found element.
     if (!anchor_object_) {
-      scroller_->SetScrollOffset(current_offset, kAnchoringScroll);
+      scroller_->SetScrollOffset(current_offset,
+                                 mojom::blink::ScrollType::kAnchoring);
       continue;
     }
 
@@ -585,10 +600,10 @@ void ScrollAnchor::ClearSelf() {
 void ScrollAnchor::Dispose() {
   if (scroller_) {
     LocalFrameView* frame_view = ScrollerLayoutBox(scroller_)->GetFrameView();
+    auto* root_frame_viewport = DynamicTo<RootFrameViewport>(scroller_.Get());
     ScrollableArea* owning_scroller =
-        scroller_->IsRootFrameViewport()
-            ? &ToRootFrameViewport(scroller_)->LayoutViewport()
-            : scroller_.Get();
+        root_frame_viewport ? &root_frame_viewport->LayoutViewport()
+                            : scroller_.Get();
     frame_view->DequeueScrollAnchoringAdjustment(owning_scroller);
     scroller_.Clear();
   }

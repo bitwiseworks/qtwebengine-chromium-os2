@@ -8,17 +8,17 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
-#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
-#include "third_party/blink/public/mojom/script/script_type.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/script/script_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/script/script.h"
-#include "third_party/blink/renderer/platform/cross_origin_attribute_value.h"
 #include "third_party/blink/renderer/platform/loader/fetch/client_hints_preferences.h"
+#include "third_party/blink/renderer/platform/loader/fetch/cross_origin_attribute_value.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
 
 namespace blink {
@@ -39,8 +39,6 @@ class CORE_EXPORT PreloadRequest {
 
   enum ReferrerSource { kDocumentIsReferrer, kBaseUrlIsReferrer };
 
-  // TODO(csharrison): Move the implementation to the cpp file when core/html
-  // gets its own testing source set in html/BUILD.gn.
   static std::unique_ptr<PreloadRequest> CreateIfNeeded(
       const String& initiator_name,
       const TextPosition& initiator_position,
@@ -54,24 +52,13 @@ class CORE_EXPORT PreloadRequest {
           FetchParameters::ResourceWidth(),
       const ClientHintsPreferences& client_hints_preferences =
           ClientHintsPreferences(),
-      RequestType request_type = kRequestTypePreload) {
-    // Never preload data URLs. We also disallow relative ref URLs which become
-    // data URLs if the document's URL is a data URL. We don't want to create
-    // extra resource requests with data URLs to avoid copy / initialization
-    // overhead, which can be significant for large URLs.
-    if (resource_url.IsEmpty() || resource_url.StartsWith("#") ||
-        ProtocolIs(resource_url, "data")) {
-      return nullptr;
-    }
-    return base::WrapUnique(new PreloadRequest(
-        initiator_name, initiator_position, resource_url, base_url,
-        resource_type, resource_width, client_hints_preferences, request_type,
-        referrer_policy, referrer_source, is_image_set));
-  }
+      RequestType request_type = kRequestTypePreload);
 
   Resource* Start(Document*);
 
   void SetDefer(FetchParameters::DeferOption defer) { defer_ = defer; }
+  FetchParameters::DeferOption DeferOption() const { return defer_; }
+
   void SetCharset(const String& charset) { charset_ = charset; }
   void SetCrossOrigin(CrossOriginAttributeValue cross_origin) {
     cross_origin_ = cross_origin;
@@ -126,11 +113,11 @@ class CORE_EXPORT PreloadRequest {
     return is_image_set_ == ResourceFetcher::kImageIsImageSet;
   }
 
-  void SetIsLazyloadImageDisabled(bool is_lazyload_image_disable) {
-    is_lazyload_image_disabled_ = is_lazyload_image_disable;
+  void SetIsLazyLoadImageEnabled(bool is_enabled) {
+    is_lazy_load_image_enabled_ = is_enabled;
   }
-  bool IsLazyloadImageDisabledForTesting() {
-    return is_lazyload_image_disabled_;
+  bool IsLazyLoadImageEnabledForTesting() {
+    return is_lazy_load_image_enabled_;
   }
 
  private:
@@ -161,30 +148,30 @@ class CORE_EXPORT PreloadRequest {
         referrer_source_(referrer_source),
         from_insertion_scanner_(false),
         is_image_set_(is_image_set),
-        is_lazyload_image_disabled_(false) {}
+        is_lazy_load_image_enabled_(false) {}
 
   KURL CompleteURL(Document*);
 
-  String initiator_name_;
-  TextPosition initiator_position_;
-  String resource_url_;
-  KURL base_url_;
+  const String initiator_name_;
+  const TextPosition initiator_position_;
+  const String resource_url_;
+  const KURL base_url_;
   String charset_;
-  ResourceType resource_type_;
+  const ResourceType resource_type_;
   mojom::ScriptType script_type_;
   CrossOriginAttributeValue cross_origin_;
   mojom::FetchImportanceMode importance_;
   String nonce_;
   FetchParameters::DeferOption defer_;
-  FetchParameters::ResourceWidth resource_width_;
-  ClientHintsPreferences client_hints_preferences_;
-  RequestType request_type_;
-  network::mojom::ReferrerPolicy referrer_policy_;
-  ReferrerSource referrer_source_;
+  const FetchParameters::ResourceWidth resource_width_;
+  const ClientHintsPreferences client_hints_preferences_;
+  const RequestType request_type_;
+  const network::mojom::ReferrerPolicy referrer_policy_;
+  const ReferrerSource referrer_source_;
   IntegrityMetadataSet integrity_metadata_;
   bool from_insertion_scanner_;
-  ResourceFetcher::IsImageSet is_image_set_;
-  bool is_lazyload_image_disabled_;
+  const ResourceFetcher::IsImageSet is_image_set_;
+  bool is_lazy_load_image_enabled_;
 };
 
 typedef Vector<std::unique_ptr<PreloadRequest>> PreloadRequestStream;

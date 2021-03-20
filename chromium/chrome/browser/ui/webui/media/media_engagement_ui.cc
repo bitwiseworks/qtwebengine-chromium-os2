@@ -5,17 +5,20 @@
 #include "chrome/browser/ui/webui/media/media_engagement_ui.h"
 
 #include <memory>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/media/media_engagement_score.h"
+#include "chrome/browser/media/media_engagement_score_details.mojom.h"
 #include "chrome/browser/media/media_engagement_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/browser_resources.h"
+#include "chrome/grit/dev_ui_browser_resources.h"
 #include "components/component_updater/component_updater_service.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
@@ -24,7 +27,8 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/web_preferences.h"
 #include "media/base/media_switches.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/common/pref_names.h"
@@ -47,11 +51,11 @@ class MediaEngagementScoreDetailsProviderImpl
  public:
   MediaEngagementScoreDetailsProviderImpl(
       content::WebUI* web_ui,
-      mojo::InterfaceRequest<media::mojom::MediaEngagementScoreDetailsProvider>
-          request)
+      mojo::PendingReceiver<media::mojom::MediaEngagementScoreDetailsProvider>
+          receiver)
       : web_ui_(web_ui),
         profile_(Profile::FromWebUI(web_ui)),
-        binding_(this, std::move(request)) {
+        receiver_(this, std::move(receiver)) {
     DCHECK(web_ui_);
     DCHECK(profile_);
     service_ = MediaEngagementService::Get(profile_);
@@ -77,6 +81,7 @@ class MediaEngagementScoreDetailsProviderImpl
         base::FeatureList::IsEnabled(
             media::kMediaEngagementBypassAutoplayPolicies),
         base::FeatureList::IsEnabled(media::kPreloadMediaEngagementData),
+        base::FeatureList::IsEnabled(media::kMediaEngagementHTTPSOnly),
         base::FeatureList::IsEnabled(media::kAutoplayDisableSettings),
         base::FeatureList::IsEnabled(media::kAutoplayWhitelistSettings),
         GetBlockAutoplayPref(),
@@ -128,7 +133,7 @@ class MediaEngagementScoreDetailsProviderImpl
 
   MediaEngagementService* service_;
 
-  mojo::Binding<media::mojom::MediaEngagementScoreDetailsProvider> binding_;
+  mojo::Receiver<media::mojom::MediaEngagementScoreDetailsProvider> receiver_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaEngagementScoreDetailsProviderImpl);
 };
@@ -142,21 +147,19 @@ MediaEngagementUI::MediaEngagementUI(content::WebUI* web_ui)
       content::WebUIDataSource::Create(chrome::kChromeUIMediaEngagementHost));
   source->AddResourcePath("media-engagement.js", IDR_MEDIA_ENGAGEMENT_JS);
   source->AddResourcePath(
-      "chrome/browser/media/media_engagement_score_details.mojom.js",
-      IDR_MEDIA_ENGAGEMENT_MOJO_JS);
-  source->AddResourcePath("url/mojom/url.mojom.js", IDR_URL_MOJO_JS);
+      "chrome/browser/media/media_engagement_score_details.mojom-lite.js",
+      IDR_MEDIA_ENGAGEMENT_SCORE_DETAILS_MOJOM_LITE_JS);
   source->SetDefaultResource(IDR_MEDIA_ENGAGEMENT_HTML);
-  source->UseGzip();
   content::WebUIDataSource::Add(Profile::FromWebUI(web_ui), source.release());
-  AddHandlerToRegistry(base::BindRepeating(
-      &MediaEngagementUI::BindMediaEngagementScoreDetailsProvider,
-      base::Unretained(this)));
 }
+
+WEB_UI_CONTROLLER_TYPE_IMPL(MediaEngagementUI)
 
 MediaEngagementUI::~MediaEngagementUI() = default;
 
-void MediaEngagementUI::BindMediaEngagementScoreDetailsProvider(
-    media::mojom::MediaEngagementScoreDetailsProviderRequest request) {
+void MediaEngagementUI::BindInterface(
+    mojo::PendingReceiver<media::mojom::MediaEngagementScoreDetailsProvider>
+        receiver) {
   ui_handler_ = std::make_unique<MediaEngagementScoreDetailsProviderImpl>(
-      web_ui(), std::move(request));
+      web_ui(), std::move(receiver));
 }

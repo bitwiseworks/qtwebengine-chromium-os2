@@ -124,7 +124,7 @@ static const unsigned char aiClass[] = {
 };
 
 /* An array to map all upper-case characters into their corresponding
-** lower-case character.
+** lower-case character. 
 **
 ** SQLite only considers US-ASCII (or EBCDIC) characters.  We do not
 ** handle case conversions for the UTF character set since the tables
@@ -171,7 +171,7 @@ static const unsigned char sqlite3UpperToLower[] = {
 ** The equivalent of tolower() is implemented using the sqlite3UpperToLower[]
 ** array. tolower() is used more often than toupper() by SQLite.
 **
-** Bit 0x40 is set if the character is non-alphanumeric and can be used in an
+** Bit 0x40 is set if the character is non-alphanumeric and can be used in an 
 ** SQLite identifier.  Identifiers are alphanumerics, "_", "$", and any
 ** non-ASCII UTF character. Hence the test for whether or not a character is
 ** part of an identifier is 0x46.
@@ -228,14 +228,14 @@ static const unsigned char sqlite3CtypeMap[256] = {
 ** IdChar(X) will be true.  Otherwise it is false.
 **
 ** For ASCII, any character with the high-order bit set is
-** allowed in an identifier.  For 7-bit characters,
+** allowed in an identifier.  For 7-bit characters, 
 ** sqlite3IsIdChar[X] must be 1.
 **
 ** For EBCDIC, the rules are more complex but have the same
 ** end result.
 **
 ** Ticket #1066.  the SQL standard does not allow '$' in the
-** middle of identifiers.  But many SQL implementations do.
+** middle of identifiers.  But many SQL implementations do. 
 ** SQLite will allow '$' in identifiers for compatibility.
 ** But the feature is undocumented.
 */
@@ -287,7 +287,7 @@ static const unsigned char sqlite3CtypeMap[256] = {
 #define TK_BLOB     TK_LITERAL
 
 /*
-** Return the length (in bytes) of the token that begins at z[0].
+** Return the length (in bytes) of the token that begins at z[0]. 
 ** Store the token type in *tokenType before returning.
 */
 static int sqlite3GetToken(const unsigned char *z, int *tokenType){
@@ -450,7 +450,7 @@ static int sqlite3GetToken(const unsigned char *z, int *tokenType){
         *tokenType = TK_FLOAT;
       }
       if( (z[i]=='e' || z[i]=='E') &&
-           ( sqlite3Isdigit(z[i+1])
+           ( sqlite3Isdigit(z[i+1]) 
             || ((z[i+1]=='+' || z[i+1]=='-') && sqlite3Isdigit(z[i+2]))
            )
       ){

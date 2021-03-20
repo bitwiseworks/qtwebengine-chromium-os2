@@ -18,7 +18,6 @@
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -49,22 +48,22 @@ void FlatTreeTraversalTest::SetupSampleHTML(const char* main_html,
                                             const char* shadow_html,
                                             unsigned index) {
   Element* body = GetDocument().body();
-  body->SetInnerHTMLFromString(String::FromUTF8(main_html));
-  Element* shadow_host = ToElement(NodeTraversal::ChildAt(*body, index));
+  body->setInnerHTML(String::FromUTF8(main_html));
+  auto* shadow_host = To<Element>(NodeTraversal::ChildAt(*body, index));
   ShadowRoot& shadow_root = shadow_host->CreateV0ShadowRootForTesting();
-  shadow_root.SetInnerHTMLFromString(String::FromUTF8(shadow_html));
+  shadow_root.setInnerHTML(String::FromUTF8(shadow_html));
   body->UpdateDistributionForFlatTreeTraversal();
 }
 
 void FlatTreeTraversalTest::SetupDocumentTree(const char* main_html) {
   Element* body = GetDocument().body();
-  body->SetInnerHTMLFromString(String::FromUTF8(main_html));
+  body->setInnerHTML(String::FromUTF8(main_html));
 }
 
 void FlatTreeTraversalTest::AttachV0ShadowRoot(Element& shadow_host,
                                                const char* shadow_inner_html) {
   ShadowRoot& shadow_root = shadow_host.CreateV0ShadowRootForTesting();
-  shadow_root.SetInnerHTMLFromString(String::FromUTF8(shadow_inner_html));
+  shadow_root.setInnerHTML(String::FromUTF8(shadow_inner_html));
   GetDocument().body()->UpdateDistributionForFlatTreeTraversal();
 }
 
@@ -73,7 +72,7 @@ void FlatTreeTraversalTest::AttachOpenShadowRoot(
     const char* shadow_inner_html) {
   ShadowRoot& shadow_root =
       shadow_host.AttachShadowRootInternal(ShadowRootType::kOpen);
-  shadow_root.SetInnerHTMLFromString(String::FromUTF8(shadow_inner_html));
+  shadow_root.setInnerHTML(String::FromUTF8(shadow_inner_html));
   GetDocument().body()->UpdateDistributionForFlatTreeTraversal();
 }
 

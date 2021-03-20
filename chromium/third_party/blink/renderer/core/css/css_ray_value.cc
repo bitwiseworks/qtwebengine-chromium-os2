@@ -11,12 +11,6 @@
 namespace blink {
 namespace cssvalue {
 
-CSSRayValue* CSSRayValue::Create(const CSSPrimitiveValue& angle,
-                                 const CSSIdentifierValue& size,
-                                 const CSSIdentifierValue* contain) {
-  return MakeGarbageCollected<CSSRayValue>(angle, size, contain);
-}
-
 CSSRayValue::CSSRayValue(const CSSPrimitiveValue& angle,
                          const CSSIdentifierValue& size,
                          const CSSIdentifierValue* contain)
@@ -42,7 +36,7 @@ bool CSSRayValue::Equals(const CSSRayValue& other) const {
          DataEquivalent(contain_, other.contain_);
 }
 
-void CSSRayValue::TraceAfterDispatch(blink::Visitor* visitor) {
+void CSSRayValue::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(angle_);
   visitor->Trace(size_);
   visitor->Trace(contain_);

@@ -10,10 +10,10 @@
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_string_collector.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_string_decoder_listener.h"
 #include "net/third_party/quiche/src/http2/hpack/tools/hpack_block_builder.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string_piece.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_test_helpers.h"
 #include "net/third_party/quiche/src/http2/test_tools/http2_random.h"
 #include "net/third_party/quiche/src/http2/tools/random_decoder_test.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 using ::testing::AssertionResult;
 
@@ -38,20 +38,20 @@ class HpackStringDecoderTest : public RandomDecoderTest {
   DecodeStatus ResumeDecoding(DecodeBuffer* b) override {
     // Provides coverage of DebugString and StateToString.
     // Not validating output.
-    VLOG(1) << decoder_.DebugString();
-    VLOG(2) << collector_;
+    HTTP2_VLOG(1) << decoder_.DebugString();
+    HTTP2_VLOG(2) << collector_;
     return decoder_.Resume(b, &listener_);
   }
 
-  AssertionResult Collected(Http2StringPiece s, bool huffman_encoded) {
-    VLOG(1) << collector_;
+  AssertionResult Collected(quiche::QuicheStringPiece s, bool huffman_encoded) {
+    HTTP2_VLOG(1) << collector_;
     return collector_.Collected(s, huffman_encoded);
   }
 
-  // expected_str is a Http2String rather than a const Http2String& or
-  // Http2StringPiece so that the lambda makes a copy of the string, and thus
+  // expected_str is a std::string rather than a const std::string& or
+  // QuicheStringPiece so that the lambda makes a copy of the string, and thus
   // the string to be passed to Collected outlives the call to MakeValidator.
-  Validator MakeValidator(const Http2String& expected_str,
+  Validator MakeValidator(const std::string& expected_str,
                           bool expected_huffman) {
     return
         [expected_str, expected_huffman, this](
@@ -64,9 +64,9 @@ class HpackStringDecoderTest : public RandomDecoderTest {
             VERIFY_NE(collector_,
                       HpackStringCollector(expected_str, expected_huffman));
           }
-          VLOG(2) << collector_.ToString();
+          HTTP2_VLOG(2) << collector_.ToString();
           collector_.Clear();
-          VLOG(2) << collector_;
+          HTTP2_VLOG(2) << collector_;
           return result;
         };
   }
@@ -111,7 +111,7 @@ TEST_F(HpackStringDecoderTest, DecodeShortString) {
   {
     Validator validator =
         ValidateDoneAndOffset(11, MakeValidator("start end.", kUncompressed));
-    Http2StringPiece data("\x0astart end.");
+    quiche::QuicheStringPiece data("\x0astart end.");
     DecodeBuffer b(data);
     EXPECT_TRUE(
         DecodeAndValidateSeveralWays(&b, kMayReturnZeroOnFirst, validator));
@@ -119,8 +119,8 @@ TEST_F(HpackStringDecoderTest, DecodeShortString) {
 }
 
 TEST_F(HpackStringDecoderTest, DecodeLongStrings) {
-  Http2String name = Random().RandString(1024);
-  Http2String value = Random().RandString(65536);
+  std::string name = Random().RandString(1024);
+  std::string value = Random().RandString(65536);
   HpackBlockBuilder hbb;
 
   hbb.AppendString(false, name);

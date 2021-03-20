@@ -18,11 +18,10 @@ namespace device {
 class PlatformSensorProviderBase {
  public:
   using CreateSensorCallback =
-      base::Callback<void(scoped_refptr<PlatformSensor>)>;
+      base::OnceCallback<void(scoped_refptr<PlatformSensor>)>;
 
   // Creates new instance of PlatformSensor.
-  void CreateSensor(mojom::SensorType type,
-                    const CreateSensorCallback& callback);
+  void CreateSensor(mojom::SensorType type, CreateSensorCallback callback);
 
   // Gets previously created instance of PlatformSensor by sensor type |type|.
   scoped_refptr<PlatformSensor> GetSensor(mojom::SensorType type);
@@ -34,11 +33,6 @@ class PlatformSensorProviderBase {
   // alive; 'false' otherwise.
   bool HasSensors() const;
 
-  // Implementations might want to override this in order to be able
-  // to read from sensor files. For example, linux does so.
-  virtual void SetFileTaskRunner(
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner) {}
-
  protected:
   PlatformSensorProviderBase();
   virtual ~PlatformSensorProviderBase();
@@ -46,7 +40,7 @@ class PlatformSensorProviderBase {
   // Method that must be implemented by platform specific classes.
   virtual void CreateSensorInternal(mojom::SensorType type,
                                     SensorReadingSharedBuffer* reading_buffer,
-                                    const CreateSensorCallback& callback) = 0;
+                                    CreateSensorCallback callback) = 0;
 
   // Implementations might override this method to free resources when there
   // are no sensors left.

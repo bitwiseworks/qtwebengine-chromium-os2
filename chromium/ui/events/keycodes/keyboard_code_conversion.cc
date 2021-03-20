@@ -11,6 +11,7 @@
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 #include "ui/events/keycodes/dom_us_layout_data.h"
+#include "ui/events/types/event_type.h"
 
 namespace ui {
 
@@ -261,6 +262,36 @@ KeyboardCode DomCodeToUsLayoutKeyboardCode(DomCode dom_code) {
 KeyboardCode DomCodeToUsLayoutNonLocatedKeyboardCode(DomCode dom_code) {
   return LocatedToNonLocatedKeyboardCode(
       DomCodeToUsLayoutKeyboardCode(dom_code));
+}
+
+int ModifierDomKeyToEventFlag(DomKey key) {
+  switch (key) {
+    case DomKey::ALT:
+      return EF_ALT_DOWN;
+    case DomKey::ALT_GRAPH:
+      return EF_ALTGR_DOWN;
+    case DomKey::CAPS_LOCK:
+      return EF_CAPS_LOCK_ON;
+    case DomKey::CONTROL:
+      return EF_CONTROL_DOWN;
+    case DomKey::META:
+      return EF_COMMAND_DOWN;
+    case DomKey::SHIFT:
+      return EF_SHIFT_DOWN;
+    case DomKey::SHIFT_LEVEL5:
+      return EF_MOD3_DOWN;
+    default:
+      return EF_NONE;
+  }
+  // Not represented:
+  //   DomKey::ACCEL
+  //   DomKey::FN
+  //   DomKey::FN_LOCK
+  //   DomKey::HYPER
+  //   DomKey::NUM_LOCK
+  //   DomKey::SCROLL_LOCK
+  //   DomKey::SUPER
+  //   DomKey::SYMBOL_LOCK
 }
 
 }  // namespace ui

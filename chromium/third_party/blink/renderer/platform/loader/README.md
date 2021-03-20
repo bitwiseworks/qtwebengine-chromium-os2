@@ -6,8 +6,8 @@ This document describes how files under `platform/loader/` are organized.
 
 Contains Cross-Origin Resource Sharing (CORS) related files. Some functions
 in this directory will be removed once CORS support is moved to
-//services/network. Please contact {kinuko,tyoshino,toyoshim}@chromium.org when
-you need to depend on this directory from new code.
+//services/network. Please contact {kinuko,toyoshim}@chromium.org when you need
+to depend on this directory from new code.
 
 ## fetch
 
@@ -18,5 +18,5 @@ needed to use them from `core/`.  Otherwise they can be used only in
 ## testing
 
 Contains helper files for testing that are available in both
-`blink_platform_unittests` and `webkit_unit_tests`.
+`blink_platform_unittests` and `blink_unittests`.
 These files are built as a part of the `platform:test_support` static library.

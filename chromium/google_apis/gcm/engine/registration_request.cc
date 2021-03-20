@@ -12,7 +12,6 @@
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "google_apis/gcm/base/gcm_util.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
@@ -121,21 +120,23 @@ RegistrationRequest::RegistrationRequest(
     const RequestInfo& request_info,
     std::unique_ptr<CustomRequestHandler> custom_request_handler,
     const net::BackoffEntry::Policy& backoff_policy,
-    const RegistrationCallback& callback,
+    RegistrationCallback callback,
     int max_retry_count,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
     GCMStatsRecorder* recorder,
     const std::string& source_to_record)
-    : callback_(callback),
+    : callback_(std::move(callback)),
       request_info_(request_info),
       custom_request_handler_(std::move(custom_request_handler)),
       registration_url_(registration_url),
       backoff_entry_(&backoff_policy),
       url_loader_factory_(std::move(url_loader_factory)),
       retries_left_(max_retry_count),
+      io_task_runner_(io_task_runner),
       recorder_(recorder),
-      source_to_record_(source_to_record),
-      weak_ptr_factory_(this) {
+      source_to_record_(source_to_record) {
+  DCHECK(io_task_runner_);
   DCHECK_GE(max_retry_count, 0);
 }
 
@@ -176,20 +177,19 @@ void RegistrationRequest::Start() {
   auto request = std::make_unique<network::ResourceRequest>();
   request->url = registration_url_;
   request->method = "POST";
-  request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   BuildRequestHeaders(&request->headers);
 
   std::string body;
   BuildRequestBody(&body);
 
-  DVLOG(1) << "Performing registration for: " << request_info_.app_id();
-  DVLOG(1) << "Registration request: " << body;
+  // TODO(crbug.com/1043347): Change back to DVLOG when the bug is resolved.
+  VLOG(1) << "Performing registration for: " << request_info_.app_id();
+  VLOG(1) << "Registration request: " << body;
   url_loader_ =
       network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
   url_loader_->AttachStringForUpload(body, kRegistrationRequestContentType);
   recorder_->RecordRegistrationSent(request_info_.app_id(), source_to_record_);
-  request_start_time_ = base::TimeTicks::Now();
   url_loader_->SetAllowHttpErrorResults(true);
   url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       url_loader_factory_.get(),
@@ -218,21 +218,23 @@ void RegistrationRequest::BuildRequestBody(std::string* body) {
 }
 
 void RegistrationRequest::RetryWithBackoff() {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   DCHECK_GT(retries_left_, 0);
   --retries_left_;
   url_loader_.reset();
   backoff_entry_.InformOfRequest(false);
 
-  DVLOG(1) << "Delaying GCM registration of app: " << request_info_.app_id()
-           << ", for " << backoff_entry_.GetTimeUntilRelease().InMilliseconds()
-           << " milliseconds.";
+  VLOG(1) << "Delaying GCM registration of app: " << request_info_.app_id()
+          << ", for " << backoff_entry_.GetTimeUntilRelease().InMilliseconds()
+          << " milliseconds.";
   recorder_->RecordRegistrationRetryDelayed(
       request_info_.app_id(), source_to_record_,
       backoff_entry_.GetTimeUntilRelease().InMilliseconds(), retries_left_ + 1);
   DCHECK(!weak_ptr_factory_.HasWeakPtrs());
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  io_task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&RegistrationRequest::Start, weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&RegistrationRequest::Start,
+                     weak_ptr_factory_.GetWeakPtr()),
       backoff_entry_.GetTimeUntilRelease());
 }
 
@@ -241,13 +243,13 @@ RegistrationRequest::Status RegistrationRequest::ParseResponse(
     std::unique_ptr<std::string> body,
     std::string* token) {
   if (source->NetError() != net::OK) {
-    DVLOG(1) << "Registration URL fetching failed.";
+    LOG(ERROR) << "Registration URL fetching failed.";
     return URL_FETCHING_FAILED;
   }
 
   std::string response;
   if (!body) {
-    DVLOG(1) << "Failed to get registration response body.";
+    LOG(ERROR) << "Failed to get registration response body.";
     return NO_RESPONSE_BODY;
   }
   response = std::move(*body);
@@ -258,21 +260,21 @@ RegistrationRequest::Status RegistrationRequest::ParseResponse(
   if (error_pos != std::string::npos) {
     std::string error =
         response.substr(error_pos + base::size(kErrorPrefix) - 1);
-    DVLOG(1) << "Registration response error message: " << error;
+    LOG(ERROR) << "Registration response error message: " << error;
     return GetStatusFromError(error);
   }
 
   // Can't even get any header info.
   if (!source->ResponseInfo() || !source->ResponseInfo()->headers) {
-    DVLOG(1) << "Registration HTTP response info or header missing";
+    LOG(ERROR) << "Registration HTTP response info or header missing";
     return HTTP_NOT_OK;
   }
 
   // If we cannot tell what the error is, but at least we know response code was
   // not OK.
   if (source->ResponseInfo()->headers->response_code() != net::HTTP_OK) {
-    DVLOG(1) << "Registration HTTP response code not OK: "
-             << source->ResponseInfo()->headers->response_code();
+    LOG(ERROR) << "Registration HTTP response code not OK: "
+               << source->ResponseInfo()->headers->response_code();
     return HTTP_NOT_OK;
   }
 
@@ -282,6 +284,7 @@ RegistrationRequest::Status RegistrationRequest::ParseResponse(
     return SUCCESS;
   }
 
+  LOG(ERROR) << "Registration HTTP response parsing failed";
   return RESPONSE_PARSING_FAILED;
 }
 
@@ -294,10 +297,8 @@ void RegistrationRequest::OnURLLoadComplete(
                                         source_to_record_, status);
 
   DCHECK(custom_request_handler_.get());
-  custom_request_handler_->ReportUMAs(
-      status,
-      backoff_entry_.failure_count(),
-      base::TimeTicks::Now() - request_start_time_);
+  custom_request_handler_->ReportStatusToUMA(status);
+  custom_request_handler_->ReportNetErrorCodeToUMA(source->NetError());
 
   if (ShouldRetryWithStatus(status)) {
     if (retries_left_ > 0) {
@@ -309,13 +310,11 @@ void RegistrationRequest::OnURLLoadComplete(
     recorder_->RecordRegistrationResponse(request_info_.app_id(),
                                           source_to_record_, status);
 
-    // Only REACHED_MAX_RETRIES is reported because the function will skip
-    // reporting count and time when status is not SUCCESS.
     DCHECK(custom_request_handler_.get());
-    custom_request_handler_->ReportUMAs(status, 0, base::TimeDelta());
+    custom_request_handler_->ReportStatusToUMA(status);
   }
 
-  callback_.Run(status, token);
+  std::move(callback_).Run(status, token);
 }
 
 }  // namespace gcm

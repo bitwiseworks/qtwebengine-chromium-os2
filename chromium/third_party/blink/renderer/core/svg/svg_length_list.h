@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/svg/properties/svg_list_property_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_length.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -44,11 +45,7 @@ class SVGLengthList final
  public:
   typedef SVGLengthListTearOff TearOffType;
 
-  static SVGLengthList* Create(SVGLengthMode mode = SVGLengthMode::kOther) {
-    return MakeGarbageCollected<SVGLengthList>(mode);
-  }
-
-  explicit SVGLengthList(SVGLengthMode);
+  explicit SVGLengthList(SVGLengthMode = SVGLengthMode::kOther);
   ~SVGLengthList() override;
 
   SVGParsingError SetValueAsString(const String&);
@@ -60,7 +57,7 @@ class SVGLengthList final
   SVGLengthMode UnitMode() const { return mode_; }
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from_value,
@@ -83,7 +80,12 @@ class SVGLengthList final
   SVGLengthMode mode_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGLengthList);
+template <>
+struct DowncastTraits<SVGLengthList> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGLengthList::ClassType();
+  }
+};
 
 }  // namespace blink
 

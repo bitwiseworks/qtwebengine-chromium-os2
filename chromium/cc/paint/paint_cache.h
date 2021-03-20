@@ -37,13 +37,23 @@ namespace cc {
 using PaintCacheId = uint32_t;
 using PaintCacheIds = std::vector<PaintCacheId>;
 enum class PaintCacheDataType : uint32_t { kTextBlob, kPath, kLast = kPath };
+enum class PaintCacheEntryState : uint32_t {
+  kEmpty,
+  kCached,
+  kInlined,
+  kLast = kInlined
+};
+
 constexpr size_t PaintCacheDataTypeCount =
     static_cast<uint32_t>(PaintCacheDataType::kLast) + 1u;
 
 class CC_PAINT_EXPORT ClientPaintCache {
  public:
   explicit ClientPaintCache(size_t max_budget_bytes);
+  ClientPaintCache(const ClientPaintCache&) = delete;
   ~ClientPaintCache();
+
+  ClientPaintCache& operator=(const ClientPaintCache&) = delete;
 
   bool Get(PaintCacheDataType type, PaintCacheId id);
   void Put(PaintCacheDataType type, PaintCacheId id, size_t size);
@@ -82,8 +92,6 @@ class CC_PAINT_EXPORT ClientPaintCache {
   // send them to the service-side cache. This is necessary to ensure we
   // maintain an accurate mirror of the service-side state.
   base::StackVector<CacheKey, 1> pending_entries_;
-
-  DISALLOW_COPY_AND_ASSIGN(ClientPaintCache);
 };
 
 class CC_PAINT_EXPORT ServicePaintCache {
@@ -96,10 +104,14 @@ class CC_PAINT_EXPORT ServicePaintCache {
 
   // Retrieves an entry for |id| stored in the cache. Or nullptr if the entry
   // is not found.
-  sk_sp<SkTextBlob> GetTextBlob(PaintCacheId id);
+  sk_sp<SkTextBlob> GetTextBlob(PaintCacheId id) const;
 
+  // Stores |path| received from the client in the cache.
   void PutPath(PaintCacheId, SkPath path);
-  SkPath* GetPath(PaintCacheId id);
+
+  // Retrieves an entry for |id| stored in the cache. The path data is stored in
+  // |path| pointed memory. Returns false, if the entry is not found.
+  bool GetPath(PaintCacheId id, SkPath* path) const;
 
   void Purge(PaintCacheDataType type,
              size_t n,

@@ -2,6 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+# Nothing outside //chrome/chrome_cleaner can depend on these targets.
+visibility = [ "//chrome/chrome_cleaner/*" ]
+
 source_set("chrome_util_lib") {
   sources = [
     "chrome_util.cc",
@@ -9,7 +12,7 @@ source_set("chrome_util_lib") {
   ]
 
   deps = [
-    "//base:base",
+    "//base",
     "//chrome/chrome_cleaner/os:common_os",
     "//components/chrome_cleaner/public/constants:constants",
   ]
@@ -24,7 +27,7 @@ source_set("extensions_util_lib") {
   deps = [
     ":chrome_util_lib",
     ":force_installed_extension",
-    "//base:base",
+    "//base",
     "//chrome/chrome_cleaner/logging/proto:shared_data_proto",
     "//chrome/chrome_cleaner/os:common_os",
     "//chrome/chrome_cleaner/parsers/json_parser",
@@ -39,10 +42,11 @@ source_set("force_installed_extension") {
     "force_installed_extension.h",
   ]
 
-  deps = [
-    ":extension_id",
-    "//chrome/chrome_cleaner/logging/proto:shared_data_proto",
-  ]
+  deps = [ ":extension_id" ]
+
+  public_deps = [ "//chrome/chrome_cleaner/logging/proto:shared_data_proto" ]
+
+  all_dependent_configs = [ "//third_party/protobuf:using_proto" ]
 }
 
 source_set("extension_file_logger_lib") {
@@ -51,7 +55,7 @@ source_set("extension_file_logger_lib") {
     "extension_file_logger.h",
   ]
   deps = [
-    "//base:base",
+    "//base",
     "//chrome/chrome_cleaner/os:common_os",
   ]
 }
@@ -67,7 +71,7 @@ source_set("unittest_sources") {
   deps = [
     ":extension_file_logger_lib",
     ":extensions_util_lib",
-    "//base:base",
+    "//base",
     "//base/test:test_support",
     "//chrome/chrome_cleaner/os:common_os",
     "//chrome/chrome_cleaner/parsers/json_parser",
@@ -83,7 +87,5 @@ source_set("extension_id") {
     "extension_id.h",
   ]
 
-  deps = [
-    "//base:base",
-  ]
+  deps = [ "//base" ]
 }

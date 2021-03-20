@@ -12,19 +12,19 @@
  * @throws {Error} In case of non supported markup.
  * @return {DocumentFragment} A document fragment containing the DOM tree.
  */
-const parseHtmlSubset = (function() {
+/* #export */ const parseHtmlSubset = (function() {
   'use strict';
 
   const allowedAttributes = {
-    'href': function(node, value) {
+    'href'(node, value) {
       // Only allow a[href] starting with chrome:// and https://
-      return node.tagName == 'A' &&
+      return node.tagName === 'A' &&
           (value.startsWith('chrome://') || value.startsWith('https://'));
     },
-    'target': function(node, value) {
+    'target'(node, value) {
       // Only allow a[target='_blank'].
-      // TODO(dbeam): are there valid use cases for target != '_blank'?
-      return node.tagName == 'A' && value == '_blank';
+      // TODO(dbeam): are there valid use cases for target !== '_blank'?
+      return node.tagName === 'A' && value === '_blank';
     },
   };
 
@@ -39,7 +39,7 @@ const parseHtmlSubset = (function() {
   function merge(var_args) {
     const clone = {};
     for (let i = 0; i < arguments.length; ++i) {
-      if (typeof arguments[i] == 'object') {
+      if (typeof arguments[i] === 'object') {
         for (const key in arguments[i]) {
           if (arguments[i].hasOwnProperty(key)) {
             clone[key] = arguments[i][key];
@@ -58,7 +58,7 @@ const parseHtmlSubset = (function() {
   }
 
   function assertElement(tags, node) {
-    if (tags.indexOf(node.tagName) == -1) {
+    if (tags.indexOf(node.tagName) === -1) {
       throw Error(node.tagName + ' is not supported');
     }
   }

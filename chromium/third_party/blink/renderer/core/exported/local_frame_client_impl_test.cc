@@ -30,6 +30,8 @@
 
 #include "third_party/blink/renderer/core/exported/local_frame_client_impl.h"
 
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
@@ -38,7 +40,6 @@
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 using testing::_;
@@ -68,15 +69,17 @@ class LocalFrameClientImplTest : public testing::Test {
   void TearDown() override {
     // Tearing down the WebView by resetting the helper will call
     // UserAgentOverride() in order to store the information for detached
-    // requests.
-    EXPECT_CALL(WebLocalFrameClient(), UserAgentOverride());
+    // requests.  This will happen twice since UserAgentOverride() is called
+    // for UserAgentMetadata() saving as well.
+    EXPECT_CALL(WebLocalFrameClient(), UserAgentOverride())
+        .WillRepeatedly(Return(WebString()));
     helper_.Reset();
   }
 
   WebString UserAgent() {
     // The test always returns the same user agent .
-    WTF::CString user_agent = GetLocalFrameClient().UserAgent().Utf8();
-    return WebString::FromUTF8(user_agent.data(), user_agent.length());
+    std::string user_agent = GetLocalFrameClient().UserAgent().Utf8();
+    return WebString::FromUTF8(user_agent.c_str(), user_agent.length());
   }
 
   WebLocalFrameImpl* MainFrame() { return helper_.LocalMainFrame(); }
@@ -85,7 +88,7 @@ class LocalFrameClientImplTest : public testing::Test {
     return web_frame_client_;
   }
   LocalFrameClient& GetLocalFrameClient() {
-    return *ToLocalFrameClientImpl(MainFrame()->GetFrame()->Client());
+    return *To<LocalFrameClientImpl>(MainFrame()->GetFrame()->Client());
   }
 
  private:

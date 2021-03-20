@@ -22,7 +22,7 @@ std::string DumpIPAddress(const IPAddress& v) {
   for (size_t i = 0; i < v.bytes().size(); ++i) {
     if (i != 0)
       out.append(",");
-    out.append(base::UintToString(v.bytes()[i]));
+    out.append(base::NumberToString(v.bytes()[i]));
   }
   return out;
 }
@@ -648,6 +648,35 @@ TEST(IPAddressTest, IPAddressStartsWith) {
   uint8_t ipv6_prefix5[] = {42, 0, 20, 80, 64, 12, 12, 9, 0,
                             0,  0, 0,  0,  0,  0,  0,  10};
   EXPECT_FALSE(IPAddressStartsWith(ipv6_address, ipv6_prefix5));
+}
+
+TEST(IPAddressTest, IsLinkLocal) {
+  const char* kPositive[] = {
+      "169.254.0.0",
+      "169.254.100.1",
+      "169.254.100.1",
+      "::ffff:169.254.0.0",
+      "::ffff:169.254.100.1",
+      "fe80::1",
+      "fe81::1",
+  };
+
+  for (const char* literal : kPositive) {
+    IPAddress ip_address;
+    ASSERT_TRUE(ip_address.AssignFromIPLiteral(literal));
+    EXPECT_TRUE(ip_address.IsLinkLocal()) << literal;
+  }
+
+  const char* kNegative[] = {
+      "170.254.0.0",        "169.255.0.0",        "::169.254.0.0",
+      "::fffe:169.254.0.0", "::ffff:169.255.0.0", "fec0::1",
+  };
+
+  for (const char* literal : kNegative) {
+    IPAddress ip_address;
+    ASSERT_TRUE(ip_address.AssignFromIPLiteral(literal));
+    EXPECT_FALSE(ip_address.IsLinkLocal()) << literal;
+  }
 }
 
 }  // anonymous namespace

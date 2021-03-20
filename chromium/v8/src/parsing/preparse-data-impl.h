@@ -7,7 +7,9 @@
 
 #include "src/parsing/preparse-data.h"
 
-#include "src/assert-scope.h"
+#include <memory>
+
+#include "src/common/assert-scope.h"
 
 namespace v8 {
 namespace internal {
@@ -59,7 +61,7 @@ class BaseConsumedPreparseData : public ConsumedPreparseData {
 
      private:
       ByteData* consumed_data_;
-      DISALLOW_HEAP_ALLOCATION(no_gc);
+      DISALLOW_HEAP_ALLOCATION(no_gc)
     };
 
     void SetPosition(int position) {
@@ -92,8 +94,8 @@ class BaseConsumedPreparseData : public ConsumedPreparseData {
     }
 
     int32_t ReadVarint32() {
-      DCHECK(HasRemainingBytes(kVarintMinSize));
-      DCHECK_EQ(data_.get(index_++), kVarintMinSize);
+      DCHECK(HasRemainingBytes(kVarint32MinSize));
+      DCHECK_EQ(data_.get(index_++), kVarint32MinSize);
       int32_t value = 0;
       bool has_another_byte;
       unsigned shift = 0;
@@ -103,7 +105,7 @@ class BaseConsumedPreparseData : public ConsumedPreparseData {
         shift += 7;
         has_another_byte = byte & 0x80;
       } while (has_another_byte);
-      DCHECK_EQ(data_.get(index_++), kVarintEndMarker);
+      DCHECK_EQ(data_.get(index_++), kVarint32EndMarker);
       stored_quarters_ = 0;
       return value;
     }
@@ -152,19 +154,21 @@ class BaseConsumedPreparseData : public ConsumedPreparseData {
 
   ProducedPreparseData* GetDataForSkippableFunction(
       Zone* zone, int start_position, int* end_position, int* num_parameters,
-      int* num_inner_functions, bool* uses_super_property,
+      int* function_length, int* num_inner_functions, bool* uses_super_property,
       LanguageMode* language_mode) final;
 
-  void RestoreScopeAllocationData(DeclarationScope* scope) final;
+  void RestoreScopeAllocationData(DeclarationScope* scope,
+                                  AstValueFactory* ast_value_factory) final;
 
 #ifdef DEBUG
   bool VerifyDataStart();
 #endif
 
  private:
-  void RestoreDataForScope(Scope* scope);
+  void RestoreDataForScope(Scope* scope, AstValueFactory* ast_value_factory);
   void RestoreDataForVariable(Variable* var);
-  void RestoreDataForInnerScopes(Scope* scope);
+  void RestoreDataForInnerScopes(Scope* scope,
+                                 AstValueFactory* ast_value_factory);
 
   std::unique_ptr<ByteData> scope_data_;
   // When consuming the data, these indexes point to the data we're going to
@@ -191,9 +195,11 @@ class OnHeapConsumedPreparseData final
 // A serialized PreparseData in zone memory (as apposed to being on-heap).
 class ZonePreparseData : public ZoneObject {
  public:
-  ZonePreparseData(Zone* zone, Vector<uint8_t>* byte_data, int child_length);
+  V8_EXPORT_PRIVATE ZonePreparseData(Zone* zone, Vector<uint8_t>* byte_data,
+                                     int child_length);
 
   Handle<PreparseData> Serialize(Isolate* isolate);
+  Handle<PreparseData> Serialize(OffThreadIsolate* isolate);
 
   int children_length() const { return static_cast<int>(children_.size()); }
 
@@ -212,6 +218,12 @@ class ZonePreparseData : public ZoneObject {
 
   DISALLOW_COPY_AND_ASSIGN(ZonePreparseData);
 };
+
+ZonePreparseData* PreparseDataBuilder::ByteData::CopyToZone(
+    Zone* zone, int children_length) {
+  DCHECK(is_finalized_);
+  return new (zone) ZonePreparseData(zone, &zone_byte_data_, children_length);
+}
 
 // Implementation of ConsumedPreparseData for PreparseData
 // serialized into zone memory.

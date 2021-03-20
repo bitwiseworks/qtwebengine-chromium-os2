@@ -27,7 +27,7 @@
 #include "content/public/test/hit_test_region_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/events/event_switches.h"
 #include "ui/latency/latency_info.h"
 
@@ -89,7 +89,7 @@ class MainThreadEventQueueBrowserTest : public ContentBrowserTest {
  protected:
   void LoadURL(const char* page_data) {
     const GURL data_url(page_data);
-    NavigateToURL(shell(), data_url);
+    EXPECT_TRUE(NavigateToURL(shell(), data_url));
 
     RenderWidgetHostImpl* host = GetWidgetHost();
     host->GetView()->SetSize(gfx::Size(400, 400));

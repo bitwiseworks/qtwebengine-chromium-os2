@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "components/bookmarks/browser/history_bookmark_model.h"
@@ -40,14 +41,19 @@ class UrlIndex : public HistoryBookmarkModel {
   BookmarkNode* root() { return root_.get(); }
 
   // Adds |node| to |parent| at |index|.
-  void Add(BookmarkNode* parent, int index, std::unique_ptr<BookmarkNode> node);
+  void Add(BookmarkNode* parent,
+           size_t index,
+           std::unique_ptr<BookmarkNode> node);
 
   // Removes |node| and all its descendants from the map, returns the set of
   // urls that are no longer contained in the index.
   std::unique_ptr<BookmarkNode> Remove(BookmarkNode* node,
                                        std::set<GURL>* removed_urls);
 
+  // Mutation of bookmark node fields that are exposed to HistoryBookmarkModel,
+  // which means must acquire a lock. Must be called from the UI thread.
   void SetUrl(BookmarkNode* node, const GURL& url);
+  void SetTitle(BookmarkNode* node, const base::string16& title);
 
   // Returns the nodes whose icon_url is |icon_url|.
   void GetNodesWithIconUrl(const GURL& icon_url,

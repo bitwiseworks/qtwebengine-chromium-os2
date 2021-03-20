@@ -11,12 +11,12 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/test_personal_data_manager.h"
 #include "components/payments/content/payment_request_spec.h"
-#include "components/payments/core/autofill_payment_instrument.h"
+#include "components/payments/core/autofill_payment_app.h"
 #include "components/payments/core/test_payment_request_delegate.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
@@ -32,20 +32,23 @@ class PaymentResponseHelperTest : public testing::Test,
         billing_addresses_({&address_}) {
     test_personal_data_manager_.AddProfile(address_);
 
-    // Set up the autofill payment instrument.
-    autofill::CreditCard visa_card = autofill::test::GetCreditCard();
-    visa_card.set_billing_address_id(address_.guid());
-    visa_card.set_use_count(5u);
-    autofill_instrument_ = std::make_unique<AutofillPaymentInstrument>(
-        "visa", visa_card, /*matches_merchant_card_type_exactly=*/true,
-        billing_addresses_, "en-US", &test_payment_request_delegate_);
+    // Set up the autofill payment app.
+    visa_card_ = autofill::test::GetCreditCard();
+    visa_card_.set_billing_address_id(address_.guid());
+    visa_card_.set_use_count(5u);
+    autofill_app_ = std::make_unique<AutofillPaymentApp>(
+        "visa", visa_card_, billing_addresses_, "en-US",
+        &test_payment_request_delegate_);
   }
   ~PaymentResponseHelperTest() override {}
 
   // PaymentRequestState::Delegate:
   void OnPaymentResponseReady(mojom::PaymentResponsePtr response) override {
     payment_response_ = std::move(response);
-  };
+  }
+
+  // PaymentRequestState::Delegate:
+  void OnPaymentResponseError(const std::string& error_message) override {}
 
   // Convenience method to create a PaymentRequestSpec with specified |details|
   // and |method_data|.
@@ -87,7 +90,8 @@ class PaymentResponseHelperTest : public testing::Test,
   PaymentRequestSpec* spec() { return spec_.get(); }
   const mojom::PaymentResponsePtr& response() { return payment_response_; }
   autofill::AutofillProfile* test_address() { return &address_; }
-  PaymentInstrument* test_instrument() { return autofill_instrument_.get(); }
+  const autofill::CreditCard& test_credit_card() { return visa_card_; }
+  PaymentApp* test_app() { return autofill_app_.get(); }
   PaymentRequestDelegate* test_payment_request_delegate() {
     return &test_payment_request_delegate_;
   }
@@ -100,8 +104,9 @@ class PaymentResponseHelperTest : public testing::Test,
 
   // Test data.
   autofill::AutofillProfile address_;
+  autofill::CreditCard visa_card_;
   const std::vector<autofill::AutofillProfile*> billing_addresses_;
-  std::unique_ptr<AutofillPaymentInstrument> autofill_instrument_;
+  std::unique_ptr<AutofillPaymentApp> autofill_app_;
 };
 
 // Test generating a PaymentResponse.
@@ -111,28 +116,32 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_SupportedMethod) {
 
   // "visa" is specified directly in the supportedMethods so it is returned
   // as the method name.
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
   EXPECT_EQ("visa", response()->method_name);
   EXPECT_EQ(
-      "{\"billingAddress\":"
-      "{\"addressLine\":[\"666 Erebus St.\",\"Apt 8\"],"
-      "\"city\":\"Elysium\","
-      "\"country\":\"US\","
-      "\"dependentLocality\":\"\","
-      "\"languageCode\":\"\","
-      "\"organization\":\"Underworld\","
-      "\"phone\":\"16502111111\","
-      "\"postalCode\":\"91111\","
-      "\"recipient\":\"John H. Doe\","
-      "\"region\":\"CA\","
-      "\"sortingCode\":\"\"},"
-      "\"cardNumber\":\"4111111111111111\","
-      "\"cardSecurityCode\":\"123\","
-      "\"cardholderName\":\"Test User\","
-      "\"expiryMonth\":\"11\","
-      "\"expiryYear\":\"2022\"}",
+      base::StringPrintf(
+          "{\"billingAddress\":"
+          "{\"addressLine\":[\"666 Erebus St.\",\"Apt 8\"],"
+          "\"city\":\"Elysium\","
+          "\"country\":\"US\","
+          "\"dependentLocality\":\"\","
+          "\"organization\":\"Underworld\","
+          "\"phone\":\"16502111111\","
+          "\"postalCode\":\"91111\","
+          "\"recipient\":\"John H. Doe\","
+          "\"region\":\"CA\","
+          "\"sortingCode\":\"\"},"
+          "\"cardNumber\":\"4111111111111111\","
+          "\"cardSecurityCode\":\"123\","
+          "\"cardholderName\":\"Test User\","
+          "\"expiryMonth\":\"%s\","
+          "\"expiryYear\":\"%s\"}",
+          base::UTF16ToUTF8(test_credit_card().Expiration2DigitMonthAsString())
+              .c_str(),
+          base::UTF16ToUTF8(test_credit_card().Expiration4DigitYearAsString())
+              .c_str()),
       response()->stringified_details);
 }
 
@@ -150,28 +159,32 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_BasicCard) {
                                     std::move(method_data));
 
   // "basic-card" is specified so it is returned as the method name.
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
   EXPECT_EQ("basic-card", response()->method_name);
   EXPECT_EQ(
-      "{\"billingAddress\":"
-      "{\"addressLine\":[\"666 Erebus St.\",\"Apt 8\"],"
-      "\"city\":\"Elysium\","
-      "\"country\":\"US\","
-      "\"dependentLocality\":\"\","
-      "\"languageCode\":\"\","
-      "\"organization\":\"Underworld\","
-      "\"phone\":\"16502111111\","
-      "\"postalCode\":\"91111\","
-      "\"recipient\":\"John H. Doe\","
-      "\"region\":\"CA\","
-      "\"sortingCode\":\"\"},"
-      "\"cardNumber\":\"4111111111111111\","
-      "\"cardSecurityCode\":\"123\","
-      "\"cardholderName\":\"Test User\","
-      "\"expiryMonth\":\"11\","
-      "\"expiryYear\":\"2022\"}",
+      base::StringPrintf(
+          "{\"billingAddress\":"
+          "{\"addressLine\":[\"666 Erebus St.\",\"Apt 8\"],"
+          "\"city\":\"Elysium\","
+          "\"country\":\"US\","
+          "\"dependentLocality\":\"\","
+          "\"organization\":\"Underworld\","
+          "\"phone\":\"16502111111\","
+          "\"postalCode\":\"91111\","
+          "\"recipient\":\"John H. Doe\","
+          "\"region\":\"CA\","
+          "\"sortingCode\":\"\"},"
+          "\"cardNumber\":\"4111111111111111\","
+          "\"cardSecurityCode\":\"123\","
+          "\"cardholderName\":\"Test User\","
+          "\"expiryMonth\":\"%s\","
+          "\"expiryYear\":\"%s\"}",
+          base::UTF16ToUTF8(test_credit_card().Expiration2DigitMonthAsString())
+              .c_str(),
+          base::UTF16ToUTF8(test_credit_card().Expiration4DigitYearAsString())
+              .c_str()),
       response()->stringified_details);
 }
 
@@ -191,7 +204,7 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ShippingAddress) {
   RecreateSpecWithOptionsAndDetails(std::move(options), std::move(details),
                                     GetMethodDataForVisa());
 
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
 
@@ -204,7 +217,6 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ShippingAddress) {
   EXPECT_EQ("", response()->shipping_address->dependent_locality);
   EXPECT_EQ("91111", response()->shipping_address->postal_code);
   EXPECT_EQ("", response()->shipping_address->sorting_code);
-  EXPECT_EQ("", response()->shipping_address->language_code);
   EXPECT_EQ("Underworld", response()->shipping_address->organization);
   EXPECT_EQ("John H. Doe", response()->shipping_address->recipient);
   EXPECT_EQ("16502111111", response()->shipping_address->phone);
@@ -220,7 +232,7 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ContactDetails_All) {
   options->request_payer_email = true;
   RecreateSpecWithOptions(std::move(options));
 
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
 
@@ -238,7 +250,7 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ContactDetails_Some) {
   options->request_payer_name = true;
   RecreateSpecWithOptions(std::move(options));
 
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
 
@@ -259,7 +271,7 @@ TEST_F(PaymentResponseHelperTest,
                              base::UTF8ToUTF16("(515) 223-1234"));
   RecreateSpecWithOptions(std::move(options));
 
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
 
@@ -278,7 +290,7 @@ TEST_F(PaymentResponseHelperTest,
                              base::UTF8ToUTF16("(515) 123-1234"));
   RecreateSpecWithOptions(std::move(options));
 
-  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+  PaymentResponseHelper helper("en-US", spec(), test_app(),
                                test_payment_request_delegate(), test_address(),
                                test_address(), this);
 

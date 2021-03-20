@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/input/touch.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_touch_init.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
@@ -46,14 +47,13 @@ FloatPoint ContentsOffset(LocalFrame* frame) {
 }
 
 LayoutPoint PageToAbsolute(LocalFrame* frame, const FloatPoint& page_pos) {
-  FloatPoint converted_point;
-  if (frame && frame->View())
-    converted_point = frame->View()->DocumentToFrame(page_pos);
-  else
-    converted_point = page_pos;
-
   float scale_factor = frame ? frame->PageZoomFactor() : 1.0f;
-  return LayoutPoint(converted_point.ScaledBy(scale_factor));
+  FloatPoint converted_point = page_pos.ScaledBy(scale_factor);
+
+  if (frame && frame->View())
+    converted_point = frame->View()->DocumentToFrame(converted_point);
+
+  return LayoutPoint(converted_point);
 }
 
 }  // namespace
@@ -117,7 +117,7 @@ Touch* Touch::CloneWithNewTarget(EventTarget* event_target) const {
       rotation_angle_, force_, region_, absolute_location_);
 }
 
-void Touch::Trace(blink::Visitor* visitor) {
+void Touch::Trace(Visitor* visitor) {
   visitor->Trace(target_);
   ScriptWrappable::Trace(visitor);
 }

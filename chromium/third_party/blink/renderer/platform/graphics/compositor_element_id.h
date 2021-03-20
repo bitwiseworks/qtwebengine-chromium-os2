@@ -5,9 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITOR_ELEMENT_ID_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_COMPOSITOR_ELEMENT_ID_H_
 
-#include <unordered_set>
-
-#include "cc/trees/element_id.h"
+#include "cc/paint/element_id.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 
 namespace blink {
@@ -26,16 +25,21 @@ enum class CompositorElementIdNamespace {
   kEffectClipPath,
   kVerticalScrollbar,
   kHorizontalScrollbar,
-  kOverscrollElasticity,
+  kDOMNodeId,
+  // The following values are for internal usage only.
+  kMax = kDOMNodeId,
   // A sentinel to indicate the maximum representable namespace id
   // (the maximum is one less than this value).
-  kMaxRepresentableNamespaceId = 1 << kCompositorNamespaceBitCount
+  kMaxRepresentable = 1 << kCompositorNamespaceBitCount
 };
+
+static_assert(CompositorElementIdNamespace::kMax <=
+                  CompositorElementIdNamespace::kMaxRepresentable,
+              "");
 
 using CompositorElementId = cc::ElementId;
 using ScrollbarId = uint64_t;
 using UniqueObjectId = uint64_t;
-using DOMNodeId = uint64_t;
 using SyntheticEffectId = uint64_t;
 
 // Call this to get a globally unique object id for a newly allocated object.
@@ -56,9 +60,6 @@ CompositorElementId PLATFORM_EXPORT CompositorElementIdFromDOMNodeId(DOMNodeId);
 
 CompositorElementIdNamespace PLATFORM_EXPORT
     NamespaceFromCompositorElementId(CompositorElementId);
-
-using CompositorElementIdSet =
-    std::unordered_set<cc::ElementId, cc::ElementIdHash>;
 
 }  // namespace blink
 

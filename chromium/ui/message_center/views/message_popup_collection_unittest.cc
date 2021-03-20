@@ -7,12 +7,13 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "ui/display/display.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/animation/linear_animation.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/views/desktop_popup_alignment_delegate.h"
+#include "ui/message_center/views/desktop_message_popup_collection.h"
 #include "ui/message_center/views/message_popup_view.h"
 #include "ui/views/test/views_test_base.h"
 
@@ -25,32 +26,10 @@ namespace {
 
 class MockMessagePopupView;
 
-// Provides an aura window context for widget creation.
-class TestPopupAlignmentDelegate : public DesktopPopupAlignmentDelegate {
+class MockMessagePopupCollection : public DesktopMessagePopupCollection {
  public:
-  explicit TestPopupAlignmentDelegate(gfx::NativeWindow context)
-      : context_(context) {}
-  ~TestPopupAlignmentDelegate() override {}
-
-  // PopupAlignmentDelegate:
-  void ConfigureWidgetInitParamsForContainer(
-      views::Widget* widget,
-      views::Widget::InitParams* init_params) override {
-    init_params->context = context_;
-  }
-
- private:
-  gfx::NativeWindow context_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestPopupAlignmentDelegate);
-};
-
-class MockMessagePopupCollection : public MessagePopupCollection {
- public:
-  explicit MockMessagePopupCollection(
-      PopupAlignmentDelegate* alignment_delegate)
-      : MessagePopupCollection(alignment_delegate),
-        alignment_delegate_(alignment_delegate) {}
+  explicit MockMessagePopupCollection(gfx::NativeWindow context)
+      : DesktopMessagePopupCollection(), context_(context) {}
 
   ~MockMessagePopupCollection() override = default;
 
@@ -83,6 +62,13 @@ class MockMessagePopupCollection : public MessagePopupCollection {
  protected:
   MessagePopupView* CreatePopup(const Notification& notification) override;
 
+  void ConfigureWidgetInitParamsForContainer(
+      views::Widget* widget,
+      views::Widget::InitParams* init_params) override {
+    // Provides an aura window context for widget creation.
+    init_params->context = context_;
+  }
+
   void RestartPopupTimers() override {
     MessagePopupCollection::RestartPopupTimers();
     popup_timer_started_ = true;
@@ -98,7 +84,8 @@ class MockMessagePopupCollection : public MessagePopupCollection {
   }
 
  private:
-  PopupAlignmentDelegate* alignment_delegate_;
+  gfx::NativeWindow context_;
+
   std::vector<MockMessagePopupView*> popups_;
 
   bool popup_timer_started_ = false;
@@ -112,11 +99,12 @@ class MockMessagePopupView : public MessagePopupView {
  public:
   MockMessagePopupView(const std::string& id,
                        int init_height,
-                       PopupAlignmentDelegate* alignment_delegate,
                        MockMessagePopupCollection* popup_collection)
-      : MessagePopupView(alignment_delegate, popup_collection),
+      : MessagePopupView(popup_collection),
         popup_collection_(popup_collection),
-        id_(id) {
+        id_(id),
+        title_(base::UTF16ToUTF8(
+            MessageCenter::Get()->FindVisibleNotificationById(id)->title())) {
     auto* view = new views::View;
     view->SetPreferredSize(gfx::Size(kNotificationWidth, init_height));
     AddChildView(view);
@@ -134,15 +122,16 @@ class MockMessagePopupView : public MessagePopupView {
       SetPreferredHeight(height_after_update_.value());
     popup_collection_->NotifyPopupResized();
     updated_ = true;
+    title_ = base::UTF16ToUTF8(notification.title());
   }
 
   void AutoCollapse() override {
     if (expandable_)
-      child_at(0)->SetPreferredSize(gfx::Size(kNotificationWidth, 42));
+      children().front()->SetPreferredSize(gfx::Size(kNotificationWidth, 42));
   }
 
   void SetPreferredHeight(int height) {
-    child_at(0)->SetPreferredSize(gfx::Size(kNotificationWidth, height));
+    children().front()->SetPreferredSize(gfx::Size(kNotificationWidth, height));
   }
 
   void SetHovered(bool is_hovered) {
@@ -158,12 +147,14 @@ class MockMessagePopupView : public MessagePopupView {
   }
 
   void Activate() {
-    set_can_activate(true);
+    SetCanActivate(true);
     GetWidget()->Activate();
   }
 
   const std::string& id() const { return id_; }
   bool updated() const { return updated_; }
+
+  const std::string& title() const { return title_; }
 
   void set_expandable(bool expandable) { expandable_ = expandable; }
 
@@ -177,14 +168,15 @@ class MockMessagePopupView : public MessagePopupView {
   std::string id_;
   bool updated_ = false;
   bool expandable_ = false;
+  std::string title_;
 
   base::Optional<int> height_after_update_;
 };
 
 MessagePopupView* MockMessagePopupCollection::CreatePopup(
     const Notification& notification) {
-  auto* popup = new MockMessagePopupView(notification.id(), new_popup_height_,
-                                         alignment_delegate_, this);
+  auto* popup =
+      new MockMessagePopupView(notification.id(), new_popup_height_, this);
   popups_.push_back(popup);
   return popup;
 }
@@ -204,10 +196,8 @@ class MessagePopupCollectionTest : public views::ViewsTestBase,
     MessageCenter::Get()->DisableTimersForTest();
     MessageCenter::Get()->AddObserver(this);
 
-    alignment_delegate_ =
-        std::make_unique<TestPopupAlignmentDelegate>(GetContext());
     popup_collection_ =
-        std::make_unique<MockMessagePopupCollection>(alignment_delegate_.get());
+        std::make_unique<MockMessagePopupCollection>(GetContext());
 
     // This size fits test machines resolution and also can keep a few popups
     // w/o ill effects of hitting the screen overflow. This allows us to assume
@@ -235,15 +225,20 @@ class MessagePopupCollectionTest : public views::ViewsTestBase,
 
  protected:
   std::unique_ptr<Notification> CreateNotification(const std::string& id) {
+    return CreateNotification(id, "test title");
+  }
+
+  std::unique_ptr<Notification> CreateNotification(const std::string& id,
+                                                   const std::string& title) {
     return std::make_unique<Notification>(
-        NOTIFICATION_TYPE_BASE_FORMAT, id, base::UTF8ToUTF16("test title"),
+        NOTIFICATION_TYPE_BASE_FORMAT, id, base::UTF8ToUTF16(title),
         base::UTF8ToUTF16("test message"), gfx::Image(),
         base::string16() /* display_source */, GURL(), NotifierId(),
         RichNotificationData(), new NotificationDelegate());
   }
 
   std::string AddNotification() {
-    std::string id = base::IntToString(id_++);
+    std::string id = base::NumberToString(id_++);
     MessageCenter::Get()->AddNotification(CreateNotification(id));
     return id;
   }
@@ -257,8 +252,9 @@ class MessagePopupCollectionTest : public views::ViewsTestBase,
   bool IsAnimating() const { return popup_collection_->IsAnimating(); }
 
   void AnimateUntilIdle() {
-    while (popup_collection_->IsAnimating())
+    while (popup_collection_->IsAnimating()) {
       popup_collection_->SetAnimationValue(1.0);
+    }
   }
 
   void AnimateToMiddle() {
@@ -291,7 +287,7 @@ class MessagePopupCollectionTest : public views::ViewsTestBase,
     dummy_display.set_bounds(display_bounds);
     dummy_display.set_work_area(work_area);
     work_area_ = work_area;
-    alignment_delegate_->RecomputeAlignment(dummy_display);
+    popup_collection_->RecomputeAlignment(dummy_display);
   }
 
   bool IsPopupTimerStarted() const {
@@ -309,7 +305,6 @@ class MessagePopupCollectionTest : public views::ViewsTestBase,
   int id_ = 0;
 
   std::unique_ptr<MockMessagePopupCollection> popup_collection_;
-  std::unique_ptr<DesktopPopupAlignmentDelegate> alignment_delegate_;
 
   gfx::Rect work_area_;
   std::string last_displayed_id_;
@@ -434,9 +429,17 @@ TEST_F(MessagePopupCollectionTest, UpdateContents) {
   EXPECT_TRUE(GetPopup(id)->updated());
 }
 
-TEST_F(MessagePopupCollectionTest, UpdateContentsCausesPopupClose) {
+// Failiing on MacOS 10.10. https://crbug.com/1047503
+#if defined(OS_MACOSX)
+#define MAYBE_UpdateContentsCausesPopupClose \
+  DISABLED_UpdateContentsCausesPopupClose
+#else
+#define MAYBE_UpdateContentsCausesPopupClose UpdateContentsCausesPopupClose
+#endif
+TEST_F(MessagePopupCollectionTest, MAYBE_UpdateContentsCausesPopupClose) {
   std::string id = AddNotification();
   AnimateToEnd();
+  RunPendingMessages();
   EXPECT_FALSE(IsAnimating());
   EXPECT_EQ(1u, GetPopupCounts());
   EXPECT_FALSE(GetPopup(id)->updated());
@@ -446,6 +449,7 @@ TEST_F(MessagePopupCollectionTest, UpdateContentsCausesPopupClose) {
   auto updated_notification = CreateNotification(id);
   updated_notification->set_message(base::ASCIIToUTF16("updated"));
   MessageCenter::Get()->UpdateNotification(id, std::move(updated_notification));
+  RunPendingMessages();
   EXPECT_EQ(0u, GetPopupCounts());
 }
 
@@ -779,6 +783,38 @@ TEST_F(MessagePopupCollectionTest, TooTallNotification) {
   EXPECT_TRUE(GetPopup(id2));
 }
 
+TEST_F(MessagePopupCollectionTest, TooTallNotificationInverse) {
+  popup_collection()->set_inverse();
+
+  SetDisplayInfo(gfx::Rect(0, 0, 800, 470),  // taskbar at the bottom.
+                 gfx::Rect(0, 0, 800, 480));
+
+  // 2 popus shall fit. 3 popups shall not.
+  popup_collection()->set_new_popup_height(200);
+
+  std::string id0 = AddNotification();
+  std::string id1 = AddNotification();
+
+  AnimateUntilIdle();
+
+  EXPECT_EQ(2u, GetPopupCounts());
+
+  std::string id2 = AddNotification();
+
+  EXPECT_FALSE(IsAnimating());
+  EXPECT_EQ(2u, GetPopupCounts());
+  EXPECT_TRUE(GetPopup(id0));
+  EXPECT_TRUE(GetPopup(id1));
+  EXPECT_FALSE(GetPopup(id2));
+
+  MessageCenter::Get()->MarkSinglePopupAsShown(id0, false);
+  AnimateUntilIdle();
+  EXPECT_EQ(2u, GetPopupCounts());
+  EXPECT_FALSE(GetPopup(id0));
+  EXPECT_TRUE(GetPopup(id1));
+  EXPECT_TRUE(GetPopup(id2));
+}
+
 TEST_F(MessagePopupCollectionTest, DisplaySizeChanged) {
   std::string id0 = AddNotification();
   AnimateToEnd();
@@ -827,6 +863,7 @@ TEST_F(MessagePopupCollectionTest, PopupResizedAndOverflown) {
   GetPopup(id1)->SetPreferredHeight(changed_height);
 
   AnimateUntilIdle();
+  RunPendingMessages();
 
   EXPECT_TRUE(GetPopup(id0));
   EXPECT_TRUE(work_area().Contains(GetPopup(id0)->GetBoundsInScreen()));
@@ -1077,27 +1114,44 @@ TEST_F(MessagePopupCollectionTest, PopupWidgetClosedOutsideDuringFadeOut) {
   EXPECT_FALSE(IsAnimating());
 }
 
-TEST_F(MessagePopupCollectionTest, HighPriorityNotificationShownAgain) {
-  // It only applies to a platform with MessageCenterView i.e. Chrome OS.
-  MessageCenter::Get()->SetHasMessageCenterView(true);
+// Notification removing may occur while the animation triggered by the previous
+// operation is running. As result, notification is removed from the message
+// center but its popup is still kept. At this moment, a new notification with
+// the same notification id may be added to the message center. This can happen
+// on Chrome OS when an external display is connected with the Chromebook device
+// (see https://crbug.com/921402). This test case emulates the procedure of
+// the external display connection that is mentioned in the link above. Verifies
+// that under this circumstance the notification popup is updated.
+TEST_F(MessagePopupCollectionTest, RemoveNotificationWhileAnimating) {
+  const std::string notification_id("test_id");
+  const std::string old_notification_title("old_title");
+  const std::string new_notification_title("new_title");
 
-  // Create a notification with system priority.
-  auto notification = CreateNotification("id");
-  notification->SetSystemPriority();
-  MessageCenter::Get()->AddNotification(std::move(notification));
-  AnimateUntilIdle();
-  EXPECT_EQ(1u, GetPopupCounts());
+  // Create a notification and add it to message center.
+  auto old_notification =
+      CreateNotification(notification_id, old_notification_title);
+  MessageCenter::Get()->AddNotification(std::move(old_notification));
+  AnimateToMiddle();
 
-  // The notification should be hidden when MessageCenterView is visible.
-  MessageCenter::Get()->SetVisibility(Visibility::VISIBILITY_MESSAGE_CENTER);
-  EXPECT_FALSE(IsAnimating());
-  EXPECT_EQ(0u, GetPopupCounts());
-
-  // The notification should be shown again when MessageCenterView is hidden.
-  MessageCenter::Get()->SetVisibility(Visibility::VISIBILITY_TRANSIENT);
+  // On real device, MessageCenter::RemoveNotification is called before the
+  // animation ends. As result, notification is removed while popup keeps still.
   EXPECT_TRUE(IsAnimating());
-  AnimateUntilIdle();
+  MessageCenter::Get()->RemoveNotification(notification_id, false);
+  EXPECT_FALSE(MessageCenter::Get()->HasPopupNotifications());
   EXPECT_EQ(1u, GetPopupCounts());
+  EXPECT_EQ(old_notification_title, GetPopup(notification_id)->title());
+
+  // On real device, the new notification with the same notification id is
+  // created and added to message center before the animation ends.
+  auto new_notification =
+      CreateNotification(notification_id, new_notification_title);
+  EXPECT_TRUE(IsAnimating());
+  MessageCenter::Get()->AddNotification(std::move(new_notification));
+  AnimateUntilIdle();
+
+  // Verifies that the new notification popup is shown.
+  EXPECT_EQ(1u, GetPopupCounts());
+  EXPECT_EQ(new_notification_title, GetPopup(notification_id)->title());
 }
 
 }  // namespace message_center

@@ -19,15 +19,16 @@
 
 #include "common/SerialQueue.h"
 #include "common/vulkan_platform.h"
-#include "dawn_native/vulkan/MemoryAllocator.h"
+#include "dawn_native/ResourceMemoryAllocation.h"
 
 namespace dawn_native { namespace vulkan {
 
+    struct CommandRecordingContext;
     class Device;
 
     class Buffer : public BufferBase {
       public:
-        Buffer(Device* device, const BufferDescriptor* descriptor);
+        static ResultOrError<Buffer*> Create(Device* device, const BufferDescriptor* descriptor);
         ~Buffer();
 
         void OnMapReadCommandSerialFinished(uint32_t mapSerial, const void* data);
@@ -38,18 +39,25 @@ namespace dawn_native { namespace vulkan {
         // Transitions the buffer to be used as `usage`, recording any necessary barrier in
         // `commands`.
         // TODO(cwallez@chromium.org): coalesce barriers and do them early when possible.
-        void TransitionUsageNow(VkCommandBuffer commands, dawn::BufferUsageBit usage);
+        void TransitionUsageNow(CommandRecordingContext* recordingContext, wgpu::BufferUsage usage);
 
       private:
-        void SetSubDataImpl(uint32_t start, uint32_t count, const uint8_t* data) override;
-        void MapReadAsyncImpl(uint32_t serial, uint32_t start, uint32_t count) override;
-        void MapWriteAsyncImpl(uint32_t serial, uint32_t start, uint32_t count) override;
+        using BufferBase::BufferBase;
+        MaybeError Initialize();
+
+        // Dawn API
+        MaybeError MapReadAsyncImpl(uint32_t serial) override;
+        MaybeError MapWriteAsyncImpl(uint32_t serial) override;
         void UnmapImpl() override;
+        void DestroyImpl() override;
+
+        bool IsMapWritable() const override;
+        MaybeError MapAtCreationImpl(uint8_t** mappedPointer) override;
 
         VkBuffer mHandle = VK_NULL_HANDLE;
-        DeviceMemoryAllocation mMemoryAllocation;
+        ResourceMemoryAllocation mMemoryAllocation;
 
-        dawn::BufferUsageBit mLastUsage = dawn::BufferUsageBit::None;
+        wgpu::BufferUsage mLastUsage = wgpu::BufferUsage::None;
     };
 
     class MapRequestTracker {

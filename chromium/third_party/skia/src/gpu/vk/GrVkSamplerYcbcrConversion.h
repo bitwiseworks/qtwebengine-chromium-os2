@@ -8,32 +8,35 @@
 #ifndef GrVkSamplerYcbcrConverison_DEFINED
 #define GrVkSamplerYcbcrConverison_DEFINED
 
-#include "GrVkResource.h"
+#include "src/gpu/vk/GrVkManagedResource.h"
 
-#include "SkOpts.h"
-#include "vk/GrVkTypes.h"
+#include "include/gpu/vk/GrVkTypes.h"
+#include "src/core/SkOpts.h"
 
 class GrVkGpu;
 
-class GrVkSamplerYcbcrConversion : public GrVkResource {
+class GrVkSamplerYcbcrConversion : public GrVkManagedResource {
 public:
-    static GrVkSamplerYcbcrConversion* Create(const GrVkGpu* gpu, const GrVkYcbcrConversionInfo&);
+    static GrVkSamplerYcbcrConversion* Create(GrVkGpu* gpu, const GrVkYcbcrConversionInfo&);
 
     VkSamplerYcbcrConversion ycbcrConversion() const { return fYcbcrConversion; }
 
     struct Key {
-        Key() : fExternalFormat(0), fConversionKey(0) {}
-        Key(uint64_t externalFormat, uint8_t conversionKey) {
+        Key() : fVkFormat(VK_FORMAT_UNDEFINED), fExternalFormat(0), fConversionKey(0) {}
+        Key(VkFormat vkFormat, uint64_t externalFormat, uint8_t conversionKey) {
             memset(this, 0, sizeof(Key));
+            fVkFormat = vkFormat;
             fExternalFormat = externalFormat;
             fConversionKey = conversionKey;
         }
 
+        VkFormat fVkFormat;
         uint64_t fExternalFormat;
         uint8_t  fConversionKey;
 
         bool operator==(const Key& that) const {
-            return this->fExternalFormat == that.fExternalFormat &&
+            return this->fVkFormat == that.fVkFormat &&
+                   this->fExternalFormat == that.fExternalFormat &&
                    this->fConversionKey == that.fConversionKey;
         }
     };
@@ -48,24 +51,25 @@ public:
         return SkOpts::hash(reinterpret_cast<const uint32_t*>(&key), sizeof(Key));
     }
 
-#ifdef SK_TRACE_VK_RESOURCES
+#ifdef SK_TRACE_MANAGED_RESOURCES
     void dumpInfo() const override {
         SkDebugf("GrVkSamplerYcbcrConversion: %d (%d refs)\n", fYcbcrConversion, this->getRefCnt());
     }
 #endif
 
 private:
-    GrVkSamplerYcbcrConversion(VkSamplerYcbcrConversion ycbcrConversion, Key key)
-            : INHERITED()
+    GrVkSamplerYcbcrConversion(const GrVkGpu* gpu, VkSamplerYcbcrConversion ycbcrConversion,
+                               Key key)
+            : INHERITED(gpu)
             , fYcbcrConversion(ycbcrConversion)
             , fKey(key) {}
 
-    void freeGPUData(GrVkGpu* gpu) const override;
+    void freeGPUData() const override;
 
     VkSamplerYcbcrConversion fYcbcrConversion;
     Key                      fKey;
 
-    typedef GrVkResource INHERITED;
+    typedef GrVkManagedResource INHERITED;
 };
 
 #endif

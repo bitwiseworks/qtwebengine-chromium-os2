@@ -4,11 +4,10 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/mac/mac_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/task_environment.h"
 #import "testing/gtest_mac.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #import "ui/base/cocoa/menu_controller.h"
@@ -18,53 +17,26 @@
 #import "ui/base/test/cocoa_helper.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
 #include "ui/gfx/image/image.h"
-#include "ui/resources/grit/ui_resources.h"
+#include "ui/gfx/image/image_unittest_util.h"
 #include "ui/strings/grit/ui_strings.h"
 
 using base::ASCIIToUTF16;
-
-@interface MenuControllerCocoa (TestingAPI)
-- (void)itemWillBeSelected:(NSMenuItem*)sender;
-- (void)itemSelected:(id)sender;
-@end
-
-@interface TestResponsiveMenuController : MenuControllerCocoa
-@property(assign, nonatomic) BOOL sawItemEarly;
-@end
-
-@implementation TestResponsiveMenuController {
-  BOOL sawItemEarly_;
-}
-
-@synthesize sawItemEarly = sawItemEarly_;
-
-- (void)itemWillBeSelected:(NSMenuItem*)sender {
-  sawItemEarly_ = YES;
-  [super itemWillBeSelected:sender];
-}
-
-@end
 
 @interface WatchedLifetimeMenuController : MenuControllerCocoa
 @property(assign, nonatomic) BOOL* deallocCalled;
 @end
 
 @implementation WatchedLifetimeMenuController {
-  BOOL* deallocCalled_;
+  BOOL* _deallocCalled;
 }
 
-@synthesize deallocCalled = deallocCalled_;
+@synthesize deallocCalled = _deallocCalled;
 
 - (void)dealloc {
-  *deallocCalled_ = YES;
+  *_deallocCalled = YES;
   [super dealloc];
 }
 
-@end
-
-@interface NSMenuItem (Private)
-// Exposed to simulate in testing.
-- (void)_sendItemSelectedNote;
 @end
 
 namespace ui {
@@ -73,8 +45,7 @@ namespace {
 
 const int kTestLabelResourceId = IDS_APP_SCROLLBAR_CXMENU_SCROLLHERE;
 
-class MenuControllerTest : public CocoaTest {
-};
+class MenuControllerTest : public CocoaTest {};
 
 class TestSimpleMenuModelVisibility : public SimpleMenuModel {
  public:
@@ -239,11 +210,9 @@ class OwningDelegate : public Delegate {
 class FontListMenuModel : public SimpleMenuModel {
  public:
   FontListMenuModel(SimpleMenuModel::Delegate* delegate,
-                    const gfx::FontList* font_list, int index)
-      : SimpleMenuModel(delegate),
-        font_list_(font_list),
-        index_(index) {
-  }
+                    const gfx::FontList* font_list,
+                    int index)
+      : SimpleMenuModel(delegate), font_list_(font_list), index_(index) {}
   ~FontListMenuModel() override {}
   const gfx::FontList* GetLabelFontListAt(int index) const override {
     return (index == index_) ? font_list_ : NULL;
@@ -284,7 +253,6 @@ TEST_F(MenuControllerTest, BasicCreation) {
   NSString* title = [itemTwo title];
   EXPECT_EQ(ASCIIToUTF16("three"), base::SysNSStringToUTF16(title));
   EXPECT_EQ(2, [itemTwo tag]);
-  EXPECT_EQ([[itemTwo representedObject] pointerValue], &model);
 
   EXPECT_TRUE([[[menu menu] itemAtIndex:3] isSeparatorItem]);
 }
@@ -306,7 +274,9 @@ TEST_F(MenuControllerTest, Submenus) {
   EXPECT_EQ(3, [[menu menu] numberOfItems]);
 
   // Inspect the submenu to ensure it has correct properties.
-  NSMenu* submenu = [[[menu menu] itemAtIndex:1] submenu];
+  NSMenuItem* menuItem = [[menu menu] itemAtIndex:1];
+  EXPECT_TRUE([menuItem isEnabled]);
+  NSMenu* submenu = [menuItem submenu];
   EXPECT_TRUE(submenu);
   EXPECT_EQ(3, [submenu numberOfItems]);
 
@@ -316,7 +286,6 @@ TEST_F(MenuControllerTest, Submenus) {
   NSString* title = [submenuItem title];
   EXPECT_EQ(ASCIIToUTF16("sub-two"), base::SysNSStringToUTF16(title));
   EXPECT_EQ(1, [submenuItem tag]);
-  EXPECT_EQ([[submenuItem representedObject] pointerValue], &submodel);
 
   // Make sure the item after the submenu is correct and its represented
   // object is back to the top model.
@@ -324,7 +293,6 @@ TEST_F(MenuControllerTest, Submenus) {
   title = [item title];
   EXPECT_EQ(ASCIIToUTF16("three"), base::SysNSStringToUTF16(title));
   EXPECT_EQ(2, [item tag]);
-  EXPECT_EQ([[item representedObject] pointerValue], &model);
 }
 
 TEST_F(MenuControllerTest, EmptySubmenu) {
@@ -377,9 +345,9 @@ TEST_F(MenuControllerTest, EmptySubmenuWhenAllChildItemsAreHidden) {
 // Tests hiding a submenu item. If a submenu item with children is set to
 // hidden, then the submenu should hide.
 TEST_F(MenuControllerTest, HiddenSubmenu) {
-  // SimpleMenuModel posts a task that calls Delegate::MenuClosed. Create
-  // a MessageLoop for that purpose.
-  base::MessageLoopForUI message_loop;
+  // SimpleMenuModel posts a task that calls Delegate::MenuClosed.
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
 
   // Create the model.
   Delegate delegate;
@@ -419,6 +387,57 @@ TEST_F(MenuControllerTest, HiddenSubmenu) {
   // Pump the task that notifies the delegate.
   base::RunLoop().RunUntilIdle();
 
+  // Expect that the delegate got notified properly.
+  EXPECT_TRUE(delegate.did_close_);
+}
+
+TEST_F(MenuControllerTest, DisabledSubmenu) {
+  // SimpleMenuModel posts a task that calls Delegate::MenuClosed.
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
+
+  // Create the model.
+  Delegate delegate;
+  SimpleMenuModel model(&delegate);
+  model.AddItem(1, ASCIIToUTF16("one"));
+  SimpleMenuModel disabled_submodel(&delegate);
+  disabled_submodel.AddItem(2, ASCIIToUTF16("disabled_submodel"));
+  model.AddSubMenuWithStringId(3, kTestLabelResourceId, &disabled_submodel);
+  SimpleMenuModel enabled_submodel(&delegate);
+  enabled_submodel.AddItem(4, ASCIIToUTF16("enabled_submodel"));
+  model.AddSubMenuWithStringId(5, kTestLabelResourceId, &enabled_submodel);
+
+  // Disable the first submenu entry.
+  model.SetEnabledAt(1, false);
+
+  // Create the controller.
+  base::scoped_nsobject<MenuControllerCocoa> menu_controller(
+      [[MenuControllerCocoa alloc] initWithModel:&model
+                          useWithPopUpButtonCell:NO]);
+  delegate.menu_to_close_ = [menu_controller menu];
+
+  // Show the menu.
+  CFRunLoopPerformBlock(CFRunLoopGetCurrent(), NSEventTrackingRunLoopMode, ^{
+    EXPECT_TRUE([menu_controller isMenuOpen]);
+
+    // Ensure that the disabled submenu is disabled.
+    NSMenuItem* disabled_item = [[menu_controller menu] itemAtIndex:1];
+    EXPECT_FALSE([disabled_item isEnabled]);
+
+    // Ensure that the enabled submenu is enabled.
+    NSMenuItem* enabled_item = [[menu_controller menu] itemAtIndex:2];
+    EXPECT_TRUE([enabled_item isEnabled]);
+  });
+
+  // Pop open the menu, which will spin an event-tracking run loop.
+  [NSMenu popUpContextMenu:[menu_controller menu]
+                 withEvent:cocoa_test_event_utils::RightMouseDownAtPoint(
+                               NSZeroPoint)
+                   forView:[test_window() contentView]];
+  EXPECT_FALSE([menu_controller isMenuOpen]);
+
+  // Pump the task that notifies the delegate.
+  base::RunLoop().RunUntilIdle();
   // Expect that the delegate got notified properly.
   EXPECT_TRUE(delegate.did_close_);
 }
@@ -553,9 +572,7 @@ TEST_F(MenuControllerTest, Dynamic) {
   // Now update the item to have a label of "second" and an icon.
   base::string16 second = ASCIIToUTF16("second");
   delegate.SetDynamicLabel(second);
-  const gfx::Image& icon =
-      ResourceBundle::GetSharedInstance().GetNativeImageNamed(
-          IDR_DEFAULT_FAVICON);
+  const gfx::Image& icon = gfx::test::CreateImage(32, 32);
   delegate.SetDynamicIcon(icon);
   // Simulate opening the menu and validate that the item label + icon changes.
   Validate(menu.get(), [menu menu]);
@@ -570,9 +587,9 @@ TEST_F(MenuControllerTest, Dynamic) {
 }
 
 TEST_F(MenuControllerTest, OpenClose) {
-  // SimpleMenuModel posts a task that calls Delegate::MenuClosed. Create
-  // a MessageLoop for that purpose.
-  base::MessageLoopForUI message_loop;
+  // SimpleMenuModel posts a task that calls Delegate::MenuClosed.
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
 
   // Create the model.
   Delegate delegate;
@@ -592,7 +609,7 @@ TEST_F(MenuControllerTest, OpenClose) {
   // In the event tracking run loop mode of the menu, verify that the controller
   // resports the menu as open.
   CFRunLoopPerformBlock(CFRunLoopGetCurrent(), NSEventTrackingRunLoopMode, ^{
-      EXPECT_TRUE([menu isMenuOpen]);
+    EXPECT_TRUE([menu isMenuOpen]);
   });
 
   // Pop open the menu, which will spin an event-tracking run loop.
@@ -619,134 +636,12 @@ TEST_F(MenuControllerTest, OpenClose) {
   EXPECT_TRUE(delegate.did_close_);
 }
 
-// Verify that the private API used by MenuControllerCocoa's
-// ResponsiveNSMenuItem exists in the runtime. It's not a disaster if it
-// disappears, (or AppKit stops invoking it) but consumers will stop receiving
-// opportunities to -processItemSelectedEarly:.
-TEST_F(MenuControllerTest, SendItemSelectedNoteExists) {
-  // -_sendItemSelectedNote doesn't exist on 10.9 or 10.10. NSPopUpButton menus
-  // on 10.9 don't animate out, and always suffer from the brief "flash" of the
-  // old selection when the menu disappears.
-  // TODO(tapted): Find a hook on 10.10 if we deem it necessary.
-  if (base::mac::IsAtMostOS10_10())
-    return;
-
-  EXPECT_TRUE(
-      [NSMenuItem instancesRespondToSelector:@selector(_sendItemSelectedNote)]);
-}
-
-// Emulate the flow for -[MenuControllerCocoa itemWillBeSelected:] and
-// processing the action via posted task during menu fade out.
-TEST_F(MenuControllerTest, EmulateItemSelectedEarly) {
-  if (![NSMenuItem instancesRespondToSelector:@selector(_sendItemSelectedNote)])
-    return;
-
-  base::MessageLoopForUI message_loop;
-
-  Delegate delegate;
-  delegate.auto_close_ = false;
-
-  SimpleMenuModel model(&delegate);
-  model.AddItem(1, ASCIIToUTF16("foo"));
-
-  base::scoped_nsobject<TestResponsiveMenuController> controller(
-      [[TestResponsiveMenuController alloc] initWithModel:&model
-                                   useWithPopUpButtonCell:NO]);
-
-  auto ResetWithPostTask = [&](BOOL post) {
-    // Flush calls to OnMenuClosed() Posted by SimpleMenuModel.
-    base::RunLoop().RunUntilIdle();
-
-    [controller setPostItemSelectedAsTask:post];
-    [controller setSawItemEarly:NO];
-    delegate.execute_count_ = 0;
-    delegate.did_show_ = delegate.did_close_ = false;
-  };
-
-  ResetWithPostTask(YES);
-  NSMenuItem* item = [[controller menu] itemAtIndex:0];
-  EXPECT_TRUE(item);
-
-  [controller menuWillOpen:[controller menu]];
-
-  // Pretend the first item got clicked. AppKit sends _sendItemSelectedNote to
-  // the menu item, then performs its action.
-  EXPECT_FALSE([controller sawItemEarly]);
-  EXPECT_EQ(0, delegate.execute_count_);
-  [item _sendItemSelectedNote];
-
-  EXPECT_TRUE([controller sawItemEarly]);
-
-  // Task is posted at this point, but not executed.
-  EXPECT_EQ(0, delegate.execute_count_);
-
-  // Pretend the menu is fading out, which spins a RunLoop.
-  base::RunLoop().RunUntilIdle();
-
-  // Item gets executed early.
-  EXPECT_EQ(1, delegate.execute_count_);
-
-  // Simulate dismissal. This happens before the action.
-  [controller menuDidClose:[controller menu]];
-
-  // Perform the action normally. Shouldn't get executed again.
-  [[item target] performSelector:[item action] withObject:item];
-  EXPECT_EQ(1, delegate.execute_count_);
-
-  // Repeat, simulating the condition where the private API hook fails.
-  ResetWithPostTask(YES);
-  [controller menuWillOpen:[controller menu]];
-  [controller menuDidClose:[controller menu]];
-  base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE([controller sawItemEarly]);
-  EXPECT_EQ(0, delegate.execute_count_);
-  [[item target] performSelector:[item action] withObject:item];
-  EXPECT_FALSE([controller sawItemEarly]);
-  EXPECT_EQ(1, delegate.execute_count_);
-
-  // Repeat, simulating the condition where events do not pump during fade out.
-  ResetWithPostTask(YES);
-  [controller menuWillOpen:[controller menu]];
-  EXPECT_FALSE([controller sawItemEarly]);
-  EXPECT_EQ(0, delegate.execute_count_);
-  [item _sendItemSelectedNote];
-  EXPECT_TRUE([controller sawItemEarly]);
-  EXPECT_EQ(0, delegate.execute_count_);
-  // No pump.
-  [controller menuDidClose:[controller menu]];
-  EXPECT_EQ(0, delegate.execute_count_);
-  [[item target] performSelector:[item action] withObject:item];
-  EXPECT_TRUE([controller sawItemEarly]);
-  EXPECT_EQ(1, delegate.execute_count_);
-  base::RunLoop().RunUntilIdle();  // Back the main loop.
-  EXPECT_EQ(1, delegate.execute_count_);
-
-  // Repeat, without processing early.
-  ResetWithPostTask(NO);
-
-  [controller menuWillOpen:[controller menu]];
-  [item _sendItemSelectedNote];
-
-  // Saw it, but didn't execute.
-  EXPECT_TRUE([controller sawItemEarly]);
-  EXPECT_EQ(0, delegate.execute_count_);
-
-  // Even after spinning a RunLoop.
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(0, delegate.execute_count_);
-
-  [controller menuDidClose:[controller menu]];
-
-  // Perform the action normally. Now executes.
-  [[item target] performSelector:[item action] withObject:item];
-  EXPECT_EQ(1, delegate.execute_count_);
-}
-
 // Tests invoking a menu action on a delegate that immediately releases the
 // MenuControllerCocoa and destroys itself. Note this usually needs asan to
 // actually crash (before it was fixed).
 TEST_F(MenuControllerTest, OwningDelegate) {
-  base::MessageLoopForUI message_loop;
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
   bool did_delete = false;
   BOOL did_dealloc = NO;
   OwningDelegate* delegate;
@@ -772,7 +667,15 @@ TEST_F(MenuControllerTest, OwningDelegate) {
   }
   EXPECT_FALSE(did_dealloc);
   EXPECT_FALSE(did_delete);
-  [[item target] performSelector:[item action] withObject:item];
+
+  // On 10.15+, [NSMenuItem target] indirectly causes an extra
+  // retain+autorelease of the target. That avoids bugs caused by the
+  // NSMenuItem's action causing destruction of the target, but also causes the
+  // NSMenuItem to get cleaned up later than this test expects. Deal with that
+  // by creating an explicit autorelease pool here.
+  @autoreleasepool {
+    [[item target] performSelector:[item action] withObject:item];
+  }
   EXPECT_TRUE(did_dealloc);
   EXPECT_TRUE(did_delete);
 }

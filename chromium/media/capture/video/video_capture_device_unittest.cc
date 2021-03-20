@@ -15,7 +15,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/gmock_callback_support.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -47,14 +48,14 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "media/capture/video/chromeos/camera_buffer_factory.h"
 #include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
-#include "media/capture/video/chromeos/local_gpu_memory_buffer_manager.h"
 #include "media/capture/video/chromeos/public/cros_features.h"
 #include "media/capture/video/chromeos/video_capture_device_chromeos_halv3.h"
 #include "media/capture/video/chromeos/video_capture_device_factory_chromeos.h"
+#include "media/gpu/test/local_gpu_memory_buffer_manager.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -63,12 +64,9 @@
   DISABLED_UsingRealWebcam_AllocateBadSize
 // We will always get YUYV from the Mac AVFoundation implementations.
 #define MAYBE_UsingRealWebcam_CaptureMjpeg DISABLED_UsingRealWebcam_CaptureMjpeg
-// TODO(crbug.com/923874).
-#define MAYBE_UsingRealWebcam_TakePhoto DISABLED_UsingRealWebcam_TakePhoto
-  // TODO(crbug.com/923874).
-#define MAYBE_UsingRealWebcam_GetPhotoState DISABLED_UsingRealWebcam_GetPhotoState
-  // TODO(crbug.com/923874).
-#define MAYBE_UsingRealWebcam_CaptureWithSize DISABLED_UsingRealWebcam_CaptureWithSize
+#define MAYBE_UsingRealWebcam_TakePhoto UsingRealWebcam_TakePhoto
+#define MAYBE_UsingRealWebcam_GetPhotoState UsingRealWebcam_GetPhotoState
+#define MAYBE_UsingRealWebcam_CaptureWithSize UsingRealWebcam_CaptureWithSize
 #define MAYBE_UsingRealWebcam_CheckPhotoCallbackRelease \
   UsingRealWebcam_CheckPhotoCallbackRelease
 #elif defined(OS_WIN)
@@ -85,7 +83,9 @@
   DISABLED_UsingRealWebcam_CheckPhotoCallbackRelease
 #elif defined(OS_ANDROID)
 #define MAYBE_UsingRealWebcam_AllocateBadSize UsingRealWebcam_AllocateBadSize
-#define MAYBE_UsingRealWebcam_CaptureMjpeg UsingRealWebcam_CaptureMjpeg
+// This format is not returned by VideoCaptureDeviceFactoryAndroid's
+// GetSupportedFormats
+#define MAYBE_UsingRealWebcam_CaptureMjpeg DISABLED_UsingRealWebcam_CaptureMjpeg
 #define MAYBE_UsingRealWebcam_TakePhoto UsingRealWebcam_TakePhoto
 #define MAYBE_UsingRealWebcam_GetPhotoState UsingRealWebcam_GetPhotoState
 #define MAYBE_UsingRealWebcam_CaptureWithSize UsingRealWebcam_CaptureWithSize
@@ -130,17 +130,14 @@
 #define WRAPPED_TEST_P(test_case_name, test_name) \
   TEST_P(test_case_name, test_name)
 
+using base::test::RunClosure;
 using ::testing::_;
 using ::testing::Invoke;
-using ::testing::SaveArg;
 using ::testing::Return;
+using ::testing::SaveArg;
 
 namespace media {
 namespace {
-
-ACTION_P(RunClosure, closure) {
-  closure.Run();
-}
 
 void DumpError(media::VideoCaptureError,
                const base::Location& location,
@@ -165,15 +162,17 @@ class MockMFPhotoCallback final : public IMFCaptureEngineOnSampleCallback {
   MOCK_METHOD0(DoRelease, ULONG(void));
   MOCK_METHOD1(DoOnSample, HRESULT(IMFSample*));
 
-  STDMETHOD(QueryInterface)(REFIID riid, void** object) override {
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** object) override {
     return DoQueryInterface(riid, object);
   }
 
-  STDMETHOD_(ULONG, AddRef)() override { return DoAddRef(); }
+  IFACEMETHODIMP_(ULONG) AddRef() override { return DoAddRef(); }
 
-  STDMETHOD_(ULONG, Release)() override { return DoRelease(); }
+  IFACEMETHODIMP_(ULONG) Release() override { return DoRelease(); }
 
-  STDMETHOD(OnSample)(IMFSample* sample) override { return DoOnSample(sample); }
+  IFACEMETHODIMP OnSample(IMFSample* sample) override {
+    return DoOnSample(sample);
+  }
 };
 #endif
 
@@ -185,11 +184,12 @@ class MockImageCaptureClient
     if (strcmp("image/jpeg", blob->mime_type.c_str()) == 0) {
       ASSERT_GT(blob->data.size(), 4u);
       // Check some bytes that univocally identify |data| as a JPEG File.
-      // https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format#File_format_structure
+      // The first two bytes must be the SOI marker.
+      // The next two bytes must be a marker, such as APPn, DTH etc.
+      // cf. Section B.2 at https://www.w3.org/Graphics/JPEG/itu-t81.pdf
       EXPECT_EQ(0xFF, blob->data[0]);         // First SOI byte
       EXPECT_EQ(0xD8, blob->data[1]);         // Second SOI byte
-      EXPECT_EQ(0xFF, blob->data[2]);         // First JFIF-APP0 byte
-      EXPECT_EQ(0xE0, blob->data[3] & 0xF0);  // Second JFIF-APP0 byte
+      EXPECT_EQ(0xFF, blob->data[2]);         // First byte of the next marker
       OnCorrectPhotoTaken();
     } else if (strcmp("image/png", blob->mime_type.c_str()) == 0) {
       ASSERT_GT(blob->data.size(), 4u);
@@ -251,8 +251,8 @@ class VideoCaptureDeviceTest
 #if defined(OS_MACOSX)
         // Video capture code on MacOSX must run on a CFRunLoop enabled thread
         // for interaction with AVFoundation.
-        scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        task_environment_(
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
 #endif
         device_descriptors_(new VideoCaptureDeviceDescriptors()),
         main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
@@ -261,15 +261,15 @@ class VideoCaptureDeviceTest
 #if defined(OS_CHROMEOS)
     local_gpu_memory_buffer_manager_ =
         std::make_unique<LocalGpuMemoryBufferManager>();
-    dbus_setter_ = chromeos::DBusThreadManager::GetSetterForTesting();
     VideoCaptureDeviceFactoryChromeOS::SetGpuBufferManager(
         local_gpu_memory_buffer_manager_.get());
-    if (!CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
+    if (media::ShouldUseCrosCameraService() &&
+        !CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
       CameraHalDispatcherImpl::GetInstance()->Start(
-          base::DoNothing::Repeatedly<
-              media::mojom::JpegDecodeAcceleratorRequest>(),
-          base::DoNothing::Repeatedly<
-              media::mojom::JpegEncodeAcceleratorRequest>());
+          base::DoNothing::Repeatedly<mojo::PendingReceiver<
+              chromeos_camera::mojom::MjpegDecodeAccelerator>>(),
+          base::DoNothing::Repeatedly<mojo::PendingReceiver<
+              chromeos_camera::mojom::JpegEncodeAccelerator>>());
     }
 #endif
     video_capture_device_factory_ =
@@ -278,8 +278,7 @@ class VideoCaptureDeviceTest
 
   void SetUp() override {
 #if defined(OS_CHROMEOS)
-    dbus_setter_->SetPowerManagerClient(
-        std::make_unique<chromeos::FakePowerManagerClient>());
+    chromeos::PowerManagerClient::InitializeFake();
 #endif
 #if defined(OS_ANDROID)
     static_cast<VideoCaptureDeviceFactoryAndroid*>(
@@ -292,6 +291,12 @@ class VideoCaptureDeviceTest
 #endif
   }
 
+  void TearDown() override {
+#if defined(OS_CHROMEOS)
+    chromeos::PowerManagerClient::Shutdown();
+#endif
+  }
+
 #if defined(OS_WIN)
   bool UseWinMediaFoundation() {
     return std::get<1>(GetParam()) == WIN_MEDIA_FOUNDATION;
@@ -299,17 +304,18 @@ class VideoCaptureDeviceTest
 #endif
 
   std::unique_ptr<MockVideoCaptureDeviceClient> CreateDeviceClient() {
-    auto result = std::make_unique<MockVideoCaptureDeviceClient>();
+    auto result = std::make_unique<NiceMockVideoCaptureDeviceClient>();
     ON_CALL(*result, OnError(_, _, _)).WillByDefault(Invoke(DumpError));
     EXPECT_CALL(*result, ReserveOutputBuffer(_, _, _, _)).Times(0);
     EXPECT_CALL(*result, DoOnIncomingCapturedBuffer(_, _, _, _)).Times(0);
-    EXPECT_CALL(*result, DoOnIncomingCapturedBufferExt(_, _, _, _, _, _))
+    EXPECT_CALL(*result, DoOnIncomingCapturedBufferExt(_, _, _, _, _, _, _))
         .Times(0);
-    ON_CALL(*result, OnIncomingCapturedData(_, _, _, _, _, _, _))
+    ON_CALL(*result, OnIncomingCapturedData(_, _, _, _, _, _, _, _, _))
         .WillByDefault(
             Invoke([this](const uint8_t* data, int length,
-                          const media::VideoCaptureFormat& frame_format, int,
-                          base::TimeTicks, base::TimeDelta, int) {
+                          const media::VideoCaptureFormat& frame_format,
+                          const gfx::ColorSpace&, int, bool, base::TimeTicks,
+                          base::TimeDelta, int) {
               ASSERT_GT(length, 0);
               ASSERT_TRUE(data);
               main_thread_task_runner_->PostTask(
@@ -335,7 +341,7 @@ class VideoCaptureDeviceTest
   void OnFrameCaptured(const VideoCaptureFormat& format) {
     last_format_ = format;
     if (run_loop_)
-      run_loop_->QuitClosure().Run();
+      run_loop_->Quit();
   }
 
   void WaitForCapturedFrame() {
@@ -348,6 +354,10 @@ class VideoCaptureDeviceTest
     video_capture_device_factory_->GetDeviceDescriptors(
         device_descriptors_.get());
 
+    if (device_descriptors_->empty()) {
+      DLOG(WARNING) << "No camera found";
+      return nullptr;
+    }
 #if defined(OS_ANDROID)
     for (const auto& descriptor : *device_descriptors_) {
       // Android deprecated/legacy devices capture on a single thread, which is
@@ -362,25 +372,11 @@ class VideoCaptureDeviceTest
     }
     DLOG(WARNING) << "No usable camera found";
     return nullptr;
-#endif
-
-    if (device_descriptors_->empty()) {
-      DLOG(WARNING) << "No camera found";
-      return nullptr;
-    }
-#if defined(OS_WIN)
-    // Dump the camera model to help debugging.
-    // TODO(alaoui.rda@gmail.com): remove after http://crbug.com/730068 is
-    // fixed.
-    LOG(INFO) << "Using camera "
-              << device_descriptors_->front().GetNameAndModel();
 #else
-    DLOG(INFO) << "Using camera "
-               << device_descriptors_->front().GetNameAndModel();
+    const auto& descriptor = device_descriptors_->front();
+    DLOG(INFO) << "Using camera " << descriptor.GetNameAndModel();
+    return std::make_unique<VideoCaptureDeviceDescriptor>(descriptor);
 #endif
-
-    return std::make_unique<VideoCaptureDeviceDescriptor>(
-        device_descriptors_->front());
   }
 
   const VideoCaptureFormat& last_format() const { return last_format_; }
@@ -457,7 +453,7 @@ class VideoCaptureDeviceTest
 #if defined(OS_WIN)
   base::win::ScopedCOMInitializer initialize_com_;
 #endif
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<VideoCaptureDeviceDescriptors> device_descriptors_;
   std::unique_ptr<base::RunLoop> run_loop_;
   scoped_refptr<base::TaskRunner> main_thread_task_runner_;
@@ -466,7 +462,6 @@ class VideoCaptureDeviceTest
   VideoCaptureFormat last_format_;
 #if defined(OS_CHROMEOS)
   std::unique_ptr<LocalGpuMemoryBufferManager> local_gpu_memory_buffer_manager_;
-  std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter_;
 #endif
   std::unique_ptr<VideoCaptureDeviceFactory> video_capture_device_factory_;
 };
@@ -568,7 +563,7 @@ const VideoCaptureImplementationTweak kCaptureImplementationTweaks[] = {
 #endif
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     VideoCaptureDeviceTests,
     VideoCaptureDeviceTest,
     testing::Combine(testing::ValuesIn(kCaptureSizes),
@@ -674,7 +669,7 @@ void VideoCaptureDeviceTest::RunCaptureMjpegTestCase() {
 
 #if defined(OS_WIN)
   base::win::Version version = base::win::GetVersion();
-  if (version >= base::win::VERSION_WIN10) {
+  if (version >= base::win::Version::WIN10) {
     VLOG(1) << "Skipped on Win10: http://crbug.com/570604, current: "
             << static_cast<int>(version);
     return;
@@ -756,7 +751,8 @@ void VideoCaptureDeviceTest::RunTakePhotoTestCase() {
       &MockImageCaptureClient::DoOnPhotoTaken, image_capture_client_);
 
   base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-  base::Closure quit_closure = BindToCurrentLoop(run_loop.QuitClosure());
+  base::RepeatingClosure quit_closure =
+      BindToCurrentLoop(run_loop.QuitClosure());
   EXPECT_CALL(*image_capture_client_.get(), OnCorrectPhotoTaken())
       .Times(1)
       .WillOnce(RunClosure(quit_closure));
@@ -809,7 +805,8 @@ void VideoCaptureDeviceTest::RunGetPhotoStateTestCase() {
   // first frame.
   WaitForCapturedFrame();
   base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-  base::Closure quit_closure = BindToCurrentLoop(run_loop.QuitClosure());
+  base::RepeatingClosure quit_closure =
+      BindToCurrentLoop(run_loop.QuitClosure());
   EXPECT_CALL(*image_capture_client_.get(), OnCorrectGetPhotoState())
       .Times(1)
       .WillOnce(RunClosure(quit_closure));
@@ -880,4 +877,4 @@ WRAPPED_TEST_P(VideoCaptureDeviceTest,
 }
 #endif
 
-};  // namespace media
+}  // namespace media

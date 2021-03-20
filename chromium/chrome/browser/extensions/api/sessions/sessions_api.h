@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/macros.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/sessions.h"
 #include "chrome/common/extensions/api/tabs.h"
 #include "chrome/common/extensions/api/windows.h"
@@ -16,7 +15,9 @@
 #include "components/sessions/core/tab_restore_service_observer.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
 
+class Browser;
 class Profile;
 
 namespace sync_sessions {
@@ -27,7 +28,7 @@ namespace extensions {
 
 class SessionId;
 
-class SessionsGetRecentlyClosedFunction : public UIThreadExtensionFunction {
+class SessionsGetRecentlyClosedFunction : public ExtensionFunction {
  protected:
   ~SessionsGetRecentlyClosedFunction() override {}
   ResponseAction Run() override;
@@ -43,7 +44,7 @@ class SessionsGetRecentlyClosedFunction : public UIThreadExtensionFunction {
       const sessions::TabRestoreService::Entry& entry);
 };
 
-class SessionsGetDevicesFunction : public UIThreadExtensionFunction {
+class SessionsGetDevicesFunction : public ExtensionFunction {
  protected:
   ~SessionsGetDevicesFunction() override {}
   ResponseAction Run() override;
@@ -64,7 +65,7 @@ class SessionsGetDevicesFunction : public UIThreadExtensionFunction {
       const sync_sessions::SyncedSession* session);
 };
 
-class SessionsRestoreFunction : public UIThreadExtensionFunction {
+class SessionsRestoreFunction : public ExtensionFunction {
  protected:
   ~SessionsRestoreFunction() override {}
   ResponseAction Run() override;

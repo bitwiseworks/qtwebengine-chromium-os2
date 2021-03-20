@@ -9,7 +9,7 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/stl_util.h"
 #include "base/win/windows_version.h"
 
@@ -24,7 +24,7 @@ void AppendNonTrivialInputScope(std::vector<InputScope>* input_scopes,
   if (input_scope == IS_DEFAULT)
     return;
 
-  if (base::ContainsValue(*input_scopes, input_scope))
+  if (base::Contains(*input_scopes, input_scope))
     return;
 
   input_scopes->push_back(input_scope);
@@ -37,11 +37,11 @@ class TSFInputScope final : public ITfInputScope {
         ref_count_(0) {}
 
   // ITfInputScope:
-  STDMETHOD_(ULONG, AddRef)() override {
+  IFACEMETHODIMP_(ULONG) AddRef() override {
     return InterlockedIncrement(&ref_count_);
   }
 
-  STDMETHOD_(ULONG, Release)() override {
+  IFACEMETHODIMP_(ULONG) Release() override {
     const LONG count = InterlockedDecrement(&ref_count_);
     if (!count) {
       delete this;
@@ -50,7 +50,7 @@ class TSFInputScope final : public ITfInputScope {
     return static_cast<ULONG>(count);
   }
 
-  STDMETHOD(QueryInterface)(REFIID iid, void** result) override {
+  IFACEMETHODIMP QueryInterface(REFIID iid, void** result) override {
     if (!result)
       return E_INVALIDARG;
     if (iid == IID_IUnknown || iid == IID_ITfInputScope) {
@@ -63,7 +63,8 @@ class TSFInputScope final : public ITfInputScope {
     return S_OK;
   }
 
-  STDMETHOD(GetInputScopes)(InputScope** input_scopes, UINT* count) override {
+  IFACEMETHODIMP GetInputScopes(InputScope** input_scopes,
+                                UINT* count) override {
     if (!count || !input_scopes)
       return E_INVALIDARG;
     *input_scopes = static_cast<InputScope*>(CoTaskMemAlloc(
@@ -79,21 +80,17 @@ class TSFInputScope final : public ITfInputScope {
     return S_OK;
   }
 
-  STDMETHOD(GetPhrase)(BSTR** phrases, UINT* count) override {
+  IFACEMETHODIMP GetPhrase(BSTR** phrases, UINT* count) override {
     return E_NOTIMPL;
   }
 
-  STDMETHOD(GetRegularExpression)(BSTR* regexp) override {
+  IFACEMETHODIMP GetRegularExpression(BSTR* regexp) override {
     return E_NOTIMPL;
   }
 
-  STDMETHOD(GetSRGS)(BSTR* srgs) override {
-    return E_NOTIMPL;
-  }
+  IFACEMETHODIMP GetSRGS(BSTR* srgs) override { return E_NOTIMPL; }
 
-  STDMETHOD(GetXML)(BSTR* xml) override {
-    return E_NOTIMPL;
-  }
+  IFACEMETHODIMP GetXML(BSTR* xml) override { return E_NOTIMPL; }
 
  private:
   // The corresponding text input types.
@@ -188,8 +185,18 @@ std::vector<InputScope> GetInputScopes(TextInputType text_input_type,
 }
 
 ITfInputScope* CreateInputScope(TextInputType text_input_type,
-                                TextInputMode text_input_mode) {
-  return new TSFInputScope(GetInputScopes(text_input_type, text_input_mode));
+                                TextInputMode text_input_mode,
+                                bool should_do_learning) {
+  std::vector<InputScope> input_scopes;
+  // Should set input scope to IS_PRIVATE if we are in "incognito" or "guest"
+  // mode. Note that the IS_PRIVATE input scope is only support from WIN10.
+  if (!should_do_learning &&
+      (base::win::GetVersion() >= base::win::Version::WIN10)) {
+    input_scopes.push_back(IS_PRIVATE);
+  } else {
+    input_scopes = GetInputScopes(text_input_type, text_input_mode);
+  }
+  return new TSFInputScope(input_scopes);
 }
 
 void SetInputScopeForTsfUnawareWindow(HWND window_handle,

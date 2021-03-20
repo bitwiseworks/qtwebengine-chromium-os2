@@ -7,6 +7,7 @@
 
 #include "base/macros.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
+#include "third_party/blink/renderer/core/input/scroll_manager.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
 
@@ -19,10 +20,10 @@ class Node;
 class WebMouseWheelEvent;
 
 class MouseWheelEventManager final
-    : public GarbageCollectedFinalized<MouseWheelEventManager> {
+    : public GarbageCollected<MouseWheelEventManager> {
  public:
-  explicit MouseWheelEventManager(LocalFrame&);
-  void Trace(blink::Visitor*);
+  explicit MouseWheelEventManager(LocalFrame&, ScrollManager&);
+  void Trace(Visitor*);
 
   void Clear();
 
@@ -37,6 +38,7 @@ class MouseWheelEventManager final
 
   const Member<LocalFrame> frame_;
   Member<Node> wheel_target_;
+  Member<ScrollManager> scroll_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(MouseWheelEventManager);
 };

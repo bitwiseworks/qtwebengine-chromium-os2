@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -13,7 +14,13 @@
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "components/feed/core/common/pref_names.h"
 #include "components/feed/feed_feature_list.h"
+#include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/access_token_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
+#include "components/signin/public/identity_manager/scope_set.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/load_flags.h"
@@ -21,15 +28,15 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "services/identity/public/cpp/identity_manager.h"
-#include "services/identity/public/cpp/primary_account_access_token_fetcher.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
+
 #include "third_party/zlib/google/compression_utils.h"
 
-using IdentityManager = identity::IdentityManager;
+using IdentityManager = signin::IdentityManager;
 
 namespace {
 
@@ -59,32 +66,43 @@ class NetworkFetch {
                IdentityManager* identity_manager,
                network::SharedURLLoaderFactory* loader_factory,
                const std::string& api_key,
-               const base::TickClock* tick_clock);
+               const base::TickClock* tick_clock,
+               PrefService* pref_service);
 
   void Start(FeedNetworkingHost::ResponseCallback done_callback);
 
  private:
   void StartAccessTokenFetch();
-  void AccessTokenFetchFinished(GoogleServiceAuthError error,
-                                identity::AccessTokenInfo access_token_info);
+  void AccessTokenFetchFinished(base::TimeTicks token_start_ticks,
+                                GoogleServiceAuthError error,
+                                signin::AccessTokenInfo access_token_info);
   void StartLoader();
   std::unique_ptr<network::SimpleURLLoader> MakeLoader();
-  net::HttpRequestHeaders MakeHeaders(const std::string& auth_header) const;
+  void SetRequestHeaders(bool has_request_body,
+                         network::ResourceRequest* request) const;
   void PopulateRequestBody(network::SimpleURLLoader* loader);
   void OnSimpleLoaderComplete(std::unique_ptr<std::string> response);
 
-  const GURL url_;
+  GURL url_;
   const std::string request_type_;
   std::string access_token_;
   const std::vector<uint8_t> request_body_;
   IdentityManager* const identity_manager_;
-  std::unique_ptr<identity::PrimaryAccountAccessTokenFetcher> token_fetcher_;
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher> token_fetcher_;
   std::unique_ptr<network::SimpleURLLoader> simple_loader_;
   FeedNetworkingHost::ResponseCallback done_callback_;
   network::SharedURLLoaderFactory* loader_factory_;
   const std::string api_key_;
   const base::TickClock* tick_clock_;
-  base::TimeTicks start_ticks_;
+
+  // Set when the NetworkFetch is constructed, before token and article fetch.
+  const base::TimeTicks entire_send_start_ticks_;
+
+  // Should be set right before the article fetch, and after the token fetch if
+  // there is one.
+  base::TimeTicks loader_only_start_ticks_;
+  PrefService* pref_service_;
+  bool host_overridden_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkFetch);
 };
@@ -95,7 +113,8 @@ NetworkFetch::NetworkFetch(const GURL& url,
                            IdentityManager* identity_manager,
                            network::SharedURLLoaderFactory* loader_factory,
                            const std::string& api_key,
-                           const base::TickClock* tick_clock)
+                           const base::TickClock* tick_clock,
+                           PrefService* pref_service)
     : url_(url),
       request_type_(request_type),
       request_body_(std::move(request_body)),
@@ -103,7 +122,23 @@ NetworkFetch::NetworkFetch(const GURL& url,
       loader_factory_(loader_factory),
       api_key_(api_key),
       tick_clock_(tick_clock),
-      start_ticks_(tick_clock_->NowTicks()) {}
+      entire_send_start_ticks_(tick_clock_->NowTicks()),
+      pref_service_(pref_service) {
+  // Apply the host override (from snippets-internals).
+  std::string host_override =
+      pref_service_->GetString(feed::prefs::kHostOverrideHost);
+  if (!host_override.empty()) {
+    GURL override_host_url(host_override);
+    if (override_host_url.is_valid()) {
+      GURL::Replacements replacements;
+      replacements.SetSchemeStr(override_host_url.scheme_piece());
+      replacements.SetHostStr(override_host_url.host_piece());
+      replacements.SetPortStr(override_host_url.port_piece());
+      url_ = url_.ReplaceComponents(replacements);
+      host_overridden_ = true;
+    }
+  }
+}
 
 void NetworkFetch::Start(FeedNetworkingHost::ResponseCallback done_callback) {
   done_callback_ = std::move(done_callback);
@@ -117,26 +152,33 @@ void NetworkFetch::Start(FeedNetworkingHost::ResponseCallback done_callback) {
 }
 
 void NetworkFetch::StartAccessTokenFetch() {
-  identity::ScopeSet scopes{kAuthenticationScope};
+  signin::ScopeSet scopes{kAuthenticationScope};
   // It's safe to pass base::Unretained(this) since deleting the token fetcher
   // will prevent the callback from being completed.
-  token_fetcher_ = std::make_unique<identity::PrimaryAccountAccessTokenFetcher>(
+  token_fetcher_ = std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
       "feed", identity_manager_, scopes,
       base::BindOnce(&NetworkFetch::AccessTokenFetchFinished,
-                     base::Unretained(this)),
-      identity::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable);
+                     base::Unretained(this), tick_clock_->NowTicks()),
+      signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable);
 }
 
 void NetworkFetch::AccessTokenFetchFinished(
+    base::TimeTicks token_start_ticks,
     GoogleServiceAuthError error,
-    identity::AccessTokenInfo access_token_info) {
+    signin::AccessTokenInfo access_token_info) {
   UMA_HISTOGRAM_ENUMERATION("ContentSuggestions.Feed.Network.TokenFetchStatus",
                             error.state(), GoogleServiceAuthError::NUM_STATES);
+
+  base::TimeDelta token_duration = tick_clock_->NowTicks() - token_start_ticks;
+  UMA_HISTOGRAM_MEDIUM_TIMES("ContentSuggestions.Feed.Network.TokenDuration",
+                             token_duration);
+
   access_token_ = access_token_info.token;
   StartLoader();
 }
 
 void NetworkFetch::StartLoader() {
+  loader_only_start_ticks_ = tick_clock_->NowTicks();
   simple_loader_ = MakeLoader();
   simple_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       loader_factory_, base::BindOnce(&NetworkFetch::OnSimpleLoaderComplete,
@@ -144,12 +186,6 @@ void NetworkFetch::StartLoader() {
 }
 
 std::unique_ptr<network::SimpleURLLoader> NetworkFetch::MakeLoader() {
-  std::string auth_header =
-      access_token_.empty()
-          ? std::string()
-          : base::StringPrintf(kAuthorizationRequestHeaderFormat,
-                               access_token_.c_str());
-  net::HttpRequestHeaders headers = MakeHeaders(auth_header);
   // TODO(pnoland): Add data use measurement once it's supported for simple
   // url loader.
   net::NetworkTrafficAnnotationTag traffic_annotation =
@@ -167,7 +203,8 @@ std::unique_ptr<network::SimpleURLLoader> NetworkFetch::MakeLoader() {
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: NO
+          cookies_allowed: YES
+          cookies_store: "user"
           setting: "This can be disabled from the New Tab Page by collapsing "
           "the articles section."
           chrome_policy {
@@ -185,9 +222,19 @@ std::unique_ptr<network::SimpleURLLoader> NetworkFetch::MakeLoader() {
   resource_request->url = url;
 
   resource_request->load_flags = net::LOAD_BYPASS_CACHE;
-  resource_request->allow_credentials = false;
-  resource_request->headers = headers;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   resource_request->method = request_type_;
+
+  // Include credentials ONLY if the user has overridden the feed host through
+  // the internals page. This allows for some authentication workflows we need
+  // for testing.
+  if (host_overridden_) {
+    resource_request->credentials_mode =
+        network::mojom::CredentialsMode::kInclude;
+    resource_request->site_for_cookies = net::SiteForCookies::FromUrl(url);
+  }
+
+  SetRequestHeaders(!request_body_.empty(), resource_request.get());
 
   auto simple_loader = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
@@ -198,22 +245,26 @@ std::unique_ptr<network::SimpleURLLoader> NetworkFetch::MakeLoader() {
   return simple_loader;
 }
 
-net::HttpRequestHeaders NetworkFetch::MakeHeaders(
-    const std::string& auth_header) const {
-  net::HttpRequestHeaders headers;
-  headers.SetHeader(net::HttpRequestHeaders::kContentType, kContentType);
-  headers.SetHeader(kContentEncoding, kGzip);
+void NetworkFetch::SetRequestHeaders(bool has_request_body,
+                                     network::ResourceRequest* request) const {
+  if (has_request_body) {
+    request->headers.SetHeader(net::HttpRequestHeaders::kContentType,
+                               kContentType);
+    request->headers.SetHeader(kContentEncoding, kGzip);
+  }
 
-  bool is_authorized = !auth_header.empty();
-  if (is_authorized)
-    headers.SetHeader(net::HttpRequestHeaders::kAuthorization, auth_header);
+  variations::SignedIn signed_in_status = variations::SignedIn::kNo;
+  if (!access_token_.empty()) {
+    std::string auth_header = base::StringPrintf(
+        kAuthorizationRequestHeaderFormat, access_token_.c_str());
+    request->headers.SetHeader(net::HttpRequestHeaders::kAuthorization,
+                               auth_header);
+    signed_in_status = variations::SignedIn::kYes;
+  }
 
-  variations::SignedIn signed_in_status =
-      is_authorized ? variations::SignedIn::kYes : variations::SignedIn::kNo;
   // Add X-Client-Data header with experiment IDs from field trials.
-  variations::AppendVariationHeaders(url_, variations::InIncognito::kNo,
-                                     signed_in_status, &headers);
-  return headers;
+  variations::AppendVariationsHeader(url_, variations::InIncognito::kNo,
+                                     signed_in_status, request);
 }
 
 void NetworkFetch::PopulateRequestBody(network::SimpleURLLoader* loader) {
@@ -237,16 +288,35 @@ void NetworkFetch::PopulateRequestBody(network::SimpleURLLoader* loader) {
 void NetworkFetch::OnSimpleLoaderComplete(
     std::unique_ptr<std::string> response) {
   int32_t status_code = simple_loader_->NetError();
+  // If overriding the feed host, try to grab the Bless nonce. This is
+  // strictly informational, and only displayed in snippets-internals.
+  if (host_overridden_ && simple_loader_->ResponseInfo()) {
+    size_t iter = 0;
+    std::string value;
+    while (simple_loader_->ResponseInfo()->headers->EnumerateHeader(
+        &iter, "www-authenticate", &value)) {
+      size_t pos = value.find("nonce=\"");
+      if (pos != std::string::npos) {
+        std::string nonce = value.substr(pos + 7, 16);
+        if (nonce.size() == 16) {
+          pref_service_->SetString(feed::prefs::kHostOverrideBlessNonce, nonce);
+          break;
+        }
+      }
+    }
+  }
   std::vector<uint8_t> response_body;
 
   if (response) {
     status_code = simple_loader_->ResponseInfo()->headers->response_code();
 
     if (status_code == net::HTTP_UNAUTHORIZED) {
-      identity::ScopeSet scopes{kAuthenticationScope};
-      std::string account_id = identity_manager_->GetPrimaryAccountId();
-      identity_manager_->RemoveAccessTokenFromCache(account_id, scopes,
-                                                    access_token_);
+      signin::ScopeSet scopes{kAuthenticationScope};
+      CoreAccountId account_id = identity_manager_->GetPrimaryAccountId();
+      if (!account_id.empty()) {
+        identity_manager_->RemoveAccessTokenFromCache(account_id, scopes,
+                                                      access_token_);
+      }
     }
 
     const uint8_t* begin = reinterpret_cast<const uint8_t*>(response->data());
@@ -254,9 +324,16 @@ void NetworkFetch::OnSimpleLoaderComplete(
     response_body.assign(begin, end);
   }
 
-  base::TimeDelta duration = tick_clock_->NowTicks() - start_ticks_;
+  base::TimeDelta entire_send_duration =
+      tick_clock_->NowTicks() - entire_send_start_ticks_;
   UMA_HISTOGRAM_MEDIUM_TIMES("ContentSuggestions.Feed.Network.Duration",
-                             duration);
+                             entire_send_duration);
+
+  base::TimeDelta loader_only_duration =
+      tick_clock_->NowTicks() - loader_only_start_ticks_;
+  // This histogram purposefully matches name and bucket size used in
+  // RemoteSuggestionsFetcherImpl.
+  UMA_HISTOGRAM_TIMES("NewTabPage.Snippets.FetchTime", loader_only_duration);
 
   base::UmaHistogramSparse("ContentSuggestions.Feed.Network.RequestStatusCode",
                            status_code);
@@ -272,14 +349,16 @@ void NetworkFetch::OnSimpleLoaderComplete(
 }
 
 FeedNetworkingHost::FeedNetworkingHost(
-    identity::IdentityManager* identity_manager,
+    signin::IdentityManager* identity_manager,
     const std::string& api_key,
     scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
-    const base::TickClock* tick_clock)
+    const base::TickClock* tick_clock,
+    PrefService* pref_service)
     : identity_manager_(identity_manager),
       api_key_(api_key),
       loader_factory_(std::move(loader_factory)),
-      tick_clock_(tick_clock) {}
+      tick_clock_(tick_clock),
+      pref_service_(pref_service) {}
 
 FeedNetworkingHost::~FeedNetworkingHost() = default;
 
@@ -294,7 +373,7 @@ void FeedNetworkingHost::Send(
     ResponseCallback callback) {
   auto fetch = std::make_unique<NetworkFetch>(
       url, request_type, std::move(request_body), identity_manager_,
-      loader_factory_.get(), api_key_, tick_clock_);
+      loader_factory_.get(), api_key_, tick_clock_, pref_service_);
   NetworkFetch* fetch_unowned = fetch.get();
   pending_requests_.emplace(std::move(fetch));
 

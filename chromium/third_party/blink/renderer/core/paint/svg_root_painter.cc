@@ -17,12 +17,13 @@
 namespace blink {
 
 IntRect SVGRootPainter::PixelSnappedSize(
-    const LayoutPoint& paint_offset) const {
-  return PixelSnappedIntRect(paint_offset, layout_svg_root_.Size());
+    const PhysicalOffset& paint_offset) const {
+  return PixelSnappedIntRect(
+      PhysicalRect(paint_offset, layout_svg_root_.Size()));
 }
 
 AffineTransform SVGRootPainter::TransformToPixelSnappedBorderBox(
-    const LayoutPoint& paint_offset) const {
+    const PhysicalOffset& paint_offset) const {
   const IntRect snapped_size = PixelSnappedSize(paint_offset);
   AffineTransform paint_offset_to_border_box =
       AffineTransform::Translation(snapped_size.X(), snapped_size.Y());
@@ -38,21 +39,21 @@ AffineTransform SVGRootPainter::TransformToPixelSnappedBorderBox(
 }
 
 void SVGRootPainter::PaintReplaced(const PaintInfo& paint_info,
-                                   const LayoutPoint& paint_offset) {
+                                   const PhysicalOffset& paint_offset) {
   // An empty viewport disables rendering.
   if (PixelSnappedSize(paint_offset).IsEmpty())
     return;
 
   // An empty viewBox also disables rendering.
   // (http://www.w3.org/TR/SVG/coords.html#ViewBoxAttribute)
-  SVGSVGElement* svg = ToSVGSVGElement(layout_svg_root_.GetNode());
+  auto* svg = To<SVGSVGElement>(layout_svg_root_.GetNode());
   DCHECK(svg);
   if (svg->HasEmptyViewBox())
     return;
 
   ScopedSVGPaintState paint_state(layout_svg_root_, paint_info);
   if (paint_state.GetPaintInfo().phase == PaintPhase::kForeground &&
-      !paint_state.ApplyClipMaskAndFilterIfNecessary())
+      !paint_state.ApplyEffects())
     return;
 
   BoxPainter(layout_svg_root_).PaintChildren(paint_state.GetPaintInfo());

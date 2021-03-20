@@ -14,55 +14,79 @@
 
 #include "utils/BackendBinding.h"
 
-#include "common/Assert.h"
+#include "common/Compiler.h"
+
+#include "GLFW/glfw3.h"
+
+#if defined(DAWN_ENABLE_BACKEND_OPENGL)
+#    include "dawn_native/OpenGLBackend.h"
+#endif  // defined(DAWN_ENABLE_BACKEND_OPENGL)
 
 namespace utils {
 
 #if defined(DAWN_ENABLE_BACKEND_D3D12)
-    BackendBinding* CreateD3D12Binding();
+    BackendBinding* CreateD3D12Binding(GLFWwindow* window, WGPUDevice device);
 #endif
 #if defined(DAWN_ENABLE_BACKEND_METAL)
-    BackendBinding* CreateMetalBinding();
+    BackendBinding* CreateMetalBinding(GLFWwindow* window, WGPUDevice device);
 #endif
 #if defined(DAWN_ENABLE_BACKEND_NULL)
-    BackendBinding* CreateNullBinding();
+    BackendBinding* CreateNullBinding(GLFWwindow* window, WGPUDevice device);
 #endif
 #if defined(DAWN_ENABLE_BACKEND_OPENGL)
-    BackendBinding* CreateOpenGLBinding();
+    BackendBinding* CreateOpenGLBinding(GLFWwindow* window, WGPUDevice device);
 #endif
 #if defined(DAWN_ENABLE_BACKEND_VULKAN)
-    BackendBinding* CreateVulkanBinding();
+    BackendBinding* CreateVulkanBinding(GLFWwindow* window, WGPUDevice device);
 #endif
 
-    void BackendBinding::SetWindow(GLFWwindow* window) {
-        mWindow = window;
+    BackendBinding::BackendBinding(GLFWwindow* window, WGPUDevice device)
+        : mWindow(window), mDevice(device) {
     }
 
-    BackendBinding* CreateBinding(BackendType type) {
+    void DiscoverAdapter(dawn_native::Instance* instance,
+                         GLFWwindow* window,
+                         wgpu::BackendType type) {
+        DAWN_UNUSED(type);
+        DAWN_UNUSED(window);
+
+        if (type == wgpu::BackendType::OpenGL) {
+#if defined(DAWN_ENABLE_BACKEND_OPENGL)
+            glfwMakeContextCurrent(window);
+            dawn_native::opengl::AdapterDiscoveryOptions adapterOptions;
+            adapterOptions.getProc = reinterpret_cast<void* (*)(const char*)>(glfwGetProcAddress);
+            instance->DiscoverAdapters(&adapterOptions);
+#endif  // defined(DAWN_ENABLE_BACKEND_OPENGL)
+        } else {
+            instance->DiscoverDefaultAdapters();
+        }
+    }
+
+    BackendBinding* CreateBinding(wgpu::BackendType type, GLFWwindow* window, WGPUDevice device) {
         switch (type) {
 #if defined(DAWN_ENABLE_BACKEND_D3D12)
-            case BackendType::D3D12:
-                return CreateD3D12Binding();
+            case wgpu::BackendType::D3D12:
+                return CreateD3D12Binding(window, device);
 #endif
 
 #if defined(DAWN_ENABLE_BACKEND_METAL)
-            case BackendType::Metal:
-                return CreateMetalBinding();
+            case wgpu::BackendType::Metal:
+                return CreateMetalBinding(window, device);
 #endif
 
 #if defined(DAWN_ENABLE_BACKEND_NULL)
-            case BackendType::Null:
-                return CreateNullBinding();
+            case wgpu::BackendType::Null:
+                return CreateNullBinding(window, device);
 #endif
 
 #if defined(DAWN_ENABLE_BACKEND_OPENGL)
-            case BackendType::OpenGL:
-                return CreateOpenGLBinding();
+            case wgpu::BackendType::OpenGL:
+                return CreateOpenGLBinding(window, device);
 #endif
 
 #if defined(DAWN_ENABLE_BACKEND_VULKAN)
-            case BackendType::Vulkan:
-                return CreateVulkanBinding();
+            case wgpu::BackendType::Vulkan:
+                return CreateVulkanBinding(window, device);
 #endif
 
             default:

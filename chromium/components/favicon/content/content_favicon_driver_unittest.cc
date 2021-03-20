@@ -14,18 +14,18 @@
 #include "components/favicon/core/favicon_handler.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/favicon_url.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/favicon/favicon_url.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/favicon_size.h"
 
 namespace favicon {
 namespace {
 
-using testing::ElementsAre;
 using testing::Return;
 using testing::SizeIs;
 using testing::_;
@@ -34,15 +34,30 @@ class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
  protected:
   const std::vector<gfx::Size> kEmptyIconSizes;
   const std::vector<SkBitmap> kEmptyIcons;
-  const std::vector<favicon_base::FaviconRawBitmapResult> kEmptyRawBitmapResult;
   const GURL kPageURL = GURL("http://www.google.com/");
   const GURL kIconURL = GURL("http://www.google.com/favicon.ico");
 
   ContentFaviconDriverTest() {
     ON_CALL(favicon_service_, UpdateFaviconMappingsAndFetch(_, _, _, _, _, _))
-        .WillByDefault(PostReply<6>(kEmptyRawBitmapResult));
+        .WillByDefault([](auto, auto, auto, auto,
+                          favicon_base::FaviconResultsCallback callback,
+                          base::CancelableTaskTracker* tracker) {
+          return tracker->PostTask(
+              base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
+              base::BindOnce(
+                  std::move(callback),
+                  std::vector<favicon_base::FaviconRawBitmapResult>()));
+        });
     ON_CALL(favicon_service_, GetFaviconForPageURL(_, _, _, _, _))
-        .WillByDefault(PostReply<5>(kEmptyRawBitmapResult));
+        .WillByDefault([](auto, auto, auto,
+                          favicon_base::FaviconResultsCallback callback,
+                          base::CancelableTaskTracker* tracker) {
+          return tracker->PostTask(
+              base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
+              base::BindOnce(
+                  std::move(callback),
+                  std::vector<favicon_base::FaviconRawBitmapResult>()));
+        });
   }
 
   ~ContentFaviconDriverTest() override {}
@@ -61,12 +76,10 @@ class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
 
   void TestFetchFaviconForPage(
       const GURL& page_url,
-      const std::vector<content::FaviconURL>& candidates) {
+      const std::vector<blink::mojom::FaviconURLPtr>& candidates) {
     ContentFaviconDriver* favicon_driver =
         ContentFaviconDriver::FromWebContents(web_contents());
     web_contents_tester()->NavigateAndCommit(page_url);
-    static_cast<content::WebContentsObserver*>(favicon_driver)
-        ->DocumentOnLoadCompletedInMainFrame();
     static_cast<content::WebContentsObserver*>(favicon_driver)
         ->DidUpdateFaviconURL(candidates);
     base::RunLoop().RunUntilIdle();
@@ -79,10 +92,10 @@ class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
 // for either the page URL or the icon URL.
 TEST_F(ContentFaviconDriverTest, ShouldCauseImageDownload) {
   // Mimic a page load.
-  TestFetchFaviconForPage(
-      kPageURL,
-      {content::FaviconURL(kIconURL, content::FaviconURL::IconType::kFavicon,
-                           kEmptyIconSizes)});
+  std::vector<blink::mojom::FaviconURLPtr> favicon_urls;
+  favicon_urls.push_back(blink::mojom::FaviconURL::New(
+      kIconURL, blink::mojom::FaviconIconType::kFavicon, kEmptyIconSizes));
+  TestFetchFaviconForPage(kPageURL, favicon_urls);
   EXPECT_TRUE(web_contents_tester()->TestDidDownloadImage(
       kIconURL, 200, kEmptyIcons, kEmptyIconSizes));
 }
@@ -92,10 +105,15 @@ TEST_F(ContentFaviconDriverTest, ShouldCauseImageDownload) {
 TEST_F(ContentFaviconDriverTest, ShouldNotCauseImageDownload) {
   ContentFaviconDriver* favicon_driver =
       ContentFaviconDriver::FromWebContents(web_contents());
-  web_contents_tester()->NavigateAndCommit(kPageURL);
+  auto navigation = content::NavigationSimulator::CreateBrowserInitiated(
+      kPageURL, web_contents());
+  navigation->SetKeepLoading(true);
+  navigation->Commit();
+  std::vector<blink::mojom::FaviconURLPtr> favicon_urls;
+  favicon_urls.push_back(blink::mojom::FaviconURL::New(
+      kIconURL, blink::mojom::FaviconIconType::kFavicon, kEmptyIconSizes));
   static_cast<content::WebContentsObserver*>(favicon_driver)
-      ->DidUpdateFaviconURL({content::FaviconURL(
-          kIconURL, content::FaviconURL::IconType::kFavicon, kEmptyIconSizes)});
+      ->DidUpdateFaviconURL(favicon_urls);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
@@ -110,10 +128,10 @@ TEST_F(ContentFaviconDriverTest, ShouldNotRequestRepeatedlyIfUnavailable) {
   ON_CALL(favicon_service_, WasUnableToDownloadFavicon(kIconURL))
       .WillByDefault(Return(true));
   // Mimic a page load.
-  TestFetchFaviconForPage(
-      kPageURL,
-      {content::FaviconURL(kIconURL, content::FaviconURL::IconType::kFavicon,
-                           kEmptyIconSizes)});
+  std::vector<blink::mojom::FaviconURLPtr> favicon_urls;
+  favicon_urls.push_back(blink::mojom::FaviconURL::New(
+      kIconURL, blink::mojom::FaviconIconType::kFavicon, kEmptyIconSizes));
+  TestFetchFaviconForPage(kPageURL, favicon_urls);
   // Verify that no download request is pending for the image.
   EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
 }
@@ -123,13 +141,12 @@ TEST_F(ContentFaviconDriverTest, ShouldDownloadSecondIfFirstUnavailable) {
   ON_CALL(favicon_service_, WasUnableToDownloadFavicon(kIconURL))
       .WillByDefault(Return(true));
   // Mimic a page load.
-  TestFetchFaviconForPage(
-      kPageURL,
-      {content::FaviconURL(kIconURL, content::FaviconURL::IconType::kFavicon,
-                           kEmptyIconSizes),
-       content::FaviconURL(kOtherIconURL,
-                           content::FaviconURL::IconType::kFavicon,
-                           kEmptyIconSizes)});
+  std::vector<blink::mojom::FaviconURLPtr> favicon_urls;
+  favicon_urls.push_back(blink::mojom::FaviconURL::New(
+      kIconURL, blink::mojom::FaviconIconType::kFavicon, kEmptyIconSizes));
+  favicon_urls.push_back(blink::mojom::FaviconURL::New(
+      kOtherIconURL, blink::mojom::FaviconIconType::kFavicon, kEmptyIconSizes));
+  TestFetchFaviconForPage(kPageURL, favicon_urls);
   // Verify a  download request is pending for the second image.
   EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
   EXPECT_TRUE(web_contents_tester()->HasPendingDownloadImage(kOtherIconURL));
@@ -141,10 +158,10 @@ TEST_F(ContentFaviconDriverTest, ShouldDownloadSecondIfFirstUnavailable) {
 TEST_F(ContentFaviconDriverTest, FaviconUpdateNoLastCommittedEntry) {
   ASSERT_EQ(nullptr, web_contents()->GetController().GetLastCommittedEntry());
 
-  std::vector<content::FaviconURL> favicon_urls;
-  favicon_urls.push_back(content::FaviconURL(
+  std::vector<blink::mojom::FaviconURLPtr> favicon_urls;
+  favicon_urls.push_back(blink::mojom::FaviconURL::New(
       GURL("http://www.google.ca/favicon.ico"),
-      content::FaviconURL::IconType::kFavicon, kEmptyIconSizes));
+      blink::mojom::FaviconIconType::kFavicon, kEmptyIconSizes));
   favicon::ContentFaviconDriver* driver =
       favicon::ContentFaviconDriver::FromWebContents(web_contents());
   static_cast<content::WebContentsObserver*>(driver)

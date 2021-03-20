@@ -8,8 +8,10 @@
 
 #include <cmath>
 
+#import "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "third_party/skia/include/ports/SkTypeface_mac.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_render_params.h"
 #include "ui/gfx/ios/NSString+CrStringDrawing.h"
@@ -77,7 +79,7 @@ const std::string& PlatformFontIOS::GetFontName() const {
   return font_name_;
 }
 
-std::string PlatformFontIOS::GetActualFontNameForTesting() const {
+std::string PlatformFontIOS::GetActualFontName() const {
   return base::SysNSStringToUTF8([GetNativeFont() familyName]);
 }
 
@@ -94,6 +96,10 @@ const FontRenderParams& PlatformFontIOS::GetFontRenderParams() {
 NativeFont PlatformFontIOS::GetNativeFont() const {
   return [UIFont fontWithName:base::SysUTF8ToNSString(font_name_)
                          size:font_size_];
+}
+
+sk_sp<SkTypeface> PlatformFontIOS::GetNativeSkTypeface() const {
+  return SkMakeTypefaceFromCTFont(base::mac::NSToCFCast(GetNativeFont()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

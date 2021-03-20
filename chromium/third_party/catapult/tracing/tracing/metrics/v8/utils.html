@@ -205,6 +205,10 @@ tr.exportTo('tr.metrics.v8.utils', function() {
     return TOP_GC_EVENTS[event.title];
   }
 
+  function topGarbageCollectionEventNames() {
+    return Object.values(TOP_GC_EVENTS);
+  }
+
   function subGarbageCollectionEventName(event) {
     const topEvent = findParent(event, isTopGarbageCollectionEvent);
     const prefix = topEvent ? topGarbageCollectionEventName(topEvent) :
@@ -218,26 +222,77 @@ tr.exportTo('tr.metrics.v8.utils', function() {
   }
 
   /**
+   * Finds all threads in renderer processes of the given model that
+   * can execute JavaScript code (the main thread and web worker threads).
+   * These threads are relevant for computing GC metrics.
+   */
+  function jsExecutionThreads(model) {
+    const chromeHelper = model.getOrCreateHelper(
+        tr.model.helpers.ChromeModelHelper);
+    let threads = [];
+    for (const rendererHelper of Object.values(chromeHelper.rendererHelpers)) {
+      if (rendererHelper.isChromeTracingUI) continue;
+      threads.push(rendererHelper.mainThread);
+      threads = threads.concat(rendererHelper.dedicatedWorkerThreads);
+      threads = threads.concat(rendererHelper.foregroundWorkerThreads);
+    }
+    return threads;
+  }
+
+  /**
    * Filters events using the |filterCallback|, then groups events by the user
-   * the name computed using the |nameCallback|, and then invokes
+   * provided group using the |groupCallback|, and then invokes
    * the |processCallback| with the grouped events.
    * @param {Function} filterCallback Takes an event and returns a boolean.
-   * @param {Function} nameCallback Takes event and returns a string.
-   * @param {Function} processCallback Takes a name, and an array of events.
+   * @param {Function} groupCallback Takes event and a group object which can
+   * be a string or number.
+   * @param {Function} processCallback Takes a group, and an array of events.
+   * @param {!Array<String>} groups Optional list of groups. If it is provided,
+   * then discovered groups that are not in this list will be ignored.
    */
   function groupAndProcessEvents(model, filterCallback,
-      nameCallback, processCallback) {
-    // Map: name -> [events].
-    const nameToEvents = {};
-    for (const event of model.getDescendantEvents()) {
-      if (!filterCallback(event)) continue;
-      const name = nameCallback(event);
-      nameToEvents[name] = nameToEvents[name] || [];
-      nameToEvents[name].push(event);
+      groupCallback, processCallback, groups) {
+    // Map: group -> [events].
+    const groupToEvents = {};
+    if (groups) {
+      for (const group of groups) {
+        groupToEvents[group] = [];
+      }
     }
-    for (const [name, events] of Object.entries(nameToEvents)) {
-      processCallback(name, events);
+    const threads = jsExecutionThreads(model);
+    for (const thread of threads) {
+      for (const event of thread.sliceGroup.childEvents()) {
+        if (!filterCallback(event)) continue;
+        const group = groupCallback(event);
+        if (groups && !(group in groupToEvents)) {
+          // The list of groups was provided explicitly and the current group
+          // is not in the list, so skip it.
+          continue;
+        }
+        groupToEvents[group] = groupToEvents[group] || [];
+        groupToEvents[group].push(event);
+      }
     }
+
+    for (const [group, events] of Object.entries(groupToEvents)) {
+      processCallback(group, events);
+    }
+  }
+
+  /**
+   * Returns the set of events that pass the |filterCallback| filter.
+   * @param {Function} filterCallback Takes an event and returns a boolean.
+   */
+  function filterEvents(model, filterCallback) {
+    const threads = jsExecutionThreads(model);
+    const events = [];
+    for (const thread of threads) {
+      for (const event of thread.sliceGroup.childEvents()) {
+        if (!filterCallback(event)) continue;
+        events.push(event);
+      }
+    }
+    return events;
   }
 
   /**
@@ -434,6 +489,8 @@ tr.exportTo('tr.metrics.v8.utils', function() {
 
     for (const rendererHelper of rendererHelpers) {
       if (rendererHelper.isChromeTracingUI) continue;
+      // Main thread may be missing. See crbug.com/1059726 for an example.
+      if (rendererHelper.mainThread === undefined) continue;
       const pauses = [];
       for (const event of rendererHelper.mainThread.sliceGroup.childEvents()) {
         if (eventFilter(event) && event.end > event.start) {
@@ -455,6 +512,7 @@ tr.exportTo('tr.metrics.v8.utils', function() {
     addMutatorUtilization,
     findParent,
     forcedGCEventName,
+    filterEvents,
     groupAndProcessEvents,
     isForcedGarbageCollectionEvent,
     isFullMarkCompactorEvent,
@@ -484,6 +542,7 @@ tr.exportTo('tr.metrics.v8.utils', function() {
     rangeForMemoryDumps,
     subGarbageCollectionEventName,
     topGarbageCollectionEventName,
+    topGarbageCollectionEventNames,
     unionOfIntervals,
   };
 });

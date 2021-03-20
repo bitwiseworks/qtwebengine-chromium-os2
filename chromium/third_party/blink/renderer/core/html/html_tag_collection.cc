@@ -23,6 +23,7 @@
  */
 
 #include "third_party/blink/renderer/core/html/html_tag_collection.h"
+#include "third_party/blink/renderer/core/html/html_document.h"
 
 namespace blink {
 
@@ -30,7 +31,14 @@ HTMLTagCollection::HTMLTagCollection(ContainerNode& root_node,
                                      const AtomicString& qualified_name)
     : TagCollection(root_node, kHTMLTagCollectionType, qualified_name),
       lowered_qualified_name_(qualified_name.LowerASCII()) {
-  DCHECK(root_node.GetDocument().IsHTMLDocument());
+  DCHECK(IsA<HTMLDocument>(root_node.GetDocument()));
+}
+
+HTMLTagCollection::HTMLTagCollection(ContainerNode& root_node,
+                                     CollectionType type,
+                                     const AtomicString& qualified_name)
+    : HTMLTagCollection(root_node, qualified_name) {
+  DCHECK_EQ(type, kHTMLTagCollectionType);
 }
 
 }  // namespace blink

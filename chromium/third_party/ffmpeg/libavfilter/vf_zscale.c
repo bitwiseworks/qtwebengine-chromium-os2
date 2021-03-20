@@ -702,7 +702,7 @@ fail:
     return ff_filter_frame(outlink, out);
 }
 
-static void uninit(AVFilterContext *ctx)
+static av_cold void uninit(AVFilterContext *ctx)
 {
     ZScaleContext *s = ctx->priv;
 
@@ -738,12 +738,13 @@ static int process_command(AVFilterContext *ctx, const char *cmd, const char *ar
 
 #define OFFSET(x) offsetof(ZScaleContext, x)
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM
+#define TFLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption zscale_options[] = {
-    { "w",      "Output video width",  OFFSET(w_expr),    AV_OPT_TYPE_STRING, .flags = FLAGS },
-    { "width",  "Output video width",  OFFSET(w_expr),    AV_OPT_TYPE_STRING, .flags = FLAGS },
-    { "h",      "Output video height", OFFSET(h_expr),    AV_OPT_TYPE_STRING, .flags = FLAGS },
-    { "height", "Output video height", OFFSET(h_expr),    AV_OPT_TYPE_STRING, .flags = FLAGS },
+    { "w",      "Output video width",  OFFSET(w_expr),    AV_OPT_TYPE_STRING, .flags = TFLAGS },
+    { "width",  "Output video width",  OFFSET(w_expr),    AV_OPT_TYPE_STRING, .flags = TFLAGS },
+    { "h",      "Output video height", OFFSET(h_expr),    AV_OPT_TYPE_STRING, .flags = TFLAGS },
+    { "height", "Output video height", OFFSET(h_expr),    AV_OPT_TYPE_STRING, .flags = TFLAGS },
     { "size",   "set video size",      OFFSET(size_str),  AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS },
     { "s",      "set video size",      OFFSET(size_str),  AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, FLAGS },
     { "dither", "set dither type",     OFFSET(dither),    AV_OPT_TYPE_INT, {.i64 = 0}, 0, ZIMG_DITHER_ERROR_DIFFUSION, FLAGS, "dither" },
@@ -789,6 +790,7 @@ static const AVOption zscale_options[] = {
     {     "smpte431",         0,       0,                 AV_OPT_TYPE_CONST, {.i64 = ZIMG_PRIMARIES_ST431_2},     0, 0, FLAGS, "primaries" },
     {     "smpte432",         0,       0,                 AV_OPT_TYPE_CONST, {.i64 = ZIMG_PRIMARIES_ST432_1},     0, 0, FLAGS, "primaries" },
     {     "jedec-p22",        0,       0,                 AV_OPT_TYPE_CONST, {.i64 = ZIMG_PRIMARIES_EBU3213_E},   0, 0, FLAGS, "primaries" },
+    {     "ebu3213",          0,       0,                 AV_OPT_TYPE_CONST, {.i64 = ZIMG_PRIMARIES_EBU3213_E},   0, 0, FLAGS, "primaries" },
     { "transfer", "set transfer characteristic", OFFSET(trc), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, FLAGS, "transfer" },
     { "t",        "set transfer characteristic", OFFSET(trc), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, FLAGS, "transfer" },
     {     "input",            0,       0,                 AV_OPT_TYPE_CONST, {.i64 = -1},                         0, 0, FLAGS, "transfer" },
@@ -859,13 +861,7 @@ static const AVOption zscale_options[] = {
     { NULL }
 };
 
-static const AVClass zscale_class = {
-    .class_name       = "zscale",
-    .item_name        = av_default_item_name,
-    .option           = zscale_options,
-    .version          = LIBAVUTIL_VERSION_INT,
-    .category         = AV_CLASS_CATEGORY_FILTER,
-};
+AVFILTER_DEFINE_CLASS(zscale);
 
 static const AVFilterPad avfilter_vf_zscale_inputs[] = {
     {

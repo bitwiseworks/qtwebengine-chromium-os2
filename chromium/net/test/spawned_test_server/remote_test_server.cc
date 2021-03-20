@@ -14,7 +14,7 @@
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -95,9 +95,7 @@ bool RemoteTestServer::StartInBackground() {
   // the test spawer may forward OCSP a second time, from the device to the
   // host.
   bool ocsp_server_enabled =
-      type() == TYPE_HTTPS && (ssl_options().server_certificate ==
-                                   SSLOptions::CERT_AUTO_AIA_INTERMEDIATE ||
-                               !ssl_options().GetOCSPArgument().empty());
+      type() == TYPE_HTTPS && !ssl_options().GetOCSPArgument().empty();
   if (ocsp_server_enabled) {
     ocsp_proxy_ = std::make_unique<TcpSocketProxy>(io_thread_.task_runner());
     bool initialized = ocsp_proxy_->Initialize();
@@ -150,10 +148,9 @@ bool RemoteTestServer::BlockUntilStarted() {
   }
 
   if (ocsp_proxy_) {
-    const base::Value* ocsp_port_value = server_data().FindKey("ocsp_port");
-    if (ocsp_port_value && ocsp_port_value->is_int()) {
-      ocsp_proxy_->Start(
-          IPEndPoint(config_.address(), ocsp_port_value->GetInt()));
+    base::Optional<int> ocsp_port_value = server_data().FindIntKey("ocsp_port");
+    if (ocsp_port_value) {
+      ocsp_proxy_->Start(IPEndPoint(config_.address(), *ocsp_port_value));
     } else {
       LOG(WARNING) << "testserver.py didn't return ocsp_port.";
     }
@@ -201,7 +198,7 @@ bool RemoteTestServer::Init(const base::FilePath& document_root) {
   config_ = RemoteTestServerConfig::Load();
 
   bool thread_started = io_thread_.StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
+      base::Thread::Options(base::MessagePumpType::IO, 0));
   CHECK(thread_started);
 
   // Unlike LocalTestServer, RemoteTestServer passes relative paths to the test

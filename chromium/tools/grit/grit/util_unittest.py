@@ -6,12 +6,16 @@
 '''Unit test that checks some of util functions.
 '''
 
+from __future__ import print_function
+
 import os
 import sys
 if __name__ == '__main__':
   sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import unittest
+
+import six
 
 from grit import util
 
@@ -52,8 +56,8 @@ class UtilUnittest(unittest.TestCase):
     self.failUnless(util.CanonicalLanguage('no_no_bokmal') == 'no-NO-BOKMAL')
 
   def testUnescapeHtml(self):
-    self.failUnless(util.UnescapeHtml('&#1010;') == unichr(1010))
-    self.failUnless(util.UnescapeHtml('&#xABcd;') == unichr(43981))
+    self.failUnless(util.UnescapeHtml('&#1010;') == six.unichr(1010))
+    self.failUnless(util.UnescapeHtml('&#xABcd;') == six.unichr(43981))
 
   def testRelativePath(self):
     """ Verify that MakeRelativePath works in some tricky cases."""
@@ -81,27 +85,23 @@ class UtilUnittest(unittest.TestCase):
     def Test(data, encoding, expected_result):
       with open('testfile', 'wb') as f:
         f.write(data)
-      if util.ReadFile('testfile', encoding) != expected_result:
-        print (util.ReadFile('testfile', encoding), expected_result)
-      self.failUnless(util.ReadFile('testfile', encoding) == expected_result)
+      self.assertEqual(util.ReadFile('testfile', encoding), expected_result)
 
-    test_std_newline = '\xEF\xBB\xBFabc\ndef'  # EF BB BF is UTF-8 BOM
-    newlines = ['\n', '\r\n', '\r']
+    test_std_newline = b'\xEF\xBB\xBFabc\ndef'  # EF BB BF is UTF-8 BOM
+    newlines = [b'\n', b'\r\n', b'\r']
 
     with util.TempDir({}) as tmp_dir:
       with tmp_dir.AsCurrentDir():
         for newline in newlines:
-          test = test_std_newline.replace('\n', newline)
+          test = test_std_newline.replace(b'\n', newline)
           Test(test, util.BINARY, test)
-          # RAW_TEXT uses universal newline mode
-          Test(test, util.RAW_TEXT, test_std_newline)
           # utf-8 doesn't strip BOM
           Test(test, 'utf-8', test_std_newline.decode('utf-8'))
           # utf-8-sig strips BOM
           Test(test, 'utf-8-sig', test_std_newline.decode('utf-8')[1:])
           # test another encoding
           Test(test, 'cp1252', test_std_newline.decode('cp1252'))
-        self.assertRaises(UnicodeDecodeError, Test, '\x80', 'utf-8', None)
+        self.assertRaises(UnicodeDecodeError, Test, b'\x80', 'utf-8', None)
 
 
 class TestBaseClassToLoad(object):

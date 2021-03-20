@@ -20,6 +20,10 @@ class PlatformFontMac : public PlatformFont {
   PlatformFontMac(const std::string& font_name,
                   int font_size);
 
+  PlatformFontMac(sk_sp<SkTypeface> typeface,
+                  int font_size_pixels,
+                  const base::Optional<FontRenderParams>& params);
+
   // Overridden from PlatformFont:
   Font DeriveFont(int size_delta,
                   int style,
@@ -31,10 +35,11 @@ class PlatformFontMac : public PlatformFont {
   int GetExpectedTextWidth(int length) override;
   int GetStyle() const override;
   const std::string& GetFontName() const override;
-  std::string GetActualFontNameForTesting() const override;
+  std::string GetActualFontName() const override;
   int GetFontSize() const override;
   const FontRenderParams& GetFontRenderParams() override;
   NativeFont GetNativeFont() const override;
+  sk_sp<SkTypeface> GetNativeSkTypeface() const override;
 
  private:
   PlatformFontMac(const std::string& font_name,

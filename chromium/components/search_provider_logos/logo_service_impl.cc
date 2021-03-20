@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
@@ -14,6 +15,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
@@ -67,8 +69,7 @@ class ImageDecodedHandlerWithTimeout {
   explicit ImageDecodedHandlerWithTimeout(
       const base::RepeatingCallback<void(const SkBitmap&)>&
           image_decoded_callback)
-      : image_decoded_callback_(image_decoded_callback),
-        weak_ptr_factory_(this) {}
+      : image_decoded_callback_(image_decoded_callback) {}
 
   void OnImageDecoded(const gfx::Image& decoded_image) {
     image_decoded_callback_.Run(decoded_image.AsBitmap());
@@ -76,7 +77,7 @@ class ImageDecodedHandlerWithTimeout {
   }
 
   base::RepeatingCallback<void(const SkBitmap&)> image_decoded_callback_;
-  base::WeakPtrFactory<ImageDecodedHandlerWithTimeout> weak_ptr_factory_;
+  base::WeakPtrFactory<ImageDecodedHandlerWithTimeout> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ImageDecodedHandlerWithTimeout);
 };
@@ -179,7 +180,7 @@ void NotifyAndClear(std::vector<EncodedLogoCallback>* encoded_callbacks,
 
 LogoServiceImpl::LogoServiceImpl(
     const base::FilePath& cache_directory,
-    identity::IdentityManager* identity_manager,
+    signin::IdentityManager* identity_manager,
     TemplateURLService* template_url_service,
     std::unique_ptr<image_fetcher::ImageDecoder> image_decoder,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
@@ -192,12 +193,11 @@ LogoServiceImpl::LogoServiceImpl(
       image_decoder_(std::move(image_decoder)),
       is_idle_(true),
       is_cached_logo_valid_(false),
-      cache_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+      cache_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       logo_cache_(new LogoCache(cache_directory_),
-                  base::OnTaskRunnerDeleter(cache_task_runner_)),
-      weak_ptr_factory_(this) {
+                  base::OnTaskRunnerDeleter(cache_task_runner_)) {
   identity_manager_->AddObserver(this);
 }
 
@@ -216,10 +216,10 @@ void LogoServiceImpl::GetLogo(search_provider_logos::LogoObserver* observer) {
       base::BindOnce(ObserverOnLogoAvailable, observer, true);
   callbacks.on_fresh_decoded_logo_available =
       base::BindOnce(ObserverOnLogoAvailable, observer, false);
-  GetLogo(std::move(callbacks));
+  GetLogo(std::move(callbacks), false);
 }
 
-void LogoServiceImpl::GetLogo(LogoCallbacks callbacks) {
+void LogoServiceImpl::GetLogo(LogoCallbacks callbacks, bool for_webui_ntp) {
   if (!template_url_service_) {
     RunCallbacksWithDisabled(std::move(callbacks));
     return;
@@ -285,11 +285,13 @@ void LogoServiceImpl::GetLogo(LogoCallbacks callbacks) {
     // We encode the type of doodle (regular or gray) in the URL so that the
     // logo cache gets cleared when that value changes.
     GURL prefilled_url = AppendPreliminaryParamsToDoodleURL(
-        want_gray_logo_getter_.Run(), doodle_url);
+        want_gray_logo_getter_.Run(), for_webui_ntp, doodle_url);
     SetServerAPI(
         prefilled_url,
-        base::Bind(&search_provider_logos::ParseDoodleLogoResponse, base_url),
-        base::Bind(&search_provider_logos::AppendFingerprintParamToDoodleURL));
+        base::BindRepeating(&search_provider_logos::ParseDoodleLogoResponse,
+                            base_url),
+        base::BindRepeating(
+            &search_provider_logos::AppendFingerprintParamToDoodleURL));
   }
 
   DCHECK(!logo_url_.is_empty());
@@ -320,11 +322,11 @@ void LogoServiceImpl::GetLogo(LogoCallbacks callbacks) {
 
     base::PostTaskAndReplyWithResult(
         cache_task_runner_.get(), FROM_HERE,
-        base::BindRepeating(&GetLogoFromCacheOnFileThread,
-                            base::Unretained(logo_cache_.get()), logo_url_,
-                            clock_->Now()),
-        base::BindRepeating(&LogoServiceImpl::OnCachedLogoRead,
-                            weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&GetLogoFromCacheOnFileThread,
+                       base::Unretained(logo_cache_.get()), logo_url_,
+                       clock_->Now()),
+        base::BindOnce(&LogoServiceImpl::OnCachedLogoRead,
+                       weak_ptr_factory_.GetWeakPtr()));
   } else if (is_cached_logo_valid_) {
     NotifyAndClear(&on_cached_encoded_logo_, &on_cached_decoded_logo_,
                    LogoCallbackReason::DETERMINED, cached_encoded_logo_.get(),
@@ -393,19 +395,19 @@ void LogoServiceImpl::OnCachedLogoRead(
 
   if (cached_logo && cached_logo->encoded_image) {
     // Store the value of logo->encoded_image for use below. This ensures that
-    // logo->encoded_image is evaulated before base::Passed(&logo), which sets
+    // logo->encoded_image is evaluated before base::Passed(&logo), which sets
     // logo to NULL.
     scoped_refptr<base::RefCountedString> encoded_image =
         cached_logo->encoded_image;
     image_decoder_->DecodeImage(
         encoded_image->data(), gfx::Size(),  // No particular size desired.
         ImageDecodedHandlerWithTimeout::Wrap(base::BindRepeating(
-            &LogoServiceImpl::OnCachedLogoAvailable,
+            &LogoServiceImpl::OnLightCachedImageDecoded,
             weak_ptr_factory_.GetWeakPtr(), base::Passed(&cached_logo))));
   } else if (cached_logo) {
-    OnCachedLogoAvailable(std::move(cached_logo), SkBitmap());
+    OnCachedLogoAvailable(std::move(cached_logo), SkBitmap(), SkBitmap());
   } else {
-    OnCachedLogoAvailable({}, SkBitmap());
+    OnCachedLogoAvailable({}, SkBitmap(), SkBitmap());
   }
 }
 
@@ -422,15 +424,41 @@ void LogoServiceImpl::SetCachedMetadata(const LogoMetadata& metadata) {
                                 base::Unretained(logo_cache_.get()), metadata));
 }
 
+void LogoServiceImpl::OnLightCachedImageDecoded(
+    std::unique_ptr<EncodedLogo> cached_logo,
+    const SkBitmap& image) {
+  if (cached_logo->metadata.dark_mime_type.empty()) {
+    OnCachedLogoAvailable(std::move(cached_logo), image, SkBitmap());
+    return;
+  }
+
+  // Store the value of logo->dark_encoded_image for use below. This ensures
+  // that logo->dark_encoded_image is evaluated before base::Passed(&logo),
+  // which sets logo to NULL.
+  scoped_refptr<base::RefCountedString> dark_encoded_image =
+      cached_logo->dark_encoded_image;
+
+  image_decoder_->DecodeImage(
+      dark_encoded_image->data(), gfx::Size(),  // No particular size desired.
+      ImageDecodedHandlerWithTimeout::Wrap(base::BindRepeating(
+          &LogoServiceImpl::OnCachedLogoAvailable,
+          weak_ptr_factory_.GetWeakPtr(), base::Passed(&cached_logo), image)));
+}
+
 void LogoServiceImpl::OnCachedLogoAvailable(
     std::unique_ptr<EncodedLogo> encoded_logo,
-    const SkBitmap& image) {
+    const SkBitmap& image,
+    const SkBitmap& dark_image) {
   DCHECK(!is_idle_);
 
-  if (encoded_logo && encoded_logo->encoded_image && !image.isNull()) {
-    cached_logo_.reset(new Logo());
+  // A dark image is not required, but if one exists (mime type is non-empty)
+  // it must be successfully decoded.
+  if (encoded_logo && !image.isNull() &&
+      (encoded_logo->metadata.dark_mime_type.empty() || !dark_image.isNull())) {
+    cached_logo_ = std::make_unique<Logo>();
     cached_logo_->metadata = encoded_logo->metadata;
     cached_logo_->image = image;
+    cached_logo_->dark_image = dark_image;
     cached_encoded_logo_ = std::move(encoded_logo);
   }
   is_cached_logo_valid_ = true;
@@ -475,9 +503,6 @@ void LogoServiceImpl::FetchLogo() {
         })");
   auto request = std::make_unique<network::ResourceRequest>();
   request->url = url;
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it:
-  // data_use_measurement::DataUseUserData::SEARCH_PROVIDER_LOGOS
   loader_ =
       network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
   loader_->DownloadToString(
@@ -496,21 +521,50 @@ void LogoServiceImpl::OnFreshLogoParsed(bool* parsing_failed,
   if (logo)
     logo->metadata.source_url = logo_url_;
 
-  if (!logo || !logo->encoded_image) {
+  if (!logo || !logo->encoded_image ||
+      (!logo->metadata.dark_mime_type.empty() && !logo->dark_encoded_image)) {
     OnFreshLogoAvailable(std::move(logo), /*download_failed=*/false,
-                         *parsing_failed, from_http_cache, SkBitmap());
+                         *parsing_failed, from_http_cache, SkBitmap(),
+                         SkBitmap());
   } else {
     // Store the value of logo->encoded_image for use below. This ensures that
-    // logo->encoded_image is evaulated before base::Passed(&logo), which sets
+    // logo->encoded_image is evaluated before base::Passed(&logo), which sets
     // logo to NULL.
     scoped_refptr<base::RefCountedString> encoded_image = logo->encoded_image;
+
     image_decoder_->DecodeImage(
         encoded_image->data(), gfx::Size(),  // No particular size desired.
         ImageDecodedHandlerWithTimeout::Wrap(base::BindRepeating(
-            &LogoServiceImpl::OnFreshLogoAvailable,
+            &LogoServiceImpl::OnLightFreshImageDecoded,
             weak_ptr_factory_.GetWeakPtr(), base::Passed(&logo),
             /*download_failed=*/false, *parsing_failed, from_http_cache)));
   }
+}
+
+void LogoServiceImpl::OnLightFreshImageDecoded(
+    std::unique_ptr<EncodedLogo> logo,
+    bool download_failed,
+    bool parsing_failed,
+    bool from_http_cache,
+    const SkBitmap& image) {
+  if (logo->metadata.dark_mime_type.empty()) {
+    OnFreshLogoAvailable(std::move(logo), download_failed, parsing_failed,
+                         from_http_cache, image, SkBitmap());
+    return;
+  }
+
+  // Store the value of logo->dark_encoded_image for use below. This ensures
+  // that logo->encoded_image is evaluated before base::Passed(&logo), which
+  // sets logo to NULL.
+  scoped_refptr<base::RefCountedString> dark_encoded_image =
+      logo->dark_encoded_image;
+
+  image_decoder_->DecodeImage(
+      dark_encoded_image->data(), gfx::Size(),  // No particular size desired.
+      ImageDecodedHandlerWithTimeout::Wrap(base::BindRepeating(
+          &LogoServiceImpl::OnFreshLogoAvailable,
+          weak_ptr_factory_.GetWeakPtr(), base::Passed(&logo), download_failed,
+          parsing_failed, from_http_cache, image)));
 }
 
 void LogoServiceImpl::OnFreshLogoAvailable(
@@ -518,7 +572,8 @@ void LogoServiceImpl::OnFreshLogoAvailable(
     bool download_failed,
     bool parsing_failed,
     bool from_http_cache,
-    const SkBitmap& image) {
+    const SkBitmap& image,
+    const SkBitmap& dark_image) {
   DCHECK(!is_idle_);
 
   LogoDownloadOutcome download_outcome = DOWNLOAD_OUTCOME_COUNT;
@@ -533,9 +588,13 @@ void LogoServiceImpl::OnFreshLogoAvailable(
     // The cached logo was revalidated, i.e. its fingerprint was verified.
     // mime_type isn't sent when revalidating, so copy it from the cached logo.
     encoded_logo->metadata.mime_type = cached_logo_->metadata.mime_type;
+    encoded_logo->metadata.dark_mime_type =
+        cached_logo_->metadata.dark_mime_type;
     SetCachedMetadata(encoded_logo->metadata);
     download_outcome = DOWNLOAD_OUTCOME_LOGO_REVALIDATED;
-  } else if (encoded_logo && encoded_logo->encoded_image && image.isNull()) {
+  } else if ((encoded_logo && encoded_logo->encoded_image && image.isNull()) ||
+             (encoded_logo && !encoded_logo->metadata.dark_mime_type.empty() &&
+              dark_image.isNull())) {
     // Image decoding failed. Do nothing.
     download_outcome = DOWNLOAD_OUTCOME_DECODING_FAILED;
   } else if (encoded_logo && !encoded_logo->encoded_image &&
@@ -556,6 +615,7 @@ void LogoServiceImpl::OnFreshLogoAvailable(
       logo.reset(new Logo());
       logo->metadata = encoded_logo->metadata;
       logo->image = image;
+      logo->dark_image = dark_image;
     }
 
     if (logo) {
@@ -640,14 +700,14 @@ void LogoServiceImpl::OnURLLoadComplete(const network::SimpleURLLoader* source,
   std::unique_ptr<network::SimpleURLLoader> cleanup_loader(loader_.release());
 
   if (source->NetError() != net::OK) {
-    OnFreshLogoAvailable({}, /*download_failed=*/true, false, false,
+    OnFreshLogoAvailable({}, /*download_failed=*/true, false, false, SkBitmap(),
                          SkBitmap());
     return;
   }
 
   if (!source->ResponseInfo() || !source->ResponseInfo()->headers ||
       source->ResponseInfo()->headers->response_code() != net::HTTP_OK) {
-    OnFreshLogoAvailable({}, /*download_failed=*/true, false, false,
+    OnFreshLogoAvailable({}, /*download_failed=*/true, false, false, SkBitmap(),
                          SkBitmap());
     return;
   }
@@ -662,7 +722,7 @@ void LogoServiceImpl::OnURLLoadComplete(const network::SimpleURLLoader* source,
   bool from_http_cache = !source->ResponseInfo()->network_accessed;
 
   bool* parsing_failed = new bool(false);
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
@@ -674,7 +734,7 @@ void LogoServiceImpl::OnURLLoadComplete(const network::SimpleURLLoader* source,
 }
 
 void LogoServiceImpl::OnAccountsInCookieUpdated(
-    const identity::AccountsInCookieJarInfo&,
+    const signin::AccountsInCookieJarInfo&,
     const GoogleServiceAuthError&) {
   // Clear any cached logo, since it may be personalized (e.g. birthday Doodle).
   if (!clock_) {

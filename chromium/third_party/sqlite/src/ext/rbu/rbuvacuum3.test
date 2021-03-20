@@ -21,7 +21,7 @@ do_execsql_test 1.0 {
   CREATE TABLE t1(a PRIMARY KEY, b, c);
   CREATE INDEX i1b ON t1(b);
   CREATE INDEX i1c ON t1(c);
-
+  
   WITH s(i) AS (
     VALUES(1) UNION ALL SELECT i+1 FROM s WHERE i<100
   )

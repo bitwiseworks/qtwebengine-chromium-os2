@@ -5,12 +5,15 @@
 #include "third_party/blink/renderer/core/loader/modulescript/document_module_script_fetcher.h"
 
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/script/layered_api.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
+
+DocumentModuleScriptFetcher::DocumentModuleScriptFetcher(
+    util::PassKey<ModuleScriptLoader> pass_key)
+    : ModuleScriptFetcher(pass_key) {}
 
 void DocumentModuleScriptFetcher::Fetch(
     FetchParameters& fetch_params,
@@ -20,9 +23,6 @@ void DocumentModuleScriptFetcher::Fetch(
   DCHECK(fetch_client_settings_object_fetcher);
   DCHECK(!client_);
   client_ = client;
-
-  if (FetchIfLayeredAPI(fetch_params))
-    return;
 
   ScriptResource::Fetch(fetch_params, fetch_client_settings_object_fetcher,
                         this, ScriptResource::kNoStreaming);
@@ -34,49 +34,24 @@ void DocumentModuleScriptFetcher::NotifyFinished(Resource* resource) {
   ScriptResource* script_resource = ToScriptResource(resource);
 
   HeapVector<Member<ConsoleMessage>> error_messages;
-  if (!WasModuleLoadSuccessful(script_resource, &error_messages)) {
+  ModuleScriptCreationParams::ModuleType module_type;
+  if (!WasModuleLoadSuccessful(script_resource, &error_messages,
+                               &module_type)) {
     client_->NotifyFetchFinished(base::nullopt, error_messages);
     return;
   }
 
   ModuleScriptCreationParams params(
-      script_resource->GetResponse().CurrentRequestUrl(),
-      script_resource->SourceText(),
-      script_resource->GetResourceRequest().GetFetchCredentialsMode());
+      script_resource->GetResponse().CurrentRequestUrl(), module_type,
+      script_resource->SourceText(), script_resource->CacheHandler(),
+      script_resource->GetResourceRequest().GetCredentialsMode());
   client_->NotifyFetchFinished(params, error_messages);
 }
 
-void DocumentModuleScriptFetcher::Trace(blink::Visitor* visitor) {
+void DocumentModuleScriptFetcher::Trace(Visitor* visitor) {
+  ModuleScriptFetcher::Trace(visitor);
   visitor->Trace(client_);
   ResourceClient::Trace(visitor);
-}
-
-bool DocumentModuleScriptFetcher::FetchIfLayeredAPI(
-    FetchParameters& fetch_params) {
-  if (!RuntimeEnabledFeatures::LayeredAPIEnabled())
-    return false;
-
-  KURL layered_api_url = blink::layered_api::GetInternalURL(fetch_params.Url());
-
-  if (layered_api_url.IsNull())
-    return false;
-
-  String source_text = blink::layered_api::GetSourceText(layered_api_url);
-
-  if (source_text.IsNull()) {
-    HeapVector<Member<ConsoleMessage>> error_messages;
-    error_messages.push_back(ConsoleMessage::CreateForRequest(
-        kJSMessageSource, kErrorMessageLevel, "Unexpected data error",
-        fetch_params.Url().GetString(), nullptr, 0));
-    client_->NotifyFetchFinished(base::nullopt, error_messages);
-    return true;
-  }
-
-  ModuleScriptCreationParams params(
-      layered_api_url, ParkableString(source_text.ReleaseImpl()),
-      fetch_params.GetResourceRequest().GetFetchCredentialsMode());
-  client_->NotifyFetchFinished(params, HeapVector<Member<ConsoleMessage>>());
-  return true;
 }
 
 }  // namespace blink

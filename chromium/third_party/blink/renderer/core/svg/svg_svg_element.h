@@ -47,8 +47,6 @@ class SVGSVGElement final : public SVGGraphicsElement,
   USING_GARBAGE_COLLECTED_MIXIN(SVGSVGElement);
 
  public:
-  DECLARE_NODE_FACTORY(SVGSVGElement);
-
   explicit SVGSVGElement(Document&);
 
   float IntrinsicWidth() const;
@@ -111,7 +109,7 @@ class SVGSVGElement final : public SVGGraphicsElement,
   SVGAnimatedLength* width() const { return width_.Get(); }
   SVGAnimatedLength* height() const { return height_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   ~SVGSVGElement() override;
@@ -120,7 +118,6 @@ class SVGSVGElement final : public SVGGraphicsElement,
 
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
-  bool IsPresentationAttributeWithSVGDOM(const QualifiedName&) const override;
   void CollectStyleForPresentationAttribute(
       const QualifiedName&,
       const AtomicString&,
@@ -128,12 +125,14 @@ class SVGSVGElement final : public SVGGraphicsElement,
 
   void AttachLayoutTree(AttachContext&) override;
   bool LayoutObjectIsNeeded(const ComputedStyle&) const override;
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
 
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
 
   void SvgAttributeChanged(const QualifiedName&) override;
+
+  void DidMoveToNewDocument(Document& old_document) override;
 
   bool SelfHasRelativeLengths() const override;
 

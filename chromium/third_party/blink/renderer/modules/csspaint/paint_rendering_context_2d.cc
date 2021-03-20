@@ -11,22 +11,21 @@ namespace blink {
 
 PaintRenderingContext2D::PaintRenderingContext2D(
     const IntSize& container_size,
-    const CanvasColorParams& color_params,
     const PaintRenderingContext2DSettings* context_settings,
-    float zoom)
+    float zoom,
+    float device_scale_factor)
     : container_size_(container_size),
-      color_params_(color_params),
       context_settings_(context_settings),
-      effective_zoom_(zoom) {
+      effective_zoom_(zoom),
+      device_scale_factor_(device_scale_factor) {
   InitializePaintRecorder();
 
   clip_antialiasing_ = kAntiAliased;
   ModifiableState().SetShouldAntialias(true);
 
-  Canvas()->clear(context_settings->alpha() ? SK_ColorTRANSPARENT
-                                            : SK_ColorBLACK);
+  GetPaintCanvas()->clear(context_settings->alpha() ? SK_ColorTRANSPARENT
+                                                    : SK_ColorBLACK);
   did_record_draw_commands_in_paint_recorder_ = true;
-  Canvas()->scale(zoom, zoom);
 }
 
 void PaintRenderingContext2D::InitializePaintRecorder() {
@@ -38,13 +37,12 @@ void PaintRenderingContext2D::InitializePaintRecorder() {
   // and clip.
   canvas->save();
 
-  did_record_draw_commands_in_paint_recorder_ = false;
-}
+  // No need to apply |device_scale_factor_| here. On the platform where the
+  // zoom_for_dsf is not enabled (currently Mac), the recording methods (e.g.
+  // setTransform) have their own logic to account for the device scale factor.
+  scale(effective_zoom_, effective_zoom_);
 
-cc::PaintCanvas* PaintRenderingContext2D::Canvas() const {
-  DCHECK(paint_recorder_);
-  DCHECK(paint_recorder_->getRecordingCanvas());
-  return paint_recorder_->getRecordingCanvas();
+  did_record_draw_commands_in_paint_recorder_ = false;
 }
 
 void PaintRenderingContext2D::DidDraw(const SkIRect&) {
@@ -98,18 +96,17 @@ void PaintRenderingContext2D::setShadowOffsetY(double y) {
   BaseRenderingContext2D::setShadowOffsetY(y * effective_zoom_);
 }
 
-cc::PaintCanvas* PaintRenderingContext2D::DrawingCanvas() const {
-  return Canvas();
+cc::PaintCanvas* PaintRenderingContext2D::GetPaintCanvas() const {
+  DCHECK(paint_recorder_);
+  DCHECK(paint_recorder_->getRecordingCanvas());
+  return paint_recorder_->getRecordingCanvas();
 }
 
-cc::PaintCanvas* PaintRenderingContext2D::ExistingDrawingCanvas() const {
-  return Canvas();
-}
-
-void PaintRenderingContext2D::ValidateStateStack() const {
+void PaintRenderingContext2D::ValidateStateStackWithCanvas(
+    const cc::PaintCanvas* canvas) const {
 #if DCHECK_IS_ON()
-  if (cc::PaintCanvas* sk_canvas = ExistingDrawingCanvas()) {
-    DCHECK_EQ(static_cast<size_t>(sk_canvas->getSaveCount()),
+  if (canvas) {
+    DCHECK_EQ(static_cast<size_t>(canvas->getSaveCount()),
               state_stack_.size() + 1);
   }
 #endif
@@ -132,6 +129,32 @@ void PaintRenderingContext2D::WillOverwriteCanvas() {
     paint_recorder_->finishRecordingAsPicture();
     InitializePaintRecorder();
   }
+}
+
+DOMMatrix* PaintRenderingContext2D::getTransform() {
+  const AffineTransform& t = GetState().Transform();
+  DOMMatrix* m = DOMMatrix::Create();
+  m->setA(t.A() / effective_zoom_);
+  m->setB(t.B() / effective_zoom_);
+  m->setC(t.C() / effective_zoom_);
+  m->setD(t.D() / effective_zoom_);
+  m->setE(t.E() / effective_zoom_);
+  m->setF(t.F() / effective_zoom_);
+  return m;
+}
+
+// On a platform where zoom_for_dsf is not enabled, the recording canvas has its
+// logic to account for the device scale factor. Therefore, when the transform
+// of the canvas happen, we must account for the effective_zoom_ such that the
+// recording canvas would have the correct behavior.
+//
+// The BaseRenderingContext2D::setTransform calls resetTransform, so integrating
+// the effective_zoom_ in here instead of setTransform, to avoid integrating it
+// twice if we have resetTransform and setTransform API calls.
+void PaintRenderingContext2D::resetTransform() {
+  BaseRenderingContext2D::resetTransform();
+  BaseRenderingContext2D::transform(effective_zoom_, 0, 0, effective_zoom_, 0,
+                                    0);
 }
 
 sk_sp<PaintRecord> PaintRenderingContext2D::GetRecord() {

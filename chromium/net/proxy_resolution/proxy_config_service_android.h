@@ -29,7 +29,7 @@ class NET_EXPORT ProxyConfigServiceAndroid : public ProxyConfigService {
   // key. If it was not found, an empty string is returned. Note that this
   // interface does not let you distinguish an empty property from a
   // non-existing property. This callback is invoked on the JNI thread.
-  typedef base::Callback<std::string (const std::string& property)>
+  typedef base::RepeatingCallback<std::string(const std::string& property)>
       GetPropertyCallback;
 
   // Separate class whose instance is owned by the Delegate class implemented in
@@ -59,7 +59,7 @@ class NET_EXPORT ProxyConfigServiceAndroid : public ProxyConfigService {
   };
 
   ProxyConfigServiceAndroid(
-      const scoped_refptr<base::SequencedTaskRunner>& network_task_runner,
+      const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
       const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner);
 
   ~ProxyConfigServiceAndroid() override;
@@ -112,12 +112,18 @@ class NET_EXPORT ProxyConfigServiceAndroid : public ProxyConfigService {
 
   // For tests.
   ProxyConfigServiceAndroid(
-      const scoped_refptr<base::SequencedTaskRunner>& network_task_runner,
+      const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
       const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner,
       GetPropertyCallback get_property_callback);
 
   // For tests.
   void ProxySettingsChanged();
+
+  // For tests.
+  void ProxySettingsChangedTo(const std::string& host,
+                              int port,
+                              const std::string& pac_url,
+                              const std::vector<std::string>& exclusion_list);
 
   scoped_refptr<Delegate> delegate_;
 

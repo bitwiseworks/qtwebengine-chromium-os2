@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <string.h>
+
 #include <cmath>
 
 #include "base/logging.h"
@@ -331,7 +332,7 @@ base::TimeTicks TimeTicksFromXEventTime(Time timestamp) {
   g_last_seen_timestamp_ms = timestamp64;
   if (!had_recent_rollover)
     return base::TimeTicks() +
-        base::TimeDelta::FromMilliseconds(g_rollover_ms + timestamp);
+           base::TimeDelta::FromMilliseconds(g_rollover_ms + timestamp);
 
   DCHECK(timestamp64 <= UINT32_MAX)
       << "X11 Time does not roll over 32 bit, the below logic is likely wrong";
@@ -342,6 +343,43 @@ base::TimeTicks TimeTicksFromXEventTime(Time timestamp) {
   g_rollover_ms = now_ms & ~static_cast<int64_t>(UINT32_MAX);
   uint32_t delta = static_cast<uint32_t>(now_ms - timestamp);
   return base::TimeTicks() + base::TimeDelta::FromMilliseconds(now_ms - delta);
+}
+
+base::TimeTicks TimeTicksFromXEvent(const XEvent& xev) {
+  switch (xev.type) {
+    case KeyPress:
+    case KeyRelease:
+      return TimeTicksFromXEventTime(xev.xkey.time);
+    case ButtonPress:
+    case ButtonRelease:
+      return TimeTicksFromXEventTime(xev.xbutton.time);
+      break;
+    case MotionNotify:
+      return TimeTicksFromXEventTime(xev.xmotion.time);
+      break;
+    case EnterNotify:
+    case LeaveNotify:
+      return TimeTicksFromXEventTime(xev.xcrossing.time);
+      break;
+    case GenericEvent: {
+      double start, end;
+      double touch_timestamp;
+      if (GetGestureTimes(xev, &start, &end)) {
+        // If the driver supports gesture times, use them.
+        return ui::EventTimeStampFromSeconds(end);
+      } else if (ui::DeviceDataManagerX11::GetInstance()->GetEventData(
+                     xev, ui::DeviceDataManagerX11::DT_TOUCH_RAW_TIMESTAMP,
+                     &touch_timestamp)) {
+        return ui::EventTimeStampFromSeconds(touch_timestamp);
+      } else {
+        XIDeviceEvent* xide = static_cast<XIDeviceEvent*>(xev.xcookie.data);
+        return TimeTicksFromXEventTime(xide->time);
+      }
+      break;
+    }
+  }
+  NOTREACHED();
+  return base::TimeTicks();
 }
 
 }  // namespace
@@ -524,40 +562,9 @@ int EventFlagsFromXEvent(const XEvent& xev) {
 }
 
 base::TimeTicks EventTimeFromXEvent(const XEvent& xev) {
-  switch (xev.type) {
-    case KeyPress:
-    case KeyRelease:
-      return TimeTicksFromXEventTime(xev.xkey.time);
-    case ButtonPress:
-    case ButtonRelease:
-      return TimeTicksFromXEventTime(xev.xbutton.time);
-      break;
-    case MotionNotify:
-      return TimeTicksFromXEventTime(xev.xmotion.time);
-      break;
-    case EnterNotify:
-    case LeaveNotify:
-      return TimeTicksFromXEventTime(xev.xcrossing.time);
-      break;
-    case GenericEvent: {
-      double start, end;
-      double touch_timestamp;
-      if (GetGestureTimes(xev, &start, &end)) {
-        // If the driver supports gesture times, use them.
-        return ui::EventTimeStampFromSeconds(end);
-      } else if (DeviceDataManagerX11::GetInstance()->GetEventData(
-                     xev, DeviceDataManagerX11::DT_TOUCH_RAW_TIMESTAMP,
-                     &touch_timestamp)) {
-        return ui::EventTimeStampFromSeconds(touch_timestamp);
-      } else {
-        XIDeviceEvent* xide = static_cast<XIDeviceEvent*>(xev.xcookie.data);
-        return TimeTicksFromXEventTime(xide->time);
-      }
-      break;
-    }
-  }
-  NOTREACHED();
-  return base::TimeTicks();
+  auto timestamp = TimeTicksFromXEvent(xev);
+  ValidateEventTimeClock(&timestamp);
+  return timestamp;
 }
 
 gfx::Point EventLocationFromXEvent(const XEvent& xev) {
@@ -677,20 +684,6 @@ gfx::Vector2d GetMouseWheelOffsetFromXEvent(const XEvent& xev) {
   }
 }
 
-void ClearTouchIdIfReleasedFromXEvent(const XEvent& xev) {
-  ui::EventType type = ui::EventTypeFromXEvent(xev);
-  if (type == ui::ET_TOUCH_CANCELLED || type == ui::ET_TOUCH_RELEASED) {
-    ui::TouchFactory* factory = ui::TouchFactory::GetInstance();
-    ui::DeviceDataManagerX11* manager = ui::DeviceDataManagerX11::GetInstance();
-    double tracking_id;
-    if (manager->GetEventData(xev,
-                              ui::DeviceDataManagerX11::DT_TOUCH_TRACKING_ID,
-                              &tracking_id)) {
-      factory->ReleaseSlotForTrackingID(tracking_id);
-    }
-  }
-}
-
 int GetTouchIdFromXEvent(const XEvent& xev) {
   double slot = 0;
   ui::DeviceDataManagerX11* manager = ui::DeviceDataManagerX11::GetInstance();
@@ -748,6 +741,13 @@ EventPointerType GetTouchPointerTypeFromXEvent(const XEvent& xev) {
   DCHECK(ui::TouchFactory::GetInstance()->IsTouchDevice(event->sourceid));
   return ui::TouchFactory::GetInstance()->GetTouchDevicePointerType(
       event->sourceid);
+}
+
+PointerDetails GetTouchPointerDetailsFromXEvent(const XEvent& xev) {
+  return PointerDetails(
+      EventPointerType::POINTER_TYPE_TOUCH, GetTouchIdFromXEvent(xev),
+      GetTouchRadiusXFromXEvent(xev), GetTouchRadiusYFromXEvent(xev),
+      GetTouchForceFromXEvent(xev), GetTouchAngleFromXEvent(xev));
 }
 
 bool GetScrollOffsetsFromXEvent(const XEvent& xev,

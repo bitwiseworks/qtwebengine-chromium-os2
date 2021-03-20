@@ -2,13 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#formdataevent
+// https://html.spec.whatwg.org/C/#formdataevent
 
 [
-  Constructor(DOMString type, optional FormDataEventInit eventInitDict),
-  Exposed=Window,
-  RuntimeEnabled=FormDataEvent
-]
-interface FormDataEvent : Event {
+  Exposed=Window
+] interface FormDataEvent : Event {
+  constructor(DOMString type, optional FormDataEventInit eventInitDict = {});
   readonly attribute FormData formData;
 };

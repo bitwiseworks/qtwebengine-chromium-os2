@@ -35,7 +35,7 @@ MutationEvent::MutationEvent(const AtomicString& type,
                              const String& prev_value,
                              const String& new_value,
                              const String& attr_name,
-                             unsigned short attr_change)
+                             uint16_t attr_change)
     : Event(type, bubbles, cancelable),
       related_node_(related_node),
       prev_value_(prev_value),
@@ -52,7 +52,7 @@ void MutationEvent::initMutationEvent(const AtomicString& type,
                                       const String& prev_value,
                                       const String& new_value,
                                       const String& attr_name,
-                                      unsigned short attr_change) {
+                                      uint16_t attr_change) {
   if (IsBeingDispatched())
     return;
 
@@ -69,7 +69,7 @@ const AtomicString& MutationEvent::InterfaceName() const {
   return event_interface_names::kMutationEvent;
 }
 
-void MutationEvent::Trace(blink::Visitor* visitor) {
+void MutationEvent::Trace(Visitor* visitor) {
   visitor->Trace(related_node_);
   Event::Trace(visitor);
 }

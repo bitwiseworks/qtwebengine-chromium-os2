@@ -29,8 +29,6 @@ namespace blink {
 
 class PLATFORM_EXPORT FETile final : public FilterEffect {
  public:
-  static FETile* Create(Filter*);
-
   FETile(Filter*);
 
   WTF::TextStream& ExternalRepresentation(WTF::TextStream&,
@@ -42,6 +40,7 @@ class PLATFORM_EXPORT FETile final : public FilterEffect {
   }
 
   FloatRect MapInputs(const FloatRect&) const final;
+  FloatRect GetSourceRect() const;
 
   sk_sp<PaintFilter> CreateImageFilter() override;
 };

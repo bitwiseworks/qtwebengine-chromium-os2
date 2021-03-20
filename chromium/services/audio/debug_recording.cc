@@ -7,25 +7,23 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "media/audio/audio_debug_recording_manager.h"
 #include "media/audio/audio_manager.h"
 
 namespace audio {
 
-DebugRecording::DebugRecording(mojom::DebugRecordingRequest request,
-                               media::AudioManager* audio_manager,
-                               TracedServiceRef service_ref)
-    : audio_manager_(audio_manager),
-      binding_(this, std::move(request)),
-      service_ref_(std::move(service_ref)),
-      weak_factory_(this) {
+DebugRecording::DebugRecording(
+    mojo::PendingReceiver<mojom::DebugRecording> receiver,
+    media::AudioManager* audio_manager)
+    : audio_manager_(audio_manager), receiver_(this, std::move(receiver)) {
   DCHECK(audio_manager_ != nullptr);
   DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
 
   // On connection error debug recording is disabled, but the object is not
   // destroyed. It will be cleaned-up by service either on next bind request
   // or when service is shut down.
-  binding_.set_connection_error_handler(
+  receiver_.set_disconnect_handler(
       base::BindOnce(&DebugRecording::Disable, base::Unretained(this)));
 }
 
@@ -34,10 +32,11 @@ DebugRecording::~DebugRecording() {
 }
 
 void DebugRecording::Enable(
-    mojom::DebugRecordingFileProviderPtr recording_file_provider) {
+    mojo::PendingRemote<mojom::DebugRecordingFileProvider>
+        recording_file_provider) {
   DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
   DCHECK(!IsEnabled());
-  file_provider_ = std::move(recording_file_provider);
+  file_provider_.Bind(std::move(recording_file_provider));
   media::AudioDebugRecordingManager* debug_recording_manager =
       audio_manager_->GetAudioDebugRecordingManager();
   if (debug_recording_manager == nullptr)
@@ -48,12 +47,10 @@ void DebugRecording::Enable(
 
 void DebugRecording::Disable() {
   DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
-  // Client connection is lost, resetting the reference.
-  service_ref_ = TracedServiceRef();
   if (!IsEnabled())
     return;
   file_provider_.reset();
-  binding_.Close();
+  receiver_.reset();
 
   media::AudioDebugRecordingManager* debug_recording_manager =
       audio_manager_->GetAudioDebugRecordingManager();

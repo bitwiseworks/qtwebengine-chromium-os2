@@ -44,11 +44,11 @@ namespace blink {
 
 class SQLTransactionBackend;
 
-class SQLTransactionCoordinator
-    : public GarbageCollectedFinalized<SQLTransactionCoordinator> {
+class SQLTransactionCoordinator final
+    : public GarbageCollected<SQLTransactionCoordinator> {
  public:
   SQLTransactionCoordinator();
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
   void AcquireLock(SQLTransactionBackend*);
   void ReleaseLock(SQLTransactionBackend*);
   void Shutdown();

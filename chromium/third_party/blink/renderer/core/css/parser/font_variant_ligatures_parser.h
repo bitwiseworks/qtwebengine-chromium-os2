@@ -28,26 +28,26 @@ class FontVariantLigaturesParser {
   ParseResult ConsumeLigature(CSSParserTokenRange& range) {
     CSSValueID value_id = range.Peek().Id();
     switch (value_id) {
-      case CSSValueNoCommonLigatures:
-      case CSSValueCommonLigatures:
+      case CSSValueID::kNoCommonLigatures:
+      case CSSValueID::kCommonLigatures:
         if (saw_common_ligatures_value_)
           return ParseResult::kDisallowedValue;
         saw_common_ligatures_value_ = true;
         break;
-      case CSSValueNoDiscretionaryLigatures:
-      case CSSValueDiscretionaryLigatures:
+      case CSSValueID::kNoDiscretionaryLigatures:
+      case CSSValueID::kDiscretionaryLigatures:
         if (saw_discretionary_ligatures_value_)
           return ParseResult::kDisallowedValue;
         saw_discretionary_ligatures_value_ = true;
         break;
-      case CSSValueNoHistoricalLigatures:
-      case CSSValueHistoricalLigatures:
+      case CSSValueID::kNoHistoricalLigatures:
+      case CSSValueID::kHistoricalLigatures:
         if (saw_historical_ligatures_value_)
           return ParseResult::kDisallowedValue;
         saw_historical_ligatures_value_ = true;
         break;
-      case CSSValueNoContextual:
-      case CSSValueContextual:
+      case CSSValueID::kNoContextual:
+      case CSSValueID::kContextual:
         if (saw_contextual_ligatures_value_)
           return ParseResult::kDisallowedValue;
         saw_contextual_ligatures_value_ = true;
@@ -61,8 +61,10 @@ class FontVariantLigaturesParser {
 
   CSSValue* FinalizeValue() {
     if (!result_->length())
-      return CSSIdentifierValue::Create(CSSValueNormal);
-    return result_.Release();
+      return CSSIdentifierValue::Create(CSSValueID::kNormal);
+    CSSValue* result = result_;
+    result_ = nullptr;
+    return result;
   }
 
  private:
@@ -70,7 +72,7 @@ class FontVariantLigaturesParser {
   bool saw_discretionary_ligatures_value_;
   bool saw_historical_ligatures_value_;
   bool saw_contextual_ligatures_value_;
-  Member<CSSValueList> result_;
+  CSSValueList* result_;
 };
 
 }  // namespace blink

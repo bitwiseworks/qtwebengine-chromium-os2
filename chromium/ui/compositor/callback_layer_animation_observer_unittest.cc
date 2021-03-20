@@ -236,10 +236,10 @@ class CallbackLayerAnimationObserverTest : public testing::Test {
 CallbackLayerAnimationObserverTest::CallbackLayerAnimationObserverTest()
     : callbacks_(new TestCallbacks()),
       observer_(new CallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(callbacks_.get())),
-          base::Bind(&TestCallbacks::AnimationsEnded,
-                     base::Unretained(callbacks_.get())))),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(callbacks_.get())),
+          base::BindRepeating(&TestCallbacks::AnimationsEnded,
+                              base::Unretained(callbacks_.get())))),
       observer_test_api_(new LayerAnimationObserverTestApi(observer_.get())) {}
 
 CallbackLayerAnimationObserverTest::~CallbackLayerAnimationObserverTest() {
@@ -256,6 +256,47 @@ CallbackLayerAnimationObserverTest::CreateLayerAnimationSequence() {
   return sequences_.back().get();
 }
 
+class CallbackLayerAnimationObserverTestOverwrite
+    : public CallbackLayerAnimationObserverTest {
+ public:
+  CallbackLayerAnimationObserverTestOverwrite();
+
+ protected:
+  void AnimationStarted(const CallbackLayerAnimationObserver& observer);
+
+  std::unique_ptr<CallbackLayerAnimationObserver> CreateAnimationObserver();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(CallbackLayerAnimationObserverTestOverwrite);
+};
+
+CallbackLayerAnimationObserverTestOverwrite::
+    CallbackLayerAnimationObserverTestOverwrite() {
+  observer_ = CreateAnimationObserver();
+  observer_test_api_ =
+      std::make_unique<LayerAnimationObserverTestApi>(observer_.get());
+}
+
+void CallbackLayerAnimationObserverTestOverwrite::AnimationStarted(
+    const CallbackLayerAnimationObserver& observer) {
+  observer_->OnLayerAnimationAborted(sequences_.front().get());
+  observer_test_api_.reset();
+  // Replace the current observer with a new observer so that the destructor
+  // gets called on the current observer.
+  observer_ = CreateAnimationObserver();
+}
+
+std::unique_ptr<CallbackLayerAnimationObserver>
+CallbackLayerAnimationObserverTestOverwrite::CreateAnimationObserver() {
+  return std::make_unique<CallbackLayerAnimationObserver>(
+      base::BindRepeating(
+          &CallbackLayerAnimationObserverTestOverwrite::AnimationStarted,
+          base::Unretained(this)),
+      base::BindRepeating([](const CallbackLayerAnimationObserver& observer) {
+        return false;
+      }));
+}
+
 TEST(CallbackLayerAnimationObserverDestructionTest, VerifyFalseAutoDelete) {
   TestCallbacks callbacks;
   callbacks.set_should_delete_observer_on_animations_ended(false);
@@ -264,8 +305,8 @@ TEST(CallbackLayerAnimationObserverDestructionTest, VerifyFalseAutoDelete) {
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
           false, &is_destroyed);
   observer->SetActive();
 
@@ -281,8 +322,8 @@ TEST(CallbackLayerAnimationObserverDestructionTest, VerifyTrueAutoDelete) {
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
           true, &is_destroyed);
   observer->SetActive();
 
@@ -298,10 +339,10 @@ TEST(CallbackLayerAnimationObserverDestructionTest,
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
-          base::Bind(&TestCallbacks::AnimationsEnded,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsEnded,
+                              base::Unretained(&callbacks)),
           &is_destroyed);
   observer->SetActive();
 
@@ -317,14 +358,31 @@ TEST(CallbackLayerAnimationObserverDestructionTest, AnimationEndedReturnsTrue) {
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
-          base::Bind(&TestCallbacks::AnimationsEnded,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsEnded,
+                              base::Unretained(&callbacks)),
           &is_destroyed);
   observer->SetActive();
 
   EXPECT_TRUE(is_destroyed);
+}
+
+// Verifies that there are not heap-use-after-free errors when an observer has
+// its animation aborted and it gets destroyed due to a
+// unique_ptr<CallbackLayerAnimationObserver> being assigned a new value.
+TEST_F(CallbackLayerAnimationObserverTestOverwrite,
+       VerifyOverwriteOnAnimationStart) {
+  LayerAnimationSequence* sequence_1 = CreateLayerAnimationSequence();
+  LayerAnimationSequence* sequence_2 = CreateLayerAnimationSequence();
+
+  observer_test_api_->AttachedToSequence(sequence_1);
+  observer_test_api_->AttachedToSequence(sequence_2);
+  observer_->OnLayerAnimationStarted(sequence_1);
+  observer_->OnLayerAnimationStarted(sequence_2);
+  observer_->OnLayerAnimationEnded(sequence_1);
+  observer_->SetActive();
+  EXPECT_FALSE(observer_->active());
 }
 
 TEST_F(CallbackLayerAnimationObserverTest, VerifyInitialState) {
@@ -350,10 +408,10 @@ TEST_F(
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
-          base::Bind(&TestCallbacks::AnimationsEnded,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsEnded,
+                              base::Unretained(&callbacks)),
           &is_destroyed);
 
   callbacks.set_observer_to_delete_in_animation_started(observer);
@@ -380,10 +438,10 @@ TEST_F(
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
-          base::Bind(&TestCallbacks::AnimationsEnded,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsEnded,
+                              base::Unretained(&callbacks)),
           &is_destroyed);
 
   observer_test_api_->AttachedToSequence(sequence_1);
@@ -411,10 +469,10 @@ TEST_F(CallbackLayerAnimationObserverTest,
 
   TestCallbackLayerAnimationObserver* observer =
       new TestCallbackLayerAnimationObserver(
-          base::Bind(&TestCallbacks::AnimationsStarted,
-                     base::Unretained(&callbacks)),
-          base::Bind(&TestCallbacks::AnimationsEnded,
-                     base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsStarted,
+                              base::Unretained(&callbacks)),
+          base::BindRepeating(&TestCallbacks::AnimationsEnded,
+                              base::Unretained(&callbacks)),
           &is_destroyed);
 
   callbacks.set_observer_to_delete_in_animation_ended(observer);
@@ -581,6 +639,43 @@ TEST_F(CallbackLayerAnimationObserverTest,
   EXPECT_TRUE(callbacks_->animations_started());
   EXPECT_TRUE(callbacks_->animations_ended());
   EXPECT_EQ(4, observer_->successful_count());
+}
+
+TEST_F(CallbackLayerAnimationObserverTest, DetachBeforeActive) {
+  LayerAnimationSequence* sequence_1 = CreateLayerAnimationSequence();
+  LayerAnimationSequence* sequence_2 = CreateLayerAnimationSequence();
+
+  observer_test_api_->AttachedToSequence(sequence_1);
+  observer_test_api_->AttachedToSequence(sequence_2);
+  observer_->OnLayerAnimationStarted(sequence_1);
+  observer_->OnLayerAnimationEnded(sequence_1);
+  observer_test_api_->DetachedFromSequence(sequence_1, true);
+  observer_test_api_->DetachedFromSequence(sequence_2, true);
+
+  observer_->SetActive();
+
+  EXPECT_FALSE(observer_->active());
+  EXPECT_TRUE(callbacks_->animations_started());
+  EXPECT_TRUE(callbacks_->animations_ended());
+}
+
+TEST_F(CallbackLayerAnimationObserverTest, DetachAfterActive) {
+  LayerAnimationSequence* sequence_1 = CreateLayerAnimationSequence();
+  LayerAnimationSequence* sequence_2 = CreateLayerAnimationSequence();
+
+  observer_test_api_->AttachedToSequence(sequence_1);
+  observer_test_api_->AttachedToSequence(sequence_2);
+
+  observer_->SetActive();
+
+  observer_->OnLayerAnimationStarted(sequence_1);
+  observer_->OnLayerAnimationEnded(sequence_1);
+  observer_test_api_->DetachedFromSequence(sequence_1, true);
+  observer_test_api_->DetachedFromSequence(sequence_2, true);
+
+  EXPECT_FALSE(observer_->active());
+  EXPECT_TRUE(callbacks_->animations_started());
+  EXPECT_TRUE(callbacks_->animations_ended());
 }
 
 }  // namespace test

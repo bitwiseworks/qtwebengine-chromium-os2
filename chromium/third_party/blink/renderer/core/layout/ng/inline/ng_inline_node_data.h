@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NGInlineNodeData_h
-#define NGInlineNodeData_h
+#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_NODE_DATA_H_
+#define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_NODE_DATA_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_item.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
+
+template <typename OffsetMappingBuilder>
+class NGInlineItemsBuilderTemplate;
 
 // Data which is required for inline nodes.
 struct CORE_EXPORT NGInlineNodeData : NGInlineItemsData {
@@ -19,20 +22,29 @@ struct CORE_EXPORT NGInlineNodeData : NGInlineItemsData {
     return static_cast<TextDirection>(base_direction_);
   }
 
- private:
+  bool IsEmptyInline() const { return is_empty_inline_; }
+
+  bool IsBlockLevel() const { return is_block_level_; }
+
   const NGInlineItemsData& ItemsData(bool is_first_line) const {
     return !is_first_line || !first_line_items_
                ? (const NGInlineItemsData&)*this
                : *first_line_items_;
   }
+
+ private:
   void SetBaseDirection(TextDirection direction) {
     base_direction_ = static_cast<unsigned>(direction);
   }
 
+  friend class NGInlineItemsBuilderTest;
   friend class NGInlineNode;
   friend class NGInlineNodeLegacy;
   friend class NGInlineNodeForTest;
   friend class NGOffsetMappingTest;
+
+  template <typename OffsetMappingBuilder>
+  friend class NGInlineItemsBuilderTemplate;
 
   // Items to use for the first line, when the node has :first-line rules.
   //
@@ -48,8 +60,19 @@ struct CORE_EXPORT NGInlineNodeData : NGInlineItemsData {
   // produce a single zero block-size line box. If the node has text, atomic
   // inlines, open/close tags with margins/border/padding this will be false.
   unsigned is_empty_inline_ : 1;
+
+  // We use this flag to determine if we have *only* floats, and OOF-positioned
+  // children. If so we consider them block-level, and run the
+  // |NGBlockLayoutAlgorithm| instead of the |NGInlineLayoutAlgorithm|. This is
+  // done to pick up block-level static-position behaviour.
+  unsigned is_block_level_ : 1;
+
+  // True if changes to an item may affect different layout of earlier lines.
+  // May not be able to use line caches even when the line or earlier lines are
+  // not dirty.
+  unsigned changes_may_affect_earlier_lines_ : 1;
 };
 
 }  // namespace blink
 
-#endif  // NGInlineNode_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_NODE_DATA_H_

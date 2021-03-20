@@ -32,19 +32,18 @@
 #include "third_party/blink/renderer/core/paint/compositing/composited_layer_mapping.h"
 #include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_paint_order_iterator.h"
 
 namespace blink {
 
 GraphicsLayerTreeBuilder::GraphicsLayerTreeBuilder() = default;
 
-GraphicsLayerTreeBuilder::~GraphicsLayerTreeBuilder() = default;
-
 static bool ShouldAppendLayer(const PaintLayer& layer) {
-  Node* node = layer.GetLayoutObject().GetNode();
-  if (node && IsHTMLVideoElement(*node)) {
-    HTMLVideoElement* element = ToHTMLVideoElement(node);
-    if (element->IsFullscreen() && element->UsesOverlayFullscreenVideo())
-      return false;
+  auto* video_element =
+      DynamicTo<HTMLVideoElement>(layer.GetLayoutObject().GetNode());
+  if (video_element && video_element->IsFullscreen() &&
+      video_element->UsesOverlayFullscreenVideo()) {
+    return false;
   }
   return true;
 }
@@ -85,17 +84,20 @@ void GraphicsLayerTreeBuilder::RebuildRecursive(
                                    : &pending_reparents;
 
 #if DCHECK_IS_ON()
-  base::Optional<LayerListMutationDetector> mutation_checker;
-  if (layer.StackingNode())
-    mutation_checker.emplace(layer.StackingNode());
+  PaintLayerListMutationDetector mutation_checker(layer);
 #endif
 
-  if (style.IsStackingContext()) {
-    PaintLayerStackingNodeIterator iterator(*layer.StackingNode(),
-                                            kNegativeZOrderChildren);
-    while (PaintLayer* child_layer = iterator.Next()) {
-      RebuildRecursive(*child_layer, *layer_vector_for_children,
-                       *pending_reparents_for_children);
+  bool recursion_blocked_by_display_lock =
+      layer.GetLayoutObject().PrePaintBlockedByDisplayLock(
+          DisplayLockLifecycleTarget::kChildren);
+
+  if (layer.IsStackingContextWithNegativeZOrderChildren()) {
+    if (!recursion_blocked_by_display_lock) {
+      PaintLayerPaintOrderIterator iterator(layer, kNegativeZOrderChildren);
+      while (PaintLayer* child_layer = iterator.Next()) {
+        RebuildRecursive(*child_layer, *layer_vector_for_children,
+                         *pending_reparents_for_children);
+      }
     }
 
     // If a negative z-order child is compositing, we get a foreground layer
@@ -107,9 +109,9 @@ void GraphicsLayerTreeBuilder::RebuildRecursive(
     }
   }
 
-  if (layer.StackingNode()) {
-    PaintLayerStackingNodeIterator iterator(
-        *layer.StackingNode(), kNormalFlowChildren | kPositiveZOrderChildren);
+  if (!recursion_blocked_by_display_lock) {
+    PaintLayerPaintOrderIterator iterator(layer,
+                                          kNormalFlowAndPositiveZOrderChildren);
     while (PaintLayer* child_layer = iterator.Next()) {
       RebuildRecursive(*child_layer, *layer_vector_for_children,
                        *pending_reparents_for_children);
@@ -139,14 +141,21 @@ void GraphicsLayerTreeBuilder::RebuildRecursive(
                 return a.second < b.second;
               });
     for (auto& item : pending) {
-      this_layer_children.insert(item.second + offset,
-                                 item.first->GetCompositedLayerMapping()
-                                     ->DetachLayerForOverflowControls());
-      offset++;
+      if (auto* layer = item.first->GetCompositedLayerMapping()
+                            ->DetachLayerForOverflowControls()) {
+        this_layer_children.insert(item.second + offset, layer);
+        offset++;
+      }
     }
 
-    if (!parented)
+    if (!parented && !this_layer_children.IsEmpty()) {
+      // Ensure we don't clobber the decoration outline layer.
+      if (auto* layer = current_composited_layer_mapping
+                            ->DetachLayerForDecorationOutline()) {
+        this_layer_children.push_back(layer);
+      }
       current_composited_layer_mapping->SetSublayers(this_layer_children);
+    }
 
     if (ShouldAppendLayer(layer)) {
       child_layers.push_back(
@@ -162,9 +171,8 @@ void GraphicsLayerTreeBuilder::RebuildRecursive(
     pending_reparents.Set(&layer, child_layers.size());
 
   // Set or overwrite the entry in |pending_reparents| for this scroller.
-  // Overlay controls need to paint on top of all content under the
-  // scroller, so keep overwriting if we find a PaintLayer that is
-  // later in paint order.
+  // Overlay scrollbars need to paint on top of all content under the scroller,
+  // so keep overwriting if we find a PaintLayer that is later in paint order.
   const PaintLayer* scroll_parent = layer.ScrollParent();
   if (style.IsStacked() && scroll_parent &&
       scroll_parent->HasCompositedLayerMapping() &&

@@ -14,8 +14,11 @@ namespace content {
 // can un-register with GpuDataManager::RemoveObserver.
 class CONTENT_EXPORT GpuDataManagerObserver {
  public:
-  // Called for any observers whenever there is a GPU info update.
+  // Called for any observers whenever there is a GPUInfo update.
   virtual void OnGpuInfoUpdate() {}
+
+  // Called for any observers whenever there is a GpuExtraInfo update.
+  virtual void OnGpuExtraInfoUpdate() {}
 
   // Called for any observer when the GPU process crashed.
   virtual void OnGpuProcessCrashed(base::TerminationStatus exit_code) {}
@@ -24,6 +27,6 @@ class CONTENT_EXPORT GpuDataManagerObserver {
   virtual ~GpuDataManagerObserver() {}
 };
 
-};  // namespace content
+}  // namespace content
 
 #endif  // CONTENT_PUBLIC_BROWSER_GPU_DATA_MANAGER_OBSERVER_H_

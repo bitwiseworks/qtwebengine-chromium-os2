@@ -4,6 +4,7 @@
 
 #include "components/search_engines/template_url_fetcher.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,6 +18,18 @@
 #include "services/network/public/cpp/simple_url_loader.h"
 
 namespace {
+
+// In some network environments, silent failure can be avoided by retrying
+// request on network change. This helps OpenSearch get through in such cases.
+// See https://crbug.com/956689 for context.
+constexpr int kOpenSearchRetryCount = 3;
+
+// Timeout for OpenSearch description document (OSDD) fetch request.
+// Requests for a particular resource are limited to one.
+// Requests may not receive a response, and in that case no
+// further requests would be allowed. The timeout cleans up failed requests
+// so that later attempts to fetch the OSDD can be made.
+constexpr int kOpenSearchTimeoutSeconds = 30;
 
 // Traffic annotation for RequestDelegate.
 const net::NetworkTrafficAnnotationTag kTrafficAnnotation =
@@ -54,7 +67,8 @@ class TemplateURLFetcher::RequestDelegate {
                   const url::Origin& initiator,
                   network::mojom::URLLoaderFactory* url_loader_factory,
                   int render_frame_id,
-                  int resource_type);
+                  int resource_type,
+                  int32_t request_id);
 
   // If data contains a valid OSDD, a TemplateURL is created and added to
   // the TemplateURLService.
@@ -67,6 +81,7 @@ class TemplateURLFetcher::RequestDelegate {
   base::string16 keyword() const { return keyword_; }
 
  private:
+  void OnTemplateURLParsed(std::unique_ptr<TemplateURL> template_url);
   void OnLoaded();
   void AddSearchProvider();
 
@@ -90,7 +105,8 @@ TemplateURLFetcher::RequestDelegate::RequestDelegate(
     const url::Origin& initiator,
     network::mojom::URLLoaderFactory* url_loader_factory,
     int render_frame_id,
-    int resource_type)
+    int resource_type,
+    int32_t request_id)
     : fetcher_(fetcher),
       keyword_(keyword),
       osdd_url_(osdd_url),
@@ -115,12 +131,36 @@ TemplateURLFetcher::RequestDelegate::RequestDelegate(
   simple_url_loader_ = network::SimpleURLLoader::Create(
       std::move(resource_request), kTrafficAnnotation);
   simple_url_loader_->SetAllowHttpErrorResults(true);
+  simple_url_loader_->SetTimeoutDuration(
+      base::TimeDelta::FromSeconds(kOpenSearchTimeoutSeconds));
+  simple_url_loader_->SetRetryOptions(
+      kOpenSearchRetryCount, network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
+  simple_url_loader_->SetRequestID(request_id);
   simple_url_loader_->DownloadToString(
       url_loader_factory,
       base::BindOnce(
           &TemplateURLFetcher::RequestDelegate::OnSimpleLoaderComplete,
           base::Unretained(this)),
       50000 /* max_body_size */);
+}
+
+void TemplateURLFetcher::RequestDelegate::OnTemplateURLParsed(
+    std::unique_ptr<TemplateURL> template_url) {
+  template_url_ = std::move(template_url);
+
+  if (!template_url_ ||
+      !template_url_->url_ref().SupportsReplacement(
+          fetcher_->template_url_service_->search_terms_data())) {
+    fetcher_->RequestCompleted(this);
+    // WARNING: RequestCompleted deletes us.
+    return;
+  }
+
+  // Wait for the model to be loaded before adding the provider.
+  if (!fetcher_->template_url_service_->loaded())
+    return;
+  AddSearchProvider();
+  // WARNING: AddSearchProvider deletes us.
 }
 
 void TemplateURLFetcher::RequestDelegate::OnLoaded() {
@@ -141,22 +181,11 @@ void TemplateURLFetcher::RequestDelegate::OnSimpleLoaderComplete(
     return;
   }
 
-  template_url_ = TemplateURLParser::Parse(
-      fetcher_->template_url_service_->search_terms_data(),
-      response_body->data(), response_body->length(), nullptr);
-  if (!template_url_ ||
-      !template_url_->url_ref().SupportsReplacement(
-          fetcher_->template_url_service_->search_terms_data())) {
-    fetcher_->RequestCompleted(this);
-    // WARNING: RequestCompleted deletes us.
-    return;
-  }
-
-  // Wait for the model to be loaded before adding the provider.
-  if (!fetcher_->template_url_service_->loaded())
-    return;
-  AddSearchProvider();
-  // WARNING: AddSearchProvider deletes us.
+  TemplateURLParser::Parse(
+      &fetcher_->template_url_service_->search_terms_data(),
+      *response_body.get(), TemplateURLParser::ParameterFilter(),
+      base::BindOnce(&RequestDelegate::OnTemplateURLParsed,
+                     base::Unretained(this)));
 }
 
 void TemplateURLFetcher::RequestDelegate::AddSearchProvider() {
@@ -209,7 +238,8 @@ void TemplateURLFetcher::ScheduleDownload(
     const url::Origin& initiator,
     network::mojom::URLLoaderFactory* url_loader_factory,
     int render_frame_id,
-    int resource_type) {
+    int resource_type,
+    int32_t request_id) {
   DCHECK(osdd_url.is_valid());
   DCHECK(!keyword.empty());
 
@@ -234,7 +264,7 @@ void TemplateURLFetcher::ScheduleDownload(
 
   requests_.push_back(std::make_unique<RequestDelegate>(
       this, keyword, osdd_url, favicon_url, initiator, url_loader_factory,
-      render_frame_id, resource_type));
+      render_frame_id, resource_type, request_id));
 }
 
 void TemplateURLFetcher::RequestCompleted(RequestDelegate* request) {

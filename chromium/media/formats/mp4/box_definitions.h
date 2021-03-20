@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/optional.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/media_export.h"
 #include "media/base/media_log.h"
@@ -39,7 +40,7 @@ enum SampleFlags {
   T(const T& other);                      \
   ~T() override;                          \
   bool Parse(BoxReader* reader) override; \
-  FourCC BoxType() const override;
+  FourCC BoxType() const override
 
 struct MEDIA_EXPORT FileType : Box {
   DECLARE_BOX_METHODS(FileType);
@@ -133,12 +134,10 @@ struct MEDIA_EXPORT TrackEncryption : Box {
   bool is_encrypted;
   uint8_t default_iv_size;
   std::vector<uint8_t> default_kid;
-#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
   uint8_t default_crypt_byte_block;
   uint8_t default_skip_byte_block;
   uint8_t default_constant_iv_size;
   uint8_t default_constant_iv[kInitializationVectorSize];
-#endif
 };
 
 struct MEDIA_EXPORT SchemeInfo : Box {
@@ -267,6 +266,37 @@ struct MEDIA_EXPORT PixelAspectRatioBox : Box {
   uint32_t v_spacing;
 };
 
+struct MEDIA_EXPORT ColorParameterInformation : Box {
+  DECLARE_BOX_METHODS(ColorParameterInformation);
+
+  uint16_t colour_primaries;
+  uint16_t transfer_characteristics;
+  uint16_t matrix_coefficients;
+  bool full_range;
+};
+
+struct MEDIA_EXPORT MasteringDisplayColorVolume : Box {
+  DECLARE_BOX_METHODS(MasteringDisplayColorVolume);
+
+  float display_primaries_gx;
+  float display_primaries_gy;
+  float display_primaries_bx;
+  float display_primaries_by;
+  float display_primaries_rx;
+  float display_primaries_ry;
+  float white_point_x;
+  float white_point_y;
+  uint32_t max_display_mastering_luminance;
+  uint32_t min_display_mastering_luminance;
+};
+
+struct MEDIA_EXPORT ContentLightLevelInformation : Box {
+  DECLARE_BOX_METHODS(ContentLightLevelInformation);
+
+  uint16_t max_content_light_level;
+  uint16_t max_pic_average_light_level;
+};
+
 struct MEDIA_EXPORT VideoSampleEntry : Box {
   DECLARE_BOX_METHODS(VideoSampleEntry);
 
@@ -280,6 +310,11 @@ struct MEDIA_EXPORT VideoSampleEntry : Box {
 
   VideoCodec video_codec;
   VideoCodecProfile video_codec_profile;
+  VideoCodecLevel video_codec_level;
+
+  base::Optional<ColorParameterInformation> color_parameter_information;
+  base::Optional<MasteringDisplayColorVolume> mastering_display_color_volume;
+  base::Optional<ContentLightLevelInformation> content_light_level_information;
 
   bool IsFormatValid() const;
 
@@ -357,12 +392,10 @@ struct MEDIA_EXPORT CencSampleEncryptionInfoEntry {
   bool is_encrypted;
   uint8_t iv_size;
   std::vector<uint8_t> key_id;
-#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
   uint8_t crypt_byte_block;
   uint8_t skip_byte_block;
   uint8_t constant_iv_size;
   uint8_t constant_iv[kInitializationVectorSize];
-#endif
 };
 
 struct MEDIA_EXPORT SampleGroupDescription : Box {  // 'sgpd'.
@@ -547,6 +580,18 @@ struct MEDIA_EXPORT MovieFragment : Box {
   MovieFragmentHeader header;
   std::vector<TrackFragment> tracks;
   std::vector<ProtectionSystemSpecificHeader> pssh;
+};
+
+struct MEDIA_EXPORT ID3v2Box : Box {
+  DECLARE_BOX_METHODS(ID3v2Box);
+
+  // Up to a maximum of the first 128 bytes of the ID3v2 box.
+  std::vector<uint8_t> id3v2_data;
+};
+
+struct MEDIA_EXPORT MetadataBox : Box {
+  DECLARE_BOX_METHODS(MetadataBox);
+  bool used_shaka_packager;
 };
 
 #undef DECLARE_BOX

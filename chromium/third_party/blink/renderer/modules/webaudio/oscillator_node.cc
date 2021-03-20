@@ -24,6 +24,7 @@
  */
 
 #include <algorithm>
+#include <limits>
 
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/oscillator_node.h"
@@ -35,8 +36,6 @@
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
-
-using namespace vector_math;
 
 OscillatorHandler::OscillatorHandler(AudioNode& node,
                                      float sample_rate,
@@ -125,7 +124,7 @@ void OscillatorHandler::SetType(const String& type,
   }
 }
 
-bool OscillatorHandler::SetType(unsigned type) {
+bool OscillatorHandler::SetType(uint8_t type) {
   PeriodicWave* periodic_wave = nullptr;
 
   switch (type) {
@@ -178,11 +177,8 @@ static void ClampFrequency(float* frequency,
 
 bool OscillatorHandler::CalculateSampleAccuratePhaseIncrements(
     uint32_t frames_to_process) {
-  bool is_good = frames_to_process <= phase_increments_.size() &&
-                 frames_to_process <= detune_values_.size();
-  DCHECK(is_good);
-  if (!is_good)
-    return false;
+  DCHECK_LE(frames_to_process, phase_increments_.size());
+  DCHECK_LE(frames_to_process, detune_values_.size());
 
   if (first_render_) {
     first_render_ = false;
@@ -220,15 +216,16 @@ bool OscillatorHandler::CalculateSampleAccuratePhaseIncrements(
 
     // Convert from cents to rate scalar.
     float k = 1.0 / 1200;
-    Vsmul(detune_values, 1, &k, detune_values, 1, frames_to_process);
+    vector_math::Vsmul(detune_values, 1, &k, detune_values, 1,
+                       frames_to_process);
     for (unsigned i = 0; i < frames_to_process; ++i) {
       detune_values[i] = std::exp2(detune_values[i]);
     }
 
     if (has_frequency_changes) {
       // Multiply frequencies by detune scalings.
-      Vmul(detune_values, 1, phase_increments, 1, phase_increments, 1,
-           frames_to_process);
+      vector_math::Vmul(detune_values, 1, phase_increments, 1, phase_increments,
+                        1, frames_to_process);
     }
   } else {
     // Handle ordinary parameter changes if there are no scheduled
@@ -242,8 +239,8 @@ bool OscillatorHandler::CalculateSampleAccuratePhaseIncrements(
     ClampFrequency(phase_increments, frames_to_process,
                    Context()->sampleRate() / 2);
     // Convert from frequency to wavetable increment.
-    Vsmul(phase_increments, 1, &final_scale, phase_increments, 1,
-          frames_to_process);
+    vector_math::Vsmul(phase_increments, 1, &final_scale, phase_increments, 1,
+                       frames_to_process);
   }
 
   return has_sample_accurate_values;
@@ -363,8 +360,6 @@ void OscillatorHandler::Process(uint32_t frames_to_process) {
   }
 
   DCHECK_LE(frames_to_process, phase_increments_.size());
-  if (frames_to_process > phase_increments_.size())
-    return;
 
   // The audio thread can't block on this lock, so we call tryLock() instead.
   MutexTryLocker try_locker(process_lock_);
@@ -489,6 +484,19 @@ bool OscillatorHandler::PropagatesSilence() const {
   return !IsPlayingOrScheduled() || HasFinished() || !periodic_wave_.Get();
 }
 
+void OscillatorHandler::HandleStoppableSourceNode() {
+  double now = Context()->currentTime();
+
+  // If we know the end time, and the source was started and the current time is
+  // definitely past the end time, we can stop this node.  (This handles the
+  // case where the this source is not connected to the destination and we want
+  // to stop it.)
+  if (end_time_ != kUnknownTime && IsPlayingOrScheduled() &&
+      now >= end_time_ + kExtraStopFrames / Context()->sampleRate()) {
+    Finish();
+  }
+}
+
 // ----------------------------------------------------------------
 
 OscillatorNode::OscillatorNode(BaseAudioContext& context,
@@ -498,7 +506,8 @@ OscillatorNode::OscillatorNode(BaseAudioContext& context,
       // Use musical pitch standard A440 as a default.
       frequency_(
           AudioParam::Create(context,
-                             kParamTypeOscillatorFrequency,
+                             Uuid(),
+                             AudioParamHandler::kParamTypeOscillatorFrequency,
                              440,
                              AudioParamHandler::AutomationRate::kAudio,
                              AudioParamHandler::AutomationRateMode::kVariable,
@@ -507,12 +516,14 @@ OscillatorNode::OscillatorNode(BaseAudioContext& context,
       // Default to no detuning.
       detune_(
           AudioParam::Create(context,
-                             kParamTypeOscillatorDetune,
+                             Uuid(),
+                             AudioParamHandler::kParamTypeOscillatorDetune,
                              0,
                              AudioParamHandler::AutomationRate::kAudio,
                              AudioParamHandler::AutomationRateMode::kVariable,
                              -1200 * log2f(std::numeric_limits<float>::max()),
-                             1200 * log2f(std::numeric_limits<float>::max()))) {
+                             1200 * log2f(std::numeric_limits<float>::max()))),
+      periodic_wave_(wave_table) {
   SetHandler(OscillatorHandler::Create(
       *this, context.sampleRate(), oscillator_type, wave_table,
       frequency_->Handler(), detune_->Handler()));
@@ -523,11 +534,6 @@ OscillatorNode* OscillatorNode::Create(BaseAudioContext& context,
                                        PeriodicWave* wave_table,
                                        ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   return MakeGarbageCollected<OscillatorNode>(context, oscillator_type,
                                               wave_table);
@@ -557,9 +563,10 @@ OscillatorNode* OscillatorNode::Create(BaseAudioContext* context,
   return node;
 }
 
-void OscillatorNode::Trace(blink::Visitor* visitor) {
+void OscillatorNode::Trace(Visitor* visitor) {
   visitor->Trace(frequency_);
   visitor->Trace(detune_);
+  visitor->Trace(periodic_wave_);
   AudioScheduledSourceNode::Trace(visitor);
 }
 
@@ -585,7 +592,20 @@ AudioParam* OscillatorNode::detune() {
 }
 
 void OscillatorNode::setPeriodicWave(PeriodicWave* wave) {
+  periodic_wave_ = wave;
   GetOscillatorHandler().SetPeriodicWave(wave);
+}
+
+void OscillatorNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+  GraphTracer().DidCreateAudioParam(detune_);
+  GraphTracer().DidCreateAudioParam(frequency_);
+}
+
+void OscillatorNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioParam(detune_);
+  GraphTracer().WillDestroyAudioParam(frequency_);
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

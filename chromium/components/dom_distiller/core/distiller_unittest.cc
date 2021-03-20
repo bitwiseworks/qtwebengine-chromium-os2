@@ -21,7 +21,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/dom_distiller/core/article_distillation_update.h"
@@ -60,7 +60,7 @@ const char* kImageData[kTotalImages] = {"abcde", "12345", "VWXYZ"};
 const char kDebugLog[] = "Debug Log";
 
 const string GetImageName(int page_num, int image_num) {
-  return base::IntToString(page_num) + "_" + base::IntToString(image_num);
+  return base::NumberToString(page_num) + "_" + base::NumberToString(image_num);
 }
 
 std::unique_ptr<base::Value> CreateDistilledValueReturnedFromJS(
@@ -244,11 +244,10 @@ class TestDistillerURLFetcher : public DistillerURLFetcher {
     responses_[kImageURLs[1]] = string(kImageData[1]);
   }
 
-  void FetchURL(const string& url,
-                const URLFetcherCallback& callback) override {
+  void FetchURL(const string& url, URLFetcherCallback callback) override {
     ASSERT_FALSE(callback.is_null());
     url_ = url;
-    callback_ = callback;
+    callback_ = std::move(callback);
     if (!delay_fetch_) {
       PostCallbackTask();
     }
@@ -258,7 +257,7 @@ class TestDistillerURLFetcher : public DistillerURLFetcher {
     ASSERT_TRUE(base::MessageLoopCurrent::Get());
     ASSERT_FALSE(callback_.is_null());
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback_, responses_[url_]));
+        FROM_HERE, base::BindOnce(std::move(callback_), responses_[url_]));
   }
 
  private:
@@ -300,16 +299,17 @@ class DistillerTest : public testing::Test {
 
   void DistillPage(const std::string& url,
                    std::unique_ptr<DistillerPage> distiller_page) {
-    distiller_->DistillPage(GURL(url), std::move(distiller_page),
-                            base::Bind(&DistillerTest::OnDistillArticleDone,
-                                       base::Unretained(this)),
-                            base::Bind(&DistillerTest::OnDistillArticleUpdate,
-                                       base::Unretained(this)));
+    distiller_->DistillPage(
+        GURL(url), std::move(distiller_page),
+        base::BindOnce(&DistillerTest::OnDistillArticleDone,
+                       base::Unretained(this)),
+        base::BindRepeating(&DistillerTest::OnDistillArticleUpdate,
+                            base::Unretained(this)));
   }
 
  protected:
-  base::test::ScopedTaskEnvironment task_environment_{
-      base::test::ScopedTaskEnvironment::MainThreadType::UI};
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI};
   std::unique_ptr<DistillerImpl> distiller_;
   std::unique_ptr<DistilledArticleProto> article_proto_;
   std::vector<ArticleDistillationUpdate> in_sequence_updates_;

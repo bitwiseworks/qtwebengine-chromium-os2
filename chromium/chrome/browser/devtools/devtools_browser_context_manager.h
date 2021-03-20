@@ -7,7 +7,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
-#include "chrome/browser/media/router/presentation/independent_otr_profile_manager.h"
+#include "chrome/browser/profiles/independent_otr_profile_manager.h"
 #include "content/public/browser/devtools_manager_delegate.h"
 
 class DevToolsBrowserContextManager : public BrowserListObserver {
@@ -37,7 +37,7 @@ class DevToolsBrowserContextManager : public BrowserListObserver {
   base::flat_map<std::string, content::DevToolsManagerDelegate::DisposeCallback>
       pending_context_disposals_;
 
-  base::WeakPtrFactory<DevToolsBrowserContextManager> weak_factory_;
+  base::WeakPtrFactory<DevToolsBrowserContextManager> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(DevToolsBrowserContextManager);
 };
 

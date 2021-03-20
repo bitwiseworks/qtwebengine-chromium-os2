@@ -47,8 +47,7 @@ const std::string kHighFrame3 = "bear-320x192-high-frame-3.h264";
 // Checks whether the decrypt config in the picture matches the decrypt config
 // passed to this matcher.
 MATCHER_P(DecryptConfigMatches, decrypt_config, "") {
-  const scoped_refptr<H264Picture>& pic = arg;
-  return pic->decrypt_config()->Matches(*decrypt_config);
+  return arg->decrypt_config()->Matches(*decrypt_config);
 }
 
 MATCHER(SubsampleSizeMatches, "Verify subsample sizes match buffer size") {
@@ -107,7 +106,7 @@ class MockH264Accelerator : public H264Decoder::H264Accelerator {
   MockH264Accelerator() = default;
 
   MOCK_METHOD0(CreateH264Picture, scoped_refptr<H264Picture>());
-  MOCK_METHOD1(SubmitDecode, Status(const scoped_refptr<H264Picture>& pic));
+  MOCK_METHOD1(SubmitDecode, Status(scoped_refptr<H264Picture> pic));
   MOCK_METHOD7(SubmitFrameMetadata,
                Status(const H264SPS* sps,
                       const H264PPS* pps,
@@ -115,17 +114,17 @@ class MockH264Accelerator : public H264Decoder::H264Accelerator {
                       const H264Picture::Vector& ref_pic_listp0,
                       const H264Picture::Vector& ref_pic_listb0,
                       const H264Picture::Vector& ref_pic_listb1,
-                      const scoped_refptr<H264Picture>& pic));
+                      scoped_refptr<H264Picture> pic));
   MOCK_METHOD8(SubmitSlice,
                Status(const H264PPS* pps,
                       const H264SliceHeader* slice_hdr,
                       const H264Picture::Vector& ref_pic_list0,
                       const H264Picture::Vector& ref_pic_list1,
-                      const scoped_refptr<H264Picture>& pic,
+                      scoped_refptr<H264Picture> pic,
                       const uint8_t* data,
                       size_t size,
                       const std::vector<SubsampleEntry>& subsamples));
-  MOCK_METHOD1(OutputPicture, bool(const scoped_refptr<H264Picture>& pic));
+  MOCK_METHOD1(OutputPicture, bool(scoped_refptr<H264Picture> pic));
   MOCK_METHOD2(SetStream,
                Status(base::span<const uint8_t> stream,
                       const DecryptConfig* decrypt_config));
@@ -157,12 +156,14 @@ class H264DecoderTest : public ::testing::Test {
  private:
   base::queue<std::string> input_frame_files_;
   std::string bitstream_;
+  scoped_refptr<DecoderBuffer> decoder_buffer_;
 };
 
 void H264DecoderTest::SetUp() {
   auto mock_accelerator = std::make_unique<MockH264Accelerator>();
   accelerator_ = mock_accelerator.get();
-  decoder_.reset(new H264Decoder(std::move(mock_accelerator)));
+  decoder_.reset(new H264Decoder(std::move(mock_accelerator),
+                                 VIDEO_CODEC_PROFILE_UNKNOWN));
 
   // Sets default behaviors for mock methods for convenience.
   ON_CALL(*accelerator_, CreateH264Picture()).WillByDefault(Invoke([]() {
@@ -197,19 +198,19 @@ AcceleratedVideoDecoder::DecodeResult H264DecoderTest::Decode() {
     auto input_file = GetTestDataFilePath(input_frame_files_.front());
     input_frame_files_.pop();
     CHECK(base::ReadFileToString(input_file, &bitstream_));
-    decoder_->SetStream(bitstream_id++,
-                        reinterpret_cast<const uint8_t*>(bitstream_.data()),
-                        bitstream_.size());
+    decoder_buffer_ = DecoderBuffer::CopyFrom(
+        reinterpret_cast<const uint8_t*>(bitstream_.data()), bitstream_.size());
+    EXPECT_NE(decoder_buffer_.get(), nullptr);
+    decoder_->SetStream(bitstream_id++, *decoder_buffer_);
   }
 }
 
 // To have better description on mismatch.
-class WithPocMatcher
-    : public MatcherInterface<const scoped_refptr<H264Picture>&> {
+class WithPocMatcher : public MatcherInterface<scoped_refptr<H264Picture>> {
  public:
   explicit WithPocMatcher(int expected_poc) : expected_poc_(expected_poc) {}
 
-  bool MatchAndExplain(const scoped_refptr<H264Picture>& p,
+  bool MatchAndExplain(scoped_refptr<H264Picture> p,
                        MatchResultListener* listener) const override {
     if (p->pic_order_cnt == expected_poc_)
       return true;
@@ -225,7 +226,7 @@ class WithPocMatcher
   int expected_poc_;
 };
 
-inline Matcher<const scoped_refptr<H264Picture>&> WithPoc(int expected_poc) {
+inline Matcher<scoped_refptr<H264Picture>> WithPoc(int expected_poc) {
   return MakeMatcher(new WithPocMatcher(expected_poc));
 }
 
@@ -233,8 +234,9 @@ inline Matcher<const scoped_refptr<H264Picture>&> WithPoc(int expected_poc) {
 
 TEST_F(H264DecoderTest, DecodeSingleFrame) {
   SetInputFrameFiles({kBaselineFrame0});
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   EXPECT_CALL(*accelerator_, CreateH264Picture()).WillOnce(Return(nullptr));
@@ -255,8 +257,9 @@ TEST_F(H264DecoderTest, DecodeSingleFrame) {
 
 TEST_F(H264DecoderTest, SkipNonIDRFrames) {
   SetInputFrameFiles({kBaselineFrame1, kBaselineFrame2, kBaselineFrame0});
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
   {
     InSequence sequence;
@@ -274,8 +277,9 @@ TEST_F(H264DecoderTest, DecodeProfileBaseline) {
   SetInputFrameFiles({
       kBaselineFrame0, kBaselineFrame1, kBaselineFrame2, kBaselineFrame3,
   });
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   EXPECT_CALL(*accelerator_, CreateH264Picture()).Times(4);
@@ -301,10 +305,34 @@ TEST_F(H264DecoderTest, DecodeProfileBaseline) {
   ASSERT_TRUE(decoder_->Flush());
 }
 
+TEST_F(H264DecoderTest, OutputPictureFailureCausesFlushToFail) {
+  // Provide one frame so that Decode() will not try to output a frame, so
+  // Flush() will.
+  SetInputFrameFiles({
+      kBaselineFrame0,
+  });
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
+  EXPECT_CALL(*accelerator_, OutputPicture(_)).WillRepeatedly(Return(false));
+  ASSERT_EQ(AcceleratedVideoDecoder::kRanOutOfStreamData, Decode());
+  ASSERT_FALSE(decoder_->Flush());
+}
+
+TEST_F(H264DecoderTest, OutputPictureFailureCausesDecodeToFail) {
+  // Provide enough data that Decode() will try to output a frame.
+  SetInputFrameFiles({
+      kBaselineFrame0,
+      kBaselineFrame1,
+  });
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
+  EXPECT_CALL(*accelerator_, OutputPicture(_)).WillRepeatedly(Return(false));
+  ASSERT_EQ(AcceleratedVideoDecoder::kDecodeError, Decode());
+}
+
 TEST_F(H264DecoderTest, DecodeProfileHigh) {
   SetInputFrameFiles({kHighFrame0, kHighFrame1, kHighFrame2, kHighFrame3});
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_HIGH, decoder_->GetProfile());
   EXPECT_LE(16u, decoder_->GetRequiredNumOfPictures());
 
   // Two pictures will be kept in DPB for reordering. The first picture should
@@ -336,8 +364,9 @@ TEST_F(H264DecoderTest, SwitchBaselineToHigh) {
   SetInputFrameFiles({
       kBaselineFrame0, kHighFrame0, kHighFrame1, kHighFrame2, kHighFrame3,
   });
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   {
@@ -348,8 +377,9 @@ TEST_F(H264DecoderTest, SwitchBaselineToHigh) {
     EXPECT_CALL(*accelerator_, SubmitDecode(_));
     EXPECT_CALL(*accelerator_, OutputPicture(WithPoc(0)));
   }
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_HIGH, decoder_->GetProfile());
   EXPECT_LE(16u, decoder_->GetRequiredNumOfPictures());
 
   ASSERT_TRUE(Mock::VerifyAndClearExpectations(&*accelerator_));
@@ -382,8 +412,9 @@ TEST_F(H264DecoderTest, SwitchHighToBaseline) {
       kHighFrame0, kBaselineFrame0, kBaselineFrame1, kBaselineFrame2,
       kBaselineFrame3,
   });
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_HIGH, decoder_->GetProfile());
   EXPECT_LE(16u, decoder_->GetRequiredNumOfPictures());
 
   {
@@ -394,8 +425,9 @@ TEST_F(H264DecoderTest, SwitchHighToBaseline) {
     EXPECT_CALL(*accelerator_, SubmitDecode(_));
     EXPECT_CALL(*accelerator_, OutputPicture(WithPoc(0)));
   }
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   ASSERT_TRUE(Mock::VerifyAndClearExpectations(&*accelerator_));
@@ -447,17 +479,22 @@ TEST_F(H264DecoderTest, SetEncryptedStream) {
               SubmitDecode(DecryptConfigMatches(decrypt_config.get())))
       .WillOnce(Return(H264Decoder::H264Accelerator::Status::kOk));
 
-  decoder_->SetStream(0, reinterpret_cast<const uint8_t*>(bitstream.data()),
-                      bitstream.size(), decrypt_config.get());
-  EXPECT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, decoder_->Decode());
+  auto buffer = DecoderBuffer::CopyFrom(
+      reinterpret_cast<const uint8_t*>(bitstream.data()), bitstream.size());
+  ASSERT_NE(buffer.get(), nullptr);
+  buffer->set_decrypt_config(std::move(decrypt_config));
+  decoder_->SetStream(0, *buffer);
+  EXPECT_EQ(AcceleratedVideoDecoder::kConfigChange, decoder_->Decode());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_EQ(AcceleratedVideoDecoder::kRanOutOfStreamData, decoder_->Decode());
   EXPECT_TRUE(decoder_->Flush());
 }
 
 TEST_F(H264DecoderTest, SubmitFrameMetadataRetry) {
   SetInputFrameFiles({kBaselineFrame0});
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   {
@@ -493,8 +530,9 @@ TEST_F(H264DecoderTest, SubmitFrameMetadataRetry) {
 
 TEST_F(H264DecoderTest, SubmitSliceRetry) {
   SetInputFrameFiles({kBaselineFrame0});
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   {
@@ -528,8 +566,9 @@ TEST_F(H264DecoderTest, SubmitSliceRetry) {
 
 TEST_F(H264DecoderTest, SubmitDecodeRetry) {
   SetInputFrameFiles({kBaselineFrame0, kBaselineFrame1});
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   {
@@ -579,8 +618,9 @@ TEST_F(H264DecoderTest, SetStreamRetry) {
       .WillOnce(Return(H264Decoder::H264Accelerator::Status::kOk));
   ASSERT_EQ(AcceleratedVideoDecoder::kTryAgain, Decode());
 
-  ASSERT_EQ(AcceleratedVideoDecoder::kAllocateNewSurfaces, Decode());
+  ASSERT_EQ(AcceleratedVideoDecoder::kConfigChange, Decode());
   EXPECT_EQ(gfx::Size(320, 192), decoder_->GetPicSize());
+  EXPECT_EQ(H264PROFILE_BASELINE, decoder_->GetProfile());
   EXPECT_LE(9u, decoder_->GetRequiredNumOfPictures());
 
   {

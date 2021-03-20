@@ -4,20 +4,29 @@
 
 #include "third_party/blink/renderer/controller/memory_usage_monitor.h"
 
+#include "base/test/test_mock_time_task_runner.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 
 namespace blink {
 
 namespace {
-constexpr TimeDelta kPingInterval = TimeDelta::FromSeconds(1);
+constexpr base::TimeDelta kPingInterval = base::TimeDelta::FromSeconds(1);
 }
 
-MemoryUsageMonitor::MemoryUsageMonitor()
-    : timer_(Thread::MainThread()->GetTaskRunner(),
-             this,
-             &MemoryUsageMonitor::TimerFired) {}
+MemoryUsageMonitor::MemoryUsageMonitor() {
+  timer_.SetTaskRunner(
+      Thread::MainThread()->Scheduler()->NonWakingTaskRunner());
+}
+
+MemoryUsageMonitor::MemoryUsageMonitor(
+    scoped_refptr<base::TestMockTimeTaskRunner> task_runner_for_testing,
+    const base::TickClock* clock_for_testing)
+    : timer_(clock_for_testing) {
+  timer_.SetTaskRunner(task_runner_for_testing);
+}
 
 void MemoryUsageMonitor::AddObserver(Observer* observer) {
   StartMonitoringIfNeeded();
@@ -28,10 +37,16 @@ void MemoryUsageMonitor::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
+bool MemoryUsageMonitor::HasObserver(Observer* observer) {
+  return observers_.HasObserver(observer);
+}
+
 void MemoryUsageMonitor::StartMonitoringIfNeeded() {
-  if (timer_.IsActive())
+  if (timer_.IsRunning())
     return;
-  timer_.StartRepeating(kPingInterval, FROM_HERE);
+  timer_.Start(FROM_HERE, kPingInterval,
+               WTF::BindRepeating(&MemoryUsageMonitor::TimerFired,
+                                  WTF::Unretained(this)));
 }
 
 void MemoryUsageMonitor::StopMonitoring() {
@@ -57,12 +72,11 @@ void MemoryUsageMonitor::GetV8MemoryUsage(MemoryUsage& usage) {
 }
 
 void MemoryUsageMonitor::GetBlinkMemoryUsage(MemoryUsage& usage) {
-  usage.blink_gc_bytes = ProcessHeap::TotalAllocatedObjectSize() +
-                         ProcessHeap::TotalMarkedObjectSize();
+  usage.blink_gc_bytes = ProcessHeap::TotalAllocatedObjectSize();
   usage.partition_alloc_bytes = WTF::Partitions::TotalSizeOfCommittedPages();
 }
 
-void MemoryUsageMonitor::TimerFired(TimerBase*) {
+void MemoryUsageMonitor::TimerFired() {
   MemoryUsage usage = GetCurrentMemoryUsage();
   for (auto& observer : observers_)
     observer.OnMemoryPing(usage);

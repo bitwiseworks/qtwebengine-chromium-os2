@@ -38,11 +38,11 @@ namespace xpath {
 
 const Value::AdoptTag Value::kAdopt = {};
 
-void ValueData::Trace(blink::Visitor* visitor) {
+void ValueData::Trace(Visitor* visitor) {
   visitor->Trace(node_set_);
 }
 
-void Value::Trace(blink::Visitor* visitor) {
+void Value::Trace(Visitor* visitor) {
   visitor->Trace(data_);
 }
 
@@ -64,7 +64,7 @@ NodeSet& Value::ModifiableNodeSet(EvaluationContext& context) {
     context.had_type_conversion_error = true;
 
   if (!data_)
-    data_ = ValueData::Create();
+    data_ = MakeGarbageCollected<ValueData>();
 
   type_ = kNodeSetValue;
   return data_->GetNodeSet();

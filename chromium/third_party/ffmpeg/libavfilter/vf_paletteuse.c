@@ -119,7 +119,7 @@ static const AVOption paletteuse_options[] = {
     { "diff_mode",   "set frame difference mode",     OFFSET(diff_mode),   AV_OPT_TYPE_INT, {.i64=DIFF_MODE_NONE}, 0, NB_DIFF_MODE-1, FLAGS, "diff_mode" },
         { "rectangle", "process smallest different rectangle", 0, AV_OPT_TYPE_CONST, {.i64=DIFF_MODE_RECTANGLE}, INT_MIN, INT_MAX, FLAGS, "diff_mode" },
     { "new", "take new palette for each output frame", OFFSET(new), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS },
-    { "alpha_threshold", "set the alpha threshold for transparency", OFFSET(trans_thresh), AV_OPT_TYPE_INT, {.i64=128}, 0, 255 },
+    { "alpha_threshold", "set the alpha threshold for transparency", OFFSET(trans_thresh), AV_OPT_TYPE_INT, {.i64=128}, 0, 255, FLAGS },
 
     /* following are the debug options, not part of the official API */
     { "debug_kdtree", "save Graphviz graph of the kdtree in specified file", OFFSET(dot_filename), AV_OPT_TYPE_STRING, {.str=NULL}, CHAR_MIN, CHAR_MAX, FLAGS },
@@ -814,7 +814,7 @@ static void set_processing_window(enum diff_mode diff_mode,
     int width  = cur_src->width;
     int height = cur_src->height;
 
-    if (prv_src && diff_mode == DIFF_MODE_RECTANGLE) {
+    if (prv_src->data[0] && diff_mode == DIFF_MODE_RECTANGLE) {
         int y;
         int x_end = cur_src->width  - 1,
             y_end = cur_src->height - 1;
@@ -903,7 +903,6 @@ static int apply_palette(AVFilterLink *inlink, AVFrame *in, AVFrame **outf)
 
     AVFrame *out = ff_get_video_buffer(outlink, outlink->w, outlink->h);
     if (!out) {
-        av_frame_free(&in);
         *outf = NULL;
         return AVERROR(ENOMEM);
     }
@@ -911,13 +910,11 @@ static int apply_palette(AVFilterLink *inlink, AVFrame *in, AVFrame **outf)
 
     set_processing_window(s->diff_mode, s->last_in, in,
                           s->last_out, out, &x, &y, &w, &h);
-    av_frame_free(&s->last_in);
-    av_frame_free(&s->last_out);
-    s->last_in  = av_frame_clone(in);
-    s->last_out = av_frame_clone(out);
-    if (!s->last_in || !s->last_out ||
+    av_frame_unref(s->last_in);
+    av_frame_unref(s->last_out);
+    if (av_frame_ref(s->last_in, in) < 0 ||
+        av_frame_ref(s->last_out, out) < 0 ||
         av_frame_make_writable(s->last_in) < 0) {
-        av_frame_free(&in);
         av_frame_free(&out);
         *outf = NULL;
         return AVERROR(ENOMEM);
@@ -935,7 +932,6 @@ static int apply_palette(AVFilterLink *inlink, AVFrame *in, AVFrame **outf)
     memcpy(out->data[1], s->palette, AVPALETTE_SIZE);
     if (s->calc_mean_err)
         debug_mean_error(s, in, out, inlink->frame_count_out);
-    av_frame_free(&in);
     *outf = out;
     return 0;
 }
@@ -1024,20 +1020,17 @@ static int load_apply_palette(FFFrameSync *fs)
     if (ret < 0)
         return ret;
     if (!master || !second) {
-        ret = AVERROR_BUG;
-        goto error;
+        av_frame_free(&master);
+        return AVERROR_BUG;
     }
     if (!s->palette_loaded) {
         load_palette(s, second);
     }
     ret = apply_palette(inlink, master, &out);
-    if (ret < 0)
-        goto error;
-    return ff_filter_frame(ctx->outputs[0], out);
-
-error:
     av_frame_free(&master);
-    return ret;
+    if (ret < 0)
+        return ret;
+    return ff_filter_frame(ctx->outputs[0], out);
 }
 
 #define DEFINE_SET_FRAME(color_search, name, value)                             \
@@ -1085,6 +1078,14 @@ static int dither_value(int p)
 static av_cold int init(AVFilterContext *ctx)
 {
     PaletteUseContext *s = ctx->priv;
+
+    s->last_in  = av_frame_alloc();
+    s->last_out = av_frame_alloc();
+    if (!s->last_in || !s->last_out) {
+        av_frame_free(&s->last_in);
+        av_frame_free(&s->last_out);
+        return AVERROR(ENOMEM);
+    }
 
     s->set_frame = set_frame_lut[s->color_search_method][s->dither];
 

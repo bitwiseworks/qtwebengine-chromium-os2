@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
@@ -65,8 +66,7 @@ const char kPortForwardingBrowserId[] = "browserId";
 class CancelableTimer {
  public:
   CancelableTimer(base::Closure callback, base::TimeDelta delay)
-      : callback_(callback),
-        weak_factory_(this) {
+      : callback_(callback) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&CancelableTimer::Fire, weak_factory_.GetWeakPtr()),
@@ -77,7 +77,7 @@ class CancelableTimer {
   void Fire() { callback_.Run(); }
 
   base::Closure callback_;
-  base::WeakPtrFactory<CancelableTimer> weak_factory_;
+  base::WeakPtrFactory<CancelableTimer> weak_factory_{this};
 };
 
 // LocalTargetsUIHandler ---------------------------------------------
@@ -102,14 +102,13 @@ private:
 
  Profile* profile_;
  std::unique_ptr<CancelableTimer> timer_;
- base::WeakPtrFactory<LocalTargetsUIHandler> weak_factory_;
+ base::WeakPtrFactory<LocalTargetsUIHandler> weak_factory_{this};
 };
 
 LocalTargetsUIHandler::LocalTargetsUIHandler(const Callback& callback,
                                              Profile* profile)
     : DevToolsTargetsUIHandler(kTargetSourceLocal, callback),
-      profile_(profile),
-      weak_factory_(this) {
+      profile_(profile) {
   DevToolsAgentHost::AddObserver(this);
   UpdateTargets();
 }
@@ -325,7 +324,7 @@ scoped_refptr<DevToolsAgentHost> DevToolsTargetsUIHandler::GetTarget(
   auto it = targets_.find(target_id);
   if (it != targets_.end())
     return it->second;
-  return NULL;
+  return nullptr;
 }
 
 void DevToolsTargetsUIHandler::Open(const std::string& browser_id,
@@ -334,7 +333,7 @@ void DevToolsTargetsUIHandler::Open(const std::string& browser_id,
 
 scoped_refptr<DevToolsAgentHost>
 DevToolsTargetsUIHandler::GetBrowserAgentHost(const std::string& browser_id) {
-  return NULL;
+  return nullptr;
 }
 
 std::unique_ptr<base::DictionaryValue> DevToolsTargetsUIHandler::Serialize(
@@ -385,7 +384,7 @@ void PortForwardingStatusSerializer::PortStatusChanged(
     auto port_status_dict = std::make_unique<base::DictionaryValue>();
     const PortStatusMap& port_status_map = sit->second;
     for (auto it = port_status_map.begin(); it != port_status_map.end(); ++it) {
-      port_status_dict->SetInteger(base::IntToString(it->first), it->second);
+      port_status_dict->SetInteger(base::NumberToString(it->first), it->second);
     }
 
     auto device_status_dict = std::make_unique<base::DictionaryValue>();

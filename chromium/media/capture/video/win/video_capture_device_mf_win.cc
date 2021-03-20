@@ -12,6 +12,7 @@
 #include <thread>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
@@ -41,7 +42,7 @@ class MFPhotoCallback final
                   VideoCaptureFormat format)
       : callback_(std::move(callback)), format_(format) {}
 
-  STDMETHOD(QueryInterface)(REFIID riid, void** object) override {
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** object) override {
     if (riid == IID_IUnknown || riid == IID_IMFCaptureEngineOnSampleCallback) {
       AddRef();
       *object = static_cast<IMFCaptureEngineOnSampleCallback*>(this);
@@ -50,17 +51,17 @@ class MFPhotoCallback final
     return E_NOINTERFACE;
   }
 
-  STDMETHOD_(ULONG, AddRef)() override {
+  IFACEMETHODIMP_(ULONG) AddRef() override {
     base::RefCountedThreadSafe<MFPhotoCallback>::AddRef();
     return 1U;
   }
 
-  STDMETHOD_(ULONG, Release)() override {
+  IFACEMETHODIMP_(ULONG) Release() override {
     base::RefCountedThreadSafe<MFPhotoCallback>::Release();
     return 1U;
   }
 
-  STDMETHOD(OnSample)(IMFSample* sample) override {
+  IFACEMETHODIMP OnSample(IMFSample* sample) override {
     if (!sample)
       return S_OK;
 
@@ -69,7 +70,7 @@ class MFPhotoCallback final
 
     for (DWORD i = 0; i < buffer_count; ++i) {
       ComPtr<IMFMediaBuffer> buffer;
-      sample->GetBufferByIndex(i, buffer.GetAddressOf());
+      sample->GetBufferByIndex(i, &buffer);
       if (!buffer)
         continue;
 
@@ -335,9 +336,9 @@ const CapabilityWin& GetBestMatchedPhotoCapability(
 
 HRESULT CreateCaptureEngine(IMFCaptureEngine** engine) {
   ComPtr<IMFCaptureEngineClassFactory> capture_engine_class_factory;
-  HRESULT hr = CoCreateInstance(
-      CLSID_MFCaptureEngineClassFactory, NULL, CLSCTX_INPROC_SERVER,
-      IID_PPV_ARGS(capture_engine_class_factory.GetAddressOf()));
+  HRESULT hr = CoCreateInstance(CLSID_MFCaptureEngineClassFactory, NULL,
+                                CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&capture_engine_class_factory));
   if (FAILED(hr))
     return hr;
 
@@ -353,7 +354,7 @@ class MFVideoCallback final
  public:
   MFVideoCallback(VideoCaptureDeviceMFWin* observer) : observer_(observer) {}
 
-  STDMETHOD(QueryInterface)(REFIID riid, void** object) override {
+  IFACEMETHODIMP QueryInterface(REFIID riid, void** object) override {
     HRESULT hr = E_NOINTERFACE;
     if (riid == IID_IUnknown) {
       *object = this;
@@ -371,22 +372,22 @@ class MFVideoCallback final
     return hr;
   }
 
-  STDMETHOD_(ULONG, AddRef)() override {
+  IFACEMETHODIMP_(ULONG) AddRef() override {
     base::RefCountedThreadSafe<MFVideoCallback>::AddRef();
     return 1U;
   }
 
-  STDMETHOD_(ULONG, Release)() override {
+  IFACEMETHODIMP_(ULONG) Release() override {
     base::RefCountedThreadSafe<MFVideoCallback>::Release();
     return 1U;
   }
 
-  STDMETHOD(OnEvent)(IMFMediaEvent* media_event) override {
+  IFACEMETHODIMP OnEvent(IMFMediaEvent* media_event) override {
     observer_->OnEvent(media_event);
     return S_OK;
   }
 
-  STDMETHOD(OnSample)(IMFSample* sample) override {
+  IFACEMETHODIMP OnSample(IMFSample* sample) override {
     if (!sample) {
       observer_->OnFrameDropped(
           VideoCaptureFrameDropReason::kWinMediaFoundationReceivedSampleIsNull);
@@ -404,7 +405,7 @@ class MFVideoCallback final
 
     for (DWORD i = 0; i < count; ++i) {
       ComPtr<IMFMediaBuffer> buffer;
-      sample->GetBufferByIndex(i, buffer.GetAddressOf());
+      sample->GetBufferByIndex(i, &buffer);
       if (buffer) {
         DWORD length = 0, max_length = 0;
         BYTE* data = NULL;
@@ -544,9 +545,8 @@ HRESULT VideoCaptureDeviceMFWin::FillCapabilities(
 
     DWORD media_type_index = 0;
     ComPtr<IMFMediaType> type;
-    while (SUCCEEDED(hr = GetAvailableDeviceMediaType(source, stream_index,
-                                                      media_type_index,
-                                                      type.GetAddressOf()))) {
+    while (SUCCEEDED(hr = GetAvailableDeviceMediaType(
+                         source, stream_index, media_type_index, &type))) {
       VideoCaptureFormat format;
       if (GetFormatFromSourceMediaType(type.Get(), photo, &format))
         capabilities->emplace_back(media_type_index, format, stream_index);
@@ -580,7 +580,8 @@ VideoCaptureDeviceMFWin::VideoCaptureDeviceMFWin(
       retry_delay_in_ms_(50),
       source_(source),
       engine_(engine),
-      is_started_(false) {
+      is_started_(false),
+      has_sent_on_started_to_client_(false) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
@@ -604,7 +605,7 @@ bool VideoCaptureDeviceMFWin::Init() {
 
   HRESULT hr = S_OK;
   if (!engine_)
-    hr = CreateCaptureEngine(engine_.GetAddressOf());
+    hr = CreateCaptureEngine(&engine_);
 
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
@@ -612,7 +613,7 @@ bool VideoCaptureDeviceMFWin::Init() {
   }
 
   ComPtr<IMFAttributes> attributes;
-  MFCreateAttributes(attributes.GetAddressOf(), 1);
+  MFCreateAttributes(&attributes, 1);
   DCHECK(attributes);
 
   video_callback_ = new MFVideoCallback(this);
@@ -643,7 +644,7 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   }
 
   ComPtr<IMFCaptureSource> source;
-  HRESULT hr = engine_->GetSource(source.GetAddressOf());
+  HRESULT hr = engine_->GetSource(&source);
   if (FAILED(hr)) {
     OnError(VideoCaptureError::kWinMediaFoundationEngineGetSourceFailed,
             FROM_HERE, hr);
@@ -679,10 +680,9 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   const CapabilityWin best_match_video_capability =
       GetBestMatchedCapability(params.requested_format, video_capabilities);
   ComPtr<IMFMediaType> source_video_media_type;
-  hr = GetAvailableDeviceMediaType(source.Get(),
-                                   best_match_video_capability.stream_index,
-                                   best_match_video_capability.media_type_index,
-                                   source_video_media_type.GetAddressOf());
+  hr = GetAvailableDeviceMediaType(
+      source.Get(), best_match_video_capability.stream_index,
+      best_match_video_capability.media_type_index, &source_video_media_type);
   if (FAILED(hr)) {
     OnError(
         VideoCaptureError::kWinMediaFoundationGetAvailableDeviceMediaTypeFailed,
@@ -700,8 +700,7 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   }
 
   ComPtr<IMFCaptureSink> sink;
-  hr = engine_->GetSink(MF_CAPTURE_ENGINE_SINK_TYPE_PREVIEW,
-                        sink.GetAddressOf());
+  hr = engine_->GetSink(MF_CAPTURE_ENGINE_SINK_TYPE_PREVIEW, &sink);
   if (FAILED(hr)) {
     OnError(VideoCaptureError::kWinMediaFoundationEngineGetSinkFailed,
             FROM_HERE, hr);
@@ -709,7 +708,7 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   }
 
   ComPtr<IMFCapturePreviewSink> preview_sink;
-  hr = sink->QueryInterface(IID_PPV_ARGS(preview_sink.GetAddressOf()));
+  hr = sink->QueryInterface(IID_PPV_ARGS(&preview_sink));
   if (FAILED(hr)) {
     OnError(VideoCaptureError::
                 kWinMediaFoundationSinkQueryCapturePreviewInterfaceFailed,
@@ -725,7 +724,7 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   }
 
   ComPtr<IMFMediaType> sink_video_media_type;
-  hr = MFCreateMediaType(sink_video_media_type.GetAddressOf());
+  hr = MFCreateMediaType(&sink_video_media_type);
   if (FAILED(hr)) {
     OnError(
         VideoCaptureError::kWinMediaFoundationCreateSinkVideoMediaTypeFailed,
@@ -760,6 +759,15 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
     return;
   }
 
+  // Note, that it is not sufficient to wait for
+  // MF_CAPTURE_ENGINE_PREVIEW_STARTED as an indicator that starting capture has
+  // succeeded. If the capture device is already in use by a different
+  // application, MediaFoundation will still emit
+  // MF_CAPTURE_ENGINE_PREVIEW_STARTED, and only after that raise an error
+  // event. For the lack of any other events indicating success, we have to wait
+  // for the first video frame to arrive before sending our |OnStarted| event to
+  // |client_|.
+  has_sent_on_started_to_client_ = false;
   hr = engine_->StartPreview();
   if (FAILED(hr)) {
     OnError(VideoCaptureError::kWinMediaFoundationEngineStartPreviewFailed,
@@ -770,7 +778,6 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   selected_video_capability_.reset(
       new CapabilityWin(best_match_video_capability));
 
-  client_->OnStarted();
   is_started_ = true;
 }
 
@@ -798,17 +805,16 @@ void VideoCaptureDeviceMFWin::TakePhoto(TakePhotoCallback callback) {
   }
 
   ComPtr<IMFCaptureSource> source;
-  HRESULT hr = engine_->GetSource(source.GetAddressOf());
+  HRESULT hr = engine_->GetSource(&source);
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
   }
 
   ComPtr<IMFMediaType> source_media_type;
-  hr = GetAvailableDeviceMediaType(source.Get(),
-                                   selected_photo_capability_->stream_index,
-                                   selected_photo_capability_->media_type_index,
-                                   source_media_type.GetAddressOf());
+  hr = GetAvailableDeviceMediaType(
+      source.Get(), selected_photo_capability_->stream_index,
+      selected_photo_capability_->media_type_index, &source_media_type);
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
@@ -822,7 +828,7 @@ void VideoCaptureDeviceMFWin::TakePhoto(TakePhotoCallback callback) {
   }
 
   ComPtr<IMFMediaType> sink_media_type;
-  hr = MFCreateMediaType(sink_media_type.GetAddressOf());
+  hr = MFCreateMediaType(&sink_media_type);
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
@@ -845,14 +851,14 @@ void VideoCaptureDeviceMFWin::TakePhoto(TakePhotoCallback callback) {
   }
 
   ComPtr<IMFCaptureSink> sink;
-  hr = engine_->GetSink(MF_CAPTURE_ENGINE_SINK_TYPE_PHOTO, sink.GetAddressOf());
+  hr = engine_->GetSink(MF_CAPTURE_ENGINE_SINK_TYPE_PHOTO, &sink);
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
   }
 
   ComPtr<IMFCapturePhotoSink> photo_sink;
-  hr = sink->QueryInterface(IID_PPV_ARGS(photo_sink.GetAddressOf()));
+  hr = sink->QueryInterface(IID_PPV_ARGS(&photo_sink));
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
@@ -893,7 +899,7 @@ void VideoCaptureDeviceMFWin::GetPhotoState(GetPhotoStateCallback callback) {
     return;
 
   ComPtr<IMFCaptureSource> source;
-  HRESULT hr = engine_->GetSource(source.GetAddressOf());
+  HRESULT hr = engine_->GetSource(&source);
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
@@ -903,7 +909,7 @@ void VideoCaptureDeviceMFWin::GetPhotoState(GetPhotoStateCallback callback) {
   hr = source->GetCurrentDeviceMediaType(
       selected_photo_capability_ ? selected_photo_capability_->stream_index
                                  : selected_video_capability_->stream_index,
-      current_media_type.GetAddressOf());
+      &current_media_type);
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
     return;
@@ -938,7 +944,7 @@ void VideoCaptureDeviceMFWin::SetPhotoOptions(
 
   HRESULT hr = S_OK;
   ComPtr<IMFCaptureSource> source;
-  hr = engine_->GetSource(source.GetAddressOf());
+  hr = engine_->GetSource(&source);
 
   if (FAILED(hr)) {
     LogError(FROM_HERE, hr);
@@ -954,8 +960,7 @@ void VideoCaptureDeviceMFWin::SetPhotoOptions(
 
     ComPtr<IMFMediaType> current_source_media_type;
     hr = source->GetCurrentDeviceMediaType(
-        selected_photo_capability_->stream_index,
-        current_source_media_type.GetAddressOf());
+        selected_photo_capability_->stream_index, &current_source_media_type);
 
     if (FAILED(hr)) {
       LogError(FROM_HERE, hr);
@@ -985,10 +990,21 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedData(
   base::AutoLock lock(lock_);
   DCHECK(data);
 
+  SendOnStartedIfNotYetSent();
+
   if (client_.get()) {
+    if (!has_sent_on_started_to_client_) {
+      has_sent_on_started_to_client_ = true;
+      client_->OnStarted();
+    }
+
+    // TODO(julien.isorce): retrieve the color space information using Media
+    // Foundation api, MFGetAttributeSize/MF_MT_VIDEO_PRIMARIES,in order to
+    // build a gfx::ColorSpace. See http://crbug.com/959988.
     client_->OnIncomingCapturedData(
         data, length, selected_video_capability_->supported_format,
-        GetCameraRotation(facing_mode_), reference_time, timestamp);
+        gfx::ColorSpace(), GetCameraRotation(facing_mode_), false /* flip_y */,
+        reference_time, timestamp);
   }
 
   while (!video_stream_take_photo_callbacks_.empty()) {
@@ -1017,6 +1033,9 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedData(
 void VideoCaptureDeviceMFWin::OnFrameDropped(
     VideoCaptureFrameDropReason reason) {
   base::AutoLock lock(lock_);
+
+  SendOnStartedIfNotYetSent();
+
   if (client_.get()) {
     client_->OnFrameDropped(reason);
   }
@@ -1047,6 +1066,13 @@ void VideoCaptureDeviceMFWin::OnError(VideoCaptureError error,
 
   client_->OnError(error, from_here,
                    base::StringPrintf("VideoCaptureDeviceMFWin: %s", message));
+}
+
+void VideoCaptureDeviceMFWin::SendOnStartedIfNotYetSent() {
+  if (!client_ || has_sent_on_started_to_client_)
+    return;
+  has_sent_on_started_to_client_ = true;
+  client_->OnStarted();
 }
 
 }  // namespace media

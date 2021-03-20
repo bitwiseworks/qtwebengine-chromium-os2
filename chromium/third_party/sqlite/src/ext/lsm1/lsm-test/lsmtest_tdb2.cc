@@ -74,7 +74,7 @@ int test_kc_delete(TestDb *pDb, void *pKey, int nKey){
 }
 
 int test_kc_delete_range(
-  TestDb *pDb,
+  TestDb *pDb, 
   void *pKey1, int nKey1,
   void *pKey2, int nKey2
 ){
@@ -118,9 +118,9 @@ int test_kc_delete_range(
 }
 
 int test_kc_fetch(
-  TestDb *pDb,
-  void *pKey,
-  int nKey,
+  TestDb *pDb, 
+  void *pKey, 
+  int nKey, 
   void **ppVal,
   int *pnVal
 ){
@@ -204,7 +204,7 @@ int test_kc_scan(
 }
 #endif /* HAVE_KYOTOCABINET */
 
-#ifdef HAVE_MDB
+#ifdef HAVE_MDB 
 #include "lmdb.h"
 
 extern "C" {
@@ -216,9 +216,9 @@ extern "C" {
 }
 
 int test_mdb_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   MDB_txn *txn;
@@ -263,9 +263,9 @@ int test_mdb_write(TestDb *pDb, void *pKey, int nKey, void *pVal, int nVal){
   MDB_val key;
   MDB_txn *txn;
 
-  val.mv_size = nVal;
+  val.mv_size = nVal; 
   val.mv_data = pVal;
-  key.mv_size = nKey;
+  key.mv_size = nKey; 
   key.mv_data = pKey;
 
   rc = mdb_txn_begin(pMdb->env, NULL, 0, &txn);
@@ -277,7 +277,7 @@ int test_mdb_write(TestDb *pDb, void *pKey, int nKey, void *pVal, int nVal){
       mdb_txn_abort(txn);
     }
   }
-
+  
   return rc;
 }
 
@@ -287,7 +287,7 @@ int test_mdb_delete(TestDb *pDb, void *pKey, int nKey){
   MDB_val key;
   MDB_txn *txn;
 
-  key.mv_size = nKey;
+  key.mv_size = nKey; 
   key.mv_data = pKey;
   rc = mdb_txn_begin(pMdb->env, NULL, 0, &txn);
   if( rc==0 ){
@@ -298,14 +298,14 @@ int test_mdb_delete(TestDb *pDb, void *pKey, int nKey){
       mdb_txn_abort(txn);
     }
   }
-
+  
   return rc;
 }
 
 int test_mdb_fetch(
-  TestDb *pDb,
-  void *pKey,
-  int nKey,
+  TestDb *pDb, 
+  void *pKey, 
+  int nKey, 
   void **ppVal,
   int *pnVal
 ){

@@ -9,6 +9,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_element_definition_options.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_definition.h"
@@ -157,9 +158,9 @@ TEST(CustomElementTest, StateByParser) {
       "<div id=div></div>"
       "<a-a id=v1v0></a-a>"
       "<font-face id=v0></font-face>";
-  std::unique_ptr<DummyPageHolder> page_holder = DummyPageHolder::Create();
+  auto page_holder = std::make_unique<DummyPageHolder>();
   Document& document = page_holder->GetDocument();
-  document.body()->SetInnerHTMLFromString(String::FromUTF8(body_content));
+  document.body()->setInnerHTML(String::FromUTF8(body_content));
 
   struct {
     const char* id;
@@ -192,7 +193,7 @@ TEST(CustomElementTest, StateByCreateElement) {
        Element::kV0WaitingForUpgrade},
       {"_-X", CustomElementState::kUncustomized, Element::kV0WaitingForUpgrade},
   };
-  std::unique_ptr<DummyPageHolder> page_holder = DummyPageHolder::Create();
+  auto page_holder = std::make_unique<DummyPageHolder>();
   Document& document = page_holder->GetDocument();
   for (const auto& data : create_element_data) {
     Element* element = document.CreateElementForBinding(data.name);
@@ -216,7 +217,7 @@ TEST(CustomElementTest, StateByCreateElement) {
 TEST(CustomElementTest,
      CreateElement_TagNameCaseHandlingCreatingCustomElement) {
   // register a definition
-  std::unique_ptr<DummyPageHolder> holder(DummyPageHolder::Create());
+  auto holder(std::make_unique<DummyPageHolder>());
   ScriptState* script_state = ToScriptStateForMainWorld(&holder->GetFrame());
   CustomElementRegistry* registry =
       holder->GetFrame().DomWindow()->customElements();
@@ -234,7 +235,7 @@ TEST(CustomElementTest,
 
   // create an element with an uppercase tag name
   Document& document = holder->GetDocument();
-  EXPECT_TRUE(document.IsHTMLDocument())
+  EXPECT_TRUE(IsA<HTMLDocument>(document))
       << "this test requires a HTML document";
   Element* element = document.CreateElementForBinding("A-A", should_not_throw);
   EXPECT_EQ(definition, element->GetCustomElementDefinition());

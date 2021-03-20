@@ -6,8 +6,10 @@
 #include <sys/ioctl.h>
 
 #include "base/files/file_enumerator.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/gmock_callback_support.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "media/capture/video/linux/v4l2_capture_delegate.h"
@@ -18,15 +20,12 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using base::test::RunClosure;
 using ::testing::_;
 
 namespace media {
 
 namespace {
-
-ACTION_P(RunClosure, closure) {
-  closure.Run();
-}
 
 // Base id and class identifiers for Controls to be modified and later tested
 // agains default values.
@@ -182,10 +181,11 @@ class V4L2CaptureDelegateTest : public ::testing::Test {
             v4l2_.get(),
             device_descriptor_,
             base::ThreadTaskRunnerHandle::Get(),
-            50)) {}
+            50,
+            0)) {}
   ~V4L2CaptureDelegateTest() override = default;
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   VideoCaptureDeviceDescriptor device_descriptor_;
   scoped_refptr<V4L2CaptureDevice> v4l2_;
   std::unique_ptr<V4L2CaptureDelegate> delegate_;
@@ -232,8 +232,8 @@ TEST_F(V4L2CaptureDelegateTest, MAYBE_CreateAndDestroyAndVerifyControls) {
                                 10.0 /* frame_rate */, std::move(client));
 
     base::RunLoop run_loop;
-    base::Closure quit_closure = run_loop.QuitClosure();
-    EXPECT_CALL(*client_ptr, OnIncomingCapturedData(_, _, _, _, _, _, _))
+    base::RepeatingClosure quit_closure = run_loop.QuitClosure();
+    EXPECT_CALL(*client_ptr, OnIncomingCapturedData(_, _, _, _, _, _, _, _, _))
         .Times(1)
         .WillOnce(RunClosure(quit_closure));
     run_loop.Run();
@@ -252,4 +252,4 @@ TEST_F(V4L2CaptureDelegateTest, MAYBE_CreateAndDestroyAndVerifyControls) {
   }
 }
 
-};  // namespace media
+}  // namespace media

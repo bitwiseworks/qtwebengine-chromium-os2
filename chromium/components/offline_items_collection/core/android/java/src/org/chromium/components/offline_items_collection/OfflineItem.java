@@ -4,6 +4,8 @@
 
 package org.chromium.components.offline_items_collection;
 
+import java.util.Objects;
+
 /**
  * This class is the Java counterpart to the C++ OfflineItem
  * (components/offline_items_collection/core/offline_item.h) class.
@@ -45,12 +47,10 @@ public class OfflineItem implements Cloneable {
         }
 
         @Override
-        @SuppressWarnings("ReferenceEquality")
         public boolean equals(Object obj) {
             if (obj instanceof Progress) {
                 Progress other = (Progress) obj;
-                return value == other.value && unit == other.unit
-                        && (max == other.max || (max != null && max.equals(other.max)));
+                return value == other.value && unit == other.unit && Objects.equals(max, other.max);
             }
             return false;
         }
@@ -74,8 +74,10 @@ public class OfflineItem implements Cloneable {
     public boolean isTransient;
     public boolean isSuggested;
     public boolean isAccelerated;
-    public boolean refreshVisuals;
     public boolean promoteOrigin;
+    public boolean canRename;
+    public boolean ignoreVisuals;
+    public double contentQualityScore;
 
     // Content Metadata.
     public long totalSizeBytes;
@@ -108,7 +110,7 @@ public class OfflineItem implements Cloneable {
 
     public OfflineItem() {
         id = new ContentId();
-        filter = OfflineItemFilter.FILTER_OTHER;
+        filter = OfflineItemFilter.OTHER;
         state = OfflineItemState.COMPLETE;
     }
 
@@ -122,7 +124,6 @@ public class OfflineItem implements Cloneable {
         clone.isTransient = isTransient;
         clone.isSuggested = isSuggested;
         clone.isAccelerated = isAccelerated;
-        clone.refreshVisuals = refreshVisuals;
         clone.promoteOrigin = promoteOrigin;
         clone.totalSizeBytes = totalSizeBytes;
         clone.externallyRemoved = externallyRemoved;
@@ -132,6 +133,9 @@ public class OfflineItem implements Cloneable {
         clone.isOpenable = isOpenable;
         clone.filePath = filePath;
         clone.mimeType = mimeType;
+        clone.canRename = canRename;
+        clone.ignoreVisuals = ignoreVisuals;
+        clone.contentQualityScore = contentQualityScore;
         clone.pageUrl = pageUrl;
         clone.originalUrl = originalUrl;
         clone.isOffTheRecord = isOffTheRecord;

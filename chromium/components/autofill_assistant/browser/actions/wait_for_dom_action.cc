@@ -20,33 +20,60 @@ static constexpr base::TimeDelta kDefaultCheckDuration =
 
 namespace autofill_assistant {
 
-WaitForDomAction::WaitForDomAction(const ActionProto& proto)
-    : Action(proto), weak_ptr_factory_(this) {}
+WaitForDomAction::WaitForDomAction(ActionDelegate* delegate,
+                                   const ActionProto& proto)
+    : Action(delegate, proto) {}
 
 WaitForDomAction::~WaitForDomAction() {}
 
-void WaitForDomAction::InternalProcessAction(ActionDelegate* delegate,
-                                             ProcessActionCallback callback) {
-  DCHECK_GT(proto_.wait_for_dom().selectors_size(), 0);
-  Selector a_selector;
-  for (const auto& selector : proto_.wait_for_dom().selectors()) {
-    a_selector.selectors.emplace_back(selector);
-  }
-
+void WaitForDomAction::InternalProcessAction(ProcessActionCallback callback) {
   base::TimeDelta max_wait_time = kDefaultCheckDuration;
   int timeout_ms = proto_.wait_for_dom().timeout_ms();
   if (timeout_ms > 0)
     max_wait_time = base::TimeDelta::FromMilliseconds(timeout_ms);
 
-  delegate->WaitForElementVisible(
-      max_wait_time, proto_.wait_for_dom().allow_interrupt(), a_selector,
-      base::BindOnce(&WaitForDomAction::OnCheckDone,
+  if (!proto_.wait_for_dom().has_wait_condition()) {
+    VLOG(2) << "WaitForDomAction: no condition specified";
+    ReportActionResult(std::move(callback), ClientStatus(INVALID_ACTION));
+    return;
+  }
+  wait_condition_ = std::make_unique<ElementPrecondition>(
+      proto_.wait_for_dom().wait_condition());
+  delegate_->WaitForDom(
+      max_wait_time, proto_.wait_for_dom().allow_interrupt(),
+      base::BindRepeating(&WaitForDomAction::CheckElements,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&WaitForDomAction::ReportActionResult,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void WaitForDomAction::OnCheckDone(ProcessActionCallback callback,
-                                   ProcessedActionStatusProto status) {
-  UpdateProcessedAction(status);
+void WaitForDomAction::CheckElements(
+    BatchElementChecker* checker,
+    base::OnceCallback<void(const ClientStatus&)> callback) {
+  wait_condition_->Check(
+      checker,
+      base::BindOnce(&WaitForDomAction::OnWaitConditionDone,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void WaitForDomAction::OnWaitConditionDone(
+    base::OnceCallback<void(const ClientStatus&)> callback,
+    const ClientStatus& status,
+    const std::vector<std::string>& payloads) {
+  auto* result = processed_action_proto_->mutable_wait_for_dom_result();
+  // Conditions are first cleared, as OnWaitConditionDone can be called more
+  // than once. Yet, we want report only the payloads sent with the final call
+  // to OnWaitConditionDone() as action result.
+  result->clear_matching_condition_payloads();
+  for (const std::string& payload : payloads) {
+    result->add_matching_condition_payloads(payload);
+  }
+  std::move(callback).Run(status);
+}
+
+void WaitForDomAction::ReportActionResult(ProcessActionCallback callback,
+                                          const ClientStatus& status) {
+  UpdateProcessedAction(status.proto_status());
   std::move(callback).Run(std::move(processed_action_proto_));
 }
 }  // namespace autofill_assistant

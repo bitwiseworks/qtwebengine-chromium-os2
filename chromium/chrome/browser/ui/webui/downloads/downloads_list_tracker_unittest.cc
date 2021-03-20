@@ -8,19 +8,23 @@
 #include <stdint.h>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_item_model.h"
+#include "chrome/browser/ui/webui/downloads/downloads.mojom.h"
 #include "chrome/browser/ui/webui/downloads/mock_downloads_page.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/download/public/common/mock_download_item.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_download_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_web_ui.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -43,7 +47,7 @@ bool ShouldShowItem(const DownloadItem& item) {
 class TestDownloadsListTracker : public DownloadsListTracker {
  public:
   TestDownloadsListTracker(content::DownloadManager* manager,
-                           md_downloads::mojom::PagePtr page)
+                           mojo::PendingRemote<downloads::mojom::Page> page)
       : DownloadsListTracker(manager,
                              std::move(page),
                              base::BindRepeating(&ShouldShowItem)) {}
@@ -54,9 +58,9 @@ class TestDownloadsListTracker : public DownloadsListTracker {
   using DownloadsListTracker::SetChunkSizeForTesting;
 
  protected:
-  md_downloads::mojom::DataPtr CreateDownloadData(
+  downloads::mojom::DataPtr CreateDownloadData(
       download::DownloadItem* download_item) const override {
-    auto file_value = md_downloads::mojom::Data::New();
+    auto file_value = downloads::mojom::Data::New();
     file_value->id = base::NumberToString(download_item->GetId());
     return file_value;
   }
@@ -97,7 +101,7 @@ class DownloadsListTrackerTest : public testing::Test {
 
   void CreateTracker() {
     tracker_.reset(
-        new TestDownloadsListTracker(manager(), page_.BindAndGetPtr()));
+        new TestDownloadsListTracker(manager(), page_.BindAndGetRemote()));
   }
 
   TestingProfile* profile() { return &profile_; }
@@ -114,7 +118,7 @@ class DownloadsListTrackerTest : public testing::Test {
   }
 
   // NOTE: The initialization order of these members matters.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 
   testing::NiceMock<content::MockDownloadManager> manager_;
@@ -240,7 +244,7 @@ TEST_F(DownloadsListTrackerTest, Incognito) {
   ON_CALL(incognito_manager, GetDownload(0)).WillByDefault(Return(&item));
 
   testing::StrictMock<MockPage> page;
-  TestDownloadsListTracker tracker(&incognito_manager, page.BindAndGetPtr());
+  TestDownloadsListTracker tracker(&incognito_manager, page.BindAndGetRemote());
   EXPECT_TRUE(tracker.IsIncognito(item));
 }
 

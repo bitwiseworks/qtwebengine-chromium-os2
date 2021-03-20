@@ -5,10 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PRESENTATION_PRESENTATION_CONTROLLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PRESENTATION_PRESENTATION_CONTROLLER_H_
 
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/presentation/presentation.mojom-blink.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
@@ -28,12 +29,11 @@ class PresentationAvailabilityState;
 // Implements the PresentationController interface from the Presentation API
 // from which websites can implement the controlling side of a presentation.
 class MODULES_EXPORT PresentationController
-    : public GarbageCollectedFinalized<PresentationController>,
+    : public GarbageCollected<PresentationController>,
       public Supplement<LocalFrame>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       public mojom::blink::PresentationController {
   USING_GARBAGE_COLLECTED_MIXIN(PresentationController);
-  WTF_MAKE_NONCOPYABLE(PresentationController);
 
  public:
   static const char kSupplementName[];
@@ -48,7 +48,7 @@ class MODULES_EXPORT PresentationController
   static PresentationController* FromContext(ExecutionContext*);
 
   // Implementation of Supplement.
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // Called by the Presentation object to advertize itself to the controller.
   // The Presentation object is kept as a WeakMember in order to avoid keeping
@@ -65,10 +65,10 @@ class MODULES_EXPORT PresentationController
       const blink::WebVector<blink::WebURL>& presentation_urls,
       const blink::WebString& presentation_id);
 
-  // Returns a reference to the PresentationService ptr, requesting the remote
-  // service if needed. May return an invalid ptr if the associated Document is
-  // detached.
-  mojom::blink::PresentationServicePtr& GetPresentationService();
+  // Returns a reference to the PresentationService remote, requesting the
+  // remote service if needed. May return an invalid remote if the associated
+  // Document is detached.
+  mojo::Remote<mojom::blink::PresentationService>& GetPresentationService();
 
   // Returns the PresentationAvailabilityState owned by |this|, creating it if
   // needed. Always non-null.
@@ -79,8 +79,8 @@ class MODULES_EXPORT PresentationController
   virtual void RemoveAvailabilityObserver(PresentationAvailabilityObserver*);
 
  private:
-  // Implementation of ContextLifecycleObserver.
-  void ContextDestroyed(ExecutionContext*) override;
+  // Implementation of ExecutionContextLifecycleObserver.
+  void ContextDestroyed() override;
 
   // mojom::blink::PresentationController implementation.
   void OnScreenAvailabilityUpdated(const KURL&,
@@ -108,12 +108,15 @@ class MODULES_EXPORT PresentationController
   // The presentation connections associated with that frame.
   HeapHashSet<WeakMember<ControllerPresentationConnection>> connections_;
 
-  // Lazily-initialized pointer to PresentationService.
-  mojom::blink::PresentationServicePtr presentation_service_;
+  // Holder of the Mojo connection to the PresentationService remote.
+  mojo::Remote<mojom::blink::PresentationService> presentation_service_remote_;
 
   // Lazily-initialized binding for mojom::blink::PresentationController. Sent
   // to |presentation_service_|'s implementation.
-  mojo::Binding<mojom::blink::PresentationController> controller_binding_;
+  mojo::Receiver<mojom::blink::PresentationController>
+      presentation_controller_receiver_{this};
+
+  DISALLOW_COPY_AND_ASSIGN(PresentationController);
 };
 
 }  // namespace blink

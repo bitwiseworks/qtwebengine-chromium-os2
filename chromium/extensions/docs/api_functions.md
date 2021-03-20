@@ -90,11 +90,11 @@ namespace gizmo {
 Next, we define the function in C++, starting with the header file.
 
 ```
-GizmoFrobulateFunction : public UIThreadExtensionFunction {
+GizmoFrobulateFunction : public ExtensionFunction {
  public:
   // This declares the extension function and initiates the mapping between the
   // string name to the C++ class as well as the histogram value.
-  DECLARE_EXTENSION_FUNCTION("gizmo.frobulate", GIZMO_FROBULATE);
+  DECLARE_EXTENSION_FUNCTION("gizmo.frobulate", GIZMO_FROBULATE)
 
   GizmoFrobulateFunction();
 
@@ -172,7 +172,7 @@ ExtensionFunction::ResponseAction GizmoFrobulateFunction::Run() {
       params->cycles,
       // Note that |this| is refcounted, so binding automatically adds a
       // reference.
-      base::Bind(&GizmoFrobulateFunction::OnFrobulated, this));
+      base::BindOnce(&GizmoFrobulateFunction::OnFrobulated, this));
 
   // Note: Since we are returning RespondLater() here, it is required that
   // Frobulate() did not call the callback synchronously (in which case,

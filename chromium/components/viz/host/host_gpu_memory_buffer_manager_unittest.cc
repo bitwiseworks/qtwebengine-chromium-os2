@@ -6,17 +6,24 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/host/gpu_memory_buffer_support.h"
-#include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
+#include "services/viz/privileged/mojom/gl/gpu_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/client_native_pixmap_factory.h"
 
 #if defined(USE_OZONE)
 #include "ui/ozone/public/ozone_platform.h"
+#endif
+
+#if defined(OS_ANDROID)
+#include "base/android/android_hardware_buffer_compat.h"
 #endif
 
 namespace viz {
@@ -68,6 +75,8 @@ class TestGpuService : public mojom::GpuService {
     gfx::GpuMemoryBufferHandle handle;
     handle.id = req.id;
     handle.type = gfx::SHARED_MEMORY_BUFFER;
+    constexpr size_t kBufferSizeBytes = 100;
+    handle.region = base::UnsafeSharedMemoryRegion::Create(kBufferSizeBytes);
 
     DCHECK(req.callback);
     std::move(req.callback).Run(std::move(handle));
@@ -83,25 +92,33 @@ class TestGpuService : public mojom::GpuService {
   void CloseChannel(int32_t client_id) override {}
 #if defined(OS_CHROMEOS)
   void CreateArcVideoDecodeAccelerator(
-      arc::mojom::VideoDecodeAcceleratorRequest vda_request) override {}
+      mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver)
+      override {}
 
   void CreateArcVideoEncodeAccelerator(
-      arc::mojom::VideoEncodeAcceleratorRequest vea_request) override {}
+      mojo::PendingReceiver<arc::mojom::VideoEncodeAccelerator> vea_receiver)
+      override {}
 
   void CreateArcVideoProtectedBufferAllocator(
-      arc::mojom::VideoProtectedBufferAllocatorRequest pba_request) override {}
+      mojo::PendingReceiver<arc::mojom::VideoProtectedBufferAllocator>
+          pba_receiver) override {}
 
   void CreateArcProtectedBufferManager(
-      arc::mojom::ProtectedBufferManagerRequest pbm_request) override {}
-#endif  // defined(OS_CHROMEOS)
+      mojo::PendingReceiver<arc::mojom::ProtectedBufferManager> pbm_receiver)
+      override {}
+
   void CreateJpegDecodeAccelerator(
-      media::mojom::JpegDecodeAcceleratorRequest jda_request) override {}
+      mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
+          jda_receiver) override {}
 
   void CreateJpegEncodeAccelerator(
-      media::mojom::JpegEncodeAcceleratorRequest jea_request) override {}
+      mojo::PendingReceiver<chromeos_camera::mojom::JpegEncodeAccelerator>
+          jea_receiver) override {}
+#endif  // defined(OS_CHROMEOS)
 
   void CreateVideoEncodeAcceleratorProvider(
-      media::mojom::VideoEncodeAcceleratorProviderRequest request) override {}
+      mojo::PendingReceiver<media::mojom::VideoEncodeAcceleratorProvider>
+          receiver) override {}
 
   void CreateGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
                              const gfx::Size& size,
@@ -122,12 +139,18 @@ class TestGpuService : public mojom::GpuService {
   void GetVideoMemoryUsageStats(
       GetVideoMemoryUsageStatsCallback callback) override {}
 
+  void StartPeakMemoryMonitor(uint32_t sequence_num) override {}
+
+  void GetPeakMemoryUsage(uint32_t sequence_num,
+                          GetPeakMemoryUsageCallback callback) override {}
+
 #if defined(OS_WIN)
   void RequestCompleteGpuInfo(
       RequestCompleteGpuInfoCallback callback) override {}
 
-  void GetGpuSupportedRuntimeVersion(
-      GetGpuSupportedRuntimeVersionCallback callback) override {}
+  void GetGpuSupportedRuntimeVersionAndDevicePerfInfo(
+      GetGpuSupportedRuntimeVersionAndDevicePerfInfoCallback callback)
+      override {}
 #endif
 
   void RequestHDRStatus(RequestHDRStatusCallback callback) override {}
@@ -138,7 +161,11 @@ class TestGpuService : public mojom::GpuService {
 
   void WakeUpGpu() override {}
 
-  void GpuSwitched() override {}
+  void GpuSwitched(gl::GpuPreference active_gpu_heuristic) override {}
+
+  void DisplayAdded() override {}
+
+  void DisplayRemoved() override {}
 
   void DestroyAllChannels() override {}
 
@@ -147,6 +174,11 @@ class TestGpuService : public mojom::GpuService {
   void OnBackgrounded() override {}
 
   void OnForegrounded() override {}
+
+#if !defined(OS_ANDROID)
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel level) override {}
+#endif
 
 #if defined(OS_MACOSX)
   void BeginCATransaction() override {}
@@ -198,6 +230,10 @@ class HostGpuMemoryBufferManagerTest : public ::testing::Test {
         std::move(gpu_service_provider), 1,
         std::move(gpu_memory_buffer_support),
         base::ThreadTaskRunnerHandle::Get());
+#if defined(USE_X11)
+    // X11 requires GPU process initialization to determine GMB support.
+    gpu_memory_buffer_manager_->native_configurations_initialized_.Signal();
+#endif
   }
 
   // Not all platforms support native configurations (currently only Windows,
@@ -208,6 +244,9 @@ class HostGpuMemoryBufferManagerTest : public ::testing::Test {
     native_pixmap_supported =
         ui::OzonePlatform::GetInstance()->IsNativePixmapConfigSupported(
             gfx::BufferFormat::RGBA_8888, gfx::BufferUsage::GPU_READ);
+#elif defined(OS_ANDROID)
+    native_pixmap_supported =
+        base::AndroidHardwareBufferCompat::IsSupportAvailable();
 #elif defined(OS_MACOSX) || defined(OS_WIN)
     native_pixmap_supported = true;
 #endif

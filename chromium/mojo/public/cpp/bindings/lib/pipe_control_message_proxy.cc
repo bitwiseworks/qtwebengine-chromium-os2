@@ -16,6 +16,8 @@
 namespace mojo {
 namespace {
 
+const char kMessageTag[] = "PipeControlMessageProxy";
+
 Message ConstructRunOrClosePipeMessage(
     pipe_control::RunOrClosePipeInputPtr input_ptr) {
   auto params_ptr = pipe_control::RunOrClosePipeMessageParams::New();
@@ -23,10 +25,12 @@ Message ConstructRunOrClosePipeMessage(
 
   Message message(pipe_control::kRunOrClosePipeMessageId, 0, 0, 0, nullptr);
   internal::SerializationContext context;
-  pipe_control::internal::RunOrClosePipeMessageParams_Data::BufferWriter params;
+  pipe_control::internal::RunOrClosePipeMessageParams_Data::BufferWriter writer;
   internal::Serialize<pipe_control::RunOrClosePipeMessageParamsDataView>(
-      params_ptr, message.payload_buffer(), &params, &context);
+      params_ptr, message.payload_buffer(), &writer, &context);
   message.set_interface_id(kInvalidInterfaceId);
+  message.set_heap_profiler_tag(kMessageTag);
+  message.AttachHandlesFromSerializationContext(&context);
   return message;
 }
 
@@ -39,6 +43,24 @@ void PipeControlMessageProxy::NotifyPeerEndpointClosed(
     InterfaceId id,
     const base::Optional<DisconnectReason>& reason) {
   Message message(ConstructPeerEndpointClosedMessage(id, reason));
+  message.set_heap_profiler_tag(kMessageTag);
+  ignore_result(receiver_->Accept(&message));
+}
+
+void PipeControlMessageProxy::PausePeerUntilFlushCompletes(PendingFlush flush) {
+  auto input = pipe_control::RunOrClosePipeInput::New();
+  input->set_pause_until_flush_completes(
+      pipe_control::PauseUntilFlushCompletes::New(flush.PassPipe()));
+  Message message(ConstructRunOrClosePipeMessage(std::move(input)));
+  message.set_heap_profiler_tag(kMessageTag);
+  ignore_result(receiver_->Accept(&message));
+}
+
+void PipeControlMessageProxy::FlushAsync(AsyncFlusher flusher) {
+  auto input = pipe_control::RunOrClosePipeInput::New();
+  input->set_flush_async(pipe_control::FlushAsync::New(flusher.PassPipe()));
+  Message message(ConstructRunOrClosePipeMessage(std::move(input)));
+  message.set_heap_profiler_tag(kMessageTag);
   ignore_result(receiver_->Accept(&message));
 }
 

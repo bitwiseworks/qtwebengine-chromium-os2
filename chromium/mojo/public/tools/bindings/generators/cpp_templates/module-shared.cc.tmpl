@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable:4065)
-#endif
-
 #include "{{module.path}}-shared.h"
 
 #include <utility>
@@ -17,6 +12,8 @@
 #include "mojo/public/cpp/bindings/lib/validation_context.h"
 #include "mojo/public/cpp/bindings/lib/validation_errors.h"
 #include "mojo/public/cpp/bindings/lib/validation_util.h"
+
+#include "{{module.path}}-params-data.h"
 
 {%- for header in extra_traits_headers %}
 #include "{{header}}"
@@ -65,7 +62,3 @@ namespace internal {
 {%- for namespace in namespaces_as_array|reverse %}
 }  // namespace {{namespace}}
 {%- endfor %}
-
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif

@@ -23,17 +23,12 @@ class WebContentsAdapter;
 }
 
 namespace web {
-class TestWebThreadBundle;
+class WebTaskEnvironment;
 }
 
 namespace base {
 
-class MessageLoopBase;
-class MessageLoopImpl;
-
 namespace sequence_manager {
-class LazyThreadControllerForTest;
-
 namespace internal {
 class SequenceManagerImpl;
 }
@@ -112,22 +107,10 @@ class BASE_EXPORT MessageLoopCurrent {
   // DestructionObserver is receiving a notification callback.
   void RemoveDestructionObserver(DestructionObserver* destruction_observer);
 
-  // Returns the name for the thread associated with this object.
-  std::string GetThreadName() const;
-
-  // Forwards to MessageLoop::task_runner().
-  // DEPRECATED(https://crbug.com/616447): Use ThreadTaskRunnerHandle::Get()
-  // instead of MessageLoopCurrent::Get()->task_runner().
-  scoped_refptr<SingleThreadTaskRunner> task_runner() const;
-
   // Forwards to MessageLoop::SetTaskRunner().
   // DEPRECATED(https://crbug.com/825327): only owners of the MessageLoop
   // instance should replace its TaskRunner.
   void SetTaskRunner(scoped_refptr<SingleThreadTaskRunner> task_runner);
-
-  // This alias is deprecated. Use base::TaskObserver instead.
-  // TODO(yutak): Replace all the use sites with base::TaskObserver.
-  using TaskObserver = base::TaskObserver;
 
   // Forwards to MessageLoop::(Add|Remove)TaskObserver.
   // DEPRECATED(https://crbug.com/825327): only owners of the MessageLoop
@@ -178,7 +161,7 @@ class BASE_EXPORT MessageLoopCurrent {
     ~ScopedNestableTaskAllower();
 
    private:
-    MessageLoopBase* const loop_;
+    sequence_manager::internal::SequenceManagerImpl* const sequence_manager_;
     const bool old_state_;
   };
 
@@ -193,35 +176,23 @@ class BASE_EXPORT MessageLoopCurrent {
   bool IsIdleForTesting();
 
  protected:
-  // Binds |current| to the current thread. It will from then on be the
-  // MessageLoop driven by MessageLoopCurrent on this thread. This is only meant
-  // to be invoked by the MessageLoop itself.
-  static void BindToCurrentThreadInternal(MessageLoopBase* current);
+  explicit MessageLoopCurrent(
+      sequence_manager::internal::SequenceManagerImpl* sequence_manager)
+      : current_(sequence_manager) {}
 
-  // Unbinds |current| from the current thread. Must be invoked on the same
-  // thread that invoked |BindToCurrentThreadInternal(current)|. This is only
-  // meant to be invoked by the MessageLoop itself.
-  static void UnbindFromCurrentThreadInternal(MessageLoopBase* current);
+  static sequence_manager::internal::SequenceManagerImpl*
+  GetCurrentSequenceManagerImpl();
 
-  explicit MessageLoopCurrent(MessageLoopBase* current) : current_(current) {}
-
-  friend class MessageLoopImpl;
   friend class MessagePumpLibeventTest;
   friend class ScheduleWorkTest;
   friend class Thread;
-  friend class sequence_manager::LazyThreadControllerForTest;
   friend class sequence_manager::internal::SequenceManagerImpl;
   friend class MessageLoopTaskRunnerTest;
-  friend class web::TestWebThreadBundle;
+  friend class web::WebTaskEnvironment;
   friend class QtWebEngineCore::MessagePumpForUIQt;
   friend class QtWebEngineCore::WebContentsAdapter;
 
-  // Return the pointer to MessageLoop for internal needs.
-  // All other callers should call MessageLoopCurrent::Get().
-  // TODO(altimin): Remove this.
-  MessageLoopBase* ToMessageLoopBaseDeprecated() const { return current_; }
-
-  MessageLoopBase* current_;
+  sequence_manager::internal::SequenceManagerImpl* current_;
 };
 
 #if !defined(OS_NACL)
@@ -239,10 +210,10 @@ class BASE_EXPORT MessageLoopCurrentForUI : public MessageLoopCurrent {
   MessageLoopCurrentForUI* operator->() { return this; }
 
 #if defined(USE_OZONE) && !defined(OS_FUCHSIA) && !defined(OS_WIN)
-  // Please see MessagePumpLibevent for definition.
-  static_assert(std::is_same<MessagePumpForUI, MessagePumpLibevent>::value,
-                "MessageLoopCurrentForUI::WatchFileDescriptor is not supported "
-                "when MessagePumpForUI is not a MessagePumpLibevent.");
+  static_assert(
+      std::is_base_of<WatchableIOMessagePumpPosix, MessagePumpForUI>::value,
+      "MessageLoopCurrentForUI::WatchFileDescriptor is supported only"
+      "by MessagePumpLibevent and MessagePumpGlib implementations.");
   bool WatchFileDescriptor(int fd,
                            bool persistent,
                            MessagePumpForUI::Mode mode,
@@ -250,7 +221,7 @@ class BASE_EXPORT MessageLoopCurrentForUI : public MessageLoopCurrent {
                            MessagePumpForUI::FdWatcher* delegate);
 #endif
 
-#if defined(OS_IOS) || defined(OS_ANDROID)
+#if defined(OS_IOS)
   // Forwards to MessageLoopForUI::Attach().
   // TODO(https://crbug.com/825327): Plumb the actual MessageLoopForUI* to
   // callers and remove ability to access this method from
@@ -272,7 +243,8 @@ class BASE_EXPORT MessageLoopCurrentForUI : public MessageLoopCurrent {
 #endif
 
  private:
-  explicit MessageLoopCurrentForUI(MessageLoopBase* current)
+  explicit MessageLoopCurrentForUI(
+      sequence_manager::internal::SequenceManagerImpl* current)
       : MessageLoopCurrent(current) {}
 
   MessagePumpForUI* GetMessagePumpForUI() const;
@@ -309,6 +281,13 @@ class BASE_EXPORT MessageLoopCurrentForIO : public MessageLoopCurrent {
                            MessagePumpForIO::FdWatcher* delegate);
 #endif  // defined(OS_WIN)
 
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  bool WatchMachReceivePort(
+      mach_port_t port,
+      MessagePumpForIO::MachPortWatchController* controller,
+      MessagePumpForIO::MachPortWatcher* delegate);
+#endif
+
 #if defined(OS_FUCHSIA)
   // Additional watch API for native platform resources.
   bool WatchZxHandle(zx_handle_t handle,
@@ -321,7 +300,8 @@ class BASE_EXPORT MessageLoopCurrentForIO : public MessageLoopCurrent {
 #endif  // !defined(OS_NACL_SFI)
 
  private:
-  explicit MessageLoopCurrentForIO(MessageLoopBase* current)
+  explicit MessageLoopCurrentForIO(
+      sequence_manager::internal::SequenceManagerImpl* current)
       : MessageLoopCurrent(current) {}
 
   MessagePumpForIO* GetMessagePumpForIO() const;

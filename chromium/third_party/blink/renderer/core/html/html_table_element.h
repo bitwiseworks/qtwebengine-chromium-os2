@@ -28,21 +28,19 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/html/html_table_rows_collection.h"
 
 namespace blink {
 
 class ExceptionState;
 class HTMLCollection;
 class HTMLTableCaptionElement;
-class HTMLTableRowsCollection;
 class HTMLTableSectionElement;
 
 class CORE_EXPORT HTMLTableElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(HTMLTableElement);
-
   explicit HTMLTableElement(Document&);
 
   HTMLTableCaptionElement* caption() const;
@@ -132,7 +130,7 @@ class CORE_EXPORT HTMLTableElement final : public HTMLElement {
   // otherwise).
   TableRules rules_attr_;
 
-  unsigned short padding_;
+  uint16_t padding_;
   Member<CSSPropertyValueSet> shared_cell_style_;
 };
 

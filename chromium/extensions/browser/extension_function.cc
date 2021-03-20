@@ -4,8 +4,10 @@
 
 #include "extensions/browser/extension_function.h"
 
+#include <numeric>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
@@ -13,6 +15,11 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/thread_checker.h"
+#include "base/trace_event/memory_allocator_dump.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/memory_dump_provider.h"
+#include "base/trace_event/trace_event.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
@@ -20,12 +27,14 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/bad_message.h"
 #include "extensions/browser/extension_function_dispatcher.h"
+#include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/extension_message_filter.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "extensions/browser/io_thread_extension_message_filter.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/extension_messages.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-forward.h"
 
 using content::BrowserThread;
 using content::WebContents;
@@ -34,6 +43,92 @@ using extensions::ExtensionAPI;
 using extensions::Feature;
 
 namespace {
+
+class ExtensionFunctionMemoryDumpProvider
+    : public base::trace_event::MemoryDumpProvider {
+ public:
+  ExtensionFunctionMemoryDumpProvider() {
+    base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
+        this, "ExtensionFunctions", base::ThreadTaskRunnerHandle::Get());
+  }
+
+  ExtensionFunctionMemoryDumpProvider(
+      const ExtensionFunctionMemoryDumpProvider&) = delete;
+  ExtensionFunctionMemoryDumpProvider& operator=(
+      const ExtensionFunctionMemoryDumpProvider&) = delete;
+  ~ExtensionFunctionMemoryDumpProvider() override {
+    base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
+        this);
+  }
+
+  void AddFunctionName(const char* function_name) {
+    DCHECK(thread_checker_.CalledOnValidThread());
+    DCHECK(function_name);
+    auto it = function_map_.emplace(function_name, 0);
+    it.first->second++;
+  }
+
+  void RemoveFunctionName(const char* function_name) {
+    DCHECK(thread_checker_.CalledOnValidThread());
+    DCHECK(function_name);
+    auto it = function_map_.find(function_name);
+    DCHECK(it != function_map_.end());
+    DCHECK_GE(it->second, static_cast<uint64_t>(1));
+    if (it->second == 1)
+      function_map_.erase(it);
+    else
+      it->second--;
+  }
+
+  static ExtensionFunctionMemoryDumpProvider& GetInstance() {
+    static base::NoDestructor<ExtensionFunctionMemoryDumpProvider> tracker;
+    return *tracker;
+  }
+
+ private:
+  // base::trace_event::MemoryDumpProvider:
+  bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
+                    base::trace_event::ProcessMemoryDump* pmd) override {
+    DCHECK(thread_checker_.CalledOnValidThread());
+    auto* dump = pmd->CreateAllocatorDump("extensions/functions");
+    uint64_t function_count =
+        std::accumulate(function_map_.begin(), function_map_.end(), 0,
+                        [](uint64_t total, auto& function_pair) {
+                          return total + function_pair.second;
+                        });
+    dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameObjectCount,
+                    base::trace_event::MemoryAllocatorDump::kUnitsObjects,
+                    function_count);
+    // Collects the top 5 ExtensionFunctions with the most instances on memory
+    // dump.
+    std::vector<std::pair<const char*, uint64_t>> results(5);
+    std::partial_sort_copy(function_map_.begin(), function_map_.end(),
+                           results.begin(), results.end(),
+                           [](const auto& lhs, const auto& rhs) {
+                             return lhs.second > rhs.second;
+                           });
+    for (const auto& function_pair : results) {
+      if (function_pair.first) {
+        TRACE_EVENT2(TRACE_DISABLED_BY_DEFAULT("memory-infra"),
+                     "ExtensionFunction::OnMemoryDump", "function",
+                     function_pair.first, "count", function_pair.second);
+      }
+    }
+    return true;
+  }
+
+  // This map is keyed based on const char* pointer since all the strings used
+  // here are defined in the registry held by the caller. The value needs to be
+  // stored as pointer to be able to add privacy safe trace events.
+  std::map<const char*, uint64_t> function_map_;
+
+  // Makes sure all methods are called from the same thread.
+  base::ThreadChecker thread_checker_;
+};
+
+void EnsureMemoryDumpProviderExists() {
+  ALLOW_UNUSED_LOCAL(ExtensionFunctionMemoryDumpProvider::GetInstance());
+}
 
 // Logs UMA about the performance for a given extension function run.
 void LogUma(bool success,
@@ -251,22 +346,16 @@ bool ExtensionFunction::ignore_all_did_respond_for_testing_do_not_use = false;
 // static
 const char ExtensionFunction::kUnknownErrorDoNotUse[] = "Unknown error.";
 
-// static
-void ExtensionFunctionDeleteTraits::Destruct(const ExtensionFunction* x) {
-  x->Destruct();
-}
-
 // Helper class to track the lifetime of ExtensionFunction's RenderFrameHost and
 // notify the function when it is deleted, as well as forwarding any messages
 // to the ExtensionFunction.
-class UIThreadExtensionFunction::RenderFrameHostTracker
+class ExtensionFunction::RenderFrameHostTracker
     : public content::WebContentsObserver {
  public:
-  explicit RenderFrameHostTracker(UIThreadExtensionFunction* function)
+  explicit RenderFrameHostTracker(ExtensionFunction* function)
       : content::WebContentsObserver(
             WebContents::FromRenderFrameHost(function->render_frame_host())),
-        function_(function) {
-  }
+        function_(function) {}
 
  private:
   // content::WebContentsObserver:
@@ -282,33 +371,32 @@ class UIThreadExtensionFunction::RenderFrameHostTracker
         function_->OnMessageReceived(message);
   }
 
-  UIThreadExtensionFunction* function_;  // Owns us.
+  ExtensionFunction* function_;  // Owns us.
 
   DISALLOW_COPY_AND_ASSIGN(RenderFrameHostTracker);
 };
 
-ExtensionFunction::ExtensionFunction()
-    : request_id_(-1),
-      profile_id_(NULL),
-      name_(""),
-      has_callback_(false),
-      include_incognito_information_(false),
-      user_gesture_(false),
-      bad_message_(false),
-      histogram_value_(extensions::functions::UNKNOWN),
-      source_context_type_(Feature::UNSPECIFIED_CONTEXT),
-      source_process_id_(-1),
-      did_respond_(false) {}
+ExtensionFunction::ExtensionFunction() {
+  EnsureMemoryDumpProviderExists();
+}
 
 ExtensionFunction::~ExtensionFunction() {
-}
+  if (name())  // name_ may not be set in unit tests.
+    ExtensionFunctionMemoryDumpProvider::GetInstance().RemoveFunctionName(
+        name());
+  if (dispatcher() && (render_frame_host() || is_from_service_worker())) {
+    dispatcher()->OnExtensionFunctionCompleted(
+        extension(), is_from_service_worker(), name());
+  }
 
-UIThreadExtensionFunction* ExtensionFunction::AsUIThreadExtensionFunction() {
-  return NULL;
-}
-
-IOThreadExtensionFunction* ExtensionFunction::AsIOThreadExtensionFunction() {
-  return NULL;
+  // The extension function should always respond to avoid leaks in the
+  // renderer, dangling callbacks, etc. The exception is if the system is
+  // shutting down.
+  extensions::ExtensionsBrowserClient* browser_client =
+      extensions::ExtensionsBrowserClient::Get();
+  DCHECK(!browser_client || browser_client->IsShuttingDown() || did_respond() ||
+         ignore_all_did_respond_for_testing_do_not_use)
+      << name();
 }
 
 bool ExtensionFunction::HasPermission() const {
@@ -319,14 +407,53 @@ bool ExtensionFunction::HasPermission() const {
   return availability.is_available();
 }
 
-void ExtensionFunction::OnQuotaExceeded(const std::string& violation_error) {
-  error_ = violation_error;
-  SendResponseImpl(false);
+void ExtensionFunction::RespondWithError(const std::string& error) {
+  Respond(Error(error));
 }
 
-void ExtensionFunction::SetArgs(const base::ListValue* args) {
+bool ExtensionFunction::PreRunValidation(std::string* error) {
+  // TODO(crbug.com/625646) This is a partial fix to avoid crashes when certain
+  // extension functions run during shutdown. Browser or Notification creation
+  // for example create a ScopedKeepAlive, which hit a CHECK if the browser is
+  // shutting down. This fixes the current problem as the known issues happen
+  // through synchronous calls from Run(), but posted tasks will not be covered.
+  // A possible fix would involve refactoring ExtensionFunction: unrefcount
+  // here and use weakptrs for the tasks, then have it owned by something that
+  // will be destroyed naturally in the course of shut down.
+  if (extensions::ExtensionsBrowserClient::Get()->IsShuttingDown()) {
+    *error = "The browser is shutting down.";
+    return false;
+  }
+
+  return true;
+}
+
+ExtensionFunction::ResponseAction ExtensionFunction::RunWithValidation() {
+#if DCHECK_IS_ON()
+  DCHECK(!did_run_);
+  did_run_ = true;
+#endif
+
+  std::string error;
+  if (!PreRunValidation(&error)) {
+    DCHECK(!error.empty() || bad_message_);
+    return bad_message_ ? ValidationFailure(this) : RespondNow(Error(error));
+  }
+  return Run();
+}
+
+bool ExtensionFunction::ShouldSkipQuotaLimiting() const {
+  return false;
+}
+
+void ExtensionFunction::OnQuotaExceeded(const std::string& violation_error) {
+  RespondWithError(violation_error);
+}
+
+void ExtensionFunction::SetArgs(base::Value args) {
+  DCHECK(args.is_list());
   DCHECK(!args_.get());  // Should only be called once.
-  args_ = args->CreateDeepCopy();
+  args_ = base::ListValue::From(base::Value::ToUniquePtrValue(std::move(args)));
 }
 
 const base::ListValue* ExtensionFunction::GetResultList() const {
@@ -337,12 +464,51 @@ const std::string& ExtensionFunction::GetError() const {
   return error_;
 }
 
+void ExtensionFunction::SetName(const char* name) {
+  DCHECK_EQ(nullptr, name_) << "SetName() called twice!";
+  DCHECK_NE(nullptr, name) << "Passed in nullptr to SetName()!";
+  name_ = name;
+  ExtensionFunctionMemoryDumpProvider::GetInstance().AddFunctionName(name);
+}
+
 void ExtensionFunction::SetBadMessage() {
   bad_message_ = true;
+
+  if (render_frame_host()) {
+    ReceivedBadMessage(render_frame_host()->GetProcess(),
+                       is_from_service_worker()
+                           ? extensions::bad_message::EFD_BAD_MESSAGE_WORKER
+                           : extensions::bad_message::EFD_BAD_MESSAGE,
+                       histogram_value());
+  }
 }
 
 bool ExtensionFunction::user_gesture() const {
   return user_gesture_ || UserGestureForTests::GetInstance()->HaveGesture();
+}
+
+bool ExtensionFunction::OnMessageReceived(const IPC::Message& message) {
+  return false;
+}
+
+void ExtensionFunction::SetRenderFrameHost(
+    content::RenderFrameHost* render_frame_host) {
+  // An extension function from Service Worker does not have a RenderFrameHost.
+  if (is_from_service_worker()) {
+    DCHECK(!render_frame_host);
+    return;
+  }
+
+  DCHECK_NE(render_frame_host_ == nullptr, render_frame_host == nullptr);
+  render_frame_host_ = render_frame_host;
+  tracker_.reset(render_frame_host ? new RenderFrameHostTracker(this)
+                                   : nullptr);
+}
+
+content::WebContents* ExtensionFunction::GetSenderWebContents() {
+  return render_frame_host_
+             ? content::WebContents::FromRenderFrameHost(render_frame_host_)
+             : nullptr;
 }
 
 ExtensionFunction::ResponseValue ExtensionFunction::NoArguments() {
@@ -438,26 +604,30 @@ void ExtensionFunction::Respond(ResponseValue result) {
   SendResponseImpl(result->Apply());
 }
 
-bool ExtensionFunction::PreRunValidation(std::string* error) {
-  return true;
-}
-
-ExtensionFunction::ResponseAction ExtensionFunction::RunWithValidation() {
-  std::string error;
-  if (!PreRunValidation(&error)) {
-    DCHECK(!error.empty() || bad_message_);
-    return bad_message_ ? ValidationFailure(this) : RespondNow(Error(error));
+void ExtensionFunction::OnResponded() {
+  if (!transferred_blob_uuids_.empty()) {
+    render_frame_host_->Send(
+        new ExtensionMsg_TransferBlobs(transferred_blob_uuids_));
   }
-  return Run();
-}
-
-bool ExtensionFunction::ShouldSkipQuotaLimiting() const {
-  return false;
 }
 
 bool ExtensionFunction::HasOptionalArgument(size_t index) {
   base::Value* value;
   return args_->Get(index, &value) && !value->is_none();
+}
+
+void ExtensionFunction::WriteToConsole(blink::mojom::ConsoleMessageLevel level,
+                                       const std::string& message) {
+  // Only the main frame handles dev tools messages.
+  WebContents::FromRenderFrameHost(render_frame_host_)
+      ->GetMainFrame()
+      ->AddMessageToConsole(level, message);
+}
+
+void ExtensionFunction::SetTransferredBlobUUIDs(
+    const std::vector<std::string>& blob_uuids) {
+  DCHECK(transferred_blob_uuids_.empty());  // Should only be called once.
+  transferred_blob_uuids_ = blob_uuids;
 }
 
 void ExtensionFunction::SendResponseImpl(bool success) {
@@ -476,145 +646,10 @@ void ExtensionFunction::SendResponseImpl(bool success) {
   if (!results_)
     results_.reset(new base::ListValue());
 
-  response_callback_.Run(response, *results_, GetError(), histogram_value());
+  response_callback_.Run(response, *results_, GetError());
   LogUma(success, timer_.Elapsed(), histogram_value_);
 
   OnResponded();
-}
-
-UIThreadExtensionFunction::UIThreadExtensionFunction()
-    : context_(nullptr),
-      render_frame_host_(nullptr),
-      service_worker_version_id_(blink::mojom::kInvalidServiceWorkerVersionId) {
-}
-
-UIThreadExtensionFunction::~UIThreadExtensionFunction() {
-  if (dispatcher() && (render_frame_host() || is_from_service_worker())) {
-    dispatcher()->OnExtensionFunctionCompleted(
-        extension(), is_from_service_worker(), name());
-  }
-
-  // The extension function should always respond to avoid leaks in the
-  // renderer, dangling callbacks, etc. The exception is if the system is
-  // shutting down.
-  // TODO(devlin): Duplicate this check in IOThreadExtensionFunction. It's
-  // tricky because checking IsShuttingDown has to be called from the UI thread.
-  extensions::ExtensionsBrowserClient* browser_client =
-      extensions::ExtensionsBrowserClient::Get();
-  DCHECK(!browser_client || browser_client->IsShuttingDown() || did_respond() ||
-         ignore_all_did_respond_for_testing_do_not_use)
-      << name();
-}
-
-UIThreadExtensionFunction*
-UIThreadExtensionFunction::AsUIThreadExtensionFunction() {
-  return this;
-}
-
-bool UIThreadExtensionFunction::PreRunValidation(std::string* error) {
-  if (!ExtensionFunction::PreRunValidation(error))
-    return false;
-
-  // TODO(crbug.com/625646) This is a partial fix to avoid crashes when certain
-  // extension functions run during shutdown. Browser or Notification creation
-  // for example create a ScopedKeepAlive, which hit a CHECK if the browser is
-  // shutting down. This fixes the current problem as the known issues happen
-  // through synchronous calls from Run(), but posted tasks will not be covered.
-  // A possible fix would involve refactoring ExtensionFunction: unrefcount
-  // here and use weakptrs for the tasks, then have it owned by something that
-  // will be destroyed naturally in the course of shut down.
-  if (extensions::ExtensionsBrowserClient::Get()->IsShuttingDown()) {
-    *error = "The browser is shutting down.";
-    return false;
-  }
-
-  return true;
-}
-
-void UIThreadExtensionFunction::SetBadMessage() {
-  ExtensionFunction::SetBadMessage();
-
-  if (render_frame_host()) {
-    ReceivedBadMessage(render_frame_host()->GetProcess(),
-                       is_from_service_worker()
-                           ? extensions::bad_message::EFD_BAD_MESSAGE_WORKER
-                           : extensions::bad_message::EFD_BAD_MESSAGE,
-                       histogram_value());
-  }
-}
-
-bool UIThreadExtensionFunction::OnMessageReceived(const IPC::Message& message) {
-  return false;
-}
-
-void UIThreadExtensionFunction::Destruct() const {
-  BrowserThread::DeleteOnUIThread::Destruct(this);
-}
-
-void UIThreadExtensionFunction::SetRenderFrameHost(
-    content::RenderFrameHost* render_frame_host) {
-  // An extension function from Service Worker does not have a RenderFrameHost.
-  if (is_from_service_worker()) {
-    DCHECK(!render_frame_host);
-    return;
-  }
-
-  DCHECK_NE(render_frame_host_ == nullptr, render_frame_host == nullptr);
-  render_frame_host_ = render_frame_host;
-  tracker_.reset(
-      render_frame_host ? new RenderFrameHostTracker(this) : nullptr);
-}
-
-content::WebContents* UIThreadExtensionFunction::GetSenderWebContents() {
-  return render_frame_host_ ?
-      content::WebContents::FromRenderFrameHost(render_frame_host_) : nullptr;
-}
-
-void UIThreadExtensionFunction::OnResponded() {
-  if (!transferred_blob_uuids_.empty()) {
-    render_frame_host_->Send(
-        new ExtensionMsg_TransferBlobs(transferred_blob_uuids_));
-  }
-}
-
-void UIThreadExtensionFunction::SetTransferredBlobUUIDs(
-    const std::vector<std::string>& blob_uuids) {
-  DCHECK(transferred_blob_uuids_.empty());  // Should only be called once.
-  transferred_blob_uuids_ = blob_uuids;
-}
-
-void UIThreadExtensionFunction::WriteToConsole(
-    content::ConsoleMessageLevel level,
-    const std::string& message) {
-  // Only the main frame handles dev tools messages.
-  WebContents::FromRenderFrameHost(render_frame_host_)
-      ->GetMainFrame()
-      ->AddMessageToConsole(level, message);
-}
-
-IOThreadExtensionFunction::IOThreadExtensionFunction()
-    : routing_id_(MSG_ROUTING_NONE) {
-}
-
-IOThreadExtensionFunction::~IOThreadExtensionFunction() {
-}
-
-IOThreadExtensionFunction*
-IOThreadExtensionFunction::AsIOThreadExtensionFunction() {
-  return this;
-}
-
-void IOThreadExtensionFunction::SetBadMessage() {
-  ExtensionFunction::SetBadMessage();
-  if (ipc_sender_) {
-    ReceivedBadMessage(
-        static_cast<content::BrowserMessageFilter*>(ipc_sender_.get()),
-        extensions::bad_message::EFD_BAD_MESSAGE, histogram_value());
-  }
-}
-
-void IOThreadExtensionFunction::Destruct() const {
-  BrowserThread::DeleteOnIOThread::Destruct(this);
 }
 
 ExtensionFunction::ScopedUserGestureForTests::ScopedUserGestureForTests() {

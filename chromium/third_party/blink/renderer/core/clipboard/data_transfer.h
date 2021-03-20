@@ -50,9 +50,9 @@ enum class DataTransferAccessPolicy;
 
 // Used for drag and drop and copy/paste.
 // Drag and Drop:
-// http://www.whatwg.org/specs/web-apps/current-work/multipage/dnd.html
+// https://html.spec.whatwg.org/multipage/dnd.html
 // Clipboard API (copy/paste):
-// http://dev.w3.org/2006/webapi/clipops/clipops.html
+// https://w3c.github.io/clipboard-apis/
 class CORE_EXPORT DataTransfer final : public ScriptWrappable,
                                        public DataObject::Observer {
   USING_GARBAGE_COLLECTED_MIXIN(DataTransfer);
@@ -147,16 +147,16 @@ class CORE_EXPORT DataTransfer final : public ScriptWrappable,
   // |paint_offset| is the offset from the origin of the dragged
   // object of the PaintRecordBuilder.
   static std::unique_ptr<DragImage> CreateDragImageForFrame(
-      const LocalFrame&,
+      LocalFrame&,
       float,
       RespectImageOrientationEnum,
       const FloatSize& css_size,
       const FloatPoint& paint_offset,
       PaintRecordBuilder&,
       const PropertyTreeState&);
-  static std::unique_ptr<DragImage> NodeImage(const LocalFrame&, Node&);
+  static std::unique_ptr<DragImage> NodeImage(LocalFrame&, Node&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void setDragImage(ImageResourceContent*, Node*, const IntPoint&);

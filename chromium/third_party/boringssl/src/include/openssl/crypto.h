@@ -16,6 +16,7 @@
 #define OPENSSL_HEADER_CRYPTO_H
 
 #include <openssl/base.h>
+#include <openssl/sha.h>
 
 // Upstream OpenSSL defines |OPENSSL_malloc|, etc., in crypto.h rather than
 // mem.h.
@@ -58,8 +59,8 @@ OPENSSL_EXPORT int CRYPTO_has_asm(void);
 // which case it returns one.
 OPENSSL_EXPORT int FIPS_mode(void);
 
-// BORINGSSL_self_test triggers the FIPS KAT-based self tests. It returns one
-// on success and zero on error.
+// BORINGSSL_self_test triggers the FIPS KAT-based self tests. It returns one on
+// success and zero on error.
 OPENSSL_EXPORT int BORINGSSL_self_test(void);
 
 

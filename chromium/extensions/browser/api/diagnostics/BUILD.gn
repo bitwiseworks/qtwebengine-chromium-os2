@@ -13,14 +13,9 @@ source_set("diagnostics") {
   sources = [
     "diagnostics_api.cc",
     "diagnostics_api.h",
-    "diagnostics_api_chromeos.cc",
   ]
 
-  deps = [
-    "//extensions/common/api",
-  ]
+  deps = [ "//extensions/common/api" ]
 
-  public_deps = [
-    "//extensions/browser:browser_sources",
-  ]
+  public_deps = [ "//extensions/browser:browser_sources" ]
 }

@@ -8,6 +8,7 @@
 #include "base/bind.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/timer/timer.h"
 #include "components/variations/variations_request_scheduler.h"
 
 class PrefService;
@@ -20,7 +21,7 @@ class VariationsRequestSchedulerMobile : public VariationsRequestScheduler {
  public:
   // |task} is the closure to call when the scheduler deems ready. |local_state|
   // is the PrefService that contains the time of the last fetch.
-  explicit VariationsRequestSchedulerMobile(const base::Closure& task,
+  explicit VariationsRequestSchedulerMobile(const base::RepeatingClosure& task,
                                             PrefService* local_state);
   ~VariationsRequestSchedulerMobile() override;
 

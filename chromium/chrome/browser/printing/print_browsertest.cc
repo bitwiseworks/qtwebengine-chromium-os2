@@ -5,12 +5,16 @@
 #include <memory>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/files/file_path.h"
+#include "base/optional.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/printing/print_view_manager_common.h"
+#include "chrome/browser/printing/printing_message_filter.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -24,30 +28,37 @@
 #include "components/printing/browser/features.h"
 #include "components/printing/browser/print_composite_client.h"
 #include "components/printing/browser/print_manager_utils.h"
+#include "components/printing/common/print.mojom.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "extensions/common/extension.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-
-#if defined(OS_CHROMEOS)
-#include "ui/aura/env.h"
-#endif
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 
 namespace printing {
 
 namespace {
 
-static constexpr int kDefaultDocumentCookie = 1234;
+constexpr int kDefaultDocumentCookie = 1234;
 
-class PrintPreviewObserver : PrintPreviewUI::TestingDelegate {
+class PrintPreviewObserver : PrintPreviewUI::TestDelegate {
  public:
-  PrintPreviewObserver() { PrintPreviewUI::SetDelegateForTesting(this); }
-  ~PrintPreviewObserver() { PrintPreviewUI::SetDelegateForTesting(nullptr); }
+  explicit PrintPreviewObserver(bool wait_for_loaded) {
+    if (wait_for_loaded)
+      queue_.emplace();  // DOMMessageQueue doesn't allow assignment
+    PrintPreviewUI::SetDelegateForTesting(this);
+  }
+
+  ~PrintPreviewObserver() override {
+    PrintPreviewUI::SetDelegateForTesting(nullptr);
+  }
 
   void WaitUntilPreviewIsReady() {
     if (rendered_page_count_ >= total_page_count_)
@@ -56,26 +67,72 @@ class PrintPreviewObserver : PrintPreviewUI::TestingDelegate {
     base::RunLoop run_loop;
     base::AutoReset<base::RunLoop*> auto_reset(&run_loop_, &run_loop);
     run_loop.Run();
+
+    if (queue_.has_value()) {
+      std::string message;
+      EXPECT_TRUE(queue_->WaitForMessage(&message));
+      EXPECT_EQ("\"success\"", message);
+    }
   }
 
  private:
-  // PrintPreviewUI::TestingDelegate implementation.
+  // PrintPreviewUI::TestDelegate:
   void DidGetPreviewPageCount(int page_count) override {
     total_page_count_ = page_count;
   }
 
-  // PrintPreviewUI::TestingDelegate implementation.
+  // PrintPreviewUI::TestDelegate:
   void DidRenderPreviewPage(content::WebContents* preview_dialog) override {
     ++rendered_page_count_;
     CHECK(rendered_page_count_ <= total_page_count_);
     if (rendered_page_count_ == total_page_count_ && run_loop_) {
       run_loop_->Quit();
+
+      if (queue_.has_value()) {
+        content::ExecuteScriptAsync(
+            preview_dialog,
+            "window.addEventListener('message', event => {"
+            "  if (event.data.type === 'documentLoaded') {"
+            "    domAutomationController.send(event.data.load_state);"
+            "  }"
+            "});");
+      }
     }
   }
 
+  base::Optional<content::DOMMessageQueue> queue_;
   int total_page_count_ = 1;
   int rendered_page_count_ = 0;
   base::RunLoop* run_loop_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(PrintPreviewObserver);
+};
+
+class NupPrintingTestDelegate : public PrintingMessageFilter::TestDelegate {
+ public:
+  NupPrintingTestDelegate() {
+    PrintingMessageFilter::SetDelegateForTesting(this);
+  }
+  ~NupPrintingTestDelegate() override {
+    PrintingMessageFilter::SetDelegateForTesting(nullptr);
+  }
+
+  // PrintingMessageFilter::TestDelegate:
+  PrintMsg_Print_Params GetPrintParams() override {
+    PrintMsg_Print_Params params;
+    params.page_size = gfx::Size(612, 792);
+    params.content_size = gfx::Size(540, 720);
+    params.printable_area = gfx::Rect(612, 792);
+    params.dpi = gfx::Size(72, 72);
+    params.document_cookie = kDefaultDocumentCookie;
+    params.pages_per_sheet = 4;
+    params.printed_doc_type =
+        IsOopifEnabled() ? SkiaDocumentType::MSKP : SkiaDocumentType::PDF;
+    return params;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(NupPrintingTestDelegate);
 };
 
 class TestPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
@@ -100,7 +157,7 @@ class TestPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
   }
 
  private:
-  ~TestPrintFrameContentMsgFilter() override {}
+  ~TestPrintFrameContentMsgFilter() override = default;
 
   void CheckMessage(int document_cookie,
                     const PrintHostMsg_DidPrintContent_Params& param) {
@@ -130,7 +187,7 @@ class KillPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
   }
 
  private:
-  ~KillPrintFrameContentMsgFilter() override {}
+  ~KillPrintFrameContentMsgFilter() override = default;
 
   void KillRenderProcess(int document_cookie,
                          const PrintHostMsg_DidPrintContent_Params& param) {
@@ -144,8 +201,8 @@ class KillPrintFrameContentMsgFilter : public content::BrowserMessageFilter {
 
 class PrintBrowserTest : public InProcessBrowserTest {
  public:
-  PrintBrowserTest() {}
-  ~PrintBrowserTest() override {}
+  PrintBrowserTest() = default;
+  ~PrintBrowserTest() override = default;
 
   void SetUp() override {
     num_expected_messages_ = 1;  // By default, only wait on one message.
@@ -161,11 +218,21 @@ class PrintBrowserTest : public InProcessBrowserTest {
   }
 
   void PrintAndWaitUntilPreviewIsReady(bool print_only_selection) {
-    PrintPreviewObserver print_preview_observer;
+    PrintPreviewObserver print_preview_observer(/*wait_for_loaded=*/false);
 
-    printing::StartPrint(browser()->tab_strip_model()->GetActiveWebContents(),
-                         /*print_preview_disabled=*/false,
-                         print_only_selection);
+    StartPrint(browser()->tab_strip_model()->GetActiveWebContents(),
+               /*print_renderer=*/mojo::NullAssociatedRemote(),
+               /*print_preview_disabled=*/false, print_only_selection);
+
+    print_preview_observer.WaitUntilPreviewIsReady();
+  }
+
+  void PrintAndWaitUntilPreviewIsReadyAndLoaded(bool print_only_selection) {
+    PrintPreviewObserver print_preview_observer(/*wait_for_loaded=*/true);
+
+    StartPrint(browser()->tab_strip_model()->GetActiveWebContents(),
+               /*print_renderer=*/mojo::NullAssociatedRemote(),
+               /*print_preview_disabled=*/false, print_only_selection);
 
     print_preview_observer.WaitUntilPreviewIsReady();
   }
@@ -195,12 +262,16 @@ class PrintBrowserTest : public InProcessBrowserTest {
     frame_host->GetProcess()->AddFilter(filter.get());
   }
 
-  PrintMsg_PrintFrame_Params GetDefaultPrintParams() {
-    PrintMsg_PrintFrame_Params params;
-    gfx::Rect area(800, 600);
-    params.printable_area = area;
-    params.document_cookie = kDefaultDocumentCookie;
-    return params;
+  static mojom::PrintFrameContentParamsPtr GetDefaultPrintFrameParams() {
+    return mojom::PrintFrameContentParams::New(gfx::Rect(800, 600),
+                                               kDefaultDocumentCookie);
+  }
+
+  static const mojo::AssociatedRemote<mojom::PrintRenderFrame>
+  GetPrintRenderFrame(content::RenderFrameHost* rfh) {
+    mojo::AssociatedRemote<mojom::PrintRenderFrame> remote;
+    rfh->GetRemoteAssociatedInterfaces()->GetInterface(&remote);
+    return remote;
   }
 
  private:
@@ -211,8 +282,8 @@ class PrintBrowserTest : public InProcessBrowserTest {
 
 class SitePerProcessPrintBrowserTest : public PrintBrowserTest {
  public:
-  SitePerProcessPrintBrowserTest() {}
-  ~SitePerProcessPrintBrowserTest() override {}
+  SitePerProcessPrintBrowserTest() = default;
+  ~SitePerProcessPrintBrowserTest() override = default;
 
   // content::BrowserTestBase
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -224,8 +295,8 @@ class IsolateOriginsPrintBrowserTest : public PrintBrowserTest {
  public:
   static constexpr char kIsolatedSite[] = "b.com";
 
-  IsolateOriginsPrintBrowserTest() {}
-  ~IsolateOriginsPrintBrowserTest() override {}
+  IsolateOriginsPrintBrowserTest() = default;
+  ~IsolateOriginsPrintBrowserTest() override = default;
 
   // content::BrowserTestBase
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -245,15 +316,15 @@ constexpr char IsolateOriginsPrintBrowserTest::kIsolatedSite[];
 
 class PrintExtensionBrowserTest : public extensions::ExtensionBrowserTest {
  public:
-  PrintExtensionBrowserTest() {}
-  ~PrintExtensionBrowserTest() override {}
+  PrintExtensionBrowserTest() = default;
+  ~PrintExtensionBrowserTest() override = default;
 
   void PrintAndWaitUntilPreviewIsReady(bool print_only_selection) {
-    PrintPreviewObserver print_preview_observer;
+    PrintPreviewObserver print_preview_observer(/*wait_for_loaded=*/false);
 
-    printing::StartPrint(browser()->tab_strip_model()->GetActiveWebContents(),
-                         /*print_preview_disabled=*/false,
-                         print_only_selection);
+    StartPrint(browser()->tab_strip_model()->GetActiveWebContents(),
+               /*print_renderer=*/mojo::NullAssociatedRemote(),
+               /*print_preview_disabled=*/false, print_only_selection);
 
     print_preview_observer.WaitUntilPreviewIsReady();
   }
@@ -313,8 +384,7 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintFrameContent) {
   content::RenderFrameHost* rfh = original_contents->GetMainFrame();
   AddFilterForFrame(rfh);
 
-  rfh->Send(new PrintMsg_PrintFrameContent(rfh->GetRoutingID(),
-                                           GetDefaultPrintParams()));
+  GetPrintRenderFrame(rfh)->PrintFrameContent(GetDefaultPrintFrameParams());
 
   // The printed result will be received and checked in
   // TestPrintFrameContentMsgFilter.
@@ -338,8 +408,8 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintSubframeContent) {
 
   AddFilterForFrame(test_frame);
 
-  test_frame->Send(new PrintMsg_PrintFrameContent(test_frame->GetRoutingID(),
-                                                  GetDefaultPrintParams()));
+  GetPrintRenderFrame(test_frame)
+      ->PrintFrameContent(GetDefaultPrintFrameParams());
 
   // The printed result will be received and checked in
   // TestPrintFrameContentMsgFilter.
@@ -383,8 +453,8 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintSubframeChain) {
     AddFilterForFrame(grandchild_frame);
   }
 
-  main_frame->Send(new PrintMsg_PrintFrameContent(main_frame->GetRoutingID(),
-                                                  GetDefaultPrintParams()));
+  GetPrintRenderFrame(main_frame)
+      ->PrintFrameContent(GetDefaultPrintFrameParams());
 
   // The printed result will be received and checked in
   // TestPrintFrameContentMsgFilter.
@@ -427,8 +497,8 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintSubframeABA) {
   if (oopif_enabled)
     AddFilterForFrame(child_frame);
 
-  main_frame->Send(new PrintMsg_PrintFrameContent(main_frame->GetRoutingID(),
-                                                  GetDefaultPrintParams()));
+  GetPrintRenderFrame(main_frame)
+      ->PrintFrameContent(GetDefaultPrintFrameParams());
 
   // The printed result will be received and checked in
   // TestPrintFrameContentMsgFilter.
@@ -496,6 +566,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest,
 
   auto filter =
       base::MakeRefCounted<KillPrintFrameContentMsgFilter>(subframe_rph);
+  content::ScopedAllowRendererCrashes allow_renderer_crashes(subframe_rph);
   subframe_rph->AddFilter(filter.get());
 
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
@@ -504,7 +575,8 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest,
 // Printing preview a web page with an iframe from an isolated origin.
 // This test passes whenever the print preview is rendered. This should not be
 // a timed out test which indicates the print preview hung or crash.
-IN_PROC_BROWSER_TEST_F(IsolateOriginsPrintBrowserTest, PrintIsolatedSubframe) {
+IN_PROC_BROWSER_TEST_F(IsolateOriginsPrintBrowserTest,
+                       DISABLED_PrintIsolatedSubframe) {
   ASSERT_TRUE(embedded_test_server()->Started());
   GURL url(embedded_test_server()->GetURL(
       "/printing/content_with_same_site_iframe.html"));
@@ -547,12 +619,6 @@ IN_PROC_BROWSER_TEST_F(IsolateOriginsPrintBrowserTest, OopifPrinting) {
 // Printing an extension option page.
 // The test should not crash or timeout.
 IN_PROC_BROWSER_TEST_F(PrintExtensionBrowserTest, PrintOptionPage) {
-#if defined(OS_CHROMEOS)
-  // Mus can not support this test now https://crbug.com/823782.
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
-    return;
-#endif
-
   LoadExtensionAndNavigateToOptionPage();
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
 }
@@ -561,14 +627,45 @@ IN_PROC_BROWSER_TEST_F(PrintExtensionBrowserTest, PrintOptionPage) {
 // The test should not crash or timeout.
 IN_PROC_BROWSER_TEST_F(SitePerProcessPrintExtensionBrowserTest,
                        PrintOptionPage) {
-#if defined(OS_CHROMEOS)
-  // Mus can not support this test now https://crbug.com/823782.
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
-    return;
-#endif
-
   LoadExtensionAndNavigateToOptionPage();
   PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// Printing frame content for the main frame of a generic webpage with N-up
+// priting. This is a regression test for https://crbug.com/937247
+IN_PROC_BROWSER_TEST_F(PrintBrowserTest, PrintNup) {
+  NupPrintingTestDelegate test_delegate;
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+// Site per process version of PrintBrowserTest.PrintNup.
+IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest, PrintNup) {
+  NupPrintingTestDelegate test_delegate;
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/test1.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  PrintAndWaitUntilPreviewIsReady(/*print_only_selection=*/false);
+}
+
+IN_PROC_BROWSER_TEST_F(PrintBrowserTest, MultipagePrint) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/multipage.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  PrintAndWaitUntilPreviewIsReadyAndLoaded(/*print_only_selection=*/false);
+}
+
+IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest, MultipagePrint) {
+  ASSERT_TRUE(embedded_test_server()->Started());
+  GURL url(embedded_test_server()->GetURL("/printing/multipage.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  PrintAndWaitUntilPreviewIsReadyAndLoaded(/*print_only_selection=*/false);
 }
 
 }  // namespace printing

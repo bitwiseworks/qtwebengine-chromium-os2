@@ -10,6 +10,7 @@
 
 #include "base/debug/alias.h"
 #include "base/memory/ref_counted.h"
+#include "base/strings/strcat.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
@@ -93,33 +94,35 @@ void UserScriptSet::GetInjections(
   }
 }
 
-bool UserScriptSet::UpdateUserScripts(base::SharedMemoryHandle shared_memory,
-                                      const std::set<HostID>& changed_hosts,
-                                      bool whitelisted_only) {
+bool UserScriptSet::UpdateUserScripts(
+    base::ReadOnlySharedMemoryRegion shared_memory,
+    const std::set<HostID>& changed_hosts,
+    bool whitelisted_only) {
   bool only_inject_incognito =
       ExtensionsRendererClient::Get()->IsIncognitoProcess();
 
-  // Create the shared memory object (read only).
-  shared_memory_.reset(new base::SharedMemory(shared_memory, true));
-  if (!shared_memory_.get())
+  // Create the shared memory mapping.
+  shared_memory_mapping_ = shared_memory.Map();
+  if (!shared_memory.IsValid())
     return false;
 
   // First get the size of the memory block.
-  if (!shared_memory_->Map(sizeof(base::Pickle::Header)))
+  const base::Pickle::Header* pickle_header =
+      shared_memory_mapping_.GetMemoryAs<base::Pickle::Header>();
+  if (!pickle_header)
     return false;
-  base::Pickle::Header* pickle_header =
-      static_cast<base::Pickle::Header*>(shared_memory_->memory());
 
-  // Now map in the rest of the block.
-  int pickle_size = sizeof(base::Pickle::Header) + pickle_header->payload_size;
-  shared_memory_->Unmap();
-  if (!shared_memory_->Map(pickle_size))
-    return false;
+  // Now read in the rest of the block.
+  size_t pickle_size =
+      sizeof(base::Pickle::Header) + pickle_header->payload_size;
 
   // Unpickle scripts.
   uint32_t num_scripts = 0;
-  base::Pickle pickle(static_cast<char*>(shared_memory_->memory()),
-                      pickle_size);
+  auto memory = shared_memory_mapping_.GetMemoryAsSpan<char>(pickle_size);
+  if (!memory.size())
+    return false;
+
+  base::Pickle pickle(memory.data(), pickle_size);
   base::PickleIterator iter(pickle);
   base::debug::Alias(&pickle_size);
   CHECK(iter.ReadUInt32(&num_scripts));
@@ -252,12 +255,8 @@ blink::WebString UserScriptSet::GetJsSource(const UserScript::File& file,
     // We add this dumb function wrapper for user scripts to emulate what
     // Greasemonkey does. |script_content| becomes:
     // concat(kUserScriptHead, script_content, kUserScriptTail).
-    std::string content;
-    content.reserve(strlen(kUserScriptHead) + script_content.length() +
-                    strlen(kUserScriptTail));
-    content.append(kUserScriptHead);
-    script_content.AppendToString(&content);
-    content.append(kUserScriptTail);
+    std::string content =
+        base::StrCat({kUserScriptHead, script_content, kUserScriptTail});
     source = blink::WebString::FromUTF8(content);
   } else {
     source = blink::WebString::FromUTF8(script_content.data(),

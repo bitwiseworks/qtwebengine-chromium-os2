@@ -7,19 +7,19 @@
 #ifndef SkPngCodec_DEFINED
 #define SkPngCodec_DEFINED
 
-#include "SkCodec.h"
-#include "SkColorTable.h"
-#include "SkPngChunkReader.h"
-#include "SkEncodedImageFormat.h"
-#include "SkImageInfo.h"
-#include "SkRefCnt.h"
-#include "SkSwizzler.h"
+#include "include/codec/SkCodec.h"
+#include "include/core/SkEncodedImageFormat.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPngChunkReader.h"
+#include "include/core/SkRefCnt.h"
+#include "src/codec/SkColorTable.h"
+#include "src/codec/SkSwizzler.h"
 
 class SkStream;
 
 class SkPngCodec : public SkCodec {
 public:
-    static bool IsPng(const char*, size_t);
+    static bool IsPng(const void*, size_t);
 
     // Assume IsPng was called and returned true.
     static std::unique_ptr<SkCodec> MakeFromStream(std::unique_ptr<SkStream>, Result*,

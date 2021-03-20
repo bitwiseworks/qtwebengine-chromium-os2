@@ -27,8 +27,9 @@
 
 #include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
-#include "third_party/blink/renderer/platform/transforms/transform_state.h"
 
 #define LAYOUT_GEOMETRY_MAP_LOGGING 0
 
@@ -50,8 +51,7 @@ void LayoutGeometryMap::MapToAncestor(
   // layoutObjects.
   if (HasNonUniformStep()) {
     mapping_.back().layout_object_->MapLocalToAncestor(
-        ancestor, transform_state,
-        kApplyContainerFlip | map_coordinates_flags_);
+        ancestor, transform_state, map_coordinates_flags_);
     transform_state.Flatten();
     return;
   }
@@ -98,15 +98,15 @@ void LayoutGeometryMap::MapToAncestor(
           current_step.flags_ & kAccumulatingTransform
               ? TransformState::kAccumulateTransform
               : TransformState::kFlattenTransform;
-      if (current_step.transform_)
+      if (current_step.transform_) {
         transform_state.ApplyTransform(*current_step.transform_.get(),
                                        accumulate);
-      else
-        transform_state.Move(current_step.offset_.Width(),
-                             current_step.offset_.Height(), accumulate);
+      } else {
+        transform_state.Move(current_step.offset_, accumulate);
+      }
     }
 
-    if (in_fixed && current_step.layout_object_->IsLayoutView()) {
+    if (in_fixed && IsA<LayoutView>(current_step.layout_object_)) {
       transform_state.Move(current_step.offset_for_fixed_position_);
       in_fixed = false;
     }
@@ -120,7 +120,7 @@ void LayoutGeometryMap::MapToAncestor(
       const LayoutGeometryMapStep& current_step = mapping_[i];
       if (current_step.flags_ & (kContainsFixedPosition | kIsFixedPosition))
         break;
-      if (current_step.layout_object_->IsLayoutView()) {
+      if (IsA<LayoutView>(current_step.layout_object_)) {
         transform_state.Move(current_step.offset_for_fixed_position_);
         break;
       }
@@ -137,13 +137,11 @@ void LayoutGeometryMap::MapToAncestor(
 // Handy function to call from gdb while debugging mismatched point/rect errors.
 void LayoutGeometryMap::DumpSteps() const {
   fprintf(stderr, "LayoutGeometryMap::dumpSteps accumulatedOffset=%d,%d\n",
-          accumulated_offset_.Width().ToInt(),
-          accumulated_offset_.Height().ToInt());
+          accumulated_offset_.left.ToInt(), accumulated_offset_.top.ToInt());
   for (int i = mapping_.size() - 1; i >= 0; --i) {
     fprintf(stderr, " [%d] %s: offset=%d,%d", i,
-            mapping_[i].layout_object_->DebugName().Ascii().data(),
-            mapping_[i].offset_.Width().ToInt(),
-            mapping_[i].offset_.Height().ToInt());
+            mapping_[i].layout_object_->DebugName().Ascii().c_str(),
+            mapping_[i].offset_.left.ToInt(), mapping_[i].offset_.top.ToInt());
     if (mapping_[i].flags_ & kContainsFixedPosition)
       fprintf(stderr, " containsFixedPosition");
     fprintf(stderr, "\n");
@@ -151,19 +149,42 @@ void LayoutGeometryMap::DumpSteps() const {
 }
 #endif
 
-FloatQuad LayoutGeometryMap::MapToAncestor(
-    const FloatRect& rect,
+bool LayoutGeometryMap::CanUseAccumulatedOffset(
+    const LayoutBoxModelObject* ancestor) const {
+  if (HasFixedPositionStep() || HasTransformStep() || HasNonUniformStep())
+    return false;
+  if (!ancestor)
+    return true;
+  if (mapping_.size() && ancestor == mapping_[0].layout_object_)
+    return true;
+  return false;
+}
+
+PhysicalRect LayoutGeometryMap::MapToAncestor(
+    const PhysicalRect& rect,
+    const LayoutBoxModelObject* ancestor) const {
+  if (CanUseAccumulatedOffset(ancestor)) {
+    PhysicalRect result = rect;
+    result.Move(accumulated_offset_);
+    return result;
+  }
+
+  return PhysicalRect::EnclosingRect(
+      MapToAncestorQuad(rect, ancestor).BoundingBox());
+}
+
+FloatQuad LayoutGeometryMap::MapToAncestorQuad(
+    const PhysicalRect& rect,
     const LayoutBoxModelObject* ancestor) const {
   FloatQuad result;
+  FloatRect float_rect(rect);
 
-  if (!HasFixedPositionStep() && !HasTransformStep() && !HasNonUniformStep() &&
-      (!ancestor ||
-       (mapping_.size() && ancestor == mapping_[0].layout_object_))) {
-    result = rect;
-    result.Move(accumulated_offset_);
+  if (CanUseAccumulatedOffset(ancestor)) {
+    result = float_rect;
+    result.Move(FloatSize(accumulated_offset_));
   } else {
     TransformState transform_state(TransformState::kApplyTransformDirection,
-                                   rect.Center(), rect);
+                                   FloatRect(rect).Center(), float_rect);
     MapToAncestor(transform_state, ancestor);
     result = transform_state.LastPlanarQuad();
   }
@@ -174,7 +195,7 @@ FloatQuad LayoutGeometryMap::MapToAncestor(
 
     FloatRect layout_object_mapped_result =
         last_layout_object
-            ->LocalToAncestorQuad(rect, ancestor, map_coordinates_flags_)
+            ->LocalToAncestorQuad(float_rect, ancestor, map_coordinates_flags_)
             .BoundingBox();
 
     DCHECK(layout_object_mapped_result.EqualWithinEpsilon(result.BoundingBox(),
@@ -257,12 +278,12 @@ void LayoutGeometryMap::PushMappingsToAncestor(
 #endif
 
   if (can_convert_in_layer_tree) {
-    LayoutPoint layer_offset;
+    PhysicalOffset layer_offset;
     layer->ConvertToLayerCoords(ancestor_layer, layer_offset);
 
     // The LayoutView must be pushed first.
     if (!mapping_.size()) {
-      DCHECK(ancestor_layer->GetLayoutObject().IsLayoutView());
+      DCHECK(IsA<LayoutView>(ancestor_layer->GetLayoutObject()));
       PushMappingsToAncestor(&ancestor_layer->GetLayoutObject(), nullptr);
     }
 
@@ -271,7 +292,7 @@ void LayoutGeometryMap::PushMappingsToAncestor(
     bool accumulating_transform =
         layout_object.StyleRef().Preserves3D() ||
         ancestor_layer->GetLayoutObject().StyleRef().Preserves3D();
-    Push(&layout_object, ToLayoutSize(layer_offset),
+    Push(&layout_object, layer_offset,
          accumulating_transform ? kAccumulatingTransform : 0);
     return;
   }
@@ -281,20 +302,19 @@ void LayoutGeometryMap::PushMappingsToAncestor(
 }
 
 void LayoutGeometryMap::Push(const LayoutObject* layout_object,
-                             const LayoutSize& offset_from_container,
+                             const PhysicalOffset& offset_from_container,
                              GeometryInfoFlags flags,
-                             LayoutSize offset_for_fixed_position) {
+                             PhysicalOffset offset_for_fixed_position) {
 #if LAYOUT_GEOMETRY_MAP_LOGGING
   DLOG(INFO) << "LayoutGeometryMap::push" << layout_object << " "
-             << offset_from_container.Width().ToInt() << ","
-             << offset_from_container.Height().ToInt()
-             << " isNonUniform=" << kIsNonUniform;
+             << offset_from_container
+             << " isNonUniform=" << (flags & kIsNonUniform);
 #endif
 
   DCHECK_NE(insertion_position_, kNotFound);
-  DCHECK(!layout_object->IsLayoutView() || !insertion_position_ ||
+  DCHECK(!IsA<LayoutView>(layout_object) || !insertion_position_ ||
          map_coordinates_flags_ & kTraverseDocumentBoundaries);
-  DCHECK(offset_for_fixed_position.IsZero() || layout_object->IsLayoutView());
+  DCHECK(offset_for_fixed_position.IsZero() || IsA<LayoutView>(layout_object));
 
   mapping_.insert(insertion_position_,
                   LayoutGeometryMapStep(layout_object, flags));
@@ -309,11 +329,11 @@ void LayoutGeometryMap::Push(const LayoutObject* layout_object,
 void LayoutGeometryMap::Push(const LayoutObject* layout_object,
                              const TransformationMatrix& t,
                              GeometryInfoFlags flags,
-                             LayoutSize offset_for_fixed_position) {
+                             PhysicalOffset offset_for_fixed_position) {
   DCHECK_NE(insertion_position_, kNotFound);
-  DCHECK(!layout_object->IsLayoutView() || !insertion_position_ ||
+  DCHECK(!IsA<LayoutView>(layout_object) || !insertion_position_ ||
          map_coordinates_flags_ & kTraverseDocumentBoundaries);
-  DCHECK(offset_for_fixed_position.IsZero() || layout_object->IsLayoutView());
+  DCHECK(offset_for_fixed_position.IsZero() || IsA<LayoutView>(layout_object));
 
   mapping_.insert(insertion_position_,
                   LayoutGeometryMapStep(layout_object, flags));
@@ -322,9 +342,9 @@ void LayoutGeometryMap::Push(const LayoutObject* layout_object,
   step.offset_for_fixed_position_ = offset_for_fixed_position;
 
   if (!t.IsIntegerTranslation())
-    step.transform_ = TransformationMatrix::Create(t);
+    step.transform_ = std::make_unique<TransformationMatrix>(t);
   else
-    step.offset_ = LayoutSize(LayoutUnit(t.E()), LayoutUnit(t.F()));
+    step.offset_ = PhysicalOffset::FromFloatSizeRound(t.To2DTranslation());
 
   StepInserted(step);
 }
@@ -337,14 +357,14 @@ void LayoutGeometryMap::PopMappingsToAncestor(
   while (mapping_.size() &&
          mapping_.back().layout_object_ != ancestor_layout_object) {
     might_be_saturated =
-        might_be_saturated || accumulated_offset_.Width().MightBeSaturated();
+        might_be_saturated || accumulated_offset_.left.MightBeSaturated();
     might_be_saturated =
-        might_be_saturated || accumulated_offset_.Height().MightBeSaturated();
+        might_be_saturated || accumulated_offset_.top.MightBeSaturated();
     StepRemoved(mapping_.back());
     mapping_.pop_back();
   }
   if (UNLIKELY(might_be_saturated)) {
-    accumulated_offset_ = LayoutSize();
+    accumulated_offset_ = PhysicalOffset();
     for (const auto& step : mapping_)
       accumulated_offset_ += step.offset_;
   }
@@ -392,7 +412,7 @@ void LayoutGeometryMap::StepRemoved(const LayoutGeometryMapStep& step) {
 #if DCHECK_IS_ON()
 bool LayoutGeometryMap::IsTopmostLayoutView(
     const LayoutObject* layout_object) const {
-  if (!layout_object->IsLayoutView())
+  if (!IsA<LayoutView>(layout_object))
     return false;
 
   // If we're not working with multiple LayoutViews, then any view is considered

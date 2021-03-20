@@ -6,8 +6,8 @@
 
 #include "media/base/test_data_util.h"
 #include "media/remoting/end2end_test_renderer.h"
-#include "media/test/mock_media_source.h"
 #include "media/test/pipeline_integration_test_base.h"
+#include "media/test/test_media_source.h"
 
 namespace media {
 namespace remoting {
@@ -16,28 +16,10 @@ namespace {
 
 constexpr int kAppendTimeSec = 1;
 
-class TestRendererFactory final : public PipelineTestRendererFactory {
- public:
-  explicit TestRendererFactory(
-      std::unique_ptr<PipelineTestRendererFactory> renderer_factory)
-      : default_renderer_factory_(std::move(renderer_factory)) {}
-  ~TestRendererFactory() override = default;
-
-  // PipelineTestRendererFactory implementation.
-  std::unique_ptr<Renderer> CreateRenderer(
-      CreateVideoDecodersCB prepend_video_decoders_cb,
-      CreateAudioDecodersCB prepend_audio_decoders_cb) override {
-    std::unique_ptr<Renderer> renderer_impl =
-        default_renderer_factory_->CreateRenderer(prepend_video_decoders_cb,
-                                                  prepend_audio_decoders_cb);
-    return std::make_unique<End2EndTestRenderer>(std::move(renderer_impl));
-  }
-
- private:
-  std::unique_ptr<PipelineTestRendererFactory> default_renderer_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestRendererFactory);
-};
+std::unique_ptr<Renderer> CreateEnd2EndTestRenderer(
+    std::unique_ptr<Renderer> default_renderer) {
+  return std::make_unique<End2EndTestRenderer>(std::move(default_renderer));
+}
 
 }  // namespace
 
@@ -45,9 +27,7 @@ class MediaRemotingIntegrationTest : public testing::Test,
                                      public PipelineIntegrationTestBase {
  public:
   MediaRemotingIntegrationTest() {
-    std::unique_ptr<PipelineTestRendererFactory> factory =
-        std::move(renderer_factory_);
-    renderer_factory_.reset(new TestRendererFactory(std::move(factory)));
+    SetWrapRendererCB(base::BindRepeating(&CreateEnd2EndTestRenderer));
   }
 
  private:
@@ -64,7 +44,7 @@ TEST_F(MediaRemotingIntegrationTest, BasicPlayback) {
 }
 
 TEST_F(MediaRemotingIntegrationTest, BasicPlayback_MediaSource) {
-  MockMediaSource source("bear-320x240.webm", 219229);
+  TestMediaSource source("bear-320x240.webm", 219229);
   EXPECT_EQ(PIPELINE_OK, StartPipelineWithMediaSource(&source));
   source.EndOfStream();
 
@@ -75,7 +55,7 @@ TEST_F(MediaRemotingIntegrationTest, BasicPlayback_MediaSource) {
 }
 
 TEST_F(MediaRemotingIntegrationTest, MediaSource_ConfigChange_WebM) {
-  MockMediaSource source("bear-320x240-16x9-aspect.webm", kAppendWholeFile);
+  TestMediaSource source("bear-320x240-16x9-aspect.webm", kAppendWholeFile);
   EXPECT_EQ(PIPELINE_OK, StartPipelineWithMediaSource(&source));
 
   EXPECT_CALL(*this, OnVideoNaturalSizeChange(gfx::Size(640, 360))).Times(1);
@@ -93,7 +73,8 @@ TEST_F(MediaRemotingIntegrationTest, MediaSource_ConfigChange_WebM) {
   Stop();
 }
 
-TEST_F(MediaRemotingIntegrationTest, SeekWhilePlaying) {
+// Flaky: http://crbug.com/1043812.
+TEST_F(MediaRemotingIntegrationTest, DISABLED_SeekWhilePlaying) {
   ASSERT_EQ(PIPELINE_OK, Start("bear-320x240.webm"));
 
   base::TimeDelta duration(pipeline_->GetMediaDuration());

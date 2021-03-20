@@ -21,9 +21,7 @@ if (skia_use_system_libpng) {
     ]
 
     defines = [ "PNG_SET_OPTION_SUPPORTED" ]
-    deps = [
-      "//third_party/zlib",
-    ]
+    deps = [ "//third_party/zlib" ]
     sources = [
       "../externals/libpng/png.c",
       "../externals/libpng/pngerror.c",
@@ -46,6 +44,7 @@ if (skia_use_system_libpng) {
       sources += [
         "../externals/libpng/arm/arm_init.c",
         "../externals/libpng/arm/filter_neon_intrinsics.c",
+        "../externals/libpng/arm/palette_neon_intrinsics.c",
       ]
     }
 

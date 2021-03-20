@@ -11,7 +11,7 @@
 #include "ui/gfx/animation/slide_animation.h"
 
 namespace {
-const float kDefaultAcceleration = -1500.0f; // in pixels per second^2
+constexpr float kDefaultAcceleration = -1500.0f;  // in pixels per second^2
 
 // Assumes that d0 == 0.0f
 float GetPosition(float v0, float a, float t) {
@@ -30,12 +30,12 @@ float GetDelta(float v0, float a, float t1, float t2) {
 namespace views {
 
 ScrollAnimator::ScrollAnimator(ScrollDelegate* delegate)
-  : delegate_(delegate),
-    velocity_x_(0.0f),
-    velocity_y_(0.0f),
-    last_t_(0.0f),
-    duration_(0.0f),
-    acceleration_(kDefaultAcceleration) {
+    : delegate_(delegate),
+      velocity_x_(0.0f),
+      velocity_y_(0.0f),
+      last_t_(0.0f),
+      duration_(0.0f),
+      acceleration_(kDefaultAcceleration) {
   DCHECK(delegate);
 }
 
@@ -50,9 +50,9 @@ void ScrollAnimator::Start(float velocity_x, float velocity_y) {
   last_t_ = 0.0f;
   velocity_x_ = velocity_x;
   velocity_y_ = velocity_y;
-  duration_ = -v / acceleration_; // in seconds
-  animation_.reset(new gfx::SlideAnimation(this));
-  animation_->SetSlideDuration(static_cast<int>(duration_ * 1000));
+  duration_ = -v / acceleration_;  // in seconds
+  animation_ = std::make_unique<gfx::SlideAnimation>(this);
+  animation_->SetSlideDuration(base::TimeDelta::FromSecondsD(duration_));
   animation_->Show();
 }
 

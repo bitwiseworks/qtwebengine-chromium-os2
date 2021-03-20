@@ -9,8 +9,8 @@
 #include "base/memory/weak_ptr.h"
 #include "cc/input/overscroll_behavior.h"
 #include "cc/input/scroll_elasticity_helper.h"
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 
 // InputScrollElasticityController is based on
 // WebKit/Source/platform/mac/ScrollElasticityController.h
@@ -155,7 +155,7 @@ class InputScrollElasticityController {
   bool received_overscroll_update_;
   cc::OverscrollBehavior overscroll_behavior_;
 
-  base::WeakPtrFactory<InputScrollElasticityController> weak_factory_;
+  base::WeakPtrFactory<InputScrollElasticityController> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(InputScrollElasticityController);
 };
 

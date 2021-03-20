@@ -10,7 +10,8 @@
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "cc/paint/raw_memory_transfer_cache_entry.h"
 #include "cc/paint/transfer_cache_entry.h"
-#include "cc/test/test_in_process_context_provider.h"
+#include "components/viz/test/test_gpu_service_holder.h"
+#include "components/viz/test/test_in_process_context_provider.h"
 #include "gpu/command_buffer/client/client_transfer_cache.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
@@ -20,7 +21,6 @@
 #include "gpu/command_buffer/service/service_transfer_cache.h"
 #include "gpu/config/gpu_switches.h"
 #include "gpu/ipc/raster_in_process_context.h"
-#include "gpu/ipc/test_gpu_thread_holder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "ui/gl/gl_implementation.h"
@@ -48,7 +48,7 @@ class TransferCacheTest : public testing::Test {
 
     context_ = std::make_unique<gpu::RasterInProcessContext>();
     auto result = context_->Initialize(
-        gpu::GetTestGpuThreadHolder()->GetTaskExecutor(), attribs,
+        viz::TestGpuServiceHolder::GetInstance()->task_executor(), attribs,
         gpu::SharedMemoryLimits(), &gpu_memory_buffer_manager_, &image_factory_,
         /*gpu_channel_manager_delegate=*/nullptr, nullptr, nullptr);
 
@@ -85,7 +85,7 @@ class TransferCacheTest : public testing::Test {
 
  private:
   viz::TestGpuMemoryBufferManager gpu_memory_buffer_manager_;
-  TestImageFactory image_factory_;
+  viz::TestImageFactory image_factory_;
   std::unique_ptr<gpu::RasterInProcessContext> context_;
   gl::DisableNullDrawGLBindings enable_pixel_output_;
   ClientRawMemoryTransferCacheEntry test_client_entry_;
@@ -229,43 +229,6 @@ TEST_F(TransferCacheTest, RawMemoryTransferLarge) {
   EXPECT_EQ(service_entry->Type(), client_entry.Type());
   const std::vector<uint8_t> service_data =
       static_cast<ServiceRawMemoryTransferCacheEntry*>(service_entry)->data();
-  EXPECT_EQ(data, service_data);
-}
-
-TEST_F(TransferCacheTest, ImageMemoryTransfer) {
-  // TODO(ericrk): This test doesn't work. crbug.com/859619
-  return;
-
-  auto* service_cache = ServiceTransferCache();
-
-  // Create a 10x10 image.
-  SkImageInfo info = SkImageInfo::MakeN32Premul(10, 10);
-  std::vector<uint8_t> data;
-  data.resize(info.width() * info.height() * 4);
-  for (size_t i = 0; i < data.size(); ++i) {
-    data[i] = i;
-  }
-  SkPixmap pixmap(info, data.data(), info.minRowBytes());
-
-  // Add the entry to the transfer cache
-  ClientImageTransferCacheEntry client_entry(&pixmap, nullptr, false);
-  CreateEntry(client_entry);
-  ri()->Finish();
-
-  // Validate service-side data matches.
-  ServiceTransferCacheEntry* service_entry =
-      service_cache->GetEntry(gpu::ServiceTransferCache::EntryKey(
-          decoder_id(), client_entry.Type(), client_entry.Id()));
-  EXPECT_EQ(service_entry->Type(), client_entry.Type());
-  sk_sp<SkImage> service_image =
-      static_cast<ServiceImageTransferCacheEntry*>(service_entry)->image();
-  EXPECT_TRUE(service_image->isTextureBacked());
-
-  std::vector<uint8_t> service_data;
-  service_data.resize(data.size());
-  service_image->readPixels(info, service_data.data(), info.minRowBytes(), 0,
-                            0);
-
   EXPECT_EQ(data, service_data);
 }
 

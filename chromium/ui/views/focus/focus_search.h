@@ -18,7 +18,7 @@ class FocusTraversable;
 class VIEWS_EXPORT FocusSearch {
  public:
   // The direction in which the focus traversal is going.
-  // TODO (jcampan): add support for lateral (left, right) focus traversal. The
+  // TODO(jcampan): add support for lateral (left, right) focus traversal. The
   // goal is to switch to focusable views on the same level when using the arrow
   // keys (ala Windows: in a dialog box, arrow keys typically move between the
   // dialog OK, Cancel buttons).
@@ -54,7 +54,7 @@ class VIEWS_EXPORT FocusSearch {
   //   needed and you want to check IsAccessibilityFocusable(), rather than
   //   IsFocusable().
   FocusSearch(View* root, bool cycle, bool accessibility_mode);
-  virtual ~FocusSearch() {}
+  virtual ~FocusSearch() = default;
 
   // Finds the next view that should be focused and returns it. If a
   // FocusTraversable is found while searching for the focusable view,

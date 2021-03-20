@@ -21,7 +21,7 @@ class GLImageSharedMemoryTestDelegate : public GLImageTestDelegateBase {
  public:
   scoped_refptr<GLImage> CreateSolidColorImage(const gfx::Size& size,
                                                const uint8_t color[4]) const {
-    DCHECK_EQ(NumberOfPlanesForBufferFormat(format), 1u);
+    DCHECK_EQ(NumberOfPlanesForLinearBufferFormat(format), 1u);
     base::UnsafeSharedMemoryRegion shared_memory_region =
         base::UnsafeSharedMemoryRegion::Create(
             gfx::BufferSizeForBufferFormat(size, format));
@@ -55,26 +55,27 @@ using GLImageTestTypes = testing::Types<
     // Fails on Win nVidia and linux android: the test writes nothing (we read
     // back the color used to clear the buffer).
     // TODO(mcasas): enable those paltforms https://crbug.com/803451.
-    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::BGRX_1010102>,
-    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::RGBX_1010102>,
-#endif
-    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::BGRA_8888>>;
-
-INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemory,
-                              GLImageTest,
-                              GLImageTestTypes);
-
-INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemory,
-                              GLImageOddSizeTest,
-                              GLImageTestTypes);
+    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::RGBA_1010102>,
 
 // https://crbug.com/830653
 #if !defined(ADDRESS_SANITIZER) && !defined(MEMORY_SANITIZER) && \
     !defined(THREAD_SANITIZER)
-INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemory,
-                              GLImageCopyTest,
-                              GLImageTestTypes);
+    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::BGRA_1010102>,
 #endif
+#endif
+    GLImageSharedMemoryTestDelegate<gfx::BufferFormat::BGRA_8888>>;
+
+INSTANTIATE_TYPED_TEST_SUITE_P(GLImageSharedMemory,
+                               GLImageTest,
+                               GLImageTestTypes);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(GLImageSharedMemory,
+                               GLImageOddSizeTest,
+                               GLImageTestTypes);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(GLImageSharedMemory,
+                               GLImageCopyTest,
+                               GLImageTestTypes);
 
 class GLImageSharedMemoryPoolTestDelegate : public GLImageTestDelegateBase {
  public:
@@ -113,12 +114,11 @@ class GLImageSharedMemoryPoolTestDelegate : public GLImageTestDelegateBase {
   int GetAdmissibleError() const { return 0; }
 };
 
-// https://crbug.com/830653
-#if !defined(ADDRESS_SANITIZER) && !defined(MEMORY_SANITIZER) && \
-    !defined(THREAD_SANITIZER)
-INSTANTIATE_TYPED_TEST_CASE_P(GLImageSharedMemoryPool,
-                              GLImageCopyTest,
-                              GLImageSharedMemoryPoolTestDelegate);
+// Disabled on Windows, see crbug.com/1036138
+#if !defined(OS_WIN)
+INSTANTIATE_TYPED_TEST_SUITE_P(GLImageSharedMemoryPool,
+                               GLImageCopyTest,
+                               GLImageSharedMemoryPoolTestDelegate);
 #endif
 
 }  // namespace

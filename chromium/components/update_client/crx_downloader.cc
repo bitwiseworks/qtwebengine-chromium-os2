@@ -10,18 +10,17 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/task/post_task.h"
-#include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #if defined(OS_WIN)
 #include "components/update_client/background_downloader_win.h"
 #endif
+#include "components/update_client/network.h"
 #include "components/update_client/task_traits.h"
 #include "components/update_client/update_client_errors.h"
 #include "components/update_client/url_fetcher_downloader.h"
 #include "components/update_client/utils.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace update_client {
 
@@ -30,17 +29,15 @@ CrxDownloader::DownloadMetrics::DownloadMetrics()
       error(0),
       downloaded_bytes(-1),
       total_bytes(-1),
-      download_time_ms(0) {
-}
+      download_time_ms(0) {}
 
 // On Windows, the first downloader in the chain is a background downloader,
 // which uses the BITS service.
 std::unique_ptr<CrxDownloader> CrxDownloader::Create(
     bool is_background_download,
-    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+    scoped_refptr<NetworkFetcherFactory> network_fetcher_factory) {
   std::unique_ptr<CrxDownloader> url_fetcher_downloader =
-      std::make_unique<UrlFetcherDownloader>(nullptr,
-                                             std::move(url_loader_factory));
+      std::make_unique<UrlFetcherDownloader>(nullptr, network_fetcher_factory);
 
 #if defined(OS_WIN)
   if (is_background_download) {
@@ -56,7 +53,7 @@ CrxDownloader::CrxDownloader(std::unique_ptr<CrxDownloader> successor)
     : main_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       successor_(std::move(successor)) {}
 
-CrxDownloader::~CrxDownloader() {}
+CrxDownloader::~CrxDownloader() = default;
 
 void CrxDownloader::set_progress_callback(
     const ProgressCallback& progress_callback) {
@@ -121,7 +118,7 @@ void CrxDownloader::OnDownloadComplete(
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!result.error)
-    base::PostTaskWithTraits(
+    base::ThreadPool::PostTask(
         FROM_HERE, kTaskTraits,
         base::BindOnce(&CrxDownloader::VerifyResponse, base::Unretained(this),
                        is_handled, result, download_metrics));

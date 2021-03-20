@@ -30,20 +30,13 @@
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/platform/animation/timing_function.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 namespace cssvalue {
 
 class CSSCubicBezierTimingFunctionValue : public CSSValue {
  public:
-  static CSSCubicBezierTimingFunctionValue* Create(double x1,
-                                                   double y1,
-                                                   double x2,
-                                                   double y2) {
-    return MakeGarbageCollected<CSSCubicBezierTimingFunctionValue>(x1, y1, x2,
-                                                                   y2);
-  }
-
   CSSCubicBezierTimingFunctionValue(double x1, double y1, double x2, double y2)
       : CSSValue(kCubicBezierTimingFunctionClass),
         x1_(x1),
@@ -60,7 +53,7 @@ class CSSCubicBezierTimingFunctionValue : public CSSValue {
 
   bool Equals(const CSSCubicBezierTimingFunctionValue&) const;
 
-  void TraceAfterDispatch(blink::Visitor* visitor) {
+  void TraceAfterDispatch(blink::Visitor* visitor) const {
     CSSValue::TraceAfterDispatch(visitor);
   }
 
@@ -71,18 +64,8 @@ class CSSCubicBezierTimingFunctionValue : public CSSValue {
   double y2_;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSCubicBezierTimingFunctionValue,
-                            IsCubicBezierTimingFunctionValue());
-
 class CSSStepsTimingFunctionValue : public CSSValue {
  public:
-  static CSSStepsTimingFunctionValue* Create(
-      int steps,
-      StepsTimingFunction::StepPosition step_position) {
-    return MakeGarbageCollected<CSSStepsTimingFunctionValue>(steps,
-                                                             step_position);
-  }
-
   CSSStepsTimingFunctionValue(int steps,
                               StepsTimingFunction::StepPosition step_position)
       : CSSValue(kStepsTimingFunctionClass),
@@ -98,7 +81,7 @@ class CSSStepsTimingFunctionValue : public CSSValue {
 
   bool Equals(const CSSStepsTimingFunctionValue&) const;
 
-  void TraceAfterDispatch(blink::Visitor* visitor) {
+  void TraceAfterDispatch(blink::Visitor* visitor) const {
     CSSValue::TraceAfterDispatch(visitor);
   }
 
@@ -107,38 +90,22 @@ class CSSStepsTimingFunctionValue : public CSSValue {
   StepsTimingFunction::StepPosition step_position_;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSStepsTimingFunctionValue,
-                            IsStepsTimingFunctionValue());
+}  // namespace cssvalue
 
-class CSSFramesTimingFunctionValue : public CSSValue {
- public:
-  static CSSFramesTimingFunctionValue* Create(int frames) {
-    return MakeGarbageCollected<CSSFramesTimingFunctionValue>(frames);
+template <>
+struct DowncastTraits<cssvalue::CSSCubicBezierTimingFunctionValue> {
+  static bool AllowFrom(const CSSValue& value) {
+    return value.IsCubicBezierTimingFunctionValue();
   }
-
-  CSSFramesTimingFunctionValue(int frames)
-      : CSSValue(kFramesTimingFunctionClass), frames_(frames) {
-    DCHECK(RuntimeEnabledFeatures::FramesTimingFunctionEnabled());
-  }
-
-  int NumberOfFrames() const { return frames_; }
-
-  String CustomCSSText() const;
-
-  bool Equals(const CSSFramesTimingFunctionValue&) const;
-
-  void TraceAfterDispatch(blink::Visitor* visitor) {
-    CSSValue::TraceAfterDispatch(visitor);
-  }
-
- private:
-  int frames_;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSFramesTimingFunctionValue,
-                            IsFramesTimingFunctionValue());
+template <>
+struct DowncastTraits<cssvalue::CSSStepsTimingFunctionValue> {
+  static bool AllowFrom(const CSSValue& value) {
+    return value.IsStepsTimingFunctionValue();
+  }
+};
 
-}  // namespace cssvalue
 }  // namespace blink
 
 #endif

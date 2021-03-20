@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "base/memory/shared_memory.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/process/process_handle.h"
 #include "content/public/common/content_client.h"
 #include "content/public/renderer/pepper_plugin_instance.h"
@@ -42,24 +42,19 @@ void PepperSharedMemoryMessageFilter::OnHostMsgCreateSharedMemory(
     uint32_t size,
     int* host_handle_id,
     ppapi::proxy::SerializedHandle* plugin_handle) {
-  plugin_handle->set_null_shmem();
+  plugin_handle->set_null_shmem_region();
   *host_handle_id = -1;
-  std::unique_ptr<base::SharedMemory> shm(
-      content::RenderThread::Get()->HostAllocateSharedMemoryBuffer(size));
-  if (!shm.get())
+  base::UnsafeSharedMemoryRegion shm =
+      base::UnsafeSharedMemoryRegion::Create(size);
+  if (!shm.IsValid())
     return;
 
-  // TODO(erikchen): This appears to sometimes leak the SharedMemoryHandle.
-  // https://crbug.com/640840.
-  base::SharedMemoryHandle host_shm_handle = shm->handle().Duplicate();
+  plugin_handle->set_shmem_region(
+      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+          host_->ShareUnsafeSharedMemoryRegionWithRemote(shm)));
+
   *host_handle_id =
       content::PepperPluginInstance::Get(instance)
           ->GetVarTracker()
-          ->TrackSharedMemoryHandle(instance, host_shm_handle, size);
-
-  // We set auto_close to false since we need our file descriptor to
-  // actually be duplicated on linux. The shared memory destructor will
-  // close the original handle for us.
-  plugin_handle->set_shmem(
-      host_->ShareSharedMemoryHandleWithRemote(host_shm_handle), size);
+          ->TrackSharedMemoryRegion(instance, std::move(shm), size);
 }

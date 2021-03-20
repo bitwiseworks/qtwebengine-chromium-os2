@@ -5,7 +5,8 @@ abstractions can make it easier to write code that makes interprocess calls,
 but can also add significant complexity. Below are some recommendation from
 Mojo and IPC reviewers for best practices.
 
-For questions, concerns, or suggestions, reach out to <mojo@chromium.org>.
+For questions, concerns, or suggestions, reach out to
+[chromium-mojo@chromium.org](https://groups.google.com/a/chromium.org/forum/#!forum/chromium-mojo).
 
 > For legacy IPC, please see [security tips for IPC][security-tips-for-ipc].
 
@@ -163,9 +164,10 @@ callee to trust the caller.
 
 ### Do not send unnecessary or privilege-presuming data
 
-> Note: there is currently work in progress to associate origins with the
-> `InterfaceProvider`s for frames and workers: <https://crbug.com/734210> and
-> <https://crbug.com/775792/>.
+> Each `BrowserInterfaceBroker` for frames and workers is strongly associated with an
+> origin. Where possible, prefer to use this associated origin rather than
+> sending it over IPC. (See <https://crbug.com/734210> and
+> <https://crbug.com/775792/>).
 
 For example, the browser process must not (fully) trust the renderer's claims
 about origins. The browser process should already know what origin the renderer
@@ -192,6 +194,27 @@ the browser process to:
 > performs the appropriate sanitizations and recommend its usage directly here.
 
 
+### Validate privilege-presuming data received over IPC
+
+If it is not possible to avoid sending privilege-presuming data over IPC (see
+the previous section), then such data should be verified before being used.
+
+* Browser process:
+    - Use `ChildProcessSecurityPolicy`'s methods like
+      `CanAccessDataForOrigin` or `CanReadFile` to verify IPC messages
+      received from less privileged processes.
+    - When verification fails, ignore the IPC and terminate the renderer process
+      using `mojo::ReportBadMessage` (or using `mojo::GetBadMessageCallback` for
+      messages handled asynchronously).  For legacy IPC, the renderer process
+      may be terminated by calling the `ReceivedBadMessage` function (separate
+      implementations exist for `//content`, `//chrome` and other layers).
+
+* NetworkService process:
+    - Do not trust `network::ResourceRequest::request_initiator` - verify it
+      using `VerifyRequestInitiatorLock` and fall back to a fail-safe origin
+      (e.g. an opaque origin) when verification fails.
+
+
 ### Do not define unused or unimplemented things
 
 Mojo interfaces often cross privilege boundaries. Having well-defined interfaces
@@ -214,7 +237,7 @@ mojom("view_bindings") {
 
   enabled_features = []
   if (is_android) {
-    enabled_features += [ "is_android" ];
+    enabled_features += [ "is_android" ]
   }
 }
 
@@ -476,7 +499,7 @@ if (!CheckMul(request->elements(), request->element_size())
          .AssignIfValid(&alloc_size)) {
   // Safe: avoids allocating with a bogus size that overflowed to a smaller than
   // expected value.
-  mojo::ReportBadMessge("Invalid allocation size");
+  mojo::ReportBadMessage("Invalid allocation size");
 }
 
 Element* array = CreateArray(alloc_size);
@@ -667,9 +690,9 @@ IDLDictionary* FromMojo(const mojom::blink::DictionaryPtr& in) {
 
 ### Use the proper abstractions
 
-`mojo::BindingSet` implies multiple clients may connect. If this actually isn't
+`mojo::ReceiverSet` implies multiple clients may connect. If this actually isn't
 the case, please do not use it. For example, if an interface can be rebound,
-then use the singular `mojo::Binding` and simply `Close()` the existing binding
+then use the singular `mojo::Receiver` and simply `reset()` the existing receiver
 before reusing it.
 
 

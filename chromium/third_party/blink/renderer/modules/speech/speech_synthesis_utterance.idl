@@ -23,13 +23,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://dvcs.w3.org/hg/speech-api/raw-file/tip/webspeechapi.html#tts-section
+// https://w3c.github.io/speech-api/#speechsynthesisutterance
 
 [
-    Constructor(optional DOMString text = null),
-    ConstructorCallWith=ExecutionContext,
     RuntimeEnabled=ScriptedSpeechSynthesis
 ] interface SpeechSynthesisUtterance : EventTarget {
+    [CallWith=ExecutionContext] constructor(optional DOMString text);
     attribute DOMString text;
     attribute DOMString lang;
     attribute SpeechSynthesisVoice? voice;

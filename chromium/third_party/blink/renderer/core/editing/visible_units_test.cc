@@ -331,7 +331,7 @@ TEST_F(VisibleUnitsTest, isVisuallyEquivalentCandidateWithHTMLBodyElement) {
   body->AppendChild(three);
   body->AppendChild(four);
   one->appendChild(body);
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
   EXPECT_FALSE(IsVisuallyEquivalentCandidate(
       Position(GetDocument().documentElement(), 0)));
@@ -420,7 +420,7 @@ TEST_F(VisibleUnitsTest, mostBackwardCaretPositionFirstLetterSplit) {
   Node* sample = GetDocument().getElementById("sample");
   Node* first_letter = sample->firstChild();
   // Split "abc" into "a" "bc"
-  Text* remaining = ToText(first_letter)->splitText(1, ASSERT_NO_EXCEPTION);
+  auto* remaining = To<Text>(first_letter)->splitText(1, ASSERT_NO_EXCEPTION);
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_EQ(Position(sample, 0),

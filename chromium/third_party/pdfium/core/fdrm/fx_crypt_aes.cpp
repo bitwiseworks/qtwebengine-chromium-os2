@@ -520,8 +520,6 @@ void aes_setup(CRYPT_aes_context* ctx, const unsigned char* key, int keylen) {
   int Nk = keylen / 4;
   ctx->Nb = 4;
   ctx->Nr = 6 + (ctx->Nb > Nk ? ctx->Nb : Nk);
-  ctx->encrypt = aes_encrypt_nb_4;
-  ctx->decrypt = aes_decrypt_nb_4;
   int rconst = 1;
   for (int i = 0; i < (ctx->Nr + 1) * ctx->Nb; i++) {
     if (i < Nk) {
@@ -574,8 +572,9 @@ void aes_setup(CRYPT_aes_context* ctx, const unsigned char* key, int keylen) {
 }
 
 void aes_decrypt(CRYPT_aes_context* ctx, unsigned int* block) {
-  ctx->decrypt(ctx, block);
+  aes_decrypt_nb_4(ctx, block);
 }
+
 void aes_decrypt_cbc(unsigned char* dest,
                      const unsigned char* src,
                      int len,
@@ -601,7 +600,7 @@ void aes_decrypt_cbc(unsigned char* dest,
 }
 
 void aes_encrypt(CRYPT_aes_context* ctx, unsigned int* block) {
-  ctx->encrypt(ctx, block);
+  aes_encrypt_nb_4(ctx, block);
 }
 
 void aes_encrypt_cbc(unsigned char* dest,
@@ -644,13 +643,13 @@ void CRYPT_AESSetIV(CRYPT_aes_context* context, const uint8_t* iv) {
 void CRYPT_AESDecrypt(CRYPT_aes_context* context,
                       uint8_t* dest,
                       const uint8_t* src,
-                      uint32_t len) {
-  aes_decrypt_cbc(dest, src, len, context);
+                      uint32_t size) {
+  aes_decrypt_cbc(dest, src, size, context);
 }
 
 void CRYPT_AESEncrypt(CRYPT_aes_context* context,
                       uint8_t* dest,
                       const uint8_t* src,
-                      uint32_t len) {
-  aes_encrypt_cbc(dest, src, len, context);
+                      uint32_t size) {
+  aes_encrypt_cbc(dest, src, size, context);
 }

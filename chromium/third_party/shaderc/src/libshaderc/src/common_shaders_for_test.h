@@ -233,7 +233,7 @@ const char kVertexOnlyShaderWithInvalidPragma[] =
 const char* kMinimalShaderDisassemblySubstrings[] = {
     "; SPIR-V\n"
     "; Version: 1.0\n"
-    "; Generator: Google Shaderc over Glslang; 7\n"
+    "; Generator: Google Shaderc over Glslang; 8\n"
     "; Bound:",
 
     "               OpCapability Shader\n",
@@ -245,7 +245,7 @@ const char* kMinimalShaderDisassemblySubstrings[] = {
 const char* kMinimalShaderDebugInfoDisassemblySubstrings[] = {
     "; SPIR-V\n"
     "; Version: 1.0\n"
-    "; Generator: Google Shaderc over Glslang; 7\n"
+    "; Generator: Google Shaderc over Glslang; 8\n"
     "; Bound:",
 
     "               OpCapability Shader\n",
@@ -257,7 +257,7 @@ const char* kMinimalShaderDebugInfoDisassemblySubstrings[] = {
 const char kMinimalShaderAssembly[] = R"(
     ; SPIR-V
     ; Version: 1.0
-    ; Generator: Google Shaderc over Glslang; 7
+    ; Generator: Google Shaderc over Glslang; 8
     ; Bound: 6
     ; Schema: 0
 
@@ -293,6 +293,7 @@ const char kShaderWithUniformsWithoutBindings[] =
 // A GLSL vertex shader with a weirdly packed block.
 const char kGlslShaderWeirdPacking[] =
     R"(#version 450
+       layout(set=0, binding=0)
        buffer B { float x; vec3 foo; } my_ssbo;
        void main() { my_ssbo.x = 1.0; })";
 
@@ -315,7 +316,6 @@ const char kGlslShaderComputeSubgroupBarrier[] =
        #extension GL_KHR_shader_subgroup_basic : enable
        void main() { subgroupBarrier(); })";
 
-#ifdef NV_EXTENSIONS
 // A GLSL task shader using a regular barrier.
 const char kGlslShaderTaskBarrier[] =
     R"(#version 450
@@ -351,7 +351,6 @@ const char kGlslShaderMeshSubgroupBarrier[] =
        layout(max_primitives=32) out;
        layout(triangles) out;
        void main() { subgroupBarrier(); })";
-#endif
 
 const char kGlslMultipleFnShader[] =
     R"(#version 450
@@ -399,6 +398,13 @@ const char kHlslMemLayoutResourceSelect[] =
 
          return Tex.Sample(samp, float2(0.5, 0.5)) + float4(a, b);
        })";
+
+const char kGlslShaderWithClamp[] =
+    R"(#version 450
+    layout(location=0) in vec4 i;
+    layout(location=0) out vec4 o;
+    void main() { o = clamp(i, vec4(0.5), vec4(1.0)); }
+    )";
 
 #ifdef __cplusplus
 }

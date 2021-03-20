@@ -5,6 +5,8 @@
 #ifndef V8_WASM_COMPILATION_ENVIRONMENT_H_
 #define V8_WASM_COMPILATION_ENVIRONMENT_H_
 
+#include <memory>
+
 #include "src/wasm/wasm-features.h"
 #include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-module.h"
@@ -12,9 +14,13 @@
 
 namespace v8 {
 namespace internal {
+
+class Counters;
+
 namespace wasm {
 
 class NativeModule;
+class WasmCode;
 class WasmError;
 
 enum RuntimeExceptionSupport : bool {
@@ -54,11 +60,15 @@ struct CompilationEnv {
 
   const LowerSimd lower_simd;
 
+  // Whether the debugger is active.
+  const bool debug;
+
   constexpr CompilationEnv(const WasmModule* module,
                            UseTrapHandler use_trap_handler,
                            RuntimeExceptionSupport runtime_exception_support,
                            const WasmFeatures& enabled_features,
-                           LowerSimd lower_simd = kNoLowerSimd)
+                           LowerSimd lower_simd = kNoLowerSimd,
+                           bool debug = false)
       : module(module),
         use_trap_handler(use_trap_handler),
         runtime_exception_support(runtime_exception_support),
@@ -66,10 +76,11 @@ struct CompilationEnv {
                                : 0),
         max_memory_size((module && module->has_maximum_pages
                              ? module->maximum_pages
-                             : kV8MaxWasmMemoryPages) *
+                             : max_initial_mem_pages()) *
                         uint64_t{kWasmPageSize}),
         enabled_features(enabled_features),
-        lower_simd(lower_simd) {}
+        lower_simd(lower_simd),
+        debug(debug) {}
 };
 
 // The wire bytes are either owned by the StreamingDecoder, or (after streaming)
@@ -87,37 +98,48 @@ enum class CompilationEvent : uint8_t {
   kFinishedBaselineCompilation,
   kFinishedTopTierCompilation,
   kFailedCompilation,
-
-  // Marker:
-  // After an event >= kFirstFinalEvent, no further events are generated.
-  kFirstFinalEvent = kFinishedTopTierCompilation
+  kFinishedRecompilation
 };
 
 // The implementation of {CompilationState} lives in module-compiler.cc.
 // This is the PIMPL interface to that private class.
 class CompilationState {
  public:
-  using callback_t = std::function<void(CompilationEvent, const WasmError*)>;
+  using callback_t = std::function<void(CompilationEvent)>;
+
   ~CompilationState();
 
-  void CancelAndWait();
+  void AbortCompilation();
 
-  void SetError(uint32_t func_index, const WasmError& error);
+  void SetError();
 
   void SetWireBytesStorage(std::shared_ptr<WireBytesStorage>);
 
-  std::shared_ptr<WireBytesStorage> GetWireBytesStorage() const;
+  V8_EXPORT_PRIVATE std::shared_ptr<WireBytesStorage> GetWireBytesStorage()
+      const;
 
   void AddCallback(callback_t);
 
   bool failed() const;
+  V8_EXPORT_PRIVATE bool baseline_compilation_finished() const;
+  V8_EXPORT_PRIVATE bool top_tier_compilation_finished() const;
+  V8_EXPORT_PRIVATE bool recompilation_finished() const;
+
+  // Override {operator delete} to avoid implicit instantiation of {operator
+  // delete} with {size_t} argument. The {size_t} argument would be incorrect.
+  void operator delete(void* ptr) { ::operator delete(ptr); }
 
  private:
+  // NativeModule is allowed to call the static {New} method.
   friend class NativeModule;
-  friend class WasmCompilationUnit;
+
   CompilationState() = delete;
 
-  static std::unique_ptr<CompilationState> New(Isolate*, NativeModule*);
+  // The CompilationState keeps a {std::weak_ptr} back to the {NativeModule}
+  // such that it can keep it alive (by regaining a {std::shared_ptr}) in
+  // certain scopes.
+  static std::unique_ptr<CompilationState> New(
+      const std::shared_ptr<NativeModule>&, std::shared_ptr<Counters>);
 };
 
 }  // namespace wasm

@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -17,7 +18,7 @@ namespace content {
 
 ManifestManagerHost::ManifestManagerHost(WebContents* web_contents)
     : WebContentsObserver(web_contents),
-      manifest_url_change_observer_bindings_(web_contents, this) {}
+      manifest_url_change_observer_receivers_(web_contents, this) {}
 
 ManifestManagerHost::~ManifestManagerHost() {
   OnConnectionError();
@@ -50,8 +51,8 @@ blink::mojom::ManifestManager& ManifestManagerHost::GetManifestManager() {
   if (!manifest_manager_) {
     manifest_manager_frame_ = web_contents()->GetMainFrame();
     manifest_manager_frame_->GetRemoteInterfaces()->GetInterface(
-        &manifest_manager_);
-    manifest_manager_.set_connection_error_handler(base::BindOnce(
+        manifest_manager_.BindNewPipeAndPassReceiver());
+    manifest_manager_.set_disconnect_handler(base::BindOnce(
         &ManifestManagerHost::OnConnectionError, base::Unretained(this)));
   }
   return *manifest_manager_;
@@ -80,7 +81,7 @@ void ManifestManagerHost::OnRequestManifestResponse(
 
 void ManifestManagerHost::ManifestUrlChanged(
     const base::Optional<GURL>& manifest_url) {
-  if (manifest_url_change_observer_bindings_.GetCurrentTargetFrame() !=
+  if (manifest_url_change_observer_receivers_.GetCurrentTargetFrame() !=
       web_contents()->GetMainFrame()) {
     return;
   }

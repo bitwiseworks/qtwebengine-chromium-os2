@@ -6,9 +6,13 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/debug/crash_logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -17,6 +21,7 @@
 #include "content/public/common/content_switches.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/native_theme/native_theme.h"
 
 namespace content {
 
@@ -57,8 +62,7 @@ BrowserAccessibilityStateImpl* BrowserAccessibilityStateImpl::GetInstance() {
 }
 
 BrowserAccessibilityStateImpl::BrowserAccessibilityStateImpl()
-    : BrowserAccessibilityState(),
-      disable_hot_tracking_(false) {
+    : BrowserAccessibilityState(), disable_hot_tracking_(false) {
   ResetAccessibilityModeValue();
 
   // We need to AddRef() the leaky singleton so that Bind doesn't
@@ -71,22 +75,25 @@ BrowserAccessibilityStateImpl::BrowserAccessibilityStateImpl()
   // Let each platform do its own initialization.
   PlatformInitialize();
 
-#if defined(OS_WIN) || defined(OS_ANDROID)
+  // Schedule calls to update histograms after a delay.
+  //
   // The delay is necessary because assistive technology sometimes isn't
   // detected until after the user interacts in some way, so a reasonable delay
   // gives us better numbers.
-  base::PostDelayedTaskWithTraits(
+
+  // Some things can be done on another thread safely.
+  base::ThreadPool::PostDelayedTask(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-      base::Bind(&BrowserAccessibilityStateImpl::UpdateHistograms, this),
+      base::BindOnce(
+          &BrowserAccessibilityStateImpl::UpdateHistogramsOnOtherThread, this),
       base::TimeDelta::FromSeconds(ACCESSIBILITY_HISTOGRAM_DELAY_SECS));
-#else
-  // On MacOS, UpdateHistograms should be called on the UI thread because it
-  // needs to be able to access PrefService.
-  base::PostDelayedTaskWithTraits(
+
+  // Other things must be done on the UI thread (e.g. to access PrefService).
+  base::PostDelayedTask(
       FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&BrowserAccessibilityStateImpl::UpdateHistograms, this),
+      base::BindOnce(&BrowserAccessibilityStateImpl::UpdateHistogramsOnUIThread,
+                     this),
       base::TimeDelta::FromSeconds(ACCESSIBILITY_HISTOGRAM_DELAY_SECS));
-#endif
 }
 
 BrowserAccessibilityStateImpl::~BrowserAccessibilityStateImpl() {
@@ -119,7 +126,7 @@ void BrowserAccessibilityStateImpl::ResetAccessibilityModeValue() {
   accessibility_mode_ = ui::AXMode();
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kForceRendererAccessibility)) {
-    accessibility_mode_ = ui::kAXModeComplete;
+    AddAccessibilityModeFlags(ui::kAXModeComplete);
   }
 }
 
@@ -136,45 +143,70 @@ bool BrowserAccessibilityStateImpl::IsAccessibleBrowser() {
   return accessibility_mode_ == ui::kAXModeComplete;
 }
 
-void BrowserAccessibilityStateImpl::AddHistogramCallback(
-    base::Closure callback) {
-  histogram_callbacks_.push_back(std::move(callback));
+void BrowserAccessibilityStateImpl::AddUIThreadHistogramCallback(
+    base::OnceClosure callback) {
+  ui_thread_histogram_callbacks_.push_back(std::move(callback));
+}
+
+void BrowserAccessibilityStateImpl::AddOtherThreadHistogramCallback(
+    base::OnceClosure callback) {
+  other_thread_histogram_callbacks_.push_back(std::move(callback));
 }
 
 void BrowserAccessibilityStateImpl::UpdateHistogramsForTesting() {
-  UpdateHistograms();
+  UpdateHistogramsOnUIThread();
+  UpdateHistogramsOnOtherThread();
 }
 
-void BrowserAccessibilityStateImpl::UpdateHistograms() {
-  UpdatePlatformSpecificHistograms();
+bool BrowserAccessibilityStateImpl::IsCaretBrowsingEnabled() const {
+  // TODO(crbug.com/1018947): Refine this check once UX provided to toggle caret
+  // browsing mode.
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableCaretBrowsing);
+}
 
-  for (size_t i = 0; i < histogram_callbacks_.size(); ++i)
-    histogram_callbacks_[i].Run();
+void BrowserAccessibilityStateImpl::UpdateHistogramsOnUIThread() {
+  UpdatePlatformSpecificHistogramsOnUIThread();
 
-  // TODO(dmazzoni): remove this in M59 since Accessibility.ModeFlag
-  // supercedes it.  http://crbug.com/672205
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.State", IsAccessibleBrowser());
+  for (auto& callback : ui_thread_histogram_callbacks_)
+    std::move(callback).Run();
+  ui_thread_histogram_callbacks_.clear();
 
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.InvertedColors",
-                        color_utils::IsInvertedColorScheme());
   UMA_HISTOGRAM_BOOLEAN("Accessibility.ManuallyEnabled",
                         base::CommandLine::ForCurrentProcess()->HasSwitch(
                             switches::kForceRendererAccessibility));
+#if defined(OS_WIN) && !defined(TOOLKIT_QT)
+  UMA_HISTOGRAM_ENUMERATION(
+      "Accessibility.WinHighContrastTheme",
+      ui::NativeTheme::GetInstanceForNativeUi()->GetHighContrastColorScheme(),
+      ui::NativeTheme::HighContrastColorScheme::kMaxValue);
+#endif
+}
+
+void BrowserAccessibilityStateImpl::UpdateHistogramsOnOtherThread() {
+  UpdatePlatformSpecificHistogramsOnOtherThread();
+
+  for (auto& callback : other_thread_histogram_callbacks_)
+    std::move(callback).Run();
+  other_thread_histogram_callbacks_.clear();
 }
 
 void BrowserAccessibilityStateImpl::OnAXModeAdded(ui::AXMode mode) {
   AddAccessibilityModeFlags(mode);
 }
 
-ui::AXMode BrowserAccessibilityStateImpl::GetAccessibilityMode() const {
+ui::AXMode BrowserAccessibilityStateImpl::GetAccessibilityMode() {
   return accessibility_mode_;
 }
 
 #if (!defined(OS_ANDROID) && !defined(OS_WIN) && !defined(OS_MACOSX)) || defined(TOOLKIT_QT)
 void BrowserAccessibilityStateImpl::PlatformInitialize() {}
 
-void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
-}
+void BrowserAccessibilityStateImpl::
+    UpdatePlatformSpecificHistogramsOnUIThread() {}
+void BrowserAccessibilityStateImpl::
+    UpdatePlatformSpecificHistogramsOnOtherThread() {}
+void BrowserAccessibilityStateImpl::UpdateUniqueUserHistograms() {}
 #endif
 
 void BrowserAccessibilityStateImpl::AddAccessibilityModeFlags(ui::AXMode mode) {
@@ -187,6 +219,9 @@ void BrowserAccessibilityStateImpl::AddAccessibilityModeFlags(ui::AXMode mode) {
   accessibility_mode_ |= mode;
   if (accessibility_mode_ == previous_mode)
     return;
+
+  // Proxy the AXMode to AXPlatformNode to enable accessibility.
+  ui::AXPlatformNode::NotifyAddAXModeFlags(accessibility_mode_);
 
   // Retrieve only newly added modes for the purposes of logging.
   int new_mode_flags = mode.mode() & (~previous_mode.mode());
@@ -205,6 +240,16 @@ void BrowserAccessibilityStateImpl::AddAccessibilityModeFlags(ui::AXMode mode) {
       WebContentsImpl::GetAllWebContents();
   for (size_t i = 0; i < web_contents_vector.size(); ++i)
     web_contents_vector[i]->AddAccessibilityMode(accessibility_mode_);
+
+  // Add a crash key with the ax_mode, to enable searching for top crashes that
+  // occur when accessibility is turned on. This adds it for the browser
+  // process, and elsewhere the same key is added to renderer processes.
+  static auto* ax_mode_crash_key = base::debug::AllocateCrashKeyString(
+      "ax_mode", base::debug::CrashKeySize::Size64);
+  if (ax_mode_crash_key) {
+    base::debug::SetCrashKeyString(ax_mode_crash_key,
+                                   accessibility_mode_.ToString());
+  }
 }
 
 void BrowserAccessibilityStateImpl::RemoveAccessibilityModeFlags(

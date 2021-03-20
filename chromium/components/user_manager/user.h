@@ -18,8 +18,6 @@
 #include "components/user_manager/user_info.h"
 #include "components/user_manager/user_manager_export.h"
 #include "components/user_manager/user_type.h"
-#include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/gfx/image/image_skia.h"
 
 namespace chromeos {
 class ChromeUserManagerImpl;
@@ -29,6 +27,10 @@ class SupervisedUserManagerImpl;
 class UserAddingScreenTest;
 class UserImageManagerImpl;
 class UserSessionManager;
+}
+
+namespace gfx {
+class ImageSkia;
 }
 
 namespace policy {
@@ -115,6 +117,9 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // True if the user is a device local account user.
   virtual bool IsDeviceLocalAccount() const;
 
+  // True if the user is a kiosk.
+  bool IsKioskType() const;
+
   // The displayed user name.
   base::string16 display_name() const { return display_name_; }
 
@@ -161,14 +166,6 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // user's next sign-in.
   bool force_online_signin() const { return force_online_signin_; }
 
-  // Whether the user's session has completed initialization yet.
-  bool profile_ever_initialized() const { return profile_ever_initialized_; }
-
-  // Public so it can be called via tests.
-  void set_profile_ever_initialized(bool profile_ever_initialized) {
-    profile_ever_initialized_ = profile_ever_initialized;
-  }
-
   // True if the user's session can be locked (i.e. the user has a password with
   // which to unlock the session).
   bool can_lock() const;
@@ -190,6 +187,11 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   static User* CreatePublicAccountUserForTesting(const AccountId& account_id) {
     return CreatePublicAccountUser(account_id);
+  }
+
+  static User* CreatePublicAccountUserForTestingWithSAML(
+      const AccountId& account_id) {
+    return CreatePublicAccountUser(account_id, /* is_using_saml */ true);
   }
 
   static User* CreateRegularUserForTesting(const AccountId& account_id) {
@@ -222,8 +224,10 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   static User* CreateGuestUser(const AccountId& guest_account_id);
   static User* CreateKioskAppUser(const AccountId& kiosk_app_account_id);
   static User* CreateArcKioskAppUser(const AccountId& arc_kiosk_account_id);
+  static User* CreateWebKioskAppUser(const AccountId& web_kiosk_account_id);
   static User* CreateSupervisedUser(const AccountId& account_id);
-  static User* CreatePublicAccountUser(const AccountId& account_id);
+  static User* CreatePublicAccountUser(const AccountId& account_id,
+                                       bool is_using_saml = false);
 
   const std::string* GetAccountLocale() const { return account_locale_.get(); }
 
@@ -283,13 +287,15 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   AccountId account_id_;
   base::string16 display_name_;
   base::string16 given_name_;
-  // The displayed user email, defaults to |email_|.
+  // User email for display, which may include capitals and non-significant
+  // periods. For example, "John.Steinbeck@gmail.com" is a display email, but
+  // "johnsteinbeck@gmail.com" is the canonical form. Defaults to
+  // account_id_.GetUserEmail().
   std::string display_email_;
   bool using_saml_ = false;
   std::unique_ptr<UserImage> user_image_;
   OAuthTokenStatus oauth_token_status_ = OAUTH_TOKEN_STATUS_UNKNOWN;
   bool force_online_signin_ = false;
-  bool profile_ever_initialized_ = false;
 
   // This is set to chromeos locale if account data has been downloaded.
   // (Or failed to download, but at least one download attempt finished).

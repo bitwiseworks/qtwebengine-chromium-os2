@@ -83,28 +83,35 @@ Size SkISizeToSize(const SkISize& size) {
 void TransformToFlattenedSkMatrix(const gfx::Transform& transform,
                                   SkMatrix* flattened) {
   // Convert from 4x4 to 3x3 by dropping the third row and column.
-  flattened->set(0, SkMScalarToScalar(transform.matrix().get(0, 0)));
-  flattened->set(1, SkMScalarToScalar(transform.matrix().get(0, 1)));
-  flattened->set(2, SkMScalarToScalar(transform.matrix().get(0, 3)));
-  flattened->set(3, SkMScalarToScalar(transform.matrix().get(1, 0)));
-  flattened->set(4, SkMScalarToScalar(transform.matrix().get(1, 1)));
-  flattened->set(5, SkMScalarToScalar(transform.matrix().get(1, 3)));
-  flattened->set(6, SkMScalarToScalar(transform.matrix().get(3, 0)));
-  flattened->set(7, SkMScalarToScalar(transform.matrix().get(3, 1)));
-  flattened->set(8, SkMScalarToScalar(transform.matrix().get(3, 3)));
+  flattened->set(0, transform.matrix().get(0, 0));
+  flattened->set(1, transform.matrix().get(0, 1));
+  flattened->set(2, transform.matrix().get(0, 3));
+  flattened->set(3, transform.matrix().get(1, 0));
+  flattened->set(4, transform.matrix().get(1, 1));
+  flattened->set(5, transform.matrix().get(1, 3));
+  flattened->set(6, transform.matrix().get(3, 0));
+  flattened->set(7, transform.matrix().get(3, 1));
+  flattened->set(8, transform.matrix().get(3, 3));
 }
 
 bool BitmapsAreEqual(const SkBitmap& bitmap1, const SkBitmap& bitmap2) {
-  void* addr1 = NULL;
-  void* addr2 = NULL;
-  size_t size1 = 0;
-  size_t size2 = 0;
+  if (bitmap1.isNull() != bitmap2.isNull() ||
+      bitmap1.dimensions() != bitmap2.dimensions())
+    return false;
 
-  addr1 = bitmap1.getAddr32(0, 0);
-  size1 = bitmap1.computeByteSize();
+  if (bitmap1.getGenerationID() == bitmap2.getGenerationID() ||
+      (bitmap1.empty() && bitmap2.empty()))
+    return true;
 
-  addr2 = bitmap2.getAddr32(0, 0);
-  size2 = bitmap2.computeByteSize();
+  // Calling getAddr32() on null or empty bitmaps will assert. The conditions
+  // above should return early if either bitmap is empty or null.
+  DCHECK(!bitmap1.isNull() && !bitmap2.isNull());
+  DCHECK(!bitmap1.empty() && !bitmap2.empty());
+
+  void* addr1 = bitmap1.getAddr32(0, 0);
+  void* addr2 = bitmap2.getAddr32(0, 0);
+  size_t size1 = bitmap1.computeByteSize();
+  size_t size2 = bitmap2.computeByteSize();
 
   return (size1 == size2) && (0 == memcmp(addr1, addr2, size1));
 }

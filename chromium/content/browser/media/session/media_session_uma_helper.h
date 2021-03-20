@@ -42,7 +42,12 @@ class CONTENT_EXPORT MediaSessionUmaHelper {
     SeekBackward = 7,
     SeekForward = 8,
     SkipAd = 9,
-    kMaxValue = SkipAd,
+    Stop = 10,
+    SeekTo = 11,
+    ScrubTo = 12,
+    EnterPictureInPicture = 13,
+    ExitPictureInPicture = 14,
+    kMaxValue = ExitPictureInPicture,
   };
 
   MediaSessionUmaHelper();

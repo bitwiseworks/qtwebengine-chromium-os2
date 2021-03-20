@@ -10,11 +10,13 @@
 #include "device/gamepad/gamepad_export.h"
 #include "device/gamepad/gamepad_pad_state_provider.h"
 #include "device/gamepad/public/cpp/gamepad.h"
-#include "device/gamepad/public/mojom/gamepad.mojom.h"
+#include "device/gamepad/public/mojom/gamepad.mojom-forward.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "services/device/public/mojom/hid.mojom.h"
 
 namespace device {
 
-// Abstract interface for imlementing platform- (and test-) specific behavior
+// Abstract interface for implementing platform- (and test-) specific behavior
 // for getting the gamepad data.
 class DEVICE_GAMEPAD_EXPORT GamepadDataFetcher {
  public:
@@ -34,13 +36,21 @@ class DEVICE_GAMEPAD_EXPORT GamepadDataFetcher {
       scoped_refptr<base::SequencedTaskRunner>);
 
   virtual GamepadSource source() = 0;
+
+  // Shuts down the gamepad with given |source_id| and removes it from the data
+  // fetchers list of devices. Default implementation used on data fetchers for
+  // recognized gamepads because it should never be called on those gamepads.
+  // Returns a boolean that is true if the gamepad was successfully
+  // disconnected.
+  virtual bool DisconnectUnrecognizedGamepad(int source_id);
+
   GamepadPadStateProvider* provider() { return provider_; }
 
-  PadState* GetPadState(int source_id) {
+  PadState* GetPadState(int source_id, bool new_pad_recognized = true) {
     if (!provider_)
       return nullptr;
 
-    return provider_->GetPadState(source(), source_id);
+    return provider_->GetPadState(source(), source_id, new_pad_recognized);
   }
 
   // Returns the current time value in microseconds. Data fetchers should use
@@ -65,19 +75,30 @@ class DEVICE_GAMEPAD_EXPORT GamepadDataFetcher {
       scoped_refptr<base::SequencedTaskRunner> callback_runner,
       mojom::GamepadHapticsResult result);
 
+  // Sets a global callback for GamepadProviders to use when binding a
+  // HidManager interface.
+  using HidManagerBinder =
+      base::RepeatingCallback<void(mojo::PendingReceiver<mojom::HidManager>)>;
+  static void SetHidManagerBinder(HidManagerBinder binder);
+
  protected:
   friend GamepadPadStateProvider;
 
-  // To be called by the GamepadPadStateProvider on the polling thread;
+  // To be called by the GamepadPadStateProvider on the polling thread.
   void InitializeProvider(GamepadPadStateProvider* provider);
+
+  // Binds a HidManager interface.
+  void BindHidManager(mojo::PendingReceiver<mojom::HidManager> receiver);
 
   // This call will happen on the gamepad polling thread. Any initialization
   // that needs to happen on that thread should be done here, not in the
   // constructor.
-  virtual void OnAddedToProvider(){};
+  virtual void OnAddedToProvider() {}
 
  private:
-  GamepadPadStateProvider* provider_;
+  // GamepadPadStateProvider is the base class of GamepadProvider, which owns
+  // this data fetcher.
+  GamepadPadStateProvider* provider_ = nullptr;
 };
 
 // Factory class for creating a GamepadDataFetcher. Used by the

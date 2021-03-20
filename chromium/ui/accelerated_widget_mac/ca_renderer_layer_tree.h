@@ -15,10 +15,10 @@
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/ref_counted.h"
 #include "ui/accelerated_widget_mac/accelerated_widget_mac_export.h"
-#include "ui/accelerated_widget_mac/availability_macros.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/mac/io_surface.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 @class AVSampleBufferDisplayLayer;
@@ -26,6 +26,15 @@
 namespace ui {
 
 struct CARendererLayerParams;
+
+enum class CALayerType {
+  // A CALayer with contents set to an IOSurface by setContents.
+  kDefault,
+  // An AVSampleBufferDisplayLayer.
+  kVideo,
+  // A CAMetalLayer that copies half-float or 10-bit IOSurfaces.
+  kHDRCopier,
+};
 
 // The CARendererLayerTree will construct a hierarchy of CALayers from a linear
 // list provided by the CoreAnimation renderer using the algorithm and structure
@@ -107,6 +116,7 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   struct ClipAndSortingLayer {
     ClipAndSortingLayer(bool is_clipped,
                         gfx::Rect clip_rect,
+                        gfx::RRectF rounded_corner_bounds,
                         unsigned sorting_context_id,
                         bool is_singleton_sorting_context);
     ClipAndSortingLayer(ClipAndSortingLayer&& layer);
@@ -123,9 +133,11 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     std::vector<TransformLayer> transform_layers;
     bool is_clipped = false;
     gfx::Rect clip_rect;
+    gfx::RRectF rounded_corner_bounds;
     unsigned sorting_context_id = 0;
     bool is_singleton_sorting_context = false;
-    base::scoped_nsobject<CALayer> ca_layer;
+    base::scoped_nsobject<CALayer> clipping_ca_layer;
+    base::scoped_nsobject<CALayer> rounded_corner_ca_layer;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ClipAndSortingLayer);
@@ -157,6 +169,7 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
                  const gfx::RectF& contents_rect,
                  const gfx::Rect& rect,
                  unsigned background_color,
+                 bool has_hdr_color_space,
                  unsigned edge_aa_mask,
                  float opacity,
                  unsigned filter);
@@ -183,12 +196,13 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     CAEdgeAntialiasingMask ca_edge_aa_mask = 0;
     float opacity = 1;
     NSString* const ca_filter = nil;
+
+    CALayerType type = CALayerType::kDefault;
     base::scoped_nsobject<CALayer> ca_layer;
 
     // If this layer's contents can be represented as an
     // AVSampleBufferDisplayLayer, then |ca_layer| will point to |av_layer|.
-    base::scoped_nsobject<AVSampleBufferDisplayLayer109> av_layer;
-    bool use_av_layer = false;
+    base::scoped_nsobject<AVSampleBufferDisplayLayer> av_layer;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ContentLayer);

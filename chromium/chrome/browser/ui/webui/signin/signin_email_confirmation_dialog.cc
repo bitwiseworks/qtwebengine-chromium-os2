@@ -8,9 +8,11 @@
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/signin_view_controller.h"
 #include "chrome/browser/ui/webui/signin/signin_email_confirmation_ui.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/host_zoom_map.h"
@@ -62,33 +64,37 @@ class SigninEmailConfirmationDialog::DialogWebContentsObserver
 };
 
 SigninEmailConfirmationDialog::SigninEmailConfirmationDialog(
+    SigninViewController* signin_view_controller,
     content::WebContents* contents,
     Profile* profile,
     const std::string& last_email,
     const std::string& new_email,
-    const Callback& callback)
-    : web_contents_(contents),
+    Callback callback)
+    : signin_view_controller_(signin_view_controller),
+      web_contents_(contents),
       profile_(profile),
       last_email_(last_email),
       new_email_(new_email),
-      callback_(callback) {
-  chrome::RecordDialogCreation(
-      chrome::DialogIdentifier::SIGN_IN_EMAIL_CONFIRMATION);
-}
+      callback_(std::move(callback)) {}
 
 SigninEmailConfirmationDialog::~SigninEmailConfirmationDialog() {}
 
 // static
-void SigninEmailConfirmationDialog::AskForConfirmation(
+SigninEmailConfirmationDialog*
+SigninEmailConfirmationDialog::AskForConfirmation(
+    SigninViewController* signin_view_controller,
     content::WebContents* contents,
     Profile* profile,
     const std::string& last_email,
     const std::string& email,
-    const Callback& callback) {
+    Callback callback) {
   base::RecordAction(base::UserMetricsAction("Signin_Show_ImportDataPrompt"));
+  // ShowDialog() will take care of ownership.
   SigninEmailConfirmationDialog* dialog = new SigninEmailConfirmationDialog(
-      contents, profile, last_email, email, callback);
+      signin_view_controller, contents, profile, last_email, email,
+      std::move(callback));
   dialog->ShowDialog();
+  return dialog;
 }
 
 void SigninEmailConfirmationDialog::ShowDialog() {
@@ -97,8 +103,8 @@ void SigninEmailConfirmationDialog::ShowDialog() {
   gfx::Size max_size(kSigninEmailConfirmationDialogWidth,
                      kSigninEmailConfirmationDialogMaxHeight);
   ConstrainedWebDialogDelegate* dialog_delegate =
-      ShowConstrainedWebDialogWithAutoResize(profile_, this, web_contents_,
-                                             min_size, max_size);
+      ShowConstrainedWebDialogWithAutoResize(profile_, base::WrapUnique(this),
+                                             web_contents_, min_size, max_size);
 
   content::WebContents* dialog_web_contents = dialog_delegate->GetWebContents();
 
@@ -174,8 +180,8 @@ std::string SigninEmailConfirmationDialog::GetDialogArgs() const {
 void SigninEmailConfirmationDialog::OnDialogClosed(
     const std::string& json_retval) {
   Action action = CLOSE;
-  std::unique_ptr<base::DictionaryValue> ret_value(
-      base::DictionaryValue::From(base::JSONReader::Read(json_retval)));
+  std::unique_ptr<base::DictionaryValue> ret_value(base::DictionaryValue::From(
+      base::JSONReader::ReadDeprecated(json_retval)));
   if (ret_value) {
     std::string action_string;
     if (ret_value->GetString(kSigninEmailConfirmationActionKey,
@@ -198,10 +204,13 @@ void SigninEmailConfirmationDialog::OnDialogClosed(
     action = CLOSE;
   }
 
-  if (!callback_.is_null()) {
-    callback_.Run(action);
-    callback_.Reset();
+  if (signin_view_controller_) {
+    signin_view_controller_->ResetModalSigninDelegate();
+    signin_view_controller_ = nullptr;
   }
+
+  if (callback_)
+    std::move(callback_).Run(action);
 }
 
 void SigninEmailConfirmationDialog::OnCloseContents(
@@ -212,4 +221,16 @@ void SigninEmailConfirmationDialog::OnCloseContents(
 
 bool SigninEmailConfirmationDialog::ShouldShowDialogTitle() const {
   return false;
+}
+
+void SigninEmailConfirmationDialog::CloseModalSignin() {
+  CloseDialog();
+}
+
+void SigninEmailConfirmationDialog::ResizeNativeView(int height) {
+  NOTIMPLEMENTED();
+}
+
+content::WebContents* SigninEmailConfirmationDialog::GetWebContents() {
+  return GetDialogWebContents();
 }

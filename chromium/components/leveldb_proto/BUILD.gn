@@ -5,20 +5,21 @@
 import("//third_party/protobuf/proto_library.gni")
 
 proto_library("proto") {
-  sources = [
-    "internal/proto/shared_db_metadata.proto",
-  ]
+  sources = [ "internal/proto/shared_db_metadata.proto" ]
 }
 
-static_library("leveldb_proto") {
+component("leveldb_proto") {
   sources = [
     "internal/leveldb_database.cc",
     "internal/leveldb_database.h",
     "internal/leveldb_proto_feature_list.cc",
     "internal/leveldb_proto_feature_list.h",
+    "internal/migration_delegate.cc",
     "internal/migration_delegate.h",
-    "internal/proto_database_wrapper.cc",
-    "internal/proto_database_wrapper.h",
+    "internal/proto_database_impl.cc",
+    "internal/proto_database_impl.h",
+    "internal/proto_database_selector.cc",
+    "internal/proto_database_selector.h",
     "internal/proto_leveldb_wrapper.cc",
     "internal/proto_leveldb_wrapper.h",
     "internal/proto_leveldb_wrapper_metrics.cc",
@@ -29,6 +30,7 @@ static_library("leveldb_proto") {
     "internal/shared_proto_database_client.h",
     "internal/shared_proto_database_provider.cc",
     "internal/shared_proto_database_provider.h",
+    "internal/unique_proto_database.cc",
     "internal/unique_proto_database.h",
     "public/proto_database.cc",
     "public/proto_database.h",
@@ -37,9 +39,8 @@ static_library("leveldb_proto") {
     "public/shared_proto_database_client_list.cc",
     "public/shared_proto_database_client_list.h",
   ]
-  deps = [
-    ":proto",
-  ]
+  defines = [ "IS_LEVELDB_PROTO_IMPL" ]
+  deps = [ ":proto" ]
 
   public_deps = [
     "//base",
@@ -50,9 +51,7 @@ static_library("leveldb_proto") {
 
 source_set("test_support") {
   testonly = true
-  sources = [
-    "testing/fake_db.h",
-  ]
+  sources = [ "testing/fake_db.h" ]
 
   public_deps = [
     ":leveldb_proto",
@@ -65,13 +64,14 @@ source_set("test_support") {
 source_set("unit_tests") {
   testonly = true
   sources = [
-    "internal/proto_database_wrapper_unittest.cc",
+    "internal/proto_database_impl_unittest.cc",
     "internal/shared_proto_database_client_list_unittest.cc",
     "internal/shared_proto_database_client_unittest.cc",
     "internal/shared_proto_database_unittest.cc",
     "internal/unique_proto_database_unittest.cc",
   ]
   deps = [
+    ":proto",
     ":test_support",
     "//testing/gmock",
     "//testing/gtest",

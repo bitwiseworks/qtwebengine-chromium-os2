@@ -23,7 +23,7 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_character_data.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -58,7 +58,7 @@ class SVGTextLayoutAttributesBuilder {
                  unsigned new_length = 0)
         : element(new_element), start(new_start), length(new_length) {}
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
 
     Member<SVGTextPositioningElement> element;
     unsigned start;
@@ -82,6 +82,6 @@ class SVGTextLayoutAttributesBuilder {
 }  // namespace blink
 
 WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(
-    blink::SVGTextLayoutAttributesBuilder::TextPosition);
+    blink::SVGTextLayoutAttributesBuilder::TextPosition)
 
 #endif

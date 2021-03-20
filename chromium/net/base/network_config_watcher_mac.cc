@@ -10,7 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -169,8 +169,9 @@ void NetworkConfigWatcherMacThread::Init() {
   // initialize this, rather than just delaying it by a fixed time.
   const base::TimeDelta kInitializationDelay = base::TimeDelta::FromSeconds(1);
   task_runner()->PostDelayedTask(
-      FROM_HERE, base::Bind(&NetworkConfigWatcherMacThread::InitNotifications,
-                            weak_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&NetworkConfigWatcherMacThread::InitNotifications,
+                     weak_factory_.GetWeakPtr()),
       kInitializationDelay);
 }
 
@@ -264,7 +265,7 @@ NetworkConfigWatcherMac::NetworkConfigWatcherMac(Delegate* delegate)
   // We create this notifier thread because the notification implementation
   // needs a thread with a CFRunLoop, and there's no guarantee that
   // MessageLoopCurrent::Get() meets that criterion.
-  base::Thread::Options thread_options(base::MessageLoop::TYPE_DEFAULT, 0);
+  base::Thread::Options thread_options(base::MessagePumpType::DEFAULT, 0);
   notifier_thread_->StartWithOptions(thread_options);
 }
 

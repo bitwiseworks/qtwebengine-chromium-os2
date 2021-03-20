@@ -105,6 +105,7 @@ enum
 	MAX_UNIFORM_BUFFER_BINDINGS = sw::MAX_UNIFORM_BUFFER_BINDINGS,
 	UNIFORM_BUFFER_OFFSET_ALIGNMENT = 4,
 	NUM_PROGRAM_BINARY_FORMATS = 0,
+	MAX_SHADER_CALL_STACK_SIZE = sw::MAX_SHADER_CALL_STACK_SIZE,
 };
 
 const GLenum compressedTextureFormats[] =
@@ -409,6 +410,7 @@ struct State
 	gl::BindingPointer<Buffer> pixelPackBuffer;
 	gl::BindingPointer<Buffer> pixelUnpackBuffer;
 	gl::BindingPointer<Buffer> genericUniformBuffer;
+	gl::BindingPointer<Buffer> genericTransformFeedbackBuffer;
 	BufferBinding uniformBuffers[MAX_UNIFORM_BUFFER_BINDINGS];
 
 	GLuint readFramebuffer;
@@ -635,10 +637,11 @@ public:
 	Buffer *getPixelPackBuffer() const;
 	Buffer *getPixelUnpackBuffer() const;
 	Buffer *getGenericUniformBuffer() const;
-	GLsizei getRequiredBufferSize(GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type) const;
-	GLenum getPixels(const GLvoid **data, GLenum type, GLsizei imageSize) const;
+	size_t getRequiredBufferSize(GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type) const;
+	GLenum getPixels(const GLvoid **data, GLenum type, size_t imageSize) const;
 	bool getBuffer(GLenum target, es2::Buffer **buffer) const;
 	Program *getCurrentProgram() const;
+	Texture *getTargetTexture(GLenum target) const;
 	Texture2D *getTexture2D() const;
 	Texture2D *getTexture2D(GLenum target) const;
 	Texture3D *getTexture3D() const;

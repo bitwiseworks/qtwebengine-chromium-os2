@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_css_variable_reference_value.h"
 #include "third_party/blink/renderer/core/css/cssom/css_style_value.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -33,6 +34,11 @@ class CORE_EXPORT CSSUnparsedValue final : public CSSStyleValue {
   static CSSUnparsedValue* FromCSSValue(const CSSVariableReferenceValue&);
   static CSSUnparsedValue* FromCSSValue(const CSSCustomPropertyDeclaration&);
   static CSSUnparsedValue* FromCSSVariableData(const CSSVariableData&);
+  static CSSUnparsedValue* FromString(const String& string) {
+    HeapVector<CSSUnparsedSegment> tokens;
+    tokens.push_back(CSSUnparsedSegment::FromString(string));
+    return Create(tokens);
+  }
 
   CSSUnparsedValue(const HeapVector<CSSUnparsedSegment>& tokens)
       : CSSStyleValue(), tokens_(tokens) {}
@@ -41,10 +47,19 @@ class CORE_EXPORT CSSUnparsedValue final : public CSSStyleValue {
 
   StyleValueType GetType() const override { return kUnparsedType; }
 
+  void AnonymousIndexedGetter(uint32_t index,
+                              CSSUnparsedSegment& return_value,
+                              ExceptionState& exception_state) const {
+    return_value = AnonymousIndexedGetter(index, exception_state);
+  }
+  // TODO(crbug.com/1050474): Remove the following 2-arguments version once the
+  // migration to the new bindings generator is done.  The current policy is
+  // that return value of IDL union type is returned by argument.  This policy
+  // may change when we implement IDL union types with GarbageCollected classes.
   CSSUnparsedSegment AnonymousIndexedGetter(unsigned, ExceptionState&) const;
-  bool AnonymousIndexedSetter(unsigned,
-                              const CSSUnparsedSegment&,
-                              ExceptionState&);
+  IndexedPropertySetterResult AnonymousIndexedSetter(unsigned,
+                                                     const CSSUnparsedSegment&,
+                                                     ExceptionState&);
 
   wtf_size_t length() const { return tokens_.size(); }
 
@@ -53,19 +68,20 @@ class CORE_EXPORT CSSUnparsedValue final : public CSSStyleValue {
     CSSStyleValue::Trace(visitor);
   }
 
- private:
-  static CSSUnparsedValue* FromString(const String& string) {
-    HeapVector<CSSUnparsedSegment> tokens;
-    tokens.push_back(CSSUnparsedSegment::FromString(string));
-    return Create(tokens);
-  }
-
   String ToString() const;
 
+ private:
   FRIEND_TEST_ALL_PREFIXES(CSSVariableReferenceValueTest, MixedList);
 
   HeapVector<CSSUnparsedSegment> tokens_;
   DISALLOW_COPY_AND_ASSIGN(CSSUnparsedValue);
+};
+
+template <>
+struct DowncastTraits<CSSUnparsedValue> {
+  static bool AllowFrom(const CSSStyleValue& value) {
+    return value.GetType() == CSSStyleValue::StyleValueType::kUnparsedType;
+  }
 };
 
 }  // namespace blink

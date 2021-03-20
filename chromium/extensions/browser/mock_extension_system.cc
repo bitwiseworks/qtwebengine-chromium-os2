@@ -13,12 +13,13 @@ MockExtensionSystem::MockExtensionSystem(content::BrowserContext* context)
     : browser_context_(context) {
 }
 
-MockExtensionSystem::~MockExtensionSystem() {
+MockExtensionSystem::~MockExtensionSystem() = default;
+
+void MockExtensionSystem::SetReady() {
+  ready_.Signal();
 }
 
 void MockExtensionSystem::InitForRegularProfile(bool extensions_enabled) {}
-
-void MockExtensionSystem::InitForIncognitoProfile() {}
 
 ExtensionService* MockExtensionSystem::extension_service() {
   return nullptr;
@@ -64,7 +65,7 @@ AppSorting* MockExtensionSystem::app_sorting() {
   return nullptr;
 }
 
-const OneShotEvent& MockExtensionSystem::ready() const {
+const base::OneShotEvent& MockExtensionSystem::ready() const {
   return ready_;
 }
 

@@ -11,16 +11,16 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/macros.h"
 #include "cc/base/list_container.h"
 #include "cc/paint/filter_operations.h"
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/largest_draw_quad.h"
 #include "components/viz/common/viz_common_export.h"
-#include "ui/gfx/color_space.h"
+#include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace base {
@@ -54,6 +54,7 @@ class VIZ_COMMON_EXPORT QuadList : public cc::ListContainer<DrawQuad> {
   // This function is used by overlay algorithm to fill the backbuffer with
   // transparent black.
   void ReplaceExistingQuadWithOpaqueTransparentSolidColor(Iterator at);
+  Iterator InsertCopyBeforeDrawQuad(Iterator at, size_t count);
 };
 
 using SharedQuadStateList = cc::ListContainer<SharedQuadState>;
@@ -91,8 +92,8 @@ class VIZ_COMMON_EXPORT RenderPass {
               const gfx::Transform& transform_to_root_target,
               const cc::FilterOperations& filters,
               const cc::FilterOperations& backdrop_filters,
-              const gfx::RectF& backdrop_filter_bounds,
-              const gfx::ColorSpace& color_space,
+              const base::Optional<gfx::RRectF>& backdrop_filter_bounds,
+              gfx::ContentColorUsage content_color_usage,
               bool has_transparent_background,
               bool cache_render_pass,
               bool has_damage_from_contributing_content,
@@ -131,10 +132,10 @@ class VIZ_COMMON_EXPORT RenderPass {
   cc::FilterOperations backdrop_filters;
 
   // Clipping bounds for backdrop filter.
-  gfx::RectF backdrop_filter_bounds;
+  base::Optional<gfx::RRectF> backdrop_filter_bounds;
 
-  // The color space into which content will be rendered for this render pass.
-  gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB();
+  // The type of color content present in this RenderPass.
+  gfx::ContentColorUsage content_color_usage = gfx::ContentColorUsage::kSRGB;
 
   // If false, the pixels in the render pass' texture are all opaque.
   bool has_transparent_background = true;

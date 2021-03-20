@@ -43,7 +43,8 @@ EventConverterEvdevImpl::EventConverterEvdevImpl(
                           devinfo.name(),
                           devinfo.phys(),
                           devinfo.vendor_id(),
-                          devinfo.product_id()),
+                          devinfo.product_id(),
+                          devinfo.version()),
       input_device_fd_(std::move(fd)),
       has_keyboard_(devinfo.HasKeyboard()),
       has_touchpad_(devinfo.HasTouchpad()),
@@ -189,9 +190,9 @@ void EventConverterEvdevImpl::OnKeyChange(unsigned int key,
   // State transition: !(down) -> (down)
   key_state_.set(key, down);
 
-  dispatcher_->DispatchKeyEvent(KeyEventParams(input_device_.id, key, down,
-                                               false /* suppress_auto_repeat */,
-                                               timestamp));
+  dispatcher_->DispatchKeyEvent(
+      KeyEventParams(input_device_.id, ui::EF_NONE, key, down,
+                     false /* suppress_auto_repeat */, timestamp));
 }
 
 void EventConverterEvdevImpl::ReleaseKeys() {

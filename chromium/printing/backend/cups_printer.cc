@@ -10,38 +10,22 @@
 #include <utility>
 
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "printing/backend/cups_connection.h"
 #include "printing/backend/print_backend.h"
 #include "printing/backend/print_backend_consts.h"
 
-namespace {
-
-const char kCUPSPrinterInfoOpt[] = "printer-info";
-const char kCUPSPrinterStateOpt[] = "printer-state";
-
-}  // namespace
-
 namespace printing {
 
-CupsPrinter::CupsPrinter(http_t* http,
-                         std::unique_ptr<cups_dest_t, DestinationDeleter> dest,
-                         std::unique_ptr<cups_dinfo_t, DestInfoDeleter> info)
-    : cups_http_(http),
-      destination_(std::move(dest)),
-      dest_info_(std::move(info)) {
+CupsPrinter::CupsPrinter(http_t* http, ScopedDestination dest)
+    : cups_http_(http), destination_(std::move(dest)) {
   DCHECK(cups_http_);
   DCHECK(destination_);
 }
 
-CupsPrinter::CupsPrinter(CupsPrinter&& printer)
-    : cups_http_(printer.cups_http_),
-      destination_(std::move(printer.destination_)),
-      dest_info_(std::move(printer.dest_info_)) {
-  DCHECK(cups_http_);
-  DCHECK(destination_);
-}
+CupsPrinter::CupsPrinter(CupsPrinter&& printer) = default;
 
-CupsPrinter::~CupsPrinter() {}
+CupsPrinter::~CupsPrinter() = default;
 
 bool CupsPrinter::is_default() const {
   return destination_->is_default;
@@ -49,7 +33,7 @@ bool CupsPrinter::is_default() const {
 
 ipp_attribute_t* CupsPrinter::GetSupportedOptionValues(
     const char* option_name) const {
-  if (!InitializeDestInfo())
+  if (!EnsureDestInfo())
     return nullptr;
 
   return cupsFindDestSupported(cups_http_, destination_.get(), dest_info_.get(),
@@ -66,7 +50,7 @@ std::vector<base::StringPiece> CupsPrinter::GetSupportedOptionValueStrings(
   base::StringPiece value;
   int num_options = ippGetCount(attr);
   for (int i = 0; i < num_options; ++i) {
-    value.set(ippGetString(attr, i, nullptr));
+    value = ippGetString(attr, i, nullptr);
     values.push_back(value);
   }
 
@@ -75,7 +59,7 @@ std::vector<base::StringPiece> CupsPrinter::GetSupportedOptionValueStrings(
 
 ipp_attribute_t* CupsPrinter::GetDefaultOptionValue(
     const char* option_name) const {
-  if (!InitializeDestInfo())
+  if (!EnsureDestInfo())
     return nullptr;
 
   return cupsFindDestDefault(cups_http_, destination_.get(), dest_info_.get(),
@@ -84,7 +68,7 @@ ipp_attribute_t* CupsPrinter::GetDefaultOptionValue(
 
 bool CupsPrinter::CheckOptionSupported(const char* name,
                                        const char* value) const {
-  if (!InitializeDestInfo())
+  if (!EnsureDestInfo())
     return false;
 
   int supported = cupsCheckDestSupported(cups_http_, destination_.get(),
@@ -98,20 +82,26 @@ bool CupsPrinter::ToPrinterInfo(PrinterBasicInfo* printer_info) const {
   printer_info->printer_name = printer->name;
   printer_info->is_default = printer->is_default;
 
-  const char* info = cupsGetOption(kCUPSPrinterInfoOpt, printer->num_options,
-                                   printer->options);
-  if (info)
-    printer_info->printer_description = info;
+  const std::string info = GetInfo();
+  const std::string make_and_model = GetMakeAndModel();
 
-  const char* state = cupsGetOption(kCUPSPrinterStateOpt, printer->num_options,
+#if defined(OS_MACOSX)
+  // On Mac, "printer-info" option specifies the human-readable printer name,
+  // while "printer-make-and-model" specifies the printer description.
+  printer_info->display_name = info;
+  printer_info->printer_description = make_and_model;
+#else
+  // On other platforms, "printer-info" specifies the printer description.
+  printer_info->display_name = printer->name;
+  printer_info->printer_description = info;
+#endif  // defined(OS_MACOSX)
+
+  const char* state = cupsGetOption(kCUPSOptPrinterState, printer->num_options,
                                     printer->options);
   if (state)
     base::StringToInt(state, &printer_info->printer_status);
 
-  const char* drv_info = cupsGetOption(kDriverNameTagName,
-                                       printer->num_options, printer->options);
-  if (drv_info)
-    printer_info->options[kDriverInfoTagName] = *drv_info;
+  printer_info->options[kDriverInfoTagName] = make_and_model;
 
   // Store printer options.
   for (int opt_index = 0; opt_index < printer->num_options; ++opt_index) {
@@ -128,17 +118,26 @@ std::string CupsPrinter::GetName() const {
 
 std::string CupsPrinter::GetMakeAndModel() const {
   const char* make_and_model =
-      cupsGetOption(kDriverNameTagName, destination_->num_options,
+      cupsGetOption(kCUPSOptPrinterMakeAndModel, destination_->num_options,
                     destination_->options);
 
   return make_and_model ? std::string(make_and_model) : std::string();
 }
 
-bool CupsPrinter::IsAvailable() const {
-  return InitializeDestInfo();
+std::string CupsPrinter::GetInfo() const {
+  const char* info = cupsGetOption(
+      kCUPSOptPrinterInfo, destination_->num_options, destination_->options);
+
+  return info ? std::string(info) : std::string();
 }
 
-bool CupsPrinter::InitializeDestInfo() const {
+std::string CupsPrinter::GetUri() const {
+  const char* uri = cupsGetOption(kCUPSOptDeviceUri, destination_->num_options,
+                                  destination_->options);
+  return uri ? std::string(uri) : std::string();
+}
+
+bool CupsPrinter::EnsureDestInfo() const {
   if (dest_info_)
     return true;
 
@@ -148,32 +147,40 @@ bool CupsPrinter::InitializeDestInfo() const {
 
 ipp_status_t CupsPrinter::CreateJob(int* job_id,
                                     const std::string& title,
+                                    const std::string& username,
                                     const std::vector<cups_option_t>& options) {
   DCHECK(dest_info_) << "Verify availability before starting a print job";
 
   cups_option_t* data = const_cast<cups_option_t*>(
       options.data());  // createDestJob will not modify the data
-  ipp_status_t create_status =
-      cupsCreateDestJob(cups_http_, destination_.get(), dest_info_.get(),
-                        job_id, title.c_str(), options.size(), data);
+  if (!username.empty())
+    cupsSetUser(username.c_str());
 
+  ipp_status_t create_status = cupsCreateDestJob(
+      cups_http_, destination_.get(), dest_info_.get(), job_id,
+      title.empty() ? nullptr : title.c_str(), options.size(), data);
+  cupsSetUser(nullptr);  // reset to default username ("anonymous")
   return create_status;
 }
 
 bool CupsPrinter::StartDocument(int job_id,
-                                const std::string& document_name,
+                                const std::string& docname,
                                 bool last_document,
+                                const std::string& username,
                                 const std::vector<cups_option_t>& options) {
   DCHECK(dest_info_);
   DCHECK(job_id);
+  if (!username.empty())
+    cupsSetUser(username.c_str());
 
   cups_option_t* data = const_cast<cups_option_t*>(
       options.data());  // createStartDestDocument will not modify the data
-  http_status_t start_doc_status =
-      cupsStartDestDocument(cups_http_, destination_.get(), dest_info_.get(),
-                            job_id, document_name.c_str(), CUPS_FORMAT_PDF,
-                            options.size(), data, last_document ? 0 : 1);
+  http_status_t start_doc_status = cupsStartDestDocument(
+      cups_http_, destination_.get(), dest_info_.get(), job_id,
+      docname.empty() ? nullptr : docname.c_str(), CUPS_FORMAT_PDF,
+      options.size(), data, last_document ? 1 : 0);
 
+  cupsSetUser(nullptr);  // reset to default username ("anonymous")
   return start_doc_status == HTTP_CONTINUE;
 }
 
@@ -192,12 +199,16 @@ bool CupsPrinter::FinishDocument() {
   return status == IPP_STATUS_OK;
 }
 
-ipp_status_t CupsPrinter::CloseJob(int job_id) {
+ipp_status_t CupsPrinter::CloseJob(int job_id, const std::string& username) {
   DCHECK(dest_info_);
   DCHECK(job_id);
+  if (!username.empty())
+    cupsSetUser(username.c_str());
 
-  return cupsCloseDestJob(cups_http_, destination_.get(), dest_info_.get(),
-                          job_id);
+  ipp_status_t result = cupsCloseDestJob(cups_http_, destination_.get(),
+                                         dest_info_.get(), job_id);
+  cupsSetUser(nullptr);  // reset to default username ("anonymous")
+  return result;
 }
 
 bool CupsPrinter::CancelJob(int job_id) {
@@ -207,6 +218,18 @@ bool CupsPrinter::CancelJob(int job_id) {
   ipp_status_t status =
       cupsCancelJob2(cups_http_, destination_->name, job_id, 0 /*cancel*/);
   return status == IPP_STATUS_OK;
+}
+
+CupsPrinter::CupsMediaMargins CupsPrinter::GetMediaMarginsByName(
+    const std::string& media_id) {
+  cups_size_t cups_media;
+  if (!EnsureDestInfo() ||
+      !cupsGetDestMediaByName(cups_http_, destination_.get(), dest_info_.get(),
+                              media_id.c_str(), CUPS_MEDIA_FLAGS_DEFAULT,
+                              &cups_media)) {
+    return {0, 0, 0, 0};
+  }
+  return {cups_media.bottom, cups_media.left, cups_media.right, cups_media.top};
 }
 
 }  // namespace printing

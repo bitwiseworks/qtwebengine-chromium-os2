@@ -16,9 +16,10 @@
 #include "third_party/blink/renderer/core/page/context_menu_controller.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/platform/cursor.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
+#include "ui/base/cursor/cursor.h"
+#include "ui/base/mojom/cursor_type.mojom-blink.h"
 
 using testing::_;
 
@@ -150,8 +151,8 @@ class LinkSelectionTest : public LinkSelectionTestBase {
     ASSERT_NE(nullptr, link_to_select);
     // We get larger range that we actually want to select, because we need a
     // slightly larger rect to include the last character to the selection.
-    auto* const range_to_select =
-        Range::Create(*document, link_to_select, 5, link_to_select, 16);
+    auto* const range_to_select = MakeGarbageCollected<Range>(
+        *document, link_to_select, 5, link_to_select, 16);
 
     const auto& selection_rect = range_to_select->BoundingBox();
     const auto& selection_rect_center_y = selection_rect.Center().Y();
@@ -191,10 +192,10 @@ TEST_F(LinkSelectionTest, HandCursorDuringLinkDrag) {
       ->LocalFrameRoot()
       .GetEventHandler()
       .ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kHand, cursor.GetType());
+  EXPECT_EQ(ui::mojom::blink::CursorType::kHand, cursor.type());
 }
 
 TEST_F(LinkSelectionTest, DragOnNothingShowsPointer) {
@@ -203,10 +204,10 @@ TEST_F(LinkSelectionTest, DragOnNothingShowsPointer) {
       ->LocalFrameRoot()
       .GetEventHandler()
       .ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kPointer, cursor.GetType());
+  EXPECT_EQ(ui::mojom::blink::CursorType::kPointer, cursor.type());
 }
 
 TEST_F(LinkSelectionTest, CaretCursorOverLinkDuringSelection) {
@@ -216,10 +217,10 @@ TEST_F(LinkSelectionTest, CaretCursorOverLinkDuringSelection) {
       ->LocalFrameRoot()
       .GetEventHandler()
       .ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kIBeam, cursor.GetType());
+  EXPECT_EQ(ui::mojom::blink::CursorType::kIBeam, cursor.type());
 }
 
 TEST_F(LinkSelectionTest, HandCursorOverLinkAfterContextMenu) {
@@ -235,10 +236,10 @@ TEST_F(LinkSelectionTest, HandCursorOverLinkAfterContextMenu) {
   frame->GetPage()->GetContextMenuController().ClearContextMenu();
 
   frame->LocalFrameRoot().GetEventHandler().ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kHand, cursor.GetType());
+  EXPECT_EQ(ui::mojom::blink::CursorType::kHand, cursor.type());
 }
 
 TEST_F(LinkSelectionTest, SingleClickWithAltStartsDownload) {
@@ -254,8 +255,8 @@ TEST_F(LinkSelectionTest, SingleClickWithAltStartsDownloadWhenTextSelected) {
   ASSERT_NE(nullptr, text_to_select);
 
   // Select some page text outside the link element.
-  const Range* range_to_select =
-      Range::Create(*document, text_to_select, 1, text_to_select, 20);
+  const auto* range_to_select = MakeGarbageCollected<Range>(
+      *document, text_to_select, 1, text_to_select, 20);
   const auto& selection_rect = range_to_select->BoundingBox();
   main_frame_->MoveRangeSelection(selection_rect.MinXMinYCorner(),
                                   selection_rect.MaxXMaxYCorner());
@@ -271,10 +272,6 @@ class LinkSelectionClickEventsTest : public LinkSelectionTestBase {
  protected:
   class MockEventListener final : public NativeEventListener {
    public:
-    static MockEventListener* Create() {
-      return MakeGarbageCollected<MockEventListener>();
-    }
-
     MOCK_METHOD2(Invoke, void(ExecutionContext* executionContext, Event*));
   };
 
@@ -309,7 +306,7 @@ class LinkSelectionClickEventsTest : public LinkSelectionTestBase {
       Persistent<Element> element_;
     } const listeners_cleaner(&element);
 
-    MockEventListener* event_handler = MockEventListener::Create();
+    auto* event_handler = MakeGarbageCollected<MockEventListener>();
     element.addEventListener(double_click_event ? event_type_names::kDblclick
                                                 : event_type_names::kClick,
                              event_handler);

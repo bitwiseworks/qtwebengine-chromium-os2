@@ -22,7 +22,7 @@ base::FilePath ShellFileSystemDelegate::GetDefaultDirectory() {
 }
 
 bool ShellFileSystemDelegate::ShowSelectFileDialog(
-    scoped_refptr<UIThreadExtensionFunction> extension_function,
+    scoped_refptr<ExtensionFunction> extension_function,
     ui::SelectFileDialog::Type type,
     const base::FilePath& default_path,
     const ui::SelectFileDialog::FileTypeInfo* file_types,
@@ -41,12 +41,12 @@ void ShellFileSystemDelegate::ConfirmSensitiveDirectoryAccess(
     bool has_write_permission,
     const base::string16& app_name,
     content::WebContents* web_contents,
-    const base::Closure& on_accept,
-    const base::Closure& on_cancel) {
+    base::OnceClosure on_accept,
+    base::OnceClosure on_cancel) {
   NOTIMPLEMENTED();
 
   // Run the cancel callback by default.
-  on_cancel.Run();
+  std::move(on_cancel).Run();
 }
 
 int ShellFileSystemDelegate::GetDescriptionIdForAcceptType(

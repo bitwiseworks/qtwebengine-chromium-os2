@@ -23,7 +23,7 @@ class NGPaintFragmentTraversalTest : public RenderingTest,
   void SetUpHtml(const char* container_id, const char* html) {
     SetBodyInnerHTML(html);
     layout_block_flow_ =
-        ToLayoutBlockFlow(GetLayoutObjectByElementId(container_id));
+        To<LayoutBlockFlow>(GetLayoutObjectByElementId(container_id));
     root_fragment_ = layout_block_flow_->PaintFragment();
   }
 
@@ -59,10 +59,12 @@ class NGPaintFragmentTraversalTest : public RenderingTest,
   }
 
   LayoutBlockFlow* layout_block_flow_;
-  NGPaintFragment* root_fragment_;
+  const NGPaintFragment* root_fragment_;
 };
 
 TEST_F(NGPaintFragmentTraversalTest, MoveToNext) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t", R"HTML(
     <div id=t>
       line0
@@ -83,6 +85,8 @@ TEST_F(NGPaintFragmentTraversalTest, MoveToNext) {
 }
 
 TEST_F(NGPaintFragmentTraversalTest, MoveToNextWithRoot) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t", R"HTML(
     <div id=t>
       line0
@@ -101,6 +105,8 @@ TEST_F(NGPaintFragmentTraversalTest, MoveToNextWithRoot) {
 }
 
 TEST_F(NGPaintFragmentTraversalTest, MoveToPrevious) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t", R"HTML(
     <div id=t>
       line0
@@ -122,6 +128,8 @@ TEST_F(NGPaintFragmentTraversalTest, MoveToPrevious) {
 }
 
 TEST_F(NGPaintFragmentTraversalTest, MoveToPreviousWithRoot) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t", R"HTML(
     <div id=t>
       line0
@@ -141,6 +149,8 @@ TEST_F(NGPaintFragmentTraversalTest, MoveToPreviousWithRoot) {
 }
 
 TEST_F(NGPaintFragmentTraversalTest, MoveTo) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t", R"HTML(
     <div id=t>
       line0
@@ -162,6 +172,8 @@ TEST_F(NGPaintFragmentTraversalTest, MoveTo) {
 }
 
 TEST_F(NGPaintFragmentTraversalTest, MoveToWithRoot) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t", R"HTML(
     <div id=t>
       line0
@@ -180,24 +192,9 @@ TEST_F(NGPaintFragmentTraversalTest, MoveToWithRoot) {
               ElementsAreArray({span, span->FirstChild(), br}));
 }
 
-TEST_F(NGPaintFragmentTraversalTest, PreviousLineOf) {
-  SetUpHtml("t", "<div id=t>foo<br>bar</div>");
-  ASSERT_EQ(2u, RootChildren().size());
-  EXPECT_EQ(nullptr, NGPaintFragmentTraversal::PreviousLineOf(
-                         *ToList(RootChildren())[0]));
-  EXPECT_EQ(ToList(RootChildren())[0], NGPaintFragmentTraversal::PreviousLineOf(
-                                           *ToList(RootChildren())[1]));
-}
-
-TEST_F(NGPaintFragmentTraversalTest, PreviousLineInListItem) {
-  SetUpHtml("t", "<ul><li id=t>foo</li></ul>");
-  ASSERT_EQ(2u, RootChildren().size());
-  ASSERT_TRUE(ToList(RootChildren())[0]->PhysicalFragment().IsListMarker());
-  EXPECT_EQ(nullptr, NGPaintFragmentTraversal::PreviousLineOf(
-                         *ToList(RootChildren())[1]));
-}
-
 TEST_F(NGPaintFragmentTraversalTest, InlineDescendantsOf) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   SetUpHtml("t",
             "<ul>"
             "<li id=t style='position: absolute'>"
@@ -210,17 +207,19 @@ TEST_F(NGPaintFragmentTraversalTest, InlineDescendantsOf) {
 
   // Tests that floats, out-of-flow positioned and descendants of atomic inlines
   // are excluded.
-  auto descendants =
-      NGPaintFragmentTraversal::InlineDescendantsOf(*root_fragment_);
+  Vector<const NGPaintFragment*> descendants;
+  for (const NGPaintFragment* fragment :
+       NGPaintFragmentTraversal::InlineDescendantsOf(*root_fragment_))
+    descendants.push_back(fragment);
   ASSERT_EQ(6u, descendants.size());
   // TODO(layout-dev): This list marker is not in any line box. Should it be
   // treated as inline?
-  EXPECT_TRUE(descendants[0].fragment->PhysicalFragment().IsListMarker());
-  EXPECT_TRUE(descendants[1].fragment->PhysicalFragment().IsLineBox());
-  EXPECT_TRUE(descendants[2].fragment->PhysicalFragment().IsText());  // "text"
-  EXPECT_TRUE(descendants[3].fragment->PhysicalFragment().IsText());  // "br"
-  EXPECT_TRUE(descendants[4].fragment->PhysicalFragment().IsLineBox());
-  EXPECT_TRUE(descendants[5].fragment->PhysicalFragment().IsAtomicInline());
+  EXPECT_TRUE(descendants[0]->PhysicalFragment().IsListMarker());
+  EXPECT_TRUE(descendants[1]->PhysicalFragment().IsLineBox());
+  EXPECT_TRUE(descendants[2]->PhysicalFragment().IsText());  // "text"
+  EXPECT_TRUE(descendants[3]->PhysicalFragment().IsText());  // "br"
+  EXPECT_TRUE(descendants[4]->PhysicalFragment().IsLineBox());
+  EXPECT_TRUE(descendants[5]->PhysicalFragment().IsAtomicInline());
 }
 
 }  // namespace blink

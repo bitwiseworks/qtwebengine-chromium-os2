@@ -5,25 +5,26 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_DOWNLOADS_MOCK_DOWNLOADS_PAGE_H_
 #define CHROME_BROWSER_UI_WEBUI_DOWNLOADS_MOCK_DOWNLOADS_PAGE_H_
 
-#include "chrome/browser/ui/webui/downloads/downloads.mojom.h"
+#include <vector>
 
-#include "mojo/public/cpp/bindings/binding.h"
+#include "chrome/browser/ui/webui/downloads/downloads.mojom.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-class MockPage : public md_downloads::mojom::Page {
+class MockPage : public downloads::mojom::Page {
  public:
   MockPage();
   ~MockPage() override;
 
-  md_downloads::mojom::PagePtr BindAndGetPtr();
+  mojo::PendingRemote<downloads::mojom::Page> BindAndGetRemote();
 
   MOCK_METHOD1(RemoveItem, void(int));
-  MOCK_METHOD2(UpdateItem, void(int, md_downloads::mojom::DataPtr));
-  MOCK_METHOD2(InsertItems,
-               void(int, std::vector<md_downloads::mojom::DataPtr>));
+  MOCK_METHOD2(UpdateItem, void(int, downloads::mojom::DataPtr));
+  MOCK_METHOD2(InsertItems, void(int, std::vector<downloads::mojom::DataPtr>));
   MOCK_METHOD0(ClearAll, void());
 
-  mojo::Binding<md_downloads::mojom::Page> binding_;
+  mojo::Receiver<downloads::mojom::Page> receiver_{this};
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_DOWNLOADS_MOCK_DOWNLOADS_PAGE_H_

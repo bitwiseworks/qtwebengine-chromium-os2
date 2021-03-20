@@ -33,14 +33,18 @@
 #include <stdint.h>
 
 #include "base/stl_util.h"
-#include "services/network/public/mojom/cors.mojom-shared.h"
+#include "net/base/url_util.h"
+#include "services/network/public/mojom/cors.mojom-blink.h"
+#include "services/network/public/mojom/cors_origin_pattern.mojom-blink.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/blob/blob_url.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin_hash.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_operators.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
@@ -71,9 +75,9 @@ TEST_F(SecurityOriginTest, LocalAccess) {
   scoped_refptr<const SecurityOrigin> file2 =
       SecurityOrigin::CreateFromString("file:///etc/shadow");
 
-  EXPECT_TRUE(file1->IsSameSchemeHostPort(file1.get()));
-  EXPECT_TRUE(file1->IsSameSchemeHostPort(file2.get()));
-  EXPECT_TRUE(file2->IsSameSchemeHostPort(file1.get()));
+  EXPECT_TRUE(file1->IsSameOriginWith(file1.get()));
+  EXPECT_TRUE(file1->IsSameOriginWith(file2.get()));
+  EXPECT_TRUE(file2->IsSameOriginWith(file1.get()));
 
   EXPECT_TRUE(file1->CanAccess(file1.get()));
   EXPECT_TRUE(file1->CanAccess(file2.get()));
@@ -82,9 +86,9 @@ TEST_F(SecurityOriginTest, LocalAccess) {
   // Block |file1|'s access to local origins. It should now be same-origin
   // with itself, but shouldn't have access to |file2|.
   file1->BlockLocalAccessFromLocalOrigin();
-  EXPECT_TRUE(file1->IsSameSchemeHostPort(file1.get()));
-  EXPECT_FALSE(file1->IsSameSchemeHostPort(file2.get()));
-  EXPECT_FALSE(file2->IsSameSchemeHostPort(file1.get()));
+  EXPECT_TRUE(file1->IsSameOriginWith(file1.get()));
+  EXPECT_FALSE(file1->IsSameOriginWith(file2.get()));
+  EXPECT_FALSE(file2->IsSameOriginWith(file1.get()));
 
   EXPECT_TRUE(file1->CanAccess(file1.get()));
   EXPECT_FALSE(file1->CanAccess(file2.get()));
@@ -93,65 +97,86 @@ TEST_F(SecurityOriginTest, LocalAccess) {
 
 TEST_F(SecurityOriginTest, IsPotentiallyTrustworthy) {
   struct TestCase {
-    bool access_granted;
+    bool is_potentially_trustworthy;
+    bool is_localhost;
     const char* url;
   };
 
   TestCase inputs[] = {
       // Access is granted to webservers running on localhost.
-      {true, "http://localhost"},
-      {true, "http://LOCALHOST"},
-      {true, "http://localhost:100"},
-      {true, "http://a.localhost"},
-      {true, "http://127.0.0.1"},
-      {true, "http://127.0.0.2"},
-      {true, "http://127.1.0.2"},
-      {true, "http://0177.00.00.01"},
-      {true, "http://[::1]"},
-      {true, "http://[0:0::1]"},
-      {true, "http://[0:0:0:0:0:0:0:1]"},
-      {true, "http://[::1]:21"},
-      {true, "http://127.0.0.1:8080"},
-      {true, "ftp://127.0.0.1"},
-      {true, "ftp://127.0.0.1:443"},
-      {true, "ws://127.0.0.1"},
+      {true, true, "http://localhost"},
+      {true, true, "http://localhost."},
+      {true, true, "http://LOCALHOST"},
+      {true, true, "http://localhost:100"},
+      {true, true, "http://a.localhost"},
+      {true, true, "http://a.b.localhost"},
+      {true, true, "http://127.0.0.1"},
+      {true, true, "http://127.0.0.2"},
+      {true, true, "http://127.1.0.2"},
+      {true, true, "http://0177.00.00.01"},
+      {true, true, "http://[::1]"},
+      {true, true, "http://[0:0::1]"},
+      {true, true, "http://[0:0:0:0:0:0:0:1]"},
+      {true, true, "http://[::1]:21"},
+      {true, true, "http://127.0.0.1:8080"},
+      {true, true, "ftp://127.0.0.1"},
+      {true, true, "ftp://127.0.0.1:443"},
+      {true, true, "ws://127.0.0.1"},
 
-      // Access is denied to non-localhost over HTTP
-      {false, "http://[1::]"},
-      {false, "http://[::2]"},
-      {false, "http://[1::1]"},
-      {false, "http://[1:2::3]"},
-      {false, "http://[::127.0.0.1]"},
-      {false, "http://a.127.0.0.1"},
-      {false, "http://127.0.0.1.b"},
-      {false, "http://localhost.a"},
+      // Non-localhost over HTTP
+      {false, false, "http://[1::]"},
+      {false, false, "http://[::2]"},
+      {false, false, "http://[1::1]"},
+      {false, false, "http://[1:2::3]"},
+      {false, false, "http://[::127.0.0.1]"},
+      {false, false, "http://a.127.0.0.1"},
+      {false, false, "http://127.0.0.1.b"},
+      {false, false, "http://localhost.a"},
 
-      // Access is granted to all secure transports.
-      {true, "https://foobar.com"},
-      {true, "wss://foobar.com"},
+      // loopback resolves to localhost on Windows, but not
+      // recognized generically here.
+      {false, false, "http://loopback"},
 
-      // Access is denied to insecure transports.
-      {false, "ftp://foobar.com"},
-      {false, "http://foobar.com"},
-      {false, "http://foobar.com:443"},
-      {false, "ws://foobar.com"},
+      // IPv4 mapped IPv6 literals for 127.0.0.1.
+      {false, false, "http://[::ffff:127.0.0.1]"},
+      {false, false, "http://[::ffff:7f00:1]"},
 
-      // Access is granted to local files
-      {true, "file:///home/foobar/index.html"},
+      // IPv4 compatible IPv6 literal for 127.0.0.1.
+      {false, false, "http://[::127.0.0.1]"},
+
+      // TODO(eroman): Not documented why these are recognized.
+      {true, true, "http://localhost6"},
+      {true, true, "ftp://localhost6.localdomain6"},
+      {true, true, "http://localhost.localdomain"},
+
+      // Secure transports are considered trustworthy.
+      {true, false, "https://foobar.com"},
+      {true, false, "wss://foobar.com"},
+
+      // Insecure transports are not considered trustworthy.
+      {false, false, "ftp://foobar.com"},
+      {false, false, "http://foobar.com"},
+      {false, false, "http://foobar.com:443"},
+      {false, false, "ws://foobar.com"},
+
+      // Local files are considered trustworthy.
+      {true, false, "file:///home/foobar/index.html"},
 
       // blob: URLs must look to the inner URL's origin, and apply the same
       // rules as above. Spot check some of them
-      {true, "blob:http://localhost:1000/578223a1-8c13-17b3-84d5-eca045ae384a"},
-      {true, "blob:https://foopy:99/578223a1-8c13-17b3-84d5-eca045ae384a"},
-      {false, "blob:http://baz:99/578223a1-8c13-17b3-84d5-eca045ae384a"},
-      {false, "blob:ftp://evil:99/578223a1-8c13-17b3-84d5-eca045ae384a"},
+      {true, true,
+       "blob:http://localhost:1000/578223a1-8c13-17b3-84d5-eca045ae384a"},
+      {true, false,
+       "blob:https://foopy:99/578223a1-8c13-17b3-84d5-eca045ae384a"},
+      {false, false, "blob:http://baz:99/578223a1-8c13-17b3-84d5-eca045ae384a"},
+      {false, false, "blob:ftp://evil:99/578223a1-8c13-17b3-84d5-eca045ae384a"},
 
       // filesystem: URLs work the same as blob: URLs, and look to the inner
       // URL for security origin.
-      {true, "filesystem:http://localhost:1000/foo"},
-      {true, "filesystem:https://foopy:99/foo"},
-      {false, "filesystem:http://baz:99/foo"},
-      {false, "filesystem:ftp://evil:99/foo"},
+      {true, true, "filesystem:http://localhost:1000/foo"},
+      {true, false, "filesystem:https://foopy:99/foo"},
+      {false, false, "filesystem:http://baz:99/foo"},
+      {false, false, "filesystem:ftp://evil:99/foo"},
   };
 
   for (size_t i = 0; i < base::size(inputs); ++i) {
@@ -159,7 +184,17 @@ TEST_F(SecurityOriginTest, IsPotentiallyTrustworthy) {
     scoped_refptr<const SecurityOrigin> origin =
         SecurityOrigin::CreateFromString(inputs[i].url);
     String error_message;
-    EXPECT_EQ(inputs[i].access_granted, origin->IsPotentiallyTrustworthy());
+    EXPECT_EQ(inputs[i].is_potentially_trustworthy,
+              origin->IsPotentiallyTrustworthy());
+    EXPECT_EQ(inputs[i].is_localhost, origin->IsLocalhost());
+
+    GURL test_gurl(inputs[i].url);
+    if (!(test_gurl.SchemeIsBlob() || test_gurl.SchemeIsFileSystem())) {
+      // Check that the origin's notion of localhost matches //net's notion of
+      // localhost. This is skipped for blob: and filesystem: URLs since
+      // SecurityOrigin uses their inner URL's origin.
+      EXPECT_EQ(net::IsLocalhost(GURL(inputs[i].url)), origin->IsLocalhost());
+    }
   }
 
   // Anonymous opaque origins are not considered secure.
@@ -203,7 +238,7 @@ TEST_F(SecurityOriginTest, IsSecureViaTrustworthy) {
   for (const char* test : urls) {
     KURL url(test);
     EXPECT_FALSE(SecurityOrigin::IsSecure(url));
-    SecurityPolicy::AddOriginTrustworthyWhiteList(
+    SecurityPolicy::AddOriginToTrustworthySafelist(
         SecurityOrigin::CreateFromString(url)->ToRawString());
     EXPECT_TRUE(SecurityOrigin::IsSecure(url));
   }
@@ -212,7 +247,7 @@ TEST_F(SecurityOriginTest, IsSecureViaTrustworthy) {
 TEST_F(SecurityOriginTest, IsSecureViaTrustworthyHostnamePattern) {
   KURL url("http://bar.foo.com");
   EXPECT_FALSE(SecurityOrigin::IsSecure(url));
-  SecurityPolicy::AddOriginTrustworthyWhiteList("*.foo.com");
+  SecurityPolicy::AddOriginToTrustworthySafelist("*.foo.com");
   EXPECT_TRUE(SecurityOrigin::IsSecure(url));
 }
 
@@ -220,7 +255,7 @@ TEST_F(SecurityOriginTest, IsSecureViaTrustworthyHostnamePattern) {
 TEST_F(SecurityOriginTest, IsSecureViaTrustworthyHostnamePatternEmptyHostname) {
   KURL url("file://foo");
   EXPECT_FALSE(SecurityOrigin::IsSecure(url));
-  SecurityPolicy::AddOriginTrustworthyWhiteList("*.foo.com");
+  SecurityPolicy::AddOriginToTrustworthySafelist("*.foo.com");
   EXPECT_FALSE(SecurityOrigin::IsSecure(url));
 }
 
@@ -361,7 +396,10 @@ TEST_F(SecurityOriginTest, CanRequestWithAllowListedAccess) {
   EXPECT_FALSE(origin->CanRequest(url));
   // Adding the url to the access allowlist should allow the request.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *origin, "https", "example.com", false,
+      *origin, "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
   EXPECT_TRUE(origin->CanRequest(url));
 }
@@ -374,10 +412,16 @@ TEST_F(SecurityOriginTest, CannotRequestWithBlockListedAccess) {
 
   // BlockList that is more or same specificity wins.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *origin, "https", "example.com", true,
+      *origin, "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *origin, "https", "example.com", false,
+      *origin, "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kLowPriority);
   // Block since example.com is on the allowlist & blocklist.
   EXPECT_FALSE(origin->CanRequest(blocked_url));
@@ -392,16 +436,45 @@ TEST_F(SecurityOriginTest, CanRequestWithMoreSpecificAllowList) {
   const blink::KURL blocked_url("https://example.com");
 
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *origin, "https", "test.example.com", true,
+      *origin, "https", "test.example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *origin, "https", "example.com", true,
+      *origin, "https", "example.com",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kLowPriority);
   // Allow since test.example.com (allowlist) has a higher priority than
   // *.example.com (blocklist).
   EXPECT_TRUE(origin->CanRequest(allowed_url));
   // Block since example.com isn't on the allowlist.
   EXPECT_FALSE(origin->CanRequest(blocked_url));
+}
+
+TEST_F(SecurityOriginTest, CanRequestWithPortSpecificAllowList) {
+  scoped_refptr<const SecurityOrigin> origin =
+      SecurityOrigin::CreateFromString("https://chromium.org");
+  SecurityPolicy::AddOriginAccessAllowListEntry(
+      *origin, "https", "test1.example.com", 443,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowOnlySpecifiedPort,
+      network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
+  SecurityPolicy::AddOriginAccessAllowListEntry(
+      *origin, "https", "test2.example.com", 444,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowOnlySpecifiedPort,
+      network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
+
+  EXPECT_TRUE(origin->CanRequest(blink::KURL("https://test1.example.com")));
+  EXPECT_TRUE(origin->CanRequest(blink::KURL("https://test1.example.com:443")));
+  EXPECT_FALSE(origin->CanRequest(blink::KURL("https://test1.example.com:43")));
+
+  EXPECT_FALSE(origin->CanRequest(blink::KURL("https://test2.example.com")));
+  EXPECT_FALSE(origin->CanRequest(blink::KURL("https://test2.example.com:44")));
+  EXPECT_TRUE(origin->CanRequest(blink::KURL("https://test2.example.com:444")));
 }
 
 TEST_F(SecurityOriginTest, PunycodeNotUnicode) {
@@ -416,14 +489,20 @@ TEST_F(SecurityOriginTest, PunycodeNotUnicode) {
 
   // Verify unicode origin can not be allowlisted.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *origin, "https", "☃.net", true,
+      *origin, "https", "☃.net",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
   EXPECT_FALSE(origin->CanRequest(punycode_url));
   EXPECT_FALSE(origin->CanRequest(unicode_url));
 
   // Verify punycode allowlist only affects punycode URLs.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *origin, "https", "xn--n3h.net", true,
+      *origin, "https", "xn--n3h.net",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kMediumPriority);
   EXPECT_TRUE(origin->CanRequest(punycode_url));
   EXPECT_FALSE(origin->CanRequest(unicode_url));
@@ -436,7 +515,10 @@ TEST_F(SecurityOriginTest, PunycodeNotUnicode) {
 
   // Simulate <all_urls> being in the extension permissions.
   SecurityPolicy::AddOriginAccessAllowListEntry(
-      *origin, "https", "", true,
+      *origin, "https", "",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority);
 
   EXPECT_TRUE(origin->CanRequest(punycode_url));
@@ -444,14 +526,20 @@ TEST_F(SecurityOriginTest, PunycodeNotUnicode) {
 
   // Verify unicode origin can not be blocklisted.
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *origin, "https", "☃.net", true,
+      *origin, "https", "☃.net",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kLowPriority);
   EXPECT_TRUE(origin->CanRequest(punycode_url));
   EXPECT_FALSE(origin->CanRequest(unicode_url));
 
   // Verify punycode blocklist only affects punycode URLs.
   SecurityPolicy::AddOriginAccessBlockListEntry(
-      *origin, "https", "xn--n3h.net", true,
+      *origin, "https", "xn--n3h.net",
+      /*destination_port=*/0,
+      network::mojom::CorsDomainMatchMode::kAllowSubdomains,
+      network::mojom::CorsPortMatchMode::kAllowAnyPort,
       network::mojom::CorsOriginAccessMatchPriority::kLowPriority);
   EXPECT_FALSE(origin->CanRequest(punycode_url));
   EXPECT_FALSE(origin->CanRequest(unicode_url));
@@ -459,8 +547,8 @@ TEST_F(SecurityOriginTest, PunycodeNotUnicode) {
 
 TEST_F(SecurityOriginTest, PortAndEffectivePortMethod) {
   struct TestCase {
-    unsigned short port;
-    unsigned short effective_port;
+    uint16_t port;
+    uint16_t effective_port;
     const char* origin;
   } cases[] = {
       {0, 80, "http://example.com"},
@@ -492,7 +580,6 @@ TEST_F(SecurityOriginTest, CreateFromTuple) {
       {"https", "example.com", 444, "https://example.com:444"},
       {"file", "", 0, "file://"},
       {"file", "example.com", 0, "file://"},
-      {"gopher", "Foo.com", 70, "gopher://foo.com"},
   };
 
   for (const auto& test : cases) {
@@ -535,17 +622,17 @@ TEST_F(SecurityOriginTest, OpaquenessPropagatesToBlobUrls) {
   }
 }
 
-TEST_F(SecurityOriginTest, OpaqueOriginIsSameSchemeHostPort) {
+TEST_F(SecurityOriginTest, OpaqueOriginIsSameOriginWith) {
   scoped_refptr<const SecurityOrigin> opaque_origin =
       SecurityOrigin::CreateUniqueOpaque();
   scoped_refptr<const SecurityOrigin> tuple_origin =
       SecurityOrigin::CreateFromString("http://example.com");
 
-  EXPECT_TRUE(opaque_origin->IsSameSchemeHostPort(opaque_origin.get()));
-  EXPECT_FALSE(SecurityOrigin::CreateUniqueOpaque()->IsSameSchemeHostPort(
+  EXPECT_TRUE(opaque_origin->IsSameOriginWith(opaque_origin.get()));
+  EXPECT_FALSE(SecurityOrigin::CreateUniqueOpaque()->IsSameOriginWith(
       opaque_origin.get()));
-  EXPECT_FALSE(tuple_origin->IsSameSchemeHostPort(opaque_origin.get()));
-  EXPECT_FALSE(opaque_origin->IsSameSchemeHostPort(tuple_origin.get()));
+  EXPECT_FALSE(tuple_origin->IsSameOriginWith(opaque_origin.get()));
+  EXPECT_FALSE(opaque_origin->IsSameOriginWith(tuple_origin.get()));
 }
 
 TEST_F(SecurityOriginTest, CanonicalizeHost) {
@@ -575,6 +662,7 @@ TEST_F(SecurityOriginTest, CanonicalizeHost) {
 }
 
 TEST_F(SecurityOriginTest, UrlOriginConversions) {
+  url::ScopedSchemeRegistryForTests scoped_registry;
   url::AddLocalScheme("nonstandard-but-local");
   SchemeRegistry::RegisterURLSchemeAsLocal("nonstandard-but-local");
   struct TestCases {
@@ -612,9 +700,6 @@ TEST_F(SecurityOriginTest, UrlOriginConversions) {
 
       // Registered URLs
       {"ftp://example.com/", "ftp", "example.com", 21},
-      // crbug.com/781342
-      // Conversion doesn't work for gopher.
-      // {"gopher://example.com/", "gopher", "example.com", 70},
       {"ws://example.com/", "ws", "example.com", 80},
       {"wss://example.com/", "wss", "example.com", 443},
 
@@ -634,9 +719,6 @@ TEST_F(SecurityOriginTest, UrlOriginConversions) {
        123},
       {"blob:https://example.com/guid-goes-here", "https", "example.com", 443},
       {"blob:http://u:p@example.com/guid-goes-here", "http", "example.com", 80},
-
-      // Gopher:
-      {"gopher://8u.9.Vx6/", "gopher", "8u.9.vx6", 70},
   };
 
   for (const auto& test_case : cases) {
@@ -663,23 +745,23 @@ TEST_F(SecurityOriginTest, UrlOriginConversions) {
     EXPECT_EQ(test_case.port, security_origin_via_kurl->EffectivePort());
     EXPECT_EQ(test_case.opaque, security_origin_via_gurl->IsOpaque());
     EXPECT_EQ(test_case.opaque, security_origin_via_kurl->IsOpaque());
-    EXPECT_EQ(!test_case.opaque, security_origin_via_kurl->IsSameSchemeHostPort(
+    EXPECT_EQ(!test_case.opaque, security_origin_via_kurl->IsSameOriginWith(
                                      security_origin_via_gurl.get()));
-    EXPECT_EQ(!test_case.opaque, security_origin_via_gurl->IsSameSchemeHostPort(
+    EXPECT_EQ(!test_case.opaque, security_origin_via_gurl->IsSameOriginWith(
                                      security_origin_via_kurl.get()));
 
     if (!test_case.opaque) {
       scoped_refptr<const SecurityOrigin> security_origin =
           SecurityOrigin::Create(test_case.scheme, test_case.host,
                                  test_case.port);
-      EXPECT_TRUE(security_origin->IsSameSchemeHostPort(
-          security_origin_via_gurl.get()));
-      EXPECT_TRUE(security_origin->IsSameSchemeHostPort(
-          security_origin_via_kurl.get()));
-      EXPECT_TRUE(security_origin_via_gurl->IsSameSchemeHostPort(
-          security_origin.get()));
-      EXPECT_TRUE(security_origin_via_kurl->IsSameSchemeHostPort(
-          security_origin.get()));
+      EXPECT_TRUE(
+          security_origin->IsSameOriginWith(security_origin_via_gurl.get()));
+      EXPECT_TRUE(
+          security_origin->IsSameOriginWith(security_origin_via_kurl.get()));
+      EXPECT_TRUE(
+          security_origin_via_gurl->IsSameOriginWith(security_origin.get()));
+      EXPECT_TRUE(
+          security_origin_via_kurl->IsSameOriginWith(security_origin.get()));
     }
 
     // Test ToUrlOrigin
@@ -762,6 +844,7 @@ TEST_F(SecurityOriginTest, EffectiveDomainSetFromDom) {
 }
 
 TEST_F(SecurityOriginTest, ToTokenForFastCheck) {
+  base::UnguessableToken agent_cluster_id = base::UnguessableToken::Create();
   constexpr struct {
     const char* url;
     const char* token;
@@ -785,9 +868,13 @@ TEST_F(SecurityOriginTest, ToTokenForFastCheck) {
 
   for (const auto& test : kTestCases) {
     SCOPED_TRACE(test.url);
-    scoped_refptr<const SecurityOrigin> origin =
-        SecurityOrigin::CreateFromString(test.url);
-    EXPECT_EQ(test.token, origin->ToTokenForFastCheck()) << test.token;
+    scoped_refptr<SecurityOrigin> origin =
+        SecurityOrigin::CreateFromString(test.url)->GetOriginForAgentCluster(
+            agent_cluster_id);
+    String expected_token;
+    if (test.token)
+      expected_token = test.token + String(agent_cluster_id.ToString().c_str());
+    EXPECT_EQ(expected_token, origin->ToTokenForFastCheck()) << expected_token;
   }
 }
 
@@ -798,6 +885,7 @@ TEST_F(SecurityOriginTest, NonStandardScheme) {
 }
 
 TEST_F(SecurityOriginTest, NonStandardSchemeWithAndroidWebViewHack) {
+  url::ScopedSchemeRegistryForTests scoped_registry;
   url::EnableNonStandardSchemesForAndroidWebView();
   scoped_refptr<const SecurityOrigin> origin =
       SecurityOrigin::CreateFromString("cow://");
@@ -805,7 +893,280 @@ TEST_F(SecurityOriginTest, NonStandardSchemeWithAndroidWebViewHack) {
   EXPECT_EQ("cow", origin->Protocol());
   EXPECT_EQ("", origin->Host());
   EXPECT_EQ(0, origin->Port());
-  url::Shutdown();
+}
+
+TEST_F(SecurityOriginTest, OpaqueIsolatedCopy) {
+  scoped_refptr<const SecurityOrigin> origin =
+      SecurityOrigin::CreateUniqueOpaque();
+  scoped_refptr<const SecurityOrigin> copied = origin->IsolatedCopy();
+  EXPECT_TRUE(origin->CanAccess(copied.get()));
+  EXPECT_TRUE(origin->IsSameOriginWith(copied.get()));
+  EXPECT_EQ(SecurityOriginHash::GetHash(origin),
+            SecurityOriginHash::GetHash(copied));
+  EXPECT_TRUE(SecurityOriginHash::Equal(origin, copied));
+}
+
+TEST_F(SecurityOriginTest, EdgeCases) {
+  scoped_refptr<SecurityOrigin> nulled_domain =
+      SecurityOrigin::CreateFromString("http://localhost");
+  nulled_domain->SetDomainFromDOM("null");
+  EXPECT_TRUE(nulled_domain->CanAccess(nulled_domain.get()));
+
+  scoped_refptr<SecurityOrigin> local =
+      SecurityOrigin::CreateFromString("file:///foo/bar");
+  local->BlockLocalAccessFromLocalOrigin();
+  EXPECT_TRUE(local->IsSameOriginWith(local.get()));
+}
+
+TEST_F(SecurityOriginTest, RegistrableDomain) {
+  scoped_refptr<SecurityOrigin> opaque = SecurityOrigin::CreateUniqueOpaque();
+  EXPECT_TRUE(opaque->RegistrableDomain().IsNull());
+
+  scoped_refptr<SecurityOrigin> ip_address =
+      SecurityOrigin::CreateFromString("http://0.0.0.0");
+  EXPECT_TRUE(ip_address->RegistrableDomain().IsNull());
+
+  scoped_refptr<SecurityOrigin> public_suffix =
+      SecurityOrigin::CreateFromString("http://com");
+  EXPECT_TRUE(public_suffix->RegistrableDomain().IsNull());
+
+  scoped_refptr<SecurityOrigin> registrable =
+      SecurityOrigin::CreateFromString("http://example.com");
+  EXPECT_EQ(String("example.com"), registrable->RegistrableDomain());
+
+  scoped_refptr<SecurityOrigin> subdomain =
+      SecurityOrigin::CreateFromString("http://foo.example.com");
+  EXPECT_EQ(String("example.com"), subdomain->RegistrableDomain());
+}
+
+TEST_F(SecurityOriginTest, IsSameOriginWith) {
+  struct TestCase {
+    bool same_origin;
+    const char* a;
+    const char* b;
+  } tests[] = {{true, "https://a.com", "https://a.com"},
+
+               // Schemes
+               {false, "https://a.com", "http://a.com"},
+
+               // Hosts
+               {false, "https://a.com", "https://not-a.com"},
+               {false, "https://a.com", "https://sub.a.com"},
+
+               // Ports
+               {true, "https://a.com", "https://a.com:443"},
+               {false, "https://a.com", "https://a.com:444"},
+               {false, "https://a.com:442", "https://a.com:443"},
+
+               // Opaque
+               {false, "data:text/html,whatever", "data:text/html,whatever"}};
+
+  for (const auto& test : tests) {
+    SCOPED_TRACE(testing::Message() << "Origin 1: `" << test.a << "` "
+                                    << "Origin 2: `" << test.b << "`\n");
+    scoped_refptr<SecurityOrigin> a = SecurityOrigin::CreateFromString(test.a);
+    scoped_refptr<SecurityOrigin> b = SecurityOrigin::CreateFromString(test.b);
+    EXPECT_EQ(test.same_origin, a->IsSameOriginWith(b.get()));
+    EXPECT_EQ(test.same_origin, b->IsSameOriginWith(a.get()));
+
+    // Self-comparison
+    EXPECT_TRUE(a->IsSameOriginWith(a.get()));
+    EXPECT_TRUE(b->IsSameOriginWith(b.get()));
+
+    // DeriveNewOpaqueOrigin
+    EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginWith(a.get()));
+    EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginWith(a.get()));
+    EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginWith(b.get()));
+    EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginWith(b.get()));
+    EXPECT_FALSE(b->IsSameOriginWith(a->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(b->IsSameOriginWith(a->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(a->IsSameOriginWith(b->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(b->IsSameOriginWith(b->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginWith(
+        a->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginWith(
+        b->DeriveNewOpaqueOrigin().get()));
+
+    // UniversalAccess does not change the result.
+    a->GrantUniversalAccess();
+    EXPECT_EQ(test.same_origin, a->IsSameOriginWith(b.get()));
+    EXPECT_EQ(test.same_origin, b->IsSameOriginWith(a.get()));
+  }
+}
+
+TEST_F(SecurityOriginTest, IsSameOriginWithWithLocalScheme) {
+  scoped_refptr<SecurityOrigin> a =
+      SecurityOrigin::CreateFromString("file:///etc/passwd");
+  scoped_refptr<SecurityOrigin> b =
+      SecurityOrigin::CreateFromString("file:///etc/hosts");
+
+  // Self-comparison
+  EXPECT_TRUE(a->IsSameOriginWith(a.get()));
+  EXPECT_TRUE(b->IsSameOriginWith(b.get()));
+
+  // block_local_access_from_local_origin_ defaults to `false`:
+  EXPECT_TRUE(a->IsSameOriginWith(b.get()));
+  EXPECT_TRUE(b->IsSameOriginWith(a.get()));
+
+  // DeriveNewOpaqueOrigin
+  EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginWith(a.get()));
+  EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginWith(a.get()));
+  EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginWith(b.get()));
+  EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginWith(b.get()));
+  EXPECT_FALSE(b->IsSameOriginWith(a->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(b->IsSameOriginWith(a->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(a->IsSameOriginWith(b->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(b->IsSameOriginWith(b->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginWith(
+      a->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginWith(
+      b->DeriveNewOpaqueOrigin().get()));
+
+  // Set block_local_access_from_local_origin_ to `true`:
+  a->BlockLocalAccessFromLocalOrigin();
+  EXPECT_FALSE(a->IsSameOriginWith(b.get()));
+  EXPECT_FALSE(b->IsSameOriginWith(a.get()));
+
+  // Self-comparison should still be true.
+  EXPECT_TRUE(a->IsSameOriginWith(a.get()));
+  EXPECT_TRUE(b->IsSameOriginWith(b.get()));
+
+  // UniversalAccess does not override
+  a->GrantUniversalAccess();
+  EXPECT_FALSE(a->IsSameOriginWith(b.get()));
+  EXPECT_FALSE(b->IsSameOriginWith(a.get()));
+}
+
+TEST_F(SecurityOriginTest, IsSameOriginDomainWith) {
+  struct TestCase {
+    bool same_origin_domain;
+    const char* a;
+    const char* domain_a;  // empty string === no `domain` set.
+    const char* b;
+    const char* domain_b;
+  } tests[] = {
+      {true, "https://a.com", "", "https://a.com", ""},
+      {false, "https://a.com", "a.com", "https://a.com", ""},
+      {true, "https://a.com", "a.com", "https://a.com", "a.com"},
+      {false, "https://sub.a.com", "", "https://a.com", ""},
+      {false, "https://sub.a.com", "a.com", "https://a.com", ""},
+      {true, "https://sub.a.com", "a.com", "https://a.com", "a.com"},
+      {true, "https://sub.a.com", "a.com", "https://sub.a.com", "a.com"},
+      {true, "https://sub.a.com", "a.com", "https://sub.sub.a.com", "a.com"},
+
+      // Schemes.
+      {false, "https://a.com", "", "http://a.com", ""},
+      {false, "https://a.com", "a.com", "http://a.com", ""},
+      {false, "https://a.com", "a.com", "http://a.com", "a.com"},
+      {false, "https://sub.a.com", "a.com", "http://a.com", ""},
+      {false, "https://a.com", "a.com", "http://sub.a.com", "a.com"},
+
+      // Ports? Why would they matter?
+      {true, "https://a.com:443", "", "https://a.com", ""},
+      {false, "https://a.com:444", "", "https://a.com", ""},
+      {false, "https://a.com:444", "", "https://a.com:442", ""},
+
+      {false, "https://a.com:443", "a.com", "https://a.com", ""},
+      {false, "https://a.com:444", "a.com", "https://a.com", ""},
+      {false, "https://a.com:444", "a.com", "https://a.com:442", ""},
+
+      {true, "https://a.com:443", "a.com", "https://a.com", "a.com"},
+      {true, "https://a.com:444", "a.com", "https://a.com", "a.com"},
+      {true, "https://a.com:444", "a.com", "https://a.com:442", "a.com"},
+
+      {false, "https://sub.a.com:443", "", "https://a.com", ""},
+      {false, "https://sub.a.com:444", "", "https://a.com", ""},
+      {false, "https://sub.a.com:444", "", "https://a.com:442", ""},
+
+      {false, "https://sub.a.com:443", "a.com", "https://a.com", ""},
+      {false, "https://sub.a.com:444", "a.com", "https://a.com", ""},
+      {false, "https://sub.a.com:444", "a.com", "https://a.com:442", ""},
+
+      {true, "https://sub.a.com:443", "a.com", "https://a.com", "a.com"},
+      {true, "https://sub.a.com:444", "a.com", "https://a.com", "a.com"},
+      {true, "https://sub.a.com:444", "a.com", "https://a.com:442", "a.com"},
+  };
+
+  for (const auto& test : tests) {
+    SCOPED_TRACE(testing::Message()
+                 << "Origin 1: `" << test.a << "` (`" << test.domain_a << "`)\n"
+                 << "Origin 2: `" << test.b << "` (`" << test.domain_b
+                 << "`)\n");
+    scoped_refptr<SecurityOrigin> a = SecurityOrigin::CreateFromString(test.a);
+    if (strlen(test.domain_a))
+      a->SetDomainFromDOM(test.domain_a);
+    scoped_refptr<SecurityOrigin> b = SecurityOrigin::CreateFromString(test.b);
+    if (strlen(test.domain_b))
+      b->SetDomainFromDOM(test.domain_b);
+    EXPECT_EQ(test.same_origin_domain, a->IsSameOriginDomainWith(b.get()));
+    EXPECT_EQ(test.same_origin_domain, b->IsSameOriginDomainWith(a.get()));
+
+    // Self-comparison
+    EXPECT_TRUE(a->IsSameOriginDomainWith(a.get()));
+    EXPECT_TRUE(b->IsSameOriginDomainWith(b.get()));
+
+    // DeriveNewOpaqueOrigin
+    EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(a.get()));
+    EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(a.get()));
+    EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(b.get()));
+    EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(b.get()));
+    EXPECT_FALSE(b->IsSameOriginDomainWith(a->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(b->IsSameOriginDomainWith(a->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(a->IsSameOriginDomainWith(b->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(b->IsSameOriginDomainWith(b->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(
+        a->DeriveNewOpaqueOrigin().get()));
+    EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(
+        b->DeriveNewOpaqueOrigin().get()));
+
+    // UniversalAccess does not override.
+    a->GrantUniversalAccess();
+    EXPECT_EQ(test.same_origin_domain, a->IsSameOriginDomainWith(b.get()));
+    EXPECT_EQ(test.same_origin_domain, b->IsSameOriginDomainWith(a.get()));
+  }
+}
+
+TEST_F(SecurityOriginTest, IsSameOriginDomainWithWithLocalScheme) {
+  scoped_refptr<SecurityOrigin> a =
+      SecurityOrigin::CreateFromString("file:///etc/passwd");
+  scoped_refptr<SecurityOrigin> b =
+      SecurityOrigin::CreateFromString("file:///etc/hosts");
+
+  // Self-comparison
+  EXPECT_TRUE(a->IsSameOriginDomainWith(a.get()));
+  EXPECT_TRUE(b->IsSameOriginDomainWith(b.get()));
+
+  // block_local_access_from_local_origin_ defaults to `false`:
+  EXPECT_TRUE(a->IsSameOriginDomainWith(b.get()));
+  EXPECT_TRUE(b->IsSameOriginDomainWith(a.get()));
+
+  // DeriveNewOpaqueOrigin
+  EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(a.get()));
+  EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(a.get()));
+  EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(b.get()));
+  EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(b.get()));
+  EXPECT_FALSE(b->IsSameOriginDomainWith(a->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(b->IsSameOriginDomainWith(a->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(a->IsSameOriginDomainWith(b->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(b->IsSameOriginDomainWith(b->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(a->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(
+      a->DeriveNewOpaqueOrigin().get()));
+  EXPECT_FALSE(b->DeriveNewOpaqueOrigin()->IsSameOriginDomainWith(
+      b->DeriveNewOpaqueOrigin().get()));
+
+  // Set block_local_access_from_local_origin_ to `true`:
+  a->BlockLocalAccessFromLocalOrigin();
+  EXPECT_FALSE(a->IsSameOriginDomainWith(b.get()));
+  EXPECT_FALSE(b->IsSameOriginDomainWith(a.get()));
+
+  // Self-comparison should still be true.
+  EXPECT_TRUE(a->IsSameOriginDomainWith(a.get()));
+  EXPECT_TRUE(b->IsSameOriginDomainWith(b.get()));
+
+  // UniversalAccess does not override
+  a->GrantUniversalAccess();
+  EXPECT_FALSE(a->IsSameOriginDomainWith(b.get()));
+  EXPECT_FALSE(b->IsSameOriginDomainWith(a.get()));
 }
 
 }  // namespace blink

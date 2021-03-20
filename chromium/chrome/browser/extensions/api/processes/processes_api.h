@@ -110,13 +110,13 @@ class ProcessesAPI : public BrowserContextKeyedAPI,
 ////////////////////////////////////////////////////////////////////////////////
 // This extension function returns the Process object for the renderer process
 // currently in use by the specified Tab.
-class ProcessesGetProcessIdForTabFunction : public UIThreadExtensionFunction {
+class ProcessesGetProcessIdForTabFunction : public ExtensionFunction {
  public:
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
 
   DECLARE_EXTENSION_FUNCTION("processes.getProcessIdForTab",
-                             PROCESSES_GETPROCESSIDFORTAB);
+                             PROCESSES_GETPROCESSIDFORTAB)
 
  private:
   ~ProcessesGetProcessIdForTabFunction() override {}
@@ -128,12 +128,12 @@ class ProcessesGetProcessIdForTabFunction : public UIThreadExtensionFunction {
 // Using unique IDs instead of OS process IDs allows two advantages:
 // * guaranteed uniqueness, since OS process IDs can be reused.
 // * guards against killing non-Chrome processes.
-class ProcessesTerminateFunction : public UIThreadExtensionFunction {
+class ProcessesTerminateFunction : public ExtensionFunction {
  public:
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
 
-  DECLARE_EXTENSION_FUNCTION("processes.terminate", PROCESSES_TERMINATE);
+  DECLARE_EXTENSION_FUNCTION("processes.terminate", PROCESSES_TERMINATE)
 
  private:
   ~ProcessesTerminateFunction() override {}
@@ -157,13 +157,13 @@ class ProcessesTerminateFunction : public UIThreadExtensionFunction {
 ////////////////////////////////////////////////////////////////////////////////
 // Extension function which returns a set of Process objects, containing the
 // details corresponding to the process IDs supplied as input.
-class ProcessesGetProcessInfoFunction :
-    public UIThreadExtensionFunction,
-    public task_manager::TaskManagerObserver {
+class ProcessesGetProcessInfoFunction
+    : public ExtensionFunction,
+      public task_manager::TaskManagerObserver {
  public:
   ProcessesGetProcessInfoFunction();
 
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
 
   // task_manager::TaskManagerObserver:
@@ -174,7 +174,7 @@ class ProcessesGetProcessInfoFunction :
       const task_manager::TaskIdList& task_ids) override;
 
   DECLARE_EXTENSION_FUNCTION("processes.getProcessInfo",
-                             PROCESSES_GETPROCESSINFO);
+                             PROCESSES_GETPROCESSINFO)
 
  private:
   ~ProcessesGetProcessInfoFunction() override;

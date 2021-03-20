@@ -30,7 +30,6 @@
 
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
 
-#include <memory>
 #include "base/memory/scoped_refptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -44,6 +43,7 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -65,7 +65,7 @@ Text* DocumentMarkerControllerTest::CreateTextNode(const char* text_contents) {
 void DocumentMarkerControllerTest::MarkNodeContents(Node* node) {
   // Force layoutObjects to be created; TextIterator, which is used in
   // DocumentMarkerControllerTest::addMarker(), needs them.
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   auto range = EphemeralRange::RangeOfContents(*node);
   MarkerController().AddSpellingMarker(range);
 }
@@ -73,7 +73,7 @@ void DocumentMarkerControllerTest::MarkNodeContents(Node* node) {
 void DocumentMarkerControllerTest::MarkNodeContentsTextMatch(Node* node) {
   // Force layoutObjects to be created; TextIterator, which is used in
   // DocumentMarkerControllerTest::addMarker(), needs them.
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   auto range = EphemeralRange::RangeOfContents(*node);
   MarkerController().AddTextMatchMarker(range,
                                         TextMatchMarker::MatchStatus::kActive);
@@ -81,14 +81,14 @@ void DocumentMarkerControllerTest::MarkNodeContentsTextMatch(Node* node) {
 
 TEST_F(DocumentMarkerControllerTest, DidMoveToNewDocument) {
   SetBodyContent("<b><i>foo</i></b>");
-  Element* parent = ToElement(GetDocument().body()->firstChild()->firstChild());
+  auto* parent = To<Element>(GetDocument().body()->firstChild()->firstChild());
   MarkNodeContents(parent);
   EXPECT_EQ(1u, MarkerController().Markers().size());
-  Persistent<Document> another_document = Document::CreateForTest();
+  Persistent<Document> another_document = MakeGarbageCollected<Document>();
   another_document->adoptNode(parent, ASSERT_NO_EXCEPTION);
 
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
   EXPECT_EQ(0u, another_document->Markers().Markers().size());
 }
@@ -96,8 +96,8 @@ TEST_F(DocumentMarkerControllerTest, DidMoveToNewDocument) {
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedMarkedByNormalize) {
   SetBodyContent("<b><i>foo</i></b>");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     parent->AppendChild(CreateTextNode("bar"));
     MarkNodeContents(parent);
     EXPECT_EQ(2u, MarkerController().Markers().size());
@@ -105,94 +105,94 @@ TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedMarkedByNormalize) {
     UpdateAllLifecyclePhasesForTest();
   }
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(1u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedMarkedByRemoveChildren) {
   SetBodyContent("<b><i>foo</i></b>");
-  Element* parent = ToElement(GetDocument().body()->firstChild()->firstChild());
+  auto* parent = To<Element>(GetDocument().body()->firstChild()->firstChild());
   MarkNodeContents(parent);
   EXPECT_EQ(1u, MarkerController().Markers().size());
   parent->RemoveChildren();
   UpdateAllLifecyclePhasesForTest();
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedByRemoveMarked) {
   SetBodyContent("<b><i>foo</i></b>");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     MarkNodeContents(parent);
     EXPECT_EQ(1u, MarkerController().Markers().size());
     parent->RemoveChild(parent->firstChild());
     UpdateAllLifecyclePhasesForTest();
   }
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedMarkedByRemoveAncestor) {
   SetBodyContent("<b><i>foo</i></b>");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     MarkNodeContents(parent);
     EXPECT_EQ(1u, MarkerController().Markers().size());
     parent->parentNode()->parentNode()->RemoveChild(parent->parentNode());
     UpdateAllLifecyclePhasesForTest();
   }
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedMarkedByRemoveParent) {
   SetBodyContent("<b><i>foo</i></b>");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     MarkNodeContents(parent);
     EXPECT_EQ(1u, MarkerController().Markers().size());
     parent->parentNode()->RemoveChild(parent);
     UpdateAllLifecyclePhasesForTest();
   }
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedMarkedByReplaceChild) {
   SetBodyContent("<b><i>foo</i></b>");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     MarkNodeContents(parent);
     EXPECT_EQ(1u, MarkerController().Markers().size());
     parent->ReplaceChild(CreateTextNode("bar"), parent->firstChild());
     UpdateAllLifecyclePhasesForTest();
   }
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, NodeWillBeRemovedBySetInnerHTML) {
   SetBodyContent("<b><i>foo</i></b>");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     MarkNodeContents(parent);
     EXPECT_EQ(1u, MarkerController().Markers().size());
     SetBodyContent("");
     UpdateAllLifecyclePhasesForTest();
   }
   // No more reference to marked node.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
@@ -201,8 +201,8 @@ TEST_F(DocumentMarkerControllerTest, SynchronousMutationNotificationAfterGC) {
   SetBodyContent("<b><i>foo</i></b>");
   Persistent<Text> sibling_text = CreateTextNode("bar");
   {
-    Element* parent =
-        ToElement(GetDocument().body()->firstChild()->firstChild());
+    auto* parent =
+        To<Element>(GetDocument().body()->firstChild()->firstChild());
     parent->parentNode()->AppendChild(sibling_text);
     MarkNodeContents(parent);
     EXPECT_EQ(1u, MarkerController().Markers().size());
@@ -211,7 +211,7 @@ TEST_F(DocumentMarkerControllerTest, SynchronousMutationNotificationAfterGC) {
   }
 
   // GC the marked node, so it disappears from WeakMember collections.
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_EQ(0u, MarkerController().Markers().size());
 
   // Trigger SynchronousMutationNotifier::NotifyUpdateCharacterData().
@@ -221,14 +221,14 @@ TEST_F(DocumentMarkerControllerTest, SynchronousMutationNotificationAfterGC) {
 
 TEST_F(DocumentMarkerControllerTest, UpdateRenderedRects) {
   SetBodyContent("<div style='margin: 100px'>foo</div>");
-  Element* div = ToElement(GetDocument().body()->firstChild());
+  auto* div = To<Element>(GetDocument().body()->firstChild());
   MarkNodeContentsTextMatch(div);
   Vector<IntRect> rendered_rects =
       MarkerController().LayoutRectsForTextMatchMarkers();
   EXPECT_EQ(1u, rendered_rects.size());
 
   div->setAttribute(html_names::kStyleAttr, "margin: 200px");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   Vector<IntRect> new_rendered_rects =
       MarkerController().LayoutRectsForTextMatchMarkers();
   EXPECT_EQ(1u, new_rendered_rects.size());
@@ -240,17 +240,21 @@ TEST_F(DocumentMarkerControllerTest, CompositionMarkersNotMerged) {
   Node* text = GetDocument().body()->firstChild()->firstChild();
   MarkerController().AddCompositionMarker(
       EphemeralRange(Position(text, 0), Position(text, 1)), Color::kTransparent,
-      ws::mojom::ImeTextSpanThickness::kThin, Color::kBlack);
+      ui::mojom::ImeTextSpanThickness::kThin,
+      ui::mojom::ImeTextSpanUnderlineStyle::kSolid, Color::kBlack,
+      Color::kBlack);
   MarkerController().AddCompositionMarker(
       EphemeralRange(Position(text, 1), Position(text, 3)), Color::kTransparent,
-      ws::mojom::ImeTextSpanThickness::kThick, Color::kBlack);
+      ui::mojom::ImeTextSpanThickness::kThick,
+      ui::mojom::ImeTextSpanUnderlineStyle::kSolid, Color::kBlack,
+      Color::kBlack);
 
   EXPECT_EQ(2u, MarkerController().Markers().size());
 }
 
 TEST_F(DocumentMarkerControllerTest, SetMarkerActiveTest) {
   SetBodyContent("<b>foo</b>");
-  Element* b_element = ToElement(GetDocument().body()->firstChild());
+  auto* b_element = To<Element>(GetDocument().body()->firstChild());
   EphemeralRange ephemeral_range = EphemeralRange::RangeOfContents(*b_element);
   Position start_b_element =
       ToPositionInDOMTree(ephemeral_range.StartPosition());
@@ -372,9 +376,9 @@ TEST_F(DocumentMarkerControllerTest, RemoveSuggestionMarkerByTag) {
       SuggestionMarkerProperties());
 
   ASSERT_EQ(1u, MarkerController().Markers().size());
-  const SuggestionMarker& marker =
-      *ToSuggestionMarker(MarkerController().Markers()[0]);
-  MarkerController().RemoveSuggestionMarkerByTag(*ToText(text), marker.Tag());
+  auto* marker = To<SuggestionMarker>(MarkerController().Markers()[0].Get());
+  MarkerController().RemoveSuggestionMarkerByTag(*To<Text>(text),
+                                                 marker->Tag());
   EXPECT_EQ(0u, MarkerController().Markers().size());
 }
 
@@ -396,9 +400,10 @@ TEST_F(DocumentMarkerControllerTest, RemoveSuggestionMarkerInRangeOnFinish) {
 
   EXPECT_EQ(1u, MarkerController().Markers().size());
 
-  const SuggestionMarker& marker =
-      *ToSuggestionMarker(MarkerController().Markers()[0]);
-  MarkerController().RemoveSuggestionMarkerByTag(*ToText(text), marker.Tag());
+  const auto* marker =
+      To<SuggestionMarker>(MarkerController().Markers()[0].Get());
+  MarkerController().RemoveSuggestionMarkerByTag(*To<Text>(text),
+                                                 marker->Tag());
   ASSERT_EQ(0u, MarkerController().Markers().size());
 
   // Add a suggestion marker which need to be removed after finish composing,
@@ -419,9 +424,9 @@ TEST_F(DocumentMarkerControllerTest, RemoveSuggestionMarkerInRangeOnFinish) {
 
 TEST_F(DocumentMarkerControllerTest, FirstMarkerIntersectingOffsetRange) {
   SetBodyContent("<div contenteditable>123456789</div>");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   Element* div = GetDocument().QuerySelector("div");
-  Text* text = ToText(div->firstChild());
+  auto* text = To<Text>(div->firstChild());
 
   // Add a spelling marker on "123"
   MarkerController().AddSpellingMarker(
@@ -440,9 +445,9 @@ TEST_F(DocumentMarkerControllerTest, FirstMarkerIntersectingOffsetRange) {
 TEST_F(DocumentMarkerControllerTest,
        FirstMarkerIntersectingOffsetRange_collapsed) {
   SetBodyContent("<div contenteditable>123456789</div>");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   Element* div = GetDocument().QuerySelector("div");
-  Text* text = ToText(div->firstChild());
+  auto* text = To<Text>(div->firstChild());
 
   // Add a spelling marker on "123"
   MarkerController().AddSpellingMarker(
@@ -476,8 +481,8 @@ TEST_F(DocumentMarkerControllerTest, MarkersIntersectingRange) {
 
   // Query for spellcheck markers intersecting "3456". The text match marker
   // should not be returned, nor should the spelling marker touching the range.
-  const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>& results =
-      MarkerController().MarkersIntersectingRange(
+  const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
+      results = MarkerController().MarkersIntersectingRange(
           EphemeralRangeInFlatTree(PositionInFlatTree(text, 2),
                                    PositionInFlatTree(text, 6)),
           DocumentMarker::MarkerTypes::Misspelling());
@@ -498,8 +503,8 @@ TEST_F(DocumentMarkerControllerTest, MarkersIntersectingCollapsedRange) {
       EphemeralRange(Position(text, 0), Position(text, 3)));
 
   // Query for spellcheck markers containing the position between "1" and "2"
-  const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>& results =
-      MarkerController().MarkersIntersectingRange(
+  const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
+      results = MarkerController().MarkersIntersectingRange(
           EphemeralRangeInFlatTree(PositionInFlatTree(text, 1),
                                    PositionInFlatTree(text, 1)),
           DocumentMarker::MarkerTypes::Misspelling());
@@ -537,8 +542,8 @@ TEST_F(DocumentMarkerControllerTest, MarkersIntersectingRangeWithShadowDOM) {
                      Position(not_shadow_text, 10)),
       TextMatchMarker::MatchStatus::kInactive);
 
-  const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>& results =
-      MarkerController().MarkersIntersectingRange(
+  const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
+      results = MarkerController().MarkersIntersectingRange(
           EphemeralRangeInFlatTree(PositionInFlatTree(not_shadow_text, 9),
                                    PositionInFlatTree(shadow1_text, 1)),
           DocumentMarker::MarkerTypes::TextMatch());
@@ -558,8 +563,8 @@ TEST_F(DocumentMarkerControllerTest, SuggestionMarkersHaveUniqueTags) {
       SuggestionMarkerProperties());
 
   EXPECT_EQ(2u, MarkerController().Markers().size());
-  EXPECT_NE(ToSuggestionMarker(MarkerController().Markers()[0])->Tag(),
-            ToSuggestionMarker(MarkerController().Markers()[1])->Tag());
+  EXPECT_NE(To<SuggestionMarker>(MarkerController().Markers()[0].Get())->Tag(),
+            To<SuggestionMarker>(MarkerController().Markers()[1].Get())->Tag());
 }
 
 }  // namespace blink

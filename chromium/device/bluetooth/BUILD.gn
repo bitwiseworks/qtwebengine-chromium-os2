@@ -78,6 +78,7 @@ source_set("fake_bluetooth") {
 
   deps = [
     ":bluetooth",
+    "//device/bluetooth/public/cpp",
     "//device/bluetooth/public/mojom:fake_bluetooth_interfaces",
     "//mojo/public/cpp/bindings",
   ]
@@ -206,8 +207,6 @@ component("bluetooth") {
     "bluetooth_socket_win.h",
     "bluetooth_task_manager_win.cc",
     "bluetooth_task_manager_win.h",
-    "bluetooth_uuid.cc",
-    "bluetooth_uuid.h",
     "string_util_icu.cc",
     "string_util_icu.h",
   ]
@@ -229,15 +228,14 @@ component("bluetooth") {
     "//ui/base",
   ]
 
+  public_deps = [ "//device/bluetooth/public/cpp" ]
+
   if (is_android) {
     deps += [ ":jni_headers" ]
   }
 
   if (is_chromeos) {
-    deps += [
-      "//chromeos:chromeos_constants",
-      "//chromeos/dbus",
-    ]
+    deps += [ "//chromeos/constants" ]
   }
 
   if (is_mac) {
@@ -325,6 +323,8 @@ component("bluetooth") {
         "dbus/bluetooth_agent_service_provider.h",
         "dbus/bluetooth_dbus_client_bundle.cc",
         "dbus/bluetooth_dbus_client_bundle.h",
+        "dbus/bluetooth_debug_manager_client.cc",
+        "dbus/bluetooth_debug_manager_client.h",
         "dbus/bluetooth_device_client.cc",
         "dbus/bluetooth_device_client.h",
         "dbus/bluetooth_gatt_application_service_provider.cc",
@@ -384,6 +384,8 @@ component("bluetooth") {
         "dbus/fake_bluetooth_agent_manager_client.h",
         "dbus/fake_bluetooth_agent_service_provider.cc",
         "dbus/fake_bluetooth_agent_service_provider.h",
+        "dbus/fake_bluetooth_debug_manager_client.cc",
+        "dbus/fake_bluetooth_debug_manager_client.h",
         "dbus/fake_bluetooth_device_client.cc",
         "dbus/fake_bluetooth_device_client.h",
         "dbus/fake_bluetooth_gatt_application_service_provider.cc",
@@ -432,6 +434,7 @@ component("bluetooth") {
           "chromeos/bluetooth_utils.cc",
           "chromeos/bluetooth_utils.h",
         ]
+        deps += [ "//services/data_decoder/public/mojom" ]
       }
       deps += [ "//dbus" ]
     } else {  # !use_dbus
@@ -451,9 +454,7 @@ component("bluetooth") {
           "cast/bluetooth_utils.h",
         ]
 
-        public_deps = [
-          "//chromecast/public",
-        ]
+        public_deps += [ "//chromecast/public" ]
 
         deps += [
           "//chromecast/device/bluetooth:util",
@@ -483,8 +484,6 @@ static_library("mocks") {
     "test/mock_bluetooth_advertisement.h",
     "test/mock_bluetooth_device.cc",
     "test/mock_bluetooth_device.h",
-    "test/mock_bluetooth_discovery_session.cc",
-    "test/mock_bluetooth_discovery_session.h",
     "test/mock_bluetooth_gatt_characteristic.cc",
     "test/mock_bluetooth_gatt_characteristic.h",
     "test/mock_bluetooth_gatt_connection.cc",
@@ -502,6 +501,7 @@ static_library("mocks") {
   public_deps = [
     ":bluetooth",
     "//base",
+    "//device/bluetooth/public/cpp",
     "//net",
     "//testing/gmock",
   ]
@@ -514,19 +514,22 @@ if (is_android) {
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothRemoteGattCharacteristic.java",
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothRemoteGattDescriptor.java",
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothRemoteGattService.java",
+    "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothScanFilterBuilder.java",
+    "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothScanFilterList.java",
     "android/java/src/org/chromium/device/bluetooth/Wrappers.java",
   ]
 
   generate_jni("jni_headers") {
     sources = java_sources_needing_jni
-    jni_package = "bluetooth"
   }
 
   android_library("java") {
-    java_files = java_sources_needing_jni
+    sources = java_sources_needing_jni
     deps = [
       "//base:base_java",
+      "//base:jni_java",
       "//components/location/android:location_java",
     ]
+    annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
   }
 }

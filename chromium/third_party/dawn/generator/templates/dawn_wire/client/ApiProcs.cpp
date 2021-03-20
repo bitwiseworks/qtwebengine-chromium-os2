@@ -15,7 +15,11 @@
 #include "dawn_wire/client/ApiObjects.h"
 #include "dawn_wire/client/ApiProcs_autogen.h"
 #include "dawn_wire/client/Client.h"
-#include "dawn_wire/client/Device_autogen.h"
+
+#include <algorithm>
+#include <cstring>
+#include <string>
+#include <vector>
 
 namespace dawn_wire { namespace client {
     //* Implementation of the client API functions.
@@ -25,7 +29,7 @@ namespace dawn_wire { namespace client {
 
         {% for method in type.methods %}
             {% set Suffix = as_MethodSuffix(type.name, method.name) %}
-            {% if Suffix not in client_side_commands %}
+            {% if Suffix not in client_handwritten_commands %}
                 {{as_cType(method.return_type.name)}} Client{{Suffix}}(
                     {{-cType}} cSelf
                     {%- for arg in method.arguments -%}
@@ -42,16 +46,7 @@ namespace dawn_wire { namespace client {
 
                     //* For object creation, store the object ID the client will use for the result.
                     {% if method.return_type.category == "object" %}
-                        auto* allocation = self->device->{{method.return_type.name.camelCase()}}.New();
-
-                        {% if type.is_builder %}
-                            //* We are in GetResult, so the callback that should be called is the
-                            //* currently set one. Copy it over to the created object and prevent the
-                            //* builder from calling the callback on destruction.
-                            allocation->object->builderCallback = self->builderCallback;
-                            self->builderCallback.canCall = false;
-                        {% endif %}
-
+                        auto* allocation = self->device->GetClient()->{{method.return_type.name.CamelCase()}}Allocator().New(self->device);
                         cmd.result = ObjectHandle{allocation->object->id, allocation->serial};
                     {% endif %}
 
@@ -61,8 +56,8 @@ namespace dawn_wire { namespace client {
 
                     //* Allocate space to send the command and copy the value args over.
                     size_t requiredSize = cmd.GetRequiredSize();
-                    char* allocatedBuffer = static_cast<char*>(device->GetCmdSpace(requiredSize));
-                    cmd.Serialize(allocatedBuffer, *device);
+                    char* allocatedBuffer = static_cast<char*>(device->GetClient()->GetCmdSpace(requiredSize));
+                    cmd.Serialize(allocatedBuffer, *device->GetClient());
 
                     {% if method.return_type.category == "object" %}
                         return reinterpret_cast<{{as_cType(method.return_type.name)}}>(allocation->object.get());
@@ -70,18 +65,6 @@ namespace dawn_wire { namespace client {
                 }
             {% endif %}
         {% endfor %}
-
-        {% if type.is_builder %}
-            void Client{{as_MethodSuffix(type.name, Name("set error callback"))}}({{cType}} cSelf,
-                                                                                  dawnBuilderErrorCallback callback,
-                                                                                  dawnCallbackUserdata userdata1,
-                                                                                  dawnCallbackUserdata userdata2) {
-                {{Type}}* self = reinterpret_cast<{{Type}}*>(cSelf);
-                self->builderCallback.callback = callback;
-                self->builderCallback.userdata1 = userdata1;
-                self->builderCallback.userdata2 = userdata2;
-            }
-        {% endif %}
 
         {% if not type.name.canonical_case() == "device" %}
             //* When an object's refcount reaches 0, notify the server side of it and delete it.
@@ -93,17 +76,15 @@ namespace dawn_wire { namespace client {
                     return;
                 }
 
-                obj->builderCallback.Call(DAWN_BUILDER_ERROR_STATUS_UNKNOWN, "Unknown");
-
                 DestroyObjectCmd cmd;
                 cmd.objectType = ObjectType::{{type.name.CamelCase()}};
                 cmd.objectId = obj->id;
 
                 size_t requiredSize = cmd.GetRequiredSize();
-                char* allocatedBuffer = static_cast<char*>(obj->device->GetCmdSpace(requiredSize));
+                char* allocatedBuffer = static_cast<char*>(obj->device->GetClient()->GetCmdSpace(requiredSize));
                 cmd.Serialize(allocatedBuffer);
 
-                obj->device->{{type.name.camelCase()}}.Free(obj);
+                obj->device->GetClient()->{{type.name.CamelCase()}}Allocator().Free(obj);
             }
 
             void Client{{as_MethodSuffix(type.name, Name("reference"))}}({{cType}} cObj) {
@@ -113,21 +94,73 @@ namespace dawn_wire { namespace client {
         {% endif %}
     {% endfor %}
 
+    namespace {
+        WGPUInstance ClientCreateInstance(WGPUInstanceDescriptor const* descriptor) {
+            UNREACHABLE();
+            return nullptr;
+        }
+
+        struct ProcEntry {
+            WGPUProc proc;
+            const char* name;
+        };
+        static const ProcEntry sProcMap[] = {
+            {% for (type, method) in c_methods_sorted_by_name %}
+                { reinterpret_cast<WGPUProc>(Client{{as_MethodSuffix(type.name, method.name)}}), "{{as_cMethod(type.name, method.name)}}" },
+            {% endfor %}
+        };
+        static constexpr size_t sProcMapSize = sizeof(sProcMap) / sizeof(sProcMap[0]);
+    }  // anonymous namespace
+
+    WGPUProc ClientGetProcAddress(WGPUDevice, const char* procName) {
+        if (procName == nullptr) {
+            return nullptr;
+        }
+
+        const ProcEntry* entry = std::lower_bound(&sProcMap[0], &sProcMap[sProcMapSize], procName,
+            [](const ProcEntry &a, const char *b) -> bool {
+                return strcmp(a.name, b) < 0;
+            }
+        );
+
+        if (entry != &sProcMap[sProcMapSize] && strcmp(entry->name, procName) == 0) {
+            return entry->proc;
+        }
+
+        // Special case the two free-standing functions of the API.
+        if (strcmp(procName, "wgpuGetProcAddress") == 0) {
+            return reinterpret_cast<WGPUProc>(ClientGetProcAddress);
+        }
+
+        if (strcmp(procName, "wgpuCreateInstance") == 0) {
+            return reinterpret_cast<WGPUProc>(ClientCreateInstance);
+        }
+
+        return nullptr;
+    }
+
+    std::vector<const char*> GetProcMapNamesForTesting() {
+        std::vector<const char*> result;
+        result.reserve(sProcMapSize);
+        for (const ProcEntry& entry : sProcMap) {
+            result.push_back(entry.name);
+        }
+        return result;
+    }
+
     //* Some commands don't have a custom wire format, but need to be handled manually to update
     //* some client-side state tracking. For these we have two functions:
     //*  - An autogenerated Client{{suffix}} method that sends the command on the wire
     //*  - A manual ProxyClient{{suffix}} method that will be inserted in the proctable instead of
     //*    the autogenerated one, and that will have to call Client{{suffix}}
-    dawnProcTable GetProcs() {
-        dawnProcTable table;
+    DawnProcTable GetProcs() {
+        DawnProcTable table;
+        table.getProcAddress = ClientGetProcAddress;
+        table.createInstance = ClientCreateInstance;
         {% for type in by_category["object"] %}
-            {% for method in native_methods(type) %}
+            {% for method in c_methods(type) %}
                 {% set suffix = as_MethodSuffix(type.name, method.name) %}
-                {% if suffix in client_proxied_commands %}
-                    table.{{as_varName(type.name, method.name)}} = ProxyClient{{suffix}};
-                {% else %}
-                    table.{{as_varName(type.name, method.name)}} = Client{{suffix}};
-                {% endif %}
+                table.{{as_varName(type.name, method.name)}} = Client{{suffix}};
             {% endfor %}
         {% endfor %}
         return table;

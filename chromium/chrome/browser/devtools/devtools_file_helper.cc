@@ -10,11 +10,12 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/md5.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/value_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -35,9 +36,9 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
-#include "storage/browser/fileapi/file_system_url.h"
-#include "storage/browser/fileapi/isolated_context.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/browser/file_system/file_system_url.h"
+#include "storage/browser/file_system/isolated_context.h"
+#include "storage/common/file_system/file_system_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
@@ -54,6 +55,7 @@ namespace {
 
 static const char kRootName[] = "<root>";
 static const char kPermissionDenied[] = "<permission denied>";
+static const char kSelectionCancelled[] = "<selection cancelled>";
 
 base::LazyInstance<base::FilePath>::Leaky
     g_last_save_path = LAZY_INSTANCE_INITIALIZER;
@@ -77,15 +79,17 @@ class SelectFileDialog : public ui::SelectFileDialog::Listener,
   void Show(ui::SelectFileDialog::Type type,
             const base::FilePath& default_path) {
     AddRef();  // Balanced in the three listener outcomes.
+    base::FilePath::StringType ext;
+    ui::SelectFileDialog::FileTypeInfo file_type_info;
+    if (type == ui::SelectFileDialog::SELECT_SAVEAS_FILE &&
+        default_path.Extension().length() > 0) {
+      ext = default_path.Extension().substr(1);
+      file_type_info.extensions.resize(1);
+      file_type_info.extensions[0].push_back(ext);
+    }
     select_file_dialog_->SelectFile(
-      type,
-      base::string16(),
-      default_path,
-      NULL,
-      0,
-      base::FilePath::StringType(),
-      platform_util::GetTopLevel(web_contents_->GetNativeView()),
-      NULL);
+        type, base::string16(), default_path, &file_type_info, 0, ext,
+        platform_util::GetTopLevel(web_contents_->GetNativeView()), nullptr);
   }
 
   // ui::SelectFileDialog::Listener implementation.
@@ -145,24 +149,25 @@ std::string RegisterFileSystem(WebContents* web_contents,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   CHECK(web_contents->GetURL().SchemeIs(content::kChromeDevToolsScheme));
   std::string root_name(kRootName);
-  std::string file_system_id = isolated_context()->RegisterFileSystemForPath(
-      storage::kFileSystemTypeNativeLocal, std::string(), path, &root_name);
+  storage::IsolatedContext::ScopedFSHandle file_system =
+      isolated_context()->RegisterFileSystemForPath(
+          storage::kFileSystemTypeNativeLocal, std::string(), path, &root_name);
 
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
   RenderViewHost* render_view_host = web_contents->GetRenderViewHost();
   int renderer_id = render_view_host->GetProcess()->GetID();
-  policy->GrantReadFileSystem(renderer_id, file_system_id);
-  policy->GrantWriteFileSystem(renderer_id, file_system_id);
-  policy->GrantCreateFileForFileSystem(renderer_id, file_system_id);
-  policy->GrantDeleteFromFileSystem(renderer_id, file_system_id);
+  policy->GrantReadFileSystem(renderer_id, file_system.id());
+  policy->GrantWriteFileSystem(renderer_id, file_system.id());
+  policy->GrantCreateFileForFileSystem(renderer_id, file_system.id());
+  policy->GrantDeleteFromFileSystem(renderer_id, file_system.id());
 
   // We only need file level access for reading FileEntries. Saving FileEntries
   // just needs the file system to have read/write access, which is granted
   // above if required.
   if (!policy->CanReadFile(renderer_id, path))
     policy->GrantReadFile(renderer_id, path);
-  return file_system_id;
+  return file_system.id();
 }
 
 DevToolsFileHelper::FileSystem CreateFileSystemStruct(
@@ -217,8 +222,7 @@ DevToolsFileHelper::DevToolsFileHelper(WebContents* web_contents,
       profile_(profile),
       delegate_(delegate),
       file_task_runner_(
-          base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})),
-      weak_factory_(this) {
+          base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})) {
   pref_change_registrar_.Init(profile_->GetPrefs());
 }
 
@@ -240,8 +244,11 @@ void DevToolsFileHelper::Save(const std::string& url,
   base::FilePath initial_path;
 
   const base::Value* path_value;
-  if (file_map->Get(base::MD5String(url), &path_value))
-    base::GetValueAsFilePath(*path_value, &initial_path);
+  if (file_map->Get(base::MD5String(url), &path_value)) {
+    // Ignore base::GetValueAsFilePath() failure since we handle empty
+    // |initial_path| below.
+    ignore_result(base::GetValueAsFilePath(*path_value, &initial_path));
+  }
 
   if (initial_path.empty()) {
     GURL gurl(url);
@@ -307,7 +314,7 @@ void DevToolsFileHelper::AddFileSystem(
       Bind(&DevToolsFileHelper::InnerAddFileSystem, weak_factory_.GetWeakPtr(),
            show_info_bar_callback, type),
       Bind(&DevToolsFileHelper::FailedToAddFileSystem,
-           weak_factory_.GetWeakPtr(), kPermissionDenied),
+           weak_factory_.GetWeakPtr(), kSelectionCancelled),
       web_contents_);
   select_file_dialog->Show(ui::SelectFileDialog::SELECT_FOLDER,
                            base::FilePath());

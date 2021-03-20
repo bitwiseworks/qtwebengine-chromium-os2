@@ -8,7 +8,9 @@
 #include "third_party/blink/public/platform/web_crypto_algorithm.h"
 #include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
 #include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
@@ -46,6 +48,10 @@ static WebFeature AlgorithmIdToFeature(WebCryptoAlgorithmId id) {
       return WebFeature::kCryptoAlgorithmHkdf;
     case kWebCryptoAlgorithmIdPbkdf2:
       return WebFeature::kCryptoAlgorithmPbkdf2;
+    case kWebCryptoAlgorithmIdX25519:
+      return WebFeature::kCryptoAlgorithmX25519;
+    case kWebCryptoAlgorithmIdEd25519:
+      return WebFeature::kCryptoAlgorithmEd25519;
   }
 
   NOTREACHED();
@@ -98,6 +104,8 @@ void HistogramAlgorithm(ExecutionContext* context,
     case kWebCryptoAlgorithmParamsTypeEcKeyGenParams:
     case kWebCryptoAlgorithmParamsTypeEcKeyImportParams:
     case kWebCryptoAlgorithmParamsTypeAesDerivedKeyParams:
+    case kWebCryptoAlgorithmParamsTypeEd25519Params:
+    case kWebCryptoAlgorithmParamsTypeX25519KeyDeriveParams:
       break;
   }
 }

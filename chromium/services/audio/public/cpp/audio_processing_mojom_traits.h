@@ -5,9 +5,10 @@
 #ifndef SERVICES_AUDIO_PUBLIC_CPP_AUDIO_PROCESSING_MOJOM_TRAITS_H_
 #define SERVICES_AUDIO_PUBLIC_CPP_AUDIO_PROCESSING_MOJOM_TRAITS_H_
 
-#include "media/audio/audio_processing.h"
+#include "media/base/audio_processing.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
-#include "services/audio/public/mojom/audio_processing.mojom.h"
+#include "services/audio/public/mojom/audio_processing.mojom-shared.h"
+#include "third_party/webrtc/api/media_stream_interface.h"
 
 namespace mojo {
 
@@ -59,8 +60,6 @@ struct EnumTraits<audio::mojom::EchoCancellationType,
     switch (type) {
       case media::EchoCancellationType::kDisabled:
         return audio::mojom::EchoCancellationType::kDisabled;
-      case media::EchoCancellationType::kAec2:
-        return audio::mojom::EchoCancellationType::kAec2;
       case media::EchoCancellationType::kAec3:
         return audio::mojom::EchoCancellationType::kAec3;
       case media::EchoCancellationType::kSystemAec:
@@ -75,9 +74,6 @@ struct EnumTraits<audio::mojom::EchoCancellationType,
     switch (input) {
       case audio::mojom::EchoCancellationType::kDisabled:
         *out = media::EchoCancellationType::kDisabled;
-        return true;
-      case audio::mojom::EchoCancellationType::kAec2:
-        *out = media::EchoCancellationType::kAec2;
         return true;
       case audio::mojom::EchoCancellationType::kAec3:
         *out = media::EchoCancellationType::kAec3;

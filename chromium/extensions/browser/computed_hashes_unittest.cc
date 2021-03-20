@@ -2,14 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/browser/computed_hashes.h"
 #include "base/base64.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "crypto/sha2.h"
-#include "extensions/browser/computed_hashes.h"
+#include "extensions/browser/content_verifier/content_verifier_utils.h"
+#include "extensions/common/constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
+
+constexpr bool kIsDotSpaceSuffixIgnored =
+    extensions::content_verifier_utils::IsDotSpaceFilenameSuffixIgnored();
+constexpr bool kIsFileAccessCaseInsensitive =
+    !extensions::content_verifier_utils::IsFileAccessCaseSensitive();
 
 // Helper to return base64 encode result by value.
 std::string Base64Encode(const std::string& data) {
@@ -18,45 +27,74 @@ std::string Base64Encode(const std::string& data) {
   return result;
 }
 
+struct HashInfo {
+  base::FilePath path;
+  int block_size;
+  std::vector<std::string> hashes;
+};
+
+testing::AssertionResult WriteThenReadComputedHashes(
+    const std::vector<HashInfo>& hash_infos,
+    extensions::ComputedHashes* result) {
+  base::ScopedTempDir scoped_dir;
+  if (!scoped_dir.CreateUniqueTempDir())
+    return testing::AssertionFailure() << "Failed to create temp dir.";
+
+  base::FilePath computed_hashes_path =
+      scoped_dir.GetPath().AppendASCII("computed_hashes.json");
+  extensions::ComputedHashes::Data computed_hashes_data;
+  for (const auto& info : hash_infos)
+    computed_hashes_data.Add(info.path, info.block_size, info.hashes);
+
+  if (!extensions::ComputedHashes(std::move(computed_hashes_data))
+           .WriteToFile(computed_hashes_path)) {
+    return testing::AssertionFailure()
+           << "Failed to write computed_hashes.json";
+  }
+  extensions::ComputedHashes::Status computed_hashes_status;
+  base::Optional<extensions::ComputedHashes> computed_hashes =
+      extensions::ComputedHashes::CreateFromFile(computed_hashes_path,
+                                                 &computed_hashes_status);
+  if (!computed_hashes)
+    return testing::AssertionFailure()
+           << "Failed to read computed_hashes.json (status: "
+           << static_cast<int>(computed_hashes_status) << ")";
+  *result = std::move(computed_hashes.value());
+
+  return testing::AssertionSuccess();
+}
+
 }  // namespace
 
 namespace extensions {
 
-TEST(ComputedHashes, ComputedHashes) {
-  base::ScopedTempDir scoped_dir;
-  ASSERT_TRUE(scoped_dir.CreateUniqueTempDir());
-  base::FilePath computed_hashes =
-      scoped_dir.GetPath().AppendASCII("computed_hashes.json");
-
+TEST(ComputedHashesTest, ComputedHashes) {
   // We'll add hashes for 2 files, one of which uses a subdirectory
   // path. The first file will have a list of 1 block hash, and the
   // second file will have 2 block hashes.
   base::FilePath path1(FILE_PATH_LITERAL("foo.txt"));
   base::FilePath path2 =
       base::FilePath(FILE_PATH_LITERAL("foo")).AppendASCII("bar.txt");
-  std::vector<std::string> hashes1;
-  std::vector<std::string> hashes2;
-  hashes1.push_back(crypto::SHA256HashString("first"));
-  hashes2.push_back(crypto::SHA256HashString("second"));
-  hashes2.push_back(crypto::SHA256HashString("third"));
+  std::vector<std::string> hashes1 = {crypto::SHA256HashString("first")};
+  std::vector<std::string> hashes2 = {crypto::SHA256HashString("second"),
+                                      crypto::SHA256HashString("third")};
+  const int kBlockSize1 = 4096;
+  const int kBlockSize2 = 2048;
 
-  // Write them into the file.
-  ComputedHashes::Writer writer;
-  writer.AddHashes(path1, 4096, hashes1);
-  writer.AddHashes(path2, 2048, hashes2);
-  EXPECT_TRUE(writer.WriteToFile(computed_hashes));
+  ComputedHashes computed_hashes{ComputedHashes::Data()};
+  ASSERT_TRUE(WriteThenReadComputedHashes(
+      {{path1, kBlockSize1, hashes1}, {path2, kBlockSize2, hashes2}},
+      &computed_hashes));
 
-  // Now read them back again and assert that we got what we wrote.
-  ComputedHashes::Reader reader;
+  // After reading hashes back assert that we got what we wrote.
   std::vector<std::string> read_hashes1;
   std::vector<std::string> read_hashes2;
-  EXPECT_TRUE(reader.InitFromFile(computed_hashes));
 
   int block_size = 0;
-  EXPECT_TRUE(reader.GetHashes(path1, &block_size, &read_hashes1));
+  EXPECT_TRUE(computed_hashes.GetHashes(path1, &block_size, &read_hashes1));
   EXPECT_EQ(block_size, 4096);
   block_size = 0;
-  EXPECT_TRUE(reader.GetHashes(path2, &block_size, &read_hashes2));
+  EXPECT_TRUE(computed_hashes.GetHashes(path2, &block_size, &read_hashes2));
   EXPECT_EQ(block_size, 2048);
 
   EXPECT_EQ(hashes1, read_hashes1);
@@ -65,17 +103,21 @@ TEST(ComputedHashes, ComputedHashes) {
   // Make sure we can lookup hashes for a file using incorrect case
   base::FilePath path1_badcase(FILE_PATH_LITERAL("FoO.txt"));
   std::vector<std::string> read_hashes1_badcase;
-  EXPECT_TRUE(
-      reader.GetHashes(path1_badcase, &block_size, &read_hashes1_badcase));
-  EXPECT_EQ(block_size, 4096);
-  EXPECT_EQ(hashes1, read_hashes1_badcase);
+  EXPECT_EQ(kIsFileAccessCaseInsensitive,
+            computed_hashes.GetHashes(path1_badcase, &block_size,
+                                      &read_hashes1_badcase));
+  if (kIsFileAccessCaseInsensitive) {
+    EXPECT_EQ(4096, block_size);
+    EXPECT_EQ(hashes1, read_hashes1_badcase);
+  }
 
   // Finally make sure that we can retrieve the hashes for the subdir
   // path even when that path contains forward slashes (on windows).
   base::FilePath path2_fwd_slashes =
       base::FilePath::FromUTF8Unsafe("foo/bar.txt");
   block_size = 0;
-  EXPECT_TRUE(reader.GetHashes(path2_fwd_slashes, &block_size, &read_hashes2));
+  EXPECT_TRUE(
+      computed_hashes.GetHashes(path2_fwd_slashes, &block_size, &read_hashes2));
   EXPECT_EQ(hashes2, read_hashes2);
 }
 
@@ -88,15 +130,15 @@ TEST(ComputedHashes, ComputedHashes) {
 // $ dd if=hello.txt bs=4096 count=1 | openssl dgst -sha256 -binary | base64
 // $ dd if=hello.txt skip=1 bs=4096 count=1 |
 //   openssl dgst -sha256 -binary | base64
-TEST(ComputedHashes, ComputeHashesForContent) {
+TEST(ComputedHashesTest, GetHashesForContent) {
   const int block_size = 4096;
 
   // Simple short input.
   std::string content1 = "hello world";
   std::string content1_expected_hash =
       "uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek=";
-  std::vector<std::string> hashes1;
-  ComputedHashes::ComputeHashesForContent(content1, block_size, &hashes1);
+  std::vector<std::string> hashes1 =
+      ComputedHashes::GetHashesForContent(content1, block_size);
   ASSERT_EQ(1u, hashes1.size());
   EXPECT_EQ(content1_expected_hash, Base64Encode(hashes1[0]));
 
@@ -107,19 +149,81 @@ TEST(ComputedHashes, ComputeHashesForContent) {
   const char* content2_expected_hashes[] = {
       "bvtt5hXo8xvHrlzGAhhoqPL/r+4zJXHx+6wAvkv15V8=",
       "lTD45F7P6I/HOdi8u7FLRA4qzAYL+7xSNVeusG6MJI0="};
-  std::vector<std::string> hashes2;
-  ComputedHashes::ComputeHashesForContent(content2, block_size, &hashes2);
+  std::vector<std::string> hashes2 =
+      ComputedHashes::GetHashesForContent(content2, block_size);
   ASSERT_EQ(2u, hashes2.size());
   EXPECT_EQ(content2_expected_hashes[0], Base64Encode(hashes2[0]));
   EXPECT_EQ(content2_expected_hashes[1], Base64Encode(hashes2[1]));
 
   // Now an empty input.
   std::string content3;
-  std::vector<std::string> hashes3;
-  ComputedHashes::ComputeHashesForContent(content3, block_size, &hashes3);
+  std::vector<std::string> hashes3 =
+      ComputedHashes::GetHashesForContent(content3, block_size);
   ASSERT_EQ(1u, hashes3.size());
   ASSERT_EQ(std::string("47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="),
             Base64Encode(hashes3[0]));
+}
+
+// Tests that dot/space path suffixes are treated correctly in
+// ComputedHashes::InitFromFile.
+//
+// Regression test for https://crbug.com/696208.
+TEST(ComputedHashesTest, DotSpaceSuffix) {
+  const std::string hash_value = crypto::SHA256HashString("test");
+  ComputedHashes computed_hashes{ComputedHashes::Data()};
+  // Add hashes for "foo.html" to computed_hashes.json.
+  ASSERT_TRUE(WriteThenReadComputedHashes(
+      {
+          {base::FilePath(FILE_PATH_LITERAL("foo.html")),
+           extension_misc::kContentVerificationDefaultBlockSize,
+           {hash_value}},
+      },
+      &computed_hashes));
+  std::vector<std::string> read_hashes;
+
+  struct TestCase {
+    const char* path;
+    bool expect_hash;
+
+    std::string ToString() const {
+      return base::StringPrintf("path = %s, expect_hash = %d", path,
+                                expect_hash);
+    }
+  } test_cases[] = {
+      // Sanity check: existing file.
+      {"foo.html", true},
+      // Sanity check: non existent file.
+      {"notfound.html", false},
+      // Path with "." suffix, along with incorrect case for the same.
+      {"foo.html.", kIsDotSpaceSuffixIgnored},
+      {"fOo.html.", kIsDotSpaceSuffixIgnored},
+      // Path with " " suffix, along with incorrect case for the same.
+      {"foo.html ", kIsDotSpaceSuffixIgnored},
+      {"fOo.html ", kIsDotSpaceSuffixIgnored},
+      // Path with ". " suffix, along with incorrect case for the same.
+      {"foo.html. ", kIsDotSpaceSuffixIgnored},
+      {"fOo.html. ", kIsDotSpaceSuffixIgnored},
+      // Path with " ." suffix, along with incorrect case for the same.
+      {"foo.html .", kIsDotSpaceSuffixIgnored},
+      {"fOo.html .", kIsDotSpaceSuffixIgnored},
+  };
+
+  for (const auto& test_case : test_cases) {
+    SCOPED_TRACE(test_case.ToString());
+    int block_size = 0;
+    std::vector<std::string> read_hashes;
+    EXPECT_EQ(
+        test_case.expect_hash,
+        computed_hashes.GetHashes(base::FilePath().AppendASCII(test_case.path),
+                                  &block_size, &read_hashes));
+
+    if (test_case.expect_hash) {
+      EXPECT_EQ(block_size,
+                extension_misc::kContentVerificationDefaultBlockSize);
+      ASSERT_EQ(1u, read_hashes.size());
+      EXPECT_EQ(hash_value, read_hashes[0]);
+    }
+  }
 }
 
 }  // namespace extensions

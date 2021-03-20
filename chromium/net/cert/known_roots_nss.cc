@@ -11,8 +11,7 @@
 
 #include <memory>
 
-#include "base/memory/protected_memory.h"
-#include "base/memory/protected_memory_cfi.h"
+#include "base/compiler_specific.h"
 #include "crypto/nss_util_internal.h"
 #include "net/base/hash_value.h"
 #include "net/cert/x509_util_nss.h"
@@ -28,7 +27,7 @@ namespace {
 
 #if defined(OS_OS2)
 // TODO: Remove once https://github.com/bitwiseworks/libc/issues/86 is done.
-void* dlsym2(const char* sym)
+static void* dlsym2(const char* sym)
 {
   // NOTE: NSS3.DLL is statically linked and loaded at startup so there is
   // no need to dlclose it - dlopen is just to get its handle.
@@ -41,41 +40,27 @@ using PK11HasAttributeSetFunction = CK_BBOOL (*)(PK11SlotInfo* slot,
                                                  CK_OBJECT_HANDLE id,
                                                  CK_ATTRIBUTE_TYPE type,
                                                  PRBool haslock);
-static PROTECTED_MEMORY_SECTION
-    base::ProtectedMemory<PK11HasAttributeSetFunction>
-        g_pk11_has_attribute_set;
-
-// The function pointer for PK11_HasAttributeSet is saved to read-only memory
-// after being dynamically resolved as a security mitigation to prevent the
-// pointer from being tampered with. See https://crbug.com/771365 for details.
-const base::ProtectedMemory<PK11HasAttributeSetFunction>&
-ResolvePK11HasAttributeSet() {
-#if defined(OS_OS2)
-  // TODO: We need to use dlopen + dlsym (and underscore) since RTLD_DEFAULT is
-  // not yet implemented in LIBCn (check
-  // https://github.com/bitwiseworks/libc/issues/86 for details).
-  static base::ProtectedMemory<PK11HasAttributeSetFunction>::Initializer init(
-      &g_pk11_has_attribute_set,
-      reinterpret_cast<PK11HasAttributeSetFunction>(
-          dlsym2("_PK11_HasAttributeSet")));
-#else
-  static base::ProtectedMemory<PK11HasAttributeSetFunction>::Initializer init(
-      &g_pk11_has_attribute_set,
-      reinterpret_cast<PK11HasAttributeSetFunction>(
-          dlsym(RTLD_DEFAULT, "PK11_HasAttributeSet")));
-#endif
-  return g_pk11_has_attribute_set;
-}
 
 }  // namespace
 
 // IsKnownRoot returns true if the given certificate is one that we believe
 // is a standard (as opposed to user-installed) root.
+NO_SANITIZE("cfi-icall")
 bool IsKnownRoot(CERTCertificate* root) {
   if (!root || !root->slot)
     return false;
 
-  if (*ResolvePK11HasAttributeSet() != nullptr) {
+  static PK11HasAttributeSetFunction pk11_has_attribute_set =
+      reinterpret_cast<PK11HasAttributeSetFunction>(
+#if defined(OS_OS2)
+          // TODO: We need to use dlopen + dlsym (and underscore) since
+          // RTLD_DEFAULT is not yet implemented in LIBCn (check
+          // https://github.com/bitwiseworks/libc/issues/86 for details).
+          dlsym2("_PK11_HasAttributeSet")));
+#else
+          dlsym(RTLD_DEFAULT, "PK11_HasAttributeSet"));
+#endif          
+  if (pk11_has_attribute_set) {
     // Historically, the set of root certs was determined based on whether or
     // not it was part of nssckbi.[so,dll], the read-only PKCS#11 module that
     // exported the certs with trust settings. However, some distributions,
@@ -97,9 +82,9 @@ bool IsKnownRoot(CERTCertificate* root) {
         if (PK11_IsPresent(slot) && PK11_HasRootCerts(slot)) {
           CK_OBJECT_HANDLE handle = PK11_FindCertInSlot(slot, root, nullptr);
           if (handle != CK_INVALID_HANDLE &&
-              UnsanitizedCfiCall(ResolvePK11HasAttributeSet())(
-                  root->slot, handle, CKA_NSS_MOZILLA_CA_POLICY, PR_FALSE) ==
-                  CK_TRUE) {
+              pk11_has_attribute_set(root->slot, handle,
+                                     CKA_NSS_MOZILLA_CA_POLICY,
+                                     PR_FALSE) == CK_TRUE) {
             return true;
           }
         }

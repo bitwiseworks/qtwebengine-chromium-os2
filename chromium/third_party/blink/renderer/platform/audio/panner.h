@@ -30,10 +30,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_AUDIO_PANNER_H_
 
 #include <memory>
+
+#include "base/macros.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -43,20 +44,21 @@ class HRTFDatabaseLoader;
 
 class PLATFORM_EXPORT Panner {
   USING_FAST_MALLOC(Panner);
-  WTF_MAKE_NONCOPYABLE(Panner);
 
  public:
-  // This values are used in histograms and should not be renumbered or deleted.
-  enum { kPanningModelEqualPower = 0, kPanningModelHRTF = 1 };
-
-  typedef unsigned PanningModel;
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class PanningModel {
+    kEqualPower = 0,
+    kHRTF = 1,
+    kMaxValue = kHRTF,
+  };
 
   static std::unique_ptr<Panner> Create(PanningModel,
                                         float sample_rate,
                                         HRTFDatabaseLoader*);
 
   virtual ~Panner() = default;
-  ;
 
   virtual void Pan(double azimuth,
                    double elevation,
@@ -78,9 +80,12 @@ class PLATFORM_EXPORT Panner {
   virtual bool RequiresTailProcessing() const = 0;
 
  protected:
-  Panner(PanningModel model) : panning_model_(model) {}
+  explicit Panner(PanningModel model) : panning_model_(model) {}
 
   PanningModel panning_model_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(Panner);
 };
 
 }  // namespace blink

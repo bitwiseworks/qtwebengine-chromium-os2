@@ -7,8 +7,9 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
+#include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
+#include "gpu/command_buffer/common/gles2_cmd_copy_texture_chromium_utils.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 
 namespace blink {
@@ -63,7 +64,7 @@ bool Extensions3DUtil::EnsureExtensionEnabled(const String& name) {
     return true;
 
   if (requestable_extensions_.Contains(name)) {
-    gl_->RequestExtensionCHROMIUM(name.Ascii().data());
+    gl_->RequestExtensionCHROMIUM(name.Ascii().c_str());
     enabled_extensions_.clear();
     requestable_extensions_.clear();
     InitializeExtensions();
@@ -75,9 +76,16 @@ bool Extensions3DUtil::IsExtensionEnabled(const String& name) {
   return enabled_extensions_.Contains(name);
 }
 
+// static
+bool Extensions3DUtil::CopyTextureCHROMIUMNeedsESSL3(GLenum dest_format) {
+  return gpu::gles2::CopyTextureCHROMIUMNeedsESSL3(dest_format);
+}
+
+// static
 bool Extensions3DUtil::CanUseCopyTextureCHROMIUM(GLenum dest_target) {
   switch (dest_target) {
     case GL_TEXTURE_2D:
+    case GL_TEXTURE_RECTANGLE_ARB:
     case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
     case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
     case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:

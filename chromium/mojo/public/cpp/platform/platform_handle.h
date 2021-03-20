@@ -6,6 +6,7 @@
 #define MOJO_PUBLIC_CPP_PLATFORM_PLATFORM_HANDLE_H_
 
 #include "base/component_export.h"
+#include "base/files/platform_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "build/build_config.h"
@@ -28,9 +29,9 @@
 namespace mojo {
 
 // A PlatformHandle is a generic wrapper around a platform-specific system
-// handle type, e.g. a POSIX file descriptor or Windows HANDLE. This can wrap
-// any of various such types depending on the host platform for which it's
-// compiled.
+// handle type, e.g. a POSIX file descriptor, Windows HANDLE, or macOS Mach
+// port. This can wrap any of various such types depending on the host platform
+// for which it's compiled.
 //
 // This is useful primarily for two reasons:
 //
@@ -48,7 +49,8 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
 #if defined(OS_WIN) || defined(OS_FUCHSIA)
     kHandle,
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
-    kMachPort,
+    kMachSend,
+    kMachReceive,
 #elif defined(OS_OS2)
     kShmemHandle,
 #endif
@@ -66,6 +68,7 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   explicit PlatformHandle(zx::handle handle);
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   explicit PlatformHandle(base::mac::ScopedMachSendRight mach_port);
+  explicit PlatformHandle(base::mac::ScopedMachReceiveRight mach_port);
 #elif defined(OS_OS2)
   explicit PlatformHandle(base::os2::ScopedShmemHandle handle);
 #endif
@@ -135,20 +138,36 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   }
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   bool is_valid() const { return is_valid_fd() || is_valid_mach_port(); }
-  bool is_valid_mach_port() const { return mach_port_.is_valid(); }
-  bool is_mach_port() const { return type_ == Type::kMachPort; }
-  const base::mac::ScopedMachSendRight& GetMachPort() const {
-    return mach_port_;
+  bool is_valid_mach_port() const {
+    return is_valid_mach_send() || is_valid_mach_receive();
   }
-  base::mac::ScopedMachSendRight TakeMachPort() {
-    if (type_ == Type::kMachPort)
-      type_ = Type::kNone;
-    return std::move(mach_port_);
+
+  bool is_valid_mach_send() const { return mach_send_.is_valid(); }
+  bool is_mach_send() const { return type_ == Type::kMachSend; }
+  const base::mac::ScopedMachSendRight& GetMachSendRight() const {
+    return mach_send_;
   }
-  mach_port_t ReleaseMachPort() WARN_UNUSED_RESULT {
-    if (type_ == Type::kMachPort)
+  base::mac::ScopedMachSendRight TakeMachSendRight() {
+    if (type_ == Type::kMachSend)
       type_ = Type::kNone;
-    return mach_port_.release();
+    return std::move(mach_send_);
+  }
+  mach_port_t ReleaseMachSendRight() WARN_UNUSED_RESULT {
+    return TakeMachSendRight().release();
+  }
+
+  bool is_valid_mach_receive() const { return mach_receive_.is_valid(); }
+  bool is_mach_receive() const { return type_ == Type::kMachReceive; }
+  const base::mac::ScopedMachReceiveRight& GetMachReceiveRight() const {
+    return mach_receive_;
+  }
+  base::mac::ScopedMachReceiveRight TakeMachReceiveRight() {
+    if (type_ == Type::kMachReceive)
+      type_ = Type::kNone;
+    return std::move(mach_receive_);
+  }
+  mach_port_t ReleaseMachReceiveRight() WARN_UNUSED_RESULT {
+    return TakeMachReceiveRight().release();
   }
 #elif defined(OS_OS2)
   bool is_valid() const { return is_valid_fd() || is_valid_shmem_handle(); }
@@ -189,6 +208,34 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   }
 #endif
 
+  bool is_valid_platform_file() const {
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+    return is_valid_fd();
+#elif defined(OS_WIN)
+    return is_valid_handle();
+#else
+#error "Unsupported platform"
+#endif
+  }
+  base::ScopedPlatformFile TakePlatformFile() {
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+    return TakeFD();
+#elif defined(OS_WIN)
+    return TakeHandle();
+#else
+#error "Unsupported platform"
+#endif
+  }
+  base::PlatformFile ReleasePlatformFile() WARN_UNUSED_RESULT {
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+    return ReleaseFD();
+#elif defined(OS_WIN)
+    return ReleaseHandle();
+#else
+#error "Unsupported platform"
+#endif
+  }
+
  private:
   Type type_ = Type::kNone;
 
@@ -197,7 +244,8 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
 #elif defined(OS_FUCHSIA)
   zx::handle handle_;
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
-  base::mac::ScopedMachSendRight mach_port_;
+  base::mac::ScopedMachSendRight mach_send_;
+  base::mac::ScopedMachReceiveRight mach_receive_;
 #elif defined(OS_OS2)
   base::os2::ScopedShmemHandle handle_;
 #endif

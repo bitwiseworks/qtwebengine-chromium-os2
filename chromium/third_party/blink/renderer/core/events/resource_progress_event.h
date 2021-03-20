@@ -47,26 +47,17 @@ class CORE_EXPORT ResourceProgressEvent final : public ProgressEvent {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static ResourceProgressEvent* Create(const AtomicString& type,
-                                       bool length_computable,
-                                       unsigned long long loaded,
-                                       unsigned long long total,
-                                       const String& url) {
-    return MakeGarbageCollected<ResourceProgressEvent>(type, length_computable,
-                                                       loaded, total, url);
-  }
-
   ResourceProgressEvent(const AtomicString& type,
                         bool length_computable,
-                        unsigned long long loaded,
-                        unsigned long long total,
+                        uint64_t loaded,
+                        uint64_t total,
                         const String& url);
 
   const String& url() const;
 
   const AtomicString& InterfaceName() const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   String url_;

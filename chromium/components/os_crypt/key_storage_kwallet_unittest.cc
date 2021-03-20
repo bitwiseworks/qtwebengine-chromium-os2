@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/nix/xdg_util.h"
+#include "build/branding_buildflags.h"
 #include "dbus/message.h"
 #include "dbus/mock_bus.h"
 #include "dbus/mock_object_proxy.h"
@@ -30,7 +31,7 @@ constexpr KWalletDBus::Error CANNOT_CONTACT =
 
 // These names are not allowed to change in prod, unless we intentionally
 // migrate.
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 const char kExpectedFolderName[] = "Chrome Keys";
 const char kExpectedEntryName[] = "Chrome Safe Storage";
 #else
@@ -262,9 +263,9 @@ class KeyStorageKWalletFailuresTest
   DISALLOW_COPY_AND_ASSIGN(KeyStorageKWalletFailuresTest);
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        KeyStorageKWalletFailuresTest,
-                        ::testing::Values(CANNOT_READ, CANNOT_CONTACT));
+INSTANTIATE_TEST_SUITE_P(All,
+                         KeyStorageKWalletFailuresTest,
+                         ::testing::Values(CANNOT_READ, CANNOT_CONTACT));
 
 TEST_P(KeyStorageKWalletFailuresTest, PostInitFailureOpen) {
   EXPECT_CALL(*kwallet_dbus_mock_, Open(_, _, _)).WillOnce(Return(GetParam()));

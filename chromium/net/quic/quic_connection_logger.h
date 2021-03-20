@@ -11,16 +11,16 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/timer/timer.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/socket_performance_watcher.h"
-#include "net/third_party/quic/core/crypto/crypto_handshake_message.h"
-#include "net/third_party/quic/core/http/quic_spdy_session.h"
-#include "net/third_party/quic/core/quic_connection.h"
-#include "net/third_party/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/crypto/crypto_handshake_message.h"
+#include "net/third_party/quiche/src/quic/core/http/quic_spdy_session.h"
+#include "net/third_party/quiche/src/quic/core/quic_connection.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 
 namespace base {
 class HistogramBase;
@@ -44,13 +44,21 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
 
   // quic::QuicPacketCreator::DebugDelegateInterface
   void OnFrameAddedToPacket(const quic::QuicFrame& frame) override;
+  void OnStreamFrameCoalesced(const quic::QuicStreamFrame& frame) override;
 
   // QuicConnectionDebugVisitorInterface
   void OnPacketSent(const quic::SerializedPacket& serialized_packet,
-                    quic::QuicPacketNumber original_packet_number,
                     quic::TransmissionType transmission_type,
                     quic::QuicTime sent_time) override;
+  void OnIncomingAck(quic::QuicPacketNumber ack_packet_number,
+                     quic::EncryptionLevel ack_decrypted_level,
+                     const quic::QuicAckFrame& frame,
+                     quic::QuicTime ack_receive_time,
+                     quic::QuicPacketNumber largest_observed,
+                     bool rtt_updated,
+                     quic::QuicPacketNumber least_unacked_sent_packet) override;
   void OnPacketLoss(quic::QuicPacketNumber lost_packet_number,
+                    quic::EncryptionLevel encryption_level,
                     quic::TransmissionType transmission_type,
                     quic::QuicTime detection_time) override;
   void OnPingSent() override;
@@ -63,8 +71,14 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   void OnDuplicatePacket(quic::QuicPacketNumber packet_number) override;
   void OnProtocolVersionMismatch(quic::ParsedQuicVersion version) override;
   void OnPacketHeader(const quic::QuicPacketHeader& header) override;
+  void OnPathChallengeFrame(const quic::QuicPathChallengeFrame& frame) override;
+  void OnPathResponseFrame(const quic::QuicPathResponseFrame& frame) override;
+  void OnCryptoFrame(const quic::QuicCryptoFrame& frame) override;
+  void OnStopSendingFrame(const quic::QuicStopSendingFrame& frame) override;
+  void OnStreamsBlockedFrame(
+      const quic::QuicStreamsBlockedFrame& frame) override;
+  void OnMaxStreamsFrame(const quic::QuicMaxStreamsFrame& frame) override;
   void OnStreamFrame(const quic::QuicStreamFrame& frame) override;
-  void OnAckFrame(const quic::QuicAckFrame& frame) override;
   void OnStopWaitingFrame(const quic::QuicStopWaitingFrame& frame) override;
   void OnRstStreamFrame(const quic::QuicRstStreamFrame& frame) override;
   void OnConnectionCloseFrame(
@@ -74,11 +88,20 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   void OnBlockedFrame(const quic::QuicBlockedFrame& frame) override;
   void OnGoAwayFrame(const quic::QuicGoAwayFrame& frame) override;
   void OnPingFrame(const quic::QuicPingFrame& frame) override;
+  void OnPaddingFrame(const quic::QuicPaddingFrame& frame) override;
+  void OnNewConnectionIdFrame(
+      const quic::QuicNewConnectionIdFrame& frame) override;
+  void OnNewTokenFrame(const quic::QuicNewTokenFrame& frame) override;
+  void OnRetireConnectionIdFrame(
+      const quic::QuicRetireConnectionIdFrame& frame) override;
+  void OnMessageFrame(const quic::QuicMessageFrame& frame) override;
+  void OnHandshakeDoneFrame(const quic::QuicHandshakeDoneFrame& frame) override;
+  void OnCoalescedPacketSent(const quic::QuicCoalescedPacket& coalesced_packet,
+                             size_t length) override;
   void OnPublicResetPacket(const quic::QuicPublicResetPacket& packet) override;
   void OnVersionNegotiationPacket(
       const quic::QuicVersionNegotiationPacket& packet) override;
-  void OnConnectionClosed(quic::QuicErrorCode error,
-                          const std::string& error_details,
+  void OnConnectionClosed(const quic::QuicConnectionCloseFrame& frame,
                           quic::ConnectionCloseSource source) override;
   void OnSuccessfulVersionNegotiation(
       const quic::ParsedQuicVersion& version) override;
@@ -106,8 +129,6 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   // the overall packet loss rate, and record it into a histogram.
   void RecordAggregatePacketLossRate() const;
 
-  void UpdateIsCapturing();
-
   NetLogWithSource net_log_;
   quic::QuicSpdySession* session_;  // Unowned.
   // The last packet number received.
@@ -118,6 +139,11 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   bool no_packet_received_after_ping_;
   // The size of the previously received packet.
   size_t previous_received_packet_size_;
+  // The first received packet number. Used as the left edge of
+  // received_packets_ and received_acks_. In the case where packets are
+  // received out of order, packets with numbers smaller than
+  // first_received_packet_number_ will not be logged.
+  quic::QuicPacketNumber first_received_packet_number_;
   // The largest packet number received.  In the case where a packet is
   // received late (out of order), this value will not be updated.
   quic::QuicPacketNumber largest_received_packet_number_;
@@ -152,23 +178,19 @@ class NET_EXPORT_PRIVATE QuicConnectionLogger
   // Count of the number of BLOCKED frames sent.
   int num_blocked_frames_sent_;
   // Vector of inital packets status' indexed by packet numbers, where
-  // false means never received.  Zero is not a valid packet number, so
-  // that offset is never used, and we'll track 150 packets.
-  std::bitset<151> received_packets_;
+  // false means never received. We track 150 packets starting from
+  // first_received_packet_number_.
+  std::bitset<150> received_packets_;
   // Vector to indicate which of the initial 150 received packets turned out to
   // contain solo ACK frames.  An element is true iff an ACK frame was in the
   // corresponding packet, and there was very little else.
-  std::bitset<151> received_acks_;
+  std::bitset<150> received_acks_;
   // The available type of connection (WiFi, 3G, etc.) when connection was first
   // used.
   const char* const connection_description_;
   // Receives notifications regarding the performance of the underlying socket
   // for the QUIC connection. May be null.
   const std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher_;
-  // Lower the overhead of checking whether logging is active, by
-  // periodically polling and caching the result of net_log_.IsCapturing().
-  bool net_log_is_capturing_;
-  base::RepeatingTimer timer_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionLogger);
 };

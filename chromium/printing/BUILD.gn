@@ -14,12 +14,37 @@ if (is_mac) {
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
+if (use_cups && is_chromeos) {
+  import("//printing/backend/tools/code_generator.gni")
+}
+
+# Reset sources_assignment_filter for the BUILD.gn file to prevent
+# regression during the migration of Chromium away from the feature.
+# See docs/no_sources_assignment_filter.md for more information.
+# TODO(crbug.com/1018739): remove this when migration is done.
+set_sources_assignment_filter([])
 
 if ((enable_basic_printing && is_win) || enable_print_preview) {
   # Windows basic printing or print preview requires pdf enabled.
   assert(enable_pdf,
          "Windows basic printing or print preview needs pdf: " +
              "set enable_pdf=true.")
+}
+
+# Several targets want to include this header file. We separate it out
+# here so multiple targets can depend on it.
+source_set("printing_export") {
+  sources = [ "printing_export.h" ]
+}
+
+if (use_cups && is_chromeos) {
+  ipp_handler_map_path = "$target_gen_dir/backend/ipp_handler_map.cc"
+
+  ipp_code_generate("ipp_handlers_generate") {
+    outputs = [ ipp_handler_map_path ]
+    args = [ "--ipp-handler-map=" +
+             rebase_path(ipp_handler_map_path, root_build_dir) ]
+  }
 }
 
 component("printing") {
@@ -29,16 +54,10 @@ component("printing") {
     "backend/print_backend_consts.cc",
     "backend/print_backend_consts.h",
     "backend/print_backend_dummy.cc",
-    "backend/printing_info_win.cc",
-    "backend/printing_info_win.h",
-    "emf_win.cc",
-    "emf_win.h",
     "metafile.cc",
     "metafile.h",
     "metafile_skia.cc",
     "metafile_skia.h",
-    "metafile_skia_wrapper.cc",
-    "metafile_skia_wrapper.h",
     "native_drawing_context.h",
     "nup_parameters.cc",
     "nup_parameters.h",
@@ -49,8 +68,6 @@ component("printing") {
     "page_setup.cc",
     "page_setup.h",
     "page_size_margins.h",
-    "pdf_metafile_cg_mac.cc",
-    "pdf_metafile_cg_mac.h",
     "pdf_render_settings.h",
     "print_dialog_gtk_interface.h",
     "print_job_constants.cc",
@@ -59,17 +76,12 @@ component("printing") {
     "print_settings.h",
     "print_settings_conversion.cc",
     "print_settings_conversion.h",
-    "print_settings_initializer_mac.cc",
-    "print_settings_initializer_mac.h",
-    "print_settings_initializer_win.cc",
-    "print_settings_initializer_win.h",
     "printed_document.cc",
     "printed_document.h",
-    "printed_document_mac.cc",
-    "printed_document_win.cc",
     "printing_context.cc",
     "printing_context.h",
-    "printing_export.h",
+    "printing_features.cc",
+    "printing_features.h",
     "printing_utils.cc",
     "printing_utils.h",
     "pwg_raster_settings.h",
@@ -77,13 +89,13 @@ component("printing") {
     "units.h",
   ]
 
+  configs += [ "//build/config/compiler:noshadowing" ]
   cflags = []
   defines = [ "PRINTING_IMPLEMENTATION" ]
 
-  public_deps = [
-    "//printing/buildflags",
-  ]
+  public_deps = [ "//printing/buildflags" ]
   deps = [
+    ":printing_export",
     "//base",
     "//base:i18n",
     "//base/third_party/dynamic_annotations",
@@ -91,25 +103,63 @@ component("printing") {
     "//printing/common",
     "//skia",
     "//third_party/icu",
+    "//ui/accessibility",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//url",
   ]
 
-  if (use_aura) {
-    deps += [ "//ui/aura" ]
+  if (is_android) {
+    sources += [
+      "printed_document_android.cc",
+      "printing_context_android.cc",
+      "printing_context_android.h",
+    ]
+
+    deps += [
+      ":printing_jni_headers",
+      "//ui/android",
+    ]
+  }
+
+  if (is_chromeos) {
+    defines += [ "PRINT_BACKEND_AVAILABLE" ]
+
+    sources += [
+      "backend/print_backend_chromeos.cc",
+      "backend/printing_restrictions.cc",
+      "backend/printing_restrictions.h",
+      "printed_document_chromeos.cc",
+      "printing_context_no_system_dialog.cc",
+      "printing_context_no_system_dialog.h",
+    ]
+  }
+
+  if (is_desktop_linux) {
+    sources += [
+      "printed_document_linux.cc",
+      "printing_context_linux.cc",
+      "printing_context_linux.h",
+    ]
   }
 
   if (is_mac) {
+    sources += [
+      "pdf_metafile_cg_mac.cc",
+      "pdf_metafile_cg_mac.h",
+      "print_settings_initializer_mac.cc",
+      "print_settings_initializer_mac.h",
+    ]
+
     # Mac-Aura does not support printing.
-    if (use_aura) {
-      sources -= [ "printed_document_mac.cc" ]
-    } else {
+    if (!use_aura) {
       sources += [
+        "printed_document_mac.cc",
         "printing_context_mac.h",
         "printing_context_mac.mm",
       ]
     }
+
     libs = [
       "AppKit.framework",
       "QuartzCore.framework",
@@ -125,8 +175,15 @@ component("printing") {
     defines += [ "PRINT_BACKEND_AVAILABLE" ]
     sources += [
       "backend/print_backend_win.cc",
+      "backend/printing_info_win.cc",
+      "backend/printing_info_win.h",
       "backend/win_helper.cc",
       "backend/win_helper.h",
+      "emf_win.cc",
+      "emf_win.h",
+      "print_settings_initializer_win.cc",
+      "print_settings_initializer_win.h",
+      "printed_document_win.cc",
       "printed_page_win.cc",
       "printed_page_win.h",
       "printing_context_system_dialog_win.cc",
@@ -136,45 +193,23 @@ component("printing") {
     ]
   }
 
+  if (use_aura) {
+    deps += [ "//ui/aura" ]
+  }
+
   if (use_cups) {
     configs += [ ":cups" ]
 
     if (is_linux || is_os2) {
-      # rebase_path does not accept an empty string
-      if (use_sysroot) {
-        cups_sysroot = rebase_path(sysroot)
-      } else {
-        cups_sysroot = ""
-      }
-      cups_version = exec_script("cups_config_helper.py",
-                                 [
-                                   "--api-version",
-                                   cups_sysroot,
-                                 ],
-                                 "trim string")
-
-      if (cups_version == "1.6" || cups_version == "1.7") {
-        cflags += [
-          # CUPS 1.6 deprecated the PPD APIs, but we will stay with this
-          # API for now as supported Linux and Mac OS'es are still using
-          # older versions of CUPS. More info: crbug.com/226176
-          "-Wno-deprecated-declarations",
-          # CUPS 1.7 deprecates httpConnectEncrypt(), see the mac section
-          # below.
-        ]
-      }
+      # CUPS 1.6 deprecated the PPD APIs, but we will stay with this API
+      # for now as the suitability of the replacement is unclear.
+      # More info: crbug.com/226176
+      cflags += [ "-Wno-deprecated-declarations" ]
     }
 
     if (is_mac) {
-      # The 10.9 SDK includes cups 1.7, which deprecates
-      # httpConnectEncrypt() in favor of httpConnect2(). hhttpConnect2()
-      # is new in 1.7, so it doesn't exist on OS X 10.6-10.8 and we
-      # can't use it until 10.9 is our minimum system version.
-      # (cups_version isn't reliable on OS X, so key the check off of
-      # mac_sdk).
-      # With a 10.8 deployment target, several other APIs are deprecated.
-      # We're still on CUPS 1.4 until Linux no longer needs to support it, see
-      # comment above.
+      # CUPS 1.6 deprecated the PPD APIs. We need to evaluate the
+      # effect of migrating Mac. More info: crbug.com/226176
       cflags += [ "-Wno-deprecated-declarations" ]
     }
 
@@ -182,63 +217,66 @@ component("printing") {
     # of the print backend and enables a custom implementation instead.
     defines += [ "PRINT_BACKEND_AVAILABLE" ]
 
-    if (is_chromeos || is_os2) {
-      # OS/2 uses some ChromeOS sources, put those back.
-      set_sources_assignment_filter([])
+    if (is_chromeos || is_mac || is_os2) {
       sources += [
         "backend/cups_connection.cc",
         "backend/cups_connection.h",
         "backend/cups_deleters.cc",
         "backend/cups_deleters.h",
-        "backend/cups_ipp_util.cc",
-        "backend/cups_ipp_util.h",
+        "backend/cups_ipp_constants.cc",
+        "backend/cups_ipp_constants.h",
+        "backend/cups_ipp_helper.cc",
+        "backend/cups_ipp_helper.h",
+        "backend/cups_ipp_utils.cc",
+        "backend/cups_ipp_utils.h",
         "backend/cups_jobs.cc",
         "backend/cups_jobs.h",
         "backend/cups_printer.cc",
         "backend/cups_printer.h",
         "backend/print_backend_cups_ipp.cc",
         "backend/print_backend_cups_ipp.h",
+      ]
+    }
+
+    if (is_chromeos) {
+      deps += [ ":ipp_handlers_generate" ]
+
+      sources += [
+        "backend/ipp_handler_map.h",
+        "backend/ipp_handlers.cc",
+        "backend/ipp_handlers.h",
         "printing_context_chromeos.cc",
         "printing_context_chromeos.h",
+        ipp_handler_map_path,
       ]
       set_sources_assignment_filter(sources_assignment_filter)
     } else {
+      # TODO(crbug.com/1062136): Remove the original CUPS backend for macOS
+      # when Cloud Print support is terminated. Follow up after Jan 1, 2021.
       sources += [
         "backend/cups_helper.cc",
         "backend/cups_helper.h",
         "backend/print_backend_cups.cc",
         "backend/print_backend_cups.h",
       ]
+
+      # We still build the utils for fuzzing.
+      if (use_fuzzing_engine) {
+        sources += [
+          "backend/cups_ipp_constants.cc",
+          "backend/cups_ipp_constants.h",
+          "backend/cups_ipp_helper.cc",
+          "backend/cups_ipp_helper.h",
+        ]
+      }
     }
   }
 
-  if (is_chromeos || is_os2) {
-    defines += [ "PRINT_BACKEND_AVAILABLE" ]
-
-    # OS/2 uses some ChromeOS sources, put those back.
-    set_sources_assignment_filter([])
+  if (is_chromeos || is_mac || is_os2) {
     sources += [
-      "backend/print_backend_chromeos.cc",
-      "backend/printing_restrictions.cc",
-      "backend/printing_restrictions.h",
-      "printed_document_chromeos.cc",
-      "printing_context_no_system_dialog.cc",
-      "printing_context_no_system_dialog.h",
-    ]
-    set_sources_assignment_filter(sources_assignment_filter)
-  } else if (is_android) {
-    sources += [
-      "printed_document_android.cc",
-      "printing_context_android.cc",
-      "printing_context_android.h",
-    ]
-
-    deps += [ ":printing_jni_headers" ]
-  } else if (is_linux) {  # Desktop Linux.
-    sources += [
-      "printed_document_linux.cc",
-      "printing_context_linux.cc",
-      "printing_context_linux.h",
+      "printer_query_result.h",
+      "printer_status.cc",
+      "printer_status.h",
     ]
   }
 }
@@ -250,15 +288,9 @@ static_library("test_support") {
     "backend/test_print_backend.h",
     "image.cc",
     "image.h",
-    "image_android.cc",
-    "image_linux.cc",
-    "image_mac.cc",
-    "image_win.cc",
   ]
-  if (is_fuchsia) {
-    sources += [ "image_fuchsia.cc" ]
-  }
 
+  configs += [ "//build/config/compiler:noshadowing" ]
   public_deps = [
     "//printing",
     "//ui/gfx/geometry",
@@ -268,23 +300,38 @@ static_library("test_support") {
     "//skia",
     "//ui/gfx",
   ]
+
+  if (is_android) {
+    sources += [ "image_android.cc" ]
+  }
+  if (is_fuchsia) {
+    sources += [ "image_fuchsia.cc" ]
+  }
+  if (is_linux) {
+    sources += [ "image_linux.cc" ]
+  }
+  if (is_mac) {
+    sources += [ "image_mac.cc" ]
+  }
+  if (is_win) {
+    sources += [ "image_win.cc" ]
+  }
 }
 
 test("printing_unittests") {
   sources = [
-    "emf_win_unittest.cc",
     "metafile_skia_unittest.cc",
     "nup_parameters_unittest.cc",
     "page_number_unittest.cc",
     "page_range_unittest.cc",
     "page_setup_unittest.cc",
-    "pdf_metafile_cg_mac_unittest.cc",
-    "printing_context_win_unittest.cc",
+    "print_settings_conversion_unittest.cc",
     "printing_test.h",
     "printing_utils_unittest.cc",
     "units_unittest.cc",
   ]
 
+  configs += [ "//build/config/compiler:noshadowing" ]
   deps = [
     ":printing",
     "//base/test:run_all_unittests",
@@ -298,21 +345,41 @@ test("printing_unittests") {
     "//ui/gfx/geometry",
   ]
 
-  if (is_win || is_mac) {
-    sources += [ "printed_document_unittest.cc" ]
+  if (is_mac) {
+    sources += [ "pdf_metafile_cg_mac_unittest.cc" ]
+
+    data = [
+      "test/data/pdf_cg/",
+      "../pdf/test/data/",
+    ]
   }
 
   if (is_win) {
-    sources += [ "printed_page_win_unittest.cc" ]
+    sources += [
+      "emf_win_unittest.cc",
+      "printed_page_win_unittest.cc",
+      "printing_context_win_unittest.cc",
+    ]
+
+    data = [ "test/data/emf/" ]
+  }
+
+  if (is_win || is_mac) {
+    sources += [ "printed_document_unittest.cc" ]
   }
 
   if (use_cups) {
     configs += [ ":cups" ]
 
-    if (is_chromeos || is_os2) {
-      sources += [ "backend/cups_ipp_util_unittest.cc" ]
-    } else {
-      sources += [ "backend/cups_helper_unittest.cc" ]
+    if (is_chromeos || is_mac || is_os2) {
+      sources += [ "backend/cups_ipp_helper_unittest.cc" ]
+    }
+
+    if (!is_chromeos) {
+      sources += [
+        "backend/cups_helper_unittest.cc",
+        "backend/print_backend_cups_unittest.cc",
+      ]
     }
   }
 }
@@ -343,17 +410,16 @@ if (use_cups) {
 
 if (is_android) {
   generate_jni("printing_jni_headers") {
-    sources = [
-      "android/java/src/org/chromium/printing/PrintingContext.java",
-    ]
-    jni_package = "printing"
+    sources = [ "android/java/src/org/chromium/printing/PrintingContext.java" ]
   }
 
   android_library("printing_java") {
     deps = [
       "//base:base_java",
+      "//base:jni_java",
+      "//ui/android:ui_java",
     ]
-    java_files = [
+    sources = [
       "android/java/src/org/chromium/printing/PrintDocumentAdapterWrapper.java",
       "android/java/src/org/chromium/printing/PrintManagerDelegate.java",
       "android/java/src/org/chromium/printing/PrintManagerDelegateImpl.java",
@@ -362,5 +428,6 @@ if (is_android) {
       "android/java/src/org/chromium/printing/PrintingController.java",
       "android/java/src/org/chromium/printing/PrintingControllerImpl.java",
     ]
+    annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
   }
 }

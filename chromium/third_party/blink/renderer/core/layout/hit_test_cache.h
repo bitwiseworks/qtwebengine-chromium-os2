@@ -37,18 +37,15 @@ namespace blink {
 struct HitTestCacheEntry {
   DISALLOW_NEW();
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
   HitTestLocation location;
   HitTestResult result;
 
   void CacheValues(const HitTestCacheEntry&);
 };
 
-class CORE_EXPORT HitTestCache final
-    : public GarbageCollectedFinalized<HitTestCache> {
+class CORE_EXPORT HitTestCache final : public GarbageCollected<HitTestCache> {
  public:
-  static HitTestCache* Create() { return MakeGarbageCollected<HitTestCache>(); }
-
   HitTestCache() : update_index_(0), dom_tree_version_(0) {}
 
   // Check the cache for a possible hit and update |result| if
@@ -64,7 +61,7 @@ class CORE_EXPORT HitTestCache final
                        const HitTestResult&,
                        uint64_t dom_tree_version);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   // The below UMA values reference a validity region. This code has not
@@ -92,6 +89,6 @@ class CORE_EXPORT HitTestCache final
 
 }  // namespace blink
 
-WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::HitTestCacheEntry);
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::HitTestCacheEntry)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_HIT_TEST_CACHE_H_

@@ -12,6 +12,7 @@
 #include "components/viz/host/client_frame_sink_video_capturer.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace blink {
@@ -46,10 +47,11 @@ class DevToolsEyeDropper : public content::WebContentsObserver,
   void OnFrameCaptured(
       base::ReadOnlySharedMemoryRegion data,
       ::media::mojom::VideoFrameInfoPtr info,
-      const gfx::Rect& update_rect,
       const gfx::Rect& content_rect,
-      viz::mojom::FrameSinkVideoConsumerFrameCallbacksPtr callbacks) override;
+      mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+          callbacks) override;
   void OnStopped() override;
+  void OnLog(const std::string& /*message*/) override {}
 
   EyeDropperCallback callback_;
   SkBitmap frame_;
@@ -58,7 +60,7 @@ class DevToolsEyeDropper : public content::WebContentsObserver,
   content::RenderWidgetHost::MouseEventCallback mouse_event_callback_;
   content::RenderWidgetHost* host_;
   std::unique_ptr<viz::ClientFrameSinkVideoCapturer> video_capturer_;
-  base::WeakPtrFactory<DevToolsEyeDropper> weak_factory_;
+  base::WeakPtrFactory<DevToolsEyeDropper> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsEyeDropper);
 };

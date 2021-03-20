@@ -27,7 +27,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_MEDIA_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_MEDIA_H_
 
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -36,21 +36,17 @@ namespace blink {
 
 class LocalFrame;
 
-class StyleMedia final : public ScriptWrappable, public ContextClient {
+class StyleMedia final : public ScriptWrappable, public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(StyleMedia);
 
  public:
-  static StyleMedia* Create(LocalFrame* frame) {
-    return MakeGarbageCollected<StyleMedia>(frame);
-  }
-
   explicit StyleMedia(LocalFrame*);
 
   AtomicString type() const;
   bool matchMedium(const String&) const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 };
 
 }  // namespace blink

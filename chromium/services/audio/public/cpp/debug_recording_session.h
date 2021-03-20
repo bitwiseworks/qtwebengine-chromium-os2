@@ -9,12 +9,11 @@
 
 #include "media/audio/audio_debug_recording_helper.h"
 #include "media/audio/audio_debug_recording_session.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/audio/public/mojom/debug_recording.mojom.h"
-
-namespace service_manager {
-class Connector;
-}
 
 namespace base {
 class FilePath;
@@ -33,8 +32,9 @@ class DebugRecordingSession : public media::AudioDebugRecordingSession {
  public:
   class DebugRecordingFileProvider : public mojom::DebugRecordingFileProvider {
    public:
-    DebugRecordingFileProvider(mojom::DebugRecordingFileProviderRequest request,
-                               const base::FilePath& file_name_base);
+    DebugRecordingFileProvider(
+        mojo::PendingReceiver<mojom::DebugRecordingFileProvider> receiver,
+        const base::FilePath& file_name_base);
     ~DebugRecordingFileProvider() override;
 
     // Creates file with name "|file_name_base_|.<stream_type_str>.|id|.wav",
@@ -45,19 +45,20 @@ class DebugRecordingSession : public media::AudioDebugRecordingSession {
                        CreateWavFileCallback reply_callback) override;
 
    private:
-    mojo::Binding<mojom::DebugRecordingFileProvider> binding_;
+    mojo::Receiver<mojom::DebugRecordingFileProvider> receiver_;
     base::FilePath file_name_base_;
 
     DISALLOW_COPY_AND_ASSIGN(DebugRecordingFileProvider);
   };
 
-  DebugRecordingSession(const base::FilePath& file_name_base,
-                        std::unique_ptr<service_manager::Connector> connector);
+  DebugRecordingSession(
+      const base::FilePath& file_name_base,
+      mojo::PendingRemote<mojom::DebugRecording> debug_recording);
   ~DebugRecordingSession() override;
 
  private:
   std::unique_ptr<DebugRecordingFileProvider> file_provider_;
-  mojom::DebugRecordingPtr debug_recording_;
+  mojo::Remote<mojom::DebugRecording> debug_recording_;
 
   DISALLOW_COPY_AND_ASSIGN(DebugRecordingSession);
 };

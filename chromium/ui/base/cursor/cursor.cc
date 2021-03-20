@@ -5,37 +5,35 @@
 #include "ui/base/cursor/cursor.h"
 
 #include "base/logging.h"
+#include "ui/gfx/skia_util.h"
 
 namespace ui {
 
-Cursor::Cursor()
-    : native_type_(CursorType::kNull),
-      platform_cursor_(0),
-      device_scale_factor_(0.0f) {}
+Cursor::Cursor() = default;
 
-Cursor::Cursor(CursorType type)
-    : native_type_(type), platform_cursor_(0), device_scale_factor_(0.0f) {}
+Cursor::Cursor(mojom::CursorType type) : type_(type) {}
 
 Cursor::Cursor(const Cursor& cursor)
-    : native_type_(cursor.native_type_),
+    : type_(cursor.type_),
       platform_cursor_(cursor.platform_cursor_),
-      device_scale_factor_(cursor.device_scale_factor_),
-      custom_bitmap_(cursor.custom_bitmap_),
-      custom_hotspot_(cursor.custom_hotspot_) {
-  if (native_type_ == CursorType::kCustom)
+      image_scale_factor_(cursor.image_scale_factor_) {
+  if (type_ == mojom::CursorType::kCustom) {
+    custom_hotspot_ = cursor.custom_hotspot_;
+    custom_bitmap_ = cursor.custom_bitmap_;
     RefCustomCursor();
+  }
 }
 
 Cursor::~Cursor() {
-  if (native_type_ == CursorType::kCustom)
+  if (type_ == mojom::CursorType::kCustom)
     UnrefCustomCursor();
 }
 
 void Cursor::SetPlatformCursor(const PlatformCursor& platform) {
-  if (native_type_ == CursorType::kCustom)
+  if (type_ == mojom::CursorType::kCustom)
     UnrefCustomCursor();
   platform_cursor_ = platform;
-  if (native_type_ == CursorType::kCustom)
+  if (type_ == mojom::CursorType::kCustom)
     RefCustomCursor();
 }
 
@@ -48,46 +46,27 @@ void Cursor::UnrefCustomCursor() {
 }
 #endif
 
-SkBitmap Cursor::GetBitmap() const {
-  if (native_type_ == CursorType::kCustom)
-    return custom_bitmap_;
-#if defined(USE_AURA)
-  return GetDefaultBitmap();
-#else
-  return SkBitmap();
-#endif
+bool Cursor::operator==(const Cursor& cursor) const {
+  return type_ == cursor.type_ && platform_cursor_ == cursor.platform_cursor_ &&
+         image_scale_factor_ == cursor.image_scale_factor_ &&
+         (type_ != mojom::CursorType::kCustom ||
+          (custom_hotspot_ == cursor.custom_hotspot_ &&
+           gfx::BitmapsAreEqual(custom_bitmap_, cursor.custom_bitmap_)));
 }
 
-gfx::Point Cursor::GetHotspot() const {
-  if (native_type_ == CursorType::kCustom)
-    return custom_hotspot_;
-#if defined(USE_AURA)
-  return GetDefaultHotspot();
-#else
-  return gfx::Point();
-#endif
-}
-
-bool Cursor::IsSameAs(const Cursor& rhs) const {
-  return native_type_ == rhs.native_type_ &&
-         custom_hotspot_ == rhs.custom_hotspot_ &&
-         device_scale_factor_ == rhs.device_scale_factor_ &&
-         custom_bitmap_.getGenerationID() ==
-             rhs.custom_bitmap_.getGenerationID();
-}
-
-void Cursor::Assign(const Cursor& cursor) {
+void Cursor::operator=(const Cursor& cursor) {
   if (*this == cursor)
     return;
-  if (native_type_ == CursorType::kCustom)
+  if (type_ == mojom::CursorType::kCustom)
     UnrefCustomCursor();
-  native_type_ = cursor.native_type_;
+  type_ = cursor.type_;
   platform_cursor_ = cursor.platform_cursor_;
-  if (native_type_ == CursorType::kCustom)
+  if (type_ == mojom::CursorType::kCustom) {
     RefCustomCursor();
-  device_scale_factor_ = cursor.device_scale_factor_;
-  custom_bitmap_ = cursor.custom_bitmap_;
-  custom_hotspot_ = cursor.custom_hotspot_;
+    custom_hotspot_ = cursor.custom_hotspot_;
+    custom_bitmap_ = cursor.custom_bitmap_;
+  }
+  image_scale_factor_ = cursor.image_scale_factor_;
 }
 
 }  // namespace ui

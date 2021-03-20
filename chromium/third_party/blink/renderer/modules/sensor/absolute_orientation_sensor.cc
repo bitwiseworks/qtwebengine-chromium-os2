@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/modules/sensor/absolute_orientation_sensor.h"
 
+#include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-blink.h"
+
 using device::mojom::blink::SensorType;
 
 namespace blink {
@@ -32,11 +34,11 @@ AbsoluteOrientationSensor::AbsoluteOrientationSensor(
                         options,
                         exception_state,
                         SensorType::ABSOLUTE_ORIENTATION_QUATERNION,
-                        {mojom::FeaturePolicyFeature::kAccelerometer,
-                         mojom::FeaturePolicyFeature::kGyroscope,
-                         mojom::FeaturePolicyFeature::kMagnetometer}) {}
+                        {mojom::blink::FeaturePolicyFeature::kAccelerometer,
+                         mojom::blink::FeaturePolicyFeature::kGyroscope,
+                         mojom::blink::FeaturePolicyFeature::kMagnetometer}) {}
 
-void AbsoluteOrientationSensor::Trace(blink::Visitor* visitor) {
+void AbsoluteOrientationSensor::Trace(Visitor* visitor) {
   OrientationSensor::Trace(visitor);
 }
 

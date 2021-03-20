@@ -50,6 +50,7 @@ static int wholenumberConnect(
   pNew = *ppVtab = sqlite3_malloc( sizeof(*pNew) );
   if( pNew==0 ) return SQLITE_NOMEM;
   sqlite3_declare_vtab(db, "CREATE TABLE x(value)");
+  sqlite3_vtab_config(db, SQLITE_VTAB_INNOCUOUS);
   memset(pNew, 0, sizeof(*pNew));
   return SQLITE_OK;
 }
@@ -143,7 +144,7 @@ static int wholenumberEof(sqlite3_vtab_cursor *cur){
 **     10      value >= $argv0 AND value <= $argv1
 */
 static int wholenumberFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -237,7 +238,7 @@ static sqlite3_module wholenumberModule = {
   wholenumberConnect,
   wholenumberConnect,
   wholenumberBestIndex,
-  wholenumberDisconnect,
+  wholenumberDisconnect, 
   wholenumberDisconnect,
   wholenumberOpen,           /* xOpen - open a cursor */
   wholenumberClose,          /* xClose - close a cursor */
@@ -261,8 +262,8 @@ static sqlite3_module wholenumberModule = {
 __declspec(dllexport)
 #endif
 int sqlite3_wholenumber_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

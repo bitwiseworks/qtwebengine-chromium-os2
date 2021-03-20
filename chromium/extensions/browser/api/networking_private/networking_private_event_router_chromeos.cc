@@ -53,6 +53,7 @@ class NetworkingPrivateEventRouterImpl
   void DeviceListChanged() override;
   void NetworkPropertiesUpdated(const NetworkState* network) override;
   void DevicePropertiesUpdated(const DeviceState* device) override;
+  void ScanCompleted(const DeviceState* device) override;
 
   // NetworkCertificateHandler::Observer overrides:
   void OnCertificatesChanged() override;
@@ -207,11 +208,13 @@ void NetworkingPrivateEventRouterImpl::NetworkPropertiesUpdated(
   EventRouter* event_router = EventRouter::Get(context_);
   if (!event_router->HasEventListener(
           api::networking_private::OnNetworksChanged::kEventName)) {
-    NET_LOG_EVENT("NetworkingPrivate.NetworkPropertiesUpdated: No Listeners",
-                  network->path());
+    NET_LOG(EVENT)
+        << "NetworkingPrivate.NetworkPropertiesUpdated: No Listeners: "
+        << NetworkId(network);
     return;
   }
-  NET_LOG_EVENT("NetworkingPrivate.NetworkPropertiesUpdated", network->path());
+  NET_LOG(EVENT) << "NetworkingPrivate.NetworkPropertiesUpdated: "
+                 << NetworkId(network);
   std::unique_ptr<base::ListValue> args(
       api::networking_private::OnNetworksChanged::Create(
           std::vector<std::string>(1, network->guid())));
@@ -239,14 +242,22 @@ void NetworkingPrivateEventRouterImpl::DevicePropertiesUpdated(
   }
 }
 
+void NetworkingPrivateEventRouterImpl::ScanCompleted(
+    const DeviceState* device) {
+  // We include the scanning state for Cellular networks, so notify the UI when
+  // a scan completes.
+  if (chromeos::NetworkTypePattern::Wireless().MatchesType(device->type()))
+    DevicePropertiesUpdated(device);
+}
+
 void NetworkingPrivateEventRouterImpl::OnCertificatesChanged() {
   EventRouter* event_router = EventRouter::Get(context_);
   if (!event_router->HasEventListener(
           api::networking_private::OnCertificateListsChanged::kEventName)) {
-    NET_LOG_EVENT("NetworkingPrivate.OnCertificatesChanged: No Listeners", "");
+    NET_LOG(EVENT) << "NetworkingPrivate.OnCertificatesChanged: No Listeners";
     return;
   }
-  NET_LOG_EVENT("NetworkingPrivate.OnCertificatesChanged", "");
+  NET_LOG(EVENT) << "NetworkingPrivate.OnCertificatesChanged";
 
   std::unique_ptr<base::ListValue> args(
       api::networking_private::OnCertificateListsChanged::Create());
@@ -260,16 +271,18 @@ void NetworkingPrivateEventRouterImpl::OnCertificatesChanged() {
 void NetworkingPrivateEventRouterImpl::OnPortalDetectionCompleted(
     const NetworkState* network,
     const NetworkPortalDetector::CaptivePortalState& state) {
-  const std::string path = network ? network->guid() : std::string();
+  const std::string guid = network ? network->guid() : std::string();
 
   EventRouter* event_router = EventRouter::Get(context_);
   if (!event_router->HasEventListener(
           api::networking_private::OnPortalDetectionCompleted::kEventName)) {
-    NET_LOG_EVENT("NetworkingPrivate.OnPortalDetectionCompleted: No Listeners",
-                  path);
+    NET_LOG(EVENT)
+        << "NetworkingPrivate.OnPortalDetectionCompleted: No Listeners: "
+        << (network ? NetworkId(network) : "");
     return;
   }
-  NET_LOG_EVENT("NetworkingPrivate.OnPortalDetectionCompleted", path);
+  NET_LOG(EVENT) << "NetworkingPrivate.OnPortalDetectionCompleted: "
+                 << (network ? NetworkId(network) : "");
 
   api::networking_private::CaptivePortalStatus status =
       api::networking_private::CAPTIVE_PORTAL_STATUS_UNKNOWN;
@@ -295,7 +308,7 @@ void NetworkingPrivateEventRouterImpl::OnPortalDetectionCompleted(
   }
 
   std::unique_ptr<base::ListValue> args(
-      api::networking_private::OnPortalDetectionCompleted::Create(path,
+      api::networking_private::OnPortalDetectionCompleted::Create(guid,
                                                                   status));
   std::unique_ptr<Event> extension_event(
       new Event(events::NETWORKING_PRIVATE_ON_PORTAL_DETECTION_COMPLETED,

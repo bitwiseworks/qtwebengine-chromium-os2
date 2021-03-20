@@ -7,11 +7,12 @@
 #ifndef GrAHardwareBufferImageGenerator_DEFINED
 #define GrAHardwareBufferImageGenerator_DEFINED
 
-#include "SkImageGenerator.h"
+#include "include/core/SkImageGenerator.h"
 
-#include "GrTypesPriv.h"
+#include "include/private/GrTypesPriv.h"
 
 class GrGpuResource;
+class GrSurfaceProxyView;
 
 extern "C" {
     typedef struct AHardwareBuffer AHardwareBuffer;
@@ -35,28 +36,20 @@ public:
 
     ~GrAHardwareBufferImageGenerator() override;
 
-    typedef void* DeleteImageCtx;
-    typedef void (*DeleteImageProc)(DeleteImageCtx);
-
     static void DeleteGLTexture(void* ctx);
-
-#ifdef SK_VULKAN
-    static void DeleteVkImage(void* ctx);
-#endif
 
 protected:
 
     bool onIsValid(GrContext*) const override;
 
-    TexGenType onCanGenerateTexture() const override { return TexGenType::kCheap; }
-    sk_sp<GrTextureProxy> onGenerateTexture(GrContext*, const SkImageInfo&, const SkIPoint&,
-                                            bool willNeedMipMaps) override;
+    GrSurfaceProxyView onGenerateTexture(GrRecordingContext*, const SkImageInfo&, const SkIPoint&,
+                                         GrMipMapped, GrImageTexGenPolicy) override;
 
 private:
     GrAHardwareBufferImageGenerator(const SkImageInfo&, AHardwareBuffer*, SkAlphaType,
                                     bool isProtectedContent, uint32_t bufferFormat,
                                     GrSurfaceOrigin surfaceOrigin);
-    sk_sp<GrTextureProxy> makeProxy(GrContext* context);
+    GrSurfaceProxyView makeView(GrRecordingContext* context);
 
     void releaseTextureRef();
 

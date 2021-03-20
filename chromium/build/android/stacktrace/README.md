@@ -1,4 +1,4 @@
-# java_deobfuscate
+# java_deobfuscate.py
 
 A wrapper around ProGuard's ReTrace tool, which:
 
@@ -7,12 +7,22 @@ A wrapper around ProGuard's ReTrace tool, which:
 
 The second point here is what allows you to run:
 
-    adb logcat | out/Default/bin/java_deobfuscate out/Default/apks/ChromePublic.apk.mapping
+    adb logcat | build/android/stacktrace/java_deobfuscate.py out/Default/apks/ChromePublic.apk.mapping
 
 And have it actually show output without logcat terminating.
 
+
+## Update Instructions:
+
+    ninja -C out/Release java_deobfuscate
+    cp out/Release/lib.java/build/android/stacktrace/java_deobfuscate.jar build/android/stacktrace
 
 # stackwalker.py
 
 Extracts Breakpad microdumps from a log file and uses `stackwalker` to symbolize
 them.
+
+
+# crashpad_stackwalker.py
+
+Fetches Crashpad dumps from a given device, walks and symbolizes the stacks.

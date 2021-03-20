@@ -4,6 +4,7 @@
 
 #include "components/dom_distiller/core/distiller_url_fetcher.h"
 
+#include "base/bind.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -17,8 +18,8 @@ DistillerURLFetcherFactory::DistillerURLFetcherFactory(
 
 DistillerURLFetcherFactory::~DistillerURLFetcherFactory() {}
 
-DistillerURLFetcher*
-DistillerURLFetcherFactory::CreateDistillerURLFetcher() const {
+DistillerURLFetcher* DistillerURLFetcherFactory::CreateDistillerURLFetcher()
+    const {
   return new DistillerURLFetcher(url_loader_factory_);
 }
 
@@ -26,14 +27,13 @@ DistillerURLFetcher::DistillerURLFetcher(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
     : url_loader_factory_(url_loader_factory) {}
 
-DistillerURLFetcher::~DistillerURLFetcher() {
-}
+DistillerURLFetcher::~DistillerURLFetcher() {}
 
 void DistillerURLFetcher::FetchURL(const std::string& url,
-                                   const URLFetcherCallback& callback) {
+                                   URLFetcherCallback callback) {
   // Don't allow a fetch if one is pending.
   DCHECK(!url_loader_);
-  callback_ = callback;
+  callback_ = std::move(callback);
   url_loader_ = CreateURLFetcher(url);
   url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       url_loader_factory_.get(),
@@ -78,7 +78,6 @@ std::unique_ptr<network::SimpleURLLoader> DistillerURLFetcher::CreateURLFetcher(
   resource_request->url = GURL(url);
   resource_request->method = "GET";
 
-  // TODO(crbug.com/808498): Restore the data use measurement when bug is fixed.
   auto url_loader = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
   static const int kMaxRetries = 5;
@@ -99,7 +98,7 @@ void DistillerURLFetcher::OnURLLoadComplete(
     // an empty string into the proto otherwise.
     response = std::move(*response_body);
   }
-  callback_.Run(response);
+  std::move(callback_).Run(response);
 }
 
 }  // namespace dom_distiller

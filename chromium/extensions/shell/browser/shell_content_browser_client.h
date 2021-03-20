@@ -5,9 +5,14 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_CONTENT_BROWSER_CLIENT_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_CONTENT_BROWSER_CLIENT_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/web_contents.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 
 class GURL;
 
@@ -38,17 +43,11 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
   content::BrowserContext* GetBrowserContext();
 
   // content::ContentBrowserClient overrides.
-  content::BrowserMainParts* CreateBrowserMainParts(
+  std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
       const content::MainFunctionParams& parameters) override;
-  void RenderProcessWillLaunch(
-      content::RenderProcessHost* host,
-      service_manager::mojom::ServiceRequest* service_request) override;
+  void RenderProcessWillLaunch(content::RenderProcessHost* host) override;
   bool ShouldUseProcessPerSite(content::BrowserContext* browser_context,
                                const GURL& effective_url) override;
-  void GetQuotaSettings(
-      content::BrowserContext* context,
-      content::StoragePartition* partition,
-      storage::OptionalQuotaSettingsCallback callback) override;
   bool IsHandledURL(const GURL& url) override;
   void SiteInstanceGotProcess(content::SiteInstance* site_instance) override;
   void SiteInstanceDeleting(content::SiteInstance* site_instance) override;
@@ -69,6 +68,12 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
   void RegisterNonNetworkNavigationURLLoaderFactories(
       int frame_tree_node_id,
       NonNetworkURLLoaderFactoryMap* factories) override;
+  void RegisterNonNetworkWorkerMainResourceURLLoaderFactories(
+      content::BrowserContext* browser_context,
+      NonNetworkURLLoaderFactoryMap* factories) override;
+  void RegisterNonNetworkServiceWorkerUpdateURLLoaderFactories(
+      content::BrowserContext* browser_context,
+      NonNetworkURLLoaderFactoryMap* factories) override;
   void RegisterNonNetworkSubresourceURLLoaderFactories(
       int render_process_id,
       int render_frame_id,
@@ -77,33 +82,36 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
       content::BrowserContext* browser_context,
       content::RenderFrameHost* frame_host,
       int render_process_id,
-      bool is_navigation,
-      bool is_download,
+      URLLoaderFactoryType type,
       const url::Origin& request_initiator,
-      network::mojom::URLLoaderFactoryRequest* factory_request,
-      network::mojom::TrustedURLLoaderHeaderClientPtrInfo* header_client,
-      bool* bypass_redirect_checks) override;
+      base::Optional<int64_t> navigation_id,
+      mojo::PendingReceiver<network::mojom::URLLoaderFactory>* factory_receiver,
+      mojo::PendingRemote<network::mojom::TrustedURLLoaderHeaderClient>*
+          header_client,
+      bool* bypass_redirect_checks,
+      bool* disable_secure_dns,
+      network::mojom::URLLoaderFactoryOverridePtr* factory_override) override;
   bool HandleExternalProtocol(
       const GURL& url,
-      content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+      content::WebContents::OnceGetter web_contents_getter,
       int child_id,
       content::NavigationUIData* navigation_data,
       bool is_main_frame,
       ui::PageTransition page_transition,
       bool has_user_gesture,
-      const std::string& method,
-      const net::HttpRequestHeaders& headers) override;
-  network::mojom::URLLoaderFactoryPtrInfo
-  CreateURLLoaderFactoryForNetworkRequests(
-      content::RenderProcessHost* process,
-      network::mojom::NetworkContext* network_context,
-      network::mojom::TrustedURLLoaderHeaderClientPtrInfo* header_client,
-      const url::Origin& request_initiator) override;
-  std::string GetUserAgent() const override;
+      const base::Optional<url::Origin>& initiating_origin,
+      mojo::PendingRemote<network::mojom::URLLoaderFactory>* out_factory)
+      override;
+  void OverrideURLLoaderFactoryParams(
+      content::BrowserContext* browser_context,
+      const url::Origin& origin,
+      bool is_for_isolated_world,
+      network::mojom::URLLoaderFactoryParams* factory_params) override;
+  std::string GetUserAgent() override;
 
  protected:
   // Subclasses may wish to provide their own ShellBrowserMainParts.
-  virtual ShellBrowserMainParts* CreateShellBrowserMainParts(
+  virtual std::unique_ptr<ShellBrowserMainParts> CreateShellBrowserMainParts(
       const content::MainFunctionParams& parameters,
       ShellBrowserMainDelegate* browser_main_delegate);
 

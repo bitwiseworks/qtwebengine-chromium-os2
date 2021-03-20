@@ -56,7 +56,7 @@ class CursorData {
   // Hot spot in the image in logical pixels.
   const IntPoint& HotSpot() const { return hot_spot_; }
 
-  void Trace(blink::Visitor* visitor) { visitor->Trace(image_); }
+  void Trace(Visitor* visitor) { visitor->Trace(image_); }
 
  private:
   Member<StyleImage> image_;
@@ -66,6 +66,6 @@ class CursorData {
 
 }  // namespace blink
 
-WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::CursorData);
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::CursorData)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_CURSOR_DATA_H_

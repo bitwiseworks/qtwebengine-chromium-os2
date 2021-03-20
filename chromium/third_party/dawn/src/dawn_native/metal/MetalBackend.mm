@@ -17,17 +17,31 @@
 
 #include "dawn_native/MetalBackend.h"
 
+#include "dawn_native/Texture.h"
 #include "dawn_native/metal/DeviceMTL.h"
 
 namespace dawn_native { namespace metal {
 
-    dawnDevice CreateDevice() {
-        return reinterpret_cast<dawnDevice>(new Device());
-    }
-
-    id<MTLDevice> GetMetalDevice(dawnDevice cDevice) {
+    id<MTLDevice> GetMetalDevice(WGPUDevice cDevice) {
         Device* device = reinterpret_cast<Device*>(cDevice);
         return device->GetMTLDevice();
+    }
+
+    ExternalImageDescriptorIOSurface::ExternalImageDescriptorIOSurface()
+        : ExternalImageDescriptor(ExternalImageDescriptorType::IOSurface) {
+    }
+
+    WGPUTexture WrapIOSurface(WGPUDevice cDevice,
+                              const ExternalImageDescriptorIOSurface* cDescriptor) {
+        Device* device = reinterpret_cast<Device*>(cDevice);
+        TextureBase* texture = device->CreateTextureWrappingIOSurface(
+            cDescriptor, cDescriptor->ioSurface, cDescriptor->plane);
+        return reinterpret_cast<WGPUTexture>(texture);
+    }
+
+    void WaitForCommandsToBeScheduled(WGPUDevice cDevice) {
+        Device* device = reinterpret_cast<Device*>(cDevice);
+        device->WaitForCommandsToBeScheduled();
     }
 
 }}  // namespace dawn_native::metal

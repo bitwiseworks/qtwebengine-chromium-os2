@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 
+#include "base/bind.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "cc/paint/image_provider.h"
 #include "cc/paint/skia_paint_canvas.h"
@@ -41,11 +42,11 @@
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
 #include "third_party/blink/renderer/platform/graphics/test/mock_image_decoder.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/testing/histogram_tester.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -60,11 +61,12 @@ class FrameSettingImageProvider : public cc::ImageProvider {
       : frame_index_(frame_index), client_id_(client_id) {}
   ~FrameSettingImageProvider() override = default;
 
-  ScopedDecodedDrawImage GetDecodedDrawImage(
+  ImageProvider::ScopedResult GetRasterContent(
       const cc::DrawImage& draw_image) override {
+    DCHECK(!draw_image.paint_image().IsPaintWorklet());
     auto sk_image =
         draw_image.paint_image().GetSkImageForFrame(frame_index_, client_id_);
-    return ScopedDecodedDrawImage(
+    return ScopedResult(
         cc::DecodedDrawImage(sk_image, SkSize::MakeEmpty(), SkSize::Make(1, 1),
                              draw_image.filter_quality(), true));
   }
@@ -96,8 +98,6 @@ void GenerateBitmapForPaintImage(cc::PaintImage paint_image,
 // return value of MaxDecodedImageBytes().
 class TestingPlatformSupportWithMaxDecodedBytes
     : public TestingPlatformSupportWithMockScheduler {
-  WTF_MAKE_NONCOPYABLE(TestingPlatformSupportWithMaxDecodedBytes);
-
  public:
   TestingPlatformSupportWithMaxDecodedBytes() {}
   ~TestingPlatformSupportWithMaxDecodedBytes() override {}
@@ -110,11 +110,13 @@ class TestingPlatformSupportWithMaxDecodedBytes
 
  private:
   size_t max_decoded_image_bytes_ = Platform::kNoDecodedImageByteLimit;
+
+  DISALLOW_COPY_AND_ASSIGN(TestingPlatformSupportWithMaxDecodedBytes);
 };
 
 class BitmapImageTest : public testing::Test {
  public:
-  class FakeImageObserver : public GarbageCollectedFinalized<FakeImageObserver>,
+  class FakeImageObserver : public GarbageCollected<FakeImageObserver>,
                             public ImageObserver {
     USING_GARBAGE_COLLECTED_MIXIN(FakeImageObserver);
 
@@ -294,8 +296,7 @@ TEST_F(BitmapImageTest, jpegHasColorProfile) {
 }
 
 TEST_F(BitmapImageTest, pngHasColorProfile) {
-  LoadImage(
-      "palatted-color-png-gamma-one-color-profile.png");
+  LoadImage("palatted-color-png-gamma-one-color-profile.png");
   image_->PaintImageForCurrentFrame();
   EXPECT_EQ(65536u, DecodedSize());
   EXPECT_TRUE(image_->HasColorProfile());
@@ -604,7 +605,7 @@ class BitmapImageTestWithMockDecoder : public BitmapImageTest,
   void SetUp() override {
     BitmapImageTest::SetUp();
 
-    auto decoder = MockImageDecoder::Create(this);
+    auto decoder = std::make_unique<MockImageDecoder>(this);
     decoder->SetSize(10, 10);
     image_->SetDecoderForTesting(
         DeferredImageDecoder::CreateForTesting(std::move(decoder)));
@@ -619,10 +620,10 @@ class BitmapImageTestWithMockDecoder : public BitmapImageTest,
   }
   size_t FrameCount() override { return frame_count_; }
   int RepetitionCount() const override { return repetition_count_; }
-  TimeDelta FrameDuration() const override { return duration_; }
+  base::TimeDelta FrameDuration() const override { return duration_; }
 
  protected:
-  TimeDelta duration_;
+  base::TimeDelta duration_;
   int repetition_count_;
   size_t frame_count_;
   bool last_frame_complete_;
@@ -651,7 +652,7 @@ TEST_F(BitmapImageTestWithMockDecoder, ImageMetadataTracking) {
   }
 
   // Now the load is finished.
-  duration_ = TimeDelta::FromSeconds(1);
+  duration_ = base::TimeDelta::FromSeconds(1);
   repetition_count_ = kAnimationLoopInfinite;
   frame_count_ = 6u;
   last_frame_complete_ = true;
@@ -670,7 +671,7 @@ TEST_F(BitmapImageTestWithMockDecoder, ImageMetadataTracking) {
       EXPECT_EQ(data.duration, base::TimeDelta::FromSeconds(1));
     EXPECT_TRUE(data.complete);
   }
-};
+}
 
 TEST_F(BitmapImageTestWithMockDecoder,
        AnimationPolicyOverrideOriginalRepetitionNone) {
@@ -787,8 +788,17 @@ TEST_F(BitmapImageTestWithMockDecoder, PaintImageForStaticBitmapImage) {
 
 template <typename HistogramEnumType>
 struct HistogramTestParams {
+  HistogramTestParams(const char* filename, HistogramEnumType type, int count)
+      : filename(filename), type(type), count(count) {}
+  HistogramTestParams(const char* filename, HistogramEnumType type)
+      : HistogramTestParams(filename, type, 1) {}
+
   const char* filename;
   HistogramEnumType type;
+
+  // The number of events reported in the histogram when |type| is not
+  // kNoSamplesReported, otherwise is ignored.
+  int count;
 };
 
 template <typename HistogramEnumType>
@@ -809,7 +819,7 @@ class BitmapHistogramTest : public BitmapImageTest,
       histogram_tester.ExpectTotalCount(histogram_name, 0);
     } else {
       histogram_tester.ExpectUniqueSample(histogram_name, this->GetParam().type,
-                                          1);
+                                          this->GetParam().count);
     }
   }
 };
@@ -831,7 +841,7 @@ const DecodedImageTypeHistogramTest::ParamType
         {"wrong-frame-dimensions.ico", BitmapImageMetrics::kImageICO},
         {"lenna.bmp", BitmapImageMetrics::kImageBMP}};
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     DecodedImageTypeHistogramTest,
     DecodedImageTypeHistogramTest,
     testing::ValuesIn(kDecodedImageTypeHistogramTestparams));
@@ -854,54 +864,30 @@ const DecodedImageOrientationHistogramTest::ParamType
         {"exif-orientation-7-rl.jpg", kOriginRightBottom},
         {"exif-orientation-8-llo.jpg", kOriginLeftBottom}};
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     DecodedImageOrientationHistogramTest,
     DecodedImageOrientationHistogramTest,
     testing::ValuesIn(kDecodedImageOrientationHistogramTestParams));
 
-using DecodedImageDensityHistogramTest100px = BitmapHistogramTest<int>;
+using DecodedImageDensityHistogramTestKiBWeighted = BitmapHistogramTest<int>;
 
-TEST_P(DecodedImageDensityHistogramTest100px, JpegDensity) {
-  RunTest("Blink.DecodedImage.JpegDensity.100px");
+TEST_P(DecodedImageDensityHistogramTestKiBWeighted, JpegDensity) {
+  RunTest("Blink.DecodedImage.JpegDensity.KiBWeighted");
 }
 
-const DecodedImageDensityHistogramTest100px::ParamType
-    kDecodedImageDensityHistogramTest100pxParams[] = {
+const DecodedImageDensityHistogramTestKiBWeighted::ParamType
+    kDecodedImageDensityHistogramTestKiBWeightedParams[] = {
         // 64x64 too small to report any metric
         {"rgb-jpeg-red.jpg",
-         DecodedImageDensityHistogramTest100px::kNoSamplesReported},
-        // 439x154, 23220 bytes --> 2.74 bpp
-        {"cropped_mandrill.jpg", 274},
-        // 320x320, 74017 bytes --> 5.78
-        {"blue-wheel-srgb-color-profile.jpg", 578},
-        // 632x475 too big for the 100-399px range.
-        {"cat.jpg", DecodedImageDensityHistogramTest100px::kNoSamplesReported}};
+         DecodedImageDensityHistogramTestKiBWeighted::kNoSamplesReported},
+        // 439x154, 23220 bytes --> 2.74 bpp, 23 KiB (rounded up)
+        {"cropped_mandrill.jpg", 274, 23},
+        // 320x320, 74017 bytes --> 5.78, 72 KiB (rounded down)
+        {"blue-wheel-srgb-color-profile.jpg", 578, 72}};
 
-INSTANTIATE_TEST_CASE_P(
-    DecodedImageDensityHistogramTest100px,
-    DecodedImageDensityHistogramTest100px,
-    testing::ValuesIn(kDecodedImageDensityHistogramTest100pxParams));
-
-using DecodedImageDensityHistogramTest400px = BitmapHistogramTest<int>;
-
-TEST_P(DecodedImageDensityHistogramTest400px, JpegDensity) {
-  RunTest("Blink.DecodedImage.JpegDensity.400px");
-}
-
-const DecodedImageDensityHistogramTest400px::ParamType
-    kDecodedImageDensityHistogramTest400pxParams[] = {
-        // 439x154, only one dimension is big enough.
-        {"cropped_mandrill.jpg",
-         DecodedImageDensityHistogramTest400px::kNoSamplesReported},
-        // 320x320, not big enough.
-        {"blue-wheel-srgb-color-profile.jpg",
-         DecodedImageDensityHistogramTest400px::kNoSamplesReported},
-        // 632x475, 68826 bytes --> 1.83
-        {"cat.jpg", 183}};
-
-INSTANTIATE_TEST_CASE_P(
-    DecodedImageDensityHistogramTest400px,
-    DecodedImageDensityHistogramTest400px,
-    testing::ValuesIn(kDecodedImageDensityHistogramTest400pxParams));
+INSTANTIATE_TEST_SUITE_P(
+    DecodedImageDensityHistogramTestKiBWeighted,
+    DecodedImageDensityHistogramTestKiBWeighted,
+    testing::ValuesIn(kDecodedImageDensityHistogramTestKiBWeightedParams));
 
 }  // namespace blink

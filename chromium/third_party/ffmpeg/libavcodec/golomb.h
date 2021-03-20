@@ -49,6 +49,8 @@ extern const uint8_t ff_interleaved_dirac_golomb_vlc_code[256];
 
 /**
  * Read an unsigned Exp-Golomb code in the range 0 to 8190.
+ *
+ * @returns the read value or a negative error code.
  */
 static inline int get_ue_golomb(GetBitContext *gb)
 {
@@ -311,7 +313,7 @@ static inline int get_interleaved_se_golomb(GetBitContext *gb)
     } else {
         int log;
         skip_bits(gb, 8);
-        buf |= 1 | show_bits_long(gb, 24);
+        buf |= 1 | show_bits(gb, 24);
 
         if ((buf & 0xAAAAAAAA) == 0)
             return INVALID_VLC;

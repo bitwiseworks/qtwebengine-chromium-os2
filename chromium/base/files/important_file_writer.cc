@@ -71,22 +71,6 @@ void UmaHistogramExactLinearWithSuffix(const char* histogram_name,
                           static_cast<int>(max_sample));
 }
 
-// Helper function to write samples to a histogram with a dynamically assigned
-// histogram name.  Works with short timings from 1 ms up to 10 seconds (50
-// buckets) which is the actual argument type of UmaHistogramTimes.
-void UmaHistogramTimesWithSuffix(const char* histogram_name,
-                                 StringPiece histogram_suffix,
-                                 TimeDelta sample) {
-  DCHECK(histogram_name);
-  std::string histogram_full_name(histogram_name);
-  if (!histogram_suffix.empty()) {
-    histogram_full_name.append(".");
-    histogram_full_name.append(histogram_suffix.data(),
-                               histogram_suffix.length());
-  }
-  UmaHistogramTimes(histogram_full_name, sample);
-}
-
 void LogFailure(const FilePath& path,
                 StringPiece histogram_suffix,
                 TempFileFailure failure_code,
@@ -108,13 +92,8 @@ void WriteScopedStringToFileAtomically(
   if (!before_write_callback.is_null())
     std::move(before_write_callback).Run();
 
-  TimeTicks start_time = TimeTicks::Now();
   bool result =
       ImportantFileWriter::WriteFileAtomically(path, *data, histogram_suffix);
-  if (result) {
-    UmaHistogramTimesWithSuffix("ImportantFile.TimeToWrite", histogram_suffix,
-                                TimeTicks::Now() - start_time);
-  }
 
   if (!after_write_callback.is_null())
     std::move(after_write_callback).Run(result);
@@ -135,6 +114,15 @@ void DeleteTmpFile(const FilePath& tmp_file_path,
 bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
                                               StringPiece data,
                                               StringPiece histogram_suffix) {
+#if defined(OS_WIN) && DCHECK_IS_ON()
+  // In https://crbug.com/920174, we have cases where CreateTemporaryFileInDir
+  // hits a DCHECK because creation fails with no indication why. Pull the path
+  // onto the stack so that we can see if it is malformed in some odd way.
+  wchar_t path_copy[MAX_PATH];
+  base::wcslcpy(path_copy, path.value().c_str(), base::size(path_copy));
+  base::debug::Alias(path_copy);
+#endif  // defined(OS_WIN) && DCHECK_IS_ON()
+
 #if defined(OS_CHROMEOS)
   // On Chrome OS, chrome gets killed when it cannot finish shutdown quickly,
   // and this function seems to be one of the slowest shutdown steps.
@@ -155,9 +143,10 @@ bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
   // is securely created.
   FilePath tmp_file_path;
   if (!CreateTemporaryFileInDir(path.DirName(), &tmp_file_path)) {
-    UmaHistogramExactLinearWithSuffix(
-        "ImportantFile.FileCreateError", histogram_suffix,
-        -base::File::GetLastFileError(), -base::File::FILE_ERROR_MAX);
+    const auto last_file_error = base::File::GetLastFileError();
+    UmaHistogramExactLinearWithSuffix("ImportantFile.FileCreateError",
+                                      histogram_suffix, -last_file_error,
+                                      -base::File::FILE_ERROR_MAX);
     LogFailure(path, histogram_suffix, FAILED_CREATING,
                "could not create temporary file");
     return false;
@@ -187,7 +176,7 @@ bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
 
   if (bytes_written < data_length) {
     LogFailure(path, histogram_suffix, FAILED_WRITING,
-               "error writing, bytes_written=" + IntToString(bytes_written));
+               "error writing, bytes_written=" + NumberToString(bytes_written));
     DeleteTmpFile(tmp_file_path, histogram_suffix);
     return false;
   }
@@ -230,8 +219,7 @@ ImportantFileWriter::ImportantFileWriter(
       task_runner_(std::move(task_runner)),
       serializer_(nullptr),
       commit_interval_(interval),
-      histogram_suffix_(histogram_suffix ? histogram_suffix : ""),
-      weak_factory_(this) {
+      histogram_suffix_(histogram_suffix ? histogram_suffix : "") {
   DCHECK(task_runner_);
 }
 
@@ -255,7 +243,7 @@ void ImportantFileWriter::WriteNow(std::unique_ptr<std::string> data) {
     return;
   }
 
-  Closure task = AdaptCallbackForRepeating(
+  RepeatingClosure task = AdaptCallbackForRepeating(
       BindOnce(&WriteScopedStringToFileAtomically, path_, std::move(data),
                std::move(before_next_write_callback_),
                std::move(after_next_write_callback_), histogram_suffix_));
@@ -266,7 +254,7 @@ void ImportantFileWriter::WriteNow(std::unique_ptr<std::string> data) {
     // on the current thread.
     NOTREACHED();
 
-    task.Run();
+    std::move(task).Run();
   }
   ClearPendingWrite();
 }
@@ -280,7 +268,7 @@ void ImportantFileWriter::ScheduleWrite(DataSerializer* serializer) {
   if (!timer().IsRunning()) {
     timer().Start(
         FROM_HERE, commit_interval_,
-        Bind(&ImportantFileWriter::DoScheduledWrite, Unretained(this)));
+        BindOnce(&ImportantFileWriter::DoScheduledWrite, Unretained(this)));
   }
 }
 

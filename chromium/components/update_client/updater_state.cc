@@ -11,6 +11,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 
 namespace update_client {
@@ -23,7 +24,7 @@ const char UpdaterState::kIsEnterpriseManaged[] = "domainjoined";
 
 UpdaterState::UpdaterState(bool is_machine) : is_machine_(is_machine) {}
 
-UpdaterState::~UpdaterState() {}
+UpdaterState::~UpdaterState() = default;
 
 std::unique_ptr<UpdaterState::Attributes> UpdaterState::GetState(
     bool is_machine) {
@@ -40,14 +41,14 @@ std::unique_ptr<UpdaterState::Attributes> UpdaterState::GetState(
 void UpdaterState::ReadState() {
   is_enterprise_managed_ = base::IsMachineExternallyManaged();
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   updater_name_ = GetUpdaterName();
   updater_version_ = GetUpdaterVersion(is_machine_);
   last_autoupdate_started_ = GetUpdaterLastStartedAU(is_machine_);
   last_checked_ = GetUpdaterLastChecked(is_machine_);
   is_autoupdate_check_enabled_ = IsAutoupdateCheckEnabled();
   update_policy_ = GetUpdatePolicy();
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 #endif  // OS_WIN or Mac
 
@@ -76,20 +77,20 @@ UpdaterState::Attributes UpdaterState::BuildAttributes() const {
       is_autoupdate_check_enabled_ ? "1" : "0";
 
   DCHECK((update_policy_ >= 0 && update_policy_ <= 3) || update_policy_ == -1);
-  attributes["updatepolicy"] = base::IntToString(update_policy_);
+  attributes["updatepolicy"] = base::NumberToString(update_policy_);
 
   return attributes;
 }
 
 std::string UpdaterState::NormalizeTimeDelta(const base::TimeDelta& delta) {
   const base::TimeDelta two_weeks = base::TimeDelta::FromDays(14);
-  const base::TimeDelta two_months = base::TimeDelta::FromDays(60);
+  const base::TimeDelta two_months = base::TimeDelta::FromDays(56);
 
   std::string val;  // Contains the value to return in hours.
   if (delta <= two_weeks) {
     val = "0";
   } else if (two_weeks < delta && delta <= two_months) {
-    val = "408";  // 2 weeks in hours.
+    val = "336";  // 2 weeks in hours.
   } else {
     val = "1344";  // 2*28 days in hours.
   }

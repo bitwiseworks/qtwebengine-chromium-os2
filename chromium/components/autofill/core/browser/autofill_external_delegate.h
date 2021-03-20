@@ -13,8 +13,8 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
-#include "components/autofill/core/browser/autofill_popup_delegate.h"
-#include "components/autofill/core/browser/suggestion.h"
+#include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -34,8 +34,7 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
  public:
   // Creates an AutofillExternalDelegate for the specified AutofillManager and
   // AutofillDriver.
-  AutofillExternalDelegate(AutofillManager* manager,
-                           AutofillDriver* driver);
+  AutofillExternalDelegate(AutofillManager* manager, AutofillDriver* driver);
   virtual ~AutofillExternalDelegate();
 
   // AutofillPopupDelegate implementation.
@@ -53,10 +52,17 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
                                    base::string16* body) override;
   bool RemoveSuggestion(const base::string16& value, int identifier) override;
   void ClearPreviewedForm() override;
+
   // Returns PopupType::kUnspecified for all popups prior to |onQuery|, or the
   // popup type after call to |onQuery|.
   PopupType GetPopupType() const override;
+
   AutofillDriver* GetAutofillDriver() override;
+
+  // Returns the ax node id associated with the current web contents' element
+  // who has a controller relation to the current autofill popup.
+  int32_t GetWebContentsPopupControllerAxId() const override;
+
   void RegisterDeletionCallback(base::OnceClosure deletion_callback) override;
 
   // Records and associates a query_id with web form data.  Called
@@ -79,9 +85,9 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   // Returns true if there is a screen reader installed on the machine.
   virtual bool HasActiveScreenReader() const;
 
-  // Indicates on focus changed if autofill is available or unavailable, so
-  // state can be announced by screen readers.
-  virtual void OnAutofillAvailabilityEvent(bool has_suggestions);
+  // Indicates on focus changed if autofill/autocomplete is available or
+  // unavailable, so state can be announced by screen readers.
+  virtual void OnAutofillAvailabilityEvent(const mojom::AutofillState state);
 
   // Set the data list value associated with the current field.
   void SetCurrentDataListValues(
@@ -95,6 +101,8 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   // Returns the delegate to its starting state by removing any page specific
   // values or settings.
   void Reset();
+
+  const FormData& query_form() const { return query_form_; }
 
  protected:
   base::WeakPtr<AutofillExternalDelegate> GetWeakPtr();
@@ -136,11 +144,11 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   // Returns the text (i.e. |Suggestion| value) for Chrome autofill options.
   base::string16 GetSettingsSuggestionValue() const;
 
-  AutofillManager* manager_;  // weak.
+  AutofillManager* const manager_;  // weak.
 
   // Provides driver-level context to the shared code of the component. Must
   // outlive this object.
-  AutofillDriver* driver_;  // weak
+  AutofillDriver* const driver_;  // weak
 
   // The ID of the last request sent for form field Autofill.  Used to ignore
   // out of date responses.

@@ -16,16 +16,17 @@
 namespace blink {
 
 TEST(AudioNodeInputTest, InputDestroyedBeforeOutput) {
-  auto page = DummyPageHolder::Create();
-  OfflineAudioContext* context = OfflineAudioContext::Create(
-      &page->GetDocument(), 2, 1, 48000, ASSERT_NO_EXCEPTION);
+  auto page = std::make_unique<DummyPageHolder>();
+  OfflineAudioContext* context =
+      OfflineAudioContext::Create(page->GetDocument().ToExecutionContext(), 2,
+                                  1, 48000, ASSERT_NO_EXCEPTION);
   DelayNode* node1 = context->createDelay(ASSERT_NO_EXCEPTION);
   auto& handler1 = node1->Handler();
   DelayNode* node2 = context->createDelay(ASSERT_NO_EXCEPTION);
   auto& handler2 = node2->Handler();
 
-  auto input = AudioNodeInput::Create(handler1);
-  auto output = AudioNodeOutput::Create(&handler2, 0);
+  auto input = std::make_unique<AudioNodeInput>(handler1);
+  auto output = std::make_unique<AudioNodeOutput>(&handler2, 0);
 
   {
     BaseAudioContext::GraphAutoLocker graph_lock(context);
@@ -40,16 +41,17 @@ TEST(AudioNodeInputTest, InputDestroyedBeforeOutput) {
 }
 
 TEST(AudioNodeInputTest, OutputDestroyedBeforeInput) {
-  auto page = DummyPageHolder::Create();
-  OfflineAudioContext* context = OfflineAudioContext::Create(
-      &page->GetDocument(), 2, 1, 48000, ASSERT_NO_EXCEPTION);
+  auto page = std::make_unique<DummyPageHolder>();
+  OfflineAudioContext* context =
+      OfflineAudioContext::Create(page->GetDocument().ToExecutionContext(), 2,
+                                  1, 48000, ASSERT_NO_EXCEPTION);
   DelayNode* node1 = context->createDelay(ASSERT_NO_EXCEPTION);
   auto& handler1 = node1->Handler();
   DelayNode* node2 = context->createDelay(ASSERT_NO_EXCEPTION);
   auto& handler2 = node2->Handler();
 
-  auto input = AudioNodeInput::Create(handler1);
-  auto output = AudioNodeOutput::Create(&handler2, 0);
+  auto input = std::make_unique<AudioNodeInput>(handler1);
+  auto output = std::make_unique<AudioNodeOutput>(&handler2, 0);
 
   {
     BaseAudioContext::GraphAutoLocker graph_lock(context);

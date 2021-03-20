@@ -11,7 +11,6 @@ struct DynamicParams {
   bool force_safe_search = true;
   int32 youtube_restrict = 0;
   string allowed_domains_for_apps;
-  string variation_ids_header;
 };
 
 interface ChromeOSListener {
@@ -27,8 +26,9 @@ interface RendererConfiguration {
   // Configures the renderer with settings that won't change.
   // The |chromeos_listener| is only passed on Chrome OS when
   // the merge session is still running - otherwise not set.
-  SetInitialConfiguration(bool is_incognito_process,
-                          ChromeOSListener&? chromeos_listener);
+  SetInitialConfiguration(
+      bool is_incognito_process,
+      pending_receiver<ChromeOSListener>? chromeos_listener);
 
   // Update renderer configuration with settings that can change.
   SetConfiguration(DynamicParams params);
@@ -36,10 +36,4 @@ interface RendererConfiguration {
   // Set the content setting rules stored by the renderer.
   SetContentSettingRules(
       content_settings.mojom.RendererContentSettingRules rules);
-
-  // Tells the renderer to create a FieldTrial, and by using a 100% probability
-  // for the FieldTrial, forces the FieldTrial to have assigned group name.
-  //
-  // See base/metrics/field_trial.h for more information.
-  SetFieldTrialGroup(string trial_name, string group_name);
 };

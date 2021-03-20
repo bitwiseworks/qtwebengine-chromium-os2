@@ -30,12 +30,12 @@ const int kTestSharedMemoryId = 123;
 
 namespace webrtc {
 
-class ScreenCapturerTest : public testing::Test {
+class ScreenCapturerTest : public ::testing::Test {
  public:
   void SetUp() override {
     capturer_ = DesktopCapturer::CreateScreenCapturer(
         DesktopCaptureOptions::CreateDefault());
-    RTC_DCHECK(capturer_);
+    ASSERT_TRUE(capturer_);
   }
 
  protected:

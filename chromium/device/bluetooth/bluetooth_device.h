@@ -17,24 +17,25 @@
 
 #include "base/callback.h"
 #include "base/containers/flat_set.h"
+#include "base/containers/span.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_piece_forward.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace device {
 
 class BluetoothAdapter;
 class BluetoothGattConnection;
 class BluetoothSocket;
-class BluetoothUUID;
 
 // BluetoothDevice represents a remote Bluetooth device, both its properties and
 // capabilities as discovered by a local adapter and actions that may be
@@ -252,7 +253,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // of, by decoding the bluetooth class information for Classic devices or
   // by decoding the device's appearance for LE devices. For example,
   // Microsoft Universal Foldable Keyboard only advertises the appearance.
-  BluetoothDeviceType GetDeviceType() const;
+  virtual BluetoothDeviceType GetDeviceType() const;
 
   // Indicates whether the device is known to support pairing based on its
   // device class and address.
@@ -369,7 +370,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // The ConnectErrorCallback is used for methods that can fail with an error,
   // passed back as an error code argument to this callback.
   // In the success case this callback is not called.
-  typedef base::Callback<void(enum ConnectErrorCode)> ConnectErrorCallback;
+  using ConnectErrorCallback = base::OnceCallback<void(enum ConnectErrorCode)>;
 
   typedef base::Callback<void(const ConnectionInfo&)> ConnectionInfoCallback;
 
@@ -421,8 +422,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // process and release the pairing delegate if user cancels the pairing and
   // closes the pairing UI.
   virtual void Connect(PairingDelegate* pairing_delegate,
-                       const base::Closure& callback,
-                       const ConnectErrorCallback& error_callback) = 0;
+                       base::OnceClosure callback,
+                       ConnectErrorCallback error_callback) = 0;
 
   // Pairs the device. This method triggers pairing unconditially, i.e. it
   // ignores the |IsPaired()| value.
@@ -431,8 +432,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // implemented on ChromeOS, Linux and Windows 10. On Windows, only pairing
   // with a pin code is currently supported.
   virtual void Pair(PairingDelegate* pairing_delegate,
-                    const base::Closure& callback,
-                    const ConnectErrorCallback& error_callback);
+                    base::OnceClosure callback,
+                    ConnectErrorCallback error_callback);
 
   // Sends the PIN code |pincode| to the remote device during pairing.
   //
@@ -514,15 +515,28 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // returned BluetoothGattConnection will be automatically marked as inactive.
   // To monitor the state of the connection, observe the
   // BluetoothAdapter::Observer::DeviceChanged method.
-  typedef base::Callback<void(std::unique_ptr<BluetoothGattConnection>)>
-      GattConnectionCallback;
-  virtual void CreateGattConnection(const GattConnectionCallback& callback,
-                                    const ConnectErrorCallback& error_callback);
+  //
+  // If |service_uuid| is given, potentially only the service with the given
+  // UUID will be discovered. This may speed up GATT discovery times if the
+  // platform can take advantage of this optimisation. Note that passing
+  // |service_uuid| may cause full GATT service discovery to be skipped. In that
+  // case, |IsGattServicesDiscoveryComplete| will not become true but
+  // |BluetoothAdapter::Observer::GattServicesDiscovered| is still the correct
+  // event to watch for.
+  using GattConnectionCallback =
+      base::OnceCallback<void(std::unique_ptr<BluetoothGattConnection>)>;
+  virtual void CreateGattConnection(
+      GattConnectionCallback callback,
+      ConnectErrorCallback error_callback,
+      base::Optional<BluetoothUUID> service_uuid = base::nullopt);
 
   // Set the gatt services discovery complete flag for this device.
   virtual void SetGattServicesDiscoveryComplete(bool complete);
 
-  // Indicates whether service discovery is complete for this device.
+  // Indicates whether full service discovery is complete for this device. If a
+  // |service_uuid| was passed to |CreateGattConnection| and a focused discovery
+  // was performed, then this will continue to return false even after discovery
+  // is complete.
   virtual bool IsGattServicesDiscoveryComplete() const;
 
   // Returns the list of discovered GATT services.
@@ -536,7 +550,15 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Returns the |address| in the canonical format: XX:XX:XX:XX:XX:XX, where
   // each 'X' is a hex digit.  If the input |address| is invalid, returns an
   // empty string.
-  static std::string CanonicalizeAddress(const std::string& address);
+  static std::string CanonicalizeAddress(base::StringPiece address);
+
+  // Parses a Bluetooth address to an output buffer. The output buffer must be
+  // exactly 6 bytes in size. The address can be formatted in one of three ways:
+  //
+  //   1A:2B:3C:4D:5E:6F
+  //   1A-2B-3C-4D-5E-6F
+  //   1A2B3C4D5E6F
+  static bool ParseAddress(base::StringPiece input, base::span<uint8_t> output);
 
   // Update the last time this device was seen.
   void UpdateTimestamp();
@@ -579,7 +601,30 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Aborts all the previous prepare writes in a reliable write session.
   virtual void AbortWrite(const base::Closure& callback,
                           const AbortWriteErrorCallback& error_callback) = 0;
+
+  // Set the remaining battery of the device to show in the UI. This value must
+  // be between 0 and 100, inclusive.
+  // TODO(https://crbug.com/973237): Battery percentage is populated by
+  // ash::GattBatteryPoller and used only by Chrome OS. In the future, when
+  // there is a unified Mojo service, this logic will be moved to
+  // BluetoothDeviceInfo.
+  void SetBatteryPercentage(base::Optional<uint8_t> battery_percentage);
+
+  // Returns the remaining battery for the device.
+  // TODO(https://crbug.com/973237): Battery percentage is populated by
+  // ash::GattBatteryPoller and used only by Chrome OS. In the future, when
+  // there is a unified Mojo service, this logic will be moved to
+  // BluetoothDeviceInfo.
+  const base::Optional<uint8_t>& battery_percentage() const {
+    return battery_percentage_;
+  }
 #endif
+
+  // Returns whether this device supports discovering specific services, i.e.
+  // whether the |service_uuid| argument to |CreateGattConnection| is
+  // meaningful. This should only be called by tests. Non-test code should
+  // optimistically pass a |service_uuid| argument if appropriate for the need.
+  bool supports_service_specific_discovery() const;
 
  protected:
   // BluetoothGattConnection is a friend to call Add/RemoveGattConnection.
@@ -611,7 +656,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
 
   // Helper class to easily update the sets of UUIDs and keep them in sync with
   // the set of all the device's UUIDs.
-  class DeviceUUIDs {
+  class DEVICE_BLUETOOTH_EXPORT DeviceUUIDs {
    public:
     DeviceUUIDs();
     ~DeviceUUIDs();
@@ -647,11 +692,23 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Subclasses must also call DidConnectGatt, DidFailToConnectGatt, or
   // DidDisconnectGatt immediately or asynchronously as the connection state
   // changes.
-  virtual void CreateGattConnectionImpl() = 0;
+  virtual void CreateGattConnectionImpl(
+      base::Optional<BluetoothUUID> service_uuid) = 0;
+
+  // UpgradeToFullDiscovery is called when there is a pending or current GATT
+  // connection that was created with a service UUID, but now discovery of all
+  // services is required because of a new connection request. This will only
+  // be called if the subclass sets |supports_service_specific_discovery_|.
+  virtual void UpgradeToFullDiscovery();
 
   // Disconnects GATT connection on platforms that maintain a specific GATT
   // connection.
   virtual void DisconnectGatt() = 0;
+
+  // Returns a |BluetoothGattConnection| object that represents a reference to a
+  // GATT connection to this device.
+  virtual std::unique_ptr<BluetoothGattConnection>
+  CreateBluetoothGattConnectionObject();
 
   // Calls any pending callbacks for CreateGattConnection based on result of
   // subclasses actions initiated in CreateGattConnectionImpl or related
@@ -676,7 +733,16 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
 
   // Raw pointer to adapter owning this device object. Subclasses use platform
   // specific pointers via adapter_.
-  BluetoothAdapter* adapter_;
+  BluetoothAdapter* const adapter_;
+
+  // Indicates whether this device supports limited discovery of a specific
+  // service. This is configured by the constructor of subclasses. If false,
+  // the UUID argument to |CreateGattConnection| is ignored.
+  bool supports_service_specific_discovery_ = false;
+
+  // Contains the specified service that was targeted for discovery. Only ever
+  // contains a value if |supports_service_specific_discovery_| is true.
+  base::Optional<BluetoothUUID> target_service_;
 
   // Callbacks for pending success and error result of CreateGattConnection.
   std::vector<GattConnectionCallback> create_gatt_connection_success_callbacks_;
@@ -713,6 +779,14 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Returns a localized string containing the device's bluetooth address and
   // a device type for display when |name_| is empty.
   base::string16 GetAddressWithLocalizedDeviceTypeName() const;
+
+#if defined(OS_CHROMEOS)
+  // Remaining battery level of the device.
+  // TODO(https://crbug.com/973237): This field is different from others because
+  // it is not filled by the platform. In the future, when there is a unified
+  // Mojo service, this field will be moved to BluetoothDeviceInfo.
+  base::Optional<uint8_t> battery_percentage_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothDevice);
 };

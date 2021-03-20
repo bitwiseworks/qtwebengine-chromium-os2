@@ -5,19 +5,22 @@
 #include "extensions/browser/computed_hashes.h"
 
 #include <memory>
+#include <set>
 #include <utility>
 
 #include "base/base64.h"
+#include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
+#include "extensions/browser/content_verifier/scoped_uma_recorder.h"
 
 namespace extensions {
 
@@ -32,173 +35,250 @@ const int kVersion = 2;
 
 namespace {
 
-// Helper to record UMA for ComputedHashes::Reader::InitFromFile.
-// Records failure UMA if RecordSuccess() isn't explicitly called.
-class ScopedUMARecorder {
- public:
-  ScopedUMARecorder() = default;
+using SortedFilePathSet = std::set<base::FilePath>;
 
-  ~ScopedUMARecorder() {
-    if (recorded_)
-      return;
-    RecordImpl(false);
-  }
-
-  void RecordSuccess() {
-    recorded_ = true;
-    RecordImpl(true);
-  }
-
- private:
-  void RecordImpl(bool succeeded) {
-    UMA_HISTOGRAM_BOOLEAN(
-        "Extensions.ContentVerification.ComputedHashesReadResult", succeeded);
-    if (succeeded) {
-      UMA_HISTOGRAM_TIMES(
-          "Extensions.ContentVerification.ComputedHashesInitTime",
-          timer_.Elapsed());
-    }
-  }
-
-  bool recorded_ = false;
-  base::ElapsedTimer timer_;
-  DISALLOW_COPY_AND_ASSIGN(ScopedUMARecorder);
-};
+constexpr char kUMAComputedHashesReadResult[] =
+    "Extensions.ContentVerification.ComputedHashesReadResult";
+constexpr char kUMAComputedHashesInitTime[] =
+    "Extensions.ContentVerification.ComputedHashesInitTime";
 
 }  // namespace
 
-ComputedHashes::Reader::Reader() {
+ComputedHashes::Data::Data() = default;
+ComputedHashes::Data::~Data() = default;
+ComputedHashes::Data::Data(ComputedHashes::Data&& data) = default;
+ComputedHashes::Data& ComputedHashes::Data::operator=(
+    ComputedHashes::Data&& data) = default;
+
+ComputedHashes::Data::HashInfo::HashInfo(int block_size,
+                                         std::vector<std::string> hashes,
+                                         base::FilePath relative_unix_path)
+    : block_size(block_size),
+      hashes(std::move(hashes)),
+      relative_unix_path(std::move(relative_unix_path)) {}
+ComputedHashes::Data::HashInfo::~HashInfo() = default;
+
+ComputedHashes::Data::HashInfo::HashInfo(ComputedHashes::Data::HashInfo&&) =
+    default;
+ComputedHashes::Data::HashInfo& ComputedHashes::Data::HashInfo::operator=(
+    ComputedHashes::Data::HashInfo&&) = default;
+
+const ComputedHashes::Data::HashInfo* ComputedHashes::Data::GetItem(
+    const base::FilePath& relative_path) const {
+  CanonicalRelativePath canonical_path =
+      content_verifier_utils::CanonicalizeRelativePath(relative_path);
+  auto iter = items_.find(canonical_path);
+  return iter == items_.end() ? nullptr : &iter->second;
 }
 
-ComputedHashes::Reader::~Reader() {
+void ComputedHashes::Data::Add(const base::FilePath& relative_path,
+                               int block_size,
+                               std::vector<std::string> hashes) {
+  CanonicalRelativePath canonical_path =
+      content_verifier_utils::CanonicalizeRelativePath(relative_path);
+  items_.insert(std::make_pair(
+      canonical_path, HashInfo(block_size, std::move(hashes),
+                               relative_path.NormalizePathSeparatorsTo('/'))));
 }
 
-bool ComputedHashes::Reader::InitFromFile(const base::FilePath& path) {
-  ScopedUMARecorder uma_recorder;
+void ComputedHashes::Data::Remove(const base::FilePath& relative_path) {
+  CanonicalRelativePath canonical_path =
+      content_verifier_utils::CanonicalizeRelativePath(relative_path);
+  items_.erase(canonical_path);
+}
+
+const std::map<CanonicalRelativePath, ComputedHashes::Data::HashInfo>&
+ComputedHashes::Data::items() const {
+  return items_;
+}
+
+ComputedHashes::ComputedHashes(Data&& data) : data_(std::move(data)) {}
+ComputedHashes::~ComputedHashes() = default;
+ComputedHashes::ComputedHashes(ComputedHashes&&) = default;
+ComputedHashes& ComputedHashes::operator=(ComputedHashes&&) = default;
+
+// static
+base::Optional<ComputedHashes> ComputedHashes::CreateFromFile(
+    const base::FilePath& path,
+    Status* status) {
+  DCHECK(status);
+  *status = Status::UNKNOWN;
+  ScopedUMARecorder<kUMAComputedHashesReadResult, kUMAComputedHashesInitTime>
+      uma_recorder;
   std::string contents;
-  if (!base::ReadFileToString(path, &contents))
-    return false;
+  if (!base::ReadFileToString(path, &contents)) {
+    *status = Status::READ_FAILED;
+    return base::nullopt;
+  }
 
-  base::DictionaryValue* top_dictionary = NULL;
-  std::unique_ptr<base::Value> value(base::JSONReader::Read(contents));
-  if (!value.get() || !value->GetAsDictionary(&top_dictionary))
-    return false;
+  base::Optional<base::Value> top_dictionary = base::JSONReader::Read(contents);
+  if (!top_dictionary || !top_dictionary->is_dict()) {
+    *status = Status::PARSE_FAILED;
+    return base::nullopt;
+  }
 
-  // For now we don't support forwards or backwards compatability in the
-  // format, so we return false on version mismatch.
-  int version = 0;
-  if (!top_dictionary->GetInteger(computed_hashes::kVersionKey, &version) ||
-      version != computed_hashes::kVersion)
-    return false;
+  // For now we don't support forwards or backwards compatibility in the
+  // format, so we return nullopt on version mismatch.
+  base::Optional<int> version =
+      top_dictionary->FindIntKey(computed_hashes::kVersionKey);
+  if (!version || *version != computed_hashes::kVersion) {
+    *status = Status::PARSE_FAILED;
+    return base::nullopt;
+  }
 
-  base::ListValue* all_hashes = NULL;
-  if (!top_dictionary->GetList(computed_hashes::kFileHashesKey, &all_hashes))
-    return false;
+  const base::Value* all_hashes =
+      top_dictionary->FindListKey(computed_hashes::kFileHashesKey);
+  if (!all_hashes) {
+    *status = Status::PARSE_FAILED;
+    return base::nullopt;
+  }
 
-  for (size_t i = 0; i < all_hashes->GetSize(); i++) {
-    base::DictionaryValue* dictionary = NULL;
-    if (!all_hashes->GetDictionary(i, &dictionary))
-      return false;
-
-    std::string relative_path_utf8;
-    if (!dictionary->GetString(computed_hashes::kPathKey, &relative_path_utf8))
-      return false;
-
-    int block_size;
-    if (!dictionary->GetInteger(computed_hashes::kBlockSizeKey, &block_size))
-      return false;
-    if (block_size <= 0 || ((block_size % 1024) != 0)) {
-      LOG(ERROR) << "Invalid block size: " << block_size;
-      return false;
+  ComputedHashes::Data data;
+  for (const base::Value& file_hash : all_hashes->GetList()) {
+    if (!file_hash.is_dict()) {
+      *status = Status::PARSE_FAILED;
+      return base::nullopt;
     }
 
-    base::ListValue* hashes_list = NULL;
-    if (!dictionary->GetList(computed_hashes::kBlockHashesKey, &hashes_list))
-      return false;
+    const std::string* relative_path_utf8 =
+        file_hash.FindStringKey(computed_hashes::kPathKey);
+    if (!relative_path_utf8) {
+      *status = Status::PARSE_FAILED;
+      return base::nullopt;
+    }
+
+    base::Optional<int> block_size =
+        file_hash.FindIntKey(computed_hashes::kBlockSizeKey);
+    if (!block_size) {
+      *status = Status::PARSE_FAILED;
+      return base::nullopt;
+    }
+    if (*block_size <= 0 || ((*block_size % 1024) != 0)) {
+      LOG(ERROR) << "Invalid block size: " << *block_size;
+      *status = Status::PARSE_FAILED;
+      return base::nullopt;
+    }
+
+    const base::Value* block_hashes =
+        file_hash.FindListKey(computed_hashes::kBlockHashesKey);
+    if (!block_hashes) {
+      *status = Status::PARSE_FAILED;
+      return base::nullopt;
+    }
 
     base::FilePath relative_path =
-        base::FilePath::FromUTF8Unsafe(relative_path_utf8);
-    relative_path = relative_path.NormalizePathSeparatorsTo('/');
+        base::FilePath::FromUTF8Unsafe(*relative_path_utf8);
+    std::vector<std::string> hashes;
 
-    data_[relative_path] = HashInfo(block_size, std::vector<std::string>());
-    std::vector<std::string>* hashes = &(data_[relative_path].second);
+    for (const base::Value& value : block_hashes->GetList()) {
+      if (!value.is_string()) {
+        *status = Status::PARSE_FAILED;
+        return base::nullopt;
+      }
 
-    for (size_t j = 0; j < hashes_list->GetSize(); j++) {
-      std::string encoded;
-      if (!hashes_list->GetString(j, &encoded))
-        return false;
-
-      hashes->push_back(std::string());
-      std::string* decoded = &hashes->back();
+      hashes.push_back(std::string());
+      const std::string& encoded = value.GetString();
+      std::string* decoded = &hashes.back();
       if (!base::Base64Decode(encoded, decoded)) {
-        hashes->clear();
-        return false;
+        *status = Status::PARSE_FAILED;
+        return base::nullopt;
       }
     }
+    data.Add(relative_path, *block_size, std::move(hashes));
   }
   uma_recorder.RecordSuccess();
+  *status = Status::SUCCESS;
+  return ComputedHashes(std::move(data));
+}
+
+// static
+base::Optional<ComputedHashes::Data> ComputedHashes::Compute(
+    const base::FilePath& extension_root,
+    int block_size,
+    const IsCancelledCallback& is_cancelled,
+    const ShouldComputeHashesCallback& should_compute_hashes_for_resource) {
+  base::FileEnumerator enumerator(extension_root, /*recursive=*/true,
+                                  base::FileEnumerator::FILES);
+  // First discover all the file paths and put them in a sorted set.
+  SortedFilePathSet paths;
+  while (true) {
+    if (is_cancelled && is_cancelled.Run())
+      return base::nullopt;
+
+    base::FilePath full_path = enumerator.Next();
+    if (full_path.empty())
+      break;
+    paths.insert(full_path);
+  }
+
+  // Now iterate over all the paths in sorted order and compute the block hashes
+  // for each one.
+  Data data;
+  for (const auto& full_path : paths) {
+    if (is_cancelled && is_cancelled.Run())
+      return base::nullopt;
+
+    base::FilePath relative_path;
+    extension_root.AppendRelativePath(full_path, &relative_path);
+
+    if (!should_compute_hashes_for_resource.Run(relative_path))
+      continue;
+
+    base::Optional<std::vector<std::string>> hashes =
+        ComputeAndCheckResourceHash(full_path, block_size);
+    if (hashes)
+      data.Add(relative_path, block_size, std::move(hashes.value()));
+  }
+
+  return std::move(data);
+}
+
+bool ComputedHashes::GetHashes(const base::FilePath& relative_path,
+                               int* block_size,
+                               std::vector<std::string>* hashes) const {
+  const Data::HashInfo* hash_info = data_.GetItem(relative_path);
+  if (!hash_info)
+    return false;
+
+  *block_size = hash_info->block_size;
+  *hashes = hash_info->hashes;
   return true;
 }
 
-bool ComputedHashes::Reader::GetHashes(const base::FilePath& relative_path,
-                                       int* block_size,
-                                       std::vector<std::string>* hashes) const {
-  base::FilePath path = relative_path.NormalizePathSeparatorsTo('/');
-  auto i = data_.find(path);
-  if (i == data_.end()) {
-    // If we didn't find the entry using exact match, it's possible the
-    // developer is using a path with some letters in the incorrect case, which
-    // happens to work on windows/osx. So try doing a linear scan to look for a
-    // case-insensitive match. In practice most extensions don't have that big
-    // a list of files so the performance penalty is probably not too big
-    // here. Also for crbug.com/29941 we plan to start warning developers when
-    // they are making this mistake, since their extension will be broken on
-    // linux/chromeos.
-    for (i = data_.begin(); i != data_.end(); ++i) {
-      const base::FilePath& entry = i->first;
-      if (base::FilePath::CompareEqualIgnoreCase(entry.value(), path.value()))
-        break;
+bool ComputedHashes::WriteToFile(const base::FilePath& path) const {
+  // Make sure the directory exists.
+  if (!base::CreateDirectoryAndGetError(path.DirName(), nullptr))
+    return false;
+
+  base::Value file_list(base::Value::Type::LIST);
+  for (const auto& resource_info : data_.items()) {
+    const Data::HashInfo& hash_info = resource_info.second;
+    int block_size = hash_info.block_size;
+    const std::vector<std::string>& hashes = hash_info.hashes;
+
+    base::Value::ListStorage block_hashes;
+    block_hashes.reserve(hashes.size());
+    for (const auto& hash : hashes) {
+      std::string encoded;
+      base::Base64Encode(hash, &encoded);
+      block_hashes.push_back(base::Value(std::move(encoded)));
     }
-    if (i == data_.end())
-      return false;
-  }
-  const HashInfo& info = i->second;
-  *block_size = info.first;
-  *hashes = info.second;
-  return true;
-}
 
-ComputedHashes::Writer::Writer() : file_list_(new base::ListValue) {
-}
+    base::Value dict(base::Value::Type::DICTIONARY);
+    dict.SetStringKey(computed_hashes::kPathKey,
+                      hash_info.relative_unix_path.AsUTF8Unsafe());
+    dict.SetIntKey(computed_hashes::kBlockSizeKey, block_size);
+    dict.SetKey(computed_hashes::kBlockHashesKey,
+                base::Value(std::move(block_hashes)));
 
-ComputedHashes::Writer::~Writer() {
-}
-
-void ComputedHashes::Writer::AddHashes(const base::FilePath& relative_path,
-                                       int block_size,
-                                       const std::vector<std::string>& hashes) {
-  auto block_hashes = std::make_unique<base::ListValue>();
-  block_hashes->GetList().reserve(hashes.size());
-  for (const auto& hash : hashes) {
-    std::string encoded;
-    base::Base64Encode(hash, &encoded);
-    block_hashes->GetList().emplace_back(std::move(encoded));
+    file_list.Append(std::move(dict));
   }
 
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->SetString(computed_hashes::kPathKey,
-                  relative_path.NormalizePathSeparatorsTo('/').AsUTF8Unsafe());
-  dict->SetInteger(computed_hashes::kBlockSizeKey, block_size);
-  dict->Set(computed_hashes::kBlockHashesKey, std::move(block_hashes));
-  file_list_->Append(std::move(dict));
-}
-
-bool ComputedHashes::Writer::WriteToFile(const base::FilePath& path) {
   std::string json;
-  base::DictionaryValue top_dictionary;
-  top_dictionary.SetInteger(computed_hashes::kVersionKey,
-                            computed_hashes::kVersion);
-  top_dictionary.Set(computed_hashes::kFileHashesKey, std::move(file_list_));
+  base::Value top_dictionary(base::Value::Type::DICTIONARY);
+  top_dictionary.SetIntKey(computed_hashes::kVersionKey,
+                           computed_hashes::kVersion);
+  top_dictionary.SetKey(computed_hashes::kFileHashesKey, std::move(file_list));
 
   if (!base::JSONWriter::Write(top_dictionary, &json))
     return false;
@@ -211,10 +291,12 @@ bool ComputedHashes::Writer::WriteToFile(const base::FilePath& path) {
   return true;
 }
 
-void ComputedHashes::ComputeHashesForContent(const std::string& contents,
-                                             size_t block_size,
-                                             std::vector<std::string>* hashes) {
+// static
+std::vector<std::string> ComputedHashes::GetHashesForContent(
+    const std::string& contents,
+    size_t block_size) {
   size_t offset = 0;
+  std::vector<std::string> hashes;
   // Even when the contents is empty, we want to output at least one hash
   // block (the hash of the empty string).
   do {
@@ -225,10 +307,10 @@ void ComputedHashes::ComputeHashesForContent(const std::string& contents,
         crypto::SecureHash::Create(crypto::SecureHash::SHA256));
     hash->Update(block_start, bytes_to_read);
 
-    hashes->push_back(std::string());
-    std::string* buffer = &(hashes->back());
-    buffer->resize(crypto::kSHA256Length);
-    hash->Finish(base::data(*buffer), buffer->size());
+    std::string buffer;
+    buffer.resize(crypto::kSHA256Length);
+    hash->Finish(base::data(buffer), buffer.size());
+    hashes.push_back(std::move(buffer));
 
     // If |contents| is empty, then we want to just exit here.
     if (bytes_to_read == 0)
@@ -236,6 +318,26 @@ void ComputedHashes::ComputeHashesForContent(const std::string& contents,
 
     offset += bytes_to_read;
   } while (offset < contents.size());
+
+  return hashes;
+}
+
+// static
+base::Optional<std::vector<std::string>>
+ComputedHashes::ComputeAndCheckResourceHash(
+    const base::FilePath& full_path,
+    int block_size) {
+  std::string contents;
+  if (!base::ReadFileToString(full_path, &contents)) {
+    LOG(ERROR) << "Could not read " << full_path.MaybeAsASCII();
+    return base::nullopt;
+  }
+
+  // Iterate through taking the hash of each block of size |block_size| of the
+  // file.
+  std::vector<std::string> hashes = GetHashesForContent(contents, block_size);
+
+  return base::make_optional(std::move(hashes));
 }
 
 }  // namespace extensions

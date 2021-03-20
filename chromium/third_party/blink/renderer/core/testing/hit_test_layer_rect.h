@@ -45,18 +45,13 @@ class HitTestLayerRect final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HitTestLayerRect* Create(DOMRectReadOnly* layer_rect,
-                                  DOMRectReadOnly* hit_test_rect) {
-    return MakeGarbageCollected<HitTestLayerRect>(layer_rect, hit_test_rect);
-  }
-
   HitTestLayerRect(DOMRectReadOnly* layer_rect, DOMRectReadOnly* hit_test_rect)
       : layer_rect_(layer_rect), hit_test_rect_(hit_test_rect) {}
 
   DOMRectReadOnly* layerRect() const { return layer_rect_.Get(); }
   DOMRectReadOnly* hitTestRect() const { return hit_test_rect_.Get(); }
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(layer_rect_);
     visitor->Trace(hit_test_rect_);
     ScriptWrappable::Trace(visitor);

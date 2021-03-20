@@ -5,7 +5,7 @@
 // https://wicg.github.io/background-fetch/#background-fetch-registration
 [
     Exposed=(Window,Worker),
-    OriginTrialEnabled=BackgroundFetch,
+    RuntimeEnabled=BackgroundFetch,
     ActiveScriptWrappable
 ] interface BackgroundFetchRegistration : EventTarget {
     readonly attribute DOMString id;
@@ -20,8 +20,8 @@
     attribute EventHandler onprogress;
 
     [CallWith=ScriptState, MeasureAs=BackgroundFetchRegistrationAbort] Promise<boolean> abort();
-    [CallWith=ScriptState, RaisesException, MeasureAs=BackgroundFetchRegistrationMatch] Promise<BackgroundFetchRecord> match(RequestInfo request, optional CacheQueryOptions options);
-    [CallWith=ScriptState, RaisesException, MeasureAs=BackgroundFetchRegistrationMatchAll] Promise<sequence<BackgroundFetchRecord>> matchAll(optional RequestInfo request, optional CacheQueryOptions options);
+    [CallWith=ScriptState, RaisesException, MeasureAs=BackgroundFetchRegistrationMatch] Promise<BackgroundFetchRecord> match(RequestInfo request, optional CacheQueryOptions options = {});
+    [CallWith=ScriptState, RaisesException, MeasureAs=BackgroundFetchRegistrationMatchAll] Promise<sequence<BackgroundFetchRecord>> matchAll(optional RequestInfo request, optional CacheQueryOptions options = {});
 };
 
 enum BackgroundFetchResult { "", "success", "failure" };

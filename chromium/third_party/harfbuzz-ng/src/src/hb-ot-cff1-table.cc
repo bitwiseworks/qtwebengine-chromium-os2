@@ -24,6 +24,11 @@
  * Adobe Author(s): Michiharu Ariza
  */
 
+#include "hb.hh"
+
+#ifndef HB_NO_CFF
+
+#include "hb-draw.hh"
 #include "hb-ot-cff1-table.hh"
 #include "hb-cff1-interp-cs.hh"
 
@@ -165,8 +170,8 @@ struct bounds_t
 {
   void init ()
   {
-    min.set_int (0x7FFFFFFF, 0x7FFFFFFF);
-    max.set_int (-0x80000000, -0x80000000);
+    min.set_int (INT_MAX, INT_MAX);
+    max.set_int (INT_MIN, INT_MIN);
   }
 
   void update (const point_t &pt)
@@ -199,14 +204,13 @@ struct bounds_t
     }
   }
 
-  bool empty () const
-  { return (min.x >= max.x) || (min.y >= max.y); }
+  bool empty () const { return (min.x >= max.x) || (min.y >= max.y); }
 
   point_t min;
   point_t max;
 };
 
-struct extents_param_t
+struct cff1_extents_param_t
 {
   void init (const OT::cff1::accelerator_t *_cff)
   {
@@ -215,25 +219,25 @@ struct extents_param_t
     bounds.init ();
   }
 
-  void start_path ()         { path_open = true; }
-  void end_path ()           { path_open = false; }
+  void start_path   ()       { path_open = true; }
+  void end_path     ()       { path_open = false; }
   bool is_path_open () const { return path_open; }
 
-  bool    path_open;
-  bounds_t  bounds;
+  bool path_open;
+  bounds_t bounds;
 
   const OT::cff1::accelerator_t *cff;
 };
 
-struct cff1_path_procs_extents_t : path_procs_t<cff1_path_procs_extents_t, cff1_cs_interp_env_t, extents_param_t>
+struct cff1_path_procs_extents_t : path_procs_t<cff1_path_procs_extents_t, cff1_cs_interp_env_t, cff1_extents_param_t>
 {
-  static void moveto (cff1_cs_interp_env_t &env, extents_param_t& param, const point_t &pt)
+  static void moveto (cff1_cs_interp_env_t &env, cff1_extents_param_t& param, const point_t &pt)
   {
     param.end_path ();
     env.moveto (pt);
   }
 
-  static void line (cff1_cs_interp_env_t &env, extents_param_t& param, const point_t &pt1)
+  static void line (cff1_cs_interp_env_t &env, cff1_extents_param_t& param, const point_t &pt1)
   {
     if (!param.is_path_open ())
     {
@@ -244,7 +248,7 @@ struct cff1_path_procs_extents_t : path_procs_t<cff1_path_procs_extents_t, cff1_
     param.bounds.update (env.get_pt ());
   }
 
-  static void curve (cff1_cs_interp_env_t &env, extents_param_t& param, const point_t &pt1, const point_t &pt2, const point_t &pt3)
+  static void curve (cff1_cs_interp_env_t &env, cff1_extents_param_t& param, const point_t &pt1, const point_t &pt2, const point_t &pt3)
   {
     if (!param.is_path_open ())
     {
@@ -261,9 +265,9 @@ struct cff1_path_procs_extents_t : path_procs_t<cff1_path_procs_extents_t, cff1_
 
 static bool _get_bounds (const OT::cff1::accelerator_t *cff, hb_codepoint_t glyph, bounds_t &bounds, bool in_seac=false);
 
-struct cff1_cs_opset_extents_t : cff1_cs_opset_t<cff1_cs_opset_extents_t, extents_param_t, cff1_path_procs_extents_t>
+struct cff1_cs_opset_extents_t : cff1_cs_opset_t<cff1_cs_opset_extents_t, cff1_extents_param_t, cff1_path_procs_extents_t>
 {
-  static void process_seac (cff1_cs_interp_env_t &env, extents_param_t& param)
+  static void process_seac (cff1_cs_interp_env_t &env, cff1_extents_param_t& param)
   {
     unsigned int  n = env.argStack.get_count ();
     point_t delta;
@@ -292,20 +296,25 @@ bool _get_bounds (const OT::cff1::accelerator_t *cff, hb_codepoint_t glyph, boun
   if (unlikely (!cff->is_valid () || (glyph >= cff->num_glyphs))) return false;
 
   unsigned int fd = cff->fdSelect->get_fd (glyph);
-  cff1_cs_interpreter_t<cff1_cs_opset_extents_t, extents_param_t> interp;
+  cff1_cs_interpreter_t<cff1_cs_opset_extents_t, cff1_extents_param_t> interp;
   const byte_str_t str = (*cff->charStrings)[glyph];
   interp.env.init (str, *cff, fd);
   interp.env.set_in_seac (in_seac);
-  extents_param_t  param;
+  cff1_extents_param_t  param;
   param.init (cff);
   if (unlikely (!interp.interpret (param))) return false;
   bounds = param.bounds;
   return true;
 }
 
-bool OT::cff1::accelerator_t::get_extents (hb_codepoint_t glyph, hb_glyph_extents_t *extents) const
+bool OT::cff1::accelerator_t::get_extents (hb_font_t *font, hb_codepoint_t glyph, hb_glyph_extents_t *extents) const
 {
-  bounds_t  bounds;
+#ifdef HB_NO_OT_FONT_CFF
+  /* XXX Remove check when this code moves to .hh file. */
+  return true;
+#endif
+
+  bounds_t bounds;
 
   if (!_get_bounds (this, glyph, bounds))
     return false;
@@ -317,8 +326,8 @@ bool OT::cff1::accelerator_t::get_extents (hb_codepoint_t glyph, hb_glyph_extent
   }
   else
   {
-    extents->x_bearing = (int32_t)bounds.min.x.floor ();
-    extents->width = (int32_t)bounds.max.x.ceil () - extents->x_bearing;
+    extents->x_bearing = font->em_scalef_x (bounds.min.x.to_real ());
+    extents->width = font->em_scalef_x (bounds.max.x.to_real () - bounds.min.x.to_real ());
   }
   if (bounds.min.y >= bounds.max.y)
   {
@@ -327,12 +336,136 @@ bool OT::cff1::accelerator_t::get_extents (hb_codepoint_t glyph, hb_glyph_extent
   }
   else
   {
-    extents->y_bearing = (int32_t)bounds.max.y.ceil ();
-    extents->height = (int32_t)bounds.min.y.floor () - extents->y_bearing;
+    extents->y_bearing = font->em_scalef_y (bounds.max.y.to_real ());
+    extents->height = font->em_scalef_y (bounds.min.y.to_real () - bounds.max.y.to_real ());
   }
 
   return true;
 }
+
+#ifdef HB_EXPERIMENTAL_API
+struct cff1_path_param_t
+{
+  cff1_path_param_t (const OT::cff1::accelerator_t *cff_, hb_font_t *font_,
+		     draw_helper_t &draw_helper_, point_t *delta_)
+  {
+    draw_helper = &draw_helper_;
+    cff = cff_;
+    font = font_;
+    delta = delta_;
+  }
+
+  void move_to (const point_t &p)
+  {
+    point_t point = p;
+    if (delta) point.move (*delta);
+    draw_helper->move_to (font->em_scalef_x (point.x.to_real ()), font->em_scalef_y (point.y.to_real ()));
+  }
+
+  void line_to (const point_t &p)
+  {
+    point_t point = p;
+    if (delta) point.move (*delta);
+    draw_helper->line_to (font->em_scalef_x (point.x.to_real ()), font->em_scalef_y (point.y.to_real ()));
+  }
+
+  void cubic_to (const point_t &p1, const point_t &p2, const point_t &p3)
+  {
+    point_t point1 = p1, point2 = p2, point3 = p3;
+    if (delta)
+    {
+      point1.move (*delta);
+      point2.move (*delta);
+      point3.move (*delta);
+    }
+    draw_helper->cubic_to (font->em_scalef_x (point1.x.to_real ()), font->em_scalef_y (point1.y.to_real ()),
+			   font->em_scalef_x (point2.x.to_real ()), font->em_scalef_y (point2.y.to_real ()),
+			   font->em_scalef_x (point3.x.to_real ()), font->em_scalef_y (point3.y.to_real ()));
+  }
+
+  void end_path () { draw_helper->end_path (); }
+
+  hb_font_t *font;
+  draw_helper_t *draw_helper;
+  point_t *delta;
+
+  const OT::cff1::accelerator_t *cff;
+};
+
+struct cff1_path_procs_path_t : path_procs_t<cff1_path_procs_path_t, cff1_cs_interp_env_t, cff1_path_param_t>
+{
+  static void moveto (cff1_cs_interp_env_t &env, cff1_path_param_t& param, const point_t &pt)
+  {
+    param.move_to (pt);
+    env.moveto (pt);
+  }
+
+  static void line (cff1_cs_interp_env_t &env, cff1_path_param_t &param, const point_t &pt1)
+  {
+    param.line_to (pt1);
+    env.moveto (pt1);
+  }
+
+  static void curve (cff1_cs_interp_env_t &env, cff1_path_param_t &param, const point_t &pt1, const point_t &pt2, const point_t &pt3)
+  {
+    param.cubic_to (pt1, pt2, pt3);
+    env.moveto (pt3);
+  }
+};
+
+static bool _get_path (const OT::cff1::accelerator_t *cff, hb_font_t *font, hb_codepoint_t glyph,
+		       draw_helper_t &draw_helper, bool in_seac = false, point_t *delta = nullptr);
+
+struct cff1_cs_opset_path_t : cff1_cs_opset_t<cff1_cs_opset_path_t, cff1_path_param_t, cff1_path_procs_path_t>
+{
+  static void process_seac (cff1_cs_interp_env_t &env, cff1_path_param_t& param)
+  {
+    /* End previous path */
+    param.end_path ();
+
+    unsigned int n = env.argStack.get_count ();
+    point_t delta;
+    delta.x = env.argStack[n-4];
+    delta.y = env.argStack[n-3];
+    hb_codepoint_t base = param.cff->std_code_to_glyph (env.argStack[n-2].to_int ());
+    hb_codepoint_t accent = param.cff->std_code_to_glyph (env.argStack[n-1].to_int ());
+
+    if (unlikely (!(!env.in_seac && base && accent
+		    && _get_path (param.cff, param.font, base, *param.draw_helper, true)
+		    && _get_path (param.cff, param.font, accent, *param.draw_helper, true, &delta))))
+      env.set_error ();
+  }
+};
+
+bool _get_path (const OT::cff1::accelerator_t *cff, hb_font_t *font, hb_codepoint_t glyph,
+		draw_helper_t &draw_helper, bool in_seac, point_t *delta)
+{
+  if (unlikely (!cff->is_valid () || (glyph >= cff->num_glyphs))) return false;
+
+  unsigned int fd = cff->fdSelect->get_fd (glyph);
+  cff1_cs_interpreter_t<cff1_cs_opset_path_t, cff1_path_param_t> interp;
+  const byte_str_t str = (*cff->charStrings)[glyph];
+  interp.env.init (str, *cff, fd);
+  interp.env.set_in_seac (in_seac);
+  cff1_path_param_t param (cff, font, draw_helper, delta);
+  if (unlikely (!interp.interpret (param))) return false;
+
+  /* Let's end the path specially since it is called inside seac also */
+  param.end_path ();
+
+  return true;
+}
+
+bool OT::cff1::accelerator_t::get_path (hb_font_t *font, hb_codepoint_t glyph, draw_helper_t &draw_helper) const
+{
+#ifdef HB_NO_OT_FONT_CFF
+  /* XXX Remove check when this code moves to .hh file. */
+  return true;
+#endif
+
+  return _get_path (this, font, glyph, draw_helper);
+}
+#endif
 
 struct get_seac_param_t
 {
@@ -383,3 +516,6 @@ bool OT::cff1::accelerator_t::get_seac_components (hb_codepoint_t glyph, hb_code
   }
   return false;
 }
+
+
+#endif

@@ -29,12 +29,14 @@
 
 namespace perfetto {
 
-void PrintFtraceEventProtoAdditions(const std::set<std::string>& events);
-void PrintEventFormatterMain(const std::set<std::string>& events);
-void PrintEventFormatterUsingStatements(const std::set<std::string>& events);
-void PrintEventFormatterFunctions(const std::set<std::string>& events);
-void PrintInodeHandlerMain(const std::string& event_name,
-                           const perfetto::Proto& proto);
+bool GenerateProto(const std::string& group,
+                   const FtraceEvent& format,
+                   Proto* proto_out);
+
+std::string EventNameToProtoName(const std::string& group,
+                                 const std::string& name);
+std::string EventNameToProtoFieldName(const std::string& group,
+                                      const std::string& name);
 
 std::vector<FtraceEventName> ReadWhitelist(const std::string& filename);
 void GenerateFtraceEventProto(const std::vector<FtraceEventName>& raw_whitelist,

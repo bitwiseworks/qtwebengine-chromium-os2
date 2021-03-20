@@ -80,7 +80,7 @@ void DisplayChangeNotifier::NotifyDisplaysChanged(
     if (new_it->device_scale_factor() != old_it->device_scale_factor())
       metrics |= DisplayObserver::DISPLAY_METRIC_DEVICE_SCALE_FACTOR;
 
-    if (new_it->color_space() != old_it->color_space())
+    if (new_it->color_spaces() != old_it->color_spaces())
       metrics |= DisplayObserver::DISPLAY_METRIC_COLOR_SPACE;
 
     if (metrics != DisplayObserver::DISPLAY_METRIC_NONE) {
@@ -88,6 +88,12 @@ void DisplayChangeNotifier::NotifyDisplaysChanged(
         observer.OnDisplayMetricsChanged(*new_it, metrics);
     }
   }
+}
+
+void DisplayChangeNotifier::NotifyCurrentWorkspaceChanged(
+    const std::string& workspace) {
+  for (DisplayObserver& observer : observer_list_)
+    observer.OnCurrentWorkspaceChanged(workspace);
 }
 
 }  // namespace display

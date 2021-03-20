@@ -10,18 +10,18 @@
 #include "base/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/task_type_traits.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
 // Represents a set of task runners of the parent execution context, or default
 // task runners for the current thread if no execution context is available.
 class CORE_EXPORT ParentExecutionContextTaskRunners final
-    : public GarbageCollectedFinalized<ParentExecutionContextTaskRunners>,
-      public ContextLifecycleObserver {
+    : public GarbageCollected<ParentExecutionContextTaskRunners>,
+      public ExecutionContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(ParentExecutionContextTaskRunners);
 
  public:
@@ -44,7 +44,7 @@ class CORE_EXPORT ParentExecutionContextTaskRunners final
   scoped_refptr<base::SingleThreadTaskRunner> Get(TaskType)
       LOCKS_EXCLUDED(mutex_);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   using TaskRunnerHashMap = HashMap<TaskType,
@@ -52,7 +52,7 @@ class CORE_EXPORT ParentExecutionContextTaskRunners final
                                     WTF::IntHash<TaskType>,
                                     TaskTypeTraits>;
 
-  void ContextDestroyed(ExecutionContext*) LOCKS_EXCLUDED(mutex_) override;
+  void ContextDestroyed() LOCKS_EXCLUDED(mutex_) override;
 
   Mutex mutex_;
   TaskRunnerHashMap task_runners_ GUARDED_BY(mutex_);

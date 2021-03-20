@@ -24,32 +24,39 @@ static size_t Mismatch(const std::string& input1, const std::string& input2) {
 // in web tests.
 class StyledMarkupSerializerTest : public EditingTestBase {
  protected:
+  CreateMarkupOptions ShouldAnnotateOptions() const {
+    return CreateMarkupOptions::Builder()
+        .SetShouldAnnotateForInterchange(true)
+        .Build();
+  }
+
   template <typename Strategy>
-  std::string Serialize(EAnnotateForInterchange = kDoNotAnnotateForInterchange);
+  std::string Serialize(
+      const CreateMarkupOptions& options = CreateMarkupOptions());
 
   template <typename Strategy>
   std::string SerializePart(
       const PositionTemplate<Strategy>& start,
       const PositionTemplate<Strategy>& end,
-      EAnnotateForInterchange = kDoNotAnnotateForInterchange);
+      const CreateMarkupOptions& options = CreateMarkupOptions());
 };
 
 template <typename Strategy>
 std::string StyledMarkupSerializerTest::Serialize(
-    EAnnotateForInterchange should_annotate) {
+    const CreateMarkupOptions& options) {
   PositionTemplate<Strategy> start = PositionTemplate<Strategy>(
       GetDocument().body(), PositionAnchorType::kBeforeChildren);
   PositionTemplate<Strategy> end = PositionTemplate<Strategy>(
       GetDocument().body(), PositionAnchorType::kAfterChildren);
-  return CreateMarkup(start, end, should_annotate).Utf8().data();
+  return CreateMarkup(start, end, options).Utf8();
 }
 
 template <typename Strategy>
 std::string StyledMarkupSerializerTest::SerializePart(
     const PositionTemplate<Strategy>& start,
     const PositionTemplate<Strategy>& end,
-    EAnnotateForInterchange should_annotate) {
-  return CreateMarkup(start, end, should_annotate).Utf8().data();
+    const CreateMarkupOptions& options) {
+  return CreateMarkup(start, end, options).Utf8();
 }
 
 TEST_F(StyledMarkupSerializerTest, TextOnly) {
@@ -189,9 +196,9 @@ TEST_F(StyledMarkupSerializerTest, ShadowTreeInterchangedNewline) {
   SetShadowContent(shadow_content, "host");
 
   std::string result_from_dom_tree =
-      Serialize<EditingStrategy>(kAnnotateForInterchange);
+      Serialize<EditingStrategy>(ShouldAnnotateOptions());
   std::string result_from_flat_tree =
-      Serialize<EditingInFlatTreeStrategy>(kAnnotateForInterchange);
+      Serialize<EditingInFlatTreeStrategy>(ShouldAnnotateOptions());
   size_t mismatched_index =
       Mismatch(result_from_dom_tree, result_from_flat_tree);
 
@@ -224,11 +231,11 @@ TEST_F(StyledMarkupSerializerTest, ShadowTreeStyle) {
       "id='one'>11</span></span></p>\n";
   SetBodyContent(body_content);
   Element* one = GetDocument().getElementById("one");
-  Text* text = ToText(one->firstChild());
+  auto* text = To<Text>(one->firstChild());
   Position start_dom(text, 0);
   Position end_dom(text, 2);
   const std::string& serialized_dom = SerializePart<EditingStrategy>(
-      start_dom, end_dom, kAnnotateForInterchange);
+      start_dom, end_dom, ShouldAnnotateOptions());
 
   body_content =
       "<p id='host' style='color: red'>00<span id='one'>11</span>22</p>\n";
@@ -237,11 +244,11 @@ TEST_F(StyledMarkupSerializerTest, ShadowTreeStyle) {
   SetBodyContent(body_content);
   SetShadowContent(shadow_content, "host");
   one = GetDocument().getElementById("one");
-  text = ToText(one->firstChild());
+  text = To<Text>(one->firstChild());
   PositionInFlatTree start_ict(text, 0);
   PositionInFlatTree end_ict(text, 2);
   const std::string& serialized_ict = SerializePart<EditingInFlatTreeStrategy>(
-      start_ict, end_ict, kAnnotateForInterchange);
+      start_ict, end_ict, ShouldAnnotateOptions());
 
   EXPECT_EQ(serialized_dom, serialized_ict);
 }
@@ -253,10 +260,10 @@ TEST_F(StyledMarkupSerializerTest, AcrossShadow) {
   SetBodyContent(body_content);
   Element* one = GetDocument().getElementById("one");
   Element* two = GetDocument().getElementById("two");
-  Position start_dom(ToText(one->firstChild()), 0);
-  Position end_dom(ToText(two->firstChild()), 2);
+  Position start_dom(To<Text>(one->firstChild()), 0);
+  Position end_dom(To<Text>(two->firstChild()), 2);
   const std::string& serialized_dom = SerializePart<EditingStrategy>(
-      start_dom, end_dom, kAnnotateForInterchange);
+      start_dom, end_dom, ShouldAnnotateOptions());
 
   body_content =
       "<p id='host1'><span id='one'>11</span></p><p id='host2'><span "
@@ -268,10 +275,10 @@ TEST_F(StyledMarkupSerializerTest, AcrossShadow) {
   SetShadowContent(shadow_content2, "host2");
   one = GetDocument().getElementById("one");
   two = GetDocument().getElementById("two");
-  PositionInFlatTree start_ict(ToText(one->firstChild()), 0);
-  PositionInFlatTree end_ict(ToText(two->firstChild()), 2);
+  PositionInFlatTree start_ict(To<Text>(one->firstChild()), 0);
+  PositionInFlatTree end_ict(To<Text>(two->firstChild()), 2);
   const std::string& serialized_ict = SerializePart<EditingInFlatTreeStrategy>(
-      start_ict, end_ict, kAnnotateForInterchange);
+      start_ict, end_ict, ShouldAnnotateOptions());
 
   EXPECT_EQ(serialized_dom, serialized_ict);
 }

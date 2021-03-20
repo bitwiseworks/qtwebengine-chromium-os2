@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/offline_pages/core/background/request_queue_store.h"
@@ -20,10 +21,18 @@ namespace {
 const int64_t kRequestId1 = 42;
 const int64_t kRequestId2 = 43;
 const int64_t kRequestId3 = 44;
-const GURL kUrl1("http://example.com");
-const GURL kUrl2("http://another-example.com");
+
 const ClientId kClientId1("bookmark", "1234");
 const ClientId kClientId2("async", "5678");
+
+// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
+// function.
+GURL Url1() {
+  return GURL("http://example.com");
+}
+GURL Url2() {
+  return GURL("http://another-example.com");
+}
 
 class RemoveRequestsTaskTest : public RequestQueueTaskTestBase {
  public:
@@ -38,7 +47,9 @@ class RemoveRequestsTaskTest : public RequestQueueTaskTestBase {
   UpdateRequestsResult* last_result() const { return result_.get(); }
 
  private:
-  void AddRequestDone(ItemActionStatus status);
+  static void AddRequestDone(AddRequestResult result) {
+    ASSERT_EQ(AddRequestResult::SUCCESS, result);
+  }
 
   std::unique_ptr<UpdateRequestsResult> result_;
 };
@@ -49,26 +60,20 @@ void RemoveRequestsTaskTest::PumpLoop() {
 
 void RemoveRequestsTaskTest::AddRequestsToStore() {
   base::Time creation_time = OfflineTimeNow();
-  SavePageRequest request_1(kRequestId1, kUrl1, kClientId1, creation_time,
+  SavePageRequest request_1(kRequestId1, Url1(), kClientId1, creation_time,
                             true);
-  store_.AddRequest(request_1,
-                    base::BindOnce(&RemoveRequestsTaskTest::AddRequestDone,
-                                   base::Unretained(this)));
-  SavePageRequest request_2(kRequestId2, kUrl2, kClientId2, creation_time,
+  store_.AddRequest(request_1, RequestQueue::AddOptions(),
+                    base::BindOnce(&RemoveRequestsTaskTest::AddRequestDone));
+  SavePageRequest request_2(kRequestId2, Url2(), kClientId2, creation_time,
                             true);
-  store_.AddRequest(request_2,
-                    base::BindOnce(&RemoveRequestsTaskTest::AddRequestDone,
-                                   base::Unretained(this)));
+  store_.AddRequest(request_2, RequestQueue::AddOptions(),
+                    base::BindOnce(&RemoveRequestsTaskTest::AddRequestDone));
   PumpLoop();
 }
 
 void RemoveRequestsTaskTest::RemoveRequestsCallback(
     UpdateRequestsResult result) {
   result_ = std::make_unique<UpdateRequestsResult>(std::move(result));
-}
-
-void RemoveRequestsTaskTest::AddRequestDone(ItemActionStatus status) {
-  ASSERT_EQ(ItemActionStatus::SUCCESS, status);
 }
 
 TEST_F(RemoveRequestsTaskTest, RemoveWhenStoreEmpty) {
@@ -79,7 +84,7 @@ TEST_F(RemoveRequestsTaskTest, RemoveWhenStoreEmpty) {
       &store_, request_ids,
       base::BindOnce(&RemoveRequestsTaskTest::RemoveRequestsCallback,
                      base::Unretained(this)));
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(1UL, last_result()->item_statuses.size());
@@ -98,7 +103,7 @@ TEST_F(RemoveRequestsTaskTest, RemoveSingleItem) {
       &store_, request_ids,
       base::BindOnce(&RemoveRequestsTaskTest::RemoveRequestsCallback,
                      base::Unretained(this)));
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(1UL, last_result()->item_statuses.size());
@@ -118,7 +123,7 @@ TEST_F(RemoveRequestsTaskTest, RemoveMultipleItems) {
       &store_, request_ids,
       base::BindOnce(&RemoveRequestsTaskTest::RemoveRequestsCallback,
                      base::Unretained(this)));
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(2UL, last_result()->item_statuses.size());
@@ -141,7 +146,7 @@ TEST_F(RemoveRequestsTaskTest, DeleteWithEmptyIdList) {
       &store_, request_ids,
       base::BindOnce(&RemoveRequestsTaskTest::RemoveRequestsCallback,
                      base::Unretained(this)));
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(0UL, last_result()->item_statuses.size());
@@ -157,7 +162,7 @@ TEST_F(RemoveRequestsTaskTest, RemoveMissingItem) {
       &store_, request_ids,
       base::BindOnce(&RemoveRequestsTaskTest::RemoveRequestsCallback,
                      base::Unretained(this)));
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(2UL, last_result()->item_statuses.size());

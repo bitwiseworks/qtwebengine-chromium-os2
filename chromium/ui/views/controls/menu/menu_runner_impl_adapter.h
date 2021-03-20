@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "ui/views/controls/menu/menu_runner_impl_interface.h"
 #include "ui/views/views_export.h"
@@ -23,17 +25,16 @@ class MenuRunnerImpl;
 class VIEWS_EXPORT MenuRunnerImplAdapter : public MenuRunnerImplInterface {
  public:
   MenuRunnerImplAdapter(ui::MenuModel* menu_model,
-                        const base::Closure& on_menu_closed_callback);
+                        base::RepeatingClosure on_menu_closed_callback);
 
   // MenuRunnerImplInterface:
   bool IsRunning() const override;
   void Release() override;
   void RunMenuAt(Widget* parent,
-                 MenuButton* button,
+                 MenuButtonController* button_controller,
                  const gfx::Rect& bounds,
                  MenuAnchorPosition anchor,
-                 int32_t types,
-                 base::flat_set<int> alerted_commands) override;
+                 int32_t types) override;
   void Cancel() override;
   base::TimeTicks GetClosingEventTime() const override;
 

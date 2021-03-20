@@ -8,11 +8,14 @@
 
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/config/gpu_finch_features.h"
+#include "skia/buildflags.h"
 #include "ui/gl/gl_switches.h"
+#include "ui/gl/gl_utils.h"
 
 #if defined(USE_EGL)
 #include "ui/gl/gl_surface_egl.h"
@@ -86,20 +89,7 @@ gl::GLContextAttribs GenerateGLContextAttribs(
 }
 
 bool UsePassthroughCommandDecoder(const base::CommandLine* command_line) {
-  std::string switch_value;
-  if (command_line->HasSwitch(switches::kUseCmdDecoder)) {
-    switch_value = command_line->GetSwitchValueASCII(switches::kUseCmdDecoder);
-  }
-
-  if (switch_value == kCmdDecoderPassthroughName) {
-    return true;
-  } else if (switch_value == kCmdDecoderValidatingName) {
-    return false;
-  } else {
-    // Unrecognized or missing switch, use the default.
-    return base::FeatureList::IsEnabled(
-        features::kDefaultPassthroughCommandDecoder);
-  }
+  return gl::UsePassthroughCommandDecoder(command_line);
 }
 
 bool PassthroughCommandDecoderSupported() {
@@ -140,9 +130,16 @@ GpuPreferences ParseGpuPreferences(const base::CommandLine* command_line) {
   gpu_preferences.enforce_gl_minimums =
       command_line->HasSwitch(switches::kEnforceGLMinimums);
   if (GetUintFromSwitch(command_line, switches::kForceGpuMemAvailableMb,
-                        &gpu_preferences.force_gpu_mem_available)) {
-    gpu_preferences.force_gpu_mem_available *= 1024 * 1024;
+                        &gpu_preferences.force_gpu_mem_available_bytes)) {
+    gpu_preferences.force_gpu_mem_available_bytes *= 1024 * 1024;
   }
+  if (GetUintFromSwitch(
+          command_line, switches::kForceGpuMemDiscardableLimitMb,
+          &gpu_preferences.force_gpu_mem_discardable_limit_bytes)) {
+    gpu_preferences.force_gpu_mem_discardable_limit_bytes *= 1024 * 1024;
+  }
+  GetUintFromSwitch(command_line, switches::kForceMaxTextureSize,
+                    &gpu_preferences.force_max_texture_size);
   if (GetUintFromSwitch(command_line, switches::kGpuProgramCacheSizeKb,
                         &gpu_preferences.gpu_program_cache_size)) {
     gpu_preferences.gpu_program_cache_size *= 1024;
@@ -161,15 +158,53 @@ GpuPreferences ParseGpuPreferences(const base::CommandLine* command_line) {
       command_line->HasSwitch(switches::kEnableGPUServiceTracing);
   gpu_preferences.use_passthrough_cmd_decoder =
       gpu::gles2::UsePassthroughCommandDecoder(command_line);
-  gpu_preferences.disable_gpu_driver_bug_workarounds =
-      command_line->HasSwitch(switches::kDisableGpuDriverBugWorkarounds);
   gpu_preferences.ignore_gpu_blacklist =
       command_line->HasSwitch(switches::kIgnoreGpuBlacklist);
   gpu_preferences.enable_webgpu =
       command_line->HasSwitch(switches::kEnableUnsafeWebGPU);
-  gpu_preferences.enable_raster_to_sk_image =
-      command_line->HasSwitch(switches::kEnableRasterToSkImage);
+  gpu_preferences.gr_context_type = ParseGrContextType();
+  gpu_preferences.use_vulkan = ParseVulkanImplementationName(
+      command_line, gpu_preferences.gr_context_type);
+  gpu_preferences.disable_vulkan_surface =
+      command_line->HasSwitch(switches::kDisableVulkanSurface);
+
+  gpu_preferences.enable_gpu_blocked_time_metric =
+      command_line->HasSwitch(switches::kEnableGpuBlockedTime);
+
   return gpu_preferences;
+}
+
+GrContextType ParseGrContextType() {
+#if BUILDFLAG(SKIA_USE_DAWN)
+  if (base::FeatureList::IsEnabled(features::kSkiaDawn))
+    return GrContextType::kDawn;
+#endif
+#if defined(OS_MACOSX)
+  return base::FeatureList::IsEnabled(features::kMetal) ? GrContextType::kMetal
+                                                        : GrContextType::kGL;
+#else
+  return base::FeatureList::IsEnabled(features::kVulkan)
+             ? GrContextType::kVulkan
+             : GrContextType::kGL;
+#endif
+}
+
+VulkanImplementationName ParseVulkanImplementationName(
+    const base::CommandLine* command_line,
+    GrContextType gr_context_type) {
+  if (command_line->HasSwitch(switches::kUseVulkan)) {
+    auto value = command_line->GetSwitchValueASCII(switches::kUseVulkan);
+    if (value.empty() || value == switches::kVulkanImplementationNameNative) {
+      return VulkanImplementationName::kForcedNative;
+    } else if (value == switches::kVulkanImplementationNameSwiftshader) {
+      return VulkanImplementationName::kSwiftshader;
+    }
+  }
+  // If the vulkan implementation is not set from --use-vulkan, the native
+  // vulkan implementation will be used by default.
+  return gr_context_type == GrContextType::kVulkan
+             ? VulkanImplementationName::kNative
+             : VulkanImplementationName::kNone;
 }
 
 }  // namespace gles2

@@ -36,9 +36,7 @@
 #include "url/origin.h"
 
 namespace content {
-class BrowserContext;
 class PluginServiceFilter;
-class ResourceContext;
 struct PepperPluginInfo;
 
 class CONTENT_EXPORT PluginServiceImpl : public PluginService {
@@ -55,7 +53,6 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
                           std::vector<std::string>* actual_mime_types) override;
   bool GetPluginInfo(int render_process_id,
                      int render_frame_id,
-                     ResourceContext* context,
                      const GURL& url,
                      const url::Origin& main_frame_origin,
                      const std::string& mime_type,
@@ -90,6 +87,7 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   // is NULL. Must be called on the IO thread.
   PpapiPluginProcessHost* FindOrStartPpapiPluginProcess(
       int render_process_id,
+      const url::Origin& embedder_origin,
       const base::FilePath& plugin_path,
       const base::FilePath& profile_data_directory,
       const base::Optional<url::Origin>& origin_lock);
@@ -100,6 +98,7 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   // a new plugin process if necessary.  This must be called on the IO thread
   // or else a deadlock can occur.
   void OpenChannelToPpapiPlugin(int render_process_id,
+                                const url::Origin& embedder_origin,
                                 const base::FilePath& plugin_path,
                                 const base::FilePath& profile_data_directory,
                                 const base::Optional<url::Origin>& origin_lock,
@@ -147,7 +146,7 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
 
   int max_ppapi_processes_per_profile_ = kDefaultMaxPpapiProcessesPerProfile;
 
-  // Weak pointer; outlives us.
+  // Weak pointer; set during the startup on UI thread and must outlive us.
   PluginServiceFilter* filter_;
 
   // Used to load plugins from disk.

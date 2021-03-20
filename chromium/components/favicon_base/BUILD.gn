@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//testing/libfuzzer/fuzzer_test.gni")
+
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
@@ -32,9 +34,7 @@ static_library("favicon_base") {
     "//ui/gfx/geometry",
     "//url",
   ]
-  public_deps = [
-    "//skia",
-  ]
+  public_deps = [ "//skia" ]
 }
 
 source_set("unit_tests") {
@@ -54,10 +54,18 @@ source_set("unit_tests") {
   ]
 }
 
+fuzzer_test("favicon_url_parser_fuzzer") {
+  sources = [ "favicon_url_parser_fuzzer.cc" ]
+
+  deps = [
+    ":favicon_base",
+    "//base",
+    "//base:i18n",
+  ]
+}
+
 if (is_android) {
   java_cpp_enum("favicon_base_enums_java") {
-    sources = [
-      "favicon_types.h",
-    ]
+    sources = [ "favicon_types.h" ]
   }
 }

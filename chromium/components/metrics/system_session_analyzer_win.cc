@@ -94,16 +94,16 @@ SystemSessionAnalyzer::~SystemSessionAnalyzer() {}
 SystemSessionAnalyzer::Status SystemSessionAnalyzer::IsSessionUnclean(
     base::Time timestamp) {
   if (!EnsureInitialized())
-    return FAILED;
+    return INITIALIZE_FAILED;
 
   while (timestamp < coverage_start_ && sessions_queried_ < max_session_cnt_) {
     // Fetch the next session start and end events.
     std::vector<EventInfo> events;
     if (!FetchEvents(2U, &events) || events.size() != 2)
-      return FAILED;
+      return FETCH_EVENTS_FAILED;
 
     if (!ProcessSession(events[0], events[1]))
-      return FAILED;
+      return PROCESS_SESSION_FAILED;
 
     ++sessions_queried_;
   }
@@ -134,7 +134,7 @@ bool SystemSessionAnalyzer::FetchEvents(size_t requested_events,
 
   // Retrieve events: 2 events per session, plus the current session's start.
   DWORD desired_event_cnt = requested_events;
-  std::vector<EVT_HANDLE> events_raw(desired_event_cnt, NULL);
+  std::vector<EVT_HANDLE> events_raw(desired_event_cnt, nullptr);
   DWORD event_cnt = 0U;
   BOOL success = ::EvtNext(query_handle_.get(), desired_event_cnt,
                            events_raw.data(), kTimeoutMs, 0, &event_cnt);

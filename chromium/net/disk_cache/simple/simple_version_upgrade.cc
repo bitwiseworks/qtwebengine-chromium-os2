@@ -228,7 +228,7 @@ SimpleCacheConsistencyResult UpgradeSimpleCacheOnDisk(
     LogMessageFailedUpgradeFromVersion(file_header.version);
     return SimpleCacheConsistencyResult::kWriteFakeIndexFileFailed;
   }
-  if (!base::ReplaceFile(temp_fake_index, fake_index, NULL)) {
+  if (!base::ReplaceFile(temp_fake_index, fake_index, nullptr)) {
     LOG(ERROR) << "Failed to replace the fake index.";
     LogMessageFailedUpgradeFromVersion(file_header.version);
     return SimpleCacheConsistencyResult::kReplaceFileFailed;
@@ -252,7 +252,7 @@ bool DeleteIndexFilesIfCacheIsEmpty(const base::FilePath& path) {
   }
   bool deleted_fake_index =
       base::DeleteFile(fake_index, /* recursive = */ false);
-  bool deleted_index_dir = base::DeleteFile(index_dir, /* recursive = */ true);
+  bool deleted_index_dir = base::DeleteFileRecursively(index_dir);
   bool deleted_legacy_index_file =
       base::DeleteFile(legacy_index_file, /* recursive = */ false);
   return deleted_fake_index || deleted_index_dir || deleted_legacy_index_file;

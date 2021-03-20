@@ -10,10 +10,6 @@
 
 namespace blink {
 
-TrackDefaultList* TrackDefaultList::Create() {
-  return MakeGarbageCollected<TrackDefaultList>();
-}
-
 TrackDefaultList* TrackDefaultList::Create(
     const HeapVector<Member<TrackDefault>>& track_defaults,
     ExceptionState& exception_state) {
@@ -69,7 +65,7 @@ TrackDefaultList::TrackDefaultList(
     const HeapVector<Member<TrackDefault>>& track_defaults)
     : track_defaults_(track_defaults) {}
 
-void TrackDefaultList::Trace(blink::Visitor* visitor) {
+void TrackDefaultList::Trace(Visitor* visitor) {
   visitor->Trace(track_defaults_);
   ScriptWrappable::Trace(visitor);
 }

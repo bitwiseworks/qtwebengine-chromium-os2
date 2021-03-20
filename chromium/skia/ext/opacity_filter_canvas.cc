@@ -4,7 +4,6 @@
 
 #include "skia/ext/opacity_filter_canvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "third_party/skia/include/core/SkTLazy.h"
 
 namespace skia {
 
@@ -12,19 +11,15 @@ OpacityFilterCanvas::OpacityFilterCanvas(SkCanvas* canvas,
                                          float opacity,
                                          bool disable_image_filtering)
     : INHERITED(canvas),
-      alpha_(SkScalarRoundToInt(opacity * 255)),
-      disable_image_filtering_(disable_image_filtering) { }
+      opacity_(opacity),
+      disable_image_filtering_(disable_image_filtering) {}
 
-bool OpacityFilterCanvas::onFilter(SkTCopyOnFirstWrite<SkPaint>* paint, Type) const {
-  // TODO(fmalita): with the new onFilter() API we could override alpha even
-  // when the original paint is null; is this something we should do?
-  if (*paint) {
-    if (alpha_ < 255)
-      paint->writable()->setAlpha(alpha_);
+bool OpacityFilterCanvas::onFilter(SkPaint& paint) const {
+  if (opacity_ < 1.f)
+    paint.setAlphaf(paint.getAlphaf() * opacity_);
 
-    if (disable_image_filtering_)
-      paint->writable()->setFilterQuality(kNone_SkFilterQuality);
-  }
+  if (disable_image_filtering_)
+    paint.setFilterQuality(kNone_SkFilterQuality);
 
   return true;
 }
@@ -32,10 +27,10 @@ bool OpacityFilterCanvas::onFilter(SkTCopyOnFirstWrite<SkPaint>* paint, Type) co
 void OpacityFilterCanvas::onDrawPicture(const SkPicture* picture,
                                         const SkMatrix* matrix,
                                         const SkPaint* paint) {
-  SkTCopyOnFirstWrite<SkPaint> filteredPaint(paint);
-  if (this->onFilter(&filteredPaint, kPicture_Type)) {
+  SkPaint filteredPaint(paint ? *paint : SkPaint());
+  if (this->onFilter(filteredPaint)) {
     // Unfurl pictures in order to filter nested paints.
-    this->SkCanvas::onDrawPicture(picture, matrix, filteredPaint);
+    this->SkCanvas::onDrawPicture(picture, matrix, &filteredPaint);
   }
 }
 

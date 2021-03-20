@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//components/spellcheck/spellcheck_build_features.gni")
+
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
@@ -9,6 +11,7 @@ import("//build/config/features.gni")
 
 source_set("browser") {
   sources = [
+    "platform_spell_checker.h",
     "pref_names.cc",
     "pref_names.h",
     "spell_check_host_impl.cc",
@@ -21,9 +24,22 @@ source_set("browser") {
     "spellcheck_platform_mac.mm",
     "spellchecker_session_bridge_android.cc",
     "spellchecker_session_bridge_android.h",
-    "spelling_service_client.cc",
-    "spelling_service_client.h",
   ]
+
+  if (enable_spelling_service) {
+    sources += [
+      "spelling_service_client.cc",
+      "spelling_service_client.h",
+    ]
+  }
+
+  if (is_win) {
+    sources += [
+      "spellcheck_platform_win.cc",
+      "windows_spell_checker.cc",
+      "windows_spell_checker.h",
+    ]
+  }
 
   public_deps = [
     "//base",
@@ -31,7 +47,6 @@ source_set("browser") {
     "//components/spellcheck/common",
   ]
   deps = [
-    "//components/data_use_measurement/core",
     "//components/prefs",
     "//components/user_prefs",
     "//content/public/browser",
@@ -40,11 +55,6 @@ source_set("browser") {
     "//net",
     "//services/network/public/cpp",
   ]
-  if (use_qt) {
-    deps -= [
-      "//components/data_use_measurement/core",
-    ]
-  }
 
   if (is_android) {
     deps += [ "android:jni_headers" ]
@@ -57,6 +67,10 @@ source_set("unit_tests") {
     "spellcheck_host_metrics_unittest.cc",
     "spellcheck_platform_mac_unittest.cc",
   ]
+
+  if (is_win) {
+    sources += [ "windows_spell_checker_unittest.cc" ]
+  }
 
   deps = [
     ":browser",

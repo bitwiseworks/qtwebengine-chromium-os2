@@ -18,14 +18,39 @@
         "buffer map async": [
             { "name": "buffer id", "type": "ObjectId" },
             { "name": "request serial", "type": "uint32_t" },
-            { "name": "start", "type": "uint32_t" },
-            { "name": "size", "type": "uint32_t" },
-            { "name": "is write", "type": "bool" }
+            { "name": "is write", "type": "bool" },
+            { "name": "handle create info length", "type": "uint64_t" },
+            { "name": "handle create info", "type": "uint8_t", "annotation": "const*", "length": "handle create info length", "skip_serialize": true}
+        ],
+        "buffer set sub data internal": [
+            {"name": "buffer id", "type": "ObjectId" },
+            {"name": "start", "type": "uint64_t"},
+            {"name": "count", "type": "uint64_t"},
+            {"name": "data", "type": "uint8_t", "annotation": "const*", "length": "count"}
         ],
         "buffer update mapped data": [
             { "name": "buffer id", "type": "ObjectId" },
-            { "name": "data length", "type": "uint32_t" },
-            { "name": "data", "type": "uint8_t", "annotation": "const*", "length": "data length" }
+            { "name": "write flush info length", "type": "uint64_t" },
+            { "name": "write flush info", "type": "uint8_t", "annotation": "const*", "length": "write flush info length", "skip_serialize": true}
+        ],
+        "device create buffer mapped": [
+            { "name": "device", "type": "device" },
+            { "name": "descriptor", "type": "buffer descriptor", "annotation": "const*" },
+            { "name": "result", "type": "ObjectHandle", "handle_type": "buffer" },
+            { "name": "handle create info length", "type": "uint64_t" },
+            { "name": "handle create info", "type": "uint8_t", "annotation": "const*", "length": "handle create info length", "skip_serialize": true}
+        ],
+        "device create buffer mapped async": [
+            { "name": "device", "type": "device" },
+            { "name": "descriptor", "type": "buffer descriptor", "annotation": "const*" },
+            { "name": "request serial", "type": "uint32_t" },
+            { "name": "result", "type": "ObjectHandle", "handle_type": "buffer" },
+            { "name": "handle create info length", "type": "uint64_t" },
+            { "name": "handle create info", "type": "uint8_t", "annotation": "const*", "length": "handle create info length", "skip_serialize": true}
+        ],
+        "device pop error scope": [
+            { "name": "device", "type": "device" },
+            { "name": "request serial", "type": "uint64_t" }
         ],
         "destroy object": [
             { "name": "object type", "type": "ObjectType" },
@@ -34,32 +59,58 @@
     },
     "return commands": {
         "buffer map read async callback": [
-            { "name": "buffer", "type": "ObjectHandle" },
+            { "name": "buffer", "type": "ObjectHandle", "handle_type": "buffer" },
             { "name": "request serial", "type": "uint32_t" },
             { "name": "status", "type": "uint32_t" },
-            { "name": "data length", "type": "uint32_t" },
-            { "name": "data", "type": "uint8_t", "annotation": "const*", "length": "data length" }
+            { "name": "initial data info length", "type": "uint64_t" },
+            { "name": "initial data info", "type": "uint8_t", "annotation": "const*", "length": "initial data info length", "skip_serialize": true }
         ],
         "buffer map write async callback": [
-            { "name": "buffer", "type": "ObjectHandle" },
+            { "name": "buffer", "type": "ObjectHandle", "handle_type": "buffer" },
             { "name": "request serial", "type": "uint32_t" },
             { "name": "status", "type": "uint32_t" }
         ],
-        "device error callback": [
+        "device uncaptured error callback": [
+            { "name": "type", "type": "error type"},
+            { "name": "message", "type": "char", "annotation": "const*", "length": "strlen" }
+        ],
+        "device lost callback" : [
+            { "name": "message", "type": "char", "annotation": "const*", "length": "strlen" }
+        ],
+        "device pop error scope callback": [
+            { "name": "request serial", "type": "uint64_t" },
+            { "name": "type", "type": "error type" },
             { "name": "message", "type": "char", "annotation": "const*", "length": "strlen" }
         ],
         "fence update completed value": [
-            { "name": "fence", "type": "ObjectHandle" },
+            { "name": "fence", "type": "ObjectHandle", "handle_type": "fence" },
             { "name": "value", "type": "uint64_t" }
         ]
     },
     "special items": {
-        "client_side_commands": [
-            "FenceGetCompletedValue"
+        "client_side_structures": [
+            "CreateBufferMappedResult",
+            "SurfaceDescriptorFromMetalLayer",
+            "SurfaceDescriptorFromWindowsHWND",
+            "SurfaceDescriptorFromXlib"
         ],
-        "client_proxied_commands": [
+        "client_side_commands": [
+            "BufferMapReadAsync",
+            "BufferMapWriteAsync",
+            "BufferSetSubData",
+            "DeviceCreateBufferMappedAsync",
+            "DevicePopErrorScope",
+            "DeviceSetDeviceLostCallback",
+            "DeviceSetUncapturedErrorCallback",
+            "FenceGetCompletedValue",
+            "FenceOnCompletion"
+        ],
+        "client_handwritten_commands": [
             "BufferUnmap",
-            "DeviceCreateFence",
+            "DeviceCreateBuffer",
+            "DeviceCreateBufferMapped",
+            "DevicePushErrorScope",
+            "QueueCreateFence",
             "QueueSignal"
         ],
         "client_special_objects": [
@@ -70,7 +121,7 @@
         "server_custom_pre_handler_commands": [
             "BufferUnmap"
         ],
-        "server_custom_post_handler_commands": [
+        "server_handwritten_commands": [
             "QueueSignal"
         ],
         "server_reverse_lookup_objects": [

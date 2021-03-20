@@ -25,24 +25,25 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/page/plugin_data.h"
 #include "third_party/blink/renderer/modules/plugins/dom_mime_type_array.h"
 #include "third_party/blink/renderer/modules/plugins/navigator_plugins.h"
-#include "third_party/blink/renderer/platform/plugins/plugin_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
 DOMPluginArray::DOMPluginArray(LocalFrame* frame)
-    : ContextLifecycleObserver(frame ? frame->GetDocument() : nullptr),
+    : ExecutionContextLifecycleObserver(frame ? frame->GetDocument() : nullptr),
       PluginsChangedObserver(frame ? frame->GetPage() : nullptr) {
   UpdatePluginData();
 }
 
-void DOMPluginArray::Trace(blink::Visitor* visitor) {
+void DOMPluginArray::Trace(Visitor* visitor) {
   visitor->Trace(dom_plugins_);
   ScriptWrappable::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
   PluginsChangedObserver::Trace(visitor);
 }
 
@@ -55,8 +56,8 @@ DOMPlugin* DOMPluginArray::item(unsigned index) {
     return nullptr;
 
   if (!dom_plugins_[index]) {
-    dom_plugins_[index] =
-        DOMPlugin::Create(GetFrame(), *GetPluginData()->Plugins()[index]);
+    dom_plugins_[index] = MakeGarbageCollected<DOMPlugin>(
+        GetFrame(), *GetPluginData()->Plugins()[index]);
   }
 
   return dom_plugins_[index];
@@ -105,17 +106,16 @@ void DOMPluginArray::refresh(bool reload) {
 
   for (Frame* frame = GetFrame()->GetPage()->MainFrame(); frame;
        frame = frame->Tree().TraverseNext()) {
-    if (!frame->IsLocalFrame())
+    auto* local_frame = DynamicTo<LocalFrame>(frame);
+    if (!local_frame)
       continue;
-    Navigator& navigator = *ToLocalFrame(frame)->DomWindow()->navigator();
+    Navigator& navigator = *local_frame->DomWindow()->navigator();
     NavigatorPlugins::plugins(navigator)->UpdatePluginData();
     NavigatorPlugins::mimeTypes(navigator)->UpdatePluginData();
   }
 
-  if (reload) {
-    GetFrame()->Reload(WebFrameLoadType::kReload,
-                       ClientRedirectPolicy::kClientRedirect);
-  }
+  if (reload)
+    GetFrame()->Reload(WebFrameLoadType::kReload);
 }
 
 PluginData* DOMPluginArray::GetPluginData() const {
@@ -148,7 +148,7 @@ void DOMPluginArray::UpdatePluginData() {
   }
 }
 
-void DOMPluginArray::ContextDestroyed(ExecutionContext*) {
+void DOMPluginArray::ContextDestroyed() {
   dom_plugins_.clear();
 }
 

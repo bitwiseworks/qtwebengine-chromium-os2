@@ -7,8 +7,8 @@
 
 #include "content/common/content_export.h"
 #include "content/common/cursors/webcursor.h"
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_touch_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_touch_event.h"
 #include "ui/base/ui_base_types.h"
 
 namespace content {
@@ -25,8 +25,10 @@ class CONTENT_EXPORT TouchEmulatorClient {
   virtual void ForwardEmulatedTouchEvent(const blink::WebTouchEvent& event,
                                          RenderWidgetHostViewBase* target) = 0;
   virtual void SetCursor(const WebCursor& cursor) = 0;
+  // |target| is the view associated with the corresponding input event.
   virtual void ShowContextMenuAtPoint(const gfx::Point& point,
-                                      const ui::MenuSourceType source_type) = 0;
+                                      const ui::MenuSourceType source_type,
+                                      RenderWidgetHostViewBase* target) = 0;
 };
 
 }  // namespace content

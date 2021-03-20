@@ -5,6 +5,7 @@ Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
 
+<link rel="import" href="/tracing/base/category_util.html">
 <link rel="import" href="/tracing/base/color_scheme.html">
 <link rel="import" href="/tracing/ui/base/draw_helpers.html">
 <link rel="import" href="/tracing/ui/base/ui.html">
@@ -340,10 +341,13 @@ tr.exportTo('tr.ui.tracks', function() {
       const events =
           this.model_.flowIntervalTree.findIntersection(viewLWorld, viewRWorld);
 
-      // When not showing flow events, show only highlighted/selected ones.
-      const onlyHighlighted = !this.viewport.showFlowEvents;
       const canvasBounds = ctx.canvas.getBoundingClientRect();
       for (let i = 0; i < events.length; ++i) {
+        // Check whether some category of |events[i]| is in
+        // |selectedFlowEvents|. If not, don't draw the flow arrow unless the
+        // event is selected or highlighted.
+        const onlyHighlighted = !tr.b.getCategoryParts(events[i].category).some(
+            (x) => this.viewport.selectedFlowEvents.has(x));
         if (onlyHighlighted &&
             events[i].selectionState !== SelectionState.SELECTED &&
             events[i].selectionState !== SelectionState.HIGHLIGHTED) {
@@ -420,8 +424,12 @@ tr.exportTo('tr.ui.tracks', function() {
       const startY = this.calculateTrackY_(startTrack, canvasBounds);
       const endY = this.calculateTrackY_(endTrack, canvasBounds);
 
-      const pixelStartY = pixelRatio * startY;
-      const pixelEndY = pixelRatio * endY;
+      // Flow arrows' y values are calculated in world space. If the canvas
+      // was repositioned as the user scrolled down we offset any
+      // canvas translations here.
+      const worldOffset = this.getBoundingClientRect().top - canvasBounds.top;
+      const pixelStartY = pixelRatio * (startY - worldOffset);
+      const pixelEndY = pixelRatio * (endY - worldOffset);
 
       const startXView = dt.xWorldToView(flowEvent.start);
       const endXView = dt.xWorldToView(flowEvent.end);

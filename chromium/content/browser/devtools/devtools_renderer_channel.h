@@ -5,13 +5,16 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_DEVTOOLS_RENDERER_CHANNEL_H_
 #define CONTENT_BROWSER_DEVTOOLS_DEVTOOLS_RENDERER_CHANNEL_H_
 
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom.h"
 
 namespace gfx {
@@ -44,13 +47,15 @@ class CONTENT_EXPORT DevToolsRendererChannel
   // Dedicated workers use non-associated version,
   // while frames and other workers use DevToolsAgent associated
   // with respective control interfraces. See mojom for details.
-  void SetRenderer(blink::mojom::DevToolsAgentPtr agent_ptr,
-                   blink::mojom::DevToolsAgentHostRequest host_request,
-                   int process_id,
-                   RenderFrameHostImpl* frame_host);
+  void SetRenderer(
+      mojo::PendingRemote<blink::mojom::DevToolsAgent> agent_remote,
+      mojo::PendingReceiver<blink::mojom::DevToolsAgentHost> host_receiver,
+      int process_id,
+      base::OnceClosure connection_error = base::NullCallback());
   void SetRendererAssociated(
-      blink::mojom::DevToolsAgentAssociatedPtr agent_ptr,
-      blink::mojom::DevToolsAgentHostAssociatedRequest host_request,
+      mojo::PendingAssociatedRemote<blink::mojom::DevToolsAgent> agent_remote,
+      mojo::PendingAssociatedReceiver<blink::mojom::DevToolsAgentHost>
+          host_receiver,
       int process_id,
       RenderFrameHostImpl* frame_host);
   void AttachSession(DevToolsSession* session);
@@ -64,31 +69,35 @@ class CONTENT_EXPORT DevToolsRendererChannel
 
  private:
   // blink::mojom::DevToolsAgentHost implementation.
-  void ChildWorkerCreated(blink::mojom::DevToolsAgentPtr worker_devtools_agent,
-                          blink::mojom::DevToolsAgentHostRequest host_request,
-                          const GURL& url,
-                          const base::UnguessableToken& devtools_worker_token,
-                          bool waiting_for_debugger) override;
+  void ChildWorkerCreated(
+      mojo::PendingRemote<blink::mojom::DevToolsAgent> worker_devtools_agent,
+      mojo::PendingReceiver<blink::mojom::DevToolsAgentHost> host_receiver,
+      const GURL& url,
+      const std::string& name,
+      const base::UnguessableToken& devtools_worker_token,
+      bool waiting_for_debugger) override;
   void ChildWorkerDestroyed(DevToolsAgentHostImpl*);
 
   void CleanupConnection();
   void SetRendererInternal(blink::mojom::DevToolsAgent* agent,
                            int process_id,
-                           RenderFrameHostImpl* frame_host);
+                           RenderFrameHostImpl* frame_host,
+                           bool force_using_io);
   void ReportChildWorkersCallback();
 
   DevToolsAgentHostImpl* owner_;
-  mojo::Binding<blink::mojom::DevToolsAgentHost> binding_;
-  mojo::AssociatedBinding<blink::mojom::DevToolsAgentHost> associated_binding_;
-  blink::mojom::DevToolsAgentPtr agent_ptr_;
-  blink::mojom::DevToolsAgentAssociatedPtr associated_agent_ptr_;
+  mojo::Receiver<blink::mojom::DevToolsAgentHost> receiver_{this};
+  mojo::AssociatedReceiver<blink::mojom::DevToolsAgentHost>
+      associated_receiver_{this};
+  mojo::Remote<blink::mojom::DevToolsAgent> agent_remote_;
+  mojo::AssociatedRemote<blink::mojom::DevToolsAgent> associated_agent_remote_;
   int process_id_;
   RenderFrameHostImpl* frame_host_ = nullptr;
   base::flat_set<protocol::TargetAutoAttacher*> report_attachers_;
   base::flat_set<protocol::TargetAutoAttacher*> wait_for_debugger_attachers_;
   base::flat_set<WorkerDevToolsAgentHost*> child_workers_;
   base::OnceClosure set_report_callback_;
-  base::WeakPtrFactory<DevToolsRendererChannel> weak_factory_;
+  base::WeakPtrFactory<DevToolsRendererChannel> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsRendererChannel);
 };

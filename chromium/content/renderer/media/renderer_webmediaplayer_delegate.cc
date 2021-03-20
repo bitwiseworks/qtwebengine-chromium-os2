@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/system/sys_info.h"
@@ -15,25 +16,20 @@
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
-#include "third_party/blink/public/common/picture_in_picture/picture_in_picture_control_info.h"
 #include "third_party/blink/public/platform/web_fullscreen_video_status.h"
 #include "third_party/blink/public/platform/web_size.h"
-#include "third_party/blink/public/web/web_scoped_user_gesture.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/gfx/geometry/size.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
 #endif
 
-namespace {
+namespace media {
 
-void RecordAction(const base::UserMetricsAction& action) {
+static void RecordAction(const base::UserMetricsAction& action) {
   content::RenderThread::Get()->RecordAction(action);
 }
-
-}  // namespace
-
-namespace media {
 
 RendererWebMediaPlayerDelegate::RendererWebMediaPlayerDelegate(
     content::RenderFrame* render_frame)
@@ -44,15 +40,7 @@ RendererWebMediaPlayerDelegate::RendererWebMediaPlayerDelegate(
   idle_cleanup_interval_ = base::TimeDelta::FromSeconds(5);
   idle_timeout_ = base::TimeDelta::FromSeconds(15);
 
-  is_jelly_bean_ = false;
-
-#if defined(OS_ANDROID)
-  // On Android, due to the instability of the OS level media components, we
-  // consider all pre-KitKat devices to be potentially buggy.
-  is_jelly_bean_ |= base::android::BuildInfo::GetInstance()->sdk_int() <=
-                    base::android::SDK_VERSION_JELLY_BEAN_MR2;
-#endif
-
+  is_low_end_ = base::SysInfo::IsLowEndDevice();
   idle_cleanup_timer_.SetTaskRunner(
       render_frame->GetTaskRunner(blink::TaskType::kInternalMedia));
 }
@@ -119,53 +107,11 @@ void RendererWebMediaPlayerDelegate::DidPlayerMutedStatusChange(int delegate_id,
                                                            delegate_id, muted));
 }
 
-void RendererWebMediaPlayerDelegate::DidPictureInPictureModeStart(
+void RendererWebMediaPlayerDelegate::DidPlayerMediaPositionStateChange(
     int delegate_id,
-    const viz::SurfaceId& surface_id,
-    const gfx::Size& natural_size,
-    blink::WebMediaPlayer::PipWindowOpenedCallback callback,
-    bool show_play_pause_button) {
-  int request_id = next_picture_in_picture_callback_id_++;
-  enter_picture_in_picture_callback_map_.insert(
-      std::make_pair(request_id, std::move(callback)));
-  Send(new MediaPlayerDelegateHostMsg_OnPictureInPictureModeStarted(
-      routing_id(), delegate_id, surface_id, natural_size, request_id,
-      show_play_pause_button));
-}
-
-void RendererWebMediaPlayerDelegate::DidPictureInPictureModeEnd(
-    int delegate_id,
-    base::OnceClosure callback) {
-  int request_id = next_picture_in_picture_callback_id_++;
-  exit_picture_in_picture_callback_map_.insert(
-      std::make_pair(request_id, std::move(callback)));
-  Send(new MediaPlayerDelegateHostMsg_OnPictureInPictureModeEnded(
-      routing_id(), delegate_id, request_id));
-}
-
-void RendererWebMediaPlayerDelegate::DidSetPictureInPictureCustomControls(
-    int delegate_id,
-    const std::vector<blink::PictureInPictureControlInfo>& controls) {
-  Send(new MediaPlayerDelegateHostMsg_OnSetPictureInPictureCustomControls(
-      routing_id(), delegate_id, controls));
-}
-
-void RendererWebMediaPlayerDelegate::DidPictureInPictureSurfaceChange(
-    int delegate_id,
-    const viz::SurfaceId& surface_id,
-    const gfx::Size& natural_size,
-    bool show_play_pause_button) {
-  Send(new MediaPlayerDelegateHostMsg_OnPictureInPictureSurfaceChanged(
-      routing_id(), delegate_id, surface_id, natural_size,
-      show_play_pause_button));
-}
-
-void RendererWebMediaPlayerDelegate::
-    RegisterPictureInPictureWindowResizeCallback(
-        int player_id,
-        blink::WebMediaPlayer::PipWindowResizedCallback callback) {
-  picture_in_picture_window_resize_observer_ =
-      std::make_pair(player_id, std::move(callback));
+    const media_session::MediaPosition& position) {
+  Send(new MediaPlayerDelegateHostMsg_OnMediaPositionStateChanged(
+      routing_id(), delegate_id, position));
 }
 
 void RendererWebMediaPlayerDelegate::DidPause(int player_id) {
@@ -250,8 +196,15 @@ void RendererWebMediaPlayerDelegate::DidPlayerSizeChange(
                                                          delegate_id, size));
 }
 
+void RendererWebMediaPlayerDelegate::DidPictureInPictureAvailabilityChange(
+    int delegate_id,
+    bool available) {
+  Send(new MediaPlayerDelegateHostMsg_OnPictureInPictureAvailabilityChanged(
+      routing_id(), delegate_id, available));
+}
+
 void RendererWebMediaPlayerDelegate::WasHidden() {
-  RecordAction(base::UserMetricsAction("Media.Hidden"));
+  media::RecordAction(base::UserMetricsAction("Media.Hidden"));
 
   for (base::IDMap<Observer*>::iterator it(&id_map_); !it.IsAtEnd();
        it.Advance())
@@ -261,7 +214,7 @@ void RendererWebMediaPlayerDelegate::WasHidden() {
 }
 
 void RendererWebMediaPlayerDelegate::WasShown() {
-  RecordAction(base::UserMetricsAction("Media.Shown"));
+  media::RecordAction(base::UserMetricsAction("Media.Shown"));
   is_frame_closed_ = false;
 
   for (base::IDMap<Observer*>::iterator it(&id_map_); !it.IsAtEnd();
@@ -276,6 +229,7 @@ bool RendererWebMediaPlayerDelegate::OnMessageReceived(
   IPC_BEGIN_MESSAGE_MAP(RendererWebMediaPlayerDelegate, msg)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_Pause, OnMediaDelegatePause)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_Play, OnMediaDelegatePlay)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_Muted, OnMediaDelegateMuted)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_SeekForward,
                         OnMediaDelegateSeekForward)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_SeekBackward,
@@ -286,17 +240,12 @@ bool RendererWebMediaPlayerDelegate::OnMessageReceived(
                         OnMediaDelegateVolumeMultiplierUpdate)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_BecamePersistentVideo,
                         OnMediaDelegateBecamePersistentVideo)
-    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_EndPictureInPictureMode,
-                        OnPictureInPictureModeEnded)
-    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_ClickPictureInPictureControl,
-                        OnPictureInPictureControlClicked)
-    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_OnPictureInPictureModeEnded_ACK,
-                        OnPictureInPictureModeEndedAck)
-    IPC_MESSAGE_HANDLER(
-        MediaPlayerDelegateMsg_OnPictureInPictureModeStarted_ACK,
-        OnPictureInPictureModeStartedAck)
-    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_OnPictureInPictureWindowResize,
-                        OnPictureInPictureWindowResize)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_EnterPictureInPicture,
+                        OnMediaDelegateEnterPictureInPicture)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_ExitPictureInPicture,
+                        OnMediaDelegateExitPictureInPicture)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_NotifyPowerExperimentState,
+                        OnMediaDelegatePowerExperimentState)
     IPC_MESSAGE_UNHANDLED(return false)
   IPC_END_MESSAGE_MAP()
   return true;
@@ -306,11 +255,11 @@ void RendererWebMediaPlayerDelegate::SetIdleCleanupParamsForTesting(
     base::TimeDelta idle_timeout,
     base::TimeDelta idle_cleanup_interval,
     const base::TickClock* tick_clock,
-    bool is_jelly_bean) {
+    bool is_low_end) {
   idle_cleanup_interval_ = idle_cleanup_interval;
   idle_timeout_ = idle_timeout;
   tick_clock_ = tick_clock;
-  is_jelly_bean_ = is_jelly_bean;
+  is_low_end_ = is_low_end;
 }
 
 bool RendererWebMediaPlayerDelegate::IsIdleCleanupTimerRunningForTesting()
@@ -327,40 +276,46 @@ void RendererWebMediaPlayerDelegate::SetFrameHiddenForTesting(bool is_hidden) {
   ScheduleUpdateTask();
 }
 
-void RendererWebMediaPlayerDelegate::OnMediaDelegatePause(int player_id) {
-  RecordAction(base::UserMetricsAction("Media.Controls.RemotePause"));
+void RendererWebMediaPlayerDelegate::OnMediaDelegatePause(
+    int player_id,
+    bool triggered_by_user) {
+  media::RecordAction(base::UserMetricsAction("Media.Controls.RemotePause"));
 
   Observer* observer = id_map_.Lookup(player_id);
   if (observer) {
-    // TODO(avayvod): remove when default play/pause is handled via
-    // the MediaSession code path.
-    std::unique_ptr<blink::WebScopedUserGesture> gesture(
-        render_frame()
-            ? new blink::WebScopedUserGesture(render_frame()->GetWebFrame())
-            : nullptr);
+    if (triggered_by_user && render_frame()) {
+      // TODO(avayvod): remove when default play/pause is handled via
+      // the MediaSession code path.
+      render_frame()->GetWebFrame()->NotifyUserActivation();
+    }
     observer->OnPause();
   }
 }
 
 void RendererWebMediaPlayerDelegate::OnMediaDelegatePlay(int player_id) {
-  RecordAction(base::UserMetricsAction("Media.Controls.RemotePlay"));
+  media::RecordAction(base::UserMetricsAction("Media.Controls.RemotePlay"));
 
   Observer* observer = id_map_.Lookup(player_id);
   if (observer) {
     // TODO(avayvod): remove when default play/pause is handled via
     // the MediaSession code path.
-    std::unique_ptr<blink::WebScopedUserGesture> gesture(
-        render_frame()
-            ? new blink::WebScopedUserGesture(render_frame()->GetWebFrame())
-            : nullptr);
+    if (render_frame())
+      render_frame()->GetWebFrame()->NotifyUserActivation();
     observer->OnPlay();
   }
+}
+
+void RendererWebMediaPlayerDelegate::OnMediaDelegateMuted(int player_id,
+                                                          bool muted) {
+  Observer* observer = id_map_.Lookup(player_id);
+  if (observer)
+    observer->OnMuted(muted);
 }
 
 void RendererWebMediaPlayerDelegate::OnMediaDelegateSeekForward(
     int player_id,
     base::TimeDelta seek_time) {
-  RecordAction(base::UserMetricsAction("Media.Controls.RemoteSeekForward"));
+  media::RecordAction(base::UserMetricsAction("Media.Controls.RemoteSeekForward"));
 
   Observer* observer = id_map_.Lookup(player_id);
   if (observer)
@@ -370,7 +325,7 @@ void RendererWebMediaPlayerDelegate::OnMediaDelegateSeekForward(
 void RendererWebMediaPlayerDelegate::OnMediaDelegateSeekBackward(
     int player_id,
     base::TimeDelta seek_time) {
-  RecordAction(base::UserMetricsAction("Media.Controls.RemoteSeekBackward"));
+  media::RecordAction(base::UserMetricsAction("Media.Controls.RemoteSeekBackward"));
 
   Observer* observer = id_map_.Lookup(player_id);
   if (observer)
@@ -401,52 +356,26 @@ void RendererWebMediaPlayerDelegate::OnMediaDelegateBecamePersistentVideo(
     observer->OnBecamePersistentVideo(value);
 }
 
-void RendererWebMediaPlayerDelegate::OnPictureInPictureModeEnded(
+void RendererWebMediaPlayerDelegate::OnMediaDelegateEnterPictureInPicture(
     int player_id) {
   Observer* observer = id_map_.Lookup(player_id);
   if (observer)
-    observer->OnPictureInPictureModeEnded();
+    observer->OnEnterPictureInPicture();
 }
 
-void RendererWebMediaPlayerDelegate::OnPictureInPictureControlClicked(
-    int player_id,
-    const std::string& control_id) {
+void RendererWebMediaPlayerDelegate::OnMediaDelegateExitPictureInPicture(
+    int player_id) {
   Observer* observer = id_map_.Lookup(player_id);
   if (observer)
-    observer->OnPictureInPictureControlClicked(control_id);
+    observer->OnExitPictureInPicture();
 }
 
-void RendererWebMediaPlayerDelegate::OnPictureInPictureModeEndedAck(
+void RendererWebMediaPlayerDelegate::OnMediaDelegatePowerExperimentState(
     int player_id,
-    int request_id) {
-  auto iter = exit_picture_in_picture_callback_map_.find(request_id);
-  DCHECK(iter != exit_picture_in_picture_callback_map_.end());
-
-  std::move(iter->second).Run();
-  exit_picture_in_picture_callback_map_.erase(iter);
-}
-
-void RendererWebMediaPlayerDelegate::OnPictureInPictureModeStartedAck(
-    int player_id,
-    int request_id,
-    const gfx::Size& window_size) {
-  auto iter = enter_picture_in_picture_callback_map_.find(request_id);
-  DCHECK(iter != enter_picture_in_picture_callback_map_.end());
-
-  std::move(iter->second).Run(blink::WebSize(window_size));
-  enter_picture_in_picture_callback_map_.erase(iter);
-}
-
-void RendererWebMediaPlayerDelegate::OnPictureInPictureWindowResize(
-    int player_id,
-    const gfx::Size& window_size) {
-  if (!picture_in_picture_window_resize_observer_ ||
-      picture_in_picture_window_resize_observer_->first != player_id) {
-    return;
-  }
-
-  picture_in_picture_window_resize_observer_->second.Run(
-      blink::WebSize(window_size));
+    bool state) {
+  Observer* observer = id_map_.Lookup(player_id);
+  if (observer)
+    observer->OnPowerExperimentState(state);
 }
 
 void RendererWebMediaPlayerDelegate::ScheduleUpdateTask() {
@@ -480,12 +409,12 @@ void RendererWebMediaPlayerDelegate::UpdateTask() {
   // When we reach the maximum number of idle players, clean them up
   // aggressively. Values chosen after testing on a Galaxy Nexus device for
   // http://crbug.com/612909.
-  if (idle_player_map_.size() > (is_jelly_bean_ ? 2u : 8u))
+  if (idle_player_map_.size() > (is_low_end_ ? 2u : 8u))
     aggressive_cleanup = true;
 
   // When a player plays on a buggy old device, clean up idle players
   // aggressively.
-  if (has_played_video_since_last_update_task && is_jelly_bean_)
+  if (has_played_video_since_last_update_task && is_low_end_)
     aggressive_cleanup = true;
 
   CleanUpIdlePlayers(aggressive_cleanup ? base::TimeDelta() : idle_timeout_);
@@ -514,10 +443,10 @@ void RendererWebMediaPlayerDelegate::RecordBackgroundVideoPlayback() {
     was_playing_background_video_ = has_playing_background_video;
 
     if (has_playing_background_video) {
-      RecordAction(base::UserMetricsAction("Media.Session.BackgroundResume"));
+      media::RecordAction(base::UserMetricsAction("Media.Session.BackgroundResume"));
       background_video_start_time_ = base::TimeTicks::Now();
     } else {
-      RecordAction(base::UserMetricsAction("Media.Session.BackgroundSuspend"));
+      media::RecordAction(base::UserMetricsAction("Media.Session.BackgroundSuspend"));
       UMA_HISTOGRAM_CUSTOM_TIMES(
           "Media.Android.BackgroundVideoTime",
           base::TimeTicks::Now() - background_video_start_time_,

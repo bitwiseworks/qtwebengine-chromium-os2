@@ -67,9 +67,18 @@ class CSSRotateNonInterpolableValue : public NonInterpolableValue {
         start.IsAdditive(), end.IsAdditive()));
   }
 
+  static scoped_refptr<CSSRotateNonInterpolableValue> CreateAdditive(
+      const CSSRotateNonInterpolableValue& other) {
+    DCHECK(other.is_single_);
+    const bool is_single = true;
+    const bool is_additive = true;
+    return base::AdoptRef(new CSSRotateNonInterpolableValue(
+        is_single, other.start_, other.end_, is_additive, is_additive));
+  }
+
   scoped_refptr<CSSRotateNonInterpolableValue> Composite(
       const CSSRotateNonInterpolableValue& other,
-      double other_progress) {
+      double other_progress) const {
     DCHECK(is_single_ && !is_start_additive_);
     if (other.is_single_) {
       DCHECK_EQ(other_progress, 0);
@@ -88,11 +97,6 @@ class CSSRotateNonInterpolableValue : public NonInterpolableValue {
             ? OptionalRotation::Add(GetOptionalRotation(), other.end_)
             : other.end_;
     return Create(OptionalRotation::Slerp(start, end, other_progress));
-  }
-
-  void SetSingleAdditive() {
-    DCHECK(is_single_);
-    is_start_additive_ = true;
   }
 
   OptionalRotation SlerpedRotation(double progress) const {
@@ -136,7 +140,15 @@ class CSSRotateNonInterpolableValue : public NonInterpolableValue {
 };
 
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(CSSRotateNonInterpolableValue);
-DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(CSSRotateNonInterpolableValue);
+template <>
+struct DowncastTraits<CSSRotateNonInterpolableValue> {
+  static bool AllowFrom(const NonInterpolableValue* value) {
+    return value && AllowFrom(*value);
+  }
+  static bool AllowFrom(const NonInterpolableValue& value) {
+    return value.GetType() == CSSRotateNonInterpolableValue::static_type_;
+  }
+};
 
 namespace {
 
@@ -148,17 +160,15 @@ OptionalRotation GetRotation(const ComputedStyle& style) {
 }
 
 InterpolationValue ConvertRotation(const OptionalRotation& rotation) {
-  return InterpolationValue(InterpolableNumber::Create(0),
+  return InterpolationValue(std::make_unique<InterpolableNumber>(0),
                             CSSRotateNonInterpolableValue::Create(rotation));
 }
 
 class InheritedRotationChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<InheritedRotationChecker> Create(
-      const OptionalRotation& inherited_rotation) {
-    return base::WrapUnique(new InheritedRotationChecker(inherited_rotation));
-  }
+  explicit InheritedRotationChecker(const OptionalRotation& inherited_rotation)
+      : inherited_rotation_(inherited_rotation) {}
 
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
@@ -172,9 +182,6 @@ class InheritedRotationChecker
   }
 
  private:
-  InheritedRotationChecker(const OptionalRotation& inherited_rotation)
-      : inherited_rotation_(inherited_rotation) {}
-
   const OptionalRotation inherited_rotation_;
 };
 
@@ -197,7 +204,7 @@ InterpolationValue CSSRotateInterpolationType::MaybeConvertInherit(
     ConversionCheckers& conversion_checkers) const {
   OptionalRotation inherited_rotation = GetRotation(*state.ParentStyle());
   conversion_checkers.push_back(
-      InheritedRotationChecker::Create(inherited_rotation));
+      std::make_unique<InheritedRotationChecker>(inherited_rotation));
   return ConvertRotation(inherited_rotation);
 }
 
@@ -213,20 +220,26 @@ InterpolationValue CSSRotateInterpolationType::MaybeConvertValue(
       OptionalRotation(StyleBuilderConverter::ConvertRotation(value)));
 }
 
-void CSSRotateInterpolationType::AdditiveKeyframeHook(
-    InterpolationValue& value) const {
-  ToCSSRotateNonInterpolableValue(*value.non_interpolable_value)
-      .SetSingleAdditive();
+InterpolationValue
+CSSRotateInterpolationType::PreInterpolationCompositeIfNeeded(
+    InterpolationValue value,
+    const InterpolationValue& underlying,
+    EffectModel::CompositeOperation,
+    ConversionCheckers&) const {
+  value.non_interpolable_value = CSSRotateNonInterpolableValue::CreateAdditive(
+      To<CSSRotateNonInterpolableValue>(*value.non_interpolable_value));
+  return value;
 }
 
 PairwiseInterpolationValue CSSRotateInterpolationType::MaybeMergeSingles(
     InterpolationValue&& start,
     InterpolationValue&& end) const {
   return PairwiseInterpolationValue(
-      InterpolableNumber::Create(0), InterpolableNumber::Create(1),
+      std::make_unique<InterpolableNumber>(0),
+      std::make_unique<InterpolableNumber>(1),
       CSSRotateNonInterpolableValue::Create(
-          ToCSSRotateNonInterpolableValue(*start.non_interpolable_value),
-          ToCSSRotateNonInterpolableValue(*end.non_interpolable_value)));
+          To<CSSRotateNonInterpolableValue>(*start.non_interpolable_value),
+          To<CSSRotateNonInterpolableValue>(*end.non_interpolable_value)));
 }
 
 InterpolationValue
@@ -240,12 +253,12 @@ void CSSRotateInterpolationType::Composite(
     double underlying_fraction,
     const InterpolationValue& value,
     double interpolation_fraction) const {
-  CSSRotateNonInterpolableValue& underlying_non_interpolable_value =
-      ToCSSRotateNonInterpolableValue(
+  const auto& underlying_non_interpolable_value =
+      To<CSSRotateNonInterpolableValue>(
           *underlying_value_owner.Value().non_interpolable_value);
-  const CSSRotateNonInterpolableValue& non_interpolable_value =
-      ToCSSRotateNonInterpolableValue(*value.non_interpolable_value);
-  double progress = ToInterpolableNumber(*value.interpolable_value).Value();
+  const auto& non_interpolable_value =
+      To<CSSRotateNonInterpolableValue>(*value.non_interpolable_value);
+  double progress = To<InterpolableNumber>(*value.interpolable_value).Value();
   underlying_value_owner.MutableValue().non_interpolable_value =
       underlying_non_interpolable_value.Composite(non_interpolable_value,
                                                   progress);
@@ -255,9 +268,9 @@ void CSSRotateInterpolationType::ApplyStandardPropertyValue(
     const InterpolableValue& interpolable_value,
     const NonInterpolableValue* untyped_non_interpolable_value,
     StyleResolverState& state) const {
-  double progress = ToInterpolableNumber(interpolable_value).Value();
-  const CSSRotateNonInterpolableValue& non_interpolable_value =
-      ToCSSRotateNonInterpolableValue(*untyped_non_interpolable_value);
+  double progress = To<InterpolableNumber>(interpolable_value).Value();
+  const auto& non_interpolable_value =
+      To<CSSRotateNonInterpolableValue>(*untyped_non_interpolable_value);
   OptionalRotation rotation = non_interpolable_value.SlerpedRotation(progress);
   if (rotation.IsNone()) {
     state.Style()->SetRotate(nullptr);

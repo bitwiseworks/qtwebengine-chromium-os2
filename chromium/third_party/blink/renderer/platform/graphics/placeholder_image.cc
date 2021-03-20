@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "base/stl_util.h"
+#include "third_party/blink/public/resources/grit/blink_image_resources.h"
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_family.h"
@@ -55,7 +57,7 @@ void DrawIcon(cc::PaintCanvas* canvas,
   // Note that |icon_image| will be a 0x0 image when running
   // blink_platform_unittests.
   DEFINE_STATIC_REF(Image, icon_image,
-                    (Image::LoadPlatformResource("placeholderIcon")));
+                    (Image::LoadPlatformResource(IDR_PLACEHOLDER_ICON)));
 
   // Note that the |icon_image| is not scaled according to dest_rect / src_rect,
   // and is always drawn at the same size. This is so that placeholder icons are
@@ -114,20 +116,19 @@ FontDescription CreatePlaceholderFontDescription(float scale_factor) {
 String FormatOriginalResourceSizeBytes(int64_t bytes) {
   DCHECK_LT(0, bytes);
 
-  static constexpr WebLocalizedString::Name kUnitsNames[] = {
-      WebLocalizedString::kUnitsKibibytes, WebLocalizedString::kUnitsMebibytes,
-      WebLocalizedString::kUnitsGibibytes, WebLocalizedString::kUnitsTebibytes,
-      WebLocalizedString::kUnitsPebibytes};
+  static constexpr int kUnitsResourceIds[] = {
+      IDS_UNITS_KIBIBYTES, IDS_UNITS_MEBIBYTES, IDS_UNITS_GIBIBYTES,
+      IDS_UNITS_TEBIBYTES, IDS_UNITS_PEBIBYTES};
 
   // Start with KB. The formatted text will be at least "1 KB", with any smaller
   // amounts being rounded up to "1 KB".
-  const WebLocalizedString::Name* units = kUnitsNames;
+  const int* units = kUnitsResourceIds;
   int64_t denomenator = 1024;
 
   // Find the smallest unit that can represent |bytes| in 3 digits or less.
   // Round up to the next higher unit if possible when it would take 4 digits to
   // display the amount, e.g. 1000 KB will be rounded up to 1 MB.
-  for (; units < kUnitsNames + (base::size(kUnitsNames) - 1) &&
+  for (; units < kUnitsResourceIds + (base::size(kUnitsResourceIds) - 1) &&
          bytes >= denomenator * 1000;
        ++units, denomenator *= 1024) {
   }
@@ -136,7 +137,7 @@ String FormatOriginalResourceSizeBytes(int64_t bytes) {
   if (bytes < denomenator) {
     // Round up to 1.
     numeric_string = String::Number(1);
-  } else if (units != kUnitsNames && bytes < denomenator * 10) {
+  } else if (units != kUnitsResourceIds && bytes < denomenator * 10) {
     // For amounts between 1 and 10 units and larger than 1 MB, allow up to one
     // fractional digit.
     numeric_string = String::Number(
@@ -176,7 +177,6 @@ class PlaceholderImage::SharedFont : public RefCounted<SharedFont> {
   explicit SharedFont(float scale_factor)
       : font_(CreatePlaceholderFontDescription(scale_factor)),
         scale_factor_(scale_factor) {
-    font_.Update(nullptr);
   }
 
   ~SharedFont() {
@@ -190,7 +190,6 @@ class PlaceholderImage::SharedFont : public RefCounted<SharedFont> {
 
     scale_factor_ = scale_factor;
     font_ = Font(CreatePlaceholderFontDescription(scale_factor_));
-    font_.Update(nullptr);
   }
 
   const Font& font() const { return font_; }
@@ -251,8 +250,8 @@ PaintImage PlaceholderImage::PaintImageForCurrentFrame() {
 
   PaintRecorder paint_recorder;
   Draw(paint_recorder.beginRecording(FloatRect(dest_rect)), PaintFlags(),
-       FloatRect(dest_rect), FloatRect(dest_rect),
-       kDoNotRespectImageOrientation, kClampImageToSourceRect, kSyncDecode);
+       FloatRect(dest_rect), FloatRect(dest_rect), kRespectImageOrientation,
+       kClampImageToSourceRect, kSyncDecode);
 
   paint_record_for_current_frame_ = paint_recorder.finishRecordingAsPicture();
   paint_record_content_id_ = PaintImage::GetNextContentId();
@@ -358,13 +357,15 @@ void PlaceholderImage::Draw(cc::PaintCanvas* canvas,
       Font::kUseFallbackIfFontNotReady, 1.0f, flags);
 }
 
-void PlaceholderImage::DrawPattern(GraphicsContext& context,
-                                   const FloatRect& src_rect,
-                                   const FloatSize& scale,
-                                   const FloatPoint& phase,
-                                   SkBlendMode mode,
-                                   const FloatRect& dest_rect,
-                                   const FloatSize& repeat_spacing) {
+void PlaceholderImage::DrawPattern(
+    GraphicsContext& context,
+    const FloatRect& src_rect,
+    const FloatSize& scale,
+    const FloatPoint& phase,
+    SkBlendMode mode,
+    const FloatRect& dest_rect,
+    const FloatSize& repeat_spacing,
+    RespectImageOrientationEnum respect_orientation) {
   DCHECK(context.Canvas());
 
   PaintFlags flags = context.FillFlags();
@@ -373,9 +374,8 @@ void PlaceholderImage::DrawPattern(GraphicsContext& context,
   // Ignore the pattern specifications and just draw a single placeholder image
   // over the whole |dest_rect|. This is done in order to prevent repeated icons
   // from cluttering tiled background images.
-  Draw(context.Canvas(), flags, dest_rect, src_rect,
-       kDoNotRespectImageOrientation, kClampImageToSourceRect,
-       kUnspecifiedDecode);
+  Draw(context.Canvas(), flags, dest_rect, src_rect, respect_orientation,
+       kClampImageToSourceRect, kUnspecifiedDecode);
 }
 
 void PlaceholderImage::DestroyDecodedData() {

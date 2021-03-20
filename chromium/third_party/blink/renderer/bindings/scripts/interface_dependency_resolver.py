@@ -25,11 +25,10 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 """Resolve interface dependencies, producing a merged IdlDefinitions object.
 
 This library computes interface dependencies (partial interfaces and
-implements), reads the dependency files, and merges them to the IdlDefinitions
+includes), reads the dependency files, and merges them to the IdlDefinitions
 for the main IDL file, producing an IdlDefinitions object representing the
 entire interface.
 
@@ -45,7 +44,6 @@ from utilities import idl_filename_to_component, is_valid_component_dependency, 
 # which changes the semantics and yields different code than the same extended
 # attribute on the main interface.
 DEPENDENCY_EXTENDED_ATTRIBUTES = frozenset([
-    'OriginTrialEnabled',
     'RuntimeEnabled',
     'SecureContext',
 ])
@@ -68,13 +66,13 @@ class InterfaceDependencyResolver(object):
         """Resolve dependencies, merging them into IDL definitions of main file.
 
         Dependencies consist of 'partial interface' for the same interface as
-        in the main file, and other interfaces that this interface 'implements'.
+        in the main file, and mixins that this interface 'includes'.
         These are merged into the main IdlInterface, as the main IdlInterface
         implements all these members.
 
-        Referenced interfaces are added to IdlDefinitions, but not merged into
-        the main IdlInterface, as these are only referenced (their members are
-        introspected, but not implemented in this interface).
+        Partial interfaces and mixins are added to IdlDefinitions, but not
+        merged into the main IdlInterface, as these are only referenced (their
+        members are introspected, but not implemented in this interface).
 
         Inherited extended attributes are also added to the main IdlInterface.
 
@@ -96,14 +94,14 @@ class InterfaceDependencyResolver(object):
                 or a given IdlDefinitions object has incorrect referenced
                 interfaces.
         """
-        # FIXME: we need to resolve dependency when we implement partial
-        # dictionary.
+        # TODO(crbug.com/579896): we need to resolve dependency when we
+        # support partial dictionary.
         if not definitions.interfaces:
             raise Exception('No need to resolve any dependencies of '
                             'this definition: %s, because this should '
                             'have a dictionary.' % definitions.idl_name)
 
-        target_interface = next(definitions.interfaces.itervalues())
+        target_interface = next(iter(definitions.interfaces.values()))
         interface_name = target_interface.name
         interface_info = self.interfaces_info[interface_name]
 
@@ -112,34 +110,36 @@ class InterfaceDependencyResolver(object):
                 interface_info['inherited_extended_attributes'])
 
         resolved_definitions = merge_interface_dependencies(
-            definitions,
-            component,
-            target_interface,
+            definitions, component, target_interface,
             interface_info['dependencies_full_paths'] +
             interface_info['dependencies_other_component_full_paths'],
             self.reader)
 
-        inherit_unforgeable_attributes(resolved_definitions, self.interfaces_info)
+        inherit_unforgeable_attributes(resolved_definitions,
+                                       self.interfaces_info)
 
-        for referenced_interface_name in interface_info['referenced_interfaces']:
+        for referenced_interface_name in \
+            interface_info['referenced_interfaces']:
             referenced_definitions = self.reader.read_idl_definitions(
                 self.interfaces_info[referenced_interface_name]['full_path'])
 
             for referenced_component in referenced_definitions:
-                if not is_valid_component_dependency(component, referenced_component):
+                if not is_valid_component_dependency(component,
+                                                     referenced_component):
                     raise Exception('This definitions: %s is defined in %s '
                                     'but reference interface:%s is defined '
-                                    'in %s' % (definitions.idl_name,
-                                               component,
+                                    'in %s' % (definitions.idl_name, component,
                                                referenced_interface_name,
                                                referenced_component))
 
-                resolved_definitions[component].update(referenced_definitions[component])
+                resolved_definitions[component].update(
+                    referenced_definitions[component])
 
         return resolved_definitions
 
 
-def merge_interface_dependencies(definitions, component, target_interface, dependency_idl_filenames, reader):
+def merge_interface_dependencies(definitions, component, target_interface,
+                                 dependency_idl_filenames, reader):
     """Merge dependencies ('partial interface' and 'implements') in dependency_idl_filenames into target_interface.
 
     Args:
@@ -159,9 +159,11 @@ def merge_interface_dependencies(definitions, component, target_interface, depen
     # Sort so order consistent, so can compare output from run to run.
     for dependency_idl_filename in sorted(dependency_idl_filenames):
         dependency_definitions = reader.read_idl_file(dependency_idl_filename)
-        dependency_component = idl_filename_to_component(dependency_idl_filename)
+        dependency_component = idl_filename_to_component(
+            dependency_idl_filename)
 
-        dependency_interface = next(dependency_definitions.interfaces.itervalues())
+        dependency_interface = next(
+            iter(dependency_definitions.interfaces.values()))
 
         transfer_extended_attributes(dependency_interface,
                                      dependency_idl_filename)
@@ -177,12 +179,13 @@ def merge_interface_dependencies(definitions, component, target_interface, depen
             # However,
             # - A partial interface defined in core cannot update
             #   the original interface defined in modules.
-            if not is_valid_component_dependency(dependency_component, component):
-                raise Exception('The partial interface:%s in %s cannot update '
-                                'the original interface:%s in %s' % (dependency_interface.name,
-                                                                     dependency_component,
-                                                                     target_interface.name,
-                                                                     component))
+            if not is_valid_component_dependency(dependency_component,
+                                                 component):
+                raise Exception(
+                    'The partial interface:%s in %s cannot update '
+                    'the original interface:%s in %s' %
+                    (dependency_interface.name, dependency_component,
+                     target_interface.name, component))
 
             if dependency_component in resolved_definitions:
                 # When merging a new partial interfaces, should not overwrite
@@ -190,12 +193,16 @@ def merge_interface_dependencies(definitions, component, target_interface, depen
                 # interface.
                 # See also the below "if 'ImplementedAs' not in ... " line's
                 # comment.
-                dependency_interface.extended_attributes.pop('ImplementedAs', None)
-                resolved_definitions[dependency_component].update(dependency_definitions)
+                dependency_interface.extended_attributes.pop(
+                    'ImplementedAs', None)
+                resolved_definitions[dependency_component].update(
+                    dependency_definitions)
                 continue
 
-            dependency_interface.extended_attributes.update(target_interface.extended_attributes)
-            assert target_interface == definitions.interfaces[dependency_interface.name]
+            dependency_interface.extended_attributes.update(
+                target_interface.extended_attributes)
+            assert target_interface == \
+                   definitions.interfaces[dependency_interface.name]
             # A partial interface should use its original interface's
             # ImplementedAs. If the original interface doesn't have,
             # remove ImplementedAs defined in the partial interface.
@@ -209,44 +216,45 @@ def merge_interface_dependencies(definitions, component, target_interface, depen
             # files correctly. ImplementedAs should not be allowed in
             # partial interfaces.
             if 'ImplementedAs' not in target_interface.extended_attributes:
-                dependency_interface.extended_attributes.pop('ImplementedAs', None)
+                dependency_interface.extended_attributes.pop(
+                    'ImplementedAs', None)
             dependency_interface.original_interface = target_interface
             target_interface.partial_interfaces.append(dependency_interface)
             resolved_definitions[dependency_component] = dependency_definitions
         else:
-            # Case: target_interface implements dependency_interface.
+            # Case: |target_interface| includes |dependency_interface| mixin.
             # So,
-            # - An interface defined in modules can implement some interface
+            # - An interface defined in modules can include any interface mixin
             #   defined in core.
-            #   In this case, we need "NoInterfaceObject" extended attribute.
             # However,
-            # - An interface defined in core cannot implement any interface
+            # - An interface defined in core cannot include an interface mixin
             #   defined in modules.
-            if not is_valid_component_dependency(component, dependency_component):
-                raise Exception('The interface:%s in %s cannot implement '
-                                'the interface:%s in %s.' % (dependency_interface.name,
-                                                             dependency_component,
-                                                             target_interface.name,
-                                                             component))
+            if not dependency_interface.is_mixin:
+                raise Exception(
+                    'The interface:%s cannot include '
+                    'the non-mixin interface: %s.' %
+                    (target_interface.name, dependency_interface.name))
 
-            if component != dependency_component and 'NoInterfaceObject' not in dependency_interface.extended_attributes:
-                raise Exception('The interface:%s in %s cannot implement '
-                                'the interface:%s in %s because of '
-                                'missing NoInterfaceObject.' % (dependency_interface.name,
-                                                                dependency_component,
-                                                                target_interface.name,
-                                                                component))
+            if not is_valid_component_dependency(component,
+                                                 dependency_component):
+                raise Exception(
+                    'The interface:%s in %s cannot include '
+                    'the interface mixin:%s in %s.' %
+                    (target_interface.name, component,
+                     dependency_interface.name, dependency_component))
 
-            resolved_definitions[component].update(dependency_definitions)  # merges partial interfaces
-            # Implemented interfaces (non-partial dependencies) are also merged
-            # into the target interface, so Code Generator can just iterate
-            # over one list (and not need to handle 'implements' itself).
+            # merges partial interfaces
+            resolved_definitions[component].update(dependency_definitions)
+            # Mixins are also merged into the target interface, so Code
+            # Generator can just iterate over one list (and not need to handle
+            # 'includes' itself).
             target_interface.merge(dependency_interface)
 
     return resolved_definitions
 
 
-def transfer_extended_attributes(dependency_interface, dependency_idl_filename):
+def transfer_extended_attributes(dependency_interface,
+                                 dependency_idl_filename):
     """Transfer extended attributes from dependency interface onto members.
 
     Merging consists of storing certain interface-level data in extended
@@ -266,7 +274,8 @@ def transfer_extended_attributes(dependency_interface, dependency_idl_filename):
         if key not in dependency_interface.extended_attributes:
             continue
 
-        merged_extended_attributes[key] = dependency_interface.extended_attributes[key]
+        merged_extended_attributes[key] = \
+            dependency_interface.extended_attributes[key]
         # Remove the merged attributes from the original dependency interface.
         # This ensures that if other dependency interfaces are merged onto this
         # one, its extended_attributes do not leak through
@@ -284,9 +293,7 @@ def transfer_extended_attributes(dependency_interface, dependency_idl_filename):
     # which class implemented interfaces are implemented.
     #
     # Currently [LegacyTreatAsPartialInterface] can be used to have partial
-    # interface behavior on implemented interfaces, but this is being removed
-    # as legacy cruft:
-    # FIXME: Remove [LegacyTreatAsPartialInterface]
+    # interface behavior on mixins, but this is being removed as legacy cruft:
     # http://crbug.com/360435
     #
     # Note that [ImplementedAs] is used with different meanings on interfaces
@@ -312,11 +319,14 @@ def transfer_extended_attributes(dependency_interface, dependency_idl_filename):
                 attributes[key] = value
 
     for attribute in dependency_interface.attributes:
-        update_attributes(attribute.extended_attributes, merged_extended_attributes)
+        update_attributes(attribute.extended_attributes,
+                          merged_extended_attributes)
     for constant in dependency_interface.constants:
-        update_attributes(constant.extended_attributes, merged_extended_attributes)
+        update_attributes(constant.extended_attributes,
+                          merged_extended_attributes)
     for operation in dependency_interface.operations:
-        update_attributes(operation.extended_attributes, merged_extended_attributes)
+        update_attributes(operation.extended_attributes,
+                          merged_extended_attributes)
 
 
 def inherit_unforgeable_attributes(resolved_definitions, interfaces_info):
@@ -327,32 +337,47 @@ def inherit_unforgeable_attributes(resolved_definitions, interfaces_info):
     'referenced_interfaces' and 'cpp_includes' in |interfaces_info| are updated
     accordingly.
     """
+
     def collect_unforgeable_attributes_in_ancestors(interface_name, component):
         if not interface_name:
             # unforgeable_attributes, referenced_interfaces, cpp_includes
             return [], [], set()
         interface = interfaces_info[interface_name]
-        unforgeable_attributes, referenced_interfaces, cpp_includes = collect_unforgeable_attributes_in_ancestors(interface.get('parent'), component)
+        unforgeable_attributes, referenced_interfaces, cpp_includes = \
+            collect_unforgeable_attributes_in_ancestors(
+                interface.get('parent'), component)
         this_unforgeable = interface.get('unforgeable_attributes', [])
+        for attr in this_unforgeable:
+            if attr.defined_in is None:
+                attr.defined_in = interface_name
         unforgeable_attributes.extend(this_unforgeable)
-        this_referenced = [attr.idl_type.base_type for attr in this_unforgeable
-                           if attr.idl_type.base_type in
-                           interface.get('referenced_interfaces', [])]
+        this_referenced = [
+            attr.idl_type.base_type for attr in this_unforgeable
+            if attr.idl_type.base_type in interface.get(
+                'referenced_interfaces', [])
+        ]
         referenced_interfaces.extend(this_referenced)
-        cpp_includes.update(interface.get('cpp_includes', {}).get(component, {}))
+        cpp_includes.update(
+            interface.get('cpp_includes', {}).get(component, {}))
         return unforgeable_attributes, referenced_interfaces, cpp_includes
 
-    for component, definitions in resolved_definitions.iteritems():
-        for interface_name, interface in definitions.interfaces.iteritems():
+    for component, definitions in resolved_definitions.items():
+        for interface_name, interface in definitions.interfaces.items():
             interface_info = interfaces_info[interface_name]
-            inherited_unforgeable_attributes, referenced_interfaces, cpp_includes = collect_unforgeable_attributes_in_ancestors(interface_info.get('parent'), component)
+            inherited_unforgeable_attributes, referenced_interfaces, cpp_includes = \
+                collect_unforgeable_attributes_in_ancestors(
+                    interface_info.get('parent'), component)
             # This loop may process the same interface many times, so it's
             # possible that we're adding the same attributes twice or more.
             # So check if there is a duplicate.
             for attr in inherited_unforgeable_attributes:
                 if attr not in interface.attributes:
                     interface.attributes.append(attr)
-            referenced_interfaces.extend(interface_info.get('referenced_interfaces', []))
-            interface_info['referenced_interfaces'] = sorted(set(referenced_interfaces))
+            referenced_interfaces.extend(
+                interface_info.get('referenced_interfaces', []))
+            interface_info['referenced_interfaces'] = sorted(
+                set(referenced_interfaces))
             merge_dict_recursively(interface_info,
-                                   {'cpp_includes': {component: cpp_includes}})
+                                   {'cpp_includes': {
+                                       component: cpp_includes
+                                   }})

@@ -6,7 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCRIPT_CUSTOM_ELEMENT_DEFINITION_DATA_H_
 
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
@@ -18,9 +18,9 @@ class ScriptState;
 class V8CustomElementAdoptedCallback;
 class V8CustomElementAttributeChangedCallback;
 class V8CustomElementConstructor;
-class V8CustomElementDisabledStateChangedCallback;
 class V8CustomElementFormAssociatedCallback;
-class V8CustomElementRestoreValueCallback;
+class V8CustomElementFormDisabledCallback;
+class V8CustomElementFormStateRestoreCallback;
 class V8VoidFunction;
 
 class ScriptCustomElementDefinitionData {
@@ -29,18 +29,19 @@ class ScriptCustomElementDefinitionData {
  public:
   ScriptCustomElementDefinitionData() {}
 
-  Member<ScriptState> script_state_;
-  Member<CustomElementRegistry> registry_;
-  Member<V8CustomElementConstructor> constructor_;
-  Member<V8VoidFunction> connected_callback_;
-  Member<V8VoidFunction> disconnected_callback_;
-  Member<V8CustomElementAdoptedCallback> adopted_callback_;
-  Member<V8CustomElementAttributeChangedCallback> attribute_changed_callback_;
-  Member<V8CustomElementFormAssociatedCallback> form_associated_callback_;
-  Member<V8VoidFunction> form_reset_callback_;
-  Member<V8CustomElementDisabledStateChangedCallback>
-      disabled_state_changed_callback_;
-  Member<V8CustomElementRestoreValueCallback> restore_value_callback_;
+  ScriptState* script_state_ = nullptr;
+  CustomElementRegistry* registry_ = nullptr;
+  V8CustomElementConstructor* constructor_ = nullptr;
+  V8VoidFunction* connected_callback_ = nullptr;
+  V8VoidFunction* disconnected_callback_ = nullptr;
+  V8CustomElementAdoptedCallback* adopted_callback_ = nullptr;
+  V8CustomElementAttributeChangedCallback* attribute_changed_callback_ =
+      nullptr;
+  V8CustomElementFormAssociatedCallback* form_associated_callback_ = nullptr;
+  V8VoidFunction* form_reset_callback_ = nullptr;
+  V8CustomElementFormDisabledCallback* form_disabled_callback_ = nullptr;
+  V8CustomElementFormStateRestoreCallback* form_state_restore_callback_ =
+      nullptr;
   HashSet<AtomicString> observed_attributes_;
   Vector<String> disabled_features_;
   bool is_form_associated_ = false;

@@ -8,26 +8,26 @@
 #ifndef GrVkResourceProvider_DEFINED
 #define GrVkResourceProvider_DEFINED
 
-#include "GrResourceHandle.h"
-#include "GrVkDescriptorPool.h"
-#include "GrVkDescriptorSetManager.h"
-#include "GrVkPipelineStateBuilder.h"
-#include "GrVkRenderPass.h"
-#include "GrVkResource.h"
-#include "GrVkSampler.h"
-#include "GrVkSamplerYcbcrConversion.h"
-#include "GrVkUtil.h"
-#include "SkLRUCache.h"
-#include "SkTArray.h"
-#include "SkTDynamicHash.h"
-#include "SkTInternalLList.h"
-#include "vk/GrVkTypes.h"
+#include "include/gpu/vk/GrVkTypes.h"
+#include "include/private/SkTArray.h"
+#include "src/core/SkLRUCache.h"
+#include "src/core/SkTDynamicHash.h"
+#include "src/core/SkTInternalLList.h"
+#include "src/gpu/GrManagedResource.h"
+#include "src/gpu/GrProgramDesc.h"
+#include "src/gpu/GrResourceHandle.h"
+#include "src/gpu/vk/GrVkDescriptorPool.h"
+#include "src/gpu/vk/GrVkDescriptorSetManager.h"
+#include "src/gpu/vk/GrVkPipelineStateBuilder.h"
+#include "src/gpu/vk/GrVkRenderPass.h"
+#include "src/gpu/vk/GrVkSampler.h"
+#include "src/gpu/vk/GrVkSamplerYcbcrConversion.h"
+#include "src/gpu/vk/GrVkUtil.h"
 
 #include <mutex>
 #include <thread>
 
 class GrVkCommandPool;
-class GrVkCopyPipeline;
 class GrVkGpu;
 class GrVkPipeline;
 class GrVkPipelineState;
@@ -44,18 +44,11 @@ public:
     // Set up any initial vk objects
     void init();
 
-    GrVkPipeline* createPipeline(const GrPrimitiveProcessor& primProc,
-                                 const GrPipeline& pipeline,
-                                 const GrStencilSettings& stencil,
+    GrVkPipeline* createPipeline(const GrProgramInfo&,
                                  VkPipelineShaderStageCreateInfo* shaderStageInfo,
                                  int shaderStageCount,
-                                 GrPrimitiveType primitiveType,
                                  VkRenderPass compatibleRenderPass,
                                  VkPipelineLayout layout);
-
-    GrVkCopyPipeline* findOrCreateCopyPipeline(const GrVkRenderTarget* dst,
-                                               VkPipelineShaderStageCreateInfo*,
-                                               VkPipelineLayout);
 
     GR_DEFINE_RESOURCE_HANDLE_CLASS(CompatibleRPHandle);
 
@@ -76,7 +69,7 @@ public:
     // refcount, and returns. The caller can optionally pass in a pointer to a CompatibleRPHandle.
     // If this is non null it will be set to a handle that can be used in the furutre to quickly
     // return a GrVkRenderPasses without the need inspecting a GrVkRenderTarget.
-    const GrVkRenderPass* findRenderPass(const GrVkRenderTarget& target,
+    const GrVkRenderPass* findRenderPass(GrVkRenderTarget* target,
                                          const GrVkRenderPass::LoadStoreOps& colorOps,
                                          const GrVkRenderPass::LoadStoreOps& stencilOps,
                                          CompatibleRPHandle* compatibleHandle = nullptr);
@@ -91,6 +84,13 @@ public:
 
     void checkCommandBuffers();
 
+    // We must add the finishedProc to all active command buffers since we may have flushed work
+    // that the client cares about before they explicitly called flush and the GPU may reorder
+    // command execution. So we make sure all previously submitted work finishes before we call the
+    // finishedProc.
+    void addFinishedProcToActiveCommandBuffers(GrGpuFinishedProc finishedProc,
+                                               GrGpuFinishedContext finishedContext);
+
     // Finds or creates a compatible GrVkDescriptorPool for the requested type and count.
     // The refcount is incremented and a pointer returned.
     // TODO: Currently this will just create a descriptor pool without holding onto a ref itself
@@ -101,7 +101,7 @@ public:
 
     // Finds or creates a compatible GrVkSampler based on the GrSamplerState and
     // GrVkYcbcrConversionInfo. The refcount is incremented and a pointer returned.
-    GrVkSampler* findOrCreateCompatibleSampler(const GrSamplerState&,
+    GrVkSampler* findOrCreateCompatibleSampler(GrSamplerState,
                                                const GrVkYcbcrConversionInfo& ycbcrInfo);
 
     // Finds or creates a compatible GrVkSamplerYcbcrConversion based on the GrSamplerState and
@@ -110,10 +110,8 @@ public:
             const GrVkYcbcrConversionInfo& ycbcrInfo);
 
     GrVkPipelineState* findOrCreateCompatiblePipelineState(
-            const GrPipeline&,
-            const GrPrimitiveProcessor&,
-            const GrTextureProxy* const primProcProxies[],
-            GrPrimitiveType,
+            GrRenderTarget*,
+            const GrProgramInfo&,
             VkRenderPass compatibleRenderPass);
 
     void getSamplerDescriptorSetHandle(VkDescriptorType type,
@@ -150,11 +148,11 @@ public:
 
     // Creates or finds free uniform buffer resources of size GrVkUniformBuffer::kStandardSize.
     // Anything larger will need to be created and released by the client.
-    const GrVkResource* findOrCreateStandardUniformBufferResource();
+    const GrManagedResource* findOrCreateStandardUniformBufferResource();
 
     // Signals that the resource passed to it (which should be a uniform buffer resource)
     // can be reused by the next uniform buffer resource request.
-    void recycleStandardUniformBufferResource(const GrVkResource*);
+    void recycleStandardUniformBufferResource(const GrManagedResource*);
 
     void storePipelineCacheData();
 
@@ -166,14 +164,13 @@ public:
     // before deleting (see section 4.2.4 of the Vulkan spec).
     void destroyResources(bool deviceLost);
 
-    // Abandon any cached resources. To be used when the context/VkDevice is lost.
-    // For resource tracing to work properly, this should be called after unrefing all other
-    // resource usages.
-    void abandonResources();
-
     void backgroundReset(GrVkCommandPool* pool);
 
     void reset(GrVkCommandPool* pool);
+
+#if GR_TEST_UTILS
+    void resetShaderCacheForTesting() const { fPipelineStateCache->release(); }
+#endif
 
 private:
 
@@ -186,22 +183,18 @@ private:
         PipelineStateCache(GrVkGpu* gpu);
         ~PipelineStateCache();
 
-        void abandon();
         void release();
-        GrVkPipelineState* refPipelineState(const GrPrimitiveProcessor&,
-                                            const GrTextureProxy* const primProcProxies[],
-                                            const GrPipeline&,
-                                            GrPrimitiveType,
-                                            VkRenderPass compatibleRenderPass);
+        GrVkPipelineState* findOrCreatePipelineState(GrRenderTarget*,
+                                                     const GrProgramInfo&,
+                                                     VkRenderPass compatibleRenderPass);
 
     private:
-        enum {
-            // We may actually have kMaxEntries+1 PipelineStates in context because we create a new
-            // PipelineState before evicting from the cache.
-            kMaxEntries = 128,
-        };
-
         struct Entry;
+
+        GrVkPipelineState* findOrCreatePipeline(GrRenderTarget*,
+                                                const GrProgramDesc&,
+                                                const GrProgramInfo&,
+                                                VkRenderPass compatibleRenderPass);
 
         struct DescHash {
             uint32_t operator()(const GrProgramDesc& desc) const {
@@ -209,7 +202,7 @@ private:
             }
         };
 
-        SkLRUCache<const GrVkPipelineStateBuilder::Desc, std::unique_ptr<Entry>, DescHash> fMap;
+        SkLRUCache<const GrProgramDesc, std::unique_ptr<Entry>, DescHash> fMap;
 
         GrVkGpu*                    fGpu;
 
@@ -224,7 +217,7 @@ private:
         // This will always construct the basic load store render pass (all attachments load and
         // store their data) so that there is at least one compatible VkRenderPass that can be used
         // with this set.
-        CompatibleRenderPassSet(const GrVkGpu* gpu, const GrVkRenderTarget& target);
+        CompatibleRenderPassSet(GrVkRenderPass* renderPass);
 
         bool isCompatible(const GrVkRenderTarget& target) const;
 
@@ -235,12 +228,11 @@ private:
             return fRenderPasses[0];
         }
 
-        GrVkRenderPass* getRenderPass(const GrVkGpu* gpu,
+        GrVkRenderPass* getRenderPass(GrVkGpu* gpu,
                                       const GrVkRenderPass::LoadStoreOps& colorOps,
                                       const GrVkRenderPass::LoadStoreOps& stencilOps);
 
-        void releaseResources(GrVkGpu* gpu);
-        void abandonResources();
+        void releaseResources();
 
     private:
         SkSTArray<4, GrVkRenderPass*> fRenderPasses;
@@ -254,9 +246,6 @@ private:
     // Central cache for creating pipelines
     VkPipelineCache fPipelineCache;
 
-    // Cache of previously created copy pipelines
-    SkTArray<GrVkCopyPipeline*> fCopyPipelines;
-
     SkSTArray<4, CompatibleRenderPassSet> fRenderPassArray;
 
     SkTArray<const GrVkRenderPass*> fExternalRenderPasses;
@@ -268,7 +257,7 @@ private:
     SkSTArray<4, GrVkCommandPool*, true> fAvailableCommandPools;
 
     // Array of available uniform buffer resources
-    SkSTArray<16, const GrVkResource*, true> fAvailableUniformBufferResources;
+    SkSTArray<16, const GrManagedResource*, true> fAvailableUniformBufferResources;
 
     // Stores GrVkSampler objects that we've already created so we can reuse them across multiple
     // GrVkPipelineStates

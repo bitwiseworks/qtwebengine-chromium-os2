@@ -4,10 +4,12 @@
 
 #include "services/shape_detection/face_detection_provider_impl.h"
 
+#include "services/shape_detection/public/mojom/facedetection.mojom.h"
+
 namespace shape_detection {
 
 void FaceDetectionProviderImpl::CreateFaceDetection(
-    shape_detection::mojom::FaceDetectionRequest request,
+    mojo::PendingReceiver<shape_detection::mojom::FaceDetection> receiver,
     shape_detection::mojom::FaceDetectorOptionsPtr options) {
   DLOG(ERROR) << "Platform not supported for Face Detection Service.";
 }

@@ -221,11 +221,11 @@ typedef struct vpx_rational {
 } vpx_rational_t; /**< alias for struct vpx_rational */
 
 /*!\brief Multi-pass Encoding Pass */
-enum vpx_enc_pass {
+typedef enum vpx_enc_pass {
   VPX_RC_ONE_PASS,   /**< Single pass mode */
   VPX_RC_FIRST_PASS, /**< First pass of multi-pass mode */
   VPX_RC_LAST_PASS   /**< Final pass of multi-pass mode */
-};
+} vpx_enc_pass;
 
 /*!\brief Rate control mode */
 enum vpx_rc_mode {
@@ -633,7 +633,7 @@ typedef struct vpx_codec_enc_cfg {
   /*!\brief Target bitrate for each spatial layer.
    *
    * These values specify the target coding bitrate to be used for each
-   * spatial layer.
+   * spatial layer. (in kbps)
    */
   unsigned int ss_target_bitrate[VPX_SS_MAX_LAYERS];
 
@@ -646,7 +646,7 @@ typedef struct vpx_codec_enc_cfg {
   /*!\brief Target bitrate for each temporal layer.
    *
    * These values specify the target coding bitrate to be used for each
-   * temporal layer.
+   * temporal layer. (in kbps)
    */
   unsigned int ts_target_bitrate[VPX_TS_MAX_LAYERS];
 
@@ -678,7 +678,7 @@ typedef struct vpx_codec_enc_cfg {
   /*!\brief Target bitrate for each spatial/temporal layer.
    *
    * These values specify the target coding bitrate to be used for each
-   * spatial/temporal layer.
+   * spatial/temporal layer. (in kbps)
    *
    */
   unsigned int layer_target_bitrate[VPX_MAX_LAYERS];

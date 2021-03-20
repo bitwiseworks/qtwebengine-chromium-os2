@@ -34,7 +34,7 @@
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 int main(int argc, char** argv) {
-  WTF::Partitions::Initialize(nullptr);
-  WTF::Initialize(nullptr);
+  WTF::Partitions::Initialize();
+  WTF::Initialize();
   return base::RunUnitTestsUsingBaseTestSuite(argc, argv);
 }

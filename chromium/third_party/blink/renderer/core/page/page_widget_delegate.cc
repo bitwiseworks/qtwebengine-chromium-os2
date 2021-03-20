@@ -30,26 +30,18 @@
 
 #include "third_party/blink/renderer/core/page/page_widget_delegate.h"
 
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/events/web_input_event_conversion.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
-#include "third_party/blink/renderer/core/layout/jank_tracker.h"
+#include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
-#include "third_party/blink/renderer/core/loader/interactive_detector.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/page/autoscroll_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_context.h"
-#include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
-#include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
-#include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
-#include "third_party/blink/renderer/platform/transforms/affine_transform.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
+#include "third_party/blink/renderer/core/page/validation_message_client.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -57,54 +49,35 @@ void PageWidgetDelegate::Animate(Page& page,
                                  base::TimeTicks monotonic_frame_begin_time) {
   page.GetAutoscrollController().Animate();
   page.Animator().ServiceScriptedAnimations(monotonic_frame_begin_time);
+  // The ValidationMessage overlay manages its own internal Page that isn't
+  // hooked up the normal BeginMainFrame flow, so we manually tick its
+  // animations here.
+  page.GetValidationMessageClient().ServiceScriptedAnimations(
+      monotonic_frame_begin_time);
 }
 
-void PageWidgetDelegate::UpdateLifecycle(
-    Page& page,
-    LocalFrame& root,
-    WebWidget::LifecycleUpdate requested_update,
-    WebWidget::LifecycleUpdateReason reason) {
-  if (requested_update == WebWidget::LifecycleUpdate::kLayout) {
-    page.Animator().UpdateLifecycleToLayoutClean(root);
-  } else if (requested_update == WebWidget::LifecycleUpdate::kPrePaint) {
-    page.Animator().UpdateAllLifecyclePhasesExceptPaint(root);
+void PageWidgetDelegate::PostAnimate(Page& page) {
+  page.Animator().PostAnimate();
+}
+
+void PageWidgetDelegate::UpdateLifecycle(Page& page,
+                                         LocalFrame& root,
+                                         WebLifecycleUpdate requested_update,
+                                         DocumentUpdateReason reason) {
+  if (requested_update == WebLifecycleUpdate::kLayout) {
+    page.Animator().UpdateLifecycleToLayoutClean(root, reason);
+  } else if (requested_update == WebLifecycleUpdate::kPrePaint) {
+    page.Animator().UpdateAllLifecyclePhasesExceptPaint(root, reason);
   } else {
-    page.Animator().UpdateAllLifecyclePhases(
-        root, static_cast<DocumentLifecycle::LifecycleUpdateReason>(reason));
+    page.Animator().UpdateAllLifecyclePhases(root, reason);
   }
 }
 
-void PageWidgetDelegate::PaintContent(cc::PaintCanvas* canvas,
-                                      const WebRect& rect,
-                                      LocalFrame& root) {
-  if (rect.IsEmpty())
-    return;
-
-  float scale_factor = root.DevicePixelRatio();
-  canvas->save();
-  canvas->scale(scale_factor, scale_factor);
-
-  IntRect dirty_rect(rect);
-  LocalFrameView* view = root.View();
-  if (view) {
-    DCHECK(view->GetLayoutView()->GetDocument().Lifecycle().GetState() ==
-           DocumentLifecycle::kPaintClean);
-    canvas->clipRect(dirty_rect);
-
-    PaintRecordBuilder builder;
-    builder.Context().SetDeviceScaleFactor(scale_factor);
-    view->PaintOutsideOfLifecycle(builder.Context(), kGlobalPaintNormalPhase,
-                                  CullRect(dirty_rect));
-    builder.EndRecording(
-        *canvas,
-        view->GetLayoutView()->FirstFragment().LocalBorderBoxProperties());
-  } else {
-    PaintFlags flags;
-    flags.setColor(SK_ColorWHITE);
-    canvas->drawRect(dirty_rect, flags);
-  }
-
-  canvas->restore();
+void PageWidgetDelegate::DidBeginFrame(LocalFrame& root) {
+  if (LocalFrameView* frame_view = root.View())
+    frame_view->RunPostLifecycleSteps();
+  if (Page* page = root.GetPage())
+    PostAnimate(*page);
 }
 
 WebInputEventResult PageWidgetDelegate::HandleInputEvent(
@@ -115,19 +88,8 @@ WebInputEventResult PageWidgetDelegate::HandleInputEvent(
   if (root) {
     Document* document = root->GetDocument();
     DCHECK(document);
-
-    InteractiveDetector* interactive_detector(
-        InteractiveDetector::From(*document));
-
-    // interactive_detector is null in the OOPIF case.
-    // TODO(crbug.com/808089): report across OOPIFs.
-    if (interactive_detector)
-      interactive_detector->HandleForInputDelay(event);
-
-    if (origin_trials::JankTrackingEnabled(document)) {
-      if (LocalFrameView* view = document->View())
-        view->GetJankTracker().NotifyInput(event);
-    }
+    if (LocalFrameView* view = document->View())
+      view->GetLayoutShiftTracker().NotifyInput(event);
   }
 
   if (event.GetModifiers() & WebInputEvent::kIsTouchAccessibility &&
@@ -178,8 +140,8 @@ WebInputEventResult PageWidgetDelegate::HandleInputEvent(
     case WebInputEvent::kMouseUp:
       if (!root || !root->View())
         return WebInputEventResult::kHandledSuppressed;
-      handler.HandleMouseUp(*root, static_cast<const WebMouseEvent&>(event));
-      return WebInputEventResult::kHandledSystem;
+      return handler.HandleMouseUp(*root,
+                                   static_cast<const WebMouseEvent&>(event));
     case WebInputEvent::kMouseWheel:
       if (!root || !root->View())
         return WebInputEventResult::kNotHandled;
@@ -215,7 +177,7 @@ WebInputEventResult PageWidgetDelegate::HandleInputEvent(
     case WebInputEvent::kPointerDown:
     case WebInputEvent::kPointerUp:
     case WebInputEvent::kPointerMove:
-    case WebInputEvent::kPointerRawMove:
+    case WebInputEvent::kPointerRawUpdate:
     case WebInputEvent::kPointerCancel:
     case WebInputEvent::kPointerCausedUaAction:
       if (!root || !root->View())
@@ -251,8 +213,8 @@ WebInputEventResult PageWidgetDelegate::HandleInputEvent(
 void PageWidgetEventHandler::HandleMouseMove(
     LocalFrame& main_frame,
     const WebMouseEvent& event,
-    const std::vector<const WebInputEvent*>& coalesced_events,
-    const std::vector<const WebInputEvent*>& predicted_events) {
+    const WebVector<const WebInputEvent*>& coalesced_events,
+    const WebVector<const WebInputEvent*>& predicted_events) {
   WebMouseEvent transformed_event =
       TransformWebMouseEvent(main_frame.View(), event);
   main_frame.GetEventHandler().HandleMouseMoveEvent(
@@ -275,11 +237,13 @@ void PageWidgetEventHandler::HandleMouseDown(LocalFrame& main_frame,
   main_frame.GetEventHandler().HandleMousePressEvent(transformed_event);
 }
 
-void PageWidgetEventHandler::HandleMouseUp(LocalFrame& main_frame,
-                                           const WebMouseEvent& event) {
+WebInputEventResult PageWidgetEventHandler::HandleMouseUp(
+    LocalFrame& main_frame,
+    const WebMouseEvent& event) {
   WebMouseEvent transformed_event =
       TransformWebMouseEvent(main_frame.View(), event);
-  main_frame.GetEventHandler().HandleMouseReleaseEvent(transformed_event);
+  return main_frame.GetEventHandler().HandleMouseReleaseEvent(
+      transformed_event);
 }
 
 WebInputEventResult PageWidgetEventHandler::HandleMouseWheel(
@@ -293,8 +257,8 @@ WebInputEventResult PageWidgetEventHandler::HandleMouseWheel(
 WebInputEventResult PageWidgetEventHandler::HandlePointerEvent(
     LocalFrame& main_frame,
     const WebPointerEvent& event,
-    const std::vector<const WebInputEvent*>& coalesced_events,
-    const std::vector<const WebInputEvent*>& predicted_events) {
+    const WebVector<const WebInputEvent*>& coalesced_events,
+    const WebVector<const WebInputEvent*>& predicted_events) {
   WebPointerEvent transformed_event =
       TransformWebPointerEvent(main_frame.View(), event);
   return main_frame.GetEventHandler().HandlePointerEvent(

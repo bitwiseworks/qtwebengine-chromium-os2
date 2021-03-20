@@ -59,9 +59,13 @@ class StereoPannerNode final : public AudioNode {
 
   StereoPannerNode(BaseAudioContext&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   AudioParam* pan() const;
+
+  // InspectorHelperMixin
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
 
  private:
   Member<AudioParam> pan_;

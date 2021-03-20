@@ -1,5 +1,9 @@
+<!--
+This is an internal only page meant for debugging. It is not intended for
+general use and is not localized.
+-->
 <!doctype html>
-<html lang="en">
+<html dir="ltr" lang="en">
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="chrome://resources/css/text_defaults.css">
@@ -11,7 +15,7 @@ body {
 
 a {
   color: blue;
-  font-size: 103%;
+  text-decoration: none;
 }
 
 #header {
@@ -96,8 +100,8 @@ div.content {
   padding-top: 5px;
 }
 
-.module {
-  border-bottom: 1px solid #cdcdcd;
+.module:hover {
+  background: rgb(255, 255, 170);
 }
 
 .module-name {
@@ -110,21 +114,8 @@ div.content {
   text-align: center;
 }
 
-.suspected-bad {
-  color: rgb(221, 119, 0);
-}
-
-.confirmed-bad {
-  color: red;
-}
-
 .nowrap {
   white-space: nowrap;
-}
-
-.extra-info-text {
-  margin-bottom: 1em;
-  margin-top: -1em;
 }
 
 .clearing {
@@ -150,7 +141,9 @@ html[dir=rtl] .clearing {
   <div id="header"><h1>Modules loaded</h1></div>
 
   <div id="blurb-container">
-    <span>This page lists all modules loaded into the browser and renderer processes and modules registered to load at a later point.</span>
+    <span>This page lists <a href="#">all</a> modules loaded into the
+       <a href="#B">browser</a> and <a href="#R">renderer</a> processes and
+       modules registered to load at a <a href="#None">later</a> point.</span>
   </div>
 
   <div id="modulesTemplate">
@@ -202,13 +195,17 @@ html[dir=rtl] .clearing {
               <span dir="ltr">Code Id</span>
             </td>
             <td class="datacell">
+              <span dir="ltr">Process types</span>
+            </td>
+            <td class="datacell">
               <span dir="ltr">Location</span>
             </td>
             <td jsdisplay="thirdPartyFeatureEnabled" class="datacell">
               <span dir="ltr">Conflicts Status</span>
             </td>
           </tr>
-          <tr jsselect="moduleList">
+          <tr jsvalues="data-process:process_types.toLowerCase()"
+            jsselect="moduleList" class="module">
             <td valign="top" class="datacell">
               <span dir="ltr"
                     jsvalues=".innerHTML:description"
@@ -224,6 +221,11 @@ html[dir=rtl] .clearing {
             </td>
             <td valign="top" class="datacell">
               <span dir="ltr" jscontent="code_id" class="nowrap">CODE_ID</span>
+            </td>
+            <td valign="top" class="datacell">
+              <span dir="ltr" jscontent="process_types" class="nowrap">
+                PROCESS_TYPES
+              </span>
             </td>
             <td valign="top" class="datacell">
               <span class="nowrap">
@@ -256,14 +258,7 @@ html[dir=rtl] .clearing {
     </div>
   </div>
 </div>
-<script src="chrome://resources/js/cr.js"></script>
 <script src="chrome://resources/js/jstemplate_compiled.js"></script>
-<script src="chrome://resources/js/load_time_data.js"></script>
-<script src="chrome://resources/js/promise_resolver.js"></script>
-<script src="chrome://resources/js/util.js"></script>
-
-<script src="chrome://conflicts/strings.js"></script>
-
-<script src="chrome://conflicts/conflicts.js"></script>
+<script type="module" src="chrome://conflicts/conflicts.js"></script>
 </body>
 </html>

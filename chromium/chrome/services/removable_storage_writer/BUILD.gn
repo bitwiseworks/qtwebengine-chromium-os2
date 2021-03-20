@@ -2,28 +2,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//services/service_manager/public/service_manifest.gni")
-
 source_set("lib") {
   sources = [
     "removable_storage_writer.cc",
     "removable_storage_writer.h",
-    "removable_storage_writer_service.cc",
-    "removable_storage_writer_service.h",
-  ]
-
-  deps = [
-    "//base",
-    "//mojo/public/cpp/bindings",
   ]
 
   public_deps = [
+    "//base",
     "//chrome/services/removable_storage_writer/public/mojom",
-    "//services/service_manager/public/cpp",
+    "//mojo/public/cpp/bindings",
   ]
-}
-
-service_manifest("manifest") {
-  name = "removable_storage_writer"
-  source = "manifest.json"
 }

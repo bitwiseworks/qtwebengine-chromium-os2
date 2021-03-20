@@ -6,10 +6,9 @@
 
 #include <utility>
 
-#include "base/logging.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_bug_tracker.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_estimate_memory_usage.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 
 namespace http2 {
 
@@ -57,12 +56,13 @@ HpackDecoderStringBuffer::HpackDecoderStringBuffer()
 HpackDecoderStringBuffer::~HpackDecoderStringBuffer() = default;
 
 void HpackDecoderStringBuffer::Reset() {
-  DVLOG(3) << "HpackDecoderStringBuffer::Reset";
+  HTTP2_DVLOG(3) << "HpackDecoderStringBuffer::Reset";
   state_ = State::RESET;
 }
 
-void HpackDecoderStringBuffer::Set(Http2StringPiece value, bool is_static) {
-  DVLOG(2) << "HpackDecoderStringBuffer::Set";
+void HpackDecoderStringBuffer::Set(quiche::QuicheStringPiece value,
+                                   bool is_static) {
+  HTTP2_DVLOG(2) << "HpackDecoderStringBuffer::Set";
   DCHECK_EQ(state_, State::RESET);
   value_ = value;
   state_ = State::COMPLETE;
@@ -73,7 +73,7 @@ void HpackDecoderStringBuffer::Set(Http2StringPiece value, bool is_static) {
 }
 
 void HpackDecoderStringBuffer::OnStart(bool huffman_encoded, size_t len) {
-  DVLOG(2) << "HpackDecoderStringBuffer::OnStart";
+  HTTP2_DVLOG(2) << "HpackDecoderStringBuffer::OnStart";
   DCHECK_EQ(state_, State::RESET);
 
   remaining_len_ = len;
@@ -101,20 +101,20 @@ void HpackDecoderStringBuffer::OnStart(bool huffman_encoded, size_t len) {
     backing_ = Backing::RESET;
     // OnData is not called for empty (zero length) strings, so make sure that
     // value_ is cleared.
-    value_ = Http2StringPiece();
+    value_ = quiche::QuicheStringPiece();
   }
 }
 
 bool HpackDecoderStringBuffer::OnData(const char* data, size_t len) {
-  DVLOG(2) << "HpackDecoderStringBuffer::OnData state=" << state_
-           << ", backing=" << backing_;
+  HTTP2_DVLOG(2) << "HpackDecoderStringBuffer::OnData state=" << state_
+                 << ", backing=" << backing_;
   DCHECK_EQ(state_, State::COLLECTING);
   DCHECK_LE(len, remaining_len_);
   remaining_len_ -= len;
 
   if (is_huffman_encoded_) {
     DCHECK_EQ(backing_, Backing::BUFFERED);
-    return decoder_.Decode(Http2StringPiece(data, len), &buffer_);
+    return decoder_.Decode(quiche::QuicheStringPiece(data, len), &buffer_);
   }
 
   if (backing_ == Backing::RESET) {
@@ -122,7 +122,7 @@ bool HpackDecoderStringBuffer::OnData(const char* data, size_t len) {
     // don't copy the string. If we later find that the HPACK entry is split
     // across input buffers, then we'll copy the string into buffer_.
     if (remaining_len_ == 0) {
-      value_ = Http2StringPiece(data, len);
+      value_ = quiche::QuicheStringPiece(data, len);
       backing_ = Backing::UNBUFFERED;
       return true;
     }
@@ -145,7 +145,7 @@ bool HpackDecoderStringBuffer::OnData(const char* data, size_t len) {
 }
 
 bool HpackDecoderStringBuffer::OnEnd() {
-  DVLOG(2) << "HpackDecoderStringBuffer::OnEnd";
+  HTTP2_DVLOG(2) << "HpackDecoderStringBuffer::OnEnd";
   DCHECK_EQ(state_, State::COLLECTING);
   DCHECK_EQ(0u, remaining_len_);
 
@@ -164,11 +164,12 @@ bool HpackDecoderStringBuffer::OnEnd() {
 }
 
 void HpackDecoderStringBuffer::BufferStringIfUnbuffered() {
-  DVLOG(3) << "HpackDecoderStringBuffer::BufferStringIfUnbuffered state="
-           << state_ << ", backing=" << backing_;
+  HTTP2_DVLOG(3) << "HpackDecoderStringBuffer::BufferStringIfUnbuffered state="
+                 << state_ << ", backing=" << backing_;
   if (state_ != State::RESET && backing_ == Backing::UNBUFFERED) {
-    DVLOG(2) << "HpackDecoderStringBuffer buffering Http2String of length "
-             << value_.size();
+    HTTP2_DVLOG(2)
+        << "HpackDecoderStringBuffer buffering std::string of length "
+        << value_.size();
     buffer_.assign(value_.data(), value_.size());
     if (state_ == State::COMPLETE) {
       value_ = buffer_;
@@ -178,23 +179,23 @@ void HpackDecoderStringBuffer::BufferStringIfUnbuffered() {
 }
 
 bool HpackDecoderStringBuffer::IsBuffered() const {
-  DVLOG(3) << "HpackDecoderStringBuffer::IsBuffered";
+  HTTP2_DVLOG(3) << "HpackDecoderStringBuffer::IsBuffered";
   return state_ != State::RESET && backing_ == Backing::BUFFERED;
 }
 
 size_t HpackDecoderStringBuffer::BufferedLength() const {
-  DVLOG(3) << "HpackDecoderStringBuffer::BufferedLength";
+  HTTP2_DVLOG(3) << "HpackDecoderStringBuffer::BufferedLength";
   return IsBuffered() ? buffer_.size() : 0;
 }
 
-Http2StringPiece HpackDecoderStringBuffer::str() const {
-  DVLOG(3) << "HpackDecoderStringBuffer::str";
+quiche::QuicheStringPiece HpackDecoderStringBuffer::str() const {
+  HTTP2_DVLOG(3) << "HpackDecoderStringBuffer::str";
   DCHECK_EQ(state_, State::COMPLETE);
   return value_;
 }
 
-Http2String HpackDecoderStringBuffer::ReleaseString() {
-  DVLOG(3) << "HpackDecoderStringBuffer::ReleaseString";
+std::string HpackDecoderStringBuffer::ReleaseString() {
+  HTTP2_DVLOG(3) << "HpackDecoderStringBuffer::ReleaseString";
   DCHECK_EQ(state_, State::COMPLETE);
   DCHECK_EQ(backing_, Backing::BUFFERED);
   if (state_ == State::COMPLETE) {
@@ -202,7 +203,7 @@ Http2String HpackDecoderStringBuffer::ReleaseString() {
     if (backing_ == Backing::BUFFERED) {
       return std::move(buffer_);
     } else {
-      return Http2String(value_);
+      return std::string(value_);
     }
   }
   return "";

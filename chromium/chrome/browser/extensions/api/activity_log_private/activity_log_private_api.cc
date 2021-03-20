@@ -10,6 +10,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
@@ -111,7 +112,8 @@ void ActivityLogAPI::OnExtensionActivity(scoped_refptr<Action> activity) {
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
 }
 
-bool ActivityLogPrivateGetExtensionActivitiesFunction::RunAsync() {
+ExtensionFunction::ResponseAction
+ActivityLogPrivateGetExtensionActivitiesFunction::Run() {
   std::unique_ptr<activity_log_private::GetExtensionActivities::Params> params(
       activity_log_private::GetExtensionActivities::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
@@ -152,20 +154,15 @@ bool ActivityLogPrivateGetExtensionActivitiesFunction::RunAsync() {
     days_ago = *filter.days_ago;
 
   // Call the ActivityLog.
-  ActivityLog* activity_log = ActivityLog::GetInstance(GetProfile());
+  ActivityLog* activity_log = ActivityLog::GetInstance(browser_context());
   DCHECK(activity_log);
   activity_log->GetFilteredActions(
-      extension_id,
-      action_type,
-      api_call,
-      page_url,
-      arg_url,
-      days_ago,
-      base::Bind(
+      extension_id, action_type, api_call, page_url, arg_url, days_ago,
+      base::BindOnce(
           &ActivityLogPrivateGetExtensionActivitiesFunction::OnLookupCompleted,
           this));
 
-  return true;
+  return RespondLater();
 }
 
 void ActivityLogPrivateGetExtensionActivitiesFunction::OnLookupCompleted(
@@ -176,12 +173,11 @@ void ActivityLogPrivateGetExtensionActivitiesFunction::OnLookupCompleted(
     result_arr.push_back(activity->ConvertToExtensionActivity());
 
   // Populate the return object.
-  std::unique_ptr<ActivityResultSet> result_set(new ActivityResultSet);
-  result_set->activities = std::move(result_arr);
-  results_ = activity_log_private::GetExtensionActivities::Results::Create(
-      *result_set);
-
-  SendResponse(true);
+  ActivityResultSet result_set;
+  result_set.activities = std::move(result_arr);
+  Respond(ArgumentList(
+      activity_log_private::GetExtensionActivities::Results::Create(
+          result_set)));
 }
 
 ExtensionFunction::ResponseAction

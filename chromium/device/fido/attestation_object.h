@@ -25,13 +25,12 @@ class AttestationStatement;
 // https://www.w3.org/TR/2017/WD-webauthn-20170505/#cred-attestation.
 class COMPONENT_EXPORT(DEVICE_FIDO) AttestationObject {
  public:
+  static base::Optional<AttestationObject> Parse(const cbor::Value& value);
+
   AttestationObject(AuthenticatorData data,
                     std::unique_ptr<AttestationStatement> statement);
-
-  // Moveable.
   AttestationObject(AttestationObject&& other);
   AttestationObject& operator=(AttestationObject&& other);
-
   ~AttestationObject();
 
   std::vector<uint8_t> GetCredentialId() const;
@@ -60,12 +59,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) AttestationObject {
   // not indended to be trackable.)
   bool IsAttestationCertificateInappropriatelyIdentifying();
 
-  // Produces a WebAuthN style CBOR-encoded byte-array in the following format:
-  // {"authData": authenticator data bytes,
-  //  "fmt": attestation format name,
-  //  "attStmt": attestation statement bytes }
-  std::vector<uint8_t> SerializeToCBOREncodedBytes() const;
-
   const std::array<uint8_t, kRpIdHashLength>& rp_id_hash() const {
     return authenticator_data_.application_parameter();
   }
@@ -85,14 +78,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) AttestationObject {
   DISALLOW_COPY_AND_ASSIGN(AttestationObject);
 };
 
-// Produces a CTAP style CBOR-encoded byte array that that conforms to the
-// format CTAP2 devices sends to the client as a response. More specifically:
-// {01: attestation format name,
-//  02: authenticator data bytes,
-//  03: attestation statement bytes }
+// Produces a WebAuthN style CBOR-encoded byte-array
+// in the following format, when written:
+// {"authData": authenticator data bytes,
+//  "fmt": attestation format name,
+//  "attStmt": attestation statement bytes }
 COMPONENT_EXPORT(DEVICE_FIDO)
-std::vector<uint8_t> SerializeToCtapStyleCborEncodedBytes(
-    const AttestationObject& object);
+cbor::Value AsCBOR(const AttestationObject&);
 
 }  // namespace device
 

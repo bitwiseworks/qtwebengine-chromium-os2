@@ -23,9 +23,6 @@ GL_EXPORT GLenum GetInternalFormat(const GLVersionInfo* version,
 GL_EXPORT void InitializeStaticGLBindingsGL();
 GL_EXPORT void ClearBindingsGL();
 
-GL_EXPORT void InitializeDebugGLBindingsGL();
-bool GetDebugGLBindingsInitializedGL();
-
 bool SetNullDrawGLBindingsEnabled(bool enabled);
 bool GetNullDrawBindingsEnabled();
 
@@ -123,6 +120,8 @@ class GL_EXPORT RealGLApi : public GLApiBase {
   void glClearDepthFn(GLclampd depth) override;
   void glDepthRangeFn(GLclampd z_near, GLclampd z_far) override;
 
+  void glUseProgramFn(GLuint program) override;
+
   void set_gl_workarounds(const GLWorkarounds& workarounds);
   void set_version(std::unique_ptr<GLVersionInfo> version);
   void ClearCachedGLExtensions();
@@ -156,10 +155,10 @@ class TraceGLApi : public GLApi {
 };
 
 // Logs debug information for every GL call.
-class DebugGLApi : public GLApi {
+class LogGLApi : public GLApi {
  public:
-  DebugGLApi(GLApi* gl_api);
-  ~DebugGLApi() override;
+  LogGLApi(GLApi* gl_api);
+  ~LogGLApi() override;
 
   // Include the auto-generated part of this class. We split this because
   // it means we can easily edit the non-auto generated parts right here in

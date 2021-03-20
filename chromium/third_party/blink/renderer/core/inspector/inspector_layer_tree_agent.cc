@@ -36,7 +36,8 @@
 #include "base/stl_util.h"
 #include "cc/base/region.h"
 #include "cc/layers/picture_layer.h"
-#include "third_party/blink/public/platform/web_float_point.h"
+#include "cc/trees/layer_tree_host.h"
+#include "cc/trees/transform_node.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -56,7 +57,9 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
 #include "third_party/blink/renderer/platform/graphics/picture_snapshot.h"
 #include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
+#include "third_party/blink/renderer/platform/wtf/text/base64.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
@@ -82,6 +85,16 @@ static std::unique_ptr<protocol::DOM::Rect> BuildObjectForRect(
       .build();
 }
 
+static std::unique_ptr<protocol::DOM::Rect> BuildObjectForRect(
+    const gfx::RectF& rect) {
+  return protocol::DOM::Rect::create()
+      .setX(rect.x())
+      .setY(rect.y())
+      .setHeight(rect.height())
+      .setWidth(rect.width())
+      .build();
+}
+
 static std::unique_ptr<protocol::LayerTree::ScrollRect> BuildScrollRect(
     const gfx::Rect& rect,
     const String& type) {
@@ -96,31 +109,31 @@ static std::unique_ptr<protocol::LayerTree::ScrollRect> BuildScrollRect(
 
 static std::unique_ptr<Array<protocol::LayerTree::ScrollRect>>
 BuildScrollRectsForLayer(const cc::Layer* layer, bool report_wheel_scrollers) {
-  std::unique_ptr<Array<protocol::LayerTree::ScrollRect>> scroll_rects =
-      Array<protocol::LayerTree::ScrollRect>::create();
+  auto scroll_rects =
+      std::make_unique<protocol::Array<protocol::LayerTree::ScrollRect>>();
   const cc::Region& non_fast_scrollable_rects =
       layer->non_fast_scrollable_region();
   for (const gfx::Rect& rect : non_fast_scrollable_rects) {
-    scroll_rects->addItem(BuildScrollRect(
+    scroll_rects->emplace_back(BuildScrollRect(
         IntRect(rect),
         protocol::LayerTree::ScrollRect::TypeEnum::RepaintsOnScroll));
   }
-  const cc::Region& touch_event_handler_region =
-      layer->touch_action_region().region();
+  const cc::Region& touch_event_handler_regions =
+      layer->touch_action_region().GetAllRegions();
 
-  for (const gfx::Rect& rect : touch_event_handler_region) {
-    scroll_rects->addItem(BuildScrollRect(
+  for (const gfx::Rect& rect : touch_event_handler_regions) {
+    scroll_rects->emplace_back(BuildScrollRect(
         IntRect(rect),
         protocol::LayerTree::ScrollRect::TypeEnum::TouchEventHandler));
   }
   if (report_wheel_scrollers) {
-    scroll_rects->addItem(BuildScrollRect(
-        // TODO(yutak): This truncates the floating point position to integers.
-        gfx::Rect(layer->position().x(), layer->position().y(),
-                  layer->bounds().width(), layer->bounds().height()),
+    scroll_rects->emplace_back(BuildScrollRect(
+        // TODO(pdr): Use the correct region for wheel event handlers, see
+        // https://crbug.com/841364.
+        gfx::Rect(0, 0, layer->bounds().width(), layer->bounds().height()),
         protocol::LayerTree::ScrollRect::TypeEnum::WheelEventHandler));
   }
-  return scroll_rects->length() ? std::move(scroll_rects) : nullptr;
+  return scroll_rects->empty() ? nullptr : std::move(scroll_rects);
 }
 
 // TODO(flackr): We should be getting the sticky position constraints from the
@@ -138,10 +151,17 @@ static const cc::Layer* FindLayerByElementId(const cc::Layer* root,
 
 static std::unique_ptr<protocol::LayerTree::StickyPositionConstraint>
 BuildStickyInfoForLayer(const cc::Layer* root, const cc::Layer* layer) {
-  cc::LayerStickyPositionConstraint constraints =
-      layer->sticky_position_constraint();
-  if (!constraints.is_sticky)
+  if (!layer->has_transform_node())
     return nullptr;
+  // Note that we'll miss the sticky transform node if multiple transform nodes
+  // apply to the layer.
+  const cc::StickyPositionNodeData* sticky_data =
+      layer->layer_tree_host()
+          ->property_trees()
+          ->transform_tree.GetStickyPositionData(layer->transform_tree_index());
+  if (!sticky_data)
+    return nullptr;
+  const cc::StickyPositionConstraint& constraints = sticky_data->constraints;
 
   std::unique_ptr<protocol::DOM::Rect> sticky_box_rect =
       BuildObjectForRect(constraints.scroll_container_relative_sticky_box_rect);
@@ -176,63 +196,50 @@ static std::unique_ptr<protocol::LayerTree::Layer> BuildObjectForLayer(
     const cc::Layer* root,
     const cc::Layer* layer,
     bool report_wheel_event_listeners) {
-  bool using_layer_list =
-      RuntimeEnabledFeatures::CompositeAfterPaintEnabled() ||
-      RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled();
-
   // When the front-end doesn't show internal layers, it will use the the first
   // DrawsContent layer as the root of the shown layer tree. This doesn't work
-  // for layer list because the non-DrawsContent root layer is the parent of
-  // all DrawsContent layers. We have to cheat the front-end by setting
-  // drawsContent to true for the root layer.
-  bool draws_content =
-      (using_layer_list && root == layer) || layer->DrawsContent();
+  // because the non-DrawsContent root layer is the parent of all DrawsContent
+  // layers. We have to cheat the front-end by setting drawsContent to true for
+  // the root layer.
+  bool draws_content = root == layer || layer->DrawsContent();
 
+  // TODO(pdr): Now that BlinkGenPropertyTrees has launched, we can remove
+  // setOffsetX and setOffsetY.
   std::unique_ptr<protocol::LayerTree::Layer> layer_object =
       protocol::LayerTree::Layer::create()
           .setLayerId(IdForLayer(layer))
-          .setOffsetX(using_layer_list ? 0 : layer->position().x())
-          .setOffsetY(using_layer_list ? 0 : layer->position().y())
+          .setOffsetX(0)
+          .setOffsetY(0)
           .setWidth(layer->bounds().width())
           .setHeight(layer->bounds().height())
-          .setPaintCount(layer->paint_count())
+          .setPaintCount(layer->debug_info() ? layer->debug_info()->paint_count
+                                             : 0)
           .setDrawsContent(draws_content)
           .build();
 
-  if (auto node_id = layer->owner_node_id())
-    layer_object->setBackendNodeId(node_id);
+  if (layer->debug_info()) {
+    if (auto node_id = layer->debug_info()->owner_node_id)
+      layer_object->setBackendNodeId(node_id);
+  }
 
   if (const auto* parent = layer->parent())
     layer_object->setParentLayerId(IdForLayer(parent));
 
-  gfx::Transform transform;
-  gfx::Point3F transform_origin;
-  if (using_layer_list) {
-    transform = layer->ScreenSpaceTransform();
-  } else {
-    transform = layer->transform();
-    transform_origin = layer->transform_origin();
-  }
+  gfx::Transform transform = layer->ScreenSpaceTransform();
 
   if (!transform.IsIdentity()) {
-    auto transform_array = Array<double>::create();
+    auto transform_array = std::make_unique<protocol::Array<double>>();
     for (int col = 0; col < 4; ++col) {
       for (int row = 0; row < 4; ++row)
-        transform_array->addItem(transform.matrix().get(row, col));
+        transform_array->emplace_back(transform.matrix().get(row, col));
     }
     layer_object->setTransform(std::move(transform_array));
     // FIXME: rename these to setTransformOrigin*
-    if (layer->bounds().width() > 0) {
-      layer_object->setAnchorX(transform_origin.x() / layer->bounds().width());
-    } else {
-      layer_object->setAnchorX(0.f);
-    }
-    if (layer->bounds().height() > 0) {
-      layer_object->setAnchorY(transform_origin.y() / layer->bounds().height());
-    } else {
-      layer_object->setAnchorY(0.f);
-    }
-    layer_object->setAnchorZ(transform_origin.z());
+    // TODO(pdr): Now that BlinkGenPropertyTrees has launched, we can remove
+    // setAnchorX, setAnchorY, and setAnchorZ.
+    layer_object->setAnchorX(0.f);
+    layer_object->setAnchorY(0.f);
+    layer_object->setAnchorZ(0.f);
   }
   std::unique_ptr<Array<protocol::LayerTree::ScrollRect>> scroll_rects =
       BuildScrollRectsForLayer(layer, report_wheel_event_listeners);
@@ -254,7 +261,7 @@ InspectorLayerTreeAgent::InspectorLayerTreeAgent(
 
 InspectorLayerTreeAgent::~InspectorLayerTreeAgent() = default;
 
-void InspectorLayerTreeAgent::Trace(blink::Visitor* visitor) {
+void InspectorLayerTreeAgent::Trace(Visitor* visitor) {
   visitor->Trace(inspected_frames_);
   InspectorBaseAgent::Trace(visitor);
 }
@@ -266,42 +273,37 @@ void InspectorLayerTreeAgent::Restore() {
 }
 
 Response InspectorLayerTreeAgent::enable() {
-  instrumenting_agents_->addInspectorLayerTreeAgent(this);
+  instrumenting_agents_->AddInspectorLayerTreeAgent(this);
   Document* document = inspected_frames_->Root()->GetDocument();
-  if (document &&
-      document->Lifecycle().GetState() >= DocumentLifecycle::kCompositingClean)
-    LayerTreeDidChange();
-  return Response::OK();
+  if (!document)
+    return Response::ServerError("The root frame doesn't have document");
+
+  inspected_frames_->Root()->View()->UpdateAllLifecyclePhases(
+      DocumentUpdateReason::kInspector);
+
+  LayerTreePainted();
+  LayerTreeDidChange();
+
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::disable() {
-  instrumenting_agents_->removeInspectorLayerTreeAgent(this);
+  instrumenting_agents_->RemoveInspectorLayerTreeAgent(this);
   snapshot_by_id_.clear();
-  return Response::OK();
+  return Response::Success();
 }
 
 void InspectorLayerTreeAgent::LayerTreeDidChange() {
   GetFrontend()->layerTreeDidChange(BuildLayerTree());
 }
 
-void InspectorLayerTreeAgent::DidPaint(const cc::Layer* layer,
-                                       GraphicsContext&,
-                                       const LayoutRect& rect) {
-  if (suppress_layer_paint_events_)
-    return;
-
-  // Should only happen for LocalFrameView paints when compositing is off.
-  // Consider different instrumentation method for that.
-  if (!layer)
-    return;
-
-  std::unique_ptr<protocol::DOM::Rect> dom_rect = protocol::DOM::Rect::create()
-                                                      .setX(rect.X())
-                                                      .setY(rect.Y())
-                                                      .setWidth(rect.Width())
-                                                      .setHeight(rect.Height())
-                                                      .build();
-  GetFrontend()->layerPainted(IdForLayer(layer), std::move(dom_rect));
+void InspectorLayerTreeAgent::LayerTreePainted() {
+  for (const auto& layer : RootLayer()->children()) {
+    if (!layer->update_rect().IsEmpty()) {
+      GetFrontend()->layerPainted(IdForLayer(layer.get()),
+                                  BuildObjectForRect(layer->update_rect()));
+    }
+  }
 }
 
 std::unique_ptr<Array<protocol::LayerTree::Layer>>
@@ -310,13 +312,11 @@ InspectorLayerTreeAgent::BuildLayerTree() {
   if (!root_layer)
     return nullptr;
 
-  std::unique_ptr<Array<protocol::LayerTree::Layer>> layers =
-      Array<protocol::LayerTree::Layer>::create();
+  auto layers = std::make_unique<protocol::Array<protocol::LayerTree::Layer>>();
   auto* root_frame = inspected_frames_->Root();
   auto* layer_for_scrolling =
       root_frame->View()->LayoutViewport()->LayerForScrolling();
-  int scrolling_layer_id =
-      layer_for_scrolling ? layer_for_scrolling->CcLayer()->id() : 0;
+  int scrolling_layer_id = layer_for_scrolling ? layer_for_scrolling->id() : 0;
   bool have_blocking_wheel_event_handlers =
       root_frame->GetChromeClient().EventListenerProperties(
           root_frame, cc::EventListenerClass::kMouseWheel) ==
@@ -334,8 +334,10 @@ void InspectorLayerTreeAgent::GatherLayers(
     int scrolling_layer_id) {
   if (client_->IsInspectorLayer(layer))
     return;
+  if (layer->layer_tree_host()->is_hud_layer(layer))
+    return;
   int layer_id = layer->id();
-  layers->addItem(BuildObjectForLayer(
+  layers->emplace_back(BuildObjectForLayer(
       RootLayer(), layer,
       has_wheel_event_handlers && layer_id == scrolling_layer_id));
   for (auto child : layer->children()) {
@@ -363,38 +365,42 @@ Response InspectorLayerTreeAgent::LayerById(const String& layer_id,
   bool ok;
   int id = layer_id.ToInt(&ok);
   if (!ok)
-    return Response::Error("Invalid layer id");
+    return Response::ServerError("Invalid layer id");
 
   result = FindLayerById(RootLayer(), id);
   if (!result)
-    return Response::Error("No layer matching given id found");
-  return Response::OK();
+    return Response::ServerError("No layer matching given id found");
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::compositingReasons(
     const String& layer_id,
-    std::unique_ptr<Array<String>>* reason_strings) {
+    std::unique_ptr<Array<String>>* compositing_reasons,
+    std::unique_ptr<Array<String>>* compositing_reason_ids) {
   const cc::Layer* layer = nullptr;
   Response response = LayerById(layer_id, layer);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
-  CompositingReasons reasons = layer->compositing_reasons();
-  *reason_strings = Array<String>::create();
-  for (const char* name : CompositingReason::ShortNames(reasons))
-    (*reason_strings)->addItem(name);
-  return Response::OK();
+  *compositing_reasons = std::make_unique<protocol::Array<String>>();
+  *compositing_reason_ids = std::make_unique<protocol::Array<String>>();
+  if (layer->debug_info()) {
+    for (const char* compositing_reason :
+         layer->debug_info()->compositing_reasons) {
+      (*compositing_reasons)->emplace_back(compositing_reason);
+    }
+    for (const char* compositing_reason_id :
+         layer->debug_info()->compositing_reason_ids) {
+      (*compositing_reason_ids)->emplace_back(compositing_reason_id);
+    }
+  }
+
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::makeSnapshot(const String& layer_id,
                                                String* snapshot_id) {
-  const cc::Layer* layer = nullptr;
-  Response response = LayerById(layer_id, layer);
-  if (!response.isSuccess())
-    return response;
-  if (!layer->DrawsContent())
-    return Response::Error("Layer does not draw content");
+  suppress_layer_paint_events_ = true;
 
-  scoped_refptr<const cc::Layer> layerRef(layer);
   // If we hit a devtool break point in the middle of document lifecycle, for
   // example, https://crbug.com/788219, this will prevent crash when clicking
   // the "layer" panel.
@@ -402,40 +408,43 @@ Response InspectorLayerTreeAgent::makeSnapshot(const String& layer_id,
                                                       ->GetDocument()
                                                       ->Lifecycle()
                                                       .LifecyclePostponed())
-    return Response::Error("Layer does not draw content");
-
-  suppress_layer_paint_events_ = true;
+    return Response::ServerError("Layer does not draw content");
 
   inspected_frames_->Root()->View()->UpdateAllLifecyclePhases(
-      DocumentLifecycle::LifecycleUpdateReason::kOther);
+      DocumentUpdateReason::kInspector);
 
   suppress_layer_paint_events_ = false;
-  if (layer->HasOneRef())
-    return Response::Error("Layer was deleted");
+
+  const cc::Layer* layer = nullptr;
+  Response response = LayerById(layer_id, layer);
+  if (!response.IsSuccess())
+    return response;
+  if (!layer->DrawsContent())
+    return Response::ServerError("Layer does not draw content");
 
   auto picture = layer->GetPicture();
   if (!picture)
-    return Response::Error("Layer does not produce picture");
+    return Response::ServerError("Layer does not produce picture");
 
   auto snapshot = base::MakeRefCounted<PictureSnapshot>(std::move(picture));
   *snapshot_id = String::Number(++last_snapshot_id_);
   bool new_entry = snapshot_by_id_.insert(*snapshot_id, snapshot).is_new_entry;
   DCHECK(new_entry);
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::loadSnapshot(
     std::unique_ptr<Array<protocol::LayerTree::PictureTile>> tiles,
     String* snapshot_id) {
-  if (!tiles->length())
-    return Response::Error("Invalid argument, no tiles provided");
-  if (tiles->length() > UINT_MAX)
-    return Response::Error("Invalid argument, too many tiles provided");
-  wtf_size_t tiles_length = static_cast<wtf_size_t>(tiles->length());
+  if (tiles->empty())
+    return Response::ServerError("Invalid argument, no tiles provided");
+  if (tiles->size() > UINT_MAX)
+    return Response::ServerError("Invalid argument, too many tiles provided");
+  wtf_size_t tiles_length = static_cast<wtf_size_t>(tiles->size());
   Vector<scoped_refptr<PictureSnapshot::TilePictureStream>> decoded_tiles;
   decoded_tiles.Grow(tiles_length);
   for (wtf_size_t i = 0; i < tiles_length; ++i) {
-    protocol::LayerTree::PictureTile* tile = tiles->get(i);
+    protocol::LayerTree::PictureTile* tile = (*tiles)[i].get();
     decoded_tiles[i] = base::AdoptRef(new PictureSnapshot::TilePictureStream());
     decoded_tiles[i]->layer_offset.Set(tile->getX(), tile->getY());
     const protocol::Binary& data = tile->getPicture();
@@ -445,22 +454,22 @@ Response InspectorLayerTreeAgent::loadSnapshot(
   scoped_refptr<PictureSnapshot> snapshot =
       PictureSnapshot::Load(decoded_tiles);
   if (!snapshot)
-    return Response::Error("Invalid snapshot format");
+    return Response::ServerError("Invalid snapshot format");
   if (snapshot->IsEmpty())
-    return Response::Error("Empty snapshot");
+    return Response::ServerError("Empty snapshot");
 
   *snapshot_id = String::Number(++last_snapshot_id_);
   bool new_entry = snapshot_by_id_.insert(*snapshot_id, snapshot).is_new_entry;
   DCHECK(new_entry);
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::releaseSnapshot(const String& snapshot_id) {
   SnapshotById::iterator it = snapshot_by_id_.find(snapshot_id);
   if (it == snapshot_by_id_.end())
-    return Response::Error("Snapshot not found");
+    return Response::ServerError("Snapshot not found");
   snapshot_by_id_.erase(it);
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::GetSnapshotById(
@@ -468,9 +477,9 @@ Response InspectorLayerTreeAgent::GetSnapshotById(
     const PictureSnapshot*& result) {
   SnapshotById::iterator it = snapshot_by_id_.find(snapshot_id);
   if (it == snapshot_by_id_.end())
-    return Response::Error("Snapshot not found");
+    return Response::ServerError("Snapshot not found");
   result = it->value.get();
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::replaySnapshot(const String& snapshot_id,
@@ -480,19 +489,14 @@ Response InspectorLayerTreeAgent::replaySnapshot(const String& snapshot_id,
                                                  String* data_url) {
   const PictureSnapshot* snapshot = nullptr;
   Response response = GetSnapshotById(snapshot_id, snapshot);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
-  Vector<char> base64_data = snapshot->Replay(
-      from_step.fromMaybe(0), to_step.fromMaybe(0), scale.fromMaybe(1.0));
-  if (base64_data.IsEmpty())
-    return Response::Error("Image encoding failed");
-  static constexpr char kUrlPrefix[] = "data:image/png;base64,";
-  StringBuilder url;
-  url.ReserveCapacity(sizeof(kUrlPrefix) + base64_data.size());
-  url.Append(kUrlPrefix);
-  url.Append(base64_data.begin(), base64_data.size());
-  *data_url = url.ToString();
-  return Response::OK();
+  auto png_data = snapshot->Replay(from_step.fromMaybe(0), to_step.fromMaybe(0),
+                                   scale.fromMaybe(1.0));
+  if (png_data.IsEmpty())
+    return Response::ServerError("Image encoding failed");
+  *data_url = "data:image/png;base64," + Base64Encode(png_data);
+  return Response::Success();
 }
 
 static void ParseRect(protocol::DOM::Rect* object, FloatRect* rect) {
@@ -508,23 +512,23 @@ Response InspectorLayerTreeAgent::profileSnapshot(
     std::unique_ptr<protocol::Array<protocol::Array<double>>>* out_timings) {
   const PictureSnapshot* snapshot = nullptr;
   Response response = GetSnapshotById(snapshot_id, snapshot);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
   FloatRect rect;
   if (clip_rect.isJust())
     ParseRect(clip_rect.fromJust(), &rect);
-  auto timings =
-      snapshot->Profile(min_repeat_count.fromMaybe(1),
-                        TimeDelta::FromSecondsD(min_duration.fromMaybe(0)),
-                        clip_rect.isJust() ? &rect : nullptr);
-  *out_timings = Array<Array<double>>::create();
+  auto timings = snapshot->Profile(
+      min_repeat_count.fromMaybe(1),
+      base::TimeDelta::FromSecondsD(min_duration.fromMaybe(0)),
+      clip_rect.isJust() ? &rect : nullptr);
+  *out_timings = std::make_unique<Array<Array<double>>>();
   for (const auto& row : timings) {
-    std::unique_ptr<Array<double>> out_row = Array<double>::create();
-    for (TimeDelta delta : row)
-      out_row->addItem(delta.InSecondsF());
-    (*out_timings)->addItem(std::move(out_row));
+    auto out_row = std::make_unique<protocol::Array<double>>();
+    for (base::TimeDelta delta : row)
+      out_row->emplace_back(delta.InSecondsF());
+    (*out_timings)->emplace_back(std::move(out_row));
   }
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorLayerTreeAgent::snapshotCommandLog(
@@ -532,16 +536,29 @@ Response InspectorLayerTreeAgent::snapshotCommandLog(
     std::unique_ptr<Array<protocol::DictionaryValue>>* command_log) {
   const PictureSnapshot* snapshot = nullptr;
   Response response = GetSnapshotById(snapshot_id, snapshot);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
   protocol::ErrorSupport errors;
-  std::unique_ptr<protocol::Value> log_value = protocol::StringUtil::parseJSON(
-      snapshot->SnapshotCommandLog()->ToJSONString());
-  *command_log =
-      Array<protocol::DictionaryValue>::fromValue(log_value.get(), &errors);
-  if (errors.hasErrors())
-    return Response::Error(errors.errors());
-  return Response::OK();
+  const String& json = snapshot->SnapshotCommandLog()->ToJSONString();
+  std::vector<uint8_t> cbor;
+  if (json.Is8Bit()) {
+    crdtp::json::ConvertJSONToCBOR(
+        crdtp::span<uint8_t>(json.Characters8(), json.length()), &cbor);
+  } else {
+    crdtp::json::ConvertJSONToCBOR(
+        crdtp::span<uint16_t>(
+            reinterpret_cast<const uint16_t*>(json.Characters16()),
+            json.length()),
+        &cbor);
+  }
+  auto log_value = protocol::Value::parseBinary(cbor.data(), cbor.size());
+  *command_log = protocol::ValueConversions<
+      protocol::Array<protocol::DictionaryValue>>::fromValue(log_value.get(),
+                                                             &errors);
+  auto err = errors.Errors();
+  if (err.empty())
+    return Response::Success();
+  return Response::ServerError(std::string(err.begin(), err.end()));
 }
 
 }  // namespace blink

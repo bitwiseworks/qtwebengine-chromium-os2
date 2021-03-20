@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/svg/svg_static_string_list.h"
 
 #include "third_party/blink/renderer/core/svg/svg_string_list_tear_off.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -46,7 +47,7 @@ SVGStaticStringList::SVGStaticStringList(SVGElement* context_element,
 
 SVGStaticStringList::~SVGStaticStringList() = default;
 
-void SVGStaticStringList::Trace(blink::Visitor* visitor) {
+void SVGStaticStringList::Trace(Visitor* visitor) {
   visitor->Trace(value_);
   visitor->Trace(tear_off_);
   SVGAnimatedPropertyBase::Trace(visitor);
@@ -80,8 +81,8 @@ void SVGStaticStringList::AnimationEnded() {
 
 SVGStringListTearOff* SVGStaticStringList::TearOff() {
   if (!tear_off_) {
-    tear_off_ =
-        SVGStringListTearOff::Create(value_, this, kPropertyIsNotAnimVal);
+    tear_off_ = MakeGarbageCollected<SVGStringListTearOff>(
+        value_, this, kPropertyIsNotAnimVal);
   }
   return tear_off_.Get();
 }

@@ -27,7 +27,7 @@
 #endif
 #include <assert.h>
 
-/* From main.c */
+/* From main.c */ 
 extern const char *sqlite3ErrName(int);
 extern int sqlite3TestMakePointerStr(Tcl_Interp*, char*, void*);
 
@@ -106,7 +106,7 @@ static int SQLITE_TCLAPI test_sqlite3rbu_cmd(
       break;
     }
 
-    case 9: /* close_no_error */
+    case 9: /* close_no_error */ 
     case 1: /* close */ {
       char *zErrmsg = 0;
       int rc;
@@ -147,7 +147,7 @@ static int SQLITE_TCLAPI test_sqlite3rbu_cmd(
       break;
     }
 
-    case 12: /* dbRbu_eval */
+    case 12: /* dbRbu_eval */ 
     case 4:  /* dbMain_eval */ {
       sqlite3 *db = sqlite3rbu_db(pRbu, (iCmd==12));
       int rc = sqlite3_exec(db, Tcl_GetString(objv[2]), 0, 0, 0);
@@ -197,7 +197,7 @@ static int SQLITE_TCLAPI test_sqlite3rbu_cmd(
       Tcl_SetObjResult(interp, Tcl_NewWideIntObj(nStep));
       break;
     }
-
+                           
     case 10: /* temp_size_limit */ {
       sqlite3_int64 nLimit;
       if( Tcl_GetWideIntFromObj(interp, objv[2], &nLimit) ){
@@ -362,7 +362,7 @@ static int SQLITE_TCLAPI test_sqlite3rbu_internal_test(
   return TCL_OK;
 }
 
-int SqliteRbu_Init(Tcl_Interp *interp){
+int SqliteRbu_Init(Tcl_Interp *interp){ 
   static struct {
      char *zName;
      Tcl_ObjCmdProc *xProc;

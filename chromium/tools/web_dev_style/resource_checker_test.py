@@ -11,20 +11,68 @@ import test_util
 import unittest
 
 _HERE = os_path.dirname(os_path.abspath(__file__))
-sys_path.append(os_path.join(_HERE, '..', '..', 'build'))
+sys_path.append(os_path.join(_HERE, '..', '..'))
 
-import find_depot_tools  # pylint: disable=W0611
-from testing_support.super_mox import SuperMoxTestBase
+from PRESUBMIT_test_mocks import MockInputApi, MockOutputApi
 
 
-class ResourceCheckerTest(SuperMoxTestBase):
+class ResourceCheckerTest(unittest.TestCase):
   def setUp(self):
-    SuperMoxTestBase.setUp(self)
+    super(ResourceCheckerTest, self).setUp()
 
-    input_api = self.mox.CreateMockAnything()
-    input_api.re = re
-    output_api = self.mox.CreateMockAnything()
-    self.checker = resource_checker.ResourceChecker(input_api, output_api)
+    self.checker = resource_checker.ResourceChecker(MockInputApi(),
+                                                    MockOutputApi())
+
+  def ShouldPassDeprecatedMojoBindingCheck(self, line):
+    error = self.checker.DeprecatedMojoBindingsCheck(1, line)
+    self.assertEqual('', error, 'Should not be flagged as error: ' + line)
+
+  def ShouldFailDeprecatedMojoBindingCheck(self, line):
+    error = self.checker.DeprecatedMojoBindingsCheck(1, line)
+    self.assertNotEqual('', error, 'Should be flagged as error: ' + line)
+    self.assertEquals('mojo_bindings.js', test_util.GetHighlight(line, error))
+
+  def testDeprecatedMojoBindingsCheckPasses(self):
+    lines = [
+      '<script src="chrome://resources/js/mojo_bindings_lite.js">',
+      "script.src = 'chrome://resources/js/mojo_bindings_lite.js';",
+    ]
+    for line in lines:
+      self.ShouldPassDeprecatedMojoBindingCheck(line)
+
+  def testDeprecatedMojoBindingsCheckFails(self):
+    lines = [
+      '<script src="chrome://resources/js/mojo_bindings.js">',
+      "script.src = 'chrome://resources/js/mojo_bindings.js';",
+    ]
+    for line in lines:
+      self.ShouldFailDeprecatedMojoBindingCheck(line)
+
+  def ShouldPassDisallowIncludeCheck(self, line):
+    self.assertEqual('', self.checker.DisallowIncludeCheck('msg', 1, line),
+                     'Should not be flagged as error')
+
+  def ShouldFailDisallowIncludeCheck(self, line):
+    error = self.checker.DisallowIncludeCheck('msg', 1, line)
+    self.assertNotEqual('', error, 'Should be flagged as error: ' + line)
+    self.assertEquals('<include', test_util.GetHighlight(line, error))
+
+  def testDisallowIncludesFails(self):
+    lines = [
+      '<include src="blah.js">',
+      ' // <include src="blah.js">',
+      '  /* <include  src="blah.js"> */ ',
+    ]
+    for line in lines:
+      self.ShouldFailDisallowIncludeCheck(line)
+
+  def testDisallowIncludesPasses(self):
+    lines = [
+      'if (count < includeCount) {',
+      '// No <include>s allowed.',
+    ]
+    for line in lines:
+      self.ShouldPassDisallowIncludeCheck(line)
 
   def ShouldFailSelfClosingIncludeCheck(self, line):
     """Checks that the '</include>' checker flags |line| as a style error."""
@@ -60,32 +108,6 @@ class ResourceCheckerTest(SuperMoxTestBase):
     ]
     for line in lines:
       self.ShouldPassSelfClosingIncludeCheck(line)
-
-  def ShouldPassDisallowIncludeCheck(self, line):
-    self.assertEqual('', self.checker.DisallowIncludeCheck('msg', 1, line),
-                     'Should not be flagged as error')
-
-  def ShouldFailDisallowIncludeCheck(self, line):
-    error = self.checker.DisallowIncludeCheck('msg', 1, line)
-    self.assertNotEqual('', error, 'Should be flagged as error: ' + line)
-    self.assertEquals('<include', test_util.GetHighlight(line, error))
-
-  def testDisallowIncludesFails(self):
-    lines = [
-      '<include src="blah.js">',
-      ' // <include src="blah.js">',
-      '  /* <include  src="blah.js"> */ ',
-    ]
-    for line in lines:
-      self.ShouldFailDisallowIncludeCheck(line)
-
-  def testDisallowIncludesPasses(self):
-    lines = [
-      'if (count < includeCount) {',
-      '// No <include>s allowed.',
-    ]
-    for line in lines:
-      self.ShouldPassDisallowIncludeCheck(line)
 
 
 if __name__ == '__main__':

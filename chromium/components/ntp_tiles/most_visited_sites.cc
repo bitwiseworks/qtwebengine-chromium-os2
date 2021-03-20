@@ -6,17 +6,20 @@
 
 #include <algorithm>
 #include <iterator>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/history/core/browser/top_sites.h"
+#include "build/build_config.h"
 #include "components/ntp_tiles/constants.h"
+#include "components/ntp_tiles/features.h"
 #include "components/ntp_tiles/icon_cacher.h"
 #include "components/ntp_tiles/pref_names.h"
 #include "components/ntp_tiles/switches.h"
@@ -31,13 +34,6 @@ using suggestions::SuggestionsService;
 namespace ntp_tiles {
 
 namespace {
-
-// The maximum number of custom links that can be shown. This is independent of
-// the maximum number of Most Visited sites that can be shown.
-const size_t kMaxNumCustomLinks = 10;
-
-const base::Feature kDisplaySuggestionsServiceTiles{
-    "DisplaySuggestionsServiceTiles", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // URL host prefixes. Hosts with these prefixes often redirect to each other, or
 // have the same content.
@@ -55,11 +51,9 @@ const char* kKnownGenericPagePrefixes[] = {
     ""};  // The no-www domain matches domains on same level .
 
 // Determine whether we need any tiles from PopularSites to fill up a grid of
-// |num_tiles| tiles. If exploration sections are used, we need popular sites
-// regardless of how many tiles we already have.
+// |num_tiles| tiles.
 bool NeedPopularSites(const PrefService* prefs, int num_tiles) {
-  return base::FeatureList::IsEnabled(kSiteExplorationUiFeature) ||
-         prefs->GetInteger(prefs::kNumPersonalTiles) < num_tiles;
+  return prefs->GetInteger(prefs::kNumPersonalTiles) < num_tiles;
 }
 
 bool AreURLsEquivalent(const GURL& url1, const GURL& url2) {
@@ -139,9 +133,7 @@ MostVisitedSites::MostVisitedSites(
       supervisor_(std::move(supervisor)),
       observer_(nullptr),
       max_num_sites_(0u),
-      top_sites_observer_(this),
-      mv_source_(TileSource::TOP_SITES),
-      top_sites_weak_ptr_factory_(this) {
+      mv_source_(TileSource::TOP_SITES) {
   DCHECK(prefs_);
   // top_sites_ can be null in tests.
   // TODO(sfiera): have iOS use a dummy TopSites in its tests.
@@ -184,6 +176,8 @@ bool MostVisitedSites::DoesSourceExist(TileSource source) const {
       return supervisor_ != nullptr;
     case TileSource::CUSTOM_LINKS:
       return custom_links_ != nullptr;
+    case TileSource::EXPLORE:
+      return explore_sites_client_ != nullptr;
   }
   NOTREACHED();
   return false;
@@ -193,6 +187,11 @@ void MostVisitedSites::SetHomepageClient(
     std::unique_ptr<HomepageClient> client) {
   DCHECK(client);
   homepage_client_ = std::move(client);
+}
+
+void MostVisitedSites::SetExploreSitesClient(
+    std::unique_ptr<ExploreSitesClient> client) {
+  explore_sites_client_ = std::move(client);
 }
 
 void MostVisitedSites::SetMostVisitedURLsObserver(Observer* observer,
@@ -206,8 +205,8 @@ void MostVisitedSites::SetMostVisitedURLsObserver(Observer* observer,
   if (popular_sites_ && NeedPopularSites(prefs_, max_num_sites_) &&
       ShouldShowPopularSites()) {
     popular_sites_->MaybeStartFetch(
-        false, base::Bind(&MostVisitedSites::OnPopularSitesDownloaded,
-                          base::Unretained(this)));
+        false, base::BindOnce(&MostVisitedSites::OnPopularSitesDownloaded,
+                              base::Unretained(this)));
   }
 
   if (top_sites_) {
@@ -222,8 +221,9 @@ void MostVisitedSites::SetMostVisitedURLsObserver(Observer* observer,
             &MostVisitedSites::OnCustomLinksChanged, base::Unretained(this)));
   }
 
-  suggestions_subscription_ = suggestions_service_->AddCallback(base::Bind(
-      &MostVisitedSites::OnSuggestionsProfileChanged, base::Unretained(this)));
+  suggestions_subscription_ = suggestions_service_->AddCallback(
+      base::BindRepeating(&MostVisitedSites::OnSuggestionsProfileChanged,
+                          base::Unretained(this)));
 
   // Immediately build the current set of tiles, getting suggestions from the
   // SuggestionsService's cache or, if that is empty, sites from TopSites.
@@ -263,7 +263,6 @@ void MostVisitedSites::UninitializeCustomLinks() {
   custom_links_action_count_ = -1;
   custom_links_->Uninitialize();
   BuildCurrentTiles();
-  Refresh();
 }
 
 bool MostVisitedSites::IsCustomLinksInitialized() {
@@ -285,6 +284,7 @@ bool MostVisitedSites::AddCustomLink(const GURL& url,
   if (!custom_links_ || !custom_links_enabled_)
     return false;
 
+  bool is_first_action = !custom_links_->IsInitialized();
   // Initialize custom links if they have not been initialized yet.
   InitializeCustomLinks();
 
@@ -293,6 +293,10 @@ bool MostVisitedSites::AddCustomLink(const GURL& url,
     if (custom_links_action_count_ != -1)
       custom_links_action_count_++;
     BuildCurrentTiles();
+  } else if (is_first_action) {
+    // We don't want to keep custom links initialized if the first action after
+    // initialization failed.
+    UninitializeCustomLinks();
   }
   return success;
 }
@@ -303,6 +307,7 @@ bool MostVisitedSites::UpdateCustomLink(const GURL& url,
   if (!custom_links_ || !custom_links_enabled_)
     return false;
 
+  bool is_first_action = !custom_links_->IsInitialized();
   // Initialize custom links if they have not been initialized yet.
   InitializeCustomLinks();
 
@@ -311,6 +316,10 @@ bool MostVisitedSites::UpdateCustomLink(const GURL& url,
     if (custom_links_action_count_ != -1)
       custom_links_action_count_++;
     BuildCurrentTiles();
+  } else if (is_first_action) {
+    // We don't want to keep custom links initialized if the first action after
+    // initialization failed.
+    UninitializeCustomLinks();
   }
   return success;
 }
@@ -319,6 +328,7 @@ bool MostVisitedSites::ReorderCustomLink(const GURL& url, size_t new_pos) {
   if (!custom_links_ || !custom_links_enabled_)
     return false;
 
+  bool is_first_action = !custom_links_->IsInitialized();
   // Initialize custom links if they have not been initialized yet.
   InitializeCustomLinks();
 
@@ -327,6 +337,10 @@ bool MostVisitedSites::ReorderCustomLink(const GURL& url, size_t new_pos) {
     if (custom_links_action_count_ != -1)
       custom_links_action_count_++;
     BuildCurrentTiles();
+  } else if (is_first_action) {
+    // We don't want to keep custom links initialized if the first action after
+    // initialization failed.
+    UninitializeCustomLinks();
   }
   return success;
 }
@@ -335,6 +349,7 @@ bool MostVisitedSites::DeleteCustomLink(const GURL& url) {
   if (!custom_links_ || !custom_links_enabled_)
     return false;
 
+  bool is_first_action = !custom_links_->IsInitialized();
   // Initialize custom links if they have not been initialized yet.
   InitializeCustomLinks();
 
@@ -343,6 +358,10 @@ bool MostVisitedSites::DeleteCustomLink(const GURL& url) {
     if (custom_links_action_count_ != -1)
       custom_links_action_count_++;
     BuildCurrentTiles();
+  } else if (is_first_action) {
+    // We don't want to keep custom links initialized if the first action after
+    // initialization failed.
+    UninitializeCustomLinks();
   }
   return success;
 }
@@ -413,8 +432,8 @@ void MostVisitedSites::InitiateTopSitesQuery() {
   if (top_sites_weak_ptr_factory_.HasWeakPtrs())
     return;  // Ongoing query.
   top_sites_->GetMostVisitedURLs(
-      base::Bind(&MostVisitedSites::OnMostVisitedURLsAvailable,
-                 top_sites_weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&MostVisitedSites::OnMostVisitedURLsAvailable,
+                     top_sites_weak_ptr_factory_.GetWeakPtr()));
 }
 
 base::FilePath MostVisitedSites::GetWhitelistLargeIconPath(const GURL& url) {
@@ -635,11 +654,12 @@ NTPTilesVector MostVisitedSites::CreatePopularSitesTiles(
     tile.source = popular_site.baked_in ? TileSource::POPULAR_BAKED_IN
                                         : TileSource::POPULAR;
     popular_sites_tiles.push_back(std::move(tile));
-    base::Closure icon_available =
-        base::Bind(&MostVisitedSites::OnIconMadeAvailable,
-                   base::Unretained(this), popular_site.url);
-    icon_cacher_->StartFetchPopularSites(popular_site, icon_available,
-                                         icon_available);
+    icon_cacher_->StartFetchPopularSites(
+        popular_site,
+        base::BindOnce(&MostVisitedSites::OnIconMadeAvailable,
+                       base::Unretained(this), popular_site.url),
+        base::BindOnce(&MostVisitedSites::OnIconMadeAvailable,
+                       base::Unretained(this), popular_site.url));
   }
   return popular_sites_tiles;
 }
@@ -697,10 +717,31 @@ NTPTilesVector MostVisitedSites::InsertHomeTile(
   return new_tiles;
 }
 
+base::Optional<NTPTile> MostVisitedSites::CreateExploreSitesTile() {
+  if (!explore_sites_client_)
+    return base::nullopt;
+
+  NTPTile explore_sites_tile;
+  explore_sites_tile.url = explore_sites_client_->GetExploreSitesUrl();
+  explore_sites_tile.title = explore_sites_client_->GetExploreSitesTitle();
+  explore_sites_tile.source = TileSource::EXPLORE;
+  explore_sites_tile.title_source = TileTitleSource::UNKNOWN;
+
+  return explore_sites_tile;
+}
+
 void MostVisitedSites::OnCustomLinksChanged() {
   DCHECK(custom_links_);
-  if (custom_links_enabled_ && custom_links_->IsInitialized())
+  if (!custom_links_enabled_)
+    return;
+
+  if (custom_links_->IsInitialized()) {
     BuildCustomLinks(custom_links_->GetLinks());
+  } else {
+    // Since custom links have been uninitialized (e.g. through Chrome sync), we
+    // should show the regular Most Visited tiles.
+    BuildCurrentTiles();
+  }
 }
 
 void MostVisitedSites::BuildCustomLinks(
@@ -708,6 +749,8 @@ void MostVisitedSites::BuildCustomLinks(
   DCHECK(custom_links_);
 
   NTPTilesVector tiles;
+  // The maximum number of custom links that can be shown is independent of the
+  // maximum number of Most Visited sites that can be shown.
   size_t num_tiles = std::min(links.size(), kMaxNumCustomLinks);
   for (size_t i = 0; i < num_tiles; ++i) {
     const CustomLinksManager::Link& link = links.at(i);
@@ -718,8 +761,7 @@ void MostVisitedSites::BuildCustomLinks(
     tile.title = link.title;
     tile.url = link.url;
     tile.source = TileSource::CUSTOM_LINKS;
-    // TODO(crbug.com/773278): Populate |data_generation_time| here in order to
-    // log UMA metrics of age.
+    tile.from_most_visited = link.is_most_visited;
     tiles.push_back(std::move(tile));
   }
 
@@ -748,7 +790,15 @@ void MostVisitedSites::InitiateNotificationForNewTiles(
 
 void MostVisitedSites::MergeMostVisitedTiles(NTPTilesVector personal_tiles) {
   std::set<std::string> used_hosts;
-  size_t num_actual_tiles = 0u;
+
+  base::Optional<NTPTile> explore_tile = CreateExploreSitesTile();
+  size_t num_actual_tiles = explore_tile ? 1 : 0;
+
+  // The explore sites tile may have taken a space that was utilized by the
+  // personal tiles.
+  if (personal_tiles.size() + num_actual_tiles > max_num_sites_) {
+    personal_tiles.pop_back();
+  }
   AddToHostsAndTotalCount(personal_tiles, &used_hosts, &num_actual_tiles);
 
   NTPTilesVector whitelist_tiles =
@@ -762,7 +812,7 @@ void MostVisitedSites::MergeMostVisitedTiles(NTPTilesVector personal_tiles) {
 
   NTPTilesVector new_tiles =
       MergeTiles(std::move(personal_tiles), std::move(whitelist_tiles),
-                 std::move(sections[SectionType::PERSONALIZED]));
+                 std::move(sections[SectionType::PERSONALIZED]), explore_tile);
 
   SaveTilesAndNotify(std::move(new_tiles), std::move(sections));
 }
@@ -789,9 +839,11 @@ void MostVisitedSites::SaveTilesAndNotify(
 }
 
 // static
-NTPTilesVector MostVisitedSites::MergeTiles(NTPTilesVector personal_tiles,
-                                            NTPTilesVector whitelist_tiles,
-                                            NTPTilesVector popular_tiles) {
+NTPTilesVector MostVisitedSites::MergeTiles(
+    NTPTilesVector personal_tiles,
+    NTPTilesVector whitelist_tiles,
+    NTPTilesVector popular_tiles,
+    base::Optional<NTPTile> explore_tile) {
   NTPTilesVector merged_tiles;
   std::move(personal_tiles.begin(), personal_tiles.end(),
             std::back_inserter(merged_tiles));
@@ -799,6 +851,9 @@ NTPTilesVector MostVisitedSites::MergeTiles(NTPTilesVector personal_tiles,
             std::back_inserter(merged_tiles));
   std::move(popular_tiles.begin(), popular_tiles.end(),
             std::back_inserter(merged_tiles));
+  if (explore_tile)
+    merged_tiles.push_back(*explore_tile);
+
   return merged_tiles;
 }
 
@@ -811,8 +866,8 @@ void MostVisitedSites::OnPopularSitesDownloaded(bool success) {
   for (const auto& section : popular_sites_->sections()) {
     for (const PopularSites::Site& site : section.second) {
       // Ignore callback; these icons will be seen on the *next* NTP.
-      icon_cacher_->StartFetchPopularSites(site, base::Closure(),
-                                           base::Closure());
+      icon_cacher_->StartFetchPopularSites(site, base::NullCallback(),
+                                           base::NullCallback());
     }
   }
 }

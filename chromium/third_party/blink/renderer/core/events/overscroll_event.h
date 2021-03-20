@@ -6,31 +6,40 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_OVERSCROLL_EVENT_H_
 
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/events/overscroll_event_init.h"
 
 namespace blink {
+
+class OverscrollEventInit;
 
 class OverscrollEvent final : public Event {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static OverscrollEvent* Create(const AtomicString& type,
+                                 bool bubbles,
                                  double delta_x,
                                  double delta_y) {
-    return MakeGarbageCollected<OverscrollEvent>(type, delta_x, delta_y);
+    return MakeGarbageCollected<OverscrollEvent>(type, bubbles, delta_x,
+                                                 delta_y);
   }
   static OverscrollEvent* Create(const AtomicString& type,
+                                 bool bubbles,
                                  const OverscrollEventInit* initializer) {
-    return MakeGarbageCollected<OverscrollEvent>(type, initializer);
+    return MakeGarbageCollected<OverscrollEvent>(type, bubbles, initializer);
   }
 
-  OverscrollEvent(const AtomicString&, double delta_x, double delta_y);
-  OverscrollEvent(const AtomicString&, const OverscrollEventInit*);
+  OverscrollEvent(const AtomicString&,
+                  bool bubbles,
+                  double delta_x,
+                  double delta_y);
+  OverscrollEvent(const AtomicString&,
+                  bool bubbles,
+                  const OverscrollEventInit*);
 
   double deltaX() const { return delta_x_; }
   double deltaY() const { return delta_y_; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   double delta_x_ = 0;

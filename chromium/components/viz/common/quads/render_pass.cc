@@ -26,6 +26,7 @@
 #include "components/viz/common/quads/surface_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
+#include "components/viz/common/quads/video_hole_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/common/traced_value.h"
 
@@ -57,6 +58,63 @@ void QuadList::ReplaceExistingQuadWithOpaqueTransparentSolidColor(Iterator at) {
   auto* replacement = QuadList::ReplaceExistingElement<SolidColorDrawQuad>(at);
   replacement->SetAll(shared_quad_state, rect, rect /* visible_rect */,
                       needs_blending, SK_ColorTRANSPARENT, true);
+}
+
+QuadList::Iterator QuadList::InsertCopyBeforeDrawQuad(Iterator at,
+                                                      size_t count) {
+  DCHECK(at->shared_quad_state);
+  switch (at->material) {
+    case DrawQuad::Material::kDebugBorder: {
+      const auto copy = *DebugBorderDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<DebugBorderDrawQuad>(
+          at, count, copy);
+    }
+    case DrawQuad::Material::kPictureContent: {
+      const auto copy = *PictureDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<PictureDrawQuad>(at, count,
+                                                                   copy);
+    }
+    case DrawQuad::Material::kTextureContent: {
+      const auto copy = *TextureDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<TextureDrawQuad>(at, count,
+                                                                   copy);
+    }
+    case DrawQuad::Material::kSolidColor: {
+      const auto copy = *SolidColorDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<SolidColorDrawQuad>(at, count,
+                                                                      copy);
+    }
+    case DrawQuad::Material::kTiledContent: {
+      const auto copy = *TileDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<TileDrawQuad>(at, count,
+                                                                copy);
+    }
+    case DrawQuad::Material::kStreamVideoContent: {
+      const auto copy = *StreamVideoDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<StreamVideoDrawQuad>(
+          at, count, copy);
+    }
+    case DrawQuad::Material::kSurfaceContent: {
+      const auto copy = *SurfaceDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<SurfaceDrawQuad>(at, count,
+                                                                   copy);
+    }
+    case DrawQuad::Material::kVideoHole: {
+      const auto copy = *VideoHoleDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<VideoHoleDrawQuad>(at, count,
+                                                                     copy);
+    }
+    case DrawQuad::Material::kYuvVideoContent: {
+      const auto copy = *YUVVideoDrawQuad::MaterialCast(*at);
+      return InsertBeforeAndInvalidateAllPointers<YUVVideoDrawQuad>(at, count,
+                                                                    copy);
+    }
+    // RenderPass quads should not be copied.
+    case DrawQuad::Material::kRenderPass:
+    case DrawQuad::Material::kInvalid:
+      NOTREACHED();  // Invalid DrawQuad material.
+      return at;
+  }
 }
 
 std::unique_ptr<RenderPass> RenderPass::Create() {
@@ -111,8 +169,9 @@ std::unique_ptr<RenderPass> RenderPass::Copy(int new_id) const {
       Create(shared_quad_state_list.size(), quad_list.size()));
   copy_pass->SetAll(new_id, output_rect, damage_rect, transform_to_root_target,
                     filters, backdrop_filters, backdrop_filter_bounds,
-                    color_space, has_transparent_background, cache_render_pass,
-                    has_damage_from_contributing_content, generate_mipmap);
+                    content_color_usage, has_transparent_background,
+                    cache_render_pass, has_damage_from_contributing_content,
+                    generate_mipmap);
   return copy_pass;
 }
 
@@ -125,8 +184,9 @@ std::unique_ptr<RenderPass> RenderPass::DeepCopy() const {
       Create(shared_quad_state_list.size(), quad_list.size()));
   copy_pass->SetAll(id, output_rect, damage_rect, transform_to_root_target,
                     filters, backdrop_filters, backdrop_filter_bounds,
-                    color_space, has_transparent_background, cache_render_pass,
-                    has_damage_from_contributing_content, generate_mipmap);
+                    content_color_usage, has_transparent_background,
+                    cache_render_pass, has_damage_from_contributing_content,
+                    generate_mipmap);
 
   if (shared_quad_state_list.empty()) {
     DCHECK(quad_list.empty());
@@ -146,7 +206,7 @@ std::unique_ptr<RenderPass> RenderPass::DeepCopy() const {
     }
     DCHECK(quad->shared_quad_state == *sqs_iter);
 
-    if (quad->material == DrawQuad::RENDER_PASS) {
+    if (quad->material == DrawQuad::Material::kRenderPass) {
       const RenderPassDrawQuad* pass_quad =
           RenderPassDrawQuad::MaterialCast(quad);
       copy_pass->CopyFromAndAppendRenderPassDrawQuad(pass_quad,
@@ -183,18 +243,19 @@ void RenderPass::SetNew(uint64_t id,
   DCHECK(shared_quad_state_list.empty());
 }
 
-void RenderPass::SetAll(uint64_t id,
-                        const gfx::Rect& output_rect,
-                        const gfx::Rect& damage_rect,
-                        const gfx::Transform& transform_to_root_target,
-                        const cc::FilterOperations& filters,
-                        const cc::FilterOperations& backdrop_filters,
-                        const gfx::RectF& backdrop_filter_bounds,
-                        const gfx::ColorSpace& color_space,
-                        bool has_transparent_background,
-                        bool cache_render_pass,
-                        bool has_damage_from_contributing_content,
-                        bool generate_mipmap) {
+void RenderPass::SetAll(
+    uint64_t id,
+    const gfx::Rect& output_rect,
+    const gfx::Rect& damage_rect,
+    const gfx::Transform& transform_to_root_target,
+    const cc::FilterOperations& filters,
+    const cc::FilterOperations& backdrop_filters,
+    const base::Optional<gfx::RRectF>& backdrop_filter_bounds,
+    gfx::ContentColorUsage content_color_usage,
+    bool has_transparent_background,
+    bool cache_render_pass,
+    bool has_damage_from_contributing_content,
+    bool generate_mipmap) {
   DCHECK(id);
 
   this->id = id;
@@ -204,7 +265,7 @@ void RenderPass::SetAll(uint64_t id,
   this->filters = filters;
   this->backdrop_filters = backdrop_filters;
   this->backdrop_filter_bounds = backdrop_filter_bounds;
-  this->color_space = color_space;
+  this->content_color_usage = content_color_usage;
   this->has_transparent_background = has_transparent_background;
   this->cache_render_pass = cache_render_pass;
   this->has_damage_from_contributing_content =
@@ -213,7 +274,6 @@ void RenderPass::SetAll(uint64_t id,
 
   DCHECK(quad_list.empty());
   DCHECK(shared_quad_state_list.empty());
-  DCHECK(color_space.IsValid());
 }
 
 void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
@@ -236,8 +296,10 @@ void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
   backdrop_filters.AsValueInto(value);
   value->EndArray();
 
-  cc::MathUtil::AddToTracedValue("backdrop_filter_bounds",
-                                 backdrop_filter_bounds, value);
+  if (backdrop_filter_bounds.has_value()) {
+    cc::MathUtil::AddToTracedValue("backdrop_filter_bounds",
+                                   backdrop_filter_bounds.value(), value);
+  }
 
   value->BeginArray("shared_quad_state_list");
   for (auto* shared_quad_state : shared_quad_state_list) {
@@ -277,33 +339,36 @@ RenderPassDrawQuad* RenderPass::CopyFromAndAppendRenderPassDrawQuad(
 DrawQuad* RenderPass::CopyFromAndAppendDrawQuad(const DrawQuad* quad) {
   DCHECK(!shared_quad_state_list.empty());
   switch (quad->material) {
-    case DrawQuad::DEBUG_BORDER:
+    case DrawQuad::Material::kDebugBorder:
       CopyFromAndAppendTypedDrawQuad<DebugBorderDrawQuad>(quad);
       break;
-    case DrawQuad::PICTURE_CONTENT:
+    case DrawQuad::Material::kPictureContent:
       CopyFromAndAppendTypedDrawQuad<PictureDrawQuad>(quad);
       break;
-    case DrawQuad::TEXTURE_CONTENT:
+    case DrawQuad::Material::kTextureContent:
       CopyFromAndAppendTypedDrawQuad<TextureDrawQuad>(quad);
       break;
-    case DrawQuad::SOLID_COLOR:
+    case DrawQuad::Material::kSolidColor:
       CopyFromAndAppendTypedDrawQuad<SolidColorDrawQuad>(quad);
       break;
-    case DrawQuad::TILED_CONTENT:
+    case DrawQuad::Material::kTiledContent:
       CopyFromAndAppendTypedDrawQuad<TileDrawQuad>(quad);
       break;
-    case DrawQuad::STREAM_VIDEO_CONTENT:
+    case DrawQuad::Material::kStreamVideoContent:
       CopyFromAndAppendTypedDrawQuad<StreamVideoDrawQuad>(quad);
       break;
-    case DrawQuad::SURFACE_CONTENT:
+    case DrawQuad::Material::kSurfaceContent:
       CopyFromAndAppendTypedDrawQuad<SurfaceDrawQuad>(quad);
       break;
-    case DrawQuad::YUV_VIDEO_CONTENT:
+    case DrawQuad::Material::kVideoHole:
+      CopyFromAndAppendTypedDrawQuad<VideoHoleDrawQuad>(quad);
+      break;
+    case DrawQuad::Material::kYuvVideoContent:
       CopyFromAndAppendTypedDrawQuad<YUVVideoDrawQuad>(quad);
       break;
     // RenderPass quads need to use specific CopyFrom function.
-    case DrawQuad::RENDER_PASS:
-    case DrawQuad::INVALID:
+    case DrawQuad::Material::kRenderPass:
+    case DrawQuad::Material::kInvalid:
       // TODO(danakj): Why is this a check instead of dcheck, and validate from
       // IPC?
       CHECK(false);  // Invalid DrawQuad material.

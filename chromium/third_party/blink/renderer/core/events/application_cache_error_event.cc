@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/events/application_cache_error_event.h"
 
 #include "third_party/blink/public/mojom/appcache/appcache.mojom-blink.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_application_cache_error_event_init.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
 
 namespace blink {
@@ -44,7 +45,7 @@ static const String& ErrorReasonToString(mojom::AppCacheErrorReason reason) {
 ApplicationCacheErrorEvent::ApplicationCacheErrorEvent(
     mojom::AppCacheErrorReason reason,
     const String& url,
-    int status,
+    uint16_t status,
     const String& message)
     : Event(event_type_names::kError, Bubbles::kNo, Cancelable::kNo),
       reason_(ErrorReasonToString(reason)),
@@ -56,9 +57,10 @@ ApplicationCacheErrorEvent::ApplicationCacheErrorEvent(
     const AtomicString& event_type,
     const ApplicationCacheErrorEventInit* initializer)
     : Event(event_type, initializer), status_(0) {
+  DCHECK(RuntimeEnabledFeatures::AppCacheEnabled());
   if (initializer->hasReason())
     reason_ = initializer->reason();
-  if (initializer->hasURL())
+  if (initializer->hasUrl())
     url_ = initializer->url();
   if (initializer->hasStatus())
     status_ = initializer->status();
@@ -68,7 +70,7 @@ ApplicationCacheErrorEvent::ApplicationCacheErrorEvent(
 
 ApplicationCacheErrorEvent::~ApplicationCacheErrorEvent() = default;
 
-void ApplicationCacheErrorEvent::Trace(blink::Visitor* visitor) {
+void ApplicationCacheErrorEvent::Trace(Visitor* visitor) {
   Event::Trace(visitor);
 }
 

@@ -13,14 +13,16 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <memory>
 #include <string>
 
 #include "api/crypto/crypto_options.h"
+#include "api/dtls_transport_interface.h"
+#include "api/scoped_refptr.h"
 #include "p2p/base/ice_transport_internal.h"
 #include "p2p/base/packet_transport_internal.h"
 #include "rtc_base/constructor_magic.h"
-#include "rtc_base/scoped_ref_ptr.h"
 #include "rtc_base/ssl_certificate.h"
 #include "rtc_base/ssl_fingerprint.h"
 #include "rtc_base/ssl_stream_adapter.h"
@@ -40,6 +42,9 @@ enum DtlsTransportState {
   // Failed due to some error in the handshake process.
   DTLS_TRANSPORT_FAILED,
 };
+
+webrtc::DtlsTransportState ConvertDtlsTransportState(
+    cricket::DtlsTransportState cricket_state);
 
 enum PacketFlags {
   PF_NORMAL = 0x00,       // A normal packet.
@@ -69,6 +74,8 @@ class DtlsTransportInternal : public rtc::PacketTransportInternal {
 
   virtual bool SetDtlsRole(rtc::SSLRole role) = 0;
 
+  // Finds out which TLS/DTLS version is running.
+  virtual bool GetSslVersionBytes(int* version) const = 0;
   // Finds out which DTLS-SRTP cipher was negotiated.
   // TODO(zhihuang): Remove this once all dependencies implement this.
   virtual bool GetSrtpCryptoSuite(int* cipher) = 0;

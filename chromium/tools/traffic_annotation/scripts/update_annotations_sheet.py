@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython
 # Copyright 2017 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -13,6 +13,8 @@ Run update_annotations_sheet --config-help for help on configuration file.
 TODO(rhalavati): Add tests.
 """
 
+from __future__ import print_function
+
 import argparse
 import csv
 import datetime
@@ -23,6 +25,7 @@ import os
 import sys
 
 from apiclient import discovery
+from infra_libs import luci_auth
 from oauth2client import client
 from oauth2client import tools
 from oauth2client.file import Storage
@@ -52,7 +55,7 @@ class SheetEditor():
       silent_change_columns: list of str
           List of the columns whose changes are not reported in the stats.
       last_update_column_name: str
-          Header of the colunm that keeps the latest update date.
+          Header of the column that keeps the latest update date.
       credentials_file_path: str
           Absolute path to read/save user credentials.
       client_secret_file_path: str
@@ -97,6 +100,8 @@ class SheetEditor():
     if the stored credentials are invalid, the OAuth2 flow is completed to
     obtain the new credentials.
 
+    When running in the buildbot, uses LUCI credentials instead.
+
     Args:
       credentials_file_path: str Absolute path to read/save user credentials.
       client_secret_file_path: str Absolute path to read client_secret.json.
@@ -104,14 +109,17 @@ class SheetEditor():
     Returns:
       OAuth2Credentials The obtained user credentials.
     """
+    if luci_auth.available():
+      return luci_auth.LUCICredentials(scopes=[self.SCOPES])
+
     store = Storage(credentials_file_path)
     credentials = store.get()
     if not credentials or credentials.invalid:
       flow = client.flow_from_clientsecrets(client_secret_file_path,
                                             self.SCOPES)
       flow.user_agent = self.APPLICATION_NAME
-      if flags:
-        credentials = tools.run_flow(flow, store, flags)
+      flags = tools.argparser.parse_args([])
+      credentials = tools.run_flow(flow, store, flags)
       print("Storing credentials to " + credentials_file_path)
     return credentials
 
@@ -230,10 +238,11 @@ class SheetEditor():
       for id in removed_ids:
         print("Deleted: %s" % id)
       for id in added_ids:
-        print("Added: %s" %id)
+        print("Added: %s" % id)
 
     empty_row = [''] * len(file_contents[0])
-    row = 0
+    # Skip first row (it's the header row).
+    row = 1
     while row < len(sheet_contents):
       row_id = sheet_contents[row][0]
       # If a row is removed, remove it from previous sheet.
@@ -263,14 +272,6 @@ class SheetEditor():
     for row in range(1, len(file_contents)):
       file_row = file_contents[row]
       sheet_row = sheet_contents[row]
-
-      # If the last column of the file_row is empty, the row belongs to a
-      # platform different from the one that TSV file is generated on, hence it
-      # should be ignored.
-      if not file_row[-1]:
-        if self.verbose:
-          print("Ignored from other platforms: %s" %file_contents[row][0])
-        continue
 
       major_update = False
       for col in range(len(file_row)):
@@ -340,11 +341,12 @@ def utf_8_encoder(input_file):
     yield line.encode("utf-8")
 
 
-def LoadTSVFile(file_path):
+def LoadTSVFile(file_path, verbose):
   """ Loads annotations TSV file.
 
   Args:
     file_path: str Path to the TSV file.
+    verbose: bool Whether to print messages about ignored rows.
 
   Returns:
     list of list Table of loaded annotations.
@@ -354,7 +356,14 @@ def LoadTSVFile(file_path):
     # CSV library does not support unicode, so encoding to utf-8 and back.
     reader = csv.reader(utf_8_encoder(csvfile), delimiter='\t')
     for row in reader:
-      rows.append([unicode(col, 'utf-8') for col in row])
+      row = [unicode(col, 'utf-8') for col in row]
+      # If the last column of the file_row is empty, the row belongs to a
+      # platform different from the one that TSV file is generated on, hence it
+      # should be ignored.
+      if row[-1]:
+        rows.append(row)
+      elif verbose:
+        print("Ignored from other platforms: %s" % row[0])
   return rows
 
 
@@ -369,7 +378,7 @@ def PrintConfigHelp():
         "silent_change_columns:\n"
         "  List of the columns whose changes are not reported in the stats.\n"
         "last_update_column_name:\n"
-        "  Header of the colunm that keeps the latest update date.\n"
+        "  Header of the column that keeps the latest update date.\n"
         "credentials_file_path:\n"
         "  Absolute path of the file that keeps user credentials.\n"
         "client_secret_file_path:\n"
@@ -380,7 +389,7 @@ def PrintConfigHelp():
 
 def main():
   parser = argparse.ArgumentParser(
-      description="Network Traffic Annotations Sheet Updator")
+      description="Network Traffic Annotations Sheet Updater")
   parser.add_argument(
       "--config-file",
       help="Configurations file.")
@@ -407,7 +416,7 @@ def main():
     config = json.load(config_file)
 
   # Load and parse annotations file.
-  file_content = LoadTSVFile(args.annotations_file)
+  file_content = LoadTSVFile(args.annotations_file, args.verbose)
   if not file_content:
     print("Could not read annotations file.")
     return -1
@@ -418,8 +427,8 @@ def main():
       changes_sheet_name = config["changes_sheet_name"],
       silent_change_columns = config["silent_change_columns"],
       last_update_column_name = config["last_update_column_name"],
-      credentials_file_path = config["credentials_file_path"],
-      client_secret_file_path = config["client_secret_file_path"],
+      credentials_file_path = config.get("credentials_file_path", None),
+      client_secret_file_path = config.get("client_secret_file_path", None),
       verbose = args.verbose)
   if not sheet_editor.GenerateUpdates(file_content):
     return -1
@@ -439,4 +448,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+  sys.exit(main())

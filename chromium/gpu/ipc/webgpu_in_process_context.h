@@ -25,7 +25,6 @@ struct GpuFeatureInfo;
 struct SharedMemoryLimits;
 
 namespace webgpu {
-class WebGPUInterface;
 class WebGPUImplementation;
 }  // namespace webgpu
 
@@ -40,7 +39,7 @@ class WebGPUInProcessContext {
   // pairs. |gpu_channel_manager| should be non-null when used in the GPU
   // process.
   ContextResult Initialize(
-      scoped_refptr<CommandBufferTaskExecutor> task_executor,
+      CommandBufferTaskExecutor* task_executor,
       const ContextCreationAttribs& attribs,
       const SharedMemoryLimits& memory_limits,
       GpuMemoryBufferManager* gpu_memory_buffer_manager,
@@ -52,7 +51,8 @@ class WebGPUInProcessContext {
 
   // Allows direct access to the WebGPUImplementation so a
   // WebGPUInProcessContext can be used without making it current.
-  gpu::webgpu::WebGPUInterface* GetImplementation();
+  gpu::webgpu::WebGPUImplementation* GetImplementation();
+  base::TestSimpleTaskRunner* GetTaskRunner();
 
   // Test only functions.
   ServiceTransferCache* GetTransferCacheForTest() const;

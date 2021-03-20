@@ -2,6 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+from six.moves import range # pylint: disable=redefined-builtin
+
 from py_utils.refactor import snippet
 
 
@@ -23,7 +29,7 @@ class AnnotatedSymbol(snippet.Symbol):
     return super(AnnotatedSymbol, self).__setattr__(name, value)
 
   def Cut(self, child):
-    for i in xrange(len(self._children)):
+    for i in range(len(self._children)):
       if self._children[i] == child:
         self._modified = True
         del self._children[i]

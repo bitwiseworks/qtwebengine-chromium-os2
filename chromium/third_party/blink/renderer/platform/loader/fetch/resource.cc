@@ -32,15 +32,17 @@
 
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
-#include "third_party/blink/renderer/platform/histogram.h"
-#include "third_party/blink/renderer/platform/instance_counters.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
+#include "third_party/blink/renderer/platform/loader/fetch/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
@@ -48,16 +50,15 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client_walker.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_finish_observer.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_load_timing.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -74,6 +75,20 @@ blink::mojom::CodeCacheType ToCodeCacheType(ResourceType resource_type) {
   return resource_type == ResourceType::kRaw
              ? blink::mojom::CodeCacheType::kWebAssembly
              : blink::mojom::CodeCacheType::kJavascript;
+}
+
+void GetSharedBufferMemoryDump(SharedBuffer* buffer,
+                               const String& dump_prefix,
+                               WebProcessMemoryDump* memory_dump) {
+  size_t dump_size;
+  String dump_name;
+  buffer->GetMemoryDumpNameAndSize(dump_name, dump_size);
+
+  WebMemoryAllocatorDump* dump =
+      memory_dump->CreateMemoryAllocatorDump(dump_prefix + dump_name);
+  dump->AddScalar("size", "bytes", dump_size);
+  memory_dump->AddSuballocation(
+      dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
 }
 
 }  // namespace
@@ -107,8 +122,7 @@ const char* const kHeaderPrefixesToIgnoreAfterRevalidation[] = {
 static inline bool ShouldUpdateHeaderAfterRevalidation(
     const AtomicString& header) {
   for (size_t i = 0; i < base::size(kHeadersToIgnoreAfterRevalidation); i++) {
-    if (DeprecatedEqualIgnoringCase(header,
-                                    kHeadersToIgnoreAfterRevalidation[i]))
+    if (EqualIgnoringASCIICase(header, kHeadersToIgnoreAfterRevalidation[i]))
       return false;
   }
   for (size_t i = 0; i < base::size(kHeaderPrefixesToIgnoreAfterRevalidation);
@@ -120,12 +134,22 @@ static inline bool ShouldUpdateHeaderAfterRevalidation(
   return true;
 }
 
-Resource::Resource(const ResourceRequest& request,
+namespace {
+const base::Clock* g_clock_for_testing = nullptr;
+}
+
+static inline base::Time Now() {
+  const base::Clock* clock = g_clock_for_testing
+                                 ? g_clock_for_testing
+                                 : base::DefaultClock::GetInstance();
+  return clock->Now();
+}
+
+Resource::Resource(const ResourceRequestHead& request,
                    ResourceType type,
                    const ResourceLoaderOptions& options)
     : type_(type),
       status_(ResourceStatus::kNotStarted),
-      identifier_(0),
       encoded_size_(0),
       encoded_size_memory_usage_(0),
       decoded_size_(0),
@@ -136,27 +160,27 @@ Resource::Resource(const ResourceRequest& request,
       is_add_remove_client_prohibited_(false),
       integrity_disposition_(ResourceIntegrityDisposition::kNotChecked),
       options_(options),
-      response_timestamp_(CurrentTime()),
+      response_timestamp_(Now()),
       resource_request_(request),
       overhead_size_(CalculateOverheadSize()) {
   InstanceCounters::IncrementCounter(InstanceCounters::kResourceCounter);
 
   if (IsMainThread())
-    MemoryCoordinator::Instance().RegisterClient(this);
+    MemoryPressureListenerRegistry::Instance().RegisterClient(this);
 }
 
 Resource::~Resource() {
   InstanceCounters::DecrementCounter(InstanceCounters::kResourceCounter);
 }
 
-void Resource::Trace(blink::Visitor* visitor) {
+void Resource::Trace(Visitor* visitor) {
   visitor->Trace(loader_);
   visitor->Trace(cache_handler_);
   visitor->Trace(clients_);
   visitor->Trace(clients_awaiting_callback_);
   visitor->Trace(finished_clients_);
   visitor->Trace(finish_observers_);
-  MemoryCoordinatorClient::Trace(visitor);
+  MemoryPressureListener::Trace(visitor);
 }
 
 void Resource::SetLoader(ResourceLoader* loader) {
@@ -199,10 +223,12 @@ void Resource::CheckResourceIntegrity() {
 
   if (SubresourceIntegrity::CheckSubresourceIntegrity(IntegrityMetadata(), data,
                                                       data_length, Url(), *this,
-                                                      integrity_report_info_))
+                                                      integrity_report_info_)) {
     integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
-  else
+  } else {
     integrity_disposition_ = ResourceIntegrityDisposition::kFailed;
+  }
+
   DCHECK_NE(IntegrityDisposition(), ResourceIntegrityDisposition::kNotChecked);
 }
 
@@ -224,7 +250,7 @@ void Resource::MarkClientFinished(ResourceClient* client) {
 }
 
 void Resource::AppendData(const char* data, size_t length) {
-  TRACE_EVENT0("blink", "Resource::appendData");
+  TRACE_EVENT1("blink", "Resource::appendData", "length", length);
   DCHECK(!is_revalidating_);
   DCHECK(!ErrorOccurred());
   if (options_.data_buffering_policy == kBufferData) {
@@ -338,10 +364,10 @@ void Resource::FinishAsError(const ResourceError& error,
   }
 }
 
-void Resource::Finish(TimeTicks load_finish_time,
+void Resource::Finish(base::TimeTicks load_response_end,
                       base::SingleThreadTaskRunner* task_runner) {
   DCHECK(!is_revalidating_);
-  load_finish_time_ = load_finish_time;
+  load_response_end_ = load_response_end;
   if (!ErrorOccurred())
     status_ = ResourceStatus::kCached;
   loader_ = nullptr;
@@ -367,56 +393,56 @@ const scoped_refptr<const SecurityOrigin>& Resource::GetOrigin() const {
   return LastResourceRequest().RequestorOrigin();
 }
 
-static double CurrentAge(const ResourceResponse& response,
-                         double response_timestamp) {
+void Resource::DidDownloadToBlob(scoped_refptr<BlobDataHandle>) {}
+
+static base::TimeDelta CurrentAge(const ResourceResponse& response,
+                                  base::Time response_timestamp) {
   // RFC2616 13.2.3
   // No compensation for latency as that is not terribly important in practice
-  double date_value = response.Date();
-  double apparent_age = std::isfinite(date_value)
-                            ? std::max(0., response_timestamp - date_value)
-                            : 0;
-  double age_value = response.Age();
-  double corrected_received_age = std::isfinite(age_value)
-                                      ? std::max(apparent_age, age_value)
-                                      : apparent_age;
-  double resident_time = CurrentTime() - response_timestamp;
+  base::Optional<base::Time> date_value = response.Date();
+  base::TimeDelta apparent_age;
+  if (date_value && response_timestamp >= date_value.value())
+    apparent_age = response_timestamp - date_value.value();
+  base::Optional<base::TimeDelta> age_value = response.Age();
+  base::TimeDelta corrected_received_age =
+      age_value ? std::max(apparent_age, age_value.value()) : apparent_age;
+  base::TimeDelta resident_time = Now() - response_timestamp;
   return corrected_received_age + resident_time;
 }
 
-static double FreshnessLifetime(const ResourceResponse& response,
-                                double response_timestamp) {
+static base::TimeDelta FreshnessLifetime(const ResourceResponse& response,
+                                         base::Time response_timestamp) {
 #if !defined(OS_ANDROID)
   // On desktop, local files should be reloaded in case they change.
   if (response.CurrentRequestUrl().IsLocalFile())
-    return 0;
+    return base::TimeDelta();
 #endif
 
   // Cache other non-http / non-filesystem resources liberally.
   if (!response.CurrentRequestUrl().ProtocolIsInHTTPFamily() &&
       !response.CurrentRequestUrl().ProtocolIs("filesystem"))
-    return std::numeric_limits<double>::max();
+    return base::TimeDelta::Max();
 
   // RFC2616 13.2.4
-  double max_age_value = response.CacheControlMaxAge();
-  if (std::isfinite(max_age_value))
-    return max_age_value;
-  double expires_value = response.Expires();
-  double date_value = response.Date();
-  double creation_time =
-      std::isfinite(date_value) ? date_value : response_timestamp;
-  if (std::isfinite(expires_value))
-    return expires_value - creation_time;
-  double last_modified_value = response.LastModified();
-  if (std::isfinite(last_modified_value))
-    return (creation_time - last_modified_value) * 0.1;
+  base::Optional<base::TimeDelta> max_age_value = response.CacheControlMaxAge();
+  if (max_age_value)
+    return max_age_value.value();
+  base::Optional<base::Time> expires = response.Expires();
+  base::Optional<base::Time> date = response.Date();
+  base::Time creation_time = date ? date.value() : response_timestamp;
+  if (expires)
+    return expires.value() - creation_time;
+  base::Optional<base::Time> last_modified = response.LastModified();
+  if (last_modified)
+    return (creation_time - last_modified.value()) * 0.1;
   // If no cache headers are present, the specification leaves the decision to
   // the UA. Other browsers seem to opt for 0.
-  return 0;
+  return base::TimeDelta();
 }
 
 static bool CanUseResponse(const ResourceResponse& response,
                            bool allow_stale,
-                           double response_timestamp) {
+                           base::Time response_timestamp) {
   if (response.IsNull())
     return false;
 
@@ -431,27 +457,33 @@ static bool CanUseResponse(const ResourceResponse& response,
 
   if (response.HttpStatusCode() == 302 || response.HttpStatusCode() == 307) {
     // Default to not cacheable unless explicitly allowed.
-    bool has_max_age = std::isfinite(response.CacheControlMaxAge());
-    bool has_expires = std::isfinite(response.Expires());
+    bool has_max_age = response.CacheControlMaxAge() != base::nullopt;
+    bool has_expires = response.Expires() != base::nullopt;
     // TODO: consider catching Cache-Control "private" and "public" here.
     if (!has_max_age && !has_expires)
       return false;
   }
 
-  double max_life = FreshnessLifetime(response, response_timestamp);
+  base::TimeDelta max_life = FreshnessLifetime(response, response_timestamp);
   if (allow_stale)
     max_life += response.CacheControlStaleWhileRevalidate();
 
   return CurrentAge(response, response_timestamp) <= max_life;
 }
 
-const ResourceRequest& Resource::LastResourceRequest() const {
+const ResourceRequestHead& Resource::LastResourceRequest() const {
   if (!redirect_chain_.size())
     return GetResourceRequest();
   return redirect_chain_.back().request_;
 }
 
-void Resource::SetRevalidatingRequest(const ResourceRequest& request) {
+const ResourceResponse* Resource::LastResourceResponse() const {
+  if (!redirect_chain_.size())
+    return nullptr;
+  return &redirect_chain_.back().redirect_response_;
+}
+
+void Resource::SetRevalidatingRequest(const ResourceRequestHead& request) {
   SECURITY_CHECK(redirect_chain_.IsEmpty());
   SECURITY_CHECK(!is_unused_preload_);
   DCHECK(!request.IsNull());
@@ -484,9 +516,8 @@ void Resource::SetResponse(const ResourceResponse& response) {
                                    GetResourceRequest().RequestorOrigin()));
 }
 
-void Resource::ResponseReceived(const ResourceResponse& response,
-                                std::unique_ptr<WebDataConsumerHandle>) {
-  response_timestamp_ = CurrentTime();
+void Resource::ResponseReceived(const ResourceResponse& response) {
+  response_timestamp_ = Now();
   if (is_revalidating_) {
     if (response.HttpStatusCode() == 304) {
       RevalidationSucceeded(response);
@@ -500,9 +531,11 @@ void Resource::ResponseReceived(const ResourceResponse& response,
     SetEncoding(encoding);
 }
 
-void Resource::SetSerializedCachedMetadata(const uint8_t* data, size_t size) {
+void Resource::SetSerializedCachedMetadata(mojo_base::BigBuffer data) {
   DCHECK(!is_revalidating_);
   DCHECK(!GetResponse().IsNull());
+  // Actual metadata transferred here will be lost.
+  DCHECK(!data.size());
 }
 
 String Resource::ReasonNotDeletable() const {
@@ -533,22 +566,23 @@ String Resource::ReasonNotDeletable() const {
   return builder.ToString();
 }
 
-void Resource::DidAddClient(ResourceClient* c) {
+void Resource::DidAddClient(ResourceClient* client) {
   if (scoped_refptr<SharedBuffer> data = Data()) {
     for (const auto& span : *data) {
-      c->DataReceived(this, span.data(), span.size());
+      client->DataReceived(this, span.data(), span.size());
       // Stop pushing data if the client removed itself.
-      if (!HasClient(c))
+      if (!HasClient(client))
         break;
     }
   }
-  if (!HasClient(c))
+  if (!HasClient(client))
     return;
   if (IsFinishedInternal()) {
-    c->NotifyFinished(this);
-    if (clients_.Contains(c)) {
-      finished_clients_.insert(c);
-      clients_.erase(c);
+    client->SetHasFinishedFromMemoryCache();
+    client->NotifyFinished(this);
+    if (clients_.Contains(client)) {
+      finished_clients_.insert(client);
+      clients_.erase(client);
     }
   }
 }
@@ -720,7 +754,6 @@ Resource::MatchStatus Resource::CanReuse(const FetchParameters& params) const {
       GetResourceRequest().RequestorOrigin();
   scoped_refptr<const SecurityOrigin> new_origin =
       new_request.RequestorOrigin();
-  DCHECK_EQ(GetDataBufferingPolicy(), kBufferData);
 
   DCHECK(existing_origin);
   DCHECK(new_origin);
@@ -730,8 +763,7 @@ Resource::MatchStatus Resource::CanReuse(const FetchParameters& params) const {
   // TODO(yhirano): Remove this.
   if (GetResponse().WasFetchedViaServiceWorker() &&
       GetResponse().GetType() == network::mojom::FetchResponseType::kOpaque &&
-      new_request.GetFetchRequestMode() !=
-          network::mojom::FetchRequestMode::kNoCors) {
+      new_request.GetMode() != network::mojom::RequestMode::kNoCors) {
     return MatchStatus::kUnknownFailure;
   }
 
@@ -791,39 +823,40 @@ Resource::MatchStatus Resource::CanReuse(const FetchParameters& params) const {
   if (resource_request_.GetKeepalive() || new_request.GetKeepalive())
     return MatchStatus::kKeepaliveSet;
 
-  if (GetResourceRequest().HttpMethod() != new_request.HttpMethod())
+  if (GetResourceRequest().HttpMethod() != http_names::kGET ||
+      new_request.HttpMethod() != http_names::kGET) {
     return MatchStatus::kRequestMethodDoesNotMatch;
+  }
 
-  if (GetResourceRequest().HttpBody() != new_request.HttpBody())
-    return MatchStatus::kUnknownFailure;
-
+  // A GET request doesn't have a request body.
+  DCHECK(!new_request.HttpBody());
 
   // Don't reuse an existing resource when the source origin is different.
-  if (!existing_origin->IsSameSchemeHostPort(new_origin.get()))
+  if (!existing_origin->IsSameOriginWith(new_origin.get()))
     return MatchStatus::kUnknownFailure;
 
   // securityOrigin has more complicated checks which callers are responsible
   // for.
 
-  if (new_request.GetFetchCredentialsMode() !=
-      resource_request_.GetFetchCredentialsMode()) {
+  if (new_request.GetCredentialsMode() !=
+      resource_request_.GetCredentialsMode()) {
     return MatchStatus::kRequestCredentialsModeDoesNotMatch;
   }
 
-  const auto new_mode = new_request.GetFetchRequestMode();
-  const auto existing_mode = resource_request_.GetFetchRequestMode();
+  const auto new_mode = new_request.GetMode();
+  const auto existing_mode = resource_request_.GetMode();
 
   if (new_mode != existing_mode)
     return MatchStatus::kRequestModeDoesNotMatch;
 
   switch (new_mode) {
-    case network::mojom::FetchRequestMode::kNoCors:
-    case network::mojom::FetchRequestMode::kNavigate:
+    case network::mojom::RequestMode::kNoCors:
+    case network::mojom::RequestMode::kNavigate:
       break;
 
-    case network::mojom::FetchRequestMode::kCors:
-    case network::mojom::FetchRequestMode::kSameOrigin:
-    case network::mojom::FetchRequestMode::kCorsWithForcedPreflight:
+    case network::mojom::RequestMode::kCors:
+    case network::mojom::RequestMode::kSameOrigin:
+    case network::mojom::RequestMode::kCorsWithForcedPreflight:
       // We have two separate CORS handling logics in ThreadableLoader
       // and ResourceLoader and sharing resources is difficult when they are
       // handled differently.
@@ -853,7 +886,7 @@ void Resource::OnPurgeMemory() {
   Prune();
   if (!cache_handler_)
     return;
-  cache_handler_->ClearCachedMetadata(CachedMetadataHandler::kCacheLocally);
+  cache_handler_->ClearCachedMetadata(CachedMetadataHandler::kClearLocally);
 }
 
 void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
@@ -871,7 +904,7 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
     dump->AddScalar("dead_size", "bytes", encoded_size_memory_usage_);
 
   if (data_)
-    data_->OnMemoryDump(dump_name, memory_dump);
+    GetSharedBufferMemoryDump(Data(), dump_name, memory_dump);
 
   if (level_of_detail == WebMemoryDumpLevelOfDetail::kDetailed) {
     String url_to_report = Url().GetString();
@@ -894,7 +927,7 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
     while (ResourceClient* client = walker3.Next())
       client_names.push_back("(finished) " + client->DebugName());
     std::sort(client_names.begin(), client_names.end(),
-              WTF::CodePointCompareLessThan);
+              WTF::CodeUnitCompareLessThan);
 
     StringBuilder builder;
     for (wtf_size_t i = 0;
@@ -919,13 +952,17 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
   overhead_dump->AddScalar("size", "bytes", OverheadSize());
   memory_dump->AddSuballocation(
       overhead_dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
+
+  const String cache_name = dump_name + "/code_cache";
+  if (cache_handler_)
+    cache_handler_->OnMemoryDump(memory_dump, cache_name);
 }
 
 String Resource::GetMemoryDumpName() const {
   return String::Format(
-      "web_cache/%s_resources/%ld",
-      ResourceTypeToString(GetType(), Options().initiator_info.name),
-      identifier_);
+             "web_cache/%s_resources/",
+             ResourceTypeToString(GetType(), Options().initiator_info.name)) +
+         String::Number(InspectorId());
 }
 
 void Resource::SetCachePolicyBypassingCache() {
@@ -937,7 +974,7 @@ void Resource::SetPreviewsState(WebURLRequest::PreviewsState previews_state) {
 }
 
 void Resource::ClearRangeRequestHeader() {
-  resource_request_.ClearHTTPHeaderField("range");
+  resource_request_.ClearHttpHeaderField("range");
 }
 
 void Resource::RevalidationSucceeded(
@@ -959,7 +996,7 @@ void Resource::RevalidationSucceeded(
     // care about.
     if (!ShouldUpdateHeaderAfterRevalidation(header.key))
       continue;
-    response_.SetHTTPHeaderField(header.key, header.value);
+    response_.SetHttpHeaderField(header.key, header.value);
   }
 
   is_revalidating_ = false;
@@ -1030,11 +1067,10 @@ bool Resource::MustRevalidateDueToCacheHeaders(bool allow_stale) const {
          GetResourceRequest().CacheControlContainsNoStore();
 }
 
-static bool ShouldRevalidateStaleResponse(const ResourceRequest& request,
-                                          const ResourceResponse& response,
-                                          double response_timestamp) {
-  double staleness = response.CacheControlStaleWhileRevalidate();
-  if (staleness == 0)
+static bool ShouldRevalidateStaleResponse(const ResourceResponse& response,
+                                          base::Time response_timestamp) {
+  base::TimeDelta staleness = response.CacheControlStaleWhileRevalidate();
+  if (staleness.is_zero())
     return false;
 
   return CurrentAge(response, response_timestamp) >
@@ -1045,15 +1081,14 @@ bool Resource::ShouldRevalidateStaleResponse() const {
   for (auto& redirect : redirect_chain_) {
     // Use |response_timestamp_| since we don't store the timestamp
     // of each redirect response.
-    if (blink::ShouldRevalidateStaleResponse(redirect.request_,
-                                             redirect.redirect_response_,
+    if (blink::ShouldRevalidateStaleResponse(redirect.redirect_response_,
                                              response_timestamp_)) {
       return true;
     }
   }
 
-  return blink::ShouldRevalidateStaleResponse(
-      GetResourceRequest(), GetResponse(), response_timestamp_);
+  return blink::ShouldRevalidateStaleResponse(GetResponse(),
+                                              response_timestamp_);
 }
 
 bool Resource::StaleRevalidationRequested() const {
@@ -1150,8 +1185,6 @@ const char* Resource::ResourceTypeToString(
     ResourceType type,
     const AtomicString& fetch_initiator_name) {
   switch (type) {
-    case ResourceType::kMainResource:
-      return "Main resource";
     case ResourceType::kImage:
       return "Image";
     case ResourceType::kCSSStyleSheet:
@@ -1191,21 +1224,15 @@ blink::mojom::CodeCacheType Resource::ResourceTypeToCodeCacheType(
   DCHECK(
       // Cacheable WebAssembly modules are fetched, so raw resource type.
       resource_type == ResourceType::kRaw ||
-      // Cacheable Javascript is a script or a document resource.
+      // Cacheable Javascript is a script resource.
       resource_type == ResourceType::kScript ||
-      resource_type == ResourceType::kMainResource ||
       // Also accept mock resources for testing.
       resource_type == ResourceType::kMock);
   return ToCodeCacheType(resource_type);
 }
 
-bool Resource::ShouldBlockLoadEvent() const {
-  return !link_preload_ && IsLoadEventBlockingResourceType();
-}
-
 bool Resource::IsLoadEventBlockingResourceType() const {
   switch (type_) {
-    case ResourceType::kMainResource:
     case ResourceType::kImage:
     case ResourceType::kCSSStyleSheet:
     case ResourceType::kScript:
@@ -1225,6 +1252,20 @@ bool Resource::IsLoadEventBlockingResourceType() const {
   }
   NOTREACHED();
   return false;
+}
+
+// static
+void Resource::SetClockForTesting(const base::Clock* clock) {
+  g_clock_for_testing = clock;
+}
+
+size_t Resource::CodeCacheSize() const {
+  return cache_handler_ ? cache_handler_->GetCodeCacheSize() : 0;
+}
+
+CachedMetadataHandler* Resource::CreateCachedMetadataHandler(
+    std::unique_ptr<CachedMetadataSender> send_callback) {
+  return nullptr;
 }
 
 }  // namespace blink

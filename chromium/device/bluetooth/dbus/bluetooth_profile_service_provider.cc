@@ -30,9 +30,8 @@ class BluetoothProfileServiceProviderImpl
       : origin_thread_id_(base::PlatformThread::CurrentId()),
         bus_(bus),
         delegate_(delegate),
-        object_path_(object_path),
-        weak_ptr_factory_(this) {
-    VLOG(1) << "Creating Bluetooth Profile: " << object_path_.value();
+        object_path_(object_path) {
+    DVLOG(1) << "Creating Bluetooth Profile: " << object_path_.value();
 
     exported_object_ = bus_->GetExportedObject(object_path_);
 
@@ -70,7 +69,7 @@ class BluetoothProfileServiceProviderImpl
   }
 
   ~BluetoothProfileServiceProviderImpl() override {
-    VLOG(1) << "Cleaning up Bluetooth Profile: " << object_path_.value();
+    DVLOG(1) << "Cleaning up Bluetooth Profile: " << object_path_.value();
 
     // Unregister the object path so we can reuse with a new agent.
     bus_->UnregisterExportedObject(object_path_);
@@ -91,7 +90,7 @@ class BluetoothProfileServiceProviderImpl
 
     delegate_->Released();
 
-    response_sender.Run(dbus::Response::FromMethodCall(method_call));
+    std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
   }
 
   // Called by dbus:: when the Bluetooth daemon establishes a new connection
@@ -128,11 +127,13 @@ class BluetoothProfileServiceProviderImpl
       }
     }
 
-    Delegate::ConfirmationCallback callback = base::Bind(
-        &BluetoothProfileServiceProviderImpl::OnConfirmation,
-        weak_ptr_factory_.GetWeakPtr(), method_call, response_sender);
+    Delegate::ConfirmationCallback callback =
+        base::BindOnce(&BluetoothProfileServiceProviderImpl::OnConfirmation,
+                       weak_ptr_factory_.GetWeakPtr(), method_call,
+                       std::move(response_sender));
 
-    delegate_->NewConnection(device_path, std::move(fd), options, callback);
+    delegate_->NewConnection(device_path, std::move(fd), options,
+                             std::move(callback));
   }
 
   // Called by dbus:: when the Bluetooth daemon is about to disconnect the
@@ -151,11 +152,12 @@ class BluetoothProfileServiceProviderImpl
       return;
     }
 
-    Delegate::ConfirmationCallback callback = base::Bind(
-        &BluetoothProfileServiceProviderImpl::OnConfirmation,
-        weak_ptr_factory_.GetWeakPtr(), method_call, response_sender);
+    Delegate::ConfirmationCallback callback =
+        base::BindOnce(&BluetoothProfileServiceProviderImpl::OnConfirmation,
+                       weak_ptr_factory_.GetWeakPtr(), method_call,
+                       std::move(response_sender));
 
-    delegate_->RequestDisconnection(device_path, callback);
+    delegate_->RequestDisconnection(device_path, std::move(callback));
   }
 
   // Called by dbus:: when the request failed before a reply was returned
@@ -167,15 +169,15 @@ class BluetoothProfileServiceProviderImpl
 
     delegate_->Cancel();
 
-    response_sender.Run(dbus::Response::FromMethodCall(method_call));
+    std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
   }
 
   // Called by dbus:: when a method is exported.
   void OnExported(const std::string& interface_name,
                   const std::string& method_name,
                   bool success) {
-    LOG_IF(WARNING, !success) << "Failed to export " << interface_name << "."
-                              << method_name;
+    DVLOG_IF(1, !success) << "Failed to export " << interface_name << "."
+                          << method_name;
   }
 
   // Called by the Delegate in response to a method requiring confirmation.
@@ -186,17 +188,20 @@ class BluetoothProfileServiceProviderImpl
 
     switch (status) {
       case Delegate::SUCCESS: {
-        response_sender.Run(dbus::Response::FromMethodCall(method_call));
+        std::move(response_sender)
+            .Run(dbus::Response::FromMethodCall(method_call));
         break;
       }
       case Delegate::REJECTED: {
-        response_sender.Run(dbus::ErrorResponse::FromMethodCall(
-            method_call, bluetooth_profile::kErrorRejected, "rejected"));
+        std::move(response_sender)
+            .Run(dbus::ErrorResponse::FromMethodCall(
+                method_call, bluetooth_profile::kErrorRejected, "rejected"));
         break;
       }
       case Delegate::CANCELLED: {
-        response_sender.Run(dbus::ErrorResponse::FromMethodCall(
-            method_call, bluetooth_profile::kErrorCanceled, "canceled"));
+        std::move(response_sender)
+            .Run(dbus::ErrorResponse::FromMethodCall(
+                method_call, bluetooth_profile::kErrorCanceled, "canceled"));
         break;
       }
       default:
@@ -227,7 +232,8 @@ class BluetoothProfileServiceProviderImpl
   // than we do.
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<BluetoothProfileServiceProviderImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<BluetoothProfileServiceProviderImpl> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothProfileServiceProviderImpl);
 };

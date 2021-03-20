@@ -89,13 +89,15 @@ var PeerConnectionUpdateTable = (function() {
         onRenegotiationNeeded: 'negotiationneeded',
         signalingStateChange: 'signalingstatechange',
         iceGatheringStateChange: 'icegatheringstatechange',
+        legacyIceConnectionStateChange: 'iceconnectionstatechange (legacy)',
         iceConnectionStateChange: 'iceconnectionstatechange',
+        connectionStateChange: 'connectionstatechange',
         onIceCandidate: 'icecandidate',
         stop: 'close'
       }[update.type] ||
           update.type;
 
-      if (update.value.length == 0) {
+      if (update.value.length === 0) {
         row.innerHTML += '<td>' + type + '</td>';
         return;
       }
@@ -106,6 +108,14 @@ var PeerConnectionUpdateTable = (function() {
         var candidateType = update.value.match(/(?: typ )(host|srflx|relay)/);
         if (candidateType) {
           type += ' (' + candidateType[1] + ')';
+        }
+      } else if (
+          update.type === 'createOfferOnSuccess' ||
+          update.type === 'createAnswerOnSuccess') {
+        this.setLastOfferAnswer_(tableElement, update);
+      } else if (update.type === 'setLocalDescription') {
+        if (update.value !== this.getLastOfferAnswer_(tableElement)) {
+          type += ' (munged)';
         }
       }
       row.innerHTML +=
@@ -184,6 +194,29 @@ var PeerConnectionUpdateTable = (function() {
             '<th class="update-log-header-event">Event</th></tr>';
       }
       return tableElement;
+    },
+
+    /**
+     * Store the last createOfferOnSuccess/createAnswerOnSuccess to compare to
+     * setLocalDescription and visualize SDP munging.
+     *
+     * @param {!Element} tableElement The peerconnection update element.
+     * @param {!PeerConnectionUpdateEntry} update The update to add.
+     * @private
+     */
+    setLastOfferAnswer_: function(tableElement, update) {
+      tableElement['data-lastofferanswer'] = update.value;
+    },
+
+    /**
+     * Retrieves the last createOfferOnSuccess/createAnswerOnSuccess to compare
+     * to setLocalDescription and visualize SDP munging.
+     *
+     * @param {!Element} tableElement The peerconnection update element.
+     * @private
+     */
+    getLastOfferAnswer_: function(tableElement) {
+      return tableElement['data-lastofferanswer'];
     }
   };
 

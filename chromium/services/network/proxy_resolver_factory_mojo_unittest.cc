@@ -12,21 +12,26 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/containers/queue.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/values.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/load_states.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/test_completion_callback.h"
-#include "net/dns/host_resolver.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
+#include "net/log/test_net_log_util.h"
 #include "net/proxy_resolution/pac_file_data.h"
 #include "net/proxy_resolution/proxy_info.h"
+#include "net/proxy_resolution/proxy_resolve_dns_operation.h"
 #include "net/proxy_resolution/proxy_resolver.h"
 #include "net/proxy_resolution/proxy_resolver_error_observer.h"
 #include "net/proxy_resolution/proxy_resolver_factory.h"
@@ -36,6 +41,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 using net::test::IsError;
 using net::test::IsOk;
@@ -188,13 +194,15 @@ class MockMojoProxyResolver : public proxy_resolver::mojom::ProxyResolver {
   void ClearBlockedClients();
 
   void AddConnection(
-      mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolver> req);
+      mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolver> receiver);
 
  private:
   // Overridden from proxy_resolver::mojom::ProxyResolver:
   void GetProxyForUrl(
       const GURL& url,
-      proxy_resolver::mojom::ProxyResolverRequestClientPtr client) override;
+      const net::NetworkIsolationKey& network_isolation_key,
+      mojo::PendingRemote<proxy_resolver::mojom::ProxyResolverRequestClient>
+          pending_client) override;
 
   void WakeWaiter();
 
@@ -202,12 +210,11 @@ class MockMojoProxyResolver : public proxy_resolver::mojom::ProxyResolver {
 
   base::queue<GetProxyForUrlAction> get_proxy_actions_;
 
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
-  std::vector<
-      std::unique_ptr<proxy_resolver::mojom::ProxyResolverRequestClientPtr>>
+  std::vector<mojo::Remote<proxy_resolver::mojom::ProxyResolverRequestClient>>
       blocked_clients_;
-  mojo::Binding<proxy_resolver::mojom::ProxyResolver> binding_;
+  mojo::Receiver<proxy_resolver::mojom::ProxyResolver> receiver_{this};
 };
 
 MockMojoProxyResolver::~MockMojoProxyResolver() {
@@ -215,7 +222,7 @@ MockMojoProxyResolver::~MockMojoProxyResolver() {
       << "Actions remaining: " << get_proxy_actions_.size();
 }
 
-MockMojoProxyResolver::MockMojoProxyResolver() : binding_(this) {}
+MockMojoProxyResolver::MockMojoProxyResolver() = default;
 
 void MockMojoProxyResolver::AddGetProxyAction(GetProxyForUrlAction action) {
   get_proxy_actions_.push(action);
@@ -229,8 +236,7 @@ void MockMojoProxyResolver::WaitForNextRequest() {
 
 void MockMojoProxyResolver::WakeWaiter() {
   if (!quit_closure_.is_null())
-    quit_closure_.Run();
-  quit_closure_.Reset();
+    std::move(quit_closure_).Run();
 }
 
 void MockMojoProxyResolver::ClearBlockedClients() {
@@ -238,20 +244,23 @@ void MockMojoProxyResolver::ClearBlockedClients() {
 }
 
 void MockMojoProxyResolver::AddConnection(
-    mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolver> req) {
-  if (binding_.is_bound())
-    binding_.Close();
-  binding_.Bind(std::move(req));
+    mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolver> receiver) {
+  receiver_.reset();
+  receiver_.Bind(std::move(receiver));
 }
 
 void MockMojoProxyResolver::GetProxyForUrl(
     const GURL& url,
-    proxy_resolver::mojom::ProxyResolverRequestClientPtr client) {
+    const net::NetworkIsolationKey& network_isolation_key,
+    mojo::PendingRemote<proxy_resolver::mojom::ProxyResolverRequestClient>
+        pending_client) {
   ASSERT_FALSE(get_proxy_actions_.empty());
   GetProxyForUrlAction action = get_proxy_actions_.front();
   get_proxy_actions_.pop();
 
   EXPECT_EQ(action.expected_url, url);
+  mojo::Remote<proxy_resolver::mojom::ProxyResolverRequestClient> client(
+      std::move(pending_client));
   client->Alert(url.spec());
   client->OnError(12345, url.spec());
   switch (action.action) {
@@ -264,26 +273,24 @@ void MockMojoProxyResolver::GetProxyForUrl(
       break;
     }
     case GetProxyForUrlAction::DISCONNECT: {
-      binding_.Close();
+      receiver_.reset();
       break;
     }
     case GetProxyForUrlAction::WAIT_FOR_CLIENT_DISCONNECT: {
       base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-      client.set_connection_error_handler(run_loop.QuitClosure());
+      client.set_disconnect_handler(run_loop.QuitClosure());
       run_loop.Run();
-      ASSERT_TRUE(client.encountered_error());
+      ASSERT_FALSE(client.is_connected());
       break;
     }
     case GetProxyForUrlAction::MAKE_DNS_REQUEST: {
-      auto request = std::make_unique<net::HostResolver::RequestInfo>(
-          net::HostPortPair(url.spec(), 12345));
-      proxy_resolver::mojom::HostResolverRequestClientPtr dns_client;
-      mojo::MakeRequest(&dns_client);
-      client->ResolveDns(std::move(request), std::move(dns_client));
-      blocked_clients_.push_back(
-          std::make_unique<
-              proxy_resolver::mojom::ProxyResolverRequestClientPtr>(
-              std::move(client)));
+      mojo::PendingRemote<proxy_resolver::mojom::HostResolverRequestClient>
+          dns_client;
+      ignore_result(dns_client.InitWithNewPipeAndPassReceiver());
+      client->ResolveDns(url.host(),
+                         net::ProxyResolveDnsOperation::DNS_RESOLVE_EX,
+                         network_isolation_key, std::move(dns_client));
+      blocked_clients_.push_back(std::move(client));
       break;
     }
   }
@@ -292,7 +299,9 @@ void MockMojoProxyResolver::GetProxyForUrl(
 
 class Request {
  public:
-  Request(net::ProxyResolver* resolver, const GURL& url);
+  Request(net::ProxyResolver* resolver,
+          const GURL& url,
+          const net::NetworkIsolationKey& network_isolation_key);
 
   int Resolve();
   void Cancel();
@@ -300,25 +309,32 @@ class Request {
 
   const net::ProxyInfo& results() const { return results_; }
   net::LoadState load_state() { return request_->GetLoadState(); }
-  net::BoundTestNetLog& net_log() { return net_log_; }
+  net::RecordingBoundTestNetLog& net_log() { return net_log_; }
   const net::TestCompletionCallback& callback() const { return callback_; }
 
  private:
   net::ProxyResolver* resolver_;
   const GURL url_;
+  const net::NetworkIsolationKey network_isolation_key_;
   net::ProxyInfo results_;
   std::unique_ptr<net::ProxyResolver::Request> request_;
   int error_;
   net::TestCompletionCallback callback_;
-  net::BoundTestNetLog net_log_;
+  net::RecordingBoundTestNetLog net_log_;
 };
 
-Request::Request(net::ProxyResolver* resolver, const GURL& url)
-    : resolver_(resolver), url_(url), error_(0) {}
+Request::Request(net::ProxyResolver* resolver,
+                 const GURL& url,
+                 const net::NetworkIsolationKey& network_isolation_key)
+    : resolver_(resolver),
+      url_(url),
+      network_isolation_key_(network_isolation_key),
+      error_(0) {}
 
 int Request::Resolve() {
-  error_ = resolver_->GetProxyForURL(url_, &results_, callback_.callback(),
-                                     &request_, net_log_.bound());
+  error_ = resolver_->GetProxyForURL(url_, network_isolation_key_, &results_,
+                                     callback_.callback(), &request_,
+                                     net_log_.bound());
   return error_;
 }
 
@@ -336,7 +352,8 @@ class MockMojoProxyResolverFactory
  public:
   MockMojoProxyResolverFactory(
       MockMojoProxyResolver* resolver,
-      mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolverFactory> req);
+      mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolverFactory>
+          receiver);
   ~MockMojoProxyResolverFactory() override;
 
   void AddCreateProxyResolverAction(CreateProxyResolverAction action);
@@ -351,30 +368,30 @@ class MockMojoProxyResolverFactory
   // Overridden from proxy_resolver::mojom::ProxyResolver:
   void CreateResolver(
       const std::string& pac_url,
-      mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolver> request,
-      proxy_resolver::mojom::ProxyResolverFactoryRequestClientPtr client)
-      override;
+      mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolver> receiver,
+      mojo::PendingRemote<
+          proxy_resolver::mojom::ProxyResolverFactoryRequestClient>
+          pending_client) override;
 
   void WakeWaiter();
 
   MockMojoProxyResolver* resolver_;
   base::queue<CreateProxyResolverAction> create_resolver_actions_;
 
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
-  std::vector<std::unique_ptr<
-      proxy_resolver::mojom::ProxyResolverFactoryRequestClientPtr>>
+  std::vector<
+      mojo::Remote<proxy_resolver::mojom::ProxyResolverFactoryRequestClient>>
       blocked_clients_;
-  std::vector<std::unique_ptr<
-      mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolver>>>
-      blocked_resolver_requests_;
-  mojo::Binding<proxy_resolver::mojom::ProxyResolverFactory> binding_;
+  std::vector<mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolver>>
+      blocked_resolver_receivers_;
+  mojo::Receiver<proxy_resolver::mojom::ProxyResolverFactory> receiver_;
 };
 
 MockMojoProxyResolverFactory::MockMojoProxyResolverFactory(
     MockMojoProxyResolver* resolver,
-    mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolverFactory> req)
-    : resolver_(resolver), binding_(this, std::move(req)) {}
+    mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolverFactory> receiver)
+    : resolver_(resolver), receiver_(this, std::move(receiver)) {}
 
 MockMojoProxyResolverFactory::~MockMojoProxyResolverFactory() {
   EXPECT_TRUE(create_resolver_actions_.empty())
@@ -394,8 +411,7 @@ void MockMojoProxyResolverFactory::WaitForNextRequest() {
 
 void MockMojoProxyResolverFactory::WakeWaiter() {
   if (!quit_closure_.is_null())
-    quit_closure_.Run();
-  quit_closure_.Reset();
+    std::move(quit_closure_).Run();
 }
 
 void MockMojoProxyResolverFactory::ClearBlockedClients() {
@@ -405,65 +421,61 @@ void MockMojoProxyResolverFactory::ClearBlockedClients() {
 void MockMojoProxyResolverFactory::RespondToBlockedClientsWithResult(
     net::Error error) {
   for (const auto& client : blocked_clients_) {
-    (*client)->ReportResult(error);
+    client->ReportResult(error);
   }
 }
 
 void MockMojoProxyResolverFactory::CreateResolver(
     const std::string& pac_script,
-    mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolver> request,
-    proxy_resolver::mojom::ProxyResolverFactoryRequestClientPtr client) {
+    mojo::PendingReceiver<proxy_resolver::mojom::ProxyResolver> receiver,
+    mojo::PendingRemote<
+        proxy_resolver::mojom::ProxyResolverFactoryRequestClient>
+        pending_client) {
   ASSERT_FALSE(create_resolver_actions_.empty());
   CreateProxyResolverAction action = create_resolver_actions_.front();
   create_resolver_actions_.pop();
 
   EXPECT_EQ(action.expected_pac_script, pac_script);
+  mojo::Remote<proxy_resolver::mojom::ProxyResolverFactoryRequestClient> client(
+      std::move(pending_client));
   client->Alert(pac_script);
   client->OnError(12345, pac_script);
   switch (action.action) {
     case CreateProxyResolverAction::COMPLETE: {
       if (action.error == net::OK)
-        resolver_->AddConnection(std::move(request));
+        resolver_->AddConnection(std::move(receiver));
       client->ReportResult(action.error);
       break;
     }
     case CreateProxyResolverAction::DROP_CLIENT: {
-      // Save |request| so its pipe isn't closed.
-      blocked_resolver_requests_.push_back(
-          std::make_unique<
-              mojo::InterfaceRequest<proxy_resolver::mojom::ProxyResolver>>(
-              std::move(request)));
+      // Save |receiver| so its pipe isn't closed.
+      blocked_resolver_receivers_.push_back(std::move(receiver));
       break;
     }
     case CreateProxyResolverAction::DROP_RESOLVER: {
       // Save |client| so its pipe isn't closed.
-      blocked_clients_.push_back(
-          std::make_unique<
-              proxy_resolver::mojom::ProxyResolverFactoryRequestClientPtr>(
-              std::move(client)));
+      blocked_clients_.push_back(std::move(client));
       break;
     }
     case CreateProxyResolverAction::DROP_BOTH: {
-      // Both |request| and |client| will be closed.
+      // Both |receiver| and |client| will be closed.
       break;
     }
     case CreateProxyResolverAction::WAIT_FOR_CLIENT_DISCONNECT: {
       base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-      client.set_connection_error_handler(run_loop.QuitClosure());
+      client.set_disconnect_handler(run_loop.QuitClosure());
       run_loop.Run();
-      ASSERT_TRUE(client.encountered_error());
+      ASSERT_FALSE(client.is_connected());
       break;
     }
     case CreateProxyResolverAction::MAKE_DNS_REQUEST: {
-      auto request = std::make_unique<net::HostResolver::RequestInfo>(
-          net::HostPortPair(pac_script, 12345));
-      proxy_resolver::mojom::HostResolverRequestClientPtr dns_client;
-      mojo::MakeRequest(&dns_client);
-      client->ResolveDns(std::move(request), std::move(dns_client));
-      blocked_clients_.push_back(
-          std::make_unique<
-              proxy_resolver::mojom::ProxyResolverFactoryRequestClientPtr>(
-              std::move(client)));
+      mojo::PendingRemote<proxy_resolver::mojom::HostResolverRequestClient>
+          dns_client;
+      ignore_result(dns_client.InitWithNewPipeAndPassReceiver());
+      client->ResolveDns(pac_script,
+                         net::ProxyResolveDnsOperation::DNS_RESOLVE_EX,
+                         net::NetworkIsolationKey(), std::move(dns_client));
+      blocked_clients_.push_back(std::move(client));
       break;
     }
   }
@@ -480,76 +492,17 @@ void DeleteResolverFactoryRequestCallback(
   std::move(callback).Run(result);
 }
 
-class MockHostResolver : public net::HostResolver {
- public:
-  enum Event {
-    DNS_REQUEST,
-  };
-
-  // net::HostResolver overrides.
-  std::unique_ptr<HostResolver::ResolveHostRequest> CreateRequest(
-      const net::HostPortPair& host,
-      const net::NetLogWithSource& source_net_log,
-      const base::Optional<ResolveHostParameters>& optional_parameters)
-      override {
-    // TODO(crbug.com/821021): Implement.
-    NOTIMPLEMENTED();
-    return nullptr;
-  }
-
-  int Resolve(const RequestInfo& info,
-              net::RequestPriority priority,
-              net::AddressList* addresses,
-              net::CompletionOnceCallback callback,
-              std::unique_ptr<Request>* request,
-              const net::NetLogWithSource& source_net_log) override {
-    waiter_.NotifyEvent(DNS_REQUEST);
-    return net::ERR_IO_PENDING;
-  }
-
-  int ResolveFromCache(const RequestInfo& info,
-                       net::AddressList* addresses,
-                       const net::NetLogWithSource& source_net_log) override {
-    return net::ERR_DNS_CACHE_MISS;
-  }
-
-  int ResolveStaleFromCache(
-      const RequestInfo& info,
-      net::AddressList* addresses,
-      net::HostCache::EntryStaleness* stale_info,
-      const net::NetLogWithSource& source_net_log) override {
-    return net::ERR_DNS_CACHE_MISS;
-  }
-
-  net::HostCache* GetHostCache() override { return nullptr; }
-
-  bool HasCached(base::StringPiece hostname,
-                 net::HostCache::Entry::Source* source_out,
-                 net::HostCache::EntryStaleness* stale_out) const override {
-    return false;
-  }
-
-  net::EventWaiter<Event>& waiter() { return waiter_; }
-
- private:
-  net::EventWaiter<Event> waiter_;
-};
-
 void CheckCapturedNetLogEntries(const std::string& expected_string,
-                                const net::TestNetLogEntry::List& entries) {
+                                const std::vector<net::NetLogEntry>& entries) {
   ASSERT_EQ(2u, entries.size());
   EXPECT_EQ(net::NetLogEventType::PAC_JAVASCRIPT_ALERT, entries[0].type);
-  std::string message;
-  ASSERT_TRUE(entries[0].GetStringValue("message", &message));
-  EXPECT_EQ(expected_string, message);
-  ASSERT_FALSE(entries[0].params->HasKey("line_number"));
-  message.clear();
+  EXPECT_EQ(expected_string,
+            net::GetStringValueFromParams(entries[0], "message"));
+  ASSERT_FALSE(entries[0].params.FindKey("line_number"));
   EXPECT_EQ(net::NetLogEventType::PAC_JAVASCRIPT_ERROR, entries[1].type);
-  ASSERT_TRUE(entries[1].GetStringValue("message", &message));
-  EXPECT_EQ(expected_string, message);
-  int line_number = 0;
-  ASSERT_TRUE(entries[1].GetIntegerValue("line_number", &line_number));
-  EXPECT_EQ(12345, line_number);
+  EXPECT_EQ(expected_string,
+            net::GetStringValueFromParams(entries[1], "message"));
+  EXPECT_EQ(12345, net::GetIntegerValueFromParams(entries[1], "line_number"));
 }
 
 }  // namespace
@@ -557,17 +510,22 @@ void CheckCapturedNetLogEntries(const std::string& expected_string,
 class ProxyResolverFactoryMojoTest : public testing::Test {
  public:
   void SetUp() override {
-    proxy_resolver::mojom::ProxyResolverFactoryPtr factory_ptr;
+    mojo::PendingRemote<proxy_resolver::mojom::ProxyResolverFactory>
+        factory_remote;
     mock_proxy_resolver_factory_.reset(new MockMojoProxyResolverFactory(
-        &mock_proxy_resolver_, mojo::MakeRequest(&factory_ptr)));
-    proxy_resolver_factory_mojo_.reset(new ProxyResolverFactoryMojo(
-        std::move(factory_ptr), &host_resolver_,
-        base::Callback<std::unique_ptr<net::ProxyResolverErrorObserver>()>(),
-        &net_log_));
+        &mock_proxy_resolver_,
+        factory_remote.InitWithNewPipeAndPassReceiver()));
+    proxy_resolver_factory_mojo_.reset(
+        new ProxyResolverFactoryMojo(std::move(factory_remote), &host_resolver_,
+                                     base::NullCallback(), &net_log_));
   }
 
-  std::unique_ptr<Request> MakeRequest(const GURL& url) {
-    return std::make_unique<Request>(proxy_resolver_mojo_.get(), url);
+  std::unique_ptr<Request> MakeRequest(
+      const GURL& url,
+      const net::NetworkIsolationKey& network_isolation_key =
+          net::NetworkIsolationKey()) {
+    return std::make_unique<Request>(proxy_resolver_mojo_.get(), url,
+                                     network_isolation_key);
   }
 
   net::ProxyInfo ProxyServersFromPacString(const std::string& pac_string) {
@@ -597,9 +555,9 @@ class ProxyResolverFactoryMojoTest : public testing::Test {
     std::move(callback).Run(result);
   }
 
-  base::test::ScopedTaskEnvironment task_environment_;
-  MockHostResolver host_resolver_;
-  net::TestNetLog net_log_;
+  base::test::TaskEnvironment task_environment_;
+  net::HangingHostResolver host_resolver_;
+  net::RecordingTestNetLog net_log_;
   std::unique_ptr<MockMojoProxyResolverFactory> mock_proxy_resolver_factory_;
   std::unique_ptr<net::ProxyResolverFactory> proxy_resolver_factory_mojo_;
 
@@ -609,9 +567,7 @@ class ProxyResolverFactoryMojoTest : public testing::Test {
 
 TEST_F(ProxyResolverFactoryMojoTest, CreateProxyResolver) {
   CreateProxyResolver();
-  net::TestNetLogEntry::List entries;
-  net_log_.GetEntries(&entries);
-  CheckCapturedNetLogEntries(kScriptData, entries);
+  CheckCapturedNetLogEntries(kScriptData, net_log_.GetEntries());
 }
 
 TEST_F(ProxyResolverFactoryMojoTest, CreateProxyResolver_Empty) {
@@ -639,15 +595,15 @@ TEST_F(ProxyResolverFactoryMojoTest, CreateProxyResolver_Url) {
 
 TEST_F(ProxyResolverFactoryMojoTest, CreateProxyResolver_Failed) {
   mock_proxy_resolver_factory_->AddCreateProxyResolverAction(
-      CreateProxyResolverAction::ReturnResult(kScriptData,
-                                              net::ERR_PAC_STATUS_NOT_OK));
+      CreateProxyResolverAction::ReturnResult(
+          kScriptData, net::ERR_HTTP_RESPONSE_CODE_FAILURE));
 
   net::TestCompletionCallback callback;
   scoped_refptr<net::PacFileData> pac_script(
       net::PacFileData::FromUTF8(kScriptData));
   std::unique_ptr<net::ProxyResolverFactory::Request> request;
   EXPECT_EQ(
-      net::ERR_PAC_STATUS_NOT_OK,
+      net::ERR_HTTP_RESPONSE_CODE_FAILURE,
       callback.GetResult(proxy_resolver_factory_mojo_->CreateProxyResolver(
           pac_script, &proxy_resolver_mojo_, callback.callback(), &request)));
   EXPECT_TRUE(request);
@@ -725,32 +681,33 @@ TEST_F(ProxyResolverFactoryMojoTest,
   // When the ResolverRequest pipe is dropped, the ProxyResolverFactory
   // shouldn't notice, and should just continue to wait for a response on the
   // other pipe.
-  net::TestCompletionCallback callback;
-  EXPECT_EQ(
-      net::ERR_IO_PENDING,
-      proxy_resolver_factory_mojo_->CreateProxyResolver(
-          pac_script, &proxy_resolver_mojo_, callback.callback(), &request));
+  net::TestCompletionCallback create_callback;
+  EXPECT_EQ(net::ERR_IO_PENDING,
+            proxy_resolver_factory_mojo_->CreateProxyResolver(
+                pac_script, &proxy_resolver_mojo_, create_callback.callback(),
+                &request));
   EXPECT_TRUE(request);
   mock_proxy_resolver_factory_->WaitForNextRequest();
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(callback.have_result());
+  EXPECT_FALSE(create_callback.have_result());
 
   // The client pipe reports success!
   mock_proxy_resolver_factory_->RespondToBlockedClientsWithResult(net::OK);
-  EXPECT_EQ(net::OK, callback.WaitForResult());
+  EXPECT_EQ(net::OK, create_callback.WaitForResult());
 
   // Proxy resolutions should fail with ERR_PAC_SCRIPT_TERMINATED, however. That
   // error should normally cause the ProxyResolutionService to destroy the
   // resolver.
   net::ProxyInfo results;
   std::unique_ptr<net::ProxyResolver::Request> pac_request;
+  net::TestCompletionCallback delete_callback;
   EXPECT_EQ(net::ERR_PAC_SCRIPT_TERMINATED,
-            callback.GetResult(proxy_resolver_mojo_->GetProxyForURL(
-                GURL(kExampleUrl), &results,
+            delete_callback.GetResult(proxy_resolver_mojo_->GetProxyForURL(
+                GURL(kExampleUrl), net::NetworkIsolationKey(), &results,
                 base::BindOnce(
                     &ProxyResolverFactoryMojoTest::DeleteProxyResolverCallback,
-                    base::Unretained(this), callback.callback()),
+                    base::Unretained(this), delete_callback.callback()),
                 &pac_request, net::NetLogWithSource())));
 }
 
@@ -804,9 +761,13 @@ TEST_F(ProxyResolverFactoryMojoTest, CreateProxyResolver_DnsRequest) {
       proxy_resolver_factory_mojo_->CreateProxyResolver(
           pac_script, &proxy_resolver_mojo_, callback.callback(), &request));
   ASSERT_TRUE(request);
-  host_resolver_.waiter().WaitForEvent(MockHostResolver::DNS_REQUEST);
+
+  base::RunLoop run_loop;
+  run_loop.RunUntilIdle();
+
   mock_proxy_resolver_factory_->ClearBlockedClients();
   callback.WaitForResult();
+  EXPECT_EQ(1, host_resolver_.num_cancellations());
 }
 
 TEST_F(ProxyResolverFactoryMojoTest, GetProxyForURL) {
@@ -822,12 +783,8 @@ TEST_F(ProxyResolverFactoryMojoTest, GetProxyForURL) {
 
   EXPECT_EQ("DIRECT", request->results().ToPacString());
 
-  net::TestNetLogEntry::List entries;
-  net_log_.GetEntries(&entries);
-  CheckCapturedNetLogEntries(url.spec(), entries);
-  entries.clear();
-  request->net_log().GetEntries(&entries);
-  CheckCapturedNetLogEntries(url.spec(), entries);
+  CheckCapturedNetLogEntries(url.spec(), net_log_.GetEntries());
+  CheckCapturedNetLogEntries(url.spec(), request->net_log().GetEntries());
 }
 
 TEST_F(ProxyResolverFactoryMojoTest, GetProxyForURL_MultipleResults) {
@@ -937,7 +894,7 @@ TEST_F(ProxyResolverFactoryMojoTest, GetProxyForURL_DeleteInCallback) {
   net::NetLogWithSource net_log;
   EXPECT_EQ(net::OK,
             callback.GetResult(proxy_resolver_mojo_->GetProxyForURL(
-                GURL(kExampleUrl), &results,
+                GURL(kExampleUrl), net::NetworkIsolationKey(), &results,
                 base::BindOnce(
                     &ProxyResolverFactoryMojoTest::DeleteProxyResolverCallback,
                     base::Unretained(this), callback.callback()),
@@ -956,7 +913,7 @@ TEST_F(ProxyResolverFactoryMojoTest,
   net::NetLogWithSource net_log;
   EXPECT_EQ(net::ERR_PAC_SCRIPT_TERMINATED,
             callback.GetResult(proxy_resolver_mojo_->GetProxyForURL(
-                GURL(kExampleUrl), &results,
+                GURL(kExampleUrl), net::NetworkIsolationKey(), &results,
                 base::BindOnce(
                     &ProxyResolverFactoryMojoTest::DeleteProxyResolverCallback,
                     base::Unretained(this), callback.callback()),
@@ -972,10 +929,33 @@ TEST_F(ProxyResolverFactoryMojoTest, GetProxyForURL_DnsRequest) {
   EXPECT_THAT(request->Resolve(), IsError(net::ERR_IO_PENDING));
   EXPECT_EQ(net::LOAD_STATE_RESOLVING_PROXY_FOR_URL, request->load_state());
 
-  host_resolver_.waiter().WaitForEvent(MockHostResolver::DNS_REQUEST);
-  EXPECT_EQ(net::LOAD_STATE_RESOLVING_HOST_IN_PAC_FILE, request->load_state());
+  base::RunLoop run_loop;
+  run_loop.RunUntilIdle();
+
   mock_proxy_resolver_.ClearBlockedClients();
   request->WaitForResult();
+  EXPECT_EQ(1, host_resolver_.num_cancellations());
+}
+
+TEST_F(ProxyResolverFactoryMojoTest,
+       GetProxyForURL_DnsRequestWithNetworkIsolationKey) {
+  const url::Origin kOrigin(url::Origin::Create(GURL("https://origin.test/")));
+  const net::NetworkIsolationKey kNetworkIsolationKey(kOrigin, kOrigin);
+  const GURL kUrl(kExampleUrl);
+
+  mock_proxy_resolver_.AddGetProxyAction(
+      GetProxyForUrlAction::MakeDnsRequest(kUrl));
+  CreateProxyResolver();
+
+  std::unique_ptr<Request> request(MakeRequest(kUrl, kNetworkIsolationKey));
+  EXPECT_THAT(request->Resolve(), IsError(net::ERR_IO_PENDING));
+  EXPECT_EQ(net::LOAD_STATE_RESOLVING_PROXY_FOR_URL, request->load_state());
+
+  base::RunLoop run_loop;
+  run_loop.RunUntilIdle();
+
+  EXPECT_EQ(kUrl.host(), host_resolver_.last_host().host());
+  EXPECT_EQ(kNetworkIsolationKey, host_resolver_.last_network_isolation_key());
 }
 
 TEST_F(ProxyResolverFactoryMojoTest, DeleteResolver) {

@@ -13,9 +13,13 @@ vollick@chromium.org
 
 # For surface ID propagation and synchronization
 samans@chromium.org
+jonross@chromium.org
 
 # lowLatency canvas
 mcasas@chromium.org
+
+# canvas resources and images
+khushalsagar@chromium.org
 
 # TEAM: paint-dev@chromium.org
 # COMPONENT: Blink>Paint

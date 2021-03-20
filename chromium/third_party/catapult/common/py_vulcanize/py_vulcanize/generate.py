@@ -2,17 +2,22 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
-import sys
 import subprocess
+import sys
 import tempfile
 
+from py_vulcanize import html_generation_controller
+
 try:
-  from StringIO import StringIO
+  from six import StringIO
 except ImportError:
   from io import StringIO
 
-from py_vulcanize import html_generation_controller
 
 
 html_warning_message = """
@@ -47,6 +52,22 @@ css_warning_message = """
  */
 """
 
+origin_trial_tokens = [
+  # WebComponent V0 origin trial token for googleusercontent.com + subdomains.
+  # This is the domain from which traces in cloud storage are served.
+  # Expires Nov 5, 2020. See https://crbug.com/1021137
+  "AnYuQDtUf6OrWCmR9Okd67JhWVTbmnRedvPi1TEvAxac8+1p6o9q08FoDO6oCbLD0xEqev+SkZFiIhFSzlY9HgUAAABxeyJvcmlnaW4iOiJodHRwczovL2dvb2dsZXVzZXJjb250ZW50LmNvbTo0NDMiLCJmZWF0dXJlIjoiV2ViQ29tcG9uZW50c1YwIiwiZXhwaXJ5IjoxNjA0NjE0NTM4LCJpc1N1YmRvbWFpbiI6dHJ1ZX0=",
+  # This is for chromium-build-stats.appspot.com (ukai@)
+  # Expires Feb 2, 2021. see https://crbug.com/1050215
+  "AkFXw3wHnOs/XXYqFXpc3diDLrRFd9PTgGs/gs43haZmngI/u1g8L4bDnSKLZkB6fecjmjTwcAMQFCpWMAoHSQEAAAB8eyJvcmlnaW4iOiJodHRwczovL2Nocm9taXVtLWJ1aWxkLXN0YXRzLmFwcHNwb3QuY29tOjQ0MyIsImZlYXR1cmUiOiJXZWJDb21wb25lbnRzVjAiLCJleHBpcnkiOjE2MTIyMjM5OTksImlzU3ViZG9tYWluIjp0cnVlfQ==",
+  # This is for chromium-build-stats-staging.appspot.com (ukai@)
+  # Expires Feb 2, 2021, see https://crbug.com/1050215
+  "AtQY4wpX9+nj+Vn27cTgygzIPbtB2WoAoMQR5jK9mCm/H2gRIDH6MmGVAaziv9XnYTDKjhBnQYtecbTiIHCQiAIAAACEeyJvcmlnaW4iOiJodHRwczovL2Nocm9taXVtLWJ1aWxkLXN0YXRzLXN0YWdpbmcuYXBwc3BvdC5jb206NDQzIiwiZmVhdHVyZSI6IldlYkNvbXBvbmVudHNWMCIsImV4cGlyeSI6MTYxMjIyMzk5OSwiaXNTdWJkb21haW4iOnRydWV9"
+  #
+  # Add more tokens here if traces are served from other domains.
+  # WebComponent V0 origin tiral token is generated on
+  # https://developers.chrome.com/origintrials/#/trials/active
+]
 
 def _AssertIsUTF8(f):
   if isinstance(f, StringIO):
@@ -69,13 +90,13 @@ def _MinifyJS(input_js):
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE)
-    res = p.communicate(input=input_js)
+    res = p.communicate(input=input_js.encode('utf-8'))
     errorcode = p.wait()
     if errorcode != 0:
       sys.stderr.write('rJSmin exited with error code %d' % errorcode)
       sys.stderr.write(res[1])
       raise Exception('Failed to minify, omgah')
-    return res[0]
+    return res[0].decode('utf-8')
 
 
 def GenerateJS(load_sequence,
@@ -144,8 +165,8 @@ def GenerateJSToFile(f,
       sln = '.'.join(parts[:2])
 
       # Output
-      print('%i\t%s\t%s\t%s\t%s' % (
-          len(js), min_js_size, module.name, tln, sln))
+      print(('%i\t%s\t%s\t%s\t%s' %
+             (len(js), min_js_size, module.name, tln, sln)))
       sys.stdout.flush()
 
 
@@ -201,6 +222,11 @@ def GenerateStandaloneHTMLAsString(*args, **kwargs):
   GenerateStandaloneHTMLToFile(f, *args, **kwargs)
   return f.getvalue()
 
+def _WriteOriginTrialTokens(output_file):
+  for token in origin_trial_tokens:
+    output_file.write('  <meta http-equiv="origin-trial" content="')
+    output_file.write(token)
+    output_file.write('">\n')
 
 def GenerateStandaloneHTMLToFile(output_file,
                                  load_sequence,
@@ -226,6 +252,7 @@ def GenerateStandaloneHTMLToFile(output_file,
         '  <head i18n-values="dir:textdirection;">\n'
         '  <meta http-equiv="Content-Type" content="text/html;'
         'charset=utf-8">\n')
+    _WriteOriginTrialTokens(output_file)
     if title:
       output_file.write('  <title>%s</title>\n  ' % title)
   else:

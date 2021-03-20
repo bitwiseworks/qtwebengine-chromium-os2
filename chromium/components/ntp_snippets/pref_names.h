@@ -8,13 +8,6 @@
 namespace ntp_snippets {
 namespace prefs {
 
-// If set to false, remote suggestions are completely disabled. This is set by
-// an enterprise policy.
-extern const char kEnableSnippets[];
-
-// Whether the list of NTP snippets is visible in UI. This is set to false when
-// the user toggles the list off.
-extern const char kArticlesListVisible[];
 
 // The pref name under which remote suggestion categories (including their ID
 // and title) are stored.
@@ -66,9 +59,6 @@ extern const char kSnippetThumbnailsRequestsDay[];
 // The pref name for the time of the last successful background fetch.
 extern const char kLastSuccessfulBackgroundFetchTime[];
 
-extern const char kDismissedAssetDownloadSuggestions[];
-extern const char kDismissedOfflinePageDownloadSuggestions[];
-
 extern const char kDismissedCategories[];
 
 // The pref name for the discounted average number of browsing sessions per hour
@@ -93,32 +83,6 @@ extern const char kUserClassifierLastTimeToUseSuggestions[];
 extern const char kClickBasedCategoryRankerOrderWithClicks[];
 // The pref name for the time when last click decay has happened.
 extern const char kClickBasedCategoryRankerLastDecayTime[];
-
-// The folllowing prefs hold the data used when subscribing for content
-// suggestions via GCM push updates. They are stored in pref such that in case
-// of change (e.g. the token renders invalid), re-subscription is required.
-// They are stored in prefs for persisting them across Chrome restarts.
-///////////////////////////////////////////////////////////////////////////////
-// The pref name for the subscription token used when subscription for
-// breaking news push updates.
-extern const char kBreakingNewsSubscriptionDataToken[];
-// The pref name for whether the subscription is authenticated or not.
-extern const char kBreakingNewsSubscriptionDataIsAuthenticated[];
-//////////////////////// End of breaking news subscription-related prefs.
-
-// The pref name for the subscription token received from the gcm server. As
-// recommended by the GCM team, it is cached in pref for faster bookkeeping to
-// see if subscription exists. This is pref holds the valid token even if
-// different from the one used for subscription. When they are different, Chrome
-// unsubscribes the old token from the content suggestions server, subscribe
-// with the new one and update kBreakingNewsSubscriptionDataToken.
-extern const char kBreakingNewsGCMSubscriptionTokenCache[];
-
-// When the last GCM token validation was.
-extern const char kBreakingNewsGCMLastTokenValidationTime[];
-
-// When the last forced subscription to content suggestions service was.
-extern const char kBreakingNewsGCMLastForcedSubscriptionTime[];
 
 }  // namespace prefs
 }  // namespace ntp_snippets

@@ -13,10 +13,12 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/download/download_danger_prompt.h"
+#include "chrome/browser/ui/webui/downloads/downloads.mojom-forward.h"
 #include "chrome/browser/ui/webui/downloads/downloads_list_tracker.h"
-#include "chrome/browser/ui/webui/downloads/downloads.mojom.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 
 namespace content {
 class DownloadManager;
@@ -31,19 +33,20 @@ class DownloadItem;
 // The handler for Javascript messages related to the "downloads" view,
 // also observes changes to the download manager.
 // TODO(calamity): Remove WebUIMessageHandler.
-class MdDownloadsDOMHandler : public content::WebContentsObserver,
-                              public md_downloads::mojom::PageHandler {
+class DownloadsDOMHandler : public content::WebContentsObserver,
+                            public downloads::mojom::PageHandler {
  public:
-  MdDownloadsDOMHandler(md_downloads::mojom::PageHandlerRequest request,
-                        md_downloads::mojom::PagePtr page,
-                        content::DownloadManager* download_manager,
-                        content::WebUI* web_ui);
-  ~MdDownloadsDOMHandler() override;
+  DownloadsDOMHandler(
+      mojo::PendingReceiver<downloads::mojom::PageHandler> receiver,
+      mojo::PendingRemote<downloads::mojom::Page> page,
+      content::DownloadManager* download_manager,
+      content::WebUI* web_ui);
+  ~DownloadsDOMHandler() override;
 
   // WebContentsObserver implementation.
   void RenderProcessGone(base::TerminationStatus status) override;
 
-  // md_downloads::mojom::PageHandler:
+  // downloads::mojom::PageHandler:
   void GetDownloads(const std::vector<std::string>& search_terms) override;
   void OpenFileRequiringGesture(const std::string& id) override;
   void Drag(const std::string& id) override;
@@ -58,6 +61,7 @@ class MdDownloadsDOMHandler : public content::WebContentsObserver,
   void Cancel(const std::string& id) override;
   void ClearAll() override;
   void OpenDownloadsFolderRequiringGesture() override;
+  void OpenDuringScanningRequiringGesture(const std::string& id) override;
 
  protected:
   // These methods are for mocking so that most of this class does not actually
@@ -123,11 +127,11 @@ class MdDownloadsDOMHandler : public content::WebContentsObserver,
 
   content::WebUI* web_ui_;
 
-  mojo::Binding<md_downloads::mojom::PageHandler> binding_;
+  mojo::Receiver<downloads::mojom::PageHandler> receiver_;
 
-  base::WeakPtrFactory<MdDownloadsDOMHandler> weak_ptr_factory_{this};
+  base::WeakPtrFactory<DownloadsDOMHandler> weak_ptr_factory_{this};
 
-  DISALLOW_COPY_AND_ASSIGN(MdDownloadsDOMHandler);
+  DISALLOW_COPY_AND_ASSIGN(DownloadsDOMHandler);
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_DOWNLOADS_DOWNLOADS_DOM_HANDLER_H_

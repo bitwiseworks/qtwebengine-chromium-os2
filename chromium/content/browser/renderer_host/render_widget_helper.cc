@@ -11,7 +11,6 @@
 #include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
-#include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -33,8 +32,7 @@ void AddWidgetHelper(int render_process_id,
 
 }  // namespace
 
-RenderWidgetHelper::RenderWidgetHelper()
-    : render_process_id_(-1), resource_dispatcher_host_(nullptr) {}
+RenderWidgetHelper::RenderWidgetHelper() : render_process_id_(-1) {}
 
 RenderWidgetHelper::~RenderWidgetHelper() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -46,15 +44,12 @@ RenderWidgetHelper::~RenderWidgetHelper() {
     widget_map.erase(it);
 }
 
-void RenderWidgetHelper::Init(
-    int render_process_id,
-    ResourceDispatcherHostImpl* resource_dispatcher_host) {
+void RenderWidgetHelper::Init(int render_process_id) {
   render_process_id_ = render_process_id;
-  resource_dispatcher_host_ = resource_dispatcher_host;
 
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                           base::BindOnce(&AddWidgetHelper, render_process_id_,
-                                          base::WrapRefCounted(this)));
+  base::PostTask(FROM_HERE, {BrowserThread::IO},
+                 base::BindOnce(&AddWidgetHelper, render_process_id_,
+                                base::WrapRefCounted(this)));
 }
 
 int RenderWidgetHelper::GetNextRoutingID() {
@@ -68,50 +63,6 @@ RenderWidgetHelper* RenderWidgetHelper::FromProcessHostID(
   WidgetHelperMap::const_iterator ci = g_widget_helpers.Get().find(
       render_process_host_id);
   return (ci == g_widget_helpers.Get().end())? NULL : ci->second;
-}
-
-void RenderWidgetHelper::CreateNewWidget(int opener_id,
-                                         mojom::WidgetPtr widget,
-                                         int* route_id) {
-  *route_id = GetNextRoutingID();
-
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&RenderWidgetHelper::OnCreateWidgetOnUI, this, opener_id,
-                     *route_id, widget.PassInterface()));
-}
-
-void RenderWidgetHelper::CreateNewFullscreenWidget(int opener_id,
-                                                   mojom::WidgetPtr widget,
-                                                   int* route_id) {
-  *route_id = GetNextRoutingID();
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&RenderWidgetHelper::OnCreateFullscreenWidgetOnUI, this,
-                     opener_id, *route_id, widget.PassInterface()));
-}
-
-void RenderWidgetHelper::OnCreateWidgetOnUI(int32_t opener_id,
-                                            int32_t route_id,
-                                            mojom::WidgetPtrInfo widget_info) {
-  mojom::WidgetPtr widget;
-  widget.Bind(std::move(widget_info));
-  RenderViewHostImpl* host = RenderViewHostImpl::FromID(
-      render_process_id_, opener_id);
-  if (host)
-    host->CreateNewWidget(route_id, std::move(widget));
-}
-
-void RenderWidgetHelper::OnCreateFullscreenWidgetOnUI(
-    int32_t opener_id,
-    int32_t route_id,
-    mojom::WidgetPtrInfo widget_info) {
-  mojom::WidgetPtr widget;
-  widget.Bind(std::move(widget_info));
-  RenderViewHostImpl* host = RenderViewHostImpl::FromID(
-      render_process_id_, opener_id);
-  if (host)
-    host->CreateNewFullscreenWidget(route_id, std::move(widget));
 }
 
 }  // namespace content

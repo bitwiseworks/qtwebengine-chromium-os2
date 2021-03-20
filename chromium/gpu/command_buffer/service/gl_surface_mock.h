@@ -21,17 +21,16 @@ class GLSurfaceMock : public gl::GLSurface {
   MOCK_METHOD4(Resize,
                bool(const gfx::Size& size,
                     float scale_factor,
-                    ColorSpace color_space,
+                    const gfx::ColorSpace& color_space,
                     bool alpha));
   MOCK_METHOD0(IsOffscreen, bool());
-  MOCK_METHOD1(SwapBuffers,
-               gfx::SwapResult(const PresentationCallback& callback));
+  MOCK_METHOD1(SwapBuffers, gfx::SwapResult(PresentationCallback callback));
   MOCK_METHOD5(PostSubBuffer,
                gfx::SwapResult(int x,
                                int y,
                                int width,
                                int height,
-                               const PresentationCallback& callback));
+                               PresentationCallback callback));
   MOCK_METHOD0(SupportsPostSubBuffer, bool());
   MOCK_METHOD0(GetSize, gfx::Size());
   MOCK_METHOD0(GetHandle, void*());

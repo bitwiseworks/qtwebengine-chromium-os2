@@ -28,7 +28,9 @@
 #include <vector>
 
 #include "core/fxcrt/fx_extension.h"
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
+#include "core/fxge/text_char_pos.h"
 #include "fxbarcode/BC_Writer.h"
 #include "fxbarcode/common/BC_CommonBitMatrix.h"
 #include "fxbarcode/oned/BC_OneDimWriter.h"
@@ -135,8 +137,8 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
   int32_t leftPosition = 3 * multiple;
   ByteString str = FX_UTF8Encode(contents);
   size_t iLength = str.GetLength();
-  std::vector<FXTEXT_CHARPOS> charpos(iLength);
-  ByteString tempStr = str.Left(4);
+  std::vector<TextCharPos> charpos(iLength);
+  ByteString tempStr = str.First(4);
   size_t iLen = tempStr.GetLength();
   int32_t strWidth = 7 * multiple * 4;
   float blank = 0.0;
@@ -149,14 +151,14 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
                      (float)(leftPosition + strWidth - 0.5), (float)m_Height);
   matr.Concat(*matrix);
   FX_RECT re = matr.TransformRect(rect).GetOuterRect();
-  device->FillRect(re, m_backgroundColor);
+  device->FillRect(re, kBackgroundColor);
   CFX_Matrix matr1(m_outputHScale, 0.0, 0.0, 1.0, 0.0, 0.0);
   CFX_FloatRect rect1(
       (float)(leftPosition + 33 * multiple), (float)(m_Height - iTextHeight),
       (float)(leftPosition + 33 * multiple + strWidth - 0.5), (float)m_Height);
   matr1.Concat(*matrix);
   re = matr1.TransformRect(rect1).GetOuterRect();
-  device->FillRect(re, m_backgroundColor);
+  device->FillRect(re, kBackgroundColor);
   strWidth = (int32_t)(strWidth * m_outputHScale);
 
   CalcTextInfo(tempStr, charpos.data(), m_pFont.Get(), (float)strWidth,
@@ -167,10 +169,10 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
                               (float)(m_Height - iTextHeight + iFontSize));
     affine_matrix1.Concat(*matrix);
     device->DrawNormalText(iLen, charpos.data(), m_pFont.Get(),
-                           static_cast<float>(iFontSize), &affine_matrix1,
+                           static_cast<float>(iFontSize), affine_matrix1,
                            m_fontColor, FXTEXT_CLEARTYPE);
   }
-  tempStr = str.Mid(4, 4);
+  tempStr = str.Substr(4, 4);
   iLen = tempStr.GetLength();
   CalcTextInfo(tempStr, &charpos[4], m_pFont.Get(), (float)strWidth, iFontSize,
                blank);
@@ -182,7 +184,7 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
     if (matrix)
       affine_matrix1.Concat(*matrix);
     device->DrawNormalText(iLen, &charpos[4], m_pFont.Get(),
-                           static_cast<float>(iFontSize), &affine_matrix1,
+                           static_cast<float>(iFontSize), affine_matrix1,
                            m_fontColor, FXTEXT_CLEARTYPE);
   }
   return true;

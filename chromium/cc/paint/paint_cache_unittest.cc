@@ -18,7 +18,7 @@ sk_sp<SkTextBlob> CreateBlob() {
 
   SkTextBlobBuilder builder;
   int glyph_count = 5;
-  const auto& run = builder.allocRun(font, glyph_count, 1.2f, 2.3f, nullptr);
+  const auto& run = builder.allocRun(font, glyph_count, 1.2f, 2.3f);
   // allocRun() allocates only the glyph buffer.
   std::fill(run.glyphs, run.glyphs + glyph_count, 0);
   return builder.make();
@@ -106,11 +106,13 @@ TEST_P(PaintCacheTest, ServiceBasic) {
     case PaintCacheDataType::kPath: {
       auto path = CreatePath();
       auto id = path.getGenerationID();
-      EXPECT_EQ(nullptr, service_cache.GetPath(id));
+      SkPath cached_path;
+      EXPECT_EQ(false, service_cache.GetPath(id, &cached_path));
       service_cache.PutPath(id, path);
-      EXPECT_EQ(path, *service_cache.GetPath(id));
+      EXPECT_EQ(true, service_cache.GetPath(id, &cached_path));
+      EXPECT_EQ(path, cached_path);
       service_cache.Purge(GetType(), 1, &id);
-      EXPECT_EQ(nullptr, service_cache.GetPath(id));
+      EXPECT_EQ(false, service_cache.GetPath(id, &cached_path));
 
       service_cache.PutPath(id, path);
     } break;
@@ -121,7 +123,7 @@ TEST_P(PaintCacheTest, ServiceBasic) {
   EXPECT_TRUE(service_cache.empty());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     P,
     PaintCacheTest,
     ::testing::Range(static_cast<uint32_t>(0),

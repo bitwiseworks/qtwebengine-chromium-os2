@@ -32,23 +32,24 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_FORM_SUBMISSION_H_
 
 #include "base/macros.h"
-#include "third_party/blink/public/web/web_triggering_event_info.h"
+#include "third_party/blink/public/common/navigation/triggering_event_info.h"
+#include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/loader/navigation_policy.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
-class Document;
 class EncodedFormData;
 class Event;
+class Frame;
 class HTMLFormControlElement;
 class HTMLFormElement;
 
-class FormSubmission : public GarbageCollectedFinalized<FormSubmission> {
+class FormSubmission final : public GarbageCollected<FormSubmission> {
  public:
   enum SubmitMethod { kGetMethod, kPostMethod, kDialogMethod };
 
@@ -96,7 +97,7 @@ class FormSubmission : public GarbageCollectedFinalized<FormSubmission> {
 
   static FormSubmission* Create(HTMLFormElement*,
                                 const Attributes&,
-                                Event*,
+                                const Event*,
                                 HTMLFormControlElement* submit_button);
 
   FormSubmission(SubmitMethod,
@@ -105,26 +106,31 @@ class FormSubmission : public GarbageCollectedFinalized<FormSubmission> {
                  const AtomicString& content_type,
                  HTMLFormElement*,
                  scoped_refptr<EncodedFormData>,
-                 const String& boundary,
-                 Event*);
+                 const Event*,
+                 NavigationPolicy navigation_policy,
+                 TriggeringEventInfo triggering_event_info,
+                 ClientNavigationReason reason,
+                 std::unique_ptr<ResourceRequest> resource_request,
+                 Frame* target_frame,
+                 WebFrameLoadType load_type,
+                 Document* origin_document);
   // FormSubmission for DialogMethod
   explicit FormSubmission(const String& result);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
-  FrameLoadRequest CreateFrameLoadRequest(Document* origin_document);
+  void Navigate();
 
   KURL RequestURL() const;
 
   SubmitMethod Method() const { return method_; }
   const KURL& Action() const { return action_; }
-  const AtomicString& Target() const { return target_; }
-  void ClearTarget() { target_ = g_null_atom; }
   HTMLFormElement* Form() const { return form_.Get(); }
   EncodedFormData* Data() const { return form_data_.get(); }
-  NavigationPolicy GetNavigationPolicy() const { return navigation_policy_; }
 
   const String& Result() const { return result_; }
+
+  Frame* TargetFrame() const { return target_frame_; }
 
  private:
   // FIXME: Hold an instance of Attributes instead of individual members.
@@ -134,10 +140,14 @@ class FormSubmission : public GarbageCollectedFinalized<FormSubmission> {
   AtomicString content_type_;
   Member<HTMLFormElement> form_;
   scoped_refptr<EncodedFormData> form_data_;
-  String boundary_;
   NavigationPolicy navigation_policy_;
-  WebTriggeringEventInfo triggering_event_info_;
+  TriggeringEventInfo triggering_event_info_;
   String result_;
+  ClientNavigationReason reason_;
+  std::unique_ptr<ResourceRequest> resource_request_;
+  Member<Frame> target_frame_;
+  WebFrameLoadType load_type_;
+  Member<Document> origin_document_;
 };
 
 }  // namespace blink

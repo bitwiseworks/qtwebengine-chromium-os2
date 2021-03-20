@@ -49,11 +49,6 @@ class MODULES_EXPORT DirectoryEntry final : public Entry {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DirectoryEntry* Create(DOMFileSystemBase* file_system,
-                                const String& full_path) {
-    return MakeGarbageCollected<DirectoryEntry>(file_system, full_path);
-  }
-
   DirectoryEntry(DOMFileSystemBase*, const String& full_path);
 
   bool isDirectory() const override { return true; }
@@ -70,14 +65,8 @@ class MODULES_EXPORT DirectoryEntry final : public Entry {
   void removeRecursively(V8VoidCallback* success_callback = nullptr,
                          V8ErrorCallback* = nullptr) const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 };
-
-DEFINE_TYPE_CASTS(DirectoryEntry,
-                  Entry,
-                  entry,
-                  entry->isDirectory(),
-                  entry.isDirectory());
 
 }  // namespace blink
 

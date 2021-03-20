@@ -33,11 +33,12 @@ const char kVariationsLastFetchTime[] = "variations_last_fetch_time";
 const char kVariationsPermanentConsistencyCountry[] =
     "variations_permanent_consistency_country";
 
-// Previously used by CachingPermutedEntropyProvider, which has been replaced by
-// NormalizedMurmurHashEntropyProvider. Deleted on startup.
-// TODO(crbug/912368): Remove this after it's been deleted from most installs.
-const char kVariationsPermutedEntropyCache[] =
-    "user_experience_metrics.permuted_entropy_cache";
+// A country code string representing the country used for filtering permanent
+// consistency studies and will not be updated on Chrome updated. It can be
+// changed via chrome://translate-internals and is intended for
+// testing / developer use.
+const char kVariationsPermanentOverriddenCountry[] =
+    "variations_permanent_overridden_country";
 
 // String for the restrict parameter to be appended to the variations URL.
 const char kVariationsRestrictParameter[] = "variations_restrict_parameter";
@@ -92,6 +93,19 @@ const char kVariationsSeedDate[] = "variations_seed_date";
 
 // Digital signature of the binary variations seed data, base64-encoded.
 const char kVariationsSeedSignature[] = "variations_seed_signature";
+
+// Reflects the state of the "ChromeVariations" policy which determines
+// if and which variations should be enabled for the client. The possible
+// values are defined in the VariationsService::RestrictionPolicyValues enum.
+const char kVariationsRestrictionsByPolicy[] =
+    "variations_restrictions_by_policy";
+
+// Reflects the state of the "DeviceChromeVariations" policy which determines
+// if and which variations should be enabled for the client on ChromeOS. The
+// possible values are defined in the
+// VariationsService::RestrictionPolicyValues enum.
+const char kDeviceVariationsRestrictionsByPolicy[] =
+    "device_variations_restrictions_by_policy";
 
 }  // namespace prefs
 }  // namespace variations

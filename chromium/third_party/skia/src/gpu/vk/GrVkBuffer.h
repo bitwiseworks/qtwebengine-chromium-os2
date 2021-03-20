@@ -8,8 +8,8 @@
 #ifndef GrVkBuffer_DEFINED
 #define GrVkBuffer_DEFINED
 
-#include "GrVkResource.h"
-#include "vk/GrVkTypes.h"
+#include "include/gpu/vk/GrVkTypes.h"
+#include "src/gpu/vk/GrVkManagedResource.h"
 
 class GrVkGpu;
 
@@ -20,7 +20,7 @@ class GrVkGpu;
 class GrVkBuffer : public SkNoncopyable {
 public:
     virtual ~GrVkBuffer() {
-        // either release or abandon should have been called by the owner of this object.
+        // release should have been called by the owner of this object.
         SkASSERT(!fResource);
         delete [] (unsigned char*)fMapPtr;
     }
@@ -56,10 +56,10 @@ protected:
 
     class Resource : public GrVkRecycledResource {
     public:
-        Resource(VkBuffer buf, const GrVkAlloc& alloc, Type type)
-            : INHERITED(), fBuffer(buf), fAlloc(alloc), fType(type) {}
+        Resource(GrVkGpu* gpu, VkBuffer buf, const GrVkAlloc& alloc, Type type)
+            : GrVkRecycledResource(gpu), fBuffer(buf), fAlloc(alloc), fType(type) {}
 
-#ifdef SK_TRACE_VK_RESOURCES
+#ifdef SK_TRACE_MANAGED_RESOURCES
         void dumpInfo() const override {
             SkDebugf("GrVkBuffer: %d (%d refs)\n", fBuffer, this->getRefCnt());
         }
@@ -68,16 +68,17 @@ protected:
         GrVkAlloc          fAlloc;
         Type               fType;
 
-    private:
-        void freeGPUData(GrVkGpu* gpu) const override;
+    protected:
+        void freeGPUData() const override;
 
-        void onRecycle(GrVkGpu* gpu) const override { this->unref(gpu); }
+    private:
+        void onRecycle() const override { this->unref(); }
 
         typedef GrVkRecycledResource INHERITED;
     };
 
     // convenience routine for raw buffer creation
-    static const Resource* Create(const GrVkGpu* gpu,
+    static const Resource* Create(GrVkGpu* gpu,
                                   const Desc& descriptor);
 
     GrVkBuffer(const Desc& desc, const GrVkBuffer::Resource* resource)
@@ -95,8 +96,7 @@ protected:
     bool vkUpdateData(GrVkGpu* gpu, const void* src, size_t srcSizeInBytes,
                       bool* createdNewBuffer = nullptr);
 
-    void vkAbandon();
-    void vkRelease(const GrVkGpu* gpu);
+    void vkRelease();
 
 private:
     virtual const Resource* createResource(GrVkGpu* gpu,
@@ -106,6 +106,7 @@ private:
 
     void internalMap(GrVkGpu* gpu, size_t size, bool* createdNewBuffer = nullptr);
     void internalUnmap(GrVkGpu* gpu, size_t size);
+    void copyCpuDataToGpuBuffer(GrVkGpu* gpu, const void* srcData, size_t size);
 
     void validate() const;
     bool vkIsMapped() const;

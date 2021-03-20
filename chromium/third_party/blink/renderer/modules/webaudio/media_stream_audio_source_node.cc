@@ -26,11 +26,11 @@
 #include "third_party/blink/renderer/modules/webaudio/media_stream_audio_source_node.h"
 
 #include <memory>
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_stream_audio_source_options.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
-#include "third_party/blink/renderer/modules/webaudio/media_stream_audio_source_options.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/wtf/locker.h"
+#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 
 namespace blink {
 
@@ -92,6 +92,9 @@ void MediaStreamAudioSourceHandler::SetFormat(uint32_t number_of_channels,
 }
 
 void MediaStreamAudioSourceHandler::Process(uint32_t number_of_frames) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("webaudio.audionode"),
+               "MediaStreamAudioSourceHandler::Process");
+
   AudioBus* output_bus = Output(0).Bus();
 
   if (!GetAudioSourceProvider()) {
@@ -136,10 +139,10 @@ MediaStreamAudioSourceNode* MediaStreamAudioSourceNode::Create(
     ExceptionState& exception_state) {
   DCHECK(IsMainThread());
 
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
+  // TODO(crbug.com/1055983): Remove this when the execution context validity
+  // check is not required in the AudioNode factory methods.
+  if (!context.CheckExecutionContextAndThrowIfNecessary(exception_state))
     return nullptr;
-  }
 
   MediaStreamTrackVector audio_tracks = media_stream.getAudioTracks();
   if (audio_tracks.IsEmpty()) {
@@ -148,10 +151,16 @@ MediaStreamAudioSourceNode* MediaStreamAudioSourceNode::Create(
     return nullptr;
   }
 
-  // Use the first audio track in the media stream.
+  // Find the first track, which is the track whose id comes first given a
+  // lexicographic ordering of the code units of the track id.
   MediaStreamTrack* audio_track = audio_tracks[0];
+  for (auto track : audio_tracks) {
+    if (CodeUnitCompareLessThan(track->id(), audio_track->id())) {
+      audio_track = track;
+    }
+  }
   std::unique_ptr<AudioSourceProvider> provider =
-      audio_track->CreateWebAudioSource();
+      audio_track->CreateWebAudioSource(context.sampleRate());
 
   MediaStreamAudioSourceNode* node =
       MakeGarbageCollected<MediaStreamAudioSourceNode>(
@@ -176,7 +185,7 @@ MediaStreamAudioSourceNode* MediaStreamAudioSourceNode::Create(
   return Create(*context, *options->mediaStream(), exception_state);
 }
 
-void MediaStreamAudioSourceNode::Trace(blink::Visitor* visitor) {
+void MediaStreamAudioSourceNode::Trace(Visitor* visitor) {
   visitor->Trace(audio_track_);
   visitor->Trace(media_stream_);
   AudioSourceProviderClient::Trace(visitor);
@@ -196,6 +205,19 @@ void MediaStreamAudioSourceNode::SetFormat(uint32_t number_of_channels,
                                            float source_sample_rate) {
   GetMediaStreamAudioSourceHandler().SetFormat(number_of_channels,
                                                source_sample_rate);
+}
+
+bool MediaStreamAudioSourceNode::HasPendingActivity() const {
+  // As long as the context is running, this node has activity.
+  return (context()->ContextState() == BaseAudioContext::kRunning);
+}
+
+void MediaStreamAudioSourceNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+}
+
+void MediaStreamAudioSourceNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

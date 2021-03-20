@@ -42,7 +42,7 @@ static int fts3TokenizerEnabled(sqlite3_context *context){
 }
 
 /*
-** Implementation of the SQL scalar function for accessing the underlying
+** Implementation of the SQL scalar function for accessing the underlying 
 ** hash table. This function may be called as follows:
 **
 **   SELECT <function-name>(<key-name>);
@@ -79,7 +79,7 @@ static void fts3TokenizerFunc(
   nName = sqlite3_value_bytes(argv[0])+1;
 
   if( argc==2 ){
-    if( fts3TokenizerEnabled(context) ){
+    if( fts3TokenizerEnabled(context) || sqlite3_value_frombind(argv[1]) ){
       void *pOld;
       int n = sqlite3_value_bytes(argv[1]);
       if( zName==0 || n!=sizeof(pPtr) ){
@@ -106,7 +106,9 @@ static void fts3TokenizerFunc(
       return;
     }
   }
-  sqlite3_result_blob(context, (void *)&pPtr, sizeof(pPtr), SQLITE_TRANSIENT);
+  if( fts3TokenizerEnabled(context) || sqlite3_value_frombind(argv[0]) ){
+    sqlite3_result_blob(context, (void *)&pPtr, sizeof(pPtr), SQLITE_TRANSIENT);
+  }
 }
 
 int sqlite3Fts3IsIdChar(char c){
@@ -212,7 +214,7 @@ int sqlite3Fts3InitTokenizer(
     if( rc!=SQLITE_OK ){
       sqlite3Fts3ErrMsg(pzErr, "unknown tokenizer");
     }else{
-      (*ppTok)->pModule = m;
+      (*ppTok)->pModule = m; 
     }
     sqlite3_free((void *)aArg);
   }
@@ -232,7 +234,7 @@ int sqlite3Fts3InitTokenizer(
 #include <string.h>
 
 /*
-** Implementation of a special SQL scalar function for testing tokenizers
+** Implementation of a special SQL scalar function for testing tokenizers 
 ** designed to be used in concert with the Tcl testing framework. This
 ** function must be called with two or more arguments:
 **
@@ -244,9 +246,9 @@ int sqlite3Fts3InitTokenizer(
 **
 ** The return value is a string that may be interpreted as a Tcl
 ** list. For each token in the <input-string>, three elements are
-** added to the returned list. The first is the token position, the
+** added to the returned list. The first is the token position, the 
 ** second is the token text (folded, stemmed, etc.) and the third is the
-** substring of <input-string> associated with the token. For example,
+** substring of <input-string> associated with the token. For example, 
 ** using the built-in "simple" tokenizer:
 **
 **   SELECT fts_tokenizer_test('simple', 'I don't see how');
@@ -254,7 +256,7 @@ int sqlite3Fts3InitTokenizer(
 ** will return the string:
 **
 **   "{0 i I 1 dont don't 2 see see 3 how how}"
-**
+**   
 */
 static void testFunc(
   sqlite3_context *context,
@@ -349,8 +351,8 @@ finish:
 
 static
 int registerTokenizer(
-  sqlite3 *db,
-  char *zName,
+  sqlite3 *db, 
+  char *zName, 
   const sqlite3_tokenizer_module *p
 ){
   int rc;
@@ -372,8 +374,8 @@ int registerTokenizer(
 
 static
 int queryTokenizer(
-  sqlite3 *db,
-  char *zName,
+  sqlite3 *db, 
+  char *zName,  
   const sqlite3_tokenizer_module **pp
 ){
   int rc;
@@ -388,7 +390,9 @@ int queryTokenizer(
 
   sqlite3_bind_text(pStmt, 1, zName, -1, SQLITE_STATIC);
   if( SQLITE_ROW==sqlite3_step(pStmt) ){
-    if( sqlite3_column_type(pStmt, 0)==SQLITE_BLOB ){
+    if( sqlite3_column_type(pStmt, 0)==SQLITE_BLOB
+     && sqlite3_column_bytes(pStmt, 0)==sizeof(*pp)
+    ){
       memcpy((void *)pp, sqlite3_column_blob(pStmt, 0), sizeof(*pp));
     }
   }
@@ -456,28 +460,28 @@ static void intTestFunc(
 /*
 ** Set up SQL objects in database db used to access the contents of
 ** the hash table pointed to by argument pHash. The hash table must
-** been initialized to use string keys, and to take a private copy
+** been initialized to use string keys, and to take a private copy 
 ** of the key when a value is inserted. i.e. by a call similar to:
 **
 **    sqlite3Fts3HashInit(pHash, FTS3_HASH_STRING, 1);
 **
 ** This function adds a scalar function (see header comment above
 ** fts3TokenizerFunc() in this file for details) and, if ENABLE_TABLE is
-** defined at compilation time, a temporary virtual table (see header
-** comment above struct HashTableVtab) to the database schema. Both
+** defined at compilation time, a temporary virtual table (see header 
+** comment above struct HashTableVtab) to the database schema. Both 
 ** provide read/write access to the contents of *pHash.
 **
 ** The third argument to this function, zName, is used as the name
 ** of both the scalar and, if created, the virtual table.
 */
 int sqlite3Fts3InitHashTable(
-  sqlite3 *db,
-  Fts3Hash *pHash,
+  sqlite3 *db, 
+  Fts3Hash *pHash, 
   const char *zName
 ){
   int rc = SQLITE_OK;
   void *p = (void *)pHash;
-  const int any = SQLITE_ANY;
+  const int any = SQLITE_UTF8|SQLITE_DIRECTONLY;
 
 #ifdef SQLITE_TEST
   char *zTest = 0;

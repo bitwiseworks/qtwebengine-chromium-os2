@@ -9,7 +9,7 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -21,13 +21,13 @@ class PaintController;
 // of DisplayItems, and supports caching via a CachedDisplayItem with the
 // CachedSubsequence DisplayItem type.
 //
-// Also note that useCachedSubsequenceIfPossible is not sufficient to determine
+// Also note that UseCachedSubsequenceIfPossible is not sufficient to determine
 // whether a CachedSubsequence can be used. In particular, the client is
 // responsible for checking that none of the DisplayItemClients that contribute
 // to the subsequence have been invalidated.
 //
 class SubsequenceRecorder final {
-  DISALLOW_NEW();
+  STACK_ALLOCATED();
 
  public:
   static bool UseCachedSubsequenceIfPossible(GraphicsContext& context,
@@ -39,19 +39,15 @@ class SubsequenceRecorder final {
       : paint_controller_(context.GetPaintController()),
         client_(client),
         start_(0) {
-    if (!paint_controller_.DisplayItemConstructionIsDisabled())
-      start_ = paint_controller_.BeginSubsequence();
+    start_ = paint_controller_.BeginSubsequence();
   }
 
-  ~SubsequenceRecorder() {
-    if (!paint_controller_.DisplayItemConstructionIsDisabled())
-      paint_controller_.EndSubsequence(client_, start_);
-  }
+  ~SubsequenceRecorder() { paint_controller_.EndSubsequence(client_, start_); }
 
  private:
   PaintController& paint_controller_;
   const DisplayItemClient& client_;
-  size_t start_;
+  wtf_size_t start_;
 
   DISALLOW_COPY_AND_ASSIGN(SubsequenceRecorder);
 };

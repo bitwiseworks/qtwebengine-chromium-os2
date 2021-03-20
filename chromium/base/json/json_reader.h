@@ -32,11 +32,12 @@
 #include <string>
 
 #include "base/base_export.h"
+#include "base/json/json_common.h"
+#include "base/optional.h"
 #include "base/strings/string_piece.h"
+#include "base/values.h"
 
 namespace base {
-
-class Value;
 
 namespace internal {
 class JSONParser;
@@ -50,16 +51,15 @@ enum JSONParserOptions {
   // Allows commas to exist after the last element in structures.
   JSON_ALLOW_TRAILING_COMMAS = 1 << 0,
 
-  // If set the parser replaces invalid characters with the Unicode replacement
-  // character (U+FFFD). If not set, invalid characters trigger a hard error and
-  // parsing fails.
+  // If set the parser replaces invalid code points (i.e. lone
+  // surrogates) with the Unicode replacement character (U+FFFD). If
+  // not set, invalid code points trigger a hard error and parsing
+  // fails.
   JSON_REPLACE_INVALID_CHARACTERS = 1 << 1,
 };
 
 class BASE_EXPORT JSONReader {
  public:
-  static const int kStackMaxDepth;
-
   // Error codes during parsing.
   enum JsonParseError {
     JSON_NO_ERROR = 0,
@@ -72,7 +72,26 @@ class BASE_EXPORT JSONReader {
     JSON_UNSUPPORTED_ENCODING,
     JSON_UNQUOTED_DICTIONARY_KEY,
     JSON_TOO_LARGE,
+    JSON_UNREPRESENTABLE_NUMBER,
     JSON_PARSE_ERROR_COUNT
+  };
+
+  struct BASE_EXPORT ValueWithError {
+    ValueWithError();
+    ValueWithError(ValueWithError&& other);
+    ValueWithError& operator=(ValueWithError&& other);
+    ~ValueWithError();
+
+    Optional<Value> value;
+
+    // Contains default values if |value| exists, or the error status if |value|
+    // is base::nullopt.
+    JsonParseError error_code = JSON_NO_ERROR;
+    std::string error_message;
+    int error_line = 0;
+    int error_column = 0;
+
+    DISALLOW_COPY_AND_ASSIGN(ValueWithError);
   };
 
   // String versions of parse error codes.
@@ -85,25 +104,43 @@ class BASE_EXPORT JSONReader {
   static const char kUnsupportedEncoding[];
   static const char kUnquotedDictionaryKey[];
   static const char kInputTooLarge[];
+  static const char kUnrepresentableNumber[];
 
   // Constructs a reader.
-  JSONReader(int options = JSON_PARSE_RFC, int max_depth = kStackMaxDepth);
+  JSONReader(int options = JSON_PARSE_RFC,
+             size_t max_depth = internal::kAbsoluteMaxDepth);
 
   ~JSONReader();
 
   // Reads and parses |json|, returning a Value.
+  // If |json| is not a properly formed JSON string, returns base::nullopt.
+  static Optional<Value> Read(StringPiece json,
+                              int options = JSON_PARSE_RFC,
+                              size_t max_depth = internal::kAbsoluteMaxDepth);
+
+  // Deprecated. Use the Read() method above.
+  // Reads and parses |json|, returning a Value.
   // If |json| is not a properly formed JSON string, returns nullptr.
   // Wrap this in base::FooValue::From() to check the Value is of type Foo and
   // convert to a FooValue at the same time.
-  static std::unique_ptr<Value> Read(StringPiece json,
-                                     int options = JSON_PARSE_RFC,
-                                     int max_depth = kStackMaxDepth);
+  static std::unique_ptr<Value> ReadDeprecated(
+      StringPiece json,
+      int options = JSON_PARSE_RFC,
+      size_t max_depth = internal::kAbsoluteMaxDepth);
 
+  // Reads and parses |json| like Read(). Returns a ValueWithError, which on
+  // error, will be populated with a formatted error message, an error code, and
+  // the error location if appropriate.
+  static ValueWithError ReadAndReturnValueWithError(
+      StringPiece json,
+      int options = JSON_PARSE_RFC);
+
+  // Deprecated. Use the ReadAndReturnValueWithError() method above.
   // Reads and parses |json| like Read(). |error_code_out| and |error_msg_out|
   // are optional. If specified and nullptr is returned, they will be populated
   // an error code and a formatted error message (including error location if
   // appropriate). Otherwise, they will be unmodified.
-  static std::unique_ptr<Value> ReadAndReturnError(
+  static std::unique_ptr<Value> ReadAndReturnErrorDeprecated(
       StringPiece json,
       int options,  // JSONParserOptions
       int* error_code_out,
@@ -116,7 +153,11 @@ class BASE_EXPORT JSONReader {
   static std::string ErrorCodeToString(JsonParseError error_code);
 
   // Non-static version of Read() above.
-  std::unique_ptr<Value> ReadToValue(StringPiece json);
+  Optional<Value> ReadToValue(StringPiece json);
+
+  // Deprecated. Use the ReadToValue() method above.
+  // Non-static version of Read() above.
+  std::unique_ptr<Value> ReadToValueDeprecated(StringPiece json);
 
   // Returns the error code if the last call to ReadToValue() failed.
   // Returns JSON_NO_ERROR otherwise.

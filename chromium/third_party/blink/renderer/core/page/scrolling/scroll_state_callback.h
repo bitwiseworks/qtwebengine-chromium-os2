@@ -5,7 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_SCROLLING_SCROLL_STATE_CALLBACK_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_SCROLLING_SCROLL_STATE_CALLBACK_H_
 
-#include "third_party/blink/public/platform/web_native_scroll_behavior.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_state_callback.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
@@ -13,27 +12,32 @@ namespace blink {
 
 class ScrollState;
 
-class ScrollStateCallback
-    : public GarbageCollectedFinalized<ScrollStateCallback> {
+enum class NativeScrollBehavior {
+  kDisableNativeScroll,
+  kPerformBeforeNativeScroll,
+  kPerformAfterNativeScroll,
+};
+
+class ScrollStateCallback : public GarbageCollected<ScrollStateCallback> {
  public:
   virtual ~ScrollStateCallback() = default;
 
-  virtual void Trace(blink::Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) {}
 
   virtual void Invoke(ScrollState*) = 0;
 
-  WebNativeScrollBehavior NativeScrollBehavior() const {
+  NativeScrollBehavior GetNativeScrollBehavior() const {
     return native_scroll_behavior_;
   }
 
  protected:
   explicit ScrollStateCallback(
-      WebNativeScrollBehavior native_scroll_behavior =
-          WebNativeScrollBehavior::kDisableNativeScroll)
+      enum NativeScrollBehavior native_scroll_behavior =
+          NativeScrollBehavior::kDisableNativeScroll)
       : native_scroll_behavior_(native_scroll_behavior) {}
 
  private:
-  const WebNativeScrollBehavior native_scroll_behavior_;
+  const enum NativeScrollBehavior native_scroll_behavior_;
 };
 
 class ScrollStateCallbackV8Impl : public ScrollStateCallback {
@@ -48,20 +52,19 @@ class ScrollStateCallbackV8Impl : public ScrollStateCallback {
 
   explicit ScrollStateCallbackV8Impl(
       V8ScrollStateCallback* callback,
-      WebNativeScrollBehavior native_scroll_behavior)
-      : ScrollStateCallback(native_scroll_behavior),
-        callback_(ToV8PersistentCallbackFunction(callback)) {}
+      enum NativeScrollBehavior native_scroll_behavior)
+      : ScrollStateCallback(native_scroll_behavior), callback_(callback) {}
   ~ScrollStateCallbackV8Impl() override = default;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   void Invoke(ScrollState*) override;
 
  private:
-  static WebNativeScrollBehavior ParseNativeScrollBehavior(
+  static enum NativeScrollBehavior ParseNativeScrollBehavior(
       const String& native_scroll_behavior);
 
-  Member<V8PersistentCallbackFunction<V8ScrollStateCallback>> callback_;
+  Member<V8ScrollStateCallback> callback_;
 };
 
 }  // namespace blink

@@ -25,26 +25,21 @@
 
 #include "third_party/blink/renderer/core/html/parser/html_parser_options.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/loader/frame_loader.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
 HTMLParserOptions::HTMLParserOptions(Document* document) {
-  if (!document)
+  if (!document || !document->GetFrame())
     return;
 
-  if (LocalFrame* frame = document->GetFrame()) {
-    script_enabled = document->CanExecuteScripts(kNotAboutToExecuteScript);
-    plugins_enabled =
-        frame->Loader().AllowPlugins(kNotAboutToInstantiatePlugin);
-    priority_hints_origin_trial_enabled =
-        origin_trials::PriorityHintsEnabled(document);
-  }
+  scripting_flag = (document->GetSettings()->GetParserScriptingFlagPolicy() ==
+                    ParserScriptingFlagPolicy::kEnabled) ||
+                   document->CanExecuteScripts(kNotAboutToExecuteScript);
+  priority_hints_origin_trial_enabled =
+      RuntimeEnabledFeatures::PriorityHintsEnabled(document);
 }
 
 }  // namespace blink

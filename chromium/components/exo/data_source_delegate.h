@@ -21,7 +21,7 @@ class DataSourceDelegate {
   virtual void OnDataSourceDestroying(DataSource* source) = 0;
 
   // Called when a client accepts a |mime_type|.
-  virtual void OnTarget(const std::string& mime_type) = 0;
+  virtual void OnTarget(const base::Optional<std::string>& mime_type) = 0;
 
   // Called when the data is requested.
   virtual void OnSend(const std::string& mime_type, base::ScopedFD fd) = 0;
@@ -38,6 +38,10 @@ class DataSourceDelegate {
 
   // Called when the compositor selects one drag and drop action.
   virtual void OnAction(DndAction dnd_action) = 0;
+
+  // This should return true if |surface| is the source of this data source.
+  // E.g. the surface is owned by the same client as the data source.
+  virtual bool CanAcceptDataEventsForSurface(Surface* surface) const = 0;
 
  protected:
   virtual ~DataSourceDelegate() {}

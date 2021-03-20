@@ -22,6 +22,8 @@ class LabelButton;
 class VIEWS_EXPORT TouchSelectionMenuViews : public BubbleDialogDelegateView,
                                              public ButtonListener {
  public:
+  METADATA_HEADER(TouchSelectionMenuViews);
+
   TouchSelectionMenuViews(TouchSelectionMenuRunnerViews* owner,
                           ui::TouchSelectionMenuClient* client,
                           aura::Window* context);
@@ -57,7 +59,6 @@ class VIEWS_EXPORT TouchSelectionMenuViews : public BubbleDialogDelegateView,
   // BubbleDialogDelegateView:
   void OnPaint(gfx::Canvas* canvas) override;
   void WindowClosing() override;
-  int GetDialogButtons() const override;
 
   TouchSelectionMenuRunnerViews* owner_;
   ui::TouchSelectionMenuClient* const client_;

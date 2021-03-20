@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
@@ -41,9 +42,8 @@ class GaiaOAuthClient::Core
         num_retries_(0),
         max_retries_(0),
         url_loader_factory_(url_loader_factory),
-        delegate_(NULL),
-        request_type_(NO_PENDING_REQUEST),
-        weak_ptr_factory_(this) {
+        delegate_(nullptr),
+        request_type_(NO_PENDING_REQUEST) {
     backoff_policy_.num_errors_to_ignore =
         net::URLRequestThrottlerEntry::kDefaultNumErrorsToIgnore;
     backoff_policy_.initial_delay_ms =
@@ -141,7 +141,7 @@ class GaiaOAuthClient::Core
   std::unique_ptr<network::SimpleURLLoader> request_;
   RequestType request_type_;
 
-  base::WeakPtrFactory<Core> weak_ptr_factory_;
+  base::WeakPtrFactory<Core> weak_ptr_factory_{this};
 };
 
 void GaiaOAuthClient::Core::GetTokensFromAuthCode(
@@ -386,8 +386,7 @@ void GaiaOAuthClient::Core::SendRequestImpl() {
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url_;
   resource_request->method = post_body_.empty() ? "GET" : "POST";
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   if (!authorization_header_.empty())
     resource_request->headers.SetHeader("Authorization", authorization_header_);
 
@@ -451,7 +450,8 @@ void GaiaOAuthClient::Core::HandleResponse(std::unique_ptr<std::string> body,
   std::unique_ptr<base::DictionaryValue> response_dict;
   if (response_code == net::HTTP_OK && body) {
     std::string data = std::move(*body);
-    std::unique_ptr<base::Value> message_value = base::JSONReader::Read(data);
+    std::unique_ptr<base::Value> message_value =
+        base::JSONReader::ReadDeprecated(data);
     if (message_value.get() && message_value->is_dict()) {
       response_dict.reset(
           static_cast<base::DictionaryValue*>(message_value.release()));

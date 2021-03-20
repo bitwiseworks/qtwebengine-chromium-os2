@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "chrome/browser/chromeos/login/enrollment/enrollment_screen_view.h"
@@ -16,10 +17,7 @@
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 #include "net/base/net_errors.h"
-
-namespace net {
-class CanonicalCookie;
-}
+#include "net/cookies/canonical_cookie.h"
 
 namespace chromeos {
 
@@ -57,7 +55,10 @@ class EnrollmentScreenHandler
       public EnrollmentScreenView,
       public NetworkStateInformer::NetworkStateInformerObserver {
  public:
+  using TView = EnrollmentScreenView;
+
   EnrollmentScreenHandler(
+      JSCallsContainer* js_calls_container,
       const scoped_refptr<NetworkStateInformer>& network_state_informer,
       ErrorScreen* error_screen);
   ~EnrollmentScreenHandler() override;
@@ -68,19 +69,20 @@ class EnrollmentScreenHandler
   // Implements EnrollmentScreenView:
   void SetEnrollmentConfig(Controller* controller,
                            const policy::EnrollmentConfig& config) override;
+
+  void SetEnterpriseDomainAndDeviceType(
+      const std::string& domain,
+      const base::string16& device_type) override;
   void Show() override;
   void Hide() override;
   void ShowSigninScreen() override;
-  void ShowLicenseTypeSelectionScreen(
-      const base::DictionaryValue& license_types) override;
   void ShowActiveDirectoryScreen(const std::string& domain_join_config,
                                  const std::string& machine_name,
                                  const std::string& username,
                                  authpolicy::ErrorType error) override;
   void ShowAttributePromptScreen(const std::string& asset_id,
                                  const std::string& location) override;
-  void ShowAttestationBasedEnrollmentSuccessScreen(
-      const std::string& enterprise_domain) override;
+  void ShowEnrollmentSuccessScreen() override;
   void ShowEnrollmentSpinnerScreen() override;
   void ShowAuthError(const GoogleServiceAuthError& error) override;
   void ShowEnrollmentStatus(policy::EnrollmentStatus status) override;
@@ -103,7 +105,8 @@ class EnrollmentScreenHandler
   void HandleCompleteLogin(const std::string& user);
   void OnGetCookiesForCompleteLogin(
       const std::string& user,
-      const std::vector<net::CanonicalCookie>& cookies);
+      const net::CookieStatusList& cookies,
+      const net::CookieStatusList& excluded_cookies);
   void HandleAdCompleteLogin(const std::string& machine_name,
                              const std::string& distinguished_name,
                              const std::string& encryption_types,
@@ -115,8 +118,6 @@ class EnrollmentScreenHandler
   void HandleDeviceAttributesProvided(const std::string& asset_id,
                                       const std::string& location);
   void HandleOnLearnMore();
-  void HandleLicenseTypeSelected(const std::string& licenseType);
-
   void UpdateStateInternal(NetworkError::ErrorReason reason, bool force_update);
   void SetupAndShowOfflineMessage(NetworkStateInformer::State state,
                                   NetworkError::ErrorReason reason);
@@ -169,9 +170,6 @@ class EnrollmentScreenHandler
   ActiveDirectoryDomainJoinType active_directory_join_type_ =
       ActiveDirectoryDomainJoinType::COUNT;
 
-  // Whether unlock password input step should be shown.
-  bool show_unlock_password_ = false;
-
   // True if screen was not shown yet.
   bool first_show_ = true;
 
@@ -189,8 +187,7 @@ class EnrollmentScreenHandler
   // Help application used for help dialogs.
   scoped_refptr<HelpAppLauncher> help_app_;
 
-
-  base::WeakPtrFactory<EnrollmentScreenHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<EnrollmentScreenHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EnrollmentScreenHandler);
 };

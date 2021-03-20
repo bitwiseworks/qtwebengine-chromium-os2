@@ -41,6 +41,7 @@
 #include "libavutil/common.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/intfloat.h"
+#include "libavutil/avstring.h"
 #include "libavutil/opt.h"
 #include "libavutil/color_utils.h"
 
@@ -881,7 +882,7 @@ static int pxr24_uncompress(EXRContext *s, const uint8_t *src,
                 in     = ptr[3] + s->xdelta;
 
                 for (j = 0; j < s->xdelta; ++j) {
-                    uint32_t diff = (*(ptr[0]++) << 24) |
+                    uint32_t diff = ((uint32_t)*(ptr[0]++) << 24) |
                     (*(ptr[1]++) << 16) |
                     (*(ptr[2]++) << 8 ) |
                     (*(ptr[3]++));
@@ -1182,7 +1183,7 @@ static int decode_block(AVCodecContext *avctx, void *tdata,
         const uint8_t * a;
         const uint8_t *rgb[3];
 
-        for (c = 0; c < rgb_channel_count; c++){
+        for (c = 0; c < rgb_channel_count; c++) {
             rgb[c] = channel_buffer[c];
         }
 
@@ -1307,6 +1308,7 @@ static int decode_header(EXRContext *s, AVFrame *frame)
     int magic_number, version, i, flags, sar = 0;
     int layer_match = 0;
     int ret;
+    int dup_channels = 0;
 
     s->current_channel_offset = 0;
     s->xmin               = ~0;
@@ -1389,6 +1391,7 @@ static int decode_header(EXRContext *s, AVFrame *frame)
                         if (*ch_gb.buffer == '.')
                             ch_gb.buffer++;         /* skip dot if not given */
                     } else {
+                        layer_match = 0;
                         av_log(s->avctx, AV_LOG_INFO,
                                "Channel doesn't match layer : %s.\n", ch_gb.buffer);
                     }
@@ -1397,24 +1400,24 @@ static int decode_header(EXRContext *s, AVFrame *frame)
                 }
 
                 if (layer_match) { /* only search channel if the layer match is valid */
-                    if (!strcmp(ch_gb.buffer, "R") ||
-                        !strcmp(ch_gb.buffer, "X") ||
-                        !strcmp(ch_gb.buffer, "U")) {
+                    if (!av_strcasecmp(ch_gb.buffer, "R") ||
+                        !av_strcasecmp(ch_gb.buffer, "X") ||
+                        !av_strcasecmp(ch_gb.buffer, "U")) {
                         channel_index = 0;
                         s->is_luma = 0;
-                    } else if (!strcmp(ch_gb.buffer, "G") ||
-                               !strcmp(ch_gb.buffer, "V")) {
+                    } else if (!av_strcasecmp(ch_gb.buffer, "G") ||
+                               !av_strcasecmp(ch_gb.buffer, "V")) {
                         channel_index = 1;
                         s->is_luma = 0;
-                    } else if (!strcmp(ch_gb.buffer, "Y")) {
+                    } else if (!av_strcasecmp(ch_gb.buffer, "Y")) {
                         channel_index = 1;
                         s->is_luma = 1;
-                    } else if (!strcmp(ch_gb.buffer, "B") ||
-                               !strcmp(ch_gb.buffer, "Z") ||
-                               !strcmp(ch_gb.buffer, "W")){
-                               channel_index = 2;
+                    } else if (!av_strcasecmp(ch_gb.buffer, "B") ||
+                               !av_strcasecmp(ch_gb.buffer, "Z") ||
+                               !av_strcasecmp(ch_gb.buffer, "W")) {
+                        channel_index = 2;
                         s->is_luma = 0;
-                    } else if (!strcmp(ch_gb.buffer, "A")) {
+                    } else if (!av_strcasecmp(ch_gb.buffer, "A")) {
                         channel_index = 3;
                     } else {
                         av_log(s->avctx, AV_LOG_WARNING,
@@ -1463,6 +1466,13 @@ static int decode_header(EXRContext *s, AVFrame *frame)
                     }
                     s->pixel_type                     = current_pixel_type;
                     s->channel_offsets[channel_index] = s->current_channel_offset;
+                } else if (channel_index >= 0) {
+                    av_log(s->avctx, AV_LOG_WARNING,
+                            "Multiple channels with index %d.\n", channel_index);
+                    if (++dup_channels > 10) {
+                        ret = AVERROR_INVALIDDATA;
+                        goto fail;
+                    }
                 }
 
                 s->channels = av_realloc(s->channels,
@@ -1485,7 +1495,7 @@ static int decode_header(EXRContext *s, AVFrame *frame)
 
             /* Check if all channels are set with an offset or if the channels
              * are causing an overflow  */
-            if (!s->is_luma){/* if we expected to have at least 3 channels */
+            if (!s->is_luma) {/* if we expected to have at least 3 channels */
                 if (FFMIN3(s->channel_offsets[0],
                            s->channel_offsets[1],
                            s->channel_offsets[2]) < 0) {
@@ -1586,7 +1596,7 @@ static int decode_header(EXRContext *s, AVFrame *frame)
             s->tile_attr.level_mode = tileLevel & 0x0f;
             s->tile_attr.level_round = (tileLevel >> 4) & 0x0f;
 
-            if (s->tile_attr.level_mode >= EXR_TILE_LEVEL_UNKNOWN){
+            if (s->tile_attr.level_mode >= EXR_TILE_LEVEL_UNKNOWN) {
                 avpriv_report_missing_feature(s->avctx, "Tile level mode %d",
                                               s->tile_attr.level_mode);
                 ret = AVERROR_PATCHWELCOME;
@@ -1855,7 +1865,8 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
 #if HAVE_THREADS
 static int decode_init_thread_copy(AVCodecContext *avctx)
-{    EXRContext *s = avctx->priv_data;
+{
+    EXRContext *s = avctx->priv_data;
 
     // allocate thread data, used for non EXR_RAW compression types
     s->thread_data = av_mallocz_array(avctx->thread_count, sizeof(EXRThreadData));

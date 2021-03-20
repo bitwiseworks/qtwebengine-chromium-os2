@@ -18,7 +18,7 @@ enum class OperationResult;
 class DataItem;
 }  // namespace lock_screen_data
 
-class LockScreenDataCreateFunction : public UIThreadExtensionFunction {
+class LockScreenDataCreateFunction : public ExtensionFunction {
  public:
   LockScreenDataCreateFunction();
 
@@ -30,11 +30,11 @@ class LockScreenDataCreateFunction : public UIThreadExtensionFunction {
   void OnDone(lock_screen_data::OperationResult result,
               const lock_screen_data::DataItem* item);
 
-  DECLARE_EXTENSION_FUNCTION("lockScreen.data.create", LOCKSCREENDATA_CREATE);
+  DECLARE_EXTENSION_FUNCTION("lockScreen.data.create", LOCKSCREENDATA_CREATE)
   DISALLOW_COPY_AND_ASSIGN(LockScreenDataCreateFunction);
 };
 
-class LockScreenDataGetAllFunction : public UIThreadExtensionFunction {
+class LockScreenDataGetAllFunction : public ExtensionFunction {
  public:
   LockScreenDataGetAllFunction();
 
@@ -45,11 +45,11 @@ class LockScreenDataGetAllFunction : public UIThreadExtensionFunction {
 
   void OnDone(const std::vector<const lock_screen_data::DataItem*>& items);
 
-  DECLARE_EXTENSION_FUNCTION("lockScreen.data.getAll", LOCKSCREENDATA_GETALL);
+  DECLARE_EXTENSION_FUNCTION("lockScreen.data.getAll", LOCKSCREENDATA_GETALL)
   DISALLOW_COPY_AND_ASSIGN(LockScreenDataGetAllFunction);
 };
 
-class LockScreenDataGetContentFunction : public UIThreadExtensionFunction {
+class LockScreenDataGetContentFunction : public ExtensionFunction {
  public:
   LockScreenDataGetContentFunction();
 
@@ -62,11 +62,11 @@ class LockScreenDataGetContentFunction : public UIThreadExtensionFunction {
               std::unique_ptr<std::vector<char>> data);
 
   DECLARE_EXTENSION_FUNCTION("lockScreen.data.getContent",
-                             LOCKSCREENDATA_GETCONTENT);
+                             LOCKSCREENDATA_GETCONTENT)
   DISALLOW_COPY_AND_ASSIGN(LockScreenDataGetContentFunction);
 };
 
-class LockScreenDataSetContentFunction : public UIThreadExtensionFunction {
+class LockScreenDataSetContentFunction : public ExtensionFunction {
  public:
   LockScreenDataSetContentFunction();
 
@@ -78,11 +78,11 @@ class LockScreenDataSetContentFunction : public UIThreadExtensionFunction {
   void OnDone(lock_screen_data::OperationResult result);
 
   DECLARE_EXTENSION_FUNCTION("lockScreen.data.setContent",
-                             LOCKSCREENDATA_SETCONTENT);
+                             LOCKSCREENDATA_SETCONTENT)
   DISALLOW_COPY_AND_ASSIGN(LockScreenDataSetContentFunction);
 };
 
-class LockScreenDataDeleteFunction : public UIThreadExtensionFunction {
+class LockScreenDataDeleteFunction : public ExtensionFunction {
  public:
   LockScreenDataDeleteFunction();
 
@@ -93,7 +93,7 @@ class LockScreenDataDeleteFunction : public UIThreadExtensionFunction {
 
   void OnDone(lock_screen_data::OperationResult result);
 
-  DECLARE_EXTENSION_FUNCTION("lockScreen.data.delete", LOCKSCREENDATA_DELETE);
+  DECLARE_EXTENSION_FUNCTION("lockScreen.data.delete", LOCKSCREENDATA_DELETE)
 
   DISALLOW_COPY_AND_ASSIGN(LockScreenDataDeleteFunction);
 };

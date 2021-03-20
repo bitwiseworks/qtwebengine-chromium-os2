@@ -95,6 +95,7 @@ ErrorInfo ErrorInfo::CreateError(ErrorType error_type,
             IDS_CERT_ERROR_NOT_VALID_AT_THIS_TIME_DESCRIPTION);
       }
       break;
+    case CERT_KNOWN_INTERCEPTION_BLOCKED:
     case CERT_AUTHORITY_INVALID:
     case CERT_SYMANTEC_LEGACY:
       details =
@@ -111,8 +112,9 @@ ErrorInfo ErrorInfo::CreateError(ErrorType error_type,
           l10n_util::GetStringUTF16(IDS_CERT_ERROR_CONTAINS_ERRORS_DESCRIPTION);
       break;
     case CERT_NO_REVOCATION_MECHANISM:
-      details = l10n_util::GetStringUTF16(
-          IDS_CERT_ERROR_NO_REVOCATION_MECHANISM_DETAILS);
+      details = l10n_util::GetStringFUTF16(
+          IDS_CERT_ERROR_NO_REVOCATION_MECHANISM_DETAILS,
+          UTF8ToUTF16(request_url.host()));
       short_description = l10n_util::GetStringUTF16(
           IDS_CERT_ERROR_NO_REVOCATION_MECHANISM_DESCRIPTION);
       break;
@@ -162,8 +164,9 @@ ErrorInfo ErrorInfo::CreateError(ErrorType error_type,
           IDS_CERT_ERROR_SUMMARY_PINNING_FAILURE_DESCRIPTION);
       break;
     case CERT_UNABLE_TO_CHECK_REVOCATION:
-      details = l10n_util::GetStringUTF16(
-          IDS_CERT_ERROR_UNABLE_TO_CHECK_REVOCATION_DETAILS);
+      details = l10n_util::GetStringFUTF16(
+          IDS_CERT_ERROR_UNABLE_TO_CHECK_REVOCATION_DETAILS,
+          UTF8ToUTF16(request_url.host()));
       short_description = l10n_util::GetStringUTF16(
           IDS_CERT_ERROR_UNABLE_TO_CHECK_REVOCATION_DESCRIPTION);
       break;
@@ -172,6 +175,12 @@ ErrorInfo ErrorInfo::CreateError(ErrorType error_type,
           IDS_CERT_ERROR_CERTIFICATE_TRANSPARENCY_REQUIRED_DETAILS);
       short_description = l10n_util::GetStringUTF16(
           IDS_CERT_ERROR_CERTIFICATE_TRANSPARENCY_REQUIRED_DESCRIPTION);
+      break;
+    case LEGACY_TLS:
+      details =
+          l10n_util::GetStringUTF16(IDS_SSL_ERROR_OBSOLETE_VERSION_DETAILS);
+      short_description =
+          l10n_util::GetStringUTF16(IDS_SSL_ERROR_OBSOLETE_VERSION_DESCRIPTION);
       break;
     case UNKNOWN:
       details = l10n_util::GetStringUTF16(IDS_CERT_ERROR_UNKNOWN_ERROR_DETAILS);
@@ -219,6 +228,10 @@ ErrorInfo::ErrorType ErrorInfo::NetErrorToErrorType(int net_error) {
       return CERTIFICATE_TRANSPARENCY_REQUIRED;
     case net::ERR_CERT_SYMANTEC_LEGACY:
       return CERT_SYMANTEC_LEGACY;
+    case net::ERR_CERT_KNOWN_INTERCEPTION_BLOCKED:
+      return CERT_KNOWN_INTERCEPTION_BLOCKED;
+    case net::ERR_SSL_OBSOLETE_VERSION:
+      return LEGACY_TLS;
     default:
       NOTREACHED();
       return UNKNOWN;
@@ -245,6 +258,8 @@ void ErrorInfo::GetErrorsForCertStatus(
       net::CERT_STATUS_VALIDITY_TOO_LONG,
       net::CERT_STATUS_CERTIFICATE_TRANSPARENCY_REQUIRED,
       net::CERT_STATUS_SYMANTEC_LEGACY,
+      net::CERT_STATUS_KNOWN_INTERCEPTION_BLOCKED,
+      net::CERT_STATUS_LEGACY_TLS,
   };
 
   const ErrorType kErrorTypes[] = {
@@ -261,6 +276,8 @@ void ErrorInfo::GetErrorsForCertStatus(
       CERT_VALIDITY_TOO_LONG,
       CERTIFICATE_TRANSPARENCY_REQUIRED,
       CERT_SYMANTEC_LEGACY,
+      CERT_KNOWN_INTERCEPTION_BLOCKED,
+      LEGACY_TLS,
   };
   DCHECK(base::size(kErrorFlags) == base::size(kErrorTypes));
 

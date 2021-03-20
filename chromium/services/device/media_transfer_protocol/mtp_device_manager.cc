@@ -4,6 +4,8 @@
 
 #include "services/device/media_transfer_protocol/mtp_device_manager.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "dbus/bus.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -19,13 +21,12 @@ MtpDeviceManager* g_mtp_device_manager = nullptr;
 }  // namespace
 
 MtpDeviceManager::MtpDeviceManager()
-    : bus_(chromeos::DBusThreadManager::Get()->GetSystemBus()),
-      weak_ptr_factory_(this) {
+    : bus_(chromeos::DBusThreadManager::Get()->GetSystemBus()) {
   // Listen for future mtpd service owner changes, in case it is not
   // available right now. There is no guarantee that mtpd is running already.
-  dbus::Bus::GetServiceOwnerCallback mtpd_owner_changed_callback =
-      base::Bind(&MtpDeviceManager::FinishSetupOnOriginThread,
-                 weak_ptr_factory_.GetWeakPtr());
+  dbus::Bus::ServiceOwnerChangeCallback mtpd_owner_changed_callback =
+      base::BindRepeating(&MtpDeviceManager::FinishSetupOnOriginThread,
+                          weak_ptr_factory_.GetWeakPtr());
   if (bus_) {
     bus_->ListenForServiceOwnerChange(mtpd::kMtpdServiceName,
                                       mtpd_owner_changed_callback);
@@ -42,19 +43,20 @@ MtpDeviceManager::~MtpDeviceManager() {
   if (bus_) {
     bus_->UnlistenForServiceOwnerChange(
         mtpd::kMtpdServiceName,
-        base::Bind(&MtpDeviceManager::FinishSetupOnOriginThread,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindRepeating(&MtpDeviceManager::FinishSetupOnOriginThread,
+                            weak_ptr_factory_.GetWeakPtr()));
   }
 
   VLOG(1) << "MtpDeviceManager Shutdown completed";
 }
 
-void MtpDeviceManager::AddBinding(mojom::MtpManagerRequest request) {
-  bindings_.AddBinding(this, std::move(request));
+void MtpDeviceManager::AddReceiver(
+    mojo::PendingReceiver<mojom::MtpManager> receiver) {
+  receivers_.Add(this, std::move(receiver));
 }
 
 void MtpDeviceManager::EnumerateStoragesAndSetClient(
-    mojom::MtpManagerClientAssociatedPtrInfo client,
+    mojo::PendingAssociatedRemote<mojom::MtpManagerClient> client,
     EnumerateStoragesAndSetClientCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -85,7 +87,7 @@ void MtpDeviceManager::GetStorageInfoFromDevice(
     const std::string& storage_name,
     GetStorageInfoFromDeviceCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(storage_info_map_, storage_name) || !mtp_client_) {
+  if (!base::Contains(storage_info_map_, storage_name) || !mtp_client_) {
     std::move(callback).Run(nullptr, true /* error */);
     return;
   }
@@ -102,7 +104,7 @@ void MtpDeviceManager::OpenStorage(const std::string& storage_name,
                                    const std::string& mode,
                                    OpenStorageCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(storage_info_map_, storage_name) || !mtp_client_) {
+  if (!base::Contains(storage_info_map_, storage_name) || !mtp_client_) {
     std::move(callback).Run(std::string(), true);
     return;
   }
@@ -117,7 +119,7 @@ void MtpDeviceManager::OpenStorage(const std::string& storage_name,
 void MtpDeviceManager::CloseStorage(const std::string& storage_handle,
                                     CloseStorageCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(true);
     return;
   }
@@ -136,7 +138,7 @@ void MtpDeviceManager::CreateDirectory(const std::string& storage_handle,
                                        const std::string& directory_name,
                                        CreateDirectoryCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(true /* error */);
     return;
   }
@@ -154,7 +156,7 @@ void MtpDeviceManager::ReadDirectoryEntryIds(
     uint32_t file_id,
     ReadDirectoryEntryIdsCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(std::vector<uint32_t>(), /*error=*/true);
     return;
   }
@@ -173,7 +175,7 @@ void MtpDeviceManager::ReadFileChunk(const std::string& storage_handle,
                                      uint32_t count,
                                      ReadFileChunkCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(std::string(), true);
     return;
   }
@@ -189,7 +191,7 @@ void MtpDeviceManager::GetFileInfo(const std::string& storage_handle,
                                    const std::vector<uint32_t>& file_ids,
                                    GetFileInfoCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(std::vector<device::mojom::MtpFileEntryPtr>(),
                             /*error=*/true);
     return;
@@ -207,7 +209,7 @@ void MtpDeviceManager::RenameObject(const std::string& storage_handle,
                                     const std::string& new_name,
                                     RenameObjectCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(true /* error */);
     return;
   }
@@ -226,7 +228,7 @@ void MtpDeviceManager::CopyFileFromLocal(const std::string& storage_handle,
                                          const std::string& file_name,
                                          CopyFileFromLocalCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(true /* error */);
     return;
   }
@@ -243,7 +245,7 @@ void MtpDeviceManager::DeleteObject(const std::string& storage_handle,
                                     uint32_t object_id,
                                     DeleteObjectCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
+  if (!base::Contains(handles_, storage_handle) || !mtp_client_) {
     std::move(callback).Run(true /* error */);
     return;
   }
@@ -296,7 +298,7 @@ void MtpDeviceManager::OnEnumerateStorages(
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(mtp_client_);
   for (const auto& name : storage_names) {
-    if (base::ContainsKey(storage_info_map_, name)) {
+    if (base::Contains(storage_info_map_, name)) {
       // OnStorageChanged() might have gotten called first.
       continue;
     }
@@ -308,7 +310,7 @@ void MtpDeviceManager::OnGetStorageInfo(
     const mojom::MtpStorageInfo& storage_info) {
   DCHECK(thread_checker_.CalledOnValidThread());
   const std::string& storage_name = storage_info.storage_name;
-  if (base::ContainsKey(storage_info_map_, storage_name)) {
+  if (base::Contains(storage_info_map_, storage_name)) {
     // This should not happen, since MtpDeviceManager should
     // only call EnumerateStorages() once, which populates |storage_info_map_|
     // with the already-attached devices.
@@ -343,7 +345,7 @@ void MtpDeviceManager::OnGetStorageInfoFromDeviceError() {
 
 void MtpDeviceManager::OnOpenStorage(const std::string& handle) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!base::ContainsKey(handles_, handle)) {
+  if (!base::Contains(handles_, handle)) {
     handles_.insert(handle);
     std::move(open_storage_callbacks_.front()).Run(handle, false);
   } else {
@@ -361,7 +363,7 @@ void MtpDeviceManager::OnOpenStorageError() {
 void MtpDeviceManager::OnCloseStorage() {
   DCHECK(thread_checker_.CalledOnValidThread());
   const std::string& handle = close_storage_callbacks_.front().second;
-  if (base::ContainsKey(handles_, handle)) {
+  if (base::Contains(handles_, handle)) {
     handles_.erase(handle);
     std::move(close_storage_callbacks_.front().first).Run(false);
   } else {
@@ -505,8 +507,8 @@ void MtpDeviceManager::FinishSetupOnOriginThread(
   mtp_client_ = MediaTransferProtocolDaemonClient::Create(bus_.get());
 
   // Set up signals and start initializing |storage_info_map_|.
-  mtp_client_->ListenForChanges(base::Bind(&MtpDeviceManager::OnStorageChanged,
-                                           weak_ptr_factory_.GetWeakPtr()));
+  mtp_client_->ListenForChanges(base::BindRepeating(
+      &MtpDeviceManager::OnStorageChanged, weak_ptr_factory_.GetWeakPtr()));
   mtp_client_->EnumerateStorages(
       base::BindOnce(&MtpDeviceManager::OnEnumerateStorages,
                      weak_ptr_factory_.GetWeakPtr()),

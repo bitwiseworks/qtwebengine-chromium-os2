@@ -1,5 +1,3 @@
-/* $Id: tif_getimage.c,v 1.114 2017-11-17 20:21:00 erouault Exp $ */
-
 /*
  * Copyright (c) 1991-1997 Sam Leffler
  * Copyright (c) 1991-1997 Silicon Graphics, Inc.
@@ -792,9 +790,8 @@ gtTileSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 	uint32 leftmost_tw;
 
 	tilesize = TIFFTileSize(tif);  
-	bufsize = TIFFSafeMultiply(tmsize_t,alpha?4:3,tilesize);
+	bufsize = _TIFFMultiplySSize(tif, alpha?4:3,tilesize, "gtTileSeparate");
 	if (bufsize == 0) {
-		TIFFErrorExt(tif->tif_clientdata, TIFFFileName(tif), "Integer overflow in %s", "gtTileSeparate");
 		return (0);
 	}
 
@@ -964,6 +961,9 @@ gtStripContig(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 	int ret = 1, flip;
         tmsize_t maxstripsize;
 
+	if ((tmsize_t)img->row_offset > TIFF_SSIZE_T_MAX || (size_t)h > (size_t)TIFF_SSIZE_T_MAX)
+		return (0);
+
 	TIFFGetFieldDefaulted(tif, TIFFTAG_YCBCRSUBSAMPLING, &subsamplinghor, &subsamplingver);
 	if( subsamplingver == 0 ) {
 		TIFFErrorExt(tif->tif_clientdata, TIFFFileName(tif), "Invalid vertical YCbCr subsampling");
@@ -987,16 +987,23 @@ gtStripContig(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 	fromskew = (w < imagewidth ? imagewidth - w : 0);
 	for (row = 0; row < h; row += nrow)
 	{
+		uint32 temp;
 		rowstoread = rowsperstrip - (row + img->row_offset) % rowsperstrip;
 		nrow = (row + rowstoread > h ? h - row : rowstoread);
 		nrowsub = nrow;
 		if ((nrowsub%subsamplingver)!=0)
 			nrowsub+=subsamplingver-nrowsub%subsamplingver;
+		temp = (row + img->row_offset)%rowsperstrip + nrowsub;
+		if( scanline > 0 && temp > (size_t)(TIFF_TMSIZE_T_MAX / scanline) )
+		{
+			TIFFErrorExt(tif->tif_clientdata, TIFFFileName(tif), "Integer overflow in gtStripContig");
+			return 0;
+		}
 		if (_TIFFReadEncodedStripAndAllocBuffer(tif,
 		    TIFFComputeStrip(tif,row+img->row_offset, 0),
 		    (void**)(&buf),
                     maxstripsize,
-		    ((row + img->row_offset)%rowsperstrip + nrowsub) * scanline)==(tmsize_t)(-1)
+		    temp * scanline)==(tmsize_t)(-1)
 		    && (buf == NULL || img->stoponerr))
 		{
 			ret = 0;
@@ -1056,9 +1063,8 @@ gtStripSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
         uint16 colorchannels;
 
 	stripsize = TIFFStripSize(tif);  
-	bufsize = TIFFSafeMultiply(tmsize_t,alpha?4:3,stripsize);
+	bufsize = _TIFFMultiplySSize(tif,alpha?4:3,stripsize, "gtStripSeparate");
 	if (bufsize == 0) {
-		TIFFErrorExt(tif->tif_clientdata, TIFFFileName(tif), "Integer overflow in %s", "gtStripSeparate");
 		return (0);
 	}
 
@@ -1090,15 +1096,22 @@ gtStripSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 	fromskew = (w < imagewidth ? imagewidth - w : 0);
 	for (row = 0; row < h; row += nrow)
 	{
+                uint32 temp;
 		rowstoread = rowsperstrip - (row + img->row_offset) % rowsperstrip;
 		nrow = (row + rowstoread > h ? h - row : rowstoread);
 		offset_row = row + img->row_offset;
+                temp = (row + img->row_offset)%rowsperstrip + nrow;
+                if( scanline > 0 && temp > (size_t)(TIFF_TMSIZE_T_MAX / scanline) )
+                {
+                        TIFFErrorExt(tif->tif_clientdata, TIFFFileName(tif), "Integer overflow in gtStripSeparate");
+                        return 0;
+                }
                 if( buf == NULL )
                 {
                     if (_TIFFReadEncodedStripAndAllocBuffer(
                             tif, TIFFComputeStrip(tif, offset_row, 0),
                             (void**) &buf, bufsize,
-                            ((row + img->row_offset)%rowsperstrip + nrow) * scanline)==(tmsize_t)(-1)
+                            temp * scanline)==(tmsize_t)(-1)
                         && (buf == NULL || img->stoponerr))
                     {
                             ret = 0;
@@ -1118,7 +1131,7 @@ gtStripSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
                     }
                 }
 		else if (TIFFReadEncodedStrip(tif, TIFFComputeStrip(tif, offset_row, 0),
-		    p0, ((row + img->row_offset)%rowsperstrip + nrow) * scanline)==(tmsize_t)(-1)
+		    p0, temp * scanline)==(tmsize_t)(-1)
 		    && img->stoponerr)
 		{
 			ret = 0;
@@ -1126,7 +1139,7 @@ gtStripSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 		}
 		if (colorchannels > 1 
                     && TIFFReadEncodedStrip(tif, TIFFComputeStrip(tif, offset_row, 1),
-                                            p1, ((row + img->row_offset)%rowsperstrip + nrow) * scanline) == (tmsize_t)(-1)
+                                            p1, temp * scanline) == (tmsize_t)(-1)
 		    && img->stoponerr)
 		{
 			ret = 0;
@@ -1134,7 +1147,7 @@ gtStripSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 		}
 		if (colorchannels > 1 
                     && TIFFReadEncodedStrip(tif, TIFFComputeStrip(tif, offset_row, 2),
-                                            p2, ((row + img->row_offset)%rowsperstrip + nrow) * scanline) == (tmsize_t)(-1)
+                                            p2, temp * scanline) == (tmsize_t)(-1)
 		    && img->stoponerr)
 		{
 			ret = 0;
@@ -1143,7 +1156,7 @@ gtStripSeparate(TIFFRGBAImage* img, uint32* raster, uint32 w, uint32 h)
 		if (alpha)
 		{
 			if (TIFFReadEncodedStrip(tif, TIFFComputeStrip(tif, offset_row, colorchannels),
-			    pa, ((row + img->row_offset)%rowsperstrip + nrow) * scanline)==(tmsize_t)(-1)
+			    pa, temp * scanline)==(tmsize_t)(-1)
 			    && img->stoponerr)
 			{
 				ret = 0;
@@ -2994,7 +3007,7 @@ TIFFReadRGBATileExt(TIFF* tif, uint32 col, uint32 row, uint32 * raster, int stop
     if( !TIFFIsTiled( tif ) )
     {
 		TIFFErrorExt(tif->tif_clientdata, TIFFFileName(tif),
-				  "Can't use TIFFReadRGBATile() with stripped file.");
+				  "Can't use TIFFReadRGBATile() with striped file.");
 		return (0);
     }
     

@@ -4,13 +4,14 @@
 
 #include "net/third_party/quiche/src/http2/http2_constants.h"
 
-#include "base/logging.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string_piece.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_string_utils.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_str_cat.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 namespace http2 {
 
-Http2String Http2FrameTypeToString(Http2FrameType v) {
+std::string Http2FrameTypeToString(Http2FrameType v) {
   switch (v) {
     case Http2FrameType::DATA:
       return "DATA";
@@ -35,18 +36,19 @@ Http2String Http2FrameTypeToString(Http2FrameType v) {
     case Http2FrameType::ALTSVC:
       return "ALTSVC";
   }
-  return Http2StrCat("UnknownFrameType(", static_cast<int>(v), ")");
+  return quiche::QuicheStrCat("UnknownFrameType(", static_cast<int>(v), ")");
 }
 
-Http2String Http2FrameTypeToString(uint8_t v) {
+std::string Http2FrameTypeToString(uint8_t v) {
   return Http2FrameTypeToString(static_cast<Http2FrameType>(v));
 }
 
-Http2String Http2FrameFlagsToString(Http2FrameType type, uint8_t flags) {
-  Http2String s;
-  // Closure to append flag name |v| to the Http2String |s|,
+std::string Http2FrameFlagsToString(Http2FrameType type, uint8_t flags) {
+  std::string s;
+  // Closure to append flag name |v| to the std::string |s|,
   // and to clear |bit| from |flags|.
-  auto append_and_clear = [&s, &flags](Http2StringPiece v, uint8_t bit) {
+  auto append_and_clear = [&s, &flags](quiche::QuicheStringPiece v,
+                                       uint8_t bit) {
     if (!s.empty()) {
       s.push_back('|');
     }
@@ -85,11 +87,11 @@ Http2String Http2FrameFlagsToString(Http2FrameType type, uint8_t flags) {
   DCHECK_EQ(0, flags);
   return s;
 }
-Http2String Http2FrameFlagsToString(uint8_t type, uint8_t flags) {
+std::string Http2FrameFlagsToString(uint8_t type, uint8_t flags) {
   return Http2FrameFlagsToString(static_cast<Http2FrameType>(type), flags);
 }
 
-Http2String Http2ErrorCodeToString(uint32_t v) {
+std::string Http2ErrorCodeToString(uint32_t v) {
   switch (v) {
     case 0x0:
       return "NO_ERROR";
@@ -120,13 +122,13 @@ Http2String Http2ErrorCodeToString(uint32_t v) {
     case 0xd:
       return "HTTP_1_1_REQUIRED";
   }
-  return Http2StrCat("UnknownErrorCode(0x", Http2Hex(v), ")");
+  return quiche::QuicheStrCat("UnknownErrorCode(0x", Http2Hex(v), ")");
 }
-Http2String Http2ErrorCodeToString(Http2ErrorCode v) {
+std::string Http2ErrorCodeToString(Http2ErrorCode v) {
   return Http2ErrorCodeToString(static_cast<uint32_t>(v));
 }
 
-Http2String Http2SettingsParameterToString(uint32_t v) {
+std::string Http2SettingsParameterToString(uint32_t v) {
   switch (v) {
     case 0x1:
       return "HEADER_TABLE_SIZE";
@@ -141,9 +143,9 @@ Http2String Http2SettingsParameterToString(uint32_t v) {
     case 0x6:
       return "MAX_HEADER_LIST_SIZE";
   }
-  return Http2StrCat("UnknownSettingsParameter(0x", Http2Hex(v), ")");
+  return quiche::QuicheStrCat("UnknownSettingsParameter(0x", Http2Hex(v), ")");
 }
-Http2String Http2SettingsParameterToString(Http2SettingsParameter v) {
+std::string Http2SettingsParameterToString(Http2SettingsParameter v) {
   return Http2SettingsParameterToString(static_cast<uint32_t>(v));
 }
 

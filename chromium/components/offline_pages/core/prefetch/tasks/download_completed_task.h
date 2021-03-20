@@ -22,8 +22,6 @@ class DownloadCompletedTask : public Task {
                         const PrefetchDownloadResult& download_result);
   ~DownloadCompletedTask() override;
 
-  void Run() override;
-
   struct UpdateInfo {
     // True if the row was updated.
     bool success = false;
@@ -32,13 +30,14 @@ class DownloadCompletedTask : public Task {
   };
 
  private:
+  void Run() override;
   void OnPrefetchItemUpdated(bool successful_download, UpdateInfo update_info);
 
   PrefetchDispatcher* prefetch_dispatcher_;  // Outlives this class.
   PrefetchStore* prefetch_store_;            // Outlives this class.
   PrefetchDownloadResult download_result_;
 
-  base::WeakPtrFactory<DownloadCompletedTask> weak_ptr_factory_;
+  base::WeakPtrFactory<DownloadCompletedTask> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DownloadCompletedTask);
 };

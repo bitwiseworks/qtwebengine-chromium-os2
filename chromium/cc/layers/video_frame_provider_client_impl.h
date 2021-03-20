@@ -5,7 +5,6 @@
 #ifndef CC_LAYERS_VIDEO_FRAME_PROVIDER_CLIENT_IMPL_H_
 #define CC_LAYERS_VIDEO_FRAME_PROVIDER_CLIENT_IMPL_H_
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
@@ -33,6 +32,10 @@ class CC_EXPORT VideoFrameProviderClientImpl
       VideoFrameProvider* provider,
       VideoFrameControllerClient* client);
 
+  VideoFrameProviderClientImpl(const VideoFrameProviderClientImpl&) = delete;
+  VideoFrameProviderClientImpl& operator=(const VideoFrameProviderClientImpl&) =
+      delete;
+
   VideoLayerImpl* ActiveVideoLayer() const;
   void SetActiveVideoLayer(VideoLayerImpl* video_layer);
 
@@ -40,9 +43,13 @@ class CC_EXPORT VideoFrameProviderClientImpl
   // Must be called on the impl thread while the main thread is blocked.
   void Stop();
 
-  scoped_refptr<media::VideoFrame> AcquireLockAndCurrentFrame();
-  void PutCurrentFrame();
-  void ReleaseLock();
+  scoped_refptr<media::VideoFrame> AcquireLockAndCurrentFrame()
+      EXCLUSIVE_LOCK_FUNCTION(provider_lock_);
+  void PutCurrentFrame() EXCLUSIVE_LOCKS_REQUIRED(provider_lock_);
+  void ReleaseLock() UNLOCK_FUNCTION(provider_lock_);
+  void AssertLocked() const ASSERT_EXCLUSIVE_LOCK(provider_lock_) {
+    provider_lock_.AssertAcquired();
+  }
   bool HasCurrentFrame();
 
   // VideoFrameController implementation.
@@ -82,8 +89,6 @@ class CC_EXPORT VideoFrameProviderClientImpl
   // from returning until the frame controller is done using the frame.
   base::Lock provider_lock_;
   base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(VideoFrameProviderClientImpl);
 };
 
 }  // namespace cc

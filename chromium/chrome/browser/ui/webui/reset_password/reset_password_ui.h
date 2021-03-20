@@ -8,11 +8,15 @@
 #include "base/macros.h"
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #include "chrome/browser/ui/webui/reset_password/reset_password.mojom.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ui/webui/mojo_web_ui_controller.h"
 
 namespace base {
 class DictionaryValue;
 }
+
+using password_manager::metrics_util::PasswordType;
 
 // The WebUI for chrome://reset-password/.
 class ResetPasswordUI : public ui::MojoWebUIController {
@@ -20,13 +24,18 @@ class ResetPasswordUI : public ui::MojoWebUIController {
   explicit ResetPasswordUI(content::WebUI* web_ui);
   ~ResetPasswordUI() override;
 
- private:
-  void BindResetPasswordHandler(mojom::ResetPasswordHandlerRequest request);
+  // Instantiates the implementor of the mojom::ResetPasswordHandler mojo
+  // interface passing the pending receiver that will be internally bound.
+  void BindInterface(
+      mojo::PendingReceiver<mojom::ResetPasswordHandler> receiver);
 
+ private:
   base::DictionaryValue PopulateStrings() const;
 
   std::unique_ptr<mojom::ResetPasswordHandler> ui_handler_;
-  const safe_browsing::ReusedPasswordType password_type_;
+  const PasswordType password_type_;
+
+  WEB_UI_CONTROLLER_TYPE_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(ResetPasswordUI);
 };

@@ -5,6 +5,8 @@
 #ifndef V8_LIBPLATFORM_LIBPLATFORM_H_
 #define V8_LIBPLATFORM_LIBPLATFORM_H_
 
+#include <memory>
+
 #include "libplatform/libplatform-export.h"
 #include "libplatform/v8-tracing.h"
 #include "v8-platform.h"  // NOLINT(build/include)
@@ -41,22 +43,15 @@ V8_PLATFORM_EXPORT std::unique_ptr<v8::Platform> NewDefaultPlatform(
         InProcessStackDumping::kDisabled,
     std::unique_ptr<v8::TracingController> tracing_controller = {});
 
-V8_PLATFORM_EXPORT V8_DEPRECATED(
-    "Use NewDefaultPlatform instead",
-    v8::Platform* CreateDefaultPlatform(
-        int thread_pool_size = 0,
-        IdleTaskSupport idle_task_support = IdleTaskSupport::kDisabled,
-        InProcessStackDumping in_process_stack_dumping =
-            InProcessStackDumping::kDisabled,
-        v8::TracingController* tracing_controller = nullptr));
-
 /**
  * Pumps the message loop for the given isolate.
  *
  * The caller has to make sure that this is called from the right thread.
- * Returns true if a task was executed, and false otherwise. Unless requested
- * through the |behavior| parameter, this call does not block if no task is
- * pending. The |platform| has to be created using |NewDefaultPlatform|.
+ * Returns true if a task was executed, and false otherwise. If the call to
+ * PumpMessageLoop is nested within another call to PumpMessageLoop, only
+ * nestable tasks may run. Otherwise, any task may run. Unless requested through
+ * the |behavior| parameter, this call does not block if no task is pending. The
+ * |platform| has to be created using |NewDefaultPlatform|.
  */
 V8_PLATFORM_EXPORT bool PumpMessageLoop(
     v8::Platform* platform, v8::Isolate* isolate,
@@ -79,11 +74,10 @@ V8_PLATFORM_EXPORT void RunIdleTasks(v8::Platform* platform,
  * The |platform| has to be created using |NewDefaultPlatform|.
  *
  */
-V8_PLATFORM_EXPORT V8_DEPRECATE_SOON(
-    "Access the DefaultPlatform directly",
-    void SetTracingController(
-        v8::Platform* platform,
-        v8::platform::tracing::TracingController* tracing_controller));
+V8_DEPRECATE_SOON("Access the DefaultPlatform directly")
+V8_PLATFORM_EXPORT void SetTracingController(
+    v8::Platform* platform,
+    v8::platform::tracing::TracingController* tracing_controller);
 
 }  // namespace platform
 }  // namespace v8

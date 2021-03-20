@@ -8,13 +8,13 @@
 #ifndef SkottieValue_DEFINED
 #define SkottieValue_DEFINED
 
-#include "SkColor.h"
-#include "SkPaint.h"
-#include "SkPath.h"
-#include "SkScalar.h"
-#include "SkString.h"
-#include "SkTextUtils.h"
-#include "SkTypeface.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkM44.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkString.h"
+#include "include/private/SkNoncopyable.h"
 
 #include <vector>
 
@@ -32,68 +32,17 @@ struct ValueTraits {
     template <typename U>
     static U As(const T&);
 
-    static bool CanLerp(const T&, const T&);
-    static void Lerp(const T&, const T&, float, T*);
+    static bool Lerp(const T&, const T&, float, T*);
 };
 
 using ScalarValue = SkScalar;
-using VectorValue = std::vector<ScalarValue>;
-
-struct BezierVertex {
-    SkPoint fInPoint,  // "in" control point, relative to the vertex
-            fOutPoint, // "out" control point, relative to the vertex
-            fVertex;
-
-    bool operator==(const BezierVertex& other) const {
-        return fInPoint  == other.fInPoint
-            && fOutPoint == other.fOutPoint
-            && fVertex   == other.fVertex;
-    }
-
-    bool operator!=(const BezierVertex& other) const { return !(*this == other); }
-};
+using   Vec2Value = SkV2;
+using VectorValue = std::vector<float>;
 
 struct ShapeValue {
-    std::vector<BezierVertex> fVertices;
-    bool                      fClosed   : 1,
-                              fVolatile : 1;
+    std::vector<float> fData;
 
-    ShapeValue() : fClosed(false), fVolatile(false) {}
-    ShapeValue(const ShapeValue&)            = default;
-    ShapeValue(ShapeValue&&)                 = default;
-    ShapeValue& operator=(const ShapeValue&) = default;
-
-    bool operator==(const ShapeValue& other) const {
-        return fVertices == other.fVertices && fClosed == other.fClosed;
-    }
-
-    bool operator!=(const ShapeValue& other) const { return !(*this == other); }
-};
-
-struct TextValue {
-    sk_sp<SkTypeface> fTypeface;
-    SkString          fText;
-    float             fTextSize    = 0,
-                      fStrokeWidth = 0;
-    SkTextUtils::Align fAlign       = SkTextUtils::kLeft_Align;
-    SkColor           fFillColor   = SK_ColorTRANSPARENT,
-                      fStrokeColor = SK_ColorTRANSPARENT;
-    bool              fHasFill   : 1,
-                      fHasStroke : 1;
-
-    bool operator==(const TextValue& other) const {
-        return fTypeface == other.fTypeface
-            && fText == other.fText
-            && fTextSize == other.fTextSize
-            && fStrokeWidth == other.fStrokeWidth
-            && fAlign == other.fAlign
-            && fFillColor == other.fFillColor
-            && fStrokeColor == other.fStrokeColor
-            && fHasFill == other.fHasFill
-            && fHasStroke == other.fHasStroke;
-    }
-
-    bool operator!=(const TextValue& other) const { return !(*this == other); }
+    operator SkPath() const;
 };
 
 } // namespace skottie

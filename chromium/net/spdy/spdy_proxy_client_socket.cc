@@ -18,11 +18,12 @@
 #include "base/values.h"
 #include "net/base/auth.h"
 #include "net/base/io_buffer.h"
+#include "net/base/proxy_delegate.h"
 #include "net/http/http_auth_cache.h"
 #include "net/http/http_auth_handler_factory.h"
+#include "net/http/http_log_util.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_headers.h"
-#include "net/http/proxy_connect_redirect_http_stream.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source_type.h"
 #include "net/spdy/spdy_http_utils.h"
@@ -33,31 +34,32 @@ namespace net {
 
 SpdyProxyClientSocket::SpdyProxyClientSocket(
     const base::WeakPtr<SpdyStream>& spdy_stream,
+    const ProxyServer& proxy_server,
     const std::string& user_agent,
     const HostPortPair& endpoint,
     const NetLogWithSource& source_net_log,
-    HttpAuthController* auth_controller)
+    HttpAuthController* auth_controller,
+    ProxyDelegate* proxy_delegate)
     : next_state_(STATE_DISCONNECTED),
       spdy_stream_(spdy_stream),
       endpoint_(endpoint),
       auth_(auth_controller),
+      proxy_server_(proxy_server),
+      proxy_delegate_(proxy_delegate),
       user_agent_(user_agent),
       user_buffer_len_(0),
       write_buffer_len_(0),
       was_ever_used_(false),
-      redirect_has_load_timing_info_(false),
       net_log_(NetLogWithSource::Make(spdy_stream->net_log().net_log(),
                                       NetLogSourceType::PROXY_CLIENT_SOCKET)),
-      source_dependency_(source_net_log.source()),
-      weak_factory_(this),
-      write_callback_weak_factory_(this) {
+      source_dependency_(source_net_log.source()) {
   request_.method = "CONNECT";
   request_.url = GURL("https://" + endpoint.ToString());
-  net_log_.BeginEvent(NetLogEventType::SOCKET_ALIVE,
-                      source_net_log.source().ToEventParametersCallback());
-  net_log_.AddEvent(
+  net_log_.BeginEventReferencingSource(NetLogEventType::SOCKET_ALIVE,
+                                       source_net_log.source());
+  net_log_.AddEventReferencingSource(
       NetLogEventType::HTTP2_PROXY_CLIENT_SESSION,
-      spdy_stream->net_log().source().ToEventParametersCallback());
+      spdy_stream->net_log().source());
 
   spdy_stream_->SetDelegate(this);
   was_ever_used_ = spdy_stream_->WasEverUsed();
@@ -69,7 +71,7 @@ SpdyProxyClientSocket::~SpdyProxyClientSocket() {
 }
 
 const HttpResponseInfo* SpdyProxyClientSocket::GetConnectResponseInfo() const {
-  return response_.headers.get() ? &response_ : NULL;
+  return response_.headers.get() ? &response_ : nullptr;
 }
 
 const scoped_refptr<HttpAuthController>&
@@ -82,7 +84,7 @@ int SpdyProxyClientSocket::RestartWithAuth(CompletionOnceCallback callback) {
   // stream may not be reused and a new SpdyProxyClientSocket must be
   // created (possibly on top of the same SPDY Session).
   next_state_ = STATE_DISCONNECTED;
-  return OK;
+  return ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH;
 }
 
 bool SpdyProxyClientSocket::IsUsingSpdy() const {
@@ -93,15 +95,13 @@ NextProto SpdyProxyClientSocket::GetProxyNegotiatedProtocol() const {
   return spdy_stream_->GetNegotiatedProtocol();
 }
 
-void SpdyProxyClientSocket::SetStreamPriority(RequestPriority priority) {
-  spdy_stream_->SetPriority(priority);
-}
-
-std::unique_ptr<HttpStream>
-SpdyProxyClientSocket::CreateConnectResponseStream() {
-  return std::make_unique<ProxyConnectRedirectHttpStream>(
-      redirect_has_load_timing_info_ ? &redirect_load_timing_info_ : nullptr);
-}
+// Ignore priority changes, just use priority of initial request. Since multiple
+// requests are pooled on the SpdyProxyClientSocket, reprioritization doesn't
+// really work.
+//
+// TODO(mmenke):  Use a single priority value for all SpdyProxyClientSockets,
+// regardless of what priority they're created with.
+void SpdyProxyClientSocket::SetStreamPriority(RequestPriority priority) {}
 
 // Sends a HEADERS frame to the proxy with a CONNECT request
 // for the specified endpoint.  Waits for the server to send back
@@ -129,7 +129,7 @@ int SpdyProxyClientSocket::Connect(CompletionOnceCallback callback) {
 
 void SpdyProxyClientSocket::Disconnect() {
   read_buffer_queue_.Clear();
-  user_buffer_ = NULL;
+  user_buffer_ = nullptr;
   user_buffer_len_ = 0;
   read_callback_.Reset();
 
@@ -187,8 +187,14 @@ int64_t SpdyProxyClientSocket::GetTotalReceivedBytes() const {
 }
 
 void SpdyProxyClientSocket::ApplySocketTag(const SocketTag& tag) {
-  // Underlying SpdySession can be tagged, but |spdy_stream_| cannot.
-  CHECK(false);
+  // In the case of a connection to the proxy using HTTP/2 or HTTP/3 where the
+  // underlying socket may multiplex multiple streams, applying this request's
+  // socket tag to the multiplexed session would incorrectly apply the socket
+  // tag to all mutliplexed streams. Fortunately socket tagging is only
+  // supported on Android without the data reduction proxy, so only simple HTTP
+  // proxies are supported, so proxies won't be using HTTP/2 or HTTP/3. Enforce
+  // that a specific (non-default) tag isn't being applied.
+  CHECK(tag == SocketTag());
 }
 
 int SpdyProxyClientSocket::Read(IOBuffer* buf,
@@ -341,8 +347,8 @@ int SpdyProxyClientSocket::DoGenerateAuthToken() {
   next_state_ = STATE_GENERATE_AUTH_TOKEN_COMPLETE;
   return auth_->MaybeGenerateAuthToken(
       &request_,
-      base::Bind(&SpdyProxyClientSocket::OnIOComplete,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&SpdyProxyClientSocket::OnIOComplete,
+                     weak_factory_.GetWeakPtr()),
       net_log_);
 }
 
@@ -362,14 +368,20 @@ int SpdyProxyClientSocket::DoSendRequest() {
     auth_->AddAuthorizationHeader(&authorization_headers);
   }
 
+  if (proxy_delegate_) {
+    HttpRequestHeaders proxy_delegate_headers;
+    proxy_delegate_->OnBeforeTunnelRequest(proxy_server_,
+                                           &proxy_delegate_headers);
+    request_.extra_headers.MergeFrom(proxy_delegate_headers);
+  }
+
   std::string request_line;
   BuildTunnelRequest(endpoint_, authorization_headers, user_agent_,
                      &request_line, &request_.extra_headers);
 
-  net_log_.AddEvent(
-      NetLogEventType::HTTP_TRANSACTION_SEND_TUNNEL_HEADERS,
-      base::Bind(&HttpRequestHeaders::NetLogCallback,
-                 base::Unretained(&request_.extra_headers), &request_line));
+  NetLogRequestHeaders(net_log_,
+                       NetLogEventType::HTTP_TRANSACTION_SEND_TUNNEL_HEADERS,
+                       request_line, &request_.extra_headers);
 
   spdy::SpdyHeaderBlock headers;
   CreateSpdyHeadersFromHttpRequest(request_, request_.extra_headers, &headers);
@@ -398,27 +410,23 @@ int SpdyProxyClientSocket::DoReadReplyComplete(int result) {
   if (response_.headers->GetHttpVersion() < HttpVersion(1, 0))
     return ERR_TUNNEL_CONNECTION_FAILED;
 
-  net_log_.AddEvent(
-      NetLogEventType::HTTP_TRANSACTION_READ_TUNNEL_RESPONSE_HEADERS,
-      base::Bind(&HttpResponseHeaders::NetLogCallback, response_.headers));
+  NetLogResponseHeaders(
+      net_log_, NetLogEventType::HTTP_TRANSACTION_READ_TUNNEL_RESPONSE_HEADERS,
+      response_.headers.get());
+
+  if (proxy_delegate_) {
+    int rv = proxy_delegate_->OnTunnelHeadersReceived(proxy_server_,
+                                                      *response_.headers);
+    if (rv != OK) {
+      DCHECK_NE(ERR_IO_PENDING, rv);
+      return rv;
+    }
+  }
 
   switch (response_.headers->response_code()) {
     case 200:  // OK
       next_state_ = STATE_OPEN;
       return OK;
-
-    case 302:  // Found / Moved Temporarily
-      // Try to return a sanitized response so we can follow auth redirects.
-      // If we can't, fail the tunnel connection.
-      if (!SanitizeProxyRedirect(&response_))
-        return ERR_TUNNEL_CONNECTION_FAILED;
-
-      redirect_has_load_timing_info_ =
-          spdy_stream_->GetLoadTimingInfo(&redirect_load_timing_info_);
-      // Note that this triggers a spdy::ERROR_CODE_CANCEL.
-      spdy_stream_->DetachDelegate();
-      next_state_ = STATE_DISCONNECTED;
-      return ERR_HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT;
 
     case 407:  // Proxy Authentication Required
       next_state_ = STATE_OPEN;
@@ -468,7 +476,7 @@ void SpdyProxyClientSocket::OnDataReceived(std::unique_ptr<SpdyBuffer> buffer) {
     read_buffer_queue_.Enqueue(std::move(buffer));
   } else {
     net_log_.AddByteTransferEvent(NetLogEventType::SOCKET_BYTES_RECEIVED, 0,
-                                  NULL);
+                                  nullptr);
   }
 
   if (read_callback_) {
@@ -532,6 +540,10 @@ void SpdyProxyClientSocket::OnClose(int status)  {
   // This may have been deleted by read_callback_, so check first.
   if (weak_ptr.get() && !write_callback.is_null())
     std::move(write_callback).Run(ERR_CONNECTION_CLOSED);
+}
+
+bool SpdyProxyClientSocket::CanGreaseFrameType() const {
+  return false;
 }
 
 NetLogSource SpdyProxyClientSocket::source_dependency() const {

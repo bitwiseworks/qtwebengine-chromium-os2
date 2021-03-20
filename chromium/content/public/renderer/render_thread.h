@@ -7,9 +7,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <memory>
 
 #include "base/callback.h"
-#include "base/memory/shared_memory.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/single_thread_task_runner.h"
 #include "content/common/content_export.h"
@@ -24,6 +24,8 @@ class WaitableEvent;
 }
 
 namespace blink {
+struct UserAgentMetadata;
+
 namespace scheduler {
 enum class WebRendererProcessType;
 }
@@ -50,6 +52,9 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   // be accessed when running on the render thread itself.
   static RenderThread* Get();
 
+  // Returns true if the current thread is the main thread.
+  static bool IsMainThread();
+
   RenderThread();
   ~RenderThread() override;
 
@@ -75,16 +80,11 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual void SetResourceDispatcherDelegate(
       ResourceDispatcherDelegate* delegate) = 0;
 
-  // Asks the host to create a block of shared memory for the renderer.
-  // The shared memory allocated by the host is returned back.
-  virtual std::unique_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
-      size_t buffer_size) = 0;
-
   // Registers the given V8 extension with WebKit.
-  virtual void RegisterExtension(v8::Extension* extension) = 0;
+  virtual void RegisterExtension(std::unique_ptr<v8::Extension> extension) = 0;
 
   // Post task to all worker threads. Returns number of workers.
-  virtual int PostTaskToAllWebWorkers(const base::Closure& closure) = 0;
+  virtual int PostTaskToAllWebWorkers(base::RepeatingClosure closure) = 0;
 
   // Resolve the proxy servers to use for a given url. On success true is
   // returned and |proxy_list| is set to a PAC string containing a list of
@@ -107,6 +107,10 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
 
   // Returns the user-agent string.
   virtual blink::WebString GetUserAgent() = 0;
+  virtual const blink::UserAgentMetadata& GetUserAgentMetadata() = 0;
+
+  // Returns whether or not the use-zoom-for-dsf flag is enabled.
+  virtual bool IsUseZoomForDSF() = 0;
 };
 
 }  // namespace content

@@ -48,6 +48,7 @@ class StylePropertySerializer {
                              const StylePropertyShorthand&,
                              const StylePropertyShorthand&) const;
   String BorderImagePropertyValue() const;
+  String BorderRadiusValue() const;
   String GetLayeredShorthandValue(const StylePropertyShorthand&) const;
   String Get2Values(const StylePropertyShorthand&) const;
   String Get4Values(const StylePropertyShorthand&) const;
@@ -85,7 +86,7 @@ class StylePropertySerializer {
    public:
     explicit PropertyValueForSerializer(
         CSSPropertyValueSet::PropertyReference property)
-        : value_(property.Value()),
+        : value_(&property.Value()),
           property_(property.Property()),
           is_important_(property.IsImportant()),
           is_inherited_(property.IsInherited()) {}
@@ -106,7 +107,7 @@ class StylePropertySerializer {
     bool IsValid() const { return value_; }
 
    private:
-    Member<const CSSValue> value_;
+    const CSSValue* value_;
     const CSSProperty& property_;
     bool is_important_;
     bool is_inherited_;
@@ -128,7 +129,7 @@ class StylePropertySerializer {
     const CSSValue* GetPropertyCSSValue(const CSSProperty&) const;
     bool IsDescriptorContext() const;
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
 
    private:
     bool HasExpandedAllProperty() const {

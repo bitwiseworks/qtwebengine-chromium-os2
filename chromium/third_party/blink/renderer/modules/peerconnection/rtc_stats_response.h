@@ -39,8 +39,6 @@ class RTCStatsResponse final : public RTCStatsResponseBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static RTCStatsResponse* Create();
-
   RTCStatsResponse();
 
   const HeapVector<Member<RTCLegacyStatsReport>>& result() const {
@@ -48,9 +46,9 @@ class RTCStatsResponse final : public RTCStatsResponseBase {
   }
   RTCLegacyStatsReport* namedItem(const AtomicString& name);
 
-  void AddStats(const WebRTCLegacyStats&) override;
+  void AddStats(const RTCLegacyStats&) override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   HeapVector<Member<RTCLegacyStatsReport>> result_;

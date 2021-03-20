@@ -7,11 +7,13 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/strings/string_number_conversions.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/resource_request_info.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/common/child_process_host.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/upload_data_presenter.h"
@@ -21,7 +23,6 @@
 #include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/api/web_request/web_request_resource_type.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "ipc/ipc_message.h"
 #include "net/base/auth.h"
 #include "net/base/upload_data_stream.h"
 #include "net/http/http_request_headers.h"
@@ -39,7 +40,7 @@ namespace {
 void EraseHeadersIf(
     base::Value* headers,
     base::RepeatingCallback<bool(const std::string&)> predicate) {
-  base::EraseIf(headers->GetList(), [&predicate](const base::Value& v) {
+  headers->EraseListValueIf([&predicate](const base::Value& v) {
     return predicate.Run(v.FindKey(keys::kHeaderNameKey)->GetString());
   });
 }
@@ -49,17 +50,18 @@ void EraseHeadersIf(
 WebRequestEventDetails::WebRequestEventDetails(const WebRequestInfo& request,
                                                int extra_info_spec)
     : extra_info_spec_(extra_info_spec),
-      render_process_id_(content::ChildProcessHost::kInvalidUniqueID),
-      render_frame_id_(MSG_ROUTING_NONE) {
+      render_process_id_(content::ChildProcessHost::kInvalidUniqueID) {
   dict_.SetString(keys::kMethodKey, request.method);
   dict_.SetString(keys::kRequestIdKey, base::NumberToString(request.id));
   dict_.SetDouble(keys::kTimeStampKey, base::Time::Now().ToDoubleT() * 1000);
   dict_.SetString(keys::kTypeKey,
                   WebRequestResourceTypeToString(request.web_request_type));
   dict_.SetString(keys::kUrlKey, request.url.spec());
+  dict_.SetInteger(keys::kTabIdKey, request.frame_data.tab_id);
+  dict_.SetInteger(keys::kFrameIdKey, request.frame_data.frame_id);
+  dict_.SetInteger(keys::kParentFrameIdKey, request.frame_data.parent_frame_id);
   initiator_ = request.initiator;
   render_process_id_ = request.render_process_id;
-  render_frame_id_ = request.frame_id;
 }
 
 WebRequestEventDetails::~WebRequestEventDetails() = default;
@@ -131,34 +133,9 @@ void WebRequestEventDetails::SetResponseSource(const WebRequestInfo& request) {
     dict_.SetString(keys::kIpKey, request.response_ip);
 }
 
-void WebRequestEventDetails::SetFrameData(
-    const ExtensionApiFrameIdMap::FrameData& frame_data) {
-  dict_.SetInteger(keys::kTabIdKey, frame_data.tab_id);
-  dict_.SetInteger(keys::kFrameIdKey, frame_data.frame_id);
-  dict_.SetInteger(keys::kParentFrameIdKey, frame_data.parent_frame_id);
-}
-
-void WebRequestEventDetails::DetermineFrameDataOnUI() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  content::RenderFrameHost* rfh =
-      content::RenderFrameHost::FromID(render_process_id_, render_frame_id_);
-  ExtensionApiFrameIdMap::FrameData frame_data =
-      ExtensionApiFrameIdMap::Get()->GetFrameData(rfh);
-  SetFrameData(frame_data);
-}
-
-void WebRequestEventDetails::DetermineFrameDataOnIO(
-    const DeterminedFrameDataCallback& callback) {
-  std::unique_ptr<WebRequestEventDetails> self(this);
-  ExtensionApiFrameIdMap::Get()->GetFrameDataOnIO(
-      render_process_id_, render_frame_id_,
-      base::Bind(&WebRequestEventDetails::OnDeterminedFrameData,
-                 base::Unretained(this), base::Passed(&self), callback));
-}
-
 std::unique_ptr<base::DictionaryValue> WebRequestEventDetails::GetFilteredDict(
     int extra_info_spec,
-    const extensions::InfoMap* extension_info_map,
+    PermissionHelper* permission_helper,
     const extensions::ExtensionId& extension_id,
     bool crosses_incognito) const {
   std::unique_ptr<base::DictionaryValue> result = dict_.CreateDeepCopy();
@@ -166,10 +143,14 @@ std::unique_ptr<base::DictionaryValue> WebRequestEventDetails::GetFilteredDict(
     result->SetKey(keys::kRequestBodyKey, request_body_->Clone());
   }
   if ((extra_info_spec & ExtraInfoSpec::REQUEST_HEADERS) && request_headers_) {
+    content::RenderProcessHost* process =
+        content::RenderProcessHost::FromID(render_process_id_);
+    content::BrowserContext* browser_context =
+        process ? process->GetBrowserContext() : nullptr;
     base::Value request_headers = request_headers_->Clone();
-    EraseHeadersIf(
-        &request_headers,
-        base::BindRepeating(helpers::ShouldHideRequestHeader, extra_info_spec));
+    EraseHeadersIf(&request_headers,
+                   base::BindRepeating(helpers::ShouldHideRequestHeader,
+                                       browser_context, extra_info_spec));
     result->SetKey(keys::kRequestHeadersKey, std::move(request_headers));
   }
   if ((extra_info_spec & ExtraInfoSpec::RESPONSE_HEADERS) &&
@@ -182,12 +163,12 @@ std::unique_ptr<base::DictionaryValue> WebRequestEventDetails::GetFilteredDict(
   }
 
   // Only listeners with a permission for the initiator should recieve it.
-  if (extension_info_map && initiator_) {
+  if (initiator_) {
     int tab_id = -1;
     dict_.GetInteger(keys::kTabIdKey, &tab_id);
     if (initiator_->opaque() ||
         WebRequestPermissions::CanExtensionAccessInitiator(
-            extension_info_map, extension_id, initiator_, tab_id,
+            permission_helper, extension_id, initiator_, tab_id,
             crosses_incognito)) {
       result->SetString(keys::kInitiatorKey, initiator_->Serialize());
     }
@@ -207,7 +188,6 @@ WebRequestEventDetails::CreatePublicSessionCopy() {
   std::unique_ptr<WebRequestEventDetails> copy(new WebRequestEventDetails);
   copy->initiator_ = initiator_;
   copy->render_process_id_ = render_process_id_;
-  copy->render_frame_id_ = render_frame_id_;
 
   static const char* const kSafeAttributes[] = {
     "method", "requestId", "timeStamp", "type", "tabId", "frameId",
@@ -230,14 +210,6 @@ WebRequestEventDetails::CreatePublicSessionCopy() {
 }
 
 WebRequestEventDetails::WebRequestEventDetails()
-    : extra_info_spec_(0), render_process_id_(0), render_frame_id_(0) {}
-
-void WebRequestEventDetails::OnDeterminedFrameData(
-    std::unique_ptr<WebRequestEventDetails> self,
-    const DeterminedFrameDataCallback& callback,
-    const ExtensionApiFrameIdMap::FrameData& frame_data) {
-  SetFrameData(frame_data);
-  callback.Run(std::move(self));
-}
+    : extra_info_spec_(0), render_process_id_(0) {}
 
 }  // namespace extensions

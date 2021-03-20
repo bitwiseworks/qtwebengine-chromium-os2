@@ -36,8 +36,6 @@ class CORE_EXPORT HTMLOptGroupElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HTMLOptGroupElement* Create(Document&);
-
   explicit HTMLOptGroupElement(Document&);
 
   bool IsDisabledFormControl() const override;
@@ -54,6 +52,8 @@ class CORE_EXPORT HTMLOptGroupElement final : public HTMLElement {
   ~HTMLOptGroupElement() override;
 
   bool SupportsFocus() const override;
+  void ChildrenChanged(const ChildrenChange& change) override;
+  bool ChildrenChangedAllChildrenRemovedNeedsList() const override;
   void ParseAttribute(const AttributeModificationParams&) override;
   void AccessKeyAction(bool send_mouse_events) override;
   void DidAddUserAgentShadowRoot(ShadowRoot&) override;

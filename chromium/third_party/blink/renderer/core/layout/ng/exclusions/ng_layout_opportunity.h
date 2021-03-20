@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NGLayoutOpportunity_h
-#define NGLayoutOpportunity_h
+#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_EXCLUSIONS_NG_LAYOUT_OPPORTUNITY_H_
+#define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_EXCLUSIONS_NG_LAYOUT_OPPORTUNITY_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/exclusions/ng_line_layout_opportunity.h"
@@ -47,9 +47,15 @@ struct CORE_EXPORT NGLayoutOpportunity {
   // Calculates a line layout opportunity which takes into account any shapes
   // which may affect the available inline size for the line breaker.
   NGLineLayoutOpportunity ComputeLineLayoutOpportunity(
-      const NGConstraintSpace&,
+      const NGConstraintSpace& space,
       LayoutUnit line_block_size,
-      LayoutUnit block_delta) const;
+      LayoutUnit block_delta) const {
+    return NGLineLayoutOpportunity(
+        ComputeLineLeftOffset(space, line_block_size, block_delta),
+        ComputeLineRightOffset(space, line_block_size, block_delta),
+        rect.LineStartOffset(), rect.LineEndOffset(),
+        rect.BlockStartOffset() + block_delta, line_block_size);
+  }
 
  private:
   LayoutUnit ComputeLineLeftOffset(const NGConstraintSpace&,
@@ -62,4 +68,4 @@ struct CORE_EXPORT NGLayoutOpportunity {
 
 }  // namespace blink
 
-#endif  // NGLayoutOpportunity_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_EXCLUSIONS_NG_LAYOUT_OPPORTUNITY_H_

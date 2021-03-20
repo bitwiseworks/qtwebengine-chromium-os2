@@ -26,7 +26,8 @@ void LogBadMessage(BadMessageReason reason) {
 
   LOG(ERROR) << "Terminating renderer for bad IPC message, reason " << reason;
   base::UmaHistogramSparse("Stability.BadMessageTerminated.Content", reason);
-  base::debug::SetCrashKeyString(bad_message_reason, base::IntToString(reason));
+  base::debug::SetCrashKeyString(bad_message_reason,
+                                 base::NumberToString(reason));
 }
 
 void ReceivedBadMessageOnUIThread(int render_process_id,
@@ -56,9 +57,9 @@ void ReceivedBadMessage(int render_process_id, BadMessageReason reason) {
   base::debug::DumpWithoutCrashing();
 
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::BindOnce(&ReceivedBadMessageOnUIThread,
-                                            render_process_id, reason));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&ReceivedBadMessageOnUIThread,
+                                  render_process_id, reason));
     return;
   }
   ReceivedBadMessageOnUIThread(render_process_id, reason);
@@ -67,18 +68,6 @@ void ReceivedBadMessage(int render_process_id, BadMessageReason reason) {
 void ReceivedBadMessage(BrowserMessageFilter* filter, BadMessageReason reason) {
   LogBadMessage(reason);
   filter->ShutdownForBadMessage();
-}
-
-base::debug::CrashKeyString* GetMojoErrorCrashKey() {
-  static auto* crash_key = base::debug::AllocateCrashKeyString(
-      "mojo-message-error", base::debug::CrashKeySize::Size256);
-  return crash_key;
-}
-
-base::debug::CrashKeyString* GetKilledProcessOriginLockKey() {
-  static auto* crash_key = base::debug::AllocateCrashKeyString(
-      "killed_process_origin_lock", base::debug::CrashKeySize::Size64);
-  return crash_key;
 }
 
 base::debug::CrashKeyString* GetRequestedSiteURLKey() {

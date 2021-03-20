@@ -12,25 +12,18 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/timer/elapsed_timer.h"
-#include "extensions/browser/api/declarative_net_request/flat/extension_ruleset_generated.h"
+#include "extensions/browser/api/declarative_net_request/constants.h"
+#include "extensions/browser/api/declarative_net_request/request_action.h"
+#include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 #include "extensions/browser/api/declarative_net_request/utils.h"
 #include "extensions/common/api/declarative_net_request/utils.h"
-#include "url/gurl.h"
 
 namespace extensions {
 namespace declarative_net_request {
-namespace flat_rule = url_pattern_index::flat;
-
-namespace {
-
-using FindRuleStrategy =
-    url_pattern_index::UrlPatternIndexMatcher::FindRuleStrategy;
-
-}  // namespace
 
 // static
 RulesetMatcher::LoadRulesetResult RulesetMatcher::CreateVerifiedMatcher(
-    const base::FilePath& indexed_ruleset_path,
+    const RulesetSource& source,
     int expected_ruleset_checksum,
     std::unique_ptr<RulesetMatcher>* matcher) {
   DCHECK(matcher);
@@ -38,11 +31,11 @@ RulesetMatcher::LoadRulesetResult RulesetMatcher::CreateVerifiedMatcher(
 
   base::ElapsedTimer timer;
 
-  if (!base::PathExists(indexed_ruleset_path))
+  if (!base::PathExists(source.indexed_path()))
     return kLoadErrorInvalidPath;
 
   std::string ruleset_data;
-  if (!base::ReadFileToString(indexed_ruleset_path, &ruleset_data))
+  if (!base::ReadFileToString(source.indexed_path(), &ruleset_data))
     return kLoadErrorFileRead;
 
   if (!StripVersionHeaderAndParseVersion(&ruleset_data))
@@ -62,82 +55,81 @@ RulesetMatcher::LoadRulesetResult RulesetMatcher::CreateVerifiedMatcher(
 
   // Using WrapUnique instead of make_unique since this class has a private
   // constructor.
-  *matcher = base::WrapUnique(new RulesetMatcher(std::move(ruleset_data)));
+  *matcher = base::WrapUnique(new RulesetMatcher(std::move(ruleset_data),
+                                                 source.id(), source.type(),
+                                                 source.extension_id()));
   return kLoadSuccess;
 }
 
 RulesetMatcher::~RulesetMatcher() = default;
 
-bool RulesetMatcher::ShouldBlockRequest(const GURL& url,
-                                        const url::Origin& first_party_origin,
-                                        flat_rule::ElementType element_type,
-                                        bool is_third_party) const {
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "Extensions.DeclarativeNetRequest.ShouldBlockRequestTime."
-      "SingleExtension");
-
-  // Don't exclude generic rules from being matched. A generic rule is one with
-  // an empty included domains list.
-  const bool disable_generic_rules = false;
-
-  bool success =
-      !!blocking_matcher_.FindMatch(
-          url, first_party_origin, element_type, flat_rule::ActivationType_NONE,
-          is_third_party, disable_generic_rules, FindRuleStrategy::kAny) &&
-      !allowing_matcher_.FindMatch(
-          url, first_party_origin, element_type, flat_rule::ActivationType_NONE,
-          is_third_party, disable_generic_rules, FindRuleStrategy::kAny);
-  return success;
+base::Optional<RequestAction> RulesetMatcher::GetBeforeRequestAction(
+    const RequestParams& params) const {
+  return GetMaxPriorityAction(
+      url_pattern_index_matcher_.GetBeforeRequestAction(params),
+      regex_matcher_.GetBeforeRequestAction(params));
 }
 
-bool RulesetMatcher::ShouldRedirectRequest(
-    const GURL& url,
-    const url::Origin& first_party_origin,
-    flat_rule::ElementType element_type,
-    bool is_third_party,
-    GURL* redirect_url) const {
-  DCHECK(redirect_url);
-  DCHECK_NE(flat_rule::ElementType_WEBSOCKET, element_type);
+uint8_t RulesetMatcher::GetRemoveHeadersMask(
+    const RequestParams& params,
+    uint8_t excluded_remove_headers_mask,
+    std::vector<RequestAction>* remove_headers_actions) const {
+  DCHECK(remove_headers_actions);
+  static_assert(
+      flat::RemoveHeaderType_ANY <= std::numeric_limits<uint8_t>::max(),
+      "flat::RemoveHeaderType can't fit in a uint8_t");
 
-  SCOPED_UMA_HISTOGRAM_TIMER(
-      "Extensions.DeclarativeNetRequest.ShouldRedirectRequestTime."
-      "SingleExtension");
-
-  // Don't exclude generic rules from being matched. A generic rule is one with
-  // an empty included domains list.
-  const bool disable_generic_rules = false;
-
-  // Retrieve the highest priority matching rule corresponding to the given
-  // request parameters.
-  const flat_rule::UrlRule* rule = redirect_matcher_.FindMatch(
-      url, first_party_origin, element_type, flat_rule::ActivationType_NONE,
-      is_third_party, disable_generic_rules,
-      FindRuleStrategy::kHighestPriority);
-  if (!rule)
-    return false;
-
-  // Find the UrlRuleMetadata corresponding to |rule|. Since |metadata_list_| is
-  // sorted by rule id, use LookupByKey which binary searches for fast lookup.
-  const flat::UrlRuleMetadata* metadata =
-      metadata_list_->LookupByKey(rule->id());
-
-  // There must be a UrlRuleMetadata object corresponding to each redirect rule.
-  DCHECK(metadata);
-  DCHECK_EQ(metadata->id(), rule->id());
-
-  *redirect_url = GURL(base::StringPiece(metadata->redirect_url()->c_str(),
-                                         metadata->redirect_url()->size()));
-  DCHECK(redirect_url->is_valid());
-  return true;
+  uint8_t mask = url_pattern_index_matcher_.GetRemoveHeadersMask(
+      params, excluded_remove_headers_mask, remove_headers_actions);
+  return mask | regex_matcher_.GetRemoveHeadersMask(
+                    params, excluded_remove_headers_mask | mask,
+                    remove_headers_actions);
 }
 
-RulesetMatcher::RulesetMatcher(std::string ruleset_data)
+bool RulesetMatcher::IsExtraHeadersMatcher() const {
+  return url_pattern_index_matcher_.IsExtraHeadersMatcher() ||
+         regex_matcher_.IsExtraHeadersMatcher();
+}
+
+void RulesetMatcher::OnRenderFrameCreated(content::RenderFrameHost* host) {
+  url_pattern_index_matcher_.OnRenderFrameCreated(host);
+  regex_matcher_.OnRenderFrameCreated(host);
+}
+
+void RulesetMatcher::OnRenderFrameDeleted(content::RenderFrameHost* host) {
+  url_pattern_index_matcher_.OnRenderFrameDeleted(host);
+  regex_matcher_.OnRenderFrameDeleted(host);
+}
+
+void RulesetMatcher::OnDidFinishNavigation(content::RenderFrameHost* host) {
+  url_pattern_index_matcher_.OnDidFinishNavigation(host);
+  regex_matcher_.OnDidFinishNavigation(host);
+}
+
+base::Optional<RequestAction>
+RulesetMatcher::GetAllowlistedFrameActionForTesting(
+    content::RenderFrameHost* host) const {
+  return GetMaxPriorityAction(
+      url_pattern_index_matcher_.GetAllowlistedFrameActionForTesting(host),
+      regex_matcher_.GetAllowlistedFrameActionForTesting(host));
+}
+
+RulesetMatcher::RulesetMatcher(
+    std::string ruleset_data,
+    int id,
+    api::declarative_net_request::SourceType source_type,
+    const ExtensionId& extension_id)
     : ruleset_data_(std::move(ruleset_data)),
       root_(flat::GetExtensionIndexedRuleset(ruleset_data_.data())),
-      blocking_matcher_(root_->blocking_index()),
-      allowing_matcher_(root_->allowing_index()),
-      redirect_matcher_(root_->redirect_index()),
-      metadata_list_(root_->extension_metadata()) {}
+      id_(id),
+      url_pattern_index_matcher_(extension_id,
+                                 source_type,
+                                 root_->index_list(),
+                                 root_->extension_metadata()),
+      regex_matcher_(extension_id,
+                     source_type,
+                     root_->regex_rules(),
+                     root_->extension_metadata()) {}
 
 }  // namespace declarative_net_request
 }  // namespace extensions

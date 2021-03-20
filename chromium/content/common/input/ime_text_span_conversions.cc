@@ -38,34 +38,74 @@ ui::ImeTextSpan::Type ConvertWebImeTextSpanTypeToUiType(
   return ui::ImeTextSpan::Type::kComposition;
 }
 
-ws::mojom::ImeTextSpanThickness ConvertUiThicknessToUiImeTextSpanThickness(
+ui::mojom::ImeTextSpanThickness ConvertUiThicknessToUiImeTextSpanThickness(
     ui::ImeTextSpan::Thickness thickness) {
   switch (thickness) {
     case ui::ImeTextSpan::Thickness::kNone:
-      return ws::mojom::ImeTextSpanThickness::kNone;
+      return ui::mojom::ImeTextSpanThickness::kNone;
     case ui::ImeTextSpan::Thickness::kThin:
-      return ws::mojom::ImeTextSpanThickness::kThin;
+      return ui::mojom::ImeTextSpanThickness::kThin;
     case ui::ImeTextSpan::Thickness::kThick:
-      return ws::mojom::ImeTextSpanThickness::kThick;
+      return ui::mojom::ImeTextSpanThickness::kThick;
   }
 
   NOTREACHED();
-  return ws::mojom::ImeTextSpanThickness::kThin;
+  return ui::mojom::ImeTextSpanThickness::kThin;
 }
 
 ui::ImeTextSpan::Thickness ConvertUiImeTextSpanThicknessToUiThickness(
-    ws::mojom::ImeTextSpanThickness thickness) {
+    ui::mojom::ImeTextSpanThickness thickness) {
   switch (thickness) {
-    case ws::mojom::ImeTextSpanThickness::kNone:
+    case ui::mojom::ImeTextSpanThickness::kNone:
       return ui::ImeTextSpan::Thickness::kNone;
-    case ws::mojom::ImeTextSpanThickness::kThin:
+    case ui::mojom::ImeTextSpanThickness::kThin:
       return ui::ImeTextSpan::Thickness::kThin;
-    case ws::mojom::ImeTextSpanThickness::kThick:
+    case ui::mojom::ImeTextSpanThickness::kThick:
       return ui::ImeTextSpan::Thickness::kThick;
   }
 
   NOTREACHED();
   return ui::ImeTextSpan::Thickness::kThin;
+}
+
+ui::mojom::ImeTextSpanUnderlineStyle
+ConvertUiUnderlineStyleToUiImeTextSpanUnderlineStyle(
+    ui::ImeTextSpan::UnderlineStyle underline_style) {
+  switch (underline_style) {
+    case ui::ImeTextSpan::UnderlineStyle::kNone:
+      return ui::mojom::ImeTextSpanUnderlineStyle::kNone;
+    case ui::ImeTextSpan::UnderlineStyle::kSolid:
+      return ui::mojom::ImeTextSpanUnderlineStyle::kSolid;
+    case ui::ImeTextSpan::UnderlineStyle::kDot:
+      return ui::mojom::ImeTextSpanUnderlineStyle::kDot;
+    case ui::ImeTextSpan::UnderlineStyle::kDash:
+      return ui::mojom::ImeTextSpanUnderlineStyle::kDash;
+    case ui::ImeTextSpan::UnderlineStyle::kSquiggle:
+      return ui::mojom::ImeTextSpanUnderlineStyle::kSquiggle;
+  }
+
+  NOTREACHED();
+  return ui::mojom::ImeTextSpanUnderlineStyle::kSolid;
+}
+
+ui::ImeTextSpan::UnderlineStyle
+ConvertUiImeTextSpanUnderlineStyleToUiUnderlineStyle(
+    ui::mojom::ImeTextSpanUnderlineStyle underline_style) {
+  switch (underline_style) {
+    case ui::mojom::ImeTextSpanUnderlineStyle::kNone:
+      return ui::ImeTextSpan::UnderlineStyle::kNone;
+    case ui::mojom::ImeTextSpanUnderlineStyle::kSolid:
+      return ui::ImeTextSpan::UnderlineStyle::kSolid;
+    case ui::mojom::ImeTextSpanUnderlineStyle::kDot:
+      return ui::ImeTextSpan::UnderlineStyle::kDot;
+    case ui::mojom::ImeTextSpanUnderlineStyle::kDash:
+      return ui::ImeTextSpan::UnderlineStyle::kDash;
+    case ui::mojom::ImeTextSpanUnderlineStyle::kSquiggle:
+      return ui::ImeTextSpan::UnderlineStyle::kSquiggle;
+  }
+
+  NOTREACHED();
+  return ui::ImeTextSpan::UnderlineStyle::kSolid;
 }
 
 blink::WebImeTextSpan ConvertUiImeTextSpanToBlinkImeTextSpan(
@@ -74,9 +114,12 @@ blink::WebImeTextSpan ConvertUiImeTextSpanToBlinkImeTextSpan(
       ConvertUiImeTextSpanTypeToWebType(ui_ime_text_span.type),
       ui_ime_text_span.start_offset, ui_ime_text_span.end_offset,
       ConvertUiThicknessToUiImeTextSpanThickness(ui_ime_text_span.thickness),
+      ConvertUiUnderlineStyleToUiImeTextSpanUnderlineStyle(
+          ui_ime_text_span.underline_style),
       ui_ime_text_span.background_color,
       ui_ime_text_span.suggestion_highlight_color,
       ui_ime_text_span.suggestions);
+  blink_ime_text_span.text_color = ui_ime_text_span.text_color;
   blink_ime_text_span.underline_color = ui_ime_text_span.underline_color;
   blink_ime_text_span.remove_on_finish_composing =
       ui_ime_text_span.remove_on_finish_composing;
@@ -99,9 +142,12 @@ ui::ImeTextSpan ConvertBlinkImeTextSpanToUiImeTextSpan(
       ConvertWebImeTextSpanTypeToUiType(blink_ime_text_span.type),
       blink_ime_text_span.start_offset, blink_ime_text_span.end_offset,
       ConvertUiImeTextSpanThicknessToUiThickness(blink_ime_text_span.thickness),
+      ConvertUiImeTextSpanUnderlineStyleToUiUnderlineStyle(
+          blink_ime_text_span.underline_style),
       blink_ime_text_span.background_color,
       blink_ime_text_span.suggestion_highlight_color,
       blink_ime_text_span.suggestions);
+  ui_ime_text_span.text_color = blink_ime_text_span.text_color;
   ui_ime_text_span.underline_color = blink_ime_text_span.underline_color;
   ui_ime_text_span.remove_on_finish_composing =
       blink_ime_text_span.remove_on_finish_composing;

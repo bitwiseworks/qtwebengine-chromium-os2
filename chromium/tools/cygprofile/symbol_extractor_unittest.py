@@ -128,6 +128,28 @@ class TestSymbolInfo(unittest.TestCase):
     self.assertEquals('_ZZL11get_globalsvENK3$_1clEv', symbol_info.name)
     self.assertEquals('.text', symbol_info.section)
 
+  def testOutlinedFunction(self):
+    # Test that an outlined function is reported normally. Also note that
+    # outlined functions are in 64 bit builds which have longer addresses.
+    line = ('00000000020fab4c l     F .text\t0000000000000014' + SPACES +
+            'OUTLINED_FUNCTION_4')
+    symbol_info = symbol_extractor._FromObjdumpLine(line)
+    self.assertIsNotNone(symbol_info)
+    self.assertEquals(0x20fab4c, symbol_info.offset)
+    self.assertEquals(0x14, symbol_info.size)
+    self.assertEquals('OUTLINED_FUNCTION_4', symbol_info.name)
+    self.assertEquals('.text', symbol_info.section)
+
+  def testNeitherLocalNorGlobalSymbol(self):
+    # This happens, see crbug.com/992884.
+    # Symbol which is neither local nor global.
+    line = '0287ae50  w    F .text\t000001e8              log2l'
+    symbol_info = symbol_extractor._FromObjdumpLine(line)
+    self.assertIsNotNone(symbol_info)
+    self.assertEquals(0x287ae50, symbol_info.offset)
+    self.assertEquals(0x1e8, symbol_info.size)
+    self.assertEquals('log2l', symbol_info.name)
+    self.assertEquals('.text', symbol_info.section)
 
 class TestSymbolInfosFromStream(unittest.TestCase):
 

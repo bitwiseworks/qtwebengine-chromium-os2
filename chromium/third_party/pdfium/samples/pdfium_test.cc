@@ -18,6 +18,10 @@
 #define _SKIA_SUPPORT_
 #endif
 
+#if defined PDF_ENABLE_SKIA_PATHS && !defined _SKIA_SUPPORT_PATHS_
+#define _SKIA_SUPPORT_PATHS_
+#endif
+
 #include "public/cpp/fpdf_scopers.h"
 #include "public/fpdf_annot.h"
 #include "public/fpdf_attachment.h"
@@ -32,7 +36,10 @@
 #include "samples/pdfium_test_dump_helper.h"
 #include "samples/pdfium_test_event_helper.h"
 #include "samples/pdfium_test_write_helper.h"
-#include "testing/test_support.h"
+#include "testing/fx_string_testhelpers.h"
+#include "testing/test_loader.h"
+#include "testing/utils/file_util.h"
+#include "testing/utils/hash.h"
 #include "testing/utils/path_service.h"
 #include "third_party/base/logging.h"
 #include "third_party/base/optional.h"
@@ -48,6 +55,7 @@
 #endif  // ENABLE_CALLGRIND
 
 #ifdef PDF_ENABLE_V8
+#include "testing/v8_initializer.h"
 #include "v8/include/libplatform/libplatform.h"
 #include "v8/include/v8.h"
 #endif  // PDF_ENABLE_V8
@@ -95,9 +103,23 @@ struct Options {
   bool show_config = false;
   bool show_metadata = false;
   bool send_events = false;
+  bool use_load_mem_document = false;
   bool render_oneshot = false;
+  bool lcd_text = false;
+  bool no_nativetext = false;
+  bool grayscale = false;
+  bool limit_cache = false;
+  bool force_halftone = false;
+  bool printing = false;
+  bool no_smoothtext = false;
+  bool no_smoothimage = false;
+  bool no_smoothpath = false;
+  bool reverse_byte_order = false;
   bool save_attachments = false;
   bool save_images = false;
+  bool save_thumbnails = false;
+  bool save_thumbnails_decoded = false;
+  bool save_thumbnails_raw = false;
 #ifdef PDF_ENABLE_V8
   bool disable_javascript = false;
 #ifdef PDF_ENABLE_XFA
@@ -108,8 +130,12 @@ struct Options {
   bool md5 = false;
 #ifdef ENABLE_CALLGRIND
   bool callgrind_delimiters = false;
-#endif  // ENABLE_CALLGRIND
+#endif
+#if defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__))
+  bool linux_no_system_fonts = false;
+#endif
   OutputFormat output_format = OUTPUT_NONE;
+  std::string password;
   std::string scale_factor_as_string;
   std::string exe_path;
   std::string bin_directory;
@@ -118,6 +144,31 @@ struct Options {
   int last_page = 0;   // Last 0-based page number to renderer.
   time_t time = -1;
 };
+
+int PageRenderFlagsFromOptions(const Options& options) {
+  int flags = FPDF_ANNOT;
+  if (options.lcd_text)
+    flags |= FPDF_LCD_TEXT;
+  if (options.no_nativetext)
+    flags |= FPDF_NO_NATIVETEXT;
+  if (options.grayscale)
+    flags |= FPDF_GRAYSCALE;
+  if (options.limit_cache)
+    flags |= FPDF_RENDER_LIMITEDIMAGECACHE;
+  if (options.force_halftone)
+    flags |= FPDF_RENDER_FORCEHALFTONE;
+  if (options.printing)
+    flags |= FPDF_PRINTING;
+  if (options.no_smoothtext)
+    flags |= FPDF_RENDER_NO_SMOOTHTEXT;
+  if (options.no_smoothimage)
+    flags |= FPDF_RENDER_NO_SMOOTHIMAGE;
+  if (options.no_smoothpath)
+    flags |= FPDF_RENDER_NO_SMOOTHPATH;
+  if (options.reverse_byte_order)
+    flags |= FPDF_REVERSE_BYTE_ORDER;
+  return flags;
+}
 
 Optional<std::string> ExpandDirectoryPath(const std::string& path) {
 #if defined(WORDEXP_AVAILABLE)
@@ -136,6 +187,22 @@ Optional<std::string> ExpandDirectoryPath(const std::string& path) {
 #endif  // WORDEXP_AVAILABLE
 }
 
+Optional<const char*> GetCustomFontPath(const Options& options) {
+#if defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__))
+  // Set custom font path to an empty path. This avoids the fallback to default
+  // font paths.
+  if (options.linux_no_system_fonts)
+    return nullptr;
+#endif
+
+  // No custom font path. Use default.
+  if (options.font_directory.empty())
+    return pdfium::nullopt;
+
+  // Set custom font path to |options.font_directory|.
+  return options.font_directory.c_str();
+}
+
 struct FPDF_FORMFILLINFO_PDFiumTest final : public FPDF_FORMFILLINFO {
   // Hold a map of the currently loaded pages in order to avoid them
   // to get loaded twice.
@@ -151,10 +218,9 @@ FPDF_FORMFILLINFO_PDFiumTest* ToPDFiumTestFormFillInfo(
   return static_cast<FPDF_FORMFILLINFO_PDFiumTest*>(form_fill_info);
 }
 
-void OutputMD5Hash(const char* file_name, const char* buffer, int len) {
+void OutputMD5Hash(const char* file_name, const uint8_t* buffer, int len) {
   // Get the MD5 hash and write it to stdout.
-  std::string hash =
-      GenerateMD5Base16(reinterpret_cast<const uint8_t*>(buffer), len);
+  std::string hash = GenerateMD5Base16(buffer, len);
   printf("MD5:%s:%s\n", file_name, hash.c_str());
 }
 
@@ -241,7 +307,12 @@ void ExampleDocSubmitForm(IPDF_JSPLATFORM*,
                           void* formData,
                           int length,
                           FPDF_WIDESTRING url) {
-  printf("Doc Submit Form: url=%ls\n", GetPlatformWString(url).c_str());
+  printf("Doc Submit Form: url=%ls + %d data bytes:\n",
+         GetPlatformWString(url).c_str(), length);
+  uint8_t* ptr = reinterpret_cast<uint8_t*>(formData);
+  for (int i = 0; i < length; ++i)
+    printf(" %02x", ptr[i]);
+  printf("\n");
 }
 
 void ExampleDocGotoPage(IPDF_JSPLATFORM*, int page_number) {
@@ -256,6 +327,18 @@ int ExampleFieldBrowse(IPDF_JSPLATFORM*, void* file_path, int length) {
   return kRequired;
 }
 #endif  // PDF_ENABLE_V8
+
+#ifdef PDF_ENABLE_XFA
+FPDF_BOOL ExamplePopupMenu(FPDF_FORMFILLINFO* pInfo,
+                           FPDF_PAGE page,
+                           FPDF_WIDGET always_null,
+                           int flags,
+                           float x,
+                           float y) {
+  printf("Popup: x=%2.1f, y=%2.1f, flags=0x%x\n", x, y, flags);
+  return true;
+}
+#endif  // PDF_ENABLE_XFA
 
 void ExampleUnsupportedHandler(UNSUPPORT_INFO*, int type) {
   std::string feature = "Unknown";
@@ -301,6 +384,17 @@ void ExampleUnsupportedHandler(UNSUPPORT_INFO*, int type) {
   printf("Unsupported feature: %s.\n", feature.c_str());
 }
 
+// |arg| is expected to be "--key=value", and |key| is "--key=".
+bool ParseSwitchKeyValue(const std::string& arg,
+                         const std::string& key,
+                         std::string* value) {
+  if (arg.size() <= key.size() || arg.compare(0, key.size(), key) != 0)
+    return false;
+
+  *value = arg.substr(key.size());
+  return true;
+}
+
 bool ParseCommandLine(const std::vector<std::string>& args,
                       Options* options,
                       std::vector<std::string>* files) {
@@ -309,6 +403,7 @@ bool ParseCommandLine(const std::vector<std::string>& args,
 
   options->exe_path = args[0];
   size_t cur_idx = 1;
+  std::string value;
   for (; cur_idx < args.size(); ++cur_idx) {
     const std::string& cur_arg = args[cur_idx];
     if (cur_arg == "--show-config") {
@@ -317,12 +412,40 @@ bool ParseCommandLine(const std::vector<std::string>& args,
       options->show_metadata = true;
     } else if (cur_arg == "--send-events") {
       options->send_events = true;
+    } else if (cur_arg == "--mem-document") {
+      options->use_load_mem_document = true;
     } else if (cur_arg == "--render-oneshot") {
       options->render_oneshot = true;
+    } else if (cur_arg == "--lcd-text") {
+      options->lcd_text = true;
+    } else if (cur_arg == "--no-nativetext") {
+      options->no_nativetext = true;
+    } else if (cur_arg == "--grayscale") {
+      options->grayscale = true;
+    } else if (cur_arg == "--limit-cache") {
+      options->limit_cache = true;
+    } else if (cur_arg == "--force-halftone") {
+      options->force_halftone = true;
+    } else if (cur_arg == "--printing") {
+      options->printing = true;
+    } else if (cur_arg == "--no-smoothtext") {
+      options->no_smoothtext = true;
+    } else if (cur_arg == "--no-smoothimage") {
+      options->no_smoothimage = true;
+    } else if (cur_arg == "--no-smoothpath") {
+      options->no_smoothpath = true;
+    } else if (cur_arg == "--reverse-byte-order") {
+      options->reverse_byte_order = true;
     } else if (cur_arg == "--save-attachments") {
       options->save_attachments = true;
     } else if (cur_arg == "--save-images") {
       options->save_images = true;
+    } else if (cur_arg == "--save-thumbs") {
+      options->save_thumbnails = true;
+    } else if (cur_arg == "--save-thumbs-dec") {
+      options->save_thumbnails_decoded = true;
+    } else if (cur_arg == "--save-thumbs-raw") {
+      options->save_thumbnails_raw = true;
 #ifdef PDF_ENABLE_V8
     } else if (cur_arg == "--disable-javascript") {
       options->disable_javascript = true;
@@ -334,7 +457,11 @@ bool ParseCommandLine(const std::vector<std::string>& args,
 #ifdef ENABLE_CALLGRIND
     } else if (cur_arg == "--callgrind-delim") {
       options->callgrind_delimiters = true;
-#endif  // ENABLE_CALLGRIND
+#endif
+#if defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__))
+    } else if (cur_arg == "--no-system-fonts") {
+      options->linux_no_system_fonts = true;
+#endif
     } else if (cur_arg == "--ppm") {
       if (options->output_format != OUTPUT_NONE) {
         fprintf(stderr, "Duplicate or conflicting --ppm argument\n");
@@ -367,13 +494,12 @@ bool ParseCommandLine(const std::vector<std::string>& args,
       }
       options->output_format = OUTPUT_SKP;
 #endif  // PDF_ENABLE_SKIA
-    } else if (cur_arg.size() > 11 &&
-               cur_arg.compare(0, 11, "--font-dir=") == 0) {
+    } else if (ParseSwitchKeyValue(cur_arg, "--font-dir=", &value)) {
       if (!options->font_directory.empty()) {
         fprintf(stderr, "Duplicate --font-dir argument\n");
         return false;
       }
-      std::string path = cur_arg.substr(11);
+      std::string path = value;
       auto expanded_path = ExpandDirectoryPath(path);
       if (!expanded_path) {
         fprintf(stderr, "Failed to expand --font-dir, %s\n", path.c_str());
@@ -417,13 +543,12 @@ bool ParseCommandLine(const std::vector<std::string>& args,
 
 #ifdef PDF_ENABLE_V8
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
-    } else if (cur_arg.size() > 10 &&
-               cur_arg.compare(0, 10, "--bin-dir=") == 0) {
+    } else if (ParseSwitchKeyValue(cur_arg, "--bin-dir=", &value)) {
       if (!options->bin_directory.empty()) {
         fprintf(stderr, "Duplicate --bin-dir argument\n");
         return false;
       }
-      std::string path = cur_arg.substr(10);
+      std::string path = value;
       auto expanded_path = ExpandDirectoryPath(path);
       if (!expanded_path) {
         fprintf(stderr, "Failed to expand --bin-dir, %s\n", path.c_str());
@@ -433,12 +558,18 @@ bool ParseCommandLine(const std::vector<std::string>& args,
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
 #endif  // PDF_ENABLE_V8
 
-    } else if (cur_arg.size() > 8 && cur_arg.compare(0, 8, "--scale=") == 0) {
+    } else if (ParseSwitchKeyValue(cur_arg, "--password=", &value)) {
+      if (!options->password.empty()) {
+        fprintf(stderr, "Duplicate --password argument\n");
+        return false;
+      }
+      options->password = value;
+    } else if (ParseSwitchKeyValue(cur_arg, "--scale=", &value)) {
       if (!options->scale_factor_as_string.empty()) {
         fprintf(stderr, "Duplicate --scale argument\n");
         return false;
       }
-      options->scale_factor_as_string = cur_arg.substr(8);
+      options->scale_factor_as_string = value;
     } else if (cur_arg == "--show-pageinfo") {
       if (options->output_format != OUTPUT_NONE) {
         fprintf(stderr, "Duplicate or conflicting --show-pageinfo argument\n");
@@ -451,13 +582,13 @@ bool ParseCommandLine(const std::vector<std::string>& args,
         return false;
       }
       options->output_format = OUTPUT_STRUCTURE;
-    } else if (cur_arg.size() > 8 && cur_arg.compare(0, 8, "--pages=") == 0) {
+    } else if (ParseSwitchKeyValue(cur_arg, "--pages=", &value)) {
       if (options->pages) {
         fprintf(stderr, "Duplicate --pages argument\n");
         return false;
       }
       options->pages = true;
-      const std::string pages_string = cur_arg.substr(8);
+      const std::string pages_string = value;
       size_t first_dash = pages_string.find("-");
       if (first_dash == std::string::npos) {
         std::stringstream(pages_string) >> options->first_page;
@@ -470,12 +601,12 @@ bool ParseCommandLine(const std::vector<std::string>& args,
       }
     } else if (cur_arg == "--md5") {
       options->md5 = true;
-    } else if (cur_arg.size() > 7 && cur_arg.compare(0, 7, "--time=") == 0) {
+    } else if (ParseSwitchKeyValue(cur_arg, "--time=", &value)) {
       if (options->time > -1) {
         fprintf(stderr, "Duplicate --time argument\n");
         return false;
       }
-      const std::string time_string = cur_arg.substr(7);
+      const std::string time_string = value;
       std::stringstream(time_string) >> options->time;
       if (options->time < 0) {
         fprintf(stderr, "Invalid --time argument, must be non-negative\n");
@@ -523,7 +654,6 @@ void PrintLastError() {
       fprintf(stderr, "Unknown error %ld", err);
   }
   fprintf(stderr, ".\n");
-  return;
 }
 
 FPDF_BOOL Is_Data_Avail(FX_FILEAVAIL* avail, size_t offset, size_t size) {
@@ -577,7 +707,12 @@ bool RenderPage(const std::string& name,
     SendPageEvents(form, page, events);
   if (options.save_images)
     WriteImages(page, name.c_str(), page_index);
-
+  if (options.save_thumbnails)
+    WriteThumbnail(page, name.c_str(), page_index);
+  if (options.save_thumbnails_decoded)
+    WriteDecodedThumbnailStream(page, name.c_str(), page_index);
+  if (options.save_thumbnails_raw)
+    WriteRawThumbnailStream(page, name.c_str(), page_index);
   if (options.output_format == OUTPUT_PAGEINFO) {
     DumpPageInfo(page, page_index);
     return true;
@@ -592,8 +727,8 @@ bool RenderPage(const std::string& name,
   if (!options.scale_factor_as_string.empty())
     std::stringstream(options.scale_factor_as_string) >> scale;
 
-  auto width = static_cast<int>(FPDF_GetPageWidth(page) * scale);
-  auto height = static_cast<int>(FPDF_GetPageHeight(page) * scale);
+  auto width = static_cast<int>(FPDF_GetPageWidthF(page) * scale);
+  auto height = static_cast<int>(FPDF_GetPageHeightF(page) * scale);
   int alpha = FPDFPage_HasTransparency(page) ? 1 : 0;
   ScopedFPDFBitmap bitmap(FPDFBitmap_Create(width, height, alpha));
 
@@ -601,31 +736,30 @@ bool RenderPage(const std::string& name,
     FPDF_DWORD fill_color = alpha ? 0x00000000 : 0xFFFFFFFF;
     FPDFBitmap_FillRect(bitmap.get(), 0, 0, width, height, fill_color);
 
+    int flags = PageRenderFlagsFromOptions(options);
     if (options.render_oneshot) {
       // Note, client programs probably want to use this method instead of the
       // progressive calls. The progressive calls are if you need to pause the
       // rendering to update the UI, the PDF renderer will break when possible.
-      FPDF_RenderPageBitmap(bitmap.get(), page, 0, 0, width, height, 0,
-                            FPDF_ANNOT);
+      FPDF_RenderPageBitmap(bitmap.get(), page, 0, 0, width, height, 0, flags);
     } else {
       IFSDK_PAUSE pause;
       pause.version = 1;
       pause.NeedToPauseNow = &NeedToPauseNow;
 
       int rv = FPDF_RenderPageBitmap_Start(bitmap.get(), page, 0, 0, width,
-                                           height, 0, FPDF_ANNOT, &pause);
+                                           height, 0, flags, &pause);
       while (rv == FPDF_RENDER_TOBECONTINUED)
         rv = FPDF_RenderPage_Continue(page, &pause);
     }
 
-    FPDF_FFLDraw(form, bitmap.get(), page, 0, 0, width, height, 0, FPDF_ANNOT);
+    FPDF_FFLDraw(form, bitmap.get(), page, 0, 0, width, height, 0, flags);
 
     if (!options.render_oneshot)
       FPDF_RenderPage_Close(page);
 
     int stride = FPDFBitmap_GetStride(bitmap.get());
-    const char* buffer =
-        reinterpret_cast<const char*>(FPDFBitmap_GetBuffer(bitmap.get()));
+    void* buffer = FPDFBitmap_GetBuffer(bitmap.get());
 
     std::string image_file_name;
     switch (options.output_format) {
@@ -677,8 +811,10 @@ bool RenderPage(const std::string& name,
 
     // Write the filename and the MD5 of the buffer to stdout if we wrote a
     // file.
-    if (options.md5 && !image_file_name.empty())
-      OutputMD5Hash(image_file_name.c_str(), buffer, stride * height);
+    if (options.md5 && !image_file_name.empty()) {
+      OutputMD5Hash(image_file_name.c_str(),
+                    static_cast<const uint8_t*>(buffer), stride * height);
+    }
   } else {
     fprintf(stderr, "Page was too large to be rendered.\n");
   }
@@ -689,11 +825,11 @@ bool RenderPage(const std::string& name,
 }
 
 void RenderPdf(const std::string& name,
-               const char* pBuf,
+               const char* buf,
                size_t len,
                const Options& options,
                const std::string& events) {
-  TestLoader loader(pBuf, len);
+  TestLoader loader({buf, len});
 
   FPDF_FILEACCESS file_access = {};
   file_access.m_FileLen = static_cast<unsigned long>(len);
@@ -708,35 +844,42 @@ void RenderPdf(const std::string& name,
   hints.version = 1;
   hints.AddSegment = Add_Segment;
 
-  // The pdf_avail must outlive doc.
+  // |pdf_avail| must outlive |doc|.
   ScopedFPDFAvail pdf_avail(FPDFAvail_Create(&file_avail, &file_access));
 
-  // The document must outlive |form_callbacks.loaded_pages|.
+  // |doc| must outlive |form_callbacks.loaded_pages|.
   ScopedFPDFDocument doc;
 
-  int nRet = PDF_DATA_NOTAVAIL;
-  bool bIsLinearized = false;
-  if (FPDFAvail_IsLinearized(pdf_avail.get()) == PDF_LINEARIZED) {
-    doc.reset(FPDFAvail_GetDocument(pdf_avail.get(), nullptr));
-    if (doc) {
-      while (nRet == PDF_DATA_NOTAVAIL)
-        nRet = FPDFAvail_IsDocAvail(pdf_avail.get(), &hints);
-
-      if (nRet == PDF_DATA_ERROR) {
-        fprintf(stderr, "Unknown error in checking if doc was available.\n");
-        return;
-      }
-      nRet = FPDFAvail_IsFormAvail(pdf_avail.get(), &hints);
-      if (nRet == PDF_FORM_ERROR || nRet == PDF_FORM_NOTAVAIL) {
-        fprintf(stderr,
-                "Error %d was returned in checking if form was available.\n",
-                nRet);
-        return;
-      }
-      bIsLinearized = true;
-    }
+  const char* password =
+      options.password.empty() ? nullptr : options.password.c_str();
+  bool is_linearized = false;
+  if (options.use_load_mem_document) {
+    doc.reset(FPDF_LoadMemDocument(buf, len, password));
   } else {
-    doc.reset(FPDF_LoadCustomDocument(&file_access, nullptr));
+    if (FPDFAvail_IsLinearized(pdf_avail.get()) == PDF_LINEARIZED) {
+      int avail_status = PDF_DATA_NOTAVAIL;
+      doc.reset(FPDFAvail_GetDocument(pdf_avail.get(), password));
+      if (doc) {
+        while (avail_status == PDF_DATA_NOTAVAIL)
+          avail_status = FPDFAvail_IsDocAvail(pdf_avail.get(), &hints);
+
+        if (avail_status == PDF_DATA_ERROR) {
+          fprintf(stderr, "Unknown error in checking if doc was available.\n");
+          return;
+        }
+        avail_status = FPDFAvail_IsFormAvail(pdf_avail.get(), &hints);
+        if (avail_status == PDF_FORM_ERROR ||
+            avail_status == PDF_FORM_NOTAVAIL) {
+          fprintf(stderr,
+                  "Error %d was returned in checking if form was available.\n",
+                  avail_status);
+          return;
+        }
+        is_linearized = true;
+      }
+    } else {
+      doc.reset(FPDF_LoadCustomDocument(&file_access, password));
+    }
   }
 
   if (!doc) {
@@ -772,6 +915,9 @@ void RenderPdf(const std::string& name,
   FPDF_FORMFILLINFO_PDFiumTest form_callbacks = {};
 #ifdef PDF_ENABLE_XFA
   form_callbacks.version = 2;
+  form_callbacks.xfa_disabled =
+      options.disable_xfa || options.disable_javascript;
+  form_callbacks.FFI_PopupMenu = ExamplePopupMenu;
 #else   // PDF_ENABLE_XFA
   form_callbacks.version = 1;
 #endif  // PDF_ENABLE_XFA
@@ -814,12 +960,12 @@ void RenderPdf(const std::string& name,
   int first_page = options.pages ? options.first_page : 0;
   int last_page = options.pages ? options.last_page + 1 : page_count;
   for (int i = first_page; i < last_page; ++i) {
-    if (bIsLinearized) {
-      nRet = PDF_DATA_NOTAVAIL;
-      while (nRet == PDF_DATA_NOTAVAIL)
-        nRet = FPDFAvail_IsPageAvail(pdf_avail.get(), i, &hints);
+    if (is_linearized) {
+      int avail_status = PDF_DATA_NOTAVAIL;
+      while (avail_status == PDF_DATA_NOTAVAIL)
+        avail_status = FPDFAvail_IsPageAvail(pdf_avail.get(), i, &hints);
 
-      if (nRet == PDF_DATA_ERROR) {
+      if (avail_status == PDF_DATA_ERROR) {
         fprintf(stderr, "Unknown error in checking if page %d is available.\n",
                 i);
         return;
@@ -862,33 +1008,64 @@ void ShowConfig() {
   config.append("ASAN");
   maybe_comma = ",";
 #endif  // PDF_ENABLE_ASAN
+#if defined(PDF_ENABLE_SKIA)
+  config.append(maybe_comma);
+  config.append("SKIA");
+  maybe_comma = ",";
+#elif defined(PDF_ENABLE_SKIA_PATHS)
+  config.append(maybe_comma);
+  config.append("SKIAPATHS");
+  maybe_comma = ",";
+#endif
   printf("%s\n", config.c_str());
 }
 
 constexpr char kUsageString[] =
     "Usage: pdfium_test [OPTION] [FILE]...\n"
-    "  --show-config       - print build options and exit\n"
-    "  --show-metadata     - print the file metadata\n"
-    "  --show-pageinfo     - print information about pages\n"
-    "  --show-structure    - print the structure elements from the document\n"
-    "  --send-events       - send input described by .evt file\n"
-    "  --render-oneshot    - render image without using progressive renderer\n"
-    "  --save-attachments  - write embedded attachments "
+    "  --show-config        - print build options and exit\n"
+    "  --show-metadata      - print the file metadata\n"
+    "  --show-pageinfo      - print information about pages\n"
+    "  --show-structure     - print the structure elements from the document\n"
+    "  --send-events        - send input described by .evt file\n"
+    "  --mem-document       - load document with FPDF_LoadMemDocument()\n"
+    "  --render-oneshot     - render image without using progressive renderer\n"
+    "  --lcd-text           - render text optimized for LCD displays\n"
+    "  --no-nativetext      - render without using the native text output\n"
+    "  --grayscale          - render grayscale output\n"
+    "  --limit-cache        - render limiting image cache size\n"
+    "  --force-halftone     - render forcing halftone\n"
+    "  --printing           - render as if for printing\n"
+    "  --no-smoothtext      - render disabling text anti-aliasing\n"
+    "  --no-smoothimage     - render disabling image anti-alisasing\n"
+    "  --no-smoothpath      - render disabling path anti-aliasing\n"
+    "  --reverse-byte-order - render to BGRA, if supported by the output "
+    "format\n"
+    "  --save-attachments   - write embedded attachments "
     "<pdf-name>.attachment.<attachment-name>\n"
-    "  --save-images       - write embedded images "
+    "  --save-images        - write embedded images "
     "<pdf-name>.<page-number>.<object-number>.png\n"
+    "  --save-thumbs        - write page thumbnails "
+    "<pdf-name>.thumbnail.<page-number>.png\n"
+    "  --save-thumbs-dec    - write page thumbnails' decoded stream data"
+    "<pdf-name>.thumbnail.decoded.<page-number>.png\n"
+    "  --save-thumbs-raw    - write page thumbnails' raw stream data"
+    "<pdf-name>.thumbnail.raw.<page-number>.png\n"
 #ifdef PDF_ENABLE_V8
-    "  --disable-javascript- do not execute JS in PDF files\n"
+    "  --disable-javascript - do not execute JS in PDF files\n"
 #ifdef PDF_ENABLE_XFA
-    "  --disable-xfa       - do not process XFA forms\n"
+    "  --disable-xfa        - do not process XFA forms\n"
 #endif  // PDF_ENABLE_XFA
 #endif  // PDF_ENABLE_V8
 #ifdef ENABLE_CALLGRIND
-    "  --callgrind-delim   - delimit interesting section when using callgrind\n"
-#endif  // ENABLE_CALLGRIND
-    "  --bin-dir=<path>    - override path to v8 external data\n"
-    "  --font-dir=<path>   - override path to external fonts\n"
-    "  --scale=<number>    - scale output size by number (e.g. 0.5)\n"
+    "  --callgrind-delim    - delimit interesting section when using "
+    "callgrind\n"
+#endif
+#if defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__))
+    "  --no-system-fonts    - do not use system fonts, overrides --font-dir\n"
+#endif
+    "  --bin-dir=<path>     - override path to v8 external data\n"
+    "  --font-dir=<path>    - override path to external fonts\n"
+    "  --scale=<number>     - scale output size by number (e.g. 0.5)\n"
     "  --pages=<number>(-<number>) - only render the given 0-based page(s)\n"
 #ifdef _WIN32
     "  --bmp   - write page images <pdf-name>.<page-number>.bmp\n"
@@ -897,7 +1074,7 @@ constexpr char kUsageString[] =
     "<pdf-name>.<page-number>.ps\n"
     "  --ps3   - write page raw PostScript (Lvl 3) "
     "<pdf-name>.<page-number>.ps\n"
-#endif  // _WIN32
+#endif
     "  --txt   - write page text in UTF32-LE <pdf-name>.<page-number>.txt\n"
     "  --png   - write page images <pdf-name>.<page-number>.png\n"
     "  --ppm   - write page images <pdf-name>.<page-number>.ppm\n"
@@ -933,12 +1110,14 @@ int main(int argc, const char* argv[]) {
 #ifdef PDF_ENABLE_V8
   std::unique_ptr<v8::Platform> platform;
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
-  v8::StartupData natives;
   v8::StartupData snapshot;
-  platform = InitializeV8ForPDFiumWithStartupData(
-      options.exe_path, options.bin_directory, &natives, &snapshot);
+  if (!options.disable_javascript) {
+    platform = InitializeV8ForPDFiumWithStartupData(
+        options.exe_path, options.bin_directory, &snapshot);
+  }
 #else   // V8_USE_EXTERNAL_STARTUP_DATA
-  platform = InitializeV8ForPDFium(options.exe_path);
+  if (!options.disable_javascript)
+    platform = InitializeV8ForPDFium(options.exe_path);
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
 #endif  // PDF_ENABLE_V8
 
@@ -948,12 +1127,13 @@ int main(int argc, const char* argv[]) {
   config.m_pIsolate = nullptr;
   config.m_v8EmbedderSlot = 0;
 
-  const char* path_array[2];
-  if (!options.font_directory.empty()) {
-    path_array[0] = options.font_directory.c_str();
-    path_array[1] = nullptr;
+  const char* path_array[2] = {nullptr, nullptr};
+  Optional<const char*> custom_font_path = GetCustomFontPath(options);
+  if (custom_font_path.has_value()) {
+    path_array[0] = custom_font_path.value();
     config.m_pUserFontPaths = path_array;
   }
+
   FPDF_InitLibraryWithConfig(&config);
 
   UNSUPPORT_INFO unsupported_info = {};
@@ -1011,13 +1191,14 @@ int main(int argc, const char* argv[]) {
   }
 
   FPDF_DestroyLibrary();
-#ifdef PDF_ENABLE_V8
-  v8::V8::ShutdownPlatform();
 
+#ifdef PDF_ENABLE_V8
+  if (!options.disable_javascript) {
+    v8::V8::ShutdownPlatform();
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
-  free(const_cast<char*>(natives.data));
-  free(const_cast<char*>(snapshot.data));
+    free(const_cast<char*>(snapshot.data));
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
+  }
 #endif  // PDF_ENABLE_V8
 
   return 0;

@@ -2,12 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/jumbo.gni")
 import("../../../pdfium.gni")
+import("../../../testing/test.gni")
 
 assert(pdf_enable_xfa)
 
-jumbo_source_set("css") {
+source_set("css") {
   sources = [
     "cfx_css.h",
     "cfx_csscolorvalue.cpp",
@@ -57,4 +57,15 @@ jumbo_source_set("css") {
   ]
   configs += [ "../../../:pdfium_core_config" ]
   visibility = [ "../../../*" ]
+}
+
+pdfium_unittest_source_set("unittests") {
+  sources = [
+    "cfx_cssdeclaration_unittest.cpp",
+    "cfx_cssstylesheet_unittest.cpp",
+    "cfx_csssyntaxparser_unittest.cpp",
+    "cfx_cssvaluelistparser_unittest.cpp",
+  ]
+  pdfium_root_dir = "../../../"
+  deps = [ ":css" ]
 }

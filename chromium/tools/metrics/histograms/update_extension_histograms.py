@@ -9,6 +9,8 @@ extension_function_histogram_value.h.
 If the file was pretty-printed, the updated version is pretty-printed too.
 """
 
+from __future__ import print_function
+
 import os
 import sys
 
@@ -16,7 +18,7 @@ from update_histogram_enum import UpdateHistogramEnum
 
 if __name__ == '__main__':
   if len(sys.argv) > 1:
-    print >>sys.stderr, 'No arguments expected!'
+    print('No arguments expected!', file=sys.stderr)
     sys.stderr.write(__doc__)
     sys.exit(1)
 
@@ -26,7 +28,9 @@ if __name__ == '__main__':
     ('ExtensionFunctions',
      'extensions/browser/extension_function_histogram_value.h'))
   for enum_name, source_header in histograms:
-    UpdateHistogramEnum(histogram_enum_name=enum_name,
-                        source_enum_path=source_header,
-                        start_marker='^enum HistogramValue {',
-                        end_marker='^ENUM_BOUNDARY')
+    UpdateHistogramEnum(
+        histogram_enum_name=enum_name,
+        source_enum_path=source_header,
+        start_marker='^enum HistogramValue {',
+        end_marker='^ENUM_BOUNDARY',
+        calling_script=os.path.basename(__file__))

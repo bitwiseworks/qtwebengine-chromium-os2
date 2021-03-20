@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/single_thread_task_runner.h"
+#include "base/synchronization/lock.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
 #include "services/device/public/mojom/sensor.mojom.h"
@@ -22,7 +23,6 @@ namespace device {
 
 class PlatformSensorProvider;
 class PlatformSensorConfiguration;
-class SensorReadingSharedBufferReader;
 
 // Base class for the sensors provided by the platform. Concrete instances of
 // this class are created by platform specific PlatformSensorProvider.
@@ -70,6 +70,8 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
   void RemoveClient(Client*);
 
   bool GetLatestReading(SensorReading* result);
+  // Return the last raw (i.e. unrounded) sensor reading.
+  bool GetLatestRawReading(SensorReading* result) const;
   // Returns 'true' if the sensor is started; returns 'false' otherwise.
   bool IsActiveForTesting() const;
   using ConfigMap = std::map<Client*, std::list<PlatformSensorConfiguration>>;
@@ -107,12 +109,14 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
  private:
   friend class base::RefCountedThreadSafe<PlatformSensor>;
   SensorReadingSharedBuffer* reading_buffer_;  // NOTE: Owned by |provider_|.
-  std::unique_ptr<SensorReadingSharedBufferReader> shared_buffer_reader_;
   mojom::SensorType type_;
   ConfigMap config_map_;
   PlatformSensorProvider* provider_;
   bool is_active_ = false;
-  base::WeakPtrFactory<PlatformSensor> weak_factory_;
+  SensorReading last_raw_reading_;
+  mutable base::Lock lock_;  // Protect have_raw_reading_ and last_raw_reading_.
+  bool have_raw_reading_;
+  base::WeakPtrFactory<PlatformSensor> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(PlatformSensor);
 };
 

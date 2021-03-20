@@ -34,6 +34,7 @@
 namespace blink {
 
 class ExceptionState;
+class ExecutionContext;
 class LayoutObject;
 class MutableCSSPropertyValueSet;
 class Node;
@@ -42,17 +43,12 @@ class ComputedStyle;
 class CORE_EXPORT CSSComputedStyleDeclaration final
     : public CSSStyleDeclaration {
  public:
-  static CSSComputedStyleDeclaration* Create(
-      Node* node,
-      bool allow_visited_style = false,
-      const String& pseudo_element_name = String()) {
-    return MakeGarbageCollected<CSSComputedStyleDeclaration>(
-        node, allow_visited_style, pseudo_element_name);
-  }
+  static const Vector<const CSSProperty*>& ComputableProperties(
+      const ExecutionContext*);
 
-  static const Vector<const CSSProperty*>& ComputableProperties();
-
-  CSSComputedStyleDeclaration(Node*, bool allow_visited_style, const String&);
+  CSSComputedStyleDeclaration(Node*,
+                              bool allow_visited_style = false,
+                              const String& = String());
   ~CSSComputedStyleDeclaration() override;
 
   String GetPropertyValue(CSSPropertyID) const;
@@ -60,8 +56,9 @@ class CORE_EXPORT CSSComputedStyleDeclaration final
 
   MutableCSSPropertyValueSet* CopyProperties() const;
 
-  const CSSValue* GetPropertyCSSValue(const CSSProperty&) const;
+  const CSSValue* GetPropertyCSSValue(CSSPropertyID) const;
   const CSSValue* GetPropertyCSSValue(AtomicString custom_property_name) const;
+  const CSSValue* GetPropertyCSSValue(const CSSPropertyName&) const;
   HeapHashMap<AtomicString, Member<const CSSValue>> GetVariables() const;
 
   const CSSValue* GetFontSizeCSSValuePreferringKeyword() const;
@@ -74,7 +71,7 @@ class CORE_EXPORT CSSComputedStyleDeclaration final
   unsigned length() const override;
   String item(unsigned index) const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   // The styled node is either the node passed into getComputedStyle, or the

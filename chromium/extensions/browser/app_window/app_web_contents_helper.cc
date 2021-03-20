@@ -9,12 +9,12 @@
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/console_message_level.h"
 #include "extensions/browser/app_window/app_delegate.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/suggest_permission_util.h"
 #include "extensions/common/permissions/api_permission.h"
-#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 
 namespace extensions {
 
@@ -40,8 +40,7 @@ bool AppWebContentsHelper::ShouldSuppressGestureEvent(
   if (blink::WebInputEvent::IsPinchGestureEventType(event.GetType())) {
     // Only suppress pinch events that cause a scale change. We still
     // allow synthetic wheel events for touchpad pinch to go to the page.
-    return !(event.SourceDevice() ==
-                 blink::WebGestureDevice::kWebGestureDeviceTouchpad &&
+    return !(event.SourceDevice() == blink::WebGestureDevice::kTouchpad &&
              event.NeedsWheelEvent());
   }
 
@@ -58,7 +57,7 @@ content::WebContents* AppWebContentsHelper::OpenURLFromTab(
   WindowOpenDisposition disposition = params.disposition;
   if (disposition == WindowOpenDisposition::CURRENT_TAB) {
     web_contents_->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_ERROR,
+        blink::mojom::ConsoleMessageLevel::kError,
         base::StringPrintf(
             "Can't open same-window link to \"%s\"; try target=\"_blank\".",
             params.url.spec().c_str()));
@@ -74,7 +73,7 @@ content::WebContents* AppWebContentsHelper::OpenURLFromTab(
       app_delegate_->OpenURLFromTab(browser_context_, web_contents_, params);
   if (!contents) {
     web_contents_->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_ERROR,
+        blink::mojom::ConsoleMessageLevel::kError,
         base::StringPrintf(
             "Can't navigate to \"%s\"; apps do not support navigation.",
             params.url.spec().c_str()));
@@ -91,7 +90,12 @@ void AppWebContentsHelper::RequestToLockMouse() const {
   bool has_permission = IsExtensionWithPermissionOrSuggestInConsole(
       APIPermission::kPointerLock, extension, web_contents_->GetMainFrame());
 
-  web_contents_->GotResponseToLockMouseRequest(has_permission);
+  if (has_permission)
+    web_contents_->GotResponseToLockMouseRequest(
+        blink::mojom::PointerLockResult::kSuccess);
+  else
+    web_contents_->GotResponseToLockMouseRequest(
+        blink::mojom::PointerLockResult::kPermissionDenied);
 }
 
 void AppWebContentsHelper::RequestMediaAccessPermission(
@@ -108,7 +112,7 @@ void AppWebContentsHelper::RequestMediaAccessPermission(
 bool AppWebContentsHelper::CheckMediaAccessPermission(
     content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    blink::MediaStreamType type) const {
+    blink::mojom::MediaStreamType type) const {
   const Extension* extension = GetExtension();
   if (!extension)
     return false;

@@ -6,11 +6,14 @@
 
 #include <memory>
 
+#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "media/base/eme_constants.h"
 #include "third_party/blink/public/platform/web_content_decryption_module.h"
 #include "third_party/blink/public/platform/web_encrypted_media_types.h"
 #include "third_party/blink/public/platform/web_media_key_system_configuration.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_key_system_media_capability.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/modules/encryptedmedia/content_decryption_module_result_promise.h"
 #include "third_party/blink/renderer/modules/encryptedmedia/encrypted_media_utils.h"
@@ -32,8 +35,6 @@ namespace {
 // All other complete methods are not expected to be called, and will
 // reject the promise.
 class NewCdmResultPromise : public ContentDecryptionModuleResultPromise {
-  WTF_MAKE_NONCOPYABLE(NewCdmResultPromise);
-
  public:
   NewCdmResultPromise(
       ScriptState* script_state,
@@ -56,7 +57,7 @@ class NewCdmResultPromise : public ContentDecryptionModuleResultPromise {
       return;
 
     // 2.9. Let media keys be a new MediaKeys object.
-    MediaKeys* media_keys = MediaKeys::Create(
+    auto* media_keys = MakeGarbageCollected<MediaKeys>(
         GetExecutionContext(), supported_session_types_, base::WrapUnique(cdm));
 
     // 2.10. Resolve promise with media keys.
@@ -65,12 +66,14 @@ class NewCdmResultPromise : public ContentDecryptionModuleResultPromise {
 
  private:
   WebVector<WebEncryptedMediaSessionType> supported_session_types_;
+
+  DISALLOW_COPY_AND_ASSIGN(NewCdmResultPromise);
 };
 
 // These methods are the inverses of those with the same names in
 // NavigatorRequestMediaKeySystemAccess.
 static Vector<String> ConvertInitDataTypes(
-    const WebVector<WebEncryptedMediaInitDataType>& init_data_types) {
+    const WebVector<media::EmeInitDataType>& init_data_types) {
   Vector<String> result(SafeCast<wtf_size_t>(init_data_types.size()));
   for (wtf_size_t i = 0; i < result.size(); i++)
     result[i] =
@@ -90,13 +93,25 @@ static HeapVector<Member<MediaKeySystemMediaCapability>> ConvertCapabilities(
 
     switch (capabilities[i].encryption_scheme) {
       case WebMediaKeySystemMediaCapability::EncryptionScheme::kNotSpecified:
-        capability->setEncryptionSchemeToNull();
+        // https://w3c.github.io/encrypted-media/#dom-mediakeysystemaccess-getconfiguration
+        // "If encryptionScheme was not given by the application, the
+        // accumulated configuration MUST still contain a encryptionScheme
+        // field with a value of null, so that polyfills can detect the user
+        // agent's support for the field without specifying specific values."
+        capability->setEncryptionScheme(String());
         break;
       case WebMediaKeySystemMediaCapability::EncryptionScheme::kCenc:
         capability->setEncryptionScheme("cenc");
         break;
       case WebMediaKeySystemMediaCapability::EncryptionScheme::kCbcs:
         capability->setEncryptionScheme("cbcs");
+        break;
+      case WebMediaKeySystemMediaCapability::EncryptionScheme::kCbcs_1_9:
+        capability->setEncryptionScheme("cbcs-1-9");
+        break;
+      case WebMediaKeySystemMediaCapability::EncryptionScheme::kUnrecognized:
+        NOTREACHED()
+            << "Unrecognized encryption scheme should never be returned.";
         break;
     }
 
@@ -126,13 +141,13 @@ MediaKeySystemConfiguration* MediaKeySystemAccess::getConfiguration() const {
   MediaKeySystemConfiguration* result = MediaKeySystemConfiguration::Create();
   // |initDataTypes|, |audioCapabilities|, and |videoCapabilities| can only be
   // empty if they were not present in the requested configuration.
-  if (!configuration.init_data_types.IsEmpty())
+  if (!configuration.init_data_types.empty())
     result->setInitDataTypes(
         ConvertInitDataTypes(configuration.init_data_types));
-  if (!configuration.audio_capabilities.IsEmpty())
+  if (!configuration.audio_capabilities.empty())
     result->setAudioCapabilities(
         ConvertCapabilities(configuration.audio_capabilities));
-  if (!configuration.video_capabilities.IsEmpty())
+  if (!configuration.video_capabilities.empty())
     result->setVideoCapabilities(
         ConvertCapabilities(configuration.video_capabilities));
 

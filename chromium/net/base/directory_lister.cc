@@ -14,6 +14,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
@@ -80,10 +81,10 @@ DirectoryLister::~DirectoryLister() {
 }
 
 void DirectoryLister::Start() {
-  base::PostTaskWithTraits(
+  base::ThreadPool::PostTask(
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(&Core::Start, core_));
+      base::BindOnce(&Core::Start, core_));
 }
 
 void DirectoryLister::Cancel() {
@@ -118,9 +119,9 @@ void DirectoryLister::Core::Start() {
 
   if (!base::DirectoryExists(dir_)) {
     origin_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::DoneOnOriginSequence, this,
-                              base::Passed(std::move(directory_list)),
-                              ERR_FILE_NOT_FOUND));
+        FROM_HERE,
+        base::BindOnce(&Core::DoneOnOriginSequence, this,
+                       std::move(directory_list), ERR_FILE_NOT_FOUND));
     return;
   }
 
@@ -158,7 +159,7 @@ void DirectoryLister::Core::Start() {
 
     origin_loop_->PostTask(
         FROM_HERE,
-        base::Bind(&DirectoryLister::Core::SendData, file_data));
+        base::BindOnce(&DirectoryLister::Core::SendData, file_data));
     file_data.clear();
     */
   }
@@ -166,8 +167,8 @@ void DirectoryLister::Core::Start() {
   SortData(directory_list.get(), type_);
 
   origin_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Core::DoneOnOriginSequence, this,
-                            base::Passed(std::move(directory_list)), OK));
+      FROM_HERE, base::BindOnce(&Core::DoneOnOriginSequence, this,
+                                std::move(directory_list), OK));
 }
 
 bool DirectoryLister::Core::IsCancelled() const {

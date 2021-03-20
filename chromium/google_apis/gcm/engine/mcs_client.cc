@@ -13,7 +13,6 @@
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -21,8 +20,6 @@
 #include "google_apis/gcm/base/socket_stream.h"
 #include "google_apis/gcm/engine/connection_factory.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
-
-using namespace google::protobuf::io;
 
 namespace gcm {
 
@@ -165,6 +162,7 @@ MCSClient::MCSClient(const std::string& version_string,
                      base::Clock* clock,
                      ConnectionFactory* connection_factory,
                      GCMStore* gcm_store,
+                     scoped_refptr<base::SequencedTaskRunner> io_task_runner,
                      GCMStatsRecorder* recorder)
     : version_string_(version_string),
       clock_(clock),
@@ -172,14 +170,17 @@ MCSClient::MCSClient(const std::string& version_string,
       android_id_(0),
       security_token_(0),
       connection_factory_(connection_factory),
-      connection_handler_(NULL),
+      connection_handler_(nullptr),
       last_device_to_server_stream_id_received_(0),
       last_server_to_device_stream_id_received_(0),
       stream_id_out_(0),
       stream_id_in_(0),
       gcm_store_(gcm_store),
-      recorder_(recorder),
-      weak_ptr_factory_(this) {
+      io_task_runner_(io_task_runner),
+      heartbeat_manager_(std::move(base::ThreadTaskRunnerHandle::Get()),
+                         std::move(io_task_runner)),
+      recorder_(recorder) {
+  DCHECK(io_task_runner_);
 }
 
 MCSClient::~MCSClient() {
@@ -198,12 +199,12 @@ void MCSClient::Initialize(
   message_sent_callback_ = message_sent_callback;
 
   connection_factory_->Initialize(
-      base::Bind(&MCSClient::ResetStateAndBuildLoginRequest,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&MCSClient::HandlePacketFromWire,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&MCSClient::MaybeSendMessage,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindRepeating(&MCSClient::ResetStateAndBuildLoginRequest,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindRepeating(&MCSClient::HandlePacketFromWire,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindRepeating(&MCSClient::MaybeSendMessage,
+                          weak_ptr_factory_.GetWeakPtr()));
 
   stream_id_out_ = 1;  // Login request is hardcoded to id 1.
 
@@ -253,9 +254,8 @@ void MCSClient::Initialize(
 
   if (!expired_ttl_ids.empty()) {
     gcm_store_->RemoveOutgoingMessages(
-        expired_ttl_ids,
-        base::Bind(&MCSClient::OnGCMUpdateFinished,
-                   weak_ptr_factory_.GetWeakPtr()));
+        expired_ttl_ids, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                                        weak_ptr_factory_.GetWeakPtr()));
   }
 
   // Now go through and add the outgoing messages to the send queue in their
@@ -288,6 +288,7 @@ void MCSClient::Initialize(
 }
 
 void MCSClient::Login(uint64_t android_id, uint64_t security_token) {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   DCHECK_EQ(state_, LOADED);
   DCHECK(android_id_ == 0 || android_id_ == android_id);
   DCHECK(security_token_ == 0 || security_token_ == security_token);
@@ -339,10 +340,9 @@ void MCSClient::SendMessage(const MCSMessage& message) {
       SetPersistentId(original_packet->persistent_id,
                       original_packet->protobuf.get());
       gcm_store_->OverwriteOutgoingMessage(
-          original_packet->persistent_id,
-          message,
-          base::Bind(&MCSClient::OnGCMUpdateFinished,
-                     weak_ptr_factory_.GetWeakPtr()));
+          original_packet->persistent_id, message,
+          base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                         weak_ptr_factory_.GetWeakPtr()));
 
       // The message is already queued, return.
       return;
@@ -352,10 +352,10 @@ void MCSClient::SendMessage(const MCSMessage& message) {
       packet_info->persistent_id = persistent_id;
       SetPersistentId(persistent_id, packet_info->protobuf.get());
       if (!gcm_store_->AddOutgoingMessage(
-               persistent_id,
-               MCSMessage(message.tag(), *(packet_info->protobuf)),
-               base::Bind(&MCSClient::OnGCMUpdateFinished,
-                          weak_ptr_factory_.GetWeakPtr()))) {
+              persistent_id,
+              MCSMessage(message.tag(), *(packet_info->protobuf)),
+              base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                             weak_ptr_factory_.GetWeakPtr()))) {
         NotifyMessageSendStatus(message.GetProtobuf(),
                                 APP_QUEUE_SIZE_LIMIT_REACHED);
         return;
@@ -390,9 +390,10 @@ void MCSClient::AddHeartbeatInterval(const std::string& scope,
     return;
 
   custom_heartbeat_intervals_[scope] = interval_ms;
-  gcm_store_->AddHeartbeatInterval(scope, interval_ms,
-                                   base::Bind(&MCSClient::OnGCMUpdateFinished,
-                                              weak_ptr_factory_.GetWeakPtr()));
+  gcm_store_->AddHeartbeatInterval(
+      scope, interval_ms,
+      base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                     weak_ptr_factory_.GetWeakPtr()));
 
   int min_interval_ms = GetMinHeartbeatIntervalMs();
   heartbeat_manager_.SetClientHeartbeatIntervalMs(min_interval_ms);
@@ -401,8 +402,8 @@ void MCSClient::AddHeartbeatInterval(const std::string& scope,
 void MCSClient::RemoveHeartbeatInterval(const std::string& scope) {
   custom_heartbeat_intervals_.erase(scope);
   gcm_store_->RemoveHeartbeatInterval(
-      scope, base::Bind(&MCSClient::OnGCMUpdateFinished,
-                        weak_ptr_factory_.GetWeakPtr()));
+      scope, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                            weak_ptr_factory_.GetWeakPtr()));
 
   int min_interval = GetMinHeartbeatIntervalMs();
   heartbeat_manager_.SetClientHeartbeatIntervalMs(min_interval);
@@ -463,7 +464,7 @@ void MCSClient::ResetStateAndBuildLoginRequest(
     // Ensure that the custom heartbeat interval is communicated to the server.
     mcs_proto::Setting* setting = request->add_setting();
     setting->set_name(kHeartbeatIntervalSettingName);
-    setting->set_value(base::IntToString(
+    setting->set_value(base::NumberToString(
         heartbeat_manager_.GetClientHeartbeatIntervalMs()));
   }
 
@@ -504,9 +505,8 @@ void MCSClient::ResetStateAndBuildLoginRequest(
     DVLOG(1) << "Connection reset, " << expired_ttl_ids.size()
              << " messages expired.";
     gcm_store_->RemoveOutgoingMessages(
-        expired_ttl_ids,
-        base::Bind(&MCSClient::OnGCMUpdateFinished,
-                   weak_ptr_factory_.GetWeakPtr()));
+        expired_ttl_ids, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                                        weak_ptr_factory_.GetWeakPtr()));
   }
 
   to_send_.swap(new_to_send);
@@ -529,6 +529,7 @@ void MCSClient::OnGCMUpdateFinished(bool success) {
 }
 
 void MCSClient::MaybeSendMessage() {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   if (to_send_.empty())
     return;
 
@@ -546,13 +547,11 @@ void MCSClient::MaybeSendMessage() {
     DVLOG(1) << "Dropping expired message " << packet->persistent_id << ".";
     NotifyMessageSendStatus(*packet->protobuf, TTL_EXCEEDED);
     gcm_store_->RemoveOutgoingMessage(
-        packet->persistent_id,
-        base::Bind(&MCSClient::OnGCMUpdateFinished,
-                   weak_ptr_factory_.GetWeakPtr()));
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-            FROM_HERE,
-            base::Bind(&MCSClient::MaybeSendMessage,
-                       weak_ptr_factory_.GetWeakPtr()));
+        packet->persistent_id, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                                              weak_ptr_factory_.GetWeakPtr()));
+    io_task_runner_->PostTask(FROM_HERE,
+                              base::BindOnce(&MCSClient::MaybeSendMessage,
+                                             weak_ptr_factory_.GetWeakPtr()));
     return;
   }
   DVLOG(1) << "Pending output message found, sending.";
@@ -674,9 +673,9 @@ void MCSClient::HandlePacketFromWire(
   ++stream_id_in_;
   if (!persistent_id.empty()) {
     unacked_server_ids_[stream_id_in_] = persistent_id;
-    gcm_store_->AddIncomingMessage(persistent_id,
-                                   base::Bind(&MCSClient::OnGCMUpdateFinished,
-                                              weak_ptr_factory_.GetWeakPtr()));
+    gcm_store_->AddIncomingMessage(
+        persistent_id, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                                      weak_ptr_factory_.GetWeakPtr()));
   }
 
   DVLOG(1) << "Received message of type " << protobuf->GetTypeName()
@@ -704,8 +703,8 @@ void MCSClient::HandlePacketFromWire(
       DVLOG(1) << "  Timestamp: " << login_response->server_timestamp();
       if (login_response->has_error() && login_response->error().code() != 0) {
         state_ = UNINITIALIZED;
-        DVLOG(1) << "  Error code: " << login_response->error().code();
-        DVLOG(1) << "  Error message: " << login_response->error().message();
+        LOG(ERROR) << "  Error code: " << login_response->error().code()
+                   << "  Error message: " << login_response->error().message();
         LOG(ERROR) << "Failed to log in to GCM, resetting connection.";
         connection_factory_->SignalConnectionReset(
             ConnectionFactory::LOGIN_FAILURE);
@@ -723,23 +722,22 @@ void MCSClient::HandlePacketFromWire(
       DCHECK_EQ(1U, stream_id_out_);
 
       // Pass the login response on up.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(message_received_callback_,
-                                MCSMessage(tag, std::move(protobuf))));
+      io_task_runner_->PostTask(
+          FROM_HERE, base::BindOnce(message_received_callback_,
+                                    MCSMessage(tag, std::move(protobuf))));
 
       // If there are pending messages, attempt to send one.
       if (!to_send_.empty()) {
-        base::ThreadTaskRunnerHandle::Get()->PostTask(
-            FROM_HERE,
-            base::Bind(&MCSClient::MaybeSendMessage,
-                       weak_ptr_factory_.GetWeakPtr()));
+        io_task_runner_->PostTask(
+            FROM_HERE, base::BindOnce(&MCSClient::MaybeSendMessage,
+                                      weak_ptr_factory_.GetWeakPtr()));
       }
 
       heartbeat_manager_.Start(
-          base::Bind(&MCSClient::SendHeartbeat,
-                     weak_ptr_factory_.GetWeakPtr()),
-          base::Bind(&MCSClient::OnConnectionResetByHeartbeat,
-                     weak_ptr_factory_.GetWeakPtr()));
+          base::BindRepeating(&MCSClient::SendHeartbeat,
+                              weak_ptr_factory_.GetWeakPtr()),
+          base::BindRepeating(&MCSClient::OnConnectionResetByHeartbeat,
+                              weak_ptr_factory_.GetWeakPtr()));
       return;
     }
     case kHeartbeatPingTag:
@@ -793,9 +791,9 @@ void MCSClient::HandlePacketFromWire(
       }
 
       DCHECK(protobuf.get());
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(message_received_callback_,
-                                MCSMessage(tag, std::move(protobuf))));
+      io_task_runner_->PostTask(
+          FROM_HERE, base::BindOnce(message_received_callback_,
+                                    MCSMessage(tag, std::move(protobuf))));
       return;
     }
     default:
@@ -822,13 +820,15 @@ void MCSClient::HandleStreamAck(StreamId last_stream_id_received) {
            << " remaining unacked";
   gcm_store_->RemoveOutgoingMessages(
       acked_outgoing_persistent_ids,
-      base::Bind(&MCSClient::OnGCMUpdateFinished,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                     weak_ptr_factory_.GetWeakPtr()));
 
   HandleServerConfirmedReceipt(last_stream_id_received);
 }
 
 void MCSClient::HandleSelectiveAck(const PersistentIdList& id_list) {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
+
   std::set<PersistentId> remaining_ids(id_list.begin(), id_list.end());
 
   StreamId last_stream_id_received = 0;
@@ -889,9 +889,8 @@ void MCSClient::HandleSelectiveAck(const PersistentIdList& id_list) {
   DVLOG(1) << "Server acked " << acked_ids.size()
            << " messages, " << to_resend_.size() << " remaining unacked.";
   gcm_store_->RemoveOutgoingMessages(
-      acked_ids,
-      base::Bind(&MCSClient::OnGCMUpdateFinished,
-                 weak_ptr_factory_.GetWeakPtr()));
+      acked_ids, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                                weak_ptr_factory_.GetWeakPtr()));
 
   // Resend any remaining outgoing messages, as they were not received by the
   // server.
@@ -900,10 +899,9 @@ void MCSClient::HandleSelectiveAck(const PersistentIdList& id_list) {
     to_send_.push_front(std::move(to_resend_.back()));
     to_resend_.pop_back();
   }
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&MCSClient::MaybeSendMessage,
-                 weak_ptr_factory_.GetWeakPtr()));
+  io_task_runner_->PostTask(FROM_HERE,
+                            base::BindOnce(&MCSClient::MaybeSendMessage,
+                                           weak_ptr_factory_.GetWeakPtr()));
 }
 
 void MCSClient::HandleServerConfirmedReceipt(StreamId device_stream_id) {
@@ -921,13 +919,12 @@ void MCSClient::HandleServerConfirmedReceipt(StreamId device_stream_id) {
   DVLOG(1) << "Server confirmed receipt of " << acked_incoming_ids.size()
            << " acknowledged server messages.";
   gcm_store_->RemoveIncomingMessages(
-      acked_incoming_ids,
-      base::Bind(&MCSClient::OnGCMUpdateFinished,
-                 weak_ptr_factory_.GetWeakPtr()));
+      acked_incoming_ids, base::BindOnce(&MCSClient::OnGCMUpdateFinished,
+                                         weak_ptr_factory_.GetWeakPtr()));
 }
 
 MCSClient::PersistentId MCSClient::GetNextPersistentId() {
-  return base::Int64ToString(base::TimeTicks::Now().ToInternalValue());
+  return base::NumberToString(base::TimeTicks::Now().ToInternalValue());
 }
 
 void MCSClient::OnConnectionResetByHeartbeat(

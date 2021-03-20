@@ -17,14 +17,14 @@ WindowManagerHandler::~WindowManagerHandler() = default;
 
 protocol::Response WindowManagerHandler::EnterOverviewMode() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  bool toggled = ash::Shell::Get()->overview_controller()->ToggleOverview();
-  return toggled ? protocol::Response::OK()
-                 : protocol::Response::Error("Overview failed");
+  bool success = ash::Shell::Get()->overview_controller()->StartOverview();
+  return success ? protocol::Response::Success()
+                 : protocol::Response::ServerError("Overview failed");
 }
 
 protocol::Response WindowManagerHandler::ExitOverviewMode() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  bool toggled = ash::Shell::Get()->overview_controller()->ToggleOverview();
-  return toggled ? protocol::Response::OK()
-                 : protocol::Response::Error("Overview failed");
+  bool success = ash::Shell::Get()->overview_controller()->EndOverview();
+  return success ? protocol::Response::Success()
+                 : protocol::Response::ServerError("Overview failed");
 }

@@ -54,13 +54,12 @@ void FileWriterSync::write(Blob* data, ExceptionState& exception_state) {
     SetLength(position());
 }
 
-void FileWriterSync::seek(long long position, ExceptionState& exception_state) {
+void FileWriterSync::seek(int64_t position, ExceptionState& exception_state) {
   DCHECK(complete_);
   SeekInternal(position);
 }
 
-void FileWriterSync::truncate(long long offset,
-                              ExceptionState& exception_state) {
+void FileWriterSync::truncate(int64_t offset, ExceptionState& exception_state) {
   DCHECK(complete_);
   if (offset < 0) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
@@ -125,7 +124,9 @@ void FileWriterSync::DoCancel() {
 }
 
 FileWriterSync::FileWriterSync(ExecutionContext* context)
-    : ContextClient(context), error_(base::File::FILE_OK), complete_(true) {}
+    : ExecutionContextClient(context),
+      error_(base::File::FILE_OK),
+      complete_(true) {}
 
 void FileWriterSync::PrepareForWrite() {
   DCHECK(complete_);
@@ -135,10 +136,10 @@ void FileWriterSync::PrepareForWrite() {
 
 FileWriterSync::~FileWriterSync() = default;
 
-void FileWriterSync::Trace(blink::Visitor* visitor) {
+void FileWriterSync::Trace(Visitor* visitor) {
   ScriptWrappable::Trace(visitor);
   FileWriterBase::Trace(visitor);
-  ContextClient::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 }  // namespace blink

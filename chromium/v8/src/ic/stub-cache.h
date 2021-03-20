@@ -6,6 +6,7 @@
 #define V8_IC_STUB_CACHE_H_
 
 #include "src/objects/name.h"
+#include "src/objects/tagged-value.h"
 
 namespace v8 {
 namespace internal {
@@ -28,19 +29,17 @@ class SCTableReference {
   friend class StubCache;
 };
 
-
-class StubCache {
+class V8_EXPORT_PRIVATE StubCache {
  public:
   struct Entry {
-    // The values here have plain Address types because they are read
-    // directly from generated code. As a nice side effect, this keeps
-    // #includes lightweight.
-    Address key;
+    // {key} is a tagged Name pointer, may be cleared by setting to empty
+    // string.
+    StrongTaggedValue key;
     // {value} is a tagged heap object reference (weak or strong), equivalent
     // to a MaybeObject's payload.
-    Address value;
-    // {map} is a tagged Map pointer, or nullptr.
-    Address map;
+    TaggedValue value;
+    // {map} is a tagged Map pointer, may be cleared by setting to Smi::zero().
+    StrongTaggedValue map;
   };
 
   void Initialize();
@@ -79,15 +78,21 @@ class StubCache {
 
   Isolate* isolate() { return isolate_; }
 
-  // Setting the entry size such that the index is shifted by Name::kHashShift
-  // is convenient; shifting down the length field (to extract the hash code)
-  // automatically discards the hash bit field.
+  // Setting kCacheIndexShift to Name::kHashShift is convenient because it
+  // causes the bit field inside the hash field to get shifted out implicitly.
+  // Note that kCacheIndexShift must not get too large, because
+  // sizeof(Entry) needs to be a multiple of 1 << kCacheIndexShift (see
+  // the STATIC_ASSERT below, in {entry(...)}).
   static const int kCacheIndexShift = Name::kHashShift;
 
   static const int kPrimaryTableBits = 11;
   static const int kPrimaryTableSize = (1 << kPrimaryTableBits);
   static const int kSecondaryTableBits = 9;
   static const int kSecondaryTableSize = (1 << kSecondaryTableBits);
+
+  // We compute the hash code for a map as follows:
+  //   <code> = <address> ^ (<address> >> kMapKeyShift)
+  static const int kMapKeyShift = kPrimaryTableBits + kCacheIndexShift;
 
   // Some magic number used in the secondary hash computation.
   static const int kSecondaryMagic = 0xb16ca6e5;
@@ -122,7 +127,10 @@ class StubCache {
   // of sizeof(Entry).  This makes it easier to avoid making mistakes
   // in the hashed offset computations.
   static Entry* entry(Entry* table, int offset) {
-    const int multiplier = sizeof(*table) >> Name::kHashShift;
+    // The size of {Entry} must be a multiple of 1 << kCacheIndexShift.
+    STATIC_ASSERT((sizeof(*table) >> kCacheIndexShift) << kCacheIndexShift ==
+                  sizeof(*table));
+    const int multiplier = sizeof(*table) >> kCacheIndexShift;
     return reinterpret_cast<Entry*>(reinterpret_cast<Address>(table) +
                                     offset * multiplier);
   }

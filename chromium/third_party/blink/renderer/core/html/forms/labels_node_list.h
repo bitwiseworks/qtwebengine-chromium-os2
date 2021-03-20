@@ -25,20 +25,14 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_LABELS_NODE_LIST_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_LABELS_NODE_LIST_H_
 
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/dom/live_node_list.h"
 
 namespace blink {
 
 class LabelsNodeList final : public LiveNodeList {
  public:
-  static LabelsNodeList* Create(ContainerNode& owner_node,
-                                CollectionType type) {
-    DCHECK_EQ(type, kLabelsNodeListType);
-    return MakeGarbageCollected<LabelsNodeList>(owner_node);
-  }
-
   explicit LabelsNodeList(ContainerNode&);
+  LabelsNodeList(ContainerNode& owner_node, CollectionType type);
   ~LabelsNodeList() override;
 
  protected:

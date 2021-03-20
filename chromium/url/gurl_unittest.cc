@@ -289,21 +289,42 @@ TEST(GURLTest, Resolve) {
     bool expected_valid;
     const char* expected;
   } resolve_cases[] = {
-    {"http://www.google.com/", "foo.html", true, "http://www.google.com/foo.html"},
-    {"http://www.google.com/foo/", "bar", true, "http://www.google.com/foo/bar"},
-    {"http://www.google.com/foo/", "/bar", true, "http://www.google.com/bar"},
-    {"http://www.google.com/foo", "bar", true, "http://www.google.com/bar"},
-    {"http://www.google.com/", "http://images.google.com/foo.html", true, "http://images.google.com/foo.html"},
-    {"http://www.google.com/", "http://images.\tgoogle.\ncom/\rfoo.html", true, "http://images.google.com/foo.html"},
-    {"http://www.google.com/blah/bloo?c#d", "../../../hello/./world.html?a#b", true, "http://www.google.com/hello/world.html?a#b"},
-    {"http://www.google.com/foo#bar", "#com", true, "http://www.google.com/foo#com"},
-    {"http://www.google.com/", "Https:images.google.com", true, "https://images.google.com/"},
+      {"http://www.google.com/", "foo.html", true,
+       "http://www.google.com/foo.html"},
+      {"http://www.google.com/foo/", "bar", true,
+       "http://www.google.com/foo/bar"},
+      {"http://www.google.com/foo/", "/bar", true, "http://www.google.com/bar"},
+      {"http://www.google.com/foo", "bar", true, "http://www.google.com/bar"},
+      {"http://www.google.com/", "http://images.google.com/foo.html", true,
+       "http://images.google.com/foo.html"},
+      {"http://www.google.com/", "http://images.\tgoogle.\ncom/\rfoo.html",
+       true, "http://images.google.com/foo.html"},
+      {"http://www.google.com/blah/bloo?c#d", "../../../hello/./world.html?a#b",
+       true, "http://www.google.com/hello/world.html?a#b"},
+      {"http://www.google.com/foo#bar", "#com", true,
+       "http://www.google.com/foo#com"},
+      {"http://www.google.com/", "Https:images.google.com", true,
+       "https://images.google.com/"},
       // A non-standard base can be replaced with a standard absolute URL.
-    {"data:blahblah", "http://google.com/", true, "http://google.com/"},
-    {"data:blahblah", "http:google.com", true, "http://google.com/"},
+      {"data:blahblah", "http://google.com/", true, "http://google.com/"},
+      {"data:blahblah", "http:google.com", true, "http://google.com/"},
       // Filesystem URLs have different paths to test.
-    {"filesystem:http://www.google.com/type/", "foo.html", true, "filesystem:http://www.google.com/type/foo.html"},
-    {"filesystem:http://www.google.com/type/", "../foo.html", true, "filesystem:http://www.google.com/type/foo.html"},
+      {"filesystem:http://www.google.com/type/", "foo.html", true,
+       "filesystem:http://www.google.com/type/foo.html"},
+      {"filesystem:http://www.google.com/type/", "../foo.html", true,
+       "filesystem:http://www.google.com/type/foo.html"},
+      // https://crbug.com/530123 - scheme validation (e.g. are "10.0.0.7:"
+      // or "x1:" valid schemes) when deciding if |relative| is an absolute url.
+      {"file:///some/dir/ip-relative.html", "10.0.0.7:8080/foo.html", true,
+       "file:///some/dir/10.0.0.7:8080/foo.html"},
+      {"file:///some/dir/", "1://host", true, "file:///some/dir/1://host"},
+      {"file:///some/dir/", "x1://host", true, "x1://host"},
+      {"file:///some/dir/", "X1://host", true, "x1://host"},
+      {"file:///some/dir/", "x.://host", true, "x.://host"},
+      {"file:///some/dir/", "x+://host", true, "x+://host"},
+      {"file:///some/dir/", "x-://host", true, "x-://host"},
+      {"file:///some/dir/", "x!://host", true, "file:///some/dir/x!://host"},
+      {"file:///some/dir/", "://host", true, "file:///some/dir/://host"},
   };
 
   for (size_t i = 0; i < base::size(resolve_cases); i++) {
@@ -539,11 +560,14 @@ TEST(GURLTest, PathForRequest) {
 
   for (size_t i = 0; i < base::size(cases); i++) {
     GURL url(cases[i].input);
-    std::string path_request = url.PathForRequest();
-    EXPECT_EQ(cases[i].expected, path_request);
+    EXPECT_EQ(cases[i].expected, url.PathForRequest());
+    EXPECT_EQ(cases[i].expected, url.PathForRequestPiece());
     EXPECT_EQ(cases[i].inner_expected == NULL, url.inner_url() == NULL);
-    if (url.inner_url() && cases[i].inner_expected)
+    if (url.inner_url() && cases[i].inner_expected) {
       EXPECT_EQ(cases[i].inner_expected, url.inner_url()->PathForRequest());
+      EXPECT_EQ(cases[i].inner_expected,
+                url.inner_url()->PathForRequestPiece());
+    }
   }
 }
 
@@ -566,11 +590,6 @@ TEST(GURLTest, EffectiveIntPort) {
     {"ftp://www.google.com/", 21},
     {"ftp://www.google.com:21/", 21},
     {"ftp://www.google.com:80/", 80},
-
-    // gopher
-    {"gopher://www.google.com/", 70},
-    {"gopher://www.google.com:70/", 70},
-    {"gopher://www.google.com:80/", 80},
 
     // file - no port
     {"file://www.google.com/", PORT_UNSPECIFIED},
@@ -765,6 +784,14 @@ TEST(GURLTest, SchemeIsCryptographic) {
   EXPECT_FALSE(GURL("ws://foo.bar.com/").SchemeIsCryptographic());
 }
 
+TEST(GURLTest, SchemeIsCryptographicStatic) {
+  EXPECT_TRUE(GURL::SchemeIsCryptographic("https"));
+  EXPECT_TRUE(GURL::SchemeIsCryptographic("wss"));
+  EXPECT_FALSE(GURL::SchemeIsCryptographic("http"));
+  EXPECT_FALSE(GURL::SchemeIsCryptographic("ws"));
+  EXPECT_FALSE(GURL::SchemeIsCryptographic("ftp"));
+}
+
 TEST(GURLTest, SchemeIsBlob) {
   EXPECT_TRUE(GURL("BLOB://BAR/").SchemeIsBlob());
   EXPECT_TRUE(GURL("blob://bar/").SchemeIsBlob());
@@ -855,9 +882,32 @@ TEST(GURLTest, IsAboutBlank) {
   const std::string kNotAboutBlankUrls[] = {
       "http:blank",      "about:blan",          "about://blank",
       "about:blank/foo", "about://:8000/blank", "about://foo:foo@/blank",
-      "foo@about:blank", "foo:bar@about:blank", "about:blank:8000"};
+      "foo@about:blank", "foo:bar@about:blank", "about:blank:8000",
+      "about:blANk"};
   for (const auto& url : kNotAboutBlankUrls)
     EXPECT_FALSE(GURL(url).IsAboutBlank()) << url;
+}
+
+TEST(GURLTest, IsAboutSrcdoc) {
+  const std::string kAboutSrcdocUrls[] = {
+      "about:srcdoc", "about:srcdoc/", "about:srcdoc?foo", "about:srcdoc/#foo",
+      "about:srcdoc?foo#foo"};
+  for (const auto& url : kAboutSrcdocUrls)
+    EXPECT_TRUE(GURL(url).IsAboutSrcdoc()) << url;
+
+  const std::string kNotAboutSrcdocUrls[] = {"http:srcdoc",
+                                             "about:srcdo",
+                                             "about://srcdoc",
+                                             "about://srcdoc\\",
+                                             "about:srcdoc/foo",
+                                             "about://:8000/srcdoc",
+                                             "about://foo:foo@/srcdoc",
+                                             "foo@about:srcdoc",
+                                             "foo:bar@about:srcdoc",
+                                             "about:srcdoc:8000",
+                                             "about:srCDOc"};
+  for (const auto& url : kNotAboutSrcdocUrls)
+    EXPECT_FALSE(GURL(url).IsAboutSrcdoc()) << url;
 }
 
 TEST(GURLTest, EqualsIgnoringRef) {

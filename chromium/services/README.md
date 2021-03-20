@@ -1,84 +1,223 @@
-# Chrome Foundation Services
+# Service Development Guidelines
 
 [TOC]
 
 ## Overview
 
-This directory contains Chrome Foundation Services. If you think of Chrome as a
-"portable OS," Chrome Foundation Services can be thought of as that OS'
-foundational "system services" layer.
+The top-level `//services` directory contains the sources, public Mojo interface
+definitions, and public client libraries for a number of essential services,
+designated as **Chrome Foundation Services**. If you think of Chrome as a
+"portable OS," Chrome Foundation Services can be thought of as the core system
+services of that OS.
 
-Roughly each subdirectory here corresponds to a service that:
+Each subdirectory here corresponds to a service that:
 
-  * is a client of `//services/service_manager` with its own unique Identity.
-  * could logically run a standalone process for security/performance isolation
-    benefits depending on the constraints of the host OS.
+- generally focuses on a subset of functionality or features which are
+  thematically or functionally related in a way that makes sense given the name
+  of the service
+- could logically run in an isolated process for security or performance
+  isolation, depending on the constraints of the host OS
 
-## API Standards
+*** aside
+Note that there are other parts of the tree which aggregate
+slightly-less-than-foundational service definitions, such as services specific
+to the Chrome browser defined in `//chrome/services` or reusable services for
+Content or its embedders, defined in `//components/services`. The motivations,
+advice, and standards discussed in this document apply to all service
+definitions in the Chromium tree.
+***
 
-As illustrated above, the individual services in //services are intended for
-graceful reusability across a broad variety of use cases. To enable this goal,
-we have rigorous [standards](/services/api_standards.md) on services'
-public APIs. Before doing significant work in //services (and especially before
-becoming an owner of a service), please internalize these standards -- you are
-responsible for upholding them.
+One of the main motivations for expressing Chromium as a collection of services
+is long-term maintainability and code health. Because service API boundaries are
+strictly limited to Mojo interfaces, state owned and managed by each service is
+strongly isolated from other components in the system.
 
-## Service Directory Structure
+Another key motivation is general modularity and reusability: in the past there
+have been a number of missed opportunities for potential new features or
+Chromium-based products due to the browser's generally monolothic and inflexible
+system design. With the services providing scaffolding for system components, it
+becomes progressively easier to build out newer use cases with *e.g.* a smaller
+resource footprint, or a different process model, or even a more granular binary
+distribution.
 
-Individual services are structured like so:
+## Service Standards
+
+As outlined above, individual services are intended for graceful reusability
+across a broad variety of use cases. To enable this goal, we have rigorous
+standards on services' structure and public API design. Before doing significant
+work in `//services` (or other places where services are defined), please
+internalize these standards. All Chromium developers are responsible for
+upholding them!
+
+### Public Service APIs
+
+In creating and maintaining a service's public API, please respect the following
+principles:
+
+- The purpose of a service should be readily apparent.
+- The supported client use cases of the service should be easy for a new
+  consumer to understand.
+- The service should use idioms and design patterns consistent with other
+  services.
+- From the service's public API documentation and tests, it should be feasible
+  to develop a new implementation of the service which satisfies existing
+  clients and doesn't require mimicking internal implementation details of the
+  existing service.
+- Perhaps most important of all, a service's public API should be designed with
+  multiple hypothetical clients in mind, *not* focused on supporting only a
+  single narrow use known at development time. **Always be thinking about the
+  future!**
+
+If you're working on a new service and have concerns or doubts about API design,
+please post to
+[services-dev@chromium.org](https://groups.google.com/a/chromium.org/forum#!forum/services-dev)
+and ask for help. The list is generally quite responsive, and it's loaded with
+people who have done a lot of work on services.
+
+### Service API Design Tips
+
+#### Using Interface Factories to Establish Context
+
+One common pitfall when designing service APIs is to write something like:
+
+``` cpp
+interface GoatTeleporter {
+  // Sets the client interface pipe for this teleporter. Must be called before
+  // other interface methods.
+  SetClient(GoatTeleporterClient client);
+
+  TeleportGoat(string name);
+};
+
+interface GoatTeleporterClient {
+  TeleporterReady();
+};
+```
+
+The problem with this approach is that a client may easily fail to call
+`SetClient` before calling `TeleportGoat`. When such ordering requirements are
+necessary, the service can benefit clients by designing an API that is harder
+to fail at. For example:
+
+``` cpp
+interface GoatTeleporterFactory {
+  GetGoatTeleporter(GoatTeleporter& request, GoatTeleporterClient client);
+};
+
+interface GoatTeleporter {
+  TeleportGoat(string name);
+};
+```
+
+Instead of exposing `GoatTeleporter` directly to other services, the service can
+expose `GoatTeleporterFactory` instead. Now it's impossible for a client to
+acquire a functioning `GoatTeleporter` pipe without also providing a
+corresponding client pipe to complement it.
+
+### Interface Naming
+
+Just some basic tips for service and interface naming:
+
+- Strive to give your service's main interface a name that directly conveys the
+  general purpose of the service (*e.g.*, `NetworkService`, `StorageService`)
+  rather than a meaningless codename like `Cromulator`.
+
+- Strive to avoid conceptual layering violations in naming and documentation --
+  *e.g.*, avoid referencing Blink or Content concepts like "renderers" or
+  "frame hosts".
+
+- Use the names `FooClient` and `FooObserver` consistently in interfaces. If
+  there is an expected 1:1 correspondence between a Foo and its client interface
+  counterpart, that counterpart should most likely be called `FooClient`. If
+  there is expected to be 1-to-many correspondence between a Foo and its
+  counterpart clients, the client interface may be better named `FooObserver`.
+
+### Service Directory &amp; Dependency Structure
+
+Services typically follow a canonical directory structure:
 
 ```
-//services/foo/                   <-- Implementation code, may have subdirs.
-              /public/
-                     /cpp/        <-- C++ client libraries (optional)
-                     /mojom/      <-- Mojom interfaces
+//services/service_name/               # Private implementation
+                        public/
+                               mojom/  # Mojom interfaces
+                               cpp/    # C++ client libraries (optional)
+                               java/   # Java client libararies (optional, rare)
+                               js/     # JS client libraries (optional, rare)
 ```
 
-## Dependencies
+As a general rule, **nothing below `/public` can depend on the private service
+implementation** (*i.e.* things above `/public`). Enforcing this principle makes
+it much easier to keep the service's state well-isolated from the rest of the
+system.
 
-Code within `//services` may only depend on each other via each other's
-`/public/` directories, *i.e.* implementation code may not be shared directly.
+Generally the language-specific client libraries are built against only the
+public mojom API of the service (and usually few other common dependencies like
+`//base` and `//mojo`).
 
-Service code should also take care to tightly limit the dependencies on static
-libraries from outside of `//services`. Dependencies to large platform
-layers like `//content`, `//chrome` or `//third_party/WebKit` must be avoided.
+Even in the private service implementation, services should not depend on very
+large components like Content, Chrome, or Blink.
 
-## Physical Packaging
+*** aside
+NOTE: Exceptions to the above rule are made in rare cases where Blink or V8 is
+actually required as part of the service implementation. For example
+`"data_decoder"` uses Blink implementation to decode common image formats, and
+`"proxy_resolver"` uses V8 to execute proxy autoconfig scripts.
+***
 
-Note that while it may be possible to build a discrete physical package (DSO)
-for each service, products consuming these services may package them
-differently, e.g. by combining them into a single package.
+### Service Documentation
 
-## Additional Documentation
+- Every service should have a top-level `README.md` that explains the purpose and
+  supported usage models of the service.
 
-[High-level Design Doc](https://docs.google.com/document/d/15I7sQyQo6zsqXVNAlVd520tdGaS8FCicZHrN0yRu-oU)
+- Every public interface should be documented within its Mojom file at both the
+  interface level and indivudal message level.
 
-[Servicification Homepage](https://sites.google.com/a/chromium.org/dev/servicification)
+- Interface documentation should be complete enough to serve as test
+  specifications. If the method returns information of a user's accounts, what
+  should happen if the user is not signed in? If the method makes a request for
+  an access token, what happens if a client makes a second method call before
+  the first one has completed? If the method returns a nullable object, under
+  which conditions will it be null?
 
-[Servicification Strategies](/docs/servicification.md)
+- Avoid writing interface documentation which is unnecessarily prescriptive
+  about implementation details. Keep in mind that these are **interface**
+  definitions, not implementations thereof.
 
-## Relationship To Other Top-Level Directories
+- Avoid writing documentation which is tailored to a specific client.
 
-Services can be thought of as integrators of library code from across the
-Chromium repository, most commonly `//base` and `//mojo` (obviously) but for
-each service also `//components`, `//ui`, *etc.* in accordance with the
-functionality they provide.
+### Service Testing
 
-Not everything in `//components` is automatically a service in its own right.
-Think of `//components` as sort of like a `//lib`. Individual `//components` can
-define, implement and use Mojom interfaces, but only `//services` have unique
-identities with the Service Manager and so only `//services` make it possible
-for Mojom interfaces to be acquired.
+- Try to cover service implementation details with unit tests tied as closely
+  as possible to the private implementation object or method being tested,
+  rather than exercising implementation details through public API surface.
 
-## Adding a new service
+- For integration tests, try to have tests cover as much of the public API
+  surface as possible while mocking out as little of the underlying service as
+  possible.
 
-See the [Service Manager documentation](/services/service_manager) for more
-details regarding how to define a service and expose or consume interfaces to
-and from other services.
+- Treat the public API tests as "conformance tests" which clearly demonstrate
+  what expectations and guarantees are supposed to be upheld by *any*
+  implementation of the service's APIs.
 
-Please start a thread on [services-dev@chromium.org](https://groups.google.com/a/chromium.org/forum/#!forum/services-dev)
-if you want to introduce a new service.
+## Adding a New Service
 
-If you are servicifying existing Chromium code: Please first read the
-[servicification strategies documentation](/docs/servicification.md), which
-contains information that will hopefully make your task easier.
+Please start a thread on
+[services-dev@chromium.org](https://groups.google.com/a/chromium.org/forum/#!forum/services-dev)
+if you want to propose the introduction of a new service.
+
+If you are servicifying an existing Chromium feature, please check out
+[Servicifying Chromium Features](/docs/servicification.md).
+
+## Other Docs
+
+Here are some other external documents that aren't quite fully captured by any
+documents in the Chromium tree. Beware of obsolete information:
+
+- [High-level Design Doc](https://docs.google.com/document/d/15I7sQyQo6zsqXVNAlVd520tdGaS8FCicZHrN0yRu-oU)
+- [Servicification Homepage](https://sites.google.com/a/chromium.org/dev/servicification)
+
+## Additional Support
+
+You can always post to
+[services-dev@chromium.org](https://groups.google.com/a/chromium.org/forum#!forum/services-dev)
+with questions or concerns about anything related to service development.

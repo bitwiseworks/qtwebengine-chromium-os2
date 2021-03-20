@@ -6,54 +6,79 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TRUSTEDTYPES_TRUSTED_TYPES_UTIL_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/script/script_element_base.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
 class Document;
+class ExecutionContext;
 class ExceptionState;
-class StringOrTrustedHTML;
-class StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURLOrTrustedURL;
+class StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURL;
 class StringOrTrustedScript;
-class StringOrTrustedScriptURL;
-class USVStringOrTrustedURL;
 
 enum class SpecificTrustedType {
-  kTrustedHTML,
-  kTrustedScript,
-  kTrustedScriptURL,
-  kTrustedURL,
+  kNone,
+  kHTML,
+  kScript,
+  kScriptURL,
 };
 
-String CORE_EXPORT GetStringFromTrustedType(
-    const StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURLOrTrustedURL&,
-    const Document*,
-    ExceptionState&);
-
-String CORE_EXPORT GetStringFromTrustedTypeWithoutCheck(
-    const StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURLOrTrustedURL&);
-
-String CORE_EXPORT GetStringFromSpecificTrustedType(
-    const StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURLOrTrustedURL&,
-    SpecificTrustedType,
-    const Document*,
-    ExceptionState&);
-
-String CORE_EXPORT GetStringFromTrustedHTML(StringOrTrustedHTML,
+// TODO(crbug.com/1029822): Temporary helpers to ease migrating ExecutionContext
+// to LocalDOMWindow.
+CORE_EXPORT String TrustedTypesCheckForHTML(const String&,
                                             const Document*,
                                             ExceptionState&);
 
-String CORE_EXPORT GetStringFromTrustedScript(StringOrTrustedScript,
-                                              const Document*,
-                                              ExceptionState&);
+// Perform Trusted Type checks, with the IDL union types as input. All of these
+// will call String& versions below to do the heavy lifting.
+CORE_EXPORT String TrustedTypesCheckFor(
+    SpecificTrustedType,
+    const StringOrTrustedHTMLOrTrustedScriptOrTrustedScriptURL&,
+    const ExecutionContext*,
+    ExceptionState&) WARN_UNUSED_RESULT;
+CORE_EXPORT String TrustedTypesCheckForScript(StringOrTrustedScript,
+                                              const ExecutionContext*,
+                                              ExceptionState&)
+    WARN_UNUSED_RESULT;
 
-String CORE_EXPORT GetStringFromTrustedScriptURL(StringOrTrustedScriptURL,
-                                                 const Document*,
-                                                 ExceptionState&);
+// Perform Trusted Type checks, for a dynamically or statically determined
+// type.
+// Returns the effective value (which may have been modified by the "default"
+// policy. We use WARN_UNUSED_RESULT to prevent erroneous usage.
+String TrustedTypesCheckFor(SpecificTrustedType,
+                            const String&,
+                            const ExecutionContext*,
+                            ExceptionState&) WARN_UNUSED_RESULT;
+CORE_EXPORT String TrustedTypesCheckForHTML(const String&,
+                                            const ExecutionContext*,
+                                            ExceptionState&) WARN_UNUSED_RESULT;
+CORE_EXPORT String TrustedTypesCheckForScript(const String&,
+                                              const ExecutionContext*,
+                                              ExceptionState&)
+    WARN_UNUSED_RESULT;
+CORE_EXPORT String TrustedTypesCheckForScriptURL(const String&,
+                                                 const ExecutionContext*,
+                                                 ExceptionState&)
+    WARN_UNUSED_RESULT;
 
-String CORE_EXPORT GetStringFromTrustedURL(USVStringOrTrustedURL,
-                                           const Document*,
-                                           ExceptionState&);
+// Functionally equivalent to TrustedTypesCheckForScript(const String&, ...),
+// but with setup & error handling suitable for the asynchronous execution
+// cases.
+String TrustedTypesCheckForJavascriptURLinNavigation(const String&, Document*);
+CORE_EXPORT String GetStringForScriptExecution(const String&,
+                                               ScriptElementBase::Type,
+                                               Document*);
+
+// Determine whether a Trusted Types check is needed in this execution context.
+//
+// Note: All methods above handle this internally and will return success if a
+// check is not required. However, in cases where not-required doesn't
+// immediately imply "okay" this method can be used.
+// Example: To determine whether 'eval' may pass, one needs to also take CSP
+// into account.
+CORE_EXPORT bool RequireTrustedTypesCheck(const ExecutionContext*);
+
 }  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_TRUSTEDTYPES_TRUSTED_TYPES_UTIL_H_

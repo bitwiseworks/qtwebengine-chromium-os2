@@ -4,6 +4,7 @@
 
 #include "content/browser/media/session/media_session_controllers_manager.h"
 
+#include "base/stl_util.h"
 #include "content/browser/media/session/media_session_controller.h"
 #include "media/base/media_switches.h"
 #include "services/media_session/public/cpp/features.h"
@@ -43,9 +44,22 @@ bool MediaSessionControllersManager::RequestPlay(
     const MediaPlayerId& id,
     bool has_audio,
     bool is_remote,
-    media::MediaContentType media_content_type) {
+    media::MediaContentType media_content_type,
+    bool has_video) {
   if (!IsMediaSessionEnabled())
     return true;
+
+  // If we have previously received the position for this player then we should
+  // initialize the controller with it.
+  media_session::MediaPosition* position = nullptr;
+  auto position_it = position_map_.find(id);
+  if (position_it != position_map_.end())
+    position = &position_it->second;
+
+  bool is_pip_available = false;
+  auto pip_it = pip_availability_map_.find(id);
+  if (pip_it != pip_availability_map_.end())
+    is_pip_available = pip_it->second;
 
   // Since we don't remove session instances on pause, there may be an existing
   // instance for this playback attempt.
@@ -55,17 +69,21 @@ bool MediaSessionControllersManager::RequestPlay(
   // controller. A later playback attempt will create a new controller.
   auto it = controllers_map_.find(id);
   if (it != controllers_map_.end()) {
-    if (it->second->Initialize(has_audio, is_remote, media_content_type))
+    if (it->second->Initialize(has_audio, is_remote, media_content_type,
+                               position, is_pip_available, has_video)) {
       return true;
+    }
+
     controllers_map_.erase(it);
     return false;
   }
-
   std::unique_ptr<MediaSessionController> controller(
       new MediaSessionController(id, media_web_contents_observer_));
 
-  if (!controller->Initialize(has_audio, is_remote, media_content_type))
+  if (!controller->Initialize(has_audio, is_remote, media_content_type,
+                              position, is_pip_available, has_video)) {
     return false;
+  }
 
   controllers_map_[id] = std::move(controller);
   return true;
@@ -88,12 +106,51 @@ void MediaSessionControllersManager::OnEnd(const MediaPlayerId& id) {
   controllers_map_.erase(id);
 }
 
+void MediaSessionControllersManager::OnMediaPositionStateChanged(
+    const MediaPlayerId& id,
+    const media_session::MediaPosition& position) {
+  if (!IsMediaSessionEnabled())
+    return;
+
+  base::InsertOrAssign(position_map_, id, position);
+
+  auto it = controllers_map_.find(id);
+  if (it == controllers_map_.end())
+    return;
+
+  it->second->OnMediaPositionStateChanged(position);
+}
+
+void MediaSessionControllersManager::PictureInPictureStateChanged(
+    bool is_picture_in_picture) {
+  if (!IsMediaSessionEnabled())
+    return;
+
+  for (auto& entry : controllers_map_)
+    entry.second->PictureInPictureStateChanged(is_picture_in_picture);
+}
+
 void MediaSessionControllersManager::WebContentsMutedStateChanged(bool muted) {
   if (!IsMediaSessionEnabled())
     return;
 
   for (auto& entry : controllers_map_)
     entry.second->WebContentsMutedStateChanged(muted);
+}
+
+void MediaSessionControllersManager::OnPictureInPictureAvailabilityChanged(
+    const MediaPlayerId& id,
+    bool available) {
+  if (!IsMediaSessionEnabled())
+    return;
+
+  base::InsertOrAssign(pip_availability_map_, id, available);
+
+  auto it = controllers_map_.find(id);
+  if (it == controllers_map_.end())
+    return;
+
+  it->second->OnPictureInPictureAvailabilityChanged(available);
 }
 
 }  // namespace content

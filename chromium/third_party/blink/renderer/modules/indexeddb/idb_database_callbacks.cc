@@ -30,15 +30,11 @@
 
 namespace blink {
 
-IDBDatabaseCallbacks* IDBDatabaseCallbacks::Create() {
-  return MakeGarbageCollected<IDBDatabaseCallbacks>();
-}
-
 IDBDatabaseCallbacks::IDBDatabaseCallbacks() : database_(nullptr) {}
 
 IDBDatabaseCallbacks::~IDBDatabaseCallbacks() = default;
 
-void IDBDatabaseCallbacks::Trace(blink::Visitor* visitor) {
+void IDBDatabaseCallbacks::Trace(Visitor* visitor) {
   visitor->Trace(database_);
 }
 
@@ -84,8 +80,7 @@ void IDBDatabaseCallbacks::Connect(IDBDatabase* database) {
 std::unique_ptr<WebIDBDatabaseCallbacks>
 IDBDatabaseCallbacks::CreateWebCallbacks() {
   DCHECK(!web_callbacks_);
-  std::unique_ptr<WebIDBDatabaseCallbacks> callbacks =
-      WebIDBDatabaseCallbacksImpl::Create(this);
+  auto callbacks = std::make_unique<WebIDBDatabaseCallbacksImpl>(this);
   web_callbacks_ = callbacks.get();
   return callbacks;
 }

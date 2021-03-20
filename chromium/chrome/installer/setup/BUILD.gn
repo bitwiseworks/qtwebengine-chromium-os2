@@ -10,8 +10,6 @@ import("//testing/test.gni")
 
 buildflag_header("buildflags") {
   header = "buildflags.h"
-
-  # Use ZUCCHINI since ZUCCHINI_ENABLED is too long a name for setup.rc.
   flags = [ "ZUCCHINI=$use_zucchini" ]
 }
 
@@ -20,7 +18,6 @@ if (is_win) {
     sources = [
       "setup.ico",
       "setup.rc",
-      "setup_exe_version.rc.version",
       "setup_main.cc",
       "setup_main.h",
       "setup_resource.h",
@@ -36,16 +33,17 @@ if (is_win) {
       ":lib",
       ":setup_exe_version",
       "//base",
+      "//build:branding_buildflags",
       "//build/win:default_exe_manifest",
+      "//chrome/chrome_elf:constants",
       "//chrome/common:constants",
       "//chrome/install_static:install_static_util",
       "//chrome/installer/util:with_rc_strings",
-      "//chrome_elf:constants",
-      "//components/crash/content/app:app",
-      "//components/crash/content/app:crash_export_thunks",
-      "//components/crash/content/app:run_as_crashpad_handler",
+      "//components/crash/core/app:app",
+      "//components/crash/core/app:crash_export_thunks",
+      "//components/crash/core/app:run_as_crashpad_handler",
       "//content/public/common:static_switches",
-      "//rlz:rlz_lib",
+      "//rlz:rlz_lib_no_network",
     ]
 
     libs = [ "netapi32.lib" ]
@@ -59,10 +57,6 @@ if (is_win) {
       "brand_behaviors.h",
       "install.cc",
       "install.h",
-      "install_service_work_item.cc",
-      "install_service_work_item.h",
-      "install_service_work_item_impl.cc",
-      "install_service_work_item_impl.h",
       "install_worker.cc",
       "install_worker.h",
       "installer_crash_reporter_client.cc",
@@ -100,11 +94,13 @@ if (is_win) {
     ]
 
     deps = [
+      "//build:branding_buildflags",
       "//chrome/common:constants",
       "//chrome/common:version_header",
+      "//chrome/install_static:buildflags",
       "//chrome/install_static:install_static_util",
       "//components/base32",
-      "//components/crash/content/app",
+      "//components/crash/core/app",
       "//components/crash/core/common",
       "//components/metrics",
       "//components/zucchini:zucchini_io",
@@ -126,7 +122,6 @@ if (is_win) {
   test("setup_unittests") {
     sources = [
       "archive_patch_helper_unittest.cc",
-      "install_service_work_item_unittest.cc",
       "install_unittest.cc",
       "install_worker_unittest.cc",
       "installer_state_unittest.cc",
@@ -149,13 +144,16 @@ if (is_win) {
       "//base:i18n",
       "//base/allocator:buildflags",
       "//base/test:test_support",
+      "//build:branding_buildflags",
       "//chrome/common:constants",
       "//chrome/common:version_header",
+      "//chrome/install_static:buildflags",
       "//chrome/install_static:install_static_util",
       "//chrome/install_static/test:test_support",
       "//chrome/installer/mini_installer:unit_tests",
+      "//chrome/installer/util:serial_unittests",
       "//chrome/installer/util:test_support",
-      "//components/crash/content/app:test_support",
+      "//components/crash/core/app:test_support",
       "//testing/gmock",
       "//testing/gtest",
     ]

@@ -9,21 +9,21 @@ import contextlib
 import hashlib
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
-import re
 import sys
 import tempfile
 import time
 
 import py_utils
+from py_utils import cloud_storage_global_lock  # pylint: disable=unused-import
 from py_utils import lock
 
 # Do a no-op import here so that cloud_storage_global_lock dep is picked up
 # by https://cs.chromium.org/chromium/src/build/android/test_runner.pydeps.
 # TODO(nedn, jbudorick): figure out a way to get rid of this ugly hack.
-from py_utils import cloud_storage_global_lock  # pylint: disable=unused-import
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -42,7 +42,7 @@ BUCKET_ALIASES = collections.OrderedDict((
     ('output', TELEMETRY_OUTPUT),
 ))
 
-BUCKET_ALIAS_NAMES = BUCKET_ALIASES.keys()
+BUCKET_ALIAS_NAMES = list(BUCKET_ALIASES.keys())
 
 
 _GSUTIL_PATH = os.path.join(py_utils.GetCatapultDir(), 'third_party', 'gsutil',
@@ -197,6 +197,37 @@ def List(bucket):
   stdout = _RunCommand(['ls', query])
   return [url[len(query):] for url in stdout.splitlines()]
 
+
+def ListDirs(bucket, path=''):
+  """Returns only directories matching the given path in bucket.
+
+  Args:
+    bucket: Name of cloud storage bucket to look at.
+    path: Path within the bucket to filter to. Path can include wildcards.
+      path = 'foo*' will return ['mybucket/foo1/', 'mybucket/foo2/, ... ] but
+      not mybucket/foo1/file.txt or mybucket/foo-file.txt.
+
+  Returns:
+    A list of directories. All returned path are relative to the bucket root
+    directory. For example, List('my-bucket', path='foo/') will returns results
+    of the form ['/foo/123', '/foo/124', ...], as opposed to ['123', '124',
+    ...].
+  """
+  bucket_prefix = 'gs://%s' % bucket
+  full_path = '%s/%s' % (bucket_prefix, path)
+  # Note that -d only ensures we don't recurse into subdirectories
+  # unnecessarily. It still lists all non directory files matching the path
+  # following by a blank line. Adding -d here is a performance optimization.
+  stdout = _RunCommand(['ls', '-d', full_path])
+  dirs = []
+  for url in stdout.splitlines():
+    if len(url) == 0:
+      continue
+    # The only way to identify directories is by filtering for trailing slash.
+    # See https://github.com/GoogleCloudPlatform/gsutil/issues/466
+    if url[-1] == '/':
+      dirs.append(url[len(bucket_prefix):])
+  return dirs
 
 def Exists(bucket, remote_path):
   try:
@@ -362,7 +393,8 @@ def _GetLocked(bucket, remote_path, local_path):
 
 
 def Insert(bucket, remote_path, local_path, publicly_readable=False):
-  """ Upload file in |local_path| to cloud storage.
+  """Upload file in |local_path| to cloud storage.
+
   Args:
     bucket: the google cloud storage bucket name.
     remote_path: the remote file path in |bucket|.
@@ -373,6 +405,43 @@ def Insert(bucket, remote_path, local_path, publicly_readable=False):
   Returns:
     The url where the file is uploaded to.
   """
+  cloud_filepath = Upload(bucket, remote_path, local_path, publicly_readable)
+  return cloud_filepath.view_url
+
+
+class CloudFilepath(object):
+  def __init__(self, bucket, remote_path):
+    self.bucket = bucket
+    self.remote_path = remote_path
+
+  @property
+  def view_url(self):
+    """Get a human viewable url for the cloud file."""
+    return 'https://console.developers.google.com/m/cloudstorage/b/%s/o/%s' % (
+        self.bucket, self.remote_path)
+
+  @property
+  def fetch_url(self):
+    """Get a machine fetchable url for the cloud file."""
+    return 'gs://%s/%s' % (self.bucket, self.remote_path)
+
+
+def Upload(bucket, remote_path, local_path, publicly_readable=False):
+  """Upload file in |local_path| to cloud storage.
+
+  Newer version of 'Insert()' returns an object instead of a string.
+
+  Args:
+    bucket: the google cloud storage bucket name.
+    remote_path: the remote file path in |bucket|.
+    local_path: path of the local file to be uploaded.
+    publicly_readable: whether the uploaded file has publicly readable
+    permission.
+
+  Returns:
+    A CloudFilepath object providing the location of the object in various
+    formats.
+  """
   url = 'gs://%s/%s' % (bucket, remote_path)
   command_and_args = ['cp']
   extra_info = ''
@@ -382,8 +451,7 @@ def Insert(bucket, remote_path, local_path, publicly_readable=False):
   command_and_args += [local_path, url]
   logger.info('Uploading %s to %s%s', local_path, url, extra_info)
   _RunCommand(command_and_args)
-  return 'https://console.developers.google.com/m/cloudstorage/b/%s/o/%s' % (
-      bucket, remote_path)
+  return CloudFilepath(bucket, remote_path)
 
 
 def GetIfHashChanged(cs_path, download_path, bucket, file_hash):

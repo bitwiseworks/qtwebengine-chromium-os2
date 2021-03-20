@@ -25,7 +25,7 @@ class VideoEncoder {
  public:
   // Callback used to deliver an encoded frame on the Cast MAIN thread.
   using FrameEncodedCallback =
-      base::Callback<void(std::unique_ptr<SenderEncodedFrame>)>;
+      base::OnceCallback<void(std::unique_ptr<SenderEncodedFrame>)>;
 
   // Creates a VideoEncoder instance from the given |video_config| and based on
   // the current platform's hardware/library support; or null if no
@@ -39,7 +39,7 @@ class VideoEncoder {
   static std::unique_ptr<VideoEncoder> Create(
       const scoped_refptr<CastEnvironment>& cast_environment,
       const FrameSenderConfig& video_config,
-      const StatusChangeCallback& status_change_cb,
+      StatusChangeCallback status_change_cb,
       const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
       const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb);
 
@@ -50,9 +50,9 @@ class VideoEncoder {
   // CastEnvironment thread with the result.  If false is returned, nothing
   // happens and the callback will not be run.
   virtual bool EncodeVideoFrame(
-      const scoped_refptr<media::VideoFrame>& video_frame,
-      const base::TimeTicks& reference_time,
-      const FrameEncodedCallback& frame_encoded_callback) = 0;
+      scoped_refptr<media::VideoFrame> video_frame,
+      base::TimeTicks reference_time,
+      FrameEncodedCallback frame_encoded_callback) = 0;
 
   // Inform the encoder about the new target bit rate.
   virtual void SetBitRate(int new_bit_rate) = 0;

@@ -60,7 +60,7 @@ proc build_rbu {filename} {
     INSERT INTO data_t2 VALUES(8, 8, 8, 0);
     INSERT INTO data_t2 VALUES(9, 9, 9, 0);
   }
-
+  
   dbRbu close
 }
 

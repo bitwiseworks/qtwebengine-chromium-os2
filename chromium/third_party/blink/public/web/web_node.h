@@ -86,6 +86,9 @@ class BLINK_EXPORT WebNode {
   bool IsElementNode() const;
   void SimulateClick();
 
+  // See cc/paint/element_id.h for the definition of these ids.
+  uint64_t ScrollingElementIdForTesting() const;
+
   // The argument should be lower-cased.
   WebElementCollection GetElementsByHTMLTagName(const WebString&) const;
 
@@ -130,7 +133,7 @@ class BLINK_EXPORT WebNode {
   template <>                             \
   BLINK_EXPORT type WebNode::To<type>();  \
   template <>                             \
-  BLINK_EXPORT const type WebNode::ToConst<type>() const;
+  BLINK_EXPORT const type WebNode::ToConst<type>() const
 
 #if INSIDE_BLINK
 #define DEFINE_WEB_NODE_TYPE_CASTS(type, predicate)        \

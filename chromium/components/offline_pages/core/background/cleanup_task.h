@@ -30,10 +30,9 @@ class CleanupTask : public Task {
               RequestCoordinatorEventLogger* logger);
   ~CleanupTask() override;
 
+ private:
   // TaskQueue::Task implementation, starts the async chain
   void Run() override;
-
- private:
   // Step 1. get results from the store
   void GetRequests();
 
@@ -59,7 +58,7 @@ class CleanupTask : public Task {
       expired_request_ids_and_reasons_;
 
   // Allows us to pass a weak pointer to callbacks.
-  base::WeakPtrFactory<CleanupTask> weak_ptr_factory_;
+  base::WeakPtrFactory<CleanupTask> weak_ptr_factory_{this};
 };
 
 }  // namespace offline_pages

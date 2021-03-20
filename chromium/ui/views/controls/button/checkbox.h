@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_BUTTON_CHECKBOX_H_
 #define UI_VIEWS_CONTROLS_BUTTON_CHECKBOX_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -24,7 +25,7 @@ namespace views {
 // platform specific objects to replicate the native platforms looks and feel.
 class VIEWS_EXPORT Checkbox : public LabelButton {
  public:
-  static const char kViewClassName[];
+  METADATA_HEADER(Checkbox);
 
   // |force_md| forces MD even when --secondary-ui-md flag is not set.
   explicit Checkbox(const base::string16& label,
@@ -33,9 +34,13 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
 
   // Sets/Gets whether or not the checkbox is checked.
   virtual void SetChecked(bool checked);
-  bool checked() const { return checked_; }
+  bool GetChecked() const;
+
+  PropertyChangedSubscription AddCheckedChangedCallback(
+      PropertyChangedCallback callback) WARN_UNUSED_RESULT;
 
   void SetMultiLine(bool multi_line);
+  bool GetMultiLine() const;
 
   // If the accessible name should be the same as the labelling view's text,
   // use this. It will set the accessible label relationship and copy the
@@ -47,31 +52,28 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  protected:
+  // Bitmask constants for GetIconImageColor.
+  enum IconState { CHECKED = 0b1, ENABLED = 0b10 };
+
   // LabelButton:
-  const char* GetClassName() const override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
   std::unique_ptr<InkDrop> CreateInkDrop() override;
   std::unique_ptr<InkDropRipple> CreateInkDropRipple() const override;
-  std::unique_ptr<InkDropMask> CreateInkDropMask() const override;
   SkColor GetInkDropBaseColor() const override;
   gfx::ImageSkia GetImage(ButtonState for_state) const override;
   std::unique_ptr<LabelButtonBorder> CreateDefaultBorder() const override;
-  void Layout() override;
-
-  // Gets the vector icon to use based on the current state of |checked_|.
-  virtual const gfx::VectorIcon& GetVectorIcon() const;
 
   // Returns the path to draw the focus ring around for this Checkbox.
   virtual SkPath GetFocusRingPath() const;
 
- private:
-  friend class IconFocusRing;
-
-  // Bitmask constants for GetIconImageColor.
-  enum IconState { CHECKED = 0b1, ENABLED = 0b10 };
-
   // |icon_state| is a bitmask using the IconState enum.
-  SkColor GetIconImageColor(int icon_state) const;
+  virtual SkColor GetIconImageColor(int icon_state) const;
+
+  // Gets the vector icon to use based on the current state of |checked_|.
+  virtual const gfx::VectorIcon& GetVectorIcon() const;
+
+ private:
+  class FocusRingHighlightPathGenerator;
 
   // Button:
   void NotifyClick(const ui::Event& event) override;

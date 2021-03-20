@@ -8,13 +8,13 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include "p2p/base/dtls_transport.h"
+
 #include <algorithm>
 #include <memory>
 #include <set>
 #include <utility>
 
-#include "absl/memory/memory.h"
-#include "p2p/base/dtls_transport.h"
 #include "p2p/base/fake_ice_transport.h"
 #include "p2p/base/packet_transport_internal.h"
 #include "rtc_base/checks.h"
@@ -66,8 +66,7 @@ class DtlsTestClient : public sigslot::has_slots<> {
   explicit DtlsTestClient(const std::string& name) : name_(name) {}
   void CreateCertificate(rtc::KeyType key_type) {
     certificate_ =
-        rtc::RTCCertificate::Create(std::unique_ptr<rtc::SSLIdentity>(
-            rtc::SSLIdentity::Generate(name_, key_type)));
+        rtc::RTCCertificate::Create(rtc::SSLIdentity::Create(name_, key_type));
   }
   const rtc::scoped_refptr<rtc::RTCCertificate>& certificate() {
     return certificate_;
@@ -77,19 +76,19 @@ class DtlsTestClient : public sigslot::has_slots<> {
   }
   // Set up fake ICE transport and real DTLS transport under test.
   void SetupTransports(IceRole role, int async_delay_ms = 0) {
-    std::unique_ptr<FakeIceTransport> fake_ice_transport;
-    fake_ice_transport.reset(new FakeIceTransport("fake", 0));
-    fake_ice_transport->SetAsync(true);
-    fake_ice_transport->SetAsyncDelay(async_delay_ms);
-    fake_ice_transport->SetIceRole(role);
-    fake_ice_transport->SetIceTiebreaker((role == ICEROLE_CONTROLLING) ? 1 : 2);
+    fake_ice_transport_.reset(new FakeIceTransport("fake", 0));
+    fake_ice_transport_->SetAsync(true);
+    fake_ice_transport_->SetAsyncDelay(async_delay_ms);
+    fake_ice_transport_->SetIceRole(role);
+    fake_ice_transport_->SetIceTiebreaker((role == ICEROLE_CONTROLLING) ? 1
+                                                                        : 2);
     // Hook the raw packets so that we can verify they are encrypted.
-    fake_ice_transport->SignalReadPacket.connect(
+    fake_ice_transport_->SignalReadPacket.connect(
         this, &DtlsTestClient::OnFakeIceTransportReadPacket);
 
-    dtls_transport_ = absl::make_unique<DtlsTransport>(
-        std::move(fake_ice_transport), webrtc::CryptoOptions(),
-        /*event_log=*/nullptr);
+    dtls_transport_ = std::make_unique<DtlsTransport>(fake_ice_transport_.get(),
+                                                      webrtc::CryptoOptions(),
+                                                      /*event_log=*/nullptr);
     dtls_transport_->SetSslMaxProtocolVersion(ssl_max_version_);
     // Note: Certificate may be null here if testing passthrough.
     dtls_transport_->SetLocalCertificate(certificate_);
@@ -297,7 +296,7 @@ class DtlsTestClient : public sigslot::has_slots<> {
 };
 
 // Base class for DtlsTransportTest and DtlsEventOrderingTest, which
-// inherit from different variants of testing::Test.
+// inherit from different variants of ::testing::Test.
 //
 // Note that this test always uses a FakeClock, due to the |fake_clock_| member
 // variable.
@@ -455,7 +454,7 @@ TEST_P(DtlsTransportVersionTest, TestCipherSuiteNegotiation) {
 }
 
 // Will test every combination of 1.0/1.2 on the client and server.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     TestCipherSuiteNegotiation,
     DtlsTransportVersionTest,
     ::testing::Combine(::testing::Values(rtc::SSL_PROTOCOL_DTLS_10,
@@ -584,9 +583,10 @@ TEST_F(DtlsTransportTest, TestRetransmissionSchedule) {
     // millisecond before the expected time and verify that no unexpected
     // retransmissions were sent. Then advance it the final millisecond and
     // verify that the expected retransmission was sent.
-    fake_clock_.AdvanceTime(webrtc::TimeDelta::ms(timeout_schedule_ms[i] - 1));
+    fake_clock_.AdvanceTime(
+        webrtc::TimeDelta::Millis(timeout_schedule_ms[i] - 1));
     EXPECT_EQ(expected_hellos, client1_.received_dtls_client_hellos());
-    fake_clock_.AdvanceTime(webrtc::TimeDelta::ms(1));
+    fake_clock_.AdvanceTime(webrtc::TimeDelta::Millis(1));
     EXPECT_EQ(++expected_hellos, client1_.received_dtls_client_hellos());
   }
 }
@@ -707,7 +707,7 @@ TEST_P(DtlsEventOrderingTest, TestEventOrdering) {
                     ::testing::get<1>(GetParam()));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     TestEventOrdering,
     DtlsEventOrderingTest,
     ::testing::Combine(

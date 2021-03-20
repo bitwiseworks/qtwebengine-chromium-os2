@@ -8,12 +8,15 @@
 
 namespace ui {
 
-OverlaySurfaceCandidate::OverlaySurfaceCandidate() : is_clipped(false) {}
+OverlaySurfaceCandidate::OverlaySurfaceCandidate() = default;
 
 OverlaySurfaceCandidate::OverlaySurfaceCandidate(
     const OverlaySurfaceCandidate& other) = default;
 
-OverlaySurfaceCandidate::~OverlaySurfaceCandidate() {}
+OverlaySurfaceCandidate::~OverlaySurfaceCandidate() = default;
+
+OverlaySurfaceCandidate& OverlaySurfaceCandidate::operator=(
+    const OverlaySurfaceCandidate& other) = default;
 
 bool OverlaySurfaceCandidate::operator<(
     const OverlaySurfaceCandidate& param) const {
@@ -24,9 +27,11 @@ bool OverlaySurfaceCandidate::operator<(
   gfx::Rect lrect = gfx::ToNearestRect(display_rect);
   gfx::Rect rrect = gfx::ToNearestRect(param.display_rect);
 
-  return std::tie(plane_z_order, format, lrect, lwidth, lheight, transform) <
+  return std::tie(plane_z_order, format, lrect, lwidth, lheight, transform,
+                  crop_rect, is_opaque, native_pixmap_unique_id) <
          std::tie(param.plane_z_order, param.format, rrect, rwidth, rheight,
-                  param.transform);
+                  param.transform, param.crop_rect, param.is_opaque,
+                  param.native_pixmap_unique_id);
 }
 
 }  // namespace ui

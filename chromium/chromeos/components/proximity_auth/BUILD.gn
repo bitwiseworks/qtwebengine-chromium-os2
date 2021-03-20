@@ -14,7 +14,6 @@ static_library("proximity_auth") {
     "messenger_observer.h",
     "metrics.cc",
     "metrics.h",
-    "notification_controller.h",
     "proximity_auth_client.h",
     "proximity_auth_local_state_pref_manager.cc",
     "proximity_auth_local_state_pref_manager.h",
@@ -42,8 +41,6 @@ static_library("proximity_auth") {
     "screenlock_state.h",
     "smart_lock_metrics_recorder.cc",
     "smart_lock_metrics_recorder.h",
-    "switches.cc",
-    "switches.h",
     "unlock_manager.h",
     "unlock_manager_impl.cc",
     "unlock_manager_impl.h",
@@ -51,11 +48,12 @@ static_library("proximity_auth") {
 
   deps = [
     "//base",
-    "//chromeos:chromeos_constants",
     "//chromeos/components/multidevice",
     "//chromeos/components/multidevice/logging",
-    "//chromeos/components/proximity_auth/public/interfaces",
-    "//chromeos/dbus",
+    "//chromeos/components/proximity_auth/public/mojom",
+    "//chromeos/constants",
+    "//chromeos/dbus/power",
+    "//chromeos/dbus/session_manager",
     "//chromeos/services/multidevice_setup/public/cpp",
     "//chromeos/services/multidevice_setup/public/cpp:prefs",
     "//chromeos/services/secure_channel/public/cpp/client",
@@ -80,9 +78,7 @@ static_library("test_support") {
     "mock_proximity_auth_client.h",
   ]
 
-  public_deps = [
-    ":proximity_auth",
-  ]
+  public_deps = [ ":proximity_auth" ]
 
   deps = [
     "//base",
@@ -116,11 +112,12 @@ source_set("unit_tests") {
     ":test_support",
     "//base",
     "//base/test:test_support",
-    "//chromeos:chromeos_constants",
     "//chromeos/components/multidevice",
     "//chromeos/components/multidevice:test_support",
     "//chromeos/components/multidevice/logging",
-    "//chromeos/dbus:test_support",
+    "//chromeos/constants",
+    "//chromeos/dbus/power",
+    "//chromeos/dbus/power:power_manager_proto",
     "//chromeos/services/multidevice_setup/public/cpp:prefs",
     "//chromeos/services/multidevice_setup/public/cpp:test_support",
     "//chromeos/services/secure_channel:test_support",
@@ -136,9 +133,7 @@ source_set("unit_tests") {
 # Note: This is a convenience target for ease of rapid iteration during
 # development. It is not executed on any try or build bots.
 test("proximity_auth_unittests") {
-  sources = [
-    "run_all_unittests.cc",
-  ]
+  sources = [ "run_all_unittests.cc" ]
   deps = [
     ":unit_tests",
     "//base",

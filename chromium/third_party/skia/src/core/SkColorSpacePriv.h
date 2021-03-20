@@ -9,8 +9,9 @@
 
 #include <math.h>
 
-#include "SkColorSpace.h"
-#include "SkFixed.h"
+#include "include/core/SkColorSpace.h"
+#include "include/private/SkFixed.h"
+#include "src/core/SkVM_fwd.h"
 
 #define SkColorSpacePrintf(...)
 
@@ -31,54 +32,37 @@ static inline bool transfer_fn_almost_equal(float a, float b) {
     return SkTAbs(a - b) < 0.001f;
 }
 
-static inline bool is_valid_transfer_fn(const SkColorSpaceTransferFn& coeffs) {
-    if (SkScalarIsNaN(coeffs.fA) || SkScalarIsNaN(coeffs.fB) ||
-        SkScalarIsNaN(coeffs.fC) || SkScalarIsNaN(coeffs.fD) ||
-        SkScalarIsNaN(coeffs.fE) || SkScalarIsNaN(coeffs.fF) ||
-        SkScalarIsNaN(coeffs.fG))
-    {
-        return false;
-    }
+// NOTE: All of this logic is copied from skcms.cc, and needs to be kept in sync.
 
-    if (coeffs.fD < 0.0f) {
-        return false;
-    }
+// Most transfer functions we work with are sRGBish.
+// For exotic HDR transfer functions, we encode them using a tf.g that makes no sense,
+// and repurpose the other fields to hold the parameters of the HDR functions.
+enum TFKind { Bad_TF, sRGBish_TF, PQish_TF, HLGish_TF, HLGinvish_TF };
 
-    if (coeffs.fD == 0.0f) {
-        // Y = (aX + b)^g + e  for always
-        if (0.0f == coeffs.fA || 0.0f == coeffs.fG) {
-            SkColorSpacePrintf("A or G is zero, constant transfer function "
-                               "is nonsense");
-            return false;
+static inline TFKind classify_transfer_fn(const skcms_TransferFunction& tf) {
+    if (tf.g < 0 && (int)tf.g == tf.g) {
+        // TODO: sanity checks for PQ/HLG like we do for sRGBish.
+        switch ((int)tf.g) {
+            case -PQish_TF:     return PQish_TF;
+            case -HLGish_TF:    return HLGish_TF;
+            case -HLGinvish_TF: return HLGinvish_TF;
         }
+        return Bad_TF;
     }
 
-    if (coeffs.fD >= 1.0f) {
-        // Y = cX + f          for always
-        if (0.0f == coeffs.fC) {
-            SkColorSpacePrintf("C is zero, constant transfer function is "
-                               "nonsense");
-            return false;
-        }
+    // Basic sanity checks for sRGBish transfer functions.
+    if (sk_float_isfinite(tf.a + tf.b + tf.c + tf.d + tf.e + tf.f + tf.g)
+            // a,c,d,g should be non-negative to make any sense.
+            && tf.a >= 0
+            && tf.c >= 0
+            && tf.d >= 0
+            && tf.g >= 0
+            // Raising a negative value to a fractional tf->g produces complex numbers.
+            && tf.a * tf.d + tf.b >= 0) {
+        return sRGBish_TF;
     }
 
-    if ((0.0f == coeffs.fA || 0.0f == coeffs.fG) && 0.0f == coeffs.fC) {
-        SkColorSpacePrintf("A or G, and C are zero, constant transfer function "
-                           "is nonsense");
-        return false;
-    }
-
-    if (coeffs.fC < 0.0f) {
-        SkColorSpacePrintf("Transfer function must be increasing");
-        return false;
-    }
-
-    if (coeffs.fA < 0.0f || coeffs.fG < 0.0f) {
-        SkColorSpacePrintf("Transfer function must be positive or increasing");
-        return false;
-    }
-
-    return true;
+    return Bad_TF;
 }
 
 static inline bool is_almost_srgb(const skcms_TransferFunction& coeffs) {
@@ -116,6 +100,9 @@ static inline bool is_almost_linear(const skcms_TransferFunction& coeffs) {
 
     return linearExp || linearFn;
 }
+
+skvm::Color sk_program_transfer_fn(skvm::Builder*, skvm::Uniforms*,
+                                   const skcms_TransferFunction&, skvm::Color);
 
 // Return raw pointers to commonly used SkColorSpaces.
 // No need to ref/unref these, but if you do, do it in pairs.

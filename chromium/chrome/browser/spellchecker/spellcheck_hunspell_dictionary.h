@@ -17,6 +17,7 @@
 #include "base/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "components/spellcheck/browser/spellcheck_dictionary.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 
 class GURL;
@@ -134,6 +135,10 @@ class SpellcheckHunspellDictionary
   void InitializeDictionaryLocationComplete(DictionaryFile file);
 #endif
 
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+  void SpellCheckPlatformSetLanguageComplete(bool result);
+#endif
+
   // The reply point for PostTaskAndReplyWithResult, called after the dictionary
   // file has been saved.
   void SaveDictionaryDataComplete(bool dictionary_saved);
@@ -143,6 +148,10 @@ class SpellcheckHunspellDictionary
 
   // Notify listeners that the dictionary download failed.
   void InformListenersOfDownloadFailure();
+
+  // Callback for asynchronously checking if the platform supports a language
+  // for spellchecking.
+  void PlatformSupportsLanguageComplete(bool platform_supports_language);
 
   // Task runner where the file operations takes place.
   scoped_refptr<base::SequencedTaskRunner> const task_runner_;
@@ -160,9 +169,7 @@ class SpellcheckHunspellDictionary
   // Used for downloading the dictionary file.
   std::unique_ptr<network::SimpleURLLoader> simple_loader_;
 
-#if !defined(OS_ANDROID)
   SpellcheckService* const spellcheck_service_;
-#endif
 
   // Observers of Hunspell dictionary events.
   base::ObserverList<Observer>::Unchecked observers_;
@@ -173,7 +180,7 @@ class SpellcheckHunspellDictionary
   // Dictionary file path and descriptor.
   DictionaryFile dictionary_file_;
 
-  base::WeakPtrFactory<SpellcheckHunspellDictionary> weak_ptr_factory_;
+  base::WeakPtrFactory<SpellcheckHunspellDictionary> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SpellcheckHunspellDictionary);
 };

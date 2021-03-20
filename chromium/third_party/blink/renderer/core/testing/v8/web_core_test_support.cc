@@ -29,14 +29,15 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_origin_trials_test.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/testing/internal_settings.h"
 #include "third_party/blink/renderer/core/testing/internals.h"
 #include "third_party/blink/renderer/core/testing/worker_internals.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/origin_trial_features.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_context_data.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -54,11 +55,12 @@ v8::Local<v8::Value> CreateInternalsObject(v8::Local<v8::Context> context) {
   v8::Local<v8::Object> global = script_state->GetContext()->Global();
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   if (execution_context->IsDocument()) {
-    return ToV8(Internals::Create(execution_context), global,
+    return ToV8(MakeGarbageCollected<Internals>(execution_context), global,
                 script_state->GetIsolate());
   }
   if (execution_context->IsWorkerGlobalScope()) {
-    return ToV8(WorkerInternals::Create(), global, script_state->GetIsolate());
+    return ToV8(MakeGarbageCollected<WorkerInternals>(), global,
+                script_state->GetIsolate());
   }
   return v8::Local<v8::Value>();
 }
@@ -93,13 +95,27 @@ void InstallOriginTrialFeaturesForTesting(
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
 
   if (type == V8OriginTrialsTest::GetWrapperTypeInfo()) {
-    if (origin_trials::OriginTrialsSampleAPIEnabled(execution_context)) {
+    if (RuntimeEnabledFeatures::OriginTrialsSampleAPIEnabled(
+            execution_context)) {
       V8OriginTrialsTest::InstallOriginTrialsSampleAPI(
           script_state->GetIsolate(), script_state->World(),
           v8::Local<v8::Object>(), prototype_object, interface_object);
     }
-    if (origin_trials::OriginTrialsSampleAPIImpliedEnabled(execution_context)) {
+    if (RuntimeEnabledFeatures::OriginTrialsSampleAPIDeprecationEnabled(
+            execution_context)) {
+      V8OriginTrialsTest::InstallOriginTrialsSampleAPIDeprecation(
+          script_state->GetIsolate(), script_state->World(),
+          v8::Local<v8::Object>(), prototype_object, interface_object);
+    }
+    if (RuntimeEnabledFeatures::OriginTrialsSampleAPIImpliedEnabled(
+            execution_context)) {
       V8OriginTrialsTest::InstallOriginTrialsSampleAPIImplied(
+          script_state->GetIsolate(), script_state->World(),
+          v8::Local<v8::Object>(), prototype_object, interface_object);
+    }
+    if (RuntimeEnabledFeatures::OriginTrialsSampleAPINavigationEnabled(
+            execution_context)) {
+      V8OriginTrialsTest::InstallOriginTrialsSampleAPINavigation(
           script_state->GetIsolate(), script_state->World(),
           v8::Local<v8::Object>(), prototype_object, interface_object);
     }
@@ -113,10 +129,8 @@ void ResetInternalsObject(v8::Local<v8::Context> context) {
 
   ScriptState* script_state = ScriptState::From(context);
   ScriptState::Scope scope(script_state);
-  Document* document = To<Document>(ExecutionContext::From(script_state));
-  DCHECK(document);
-  LocalFrame* frame = document->GetFrame();
-  // Should the document have been detached, the page is assumed being destroyed
+  LocalFrame* frame = LocalDOMWindow::From(script_state)->GetFrame();
+  // Should the frame have been detached, the page is assumed being destroyed
   // (=> no reset required.)
   if (!frame)
     return;
@@ -127,33 +141,59 @@ void ResetInternalsObject(v8::Local<v8::Context> context) {
 }
 
 void InstallPendingOriginTrialFeatureForTesting(
-    const String& feature,
+    OriginTrialFeature feature,
     const ScriptState* script_state) {
   (*s_original_install_pending_origin_trial_feature_function)(feature,
                                                               script_state);
   v8::Local<v8::Object> prototype_object;
   v8::Local<v8::Function> interface_object;
-  if (feature == origin_trials::kOriginTrialsSampleAPITrialName) {
-    if (script_state->PerContextData()
-            ->GetExistingConstructorAndPrototypeForType(
-                V8OriginTrialsTest::GetWrapperTypeInfo(), &prototype_object,
-                &interface_object)) {
-      V8OriginTrialsTest::InstallOriginTrialsSampleAPI(
-          script_state->GetIsolate(), script_state->World(),
-          v8::Local<v8::Object>(), prototype_object, interface_object);
+  switch (feature) {
+    case OriginTrialFeature::kOriginTrialsSampleAPI: {
+      if (script_state->PerContextData()
+              ->GetExistingConstructorAndPrototypeForType(
+                  V8OriginTrialsTest::GetWrapperTypeInfo(), &prototype_object,
+                  &interface_object)) {
+        V8OriginTrialsTest::InstallOriginTrialsSampleAPI(
+            script_state->GetIsolate(), script_state->World(),
+            v8::Local<v8::Object>(), prototype_object, interface_object);
+      }
+      break;
     }
-    return;
-  }
-  if (feature == origin_trials::kOriginTrialsSampleAPIImpliedTrialName) {
-    if (script_state->PerContextData()
-            ->GetExistingConstructorAndPrototypeForType(
-                V8OriginTrialsTest::GetWrapperTypeInfo(), &prototype_object,
-                &interface_object)) {
-      V8OriginTrialsTest::InstallOriginTrialsSampleAPIImplied(
-          script_state->GetIsolate(), script_state->World(),
-          v8::Local<v8::Object>(), prototype_object, interface_object);
+    case OriginTrialFeature::kOriginTrialsSampleAPIDeprecation: {
+      if (script_state->PerContextData()
+              ->GetExistingConstructorAndPrototypeForType(
+                  V8OriginTrialsTest::GetWrapperTypeInfo(), &prototype_object,
+                  &interface_object)) {
+        V8OriginTrialsTest::InstallOriginTrialsSampleAPIDeprecation(
+            script_state->GetIsolate(), script_state->World(),
+            v8::Local<v8::Object>(), prototype_object, interface_object);
+      }
+      break;
     }
-    return;
+    case OriginTrialFeature::kOriginTrialsSampleAPIImplied: {
+      if (script_state->PerContextData()
+              ->GetExistingConstructorAndPrototypeForType(
+                  V8OriginTrialsTest::GetWrapperTypeInfo(), &prototype_object,
+                  &interface_object)) {
+        V8OriginTrialsTest::InstallOriginTrialsSampleAPIImplied(
+            script_state->GetIsolate(), script_state->World(),
+            v8::Local<v8::Object>(), prototype_object, interface_object);
+      }
+      break;
+    }
+    case OriginTrialFeature::kOriginTrialsSampleAPINavigation: {
+      if (script_state->PerContextData()
+              ->GetExistingConstructorAndPrototypeForType(
+                  V8OriginTrialsTest::GetWrapperTypeInfo(), &prototype_object,
+                  &interface_object)) {
+        V8OriginTrialsTest::InstallOriginTrialsSampleAPINavigation(
+            script_state->GetIsolate(), script_state->World(),
+            v8::Local<v8::Object>(), prototype_object, interface_object);
+      }
+      break;
+    }
+    default:
+      break;
   }
 }
 

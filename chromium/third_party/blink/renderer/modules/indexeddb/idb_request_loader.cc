@@ -4,14 +4,17 @@
 
 #include "third_party/blink/renderer/modules/indexeddb/idb_request_loader.h"
 
-#include "third_party/blink/public/platform/modules/indexeddb/web_idb_database_exception.h"
+#include "base/metrics/histogram_functions.h"
+#include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_request.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_request_queue_item.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_value.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_value_wrapping.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
@@ -69,12 +72,21 @@ void IDBRequestLoader::StartNextValue() {
 
   DCHECK(current_value_ != values_.end());
 
+  ExecutionContext* exection_context =
+      queue_item_->Request()->GetExecutionContext();
+  // The execution context was torn down. The loader will eventually get a
+  // Cancel() call.
+  if (!exection_context)
+    return;
+
   wrapped_data_.ReserveCapacity(unwrapper.WrapperBlobSize());
 #if DCHECK_IS_ON()
   DCHECK(!file_reader_loading_);
   file_reader_loading_ = true;
 #endif  // DCHECK_IS_ON()
-  loader_ = FileReaderLoader::Create(FileReaderLoader::kReadByClient, this);
+  loader_ = std::make_unique<FileReaderLoader>(
+      FileReaderLoader::kReadByClient, this,
+      exection_context->GetTaskRunner(TaskType::kDatabaseAccess));
   loader_->Start(unwrapper.WrapperBlobHandle());
 }
 
@@ -117,11 +129,8 @@ void IDBRequestLoader::DidFail(FileErrorCode) {
   file_reader_loading_ = false;
 #endif  // DCHECK_IS_ON()
 
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(SparseHistogram,
-                                  idb_request_loader_read_errors_histogram,
-                                  ("Storage.Blob.IDBRequestLoader.ReadError"));
-  idb_request_loader_read_errors_histogram.Sample(
-      std::max(0, -loader_->GetNetError()));
+  base::UmaHistogramSparse("Storage.Blob.IDBRequestLoader.ReadError",
+                           std::max(0, -loader_->GetNetError()));
 
   ReportError();
 }
@@ -139,7 +148,7 @@ void IDBRequestLoader::ReportError() {
   DCHECK(started_);
   DCHECK(!canceled_);
 #endif  // DCHECK_IS_ON()
-  queue_item_->OnResultLoadComplete(DOMException::Create(
+  queue_item_->OnResultLoadComplete(MakeGarbageCollected<DOMException>(
       DOMExceptionCode::kDataError, "Failed to read large IndexedDB value"));
 }
 

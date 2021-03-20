@@ -34,8 +34,8 @@
 
 #include <memory>
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader_client.h"
 #include "third_party/blink/renderer/modules/eventsource/event_source_parser.h"
@@ -55,7 +55,7 @@ class MODULES_EXPORT EventSource final
     : public EventTargetWithInlineData,
       public ThreadableLoaderClient,
       public ActiveScriptWrappable<EventSource>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       public EventSourceParser::Client {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(EventSource);
@@ -69,51 +69,48 @@ class MODULES_EXPORT EventSource final
   EventSource(ExecutionContext*, const KURL&, const EventSourceInit*);
   ~EventSource() override;
 
-  static const unsigned long long kDefaultReconnectDelay;
+  static const uint64_t kDefaultReconnectDelay;
 
   String url() const;
   bool withCredentials() const;
 
-  enum State : short { kConnecting = 0, kOpen = 1, kClosed = 2 };
+  enum State : int16_t { kConnecting = 0, kOpen = 1, kClosed = 2 };
 
   State readyState() const;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(open, kOpen);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(message, kMessage);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(open, kOpen)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(message, kMessage)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError)
 
   void close();
 
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
 
-  // ContextLifecycleObserver
+  // ExecutionContextLifecycleObserver
   //
-  // Note: We don't need to inherit from PausableObject since
-  // ScopedPageLoadDeferrer calls Page::setDefersLoading() and
-  // it defers delivery of events from the loader, and therefore
-  // the methods of this class for receiving asynchronous events
-  // from the loader won't be invoked.
-  void ContextDestroyed(ExecutionContext*) override;
+  // Note: We don't need to inherit from ExecutionContextLifecycleStateObserver
+  // since ScopedPageLoadDeferrer calls Page::setDefersLoading() and it defers
+  // delivery of events from the loader, and therefore the methods of this class
+  // for receiving asynchronous events from the loader won't be invoked.
+  void ContextDestroyed() override;
 
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
-  void DidReceiveResponse(unsigned long,
-                          const ResourceResponse&,
-                          std::unique_ptr<WebDataConsumerHandle>) override;
+  void DidReceiveResponse(uint64_t, const ResourceResponse&) override;
   void DidReceiveData(const char*, unsigned) override;
-  void DidFinishLoading(unsigned long) override;
+  void DidFinishLoading(uint64_t) override;
   void DidFail(const ResourceError&) override;
   void DidFailRedirectCheck() override;
 
   void OnMessageEvent(const AtomicString& event,
                       const String& data,
                       const AtomicString& id) override;
-  void OnReconnectionTimeSet(unsigned long long reconnection_time) override;
+  void OnReconnectionTimeSet(uint64_t reconnection_time) override;
 
   void ScheduleInitialConnect();
   void Connect();
@@ -135,9 +132,9 @@ class MODULES_EXPORT EventSource final
   Member<ThreadableLoader> loader_;
   TaskRunnerTimer<EventSource> connect_timer_;
 
-  unsigned long long reconnect_delay_;
+  uint64_t reconnect_delay_;
   String event_stream_origin_;
-  unsigned long resource_identifier_ = 0;
+  uint64_t resource_identifier_ = 0;
 };
 
 }  // namespace blink

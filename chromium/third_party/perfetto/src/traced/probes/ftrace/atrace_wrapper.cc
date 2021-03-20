@@ -26,8 +26,9 @@
 #include <unistd.h>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/pipe.h"
 #include "perfetto/base/time.h"
+#include "perfetto/ext/base/pipe.h"
+#include "perfetto/ext/base/utils.h"
 
 namespace perfetto {
 
@@ -60,11 +61,30 @@ bool ExecvAtrace(const std::vector<std::string>& args) {
       _exit(1);
     }
 
+    int null_fd = open("/dev/null", O_RDWR);
+    if (null_fd == -1) {
+      const char kError[] = "Unable to open dev null";
+      base::ignore_result(write(*err_pipe.wr, kError, sizeof(kError)));
+      _exit(1);
+    }
+
+    if ((dup2(null_fd, STDOUT_FILENO) == -1)) {
+      const char kError[] = "Unable to duplicate stdout fd";
+      base::ignore_result(write(*err_pipe.wr, kError, sizeof(kError)));
+      _exit(1);
+    }
+
+    if ((dup2(null_fd, STDIN_FILENO) == -1)) {
+      const char kError[] = "Unable to duplicate stdin fd";
+      base::ignore_result(write(*err_pipe.wr, kError, sizeof(kError)));
+      _exit(1);
+    }
+
     // Close stdin/out + any file descriptor that we might have mistakenly
     // not marked as FD_CLOEXEC. |err_pipe| is FD_CLOEXEC and will be
     // automatically closed on exec.
     for (int i = 0; i < 128; i++) {
-      if (i != STDERR_FILENO)
+      if (i != STDIN_FILENO && i != STDERR_FILENO && i != STDOUT_FILENO)
         close(i);
     }
 
@@ -88,7 +108,7 @@ bool ExecvAtrace(const std::vector<std::string>& args) {
   fds[0].events = POLLIN;
 
   // Store the start time of atrace and setup the timeout.
-  constexpr auto timeout = base::TimeMillis(7500);
+  constexpr auto timeout = base::TimeMillis(20000);
   auto start = base::GetWallTimeMs();
   for (;;) {
     // Check if we are below the timeout and update the select timeout to
@@ -111,7 +131,7 @@ bool ExecvAtrace(const std::vector<std::string>& args) {
     // Wait for the value of the timeout.
     auto ret = poll(fds, kFdCount, timeout_ms);
     if (ret == 0 || (ret < 0 && errno == EINTR)) {
-      // Either timeout occured in poll (in which case continue so that this
+      // Either timeout occurred in poll (in which case continue so that this
       // will be picked up by our own timeout logic) or we received an EINTR and
       // we should try again.
       continue;

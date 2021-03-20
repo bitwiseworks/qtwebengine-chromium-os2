@@ -48,23 +48,14 @@ class CORE_EXPORT ReplaceSelectionCommand final : public CompositeEditCommand {
 
   typedef unsigned CommandOptions;
 
-  static ReplaceSelectionCommand* Create(
-      Document& document,
-      DocumentFragment* fragment,
-      CommandOptions options,
-      InputEvent::InputType input_type = InputEvent::InputType::kNone) {
-    return MakeGarbageCollected<ReplaceSelectionCommand>(document, fragment,
-                                                         options, input_type);
-  }
-
   ReplaceSelectionCommand(Document&,
                           DocumentFragment*,
                           CommandOptions,
-                          InputEvent::InputType);
+                          InputEvent::InputType = InputEvent::InputType::kNone);
 
   EphemeralRange InsertedRange() const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void DoApply(EditingState*) override;
@@ -80,7 +71,7 @@ class CORE_EXPORT ReplaceSelectionCommand final : public CompositeEditCommand {
     void WillRemoveNode(Node&);
     void DidReplaceNode(Node&, Node& new_node);
 
-    Node* FirstNodeInserted() const { return first_node_inserted_.Get(); }
+    Node* FirstNodeInserted() const { return first_node_inserted_; }
     Node* LastLeafInserted() const {
       return last_node_inserted_
                  ? &NodeTraversal::LastWithinOrSelf(*last_node_inserted_)
@@ -92,13 +83,13 @@ class CORE_EXPORT ReplaceSelectionCommand final : public CompositeEditCommand {
                        NodeTraversal::LastWithinOrSelf(*last_node_inserted_))
                  : nullptr;
     }
-    Node* RefNode() const { return ref_node_.Get(); }
+    Node* RefNode() const { return ref_node_; }
     void SetRefNode(Node* node) { ref_node_ = node; }
 
    private:
-    Member<Node> first_node_inserted_;
-    Member<Node> last_node_inserted_;
-    Member<Node> ref_node_;
+    Node* first_node_inserted_ = nullptr;
+    Node* last_node_inserted_ = nullptr;
+    Node* ref_node_ = nullptr;
   };
 
   Node* InsertAsListItems(HTMLElement* list_element,
@@ -159,12 +150,6 @@ class CORE_EXPORT ReplaceSelectionCommand final : public CompositeEditCommand {
   Position start_of_inserted_range_;
   Position end_of_inserted_range_;
 };
-
-DEFINE_TYPE_CASTS(ReplaceSelectionCommand,
-                  CompositeEditCommand,
-                  command,
-                  command->IsReplaceSelectionCommand(),
-                  command.IsReplaceSelectionCommand());
 
 }  // namespace blink
 

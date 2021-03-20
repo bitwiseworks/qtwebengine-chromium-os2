@@ -22,6 +22,10 @@ component("chromeos") {
     "ime/input_method_menu_item.h",
     "ime/input_method_menu_manager.cc",
     "ime/input_method_menu_manager.h",
+    "ime/suggestion_view.cc",
+    "ime/suggestion_view.h",
+    "ime/suggestion_window_view.cc",
+    "ime/suggestion_window_view.h",
     "user_activity_power_manager_notifier.cc",
     "user_activity_power_manager_notifier.h",
   ]
@@ -29,16 +33,14 @@ component("chromeos") {
   deps = [
     "//base",
     "//base/third_party/dynamic_annotations",
-    "//chromeos",
-    "//chromeos/dbus",
-    "//chromeos/dbus:power_manager_proto",
+    "//chromeos/constants",
+    "//chromeos/dbus/power",
+    "//chromeos/dbus/power:power_manager_proto",
     "//components/device_event_log",
     "//components/onc",
     "//mojo/public/cpp/bindings",
     "//services/device/public/mojom",
     "//services/service_manager/public/cpp",
-    "//services/ws/public/cpp",
-    "//services/ws/public/mojom",
     "//skia",
     "//ui/aura",
     "//ui/base",
@@ -69,7 +71,6 @@ test("ui_chromeos_unittests") {
   deps = [
     ":chromeos",
     "//base/test:test_support",
-    "//chromeos",
     "//chromeos:chromeos_buildflags",
     "//mojo/core/embedder",
     "//skia",
@@ -79,12 +80,9 @@ test("ui_chromeos_unittests") {
     "//ui/events:test_support",
     "//ui/gl:test_support",
     "//ui/message_center",
-    "//ui/resources:ui_test_pak",
     "//ui/views",
     "//ui/views:test_support",
   ]
-  data = [
-    "$root_out_dir/locales/en-US.pak",
-    "$root_out_dir/ui_test.pak",
-  ]
+  data = [ "$root_out_dir/locales/en-US.pak" ]
+  data_deps = [ "//ui/resources:ui_test_pak_data" ]
 }

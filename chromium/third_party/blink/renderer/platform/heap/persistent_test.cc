@@ -6,22 +6,25 @@
 
 #include <memory>
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/heap_test_utilities.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+
+class PersistentTest : public TestSupportingGC {};
+
 namespace {
 
 class Receiver : public GarbageCollected<Receiver> {
  public:
   void Increment(int* counter) { ++*counter; }
 
-  void Trace(blink::Visitor* visitor) {}
+  void Trace(Visitor* visitor) {}
 };
 
-TEST(PersistentTest, BindCancellation) {
+TEST_F(PersistentTest, BindCancellation) {
   Receiver* receiver = MakeGarbageCollected<Receiver>();
   int counter = 0;
   base::RepeatingClosure function =
@@ -37,10 +40,10 @@ TEST(PersistentTest, BindCancellation) {
   EXPECT_EQ(1, counter);
 }
 
-TEST(PersistentTest, CrossThreadBindCancellation) {
+TEST_F(PersistentTest, CrossThreadBindCancellation) {
   Receiver* receiver = MakeGarbageCollected<Receiver>();
   int counter = 0;
-  CrossThreadClosure function = blink::CrossThreadBind(
+  CrossThreadOnceClosure function = CrossThreadBindOnce(
       &Receiver::Increment, WrapCrossThreadWeakPersistent(receiver),
       WTF::CrossThreadUnretained(&counter));
 

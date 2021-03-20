@@ -4,19 +4,19 @@
 
 #include "third_party/blink/renderer/core/html/custom/custom_element_upgrade_sorter.h"
 
-#include <memory>
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_element_creation_options.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_shadow_root_init.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
-#include "third_party/blink/renderer/core/dom/shadow_root_init.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -43,7 +43,7 @@ TEST_F(CustomElementUpgradeSorterTest, inOtherDocument_notInSet) {
   Element* element = GetDocument().CreateElementForBinding(
       "a-a", StringOrElementCreationOptions(), no_exceptions);
 
-  Document* other_document = HTMLDocument::CreateForTest();
+  auto* other_document = MakeGarbageCollected<HTMLDocument>();
   other_document->AppendChild(element);
   EXPECT_EQ(other_document, element->ownerDocument())
       << "sanity: another document should have adopted an element on append";

@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,6 +17,7 @@
 #include "absl/strings/internal/memutil.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 bool EqualsIgnoreCase(absl::string_view piece1, absl::string_view piece2) {
   return (piece1.size() == piece2.size() &&
@@ -35,4 +36,5 @@ bool EndsWithIgnoreCase(absl::string_view text, absl::string_view suffix) {
          EqualsIgnoreCase(text.substr(text.size() - suffix.size()), suffix);
 }
 
+ABSL_NAMESPACE_END
 }  // namespace absl

@@ -31,14 +31,13 @@ action("instrumentation_probes") {
 }
 
 source_set("generated") {
-  deps = [
-    ":instrumentation_probes",
-  ]
+  deps = [ ":instrumentation_probes" ]
 }
 
 # Compiles the sources generated above.
 blink_core_sources("probe") {
   sources = [
+    "async_task_id.h",
     "core_probes.cc",
     "core_probes.h",
   ]

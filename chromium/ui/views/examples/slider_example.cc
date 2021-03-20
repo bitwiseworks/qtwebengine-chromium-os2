@@ -4,6 +4,8 @@
 
 #include "ui/views/examples/slider_example.h"
 
+#include <memory>
+
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/geometry/insets.h"
@@ -15,14 +17,9 @@
 namespace views {
 namespace examples {
 
-SliderExample::SliderExample()
-    : ExampleBase("Slider"),
-      slider_(NULL),
-      label_(NULL) {
-}
+SliderExample::SliderExample() : ExampleBase("Slider") {}
 
-SliderExample::~SliderExample() {
-}
+SliderExample::~SliderExample() = default;
 
 void SliderExample::CreateExampleView(View* container) {
   label_ = new Label();
@@ -30,8 +27,8 @@ void SliderExample::CreateExampleView(View* container) {
 
   slider_->SetValue(0.5);
 
-  container->SetLayoutManager(
-      std::make_unique<BoxLayout>(BoxLayout::kHorizontal, gfx::Insets(3), 3));
+  container->SetLayoutManager(std::make_unique<BoxLayout>(
+      BoxLayout::Orientation::kHorizontal, gfx::Insets(3), 3));
   container->AddChildView(slider_);
   container->AddChildView(label_);
 }
@@ -45,4 +42,3 @@ void SliderExample::SliderValueChanged(Slider* sender,
 
 }  // namespace examples
 }  // namespace views
-

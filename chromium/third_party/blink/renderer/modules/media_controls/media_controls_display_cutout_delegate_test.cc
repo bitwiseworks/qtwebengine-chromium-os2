@@ -6,7 +6,6 @@
 
 #include "third_party/blink/public/mojom/page/display_cutout.mojom-blink.h"
 #include "third_party/blink/renderer/core/events/touch_event.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
@@ -16,7 +15,9 @@
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -26,8 +27,11 @@ namespace {
 class DisplayCutoutMockChromeClient : public EmptyChromeClient {
  public:
   // ChromeClient overrides:
-  void EnterFullscreen(LocalFrame& frame, const FullscreenOptions*) override {
-    Fullscreen::DidEnterFullscreen(*frame.GetDocument());
+  void EnterFullscreen(LocalFrame& frame,
+                       const FullscreenOptions*,
+                       bool for_cross_process_descendant) override {
+    Fullscreen::DidResolveEnterFullscreenRequest(*frame.GetDocument(),
+                                                 true /* granted */);
   }
   void ExitFullscreen(LocalFrame& frame) override {
     Fullscreen::DidExitFullscreen(*frame.GetDocument());
@@ -36,26 +40,28 @@ class DisplayCutoutMockChromeClient : public EmptyChromeClient {
 
 }  // namespace
 
-class MediaControlsDisplayCutoutDelegateTest : public PageTestBase {
+class MediaControlsDisplayCutoutDelegateTest
+    : public PageTestBase,
+      private ScopedDisplayCutoutAPIForTest,
+      private ScopedMediaControlsExpandGestureForTest {
  public:
+  MediaControlsDisplayCutoutDelegateTest()
+      : ScopedDisplayCutoutAPIForTest(true),
+        ScopedMediaControlsExpandGestureForTest(true) {}
   void SetUp() override {
     chrome_client_ = MakeGarbageCollected<DisplayCutoutMockChromeClient>();
 
     Page::PageClients clients;
     FillWithEmptyClients(clients);
     clients.chrome_client = chrome_client_.Get();
-    SetupPageWithClients(&clients, EmptyLocalFrameClient::Create());
-
-    RuntimeEnabledFeatures::SetDisplayCutoutAPIEnabled(true);
-    RuntimeEnabledFeatures::SetMediaControlsExpandGestureEnabled(true);
-
+    SetupPageWithClients(&clients,
+                         MakeGarbageCollected<EmptyLocalFrameClient>());
     GetDocument().write("<body><video id=video></body>");
   }
 
   void SimulateEnterFullscreen() {
     {
-      std::unique_ptr<UserGestureIndicator> gesture =
-          LocalFrame::NotifyUserActivation(GetDocument().GetFrame());
+      LocalFrame::NotifyUserActivation(GetDocument().GetFrame());
       Fullscreen::RequestFullscreen(GetVideoElement());
     }
 
@@ -165,7 +171,7 @@ class MediaControlsDisplayCutoutDelegateTest : public PageTestBase {
   }
 
   HTMLVideoElement& GetVideoElement() {
-    return *ToHTMLVideoElement(GetDocument().getElementById("video"));
+    return *To<HTMLVideoElement>(GetDocument().getElementById("video"));
   }
 
   Persistent<DisplayCutoutMockChromeClient> chrome_client_;
@@ -191,8 +197,8 @@ TEST_F(MediaControlsDisplayCutoutDelegateTest, CombinedGesture) {
   EXPECT_EQ(mojom::ViewportFit::kAuto, CurrentViewportFit());
 
   // Make sure we recorded a UseCounter metric.
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kMediaControlsDisplayCutoutGesture));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kMediaControlsDisplayCutoutGesture));
 }
 
 TEST_F(MediaControlsDisplayCutoutDelegateTest, ContractingGesture) {
@@ -208,8 +214,8 @@ TEST_F(MediaControlsDisplayCutoutDelegateTest, ContractingGesture) {
   EXPECT_EQ(mojom::ViewportFit::kAuto, CurrentViewportFit());
 
   // Make sure we recorded a UseCounter metric.
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kMediaControlsDisplayCutoutGesture));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kMediaControlsDisplayCutoutGesture));
 }
 
 TEST_F(MediaControlsDisplayCutoutDelegateTest, ContractingGesture_Noop) {
@@ -234,8 +240,8 @@ TEST_F(MediaControlsDisplayCutoutDelegateTest, ExpandingGesture) {
   EXPECT_EQ(mojom::ViewportFit::kAuto, CurrentViewportFit());
 
   // Make sure we recorded a UseCounter metric.
-  EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kMediaControlsDisplayCutoutGesture));
+  EXPECT_TRUE(GetDocument().IsUseCounted(
+      WebFeature::kMediaControlsDisplayCutoutGesture));
 }
 
 TEST_F(MediaControlsDisplayCutoutDelegateTest, ExpandingGesture_DoubleNoop) {
@@ -269,8 +275,8 @@ TEST_F(MediaControlsDisplayCutoutDelegateTest, IncompleteGestureClearsState) {
 }
 
 TEST_F(MediaControlsDisplayCutoutDelegateTest, MetricsNoop) {
-  EXPECT_FALSE(UseCounter::IsCounted(
-      GetDocument(), WebFeature::kMediaControlsDisplayCutoutGesture));
+  EXPECT_FALSE(GetDocument().IsUseCounted(
+      WebFeature::kMediaControlsDisplayCutoutGesture));
 }
 
 TEST_F(MediaControlsDisplayCutoutDelegateTest, NoFullscreen_Noop) {

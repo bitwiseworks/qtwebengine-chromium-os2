@@ -14,8 +14,8 @@
   * Example usage:
 
   gn gen out/coverage \\
-      --args='use_clang_coverage=true is_component_build=false \\
-              dcheck_always_on=true'
+      --args="use_clang_coverage=true is_component_build=false\\
+              is_debug=false dcheck_always_on=true"
   gclient runhooks
   python tools/code_coverage/coverage.py crypto_unittests url_unittests \\
       -b out/coverage -o out/report -c 'out/coverage/crypto_unittests' \\
@@ -62,7 +62,7 @@
   For more options, please refer to tools/code_coverage/coverage.py -h.
 
   For an overview of how code coverage works in Chromium, please refer to
-  https://chromium.googlesource.com/chromium/src/+/master/docs/code_coverage.md
+  https://chromium.googlesource.com/chromium/src/+/master/docs/testing/code_coverage.md
 """
 
 from __future__ import print_function
@@ -84,7 +84,7 @@ sys.path.append(
     os.path.join(
         os.path.dirname(__file__), os.path.pardir, os.path.pardir, 'tools',
         'clang', 'scripts'))
-from update import LLVM_BUILD_DIR
+import update
 
 sys.path.append(
     os.path.join(
@@ -93,11 +93,10 @@ sys.path.append(
 from collections import defaultdict
 
 import coverage_utils
-import update_clang_coverage_tools
 
 # Absolute path to the code coverage tools binary. These paths can be
 # overwritten by user specified coverage tool paths.
-LLVM_BIN_DIR = os.path.join(LLVM_BUILD_DIR, 'bin')
+LLVM_BIN_DIR = os.path.join(update.LLVM_BUILD_DIR, 'bin')
 LLVM_COV_PATH = os.path.join(LLVM_BIN_DIR, 'llvm-cov')
 LLVM_PROFDATA_PATH = os.path.join(LLVM_BIN_DIR, 'llvm-profdata')
 
@@ -143,7 +142,7 @@ FILE_BUG_MESSAGE = (
     'If it persists, please file a bug with the command you used, git revision '
     'and args.gn config here: '
     'https://bugs.chromium.org/p/chromium/issues/entry?'
-    'components=Tools%3ECodeCoverage')
+    'components=Infra%3ETest%3ECodeCoverage')
 
 # String to replace with actual llvm profile path.
 LLVM_PROFILE_FILE_PATH_SUBSTITUTION = '<llvm_profile_file_path>'
@@ -158,13 +157,14 @@ def _ConfigureLLVMCoverageTools(args):
     LLVM_COV_PATH = os.path.join(llvm_bin_dir, 'llvm-cov')
     LLVM_PROFDATA_PATH = os.path.join(llvm_bin_dir, 'llvm-profdata')
   else:
-    update_clang_coverage_tools.DownloadCoverageToolsIfNeeded()
+    update.UpdatePackage('coverage_tools')
 
   coverage_tools_exist = (
       os.path.exists(LLVM_COV_PATH) and os.path.exists(LLVM_PROFDATA_PATH))
   assert coverage_tools_exist, ('Cannot find coverage tools, please make sure '
                                 'both \'%s\' and \'%s\' exist.') % (
                                     LLVM_COV_PATH, LLVM_PROFDATA_PATH)
+
 
 def _GetPathWithLLVMSymbolizerDir():
   """Add llvm-symbolizer directory to path for symbolized stacks."""
@@ -190,19 +190,23 @@ def _IsIOS():
   return _GetTargetOS() == 'ios'
 
 
+def _GeneratePerFileLineByLineCoverageInFormat(binary_paths, profdata_file_path,
+                                               filters, ignore_filename_regex,
+                                               output_format):
+  """Generates per file line-by-line coverage in html or text using
+  'llvm-cov show'.
 
-def _GeneratePerFileLineByLineCoverageInHtml(binary_paths, profdata_file_path,
-                                             filters, ignore_filename_regex):
-  """Generates per file line-by-line coverage in html using 'llvm-cov show'.
-
-  For a file with absolute path /a/b/x.cc, a html report is generated as:
-  OUTPUT_DIR/coverage/a/b/x.cc.html. An index html file is also generated as:
-  OUTPUT_DIR/index.html.
+  For a file with absolute path /a/b/x.cc, a html/txt report is generated as:
+  OUTPUT_DIR/coverage/a/b/x.cc.[html|txt]. For html format, an index html file
+  is also generated as: OUTPUT_DIR/index.html.
 
   Args:
     binary_paths: A list of paths to the instrumented binaries.
     profdata_file_path: A path to the profdata file.
     filters: A list of directories and files to get coverage for.
+    ignore_filename_regex: A regular expression for skipping source code files
+                           with certain file paths.
+    output_format: The output format of generated report files.
   """
   # llvm-cov show [options] -instr-profile PROFILE BIN [-object BIN,...]
   # [[-object BIN]] [SOURCES]
@@ -210,8 +214,9 @@ def _GeneratePerFileLineByLineCoverageInHtml(binary_paths, profdata_file_path,
   # and the rest are specified as keyword argument.
   logging.debug('Generating per file line by line coverage reports using '
                 '"llvm-cov show" command.')
+
   subprocess_cmd = [
-      LLVM_COV_PATH, 'show', '-format=html',
+      LLVM_COV_PATH, 'show', '-format={}'.format(output_format),
       '-output-dir={}'.format(OUTPUT_DIR),
       '-instr-profile={}'.format(profdata_file_path), binary_paths[0]
   ]
@@ -799,6 +804,16 @@ def _SetupOutputDir():
   os.makedirs(coverage_utils.GetCoverageReportRootDirPath(OUTPUT_DIR))
 
 
+def _SetMacXcodePath():
+  """Set DEVELOPER_DIR to the path to hermetic Xcode.app on Mac OS X."""
+  if sys.platform != 'darwin':
+    return
+
+  xcode_path = os.path.join(SRC_ROOT_PATH, 'build', 'mac_files', 'Xcode.app')
+  if os.path.exists(xcode_path):
+    os.environ['DEVELOPER_DIR'] = xcode_path
+
+
 def _ParseCommandArguments():
   """Adds and parses relevant arguments for tool comands.
 
@@ -898,6 +913,13 @@ def _ParseCommandArguments():
       '\'autoninja -h\' for more details.')
 
   arg_parser.add_argument(
+      '--format',
+      type=str,
+      default='html',
+      help='Output format of the "llvm-cov show" command. The supported '
+      'formats are "text" and "html".')
+
+  arg_parser.add_argument(
       '-v',
       '--verbose',
       action='store_true',
@@ -922,7 +944,7 @@ def Main():
   # Setup coverage binaries even when script is called with empty params. This
   # is used by coverage bot for initial setup.
   if len(sys.argv) == 1:
-    update_clang_coverage_tools.DownloadCoverageToolsIfNeeded()
+    update.UpdatePackage('coverage_tools')
     print(__doc__)
     return
 
@@ -986,17 +1008,31 @@ def Main():
     profdata_file_path = args.profdata_file
     binary_paths = _GetBinaryPathsFromTargets(args.targets, args.build_dir)
 
+  # If the checkout uses the hermetic xcode binaries, then otool must be
+  # directly invoked. The indirection via /usr/bin/otool won't work unless
+  # there's an actual system install of Xcode.
+  otool_path = None
+  if sys.platform == 'darwin':
+    hermetic_otool_path = os.path.join(
+        SRC_ROOT_PATH, 'build', 'mac_files', 'xcode_binaries', 'Contents',
+        'Developer', 'Toolchains', 'XcodeDefault.xctoolchain', 'usr', 'bin',
+        'otool')
+    if os.path.exists(hermetic_otool_path):
+      otool_path = hermetic_otool_path
   binary_paths.extend(
-      coverage_utils.GetSharedLibraries(binary_paths, BUILD_DIR))
+      coverage_utils.GetSharedLibraries(binary_paths, BUILD_DIR, otool_path))
 
-  logging.info('Generating code coverage report in html (this can take a while '
-               'depending on size of target!).')
+  assert args.format == 'html' or args.format == 'text', (
+      '%s is not a valid output format for "llvm-cov show". Only "text" and '
+      '"html" formats are supported.' % (args.format))
+  logging.info('Generating code coverage report in %s (this can take a while '
+               'depending on size of target!).' % (args.format))
   per_file_summary_data = _GeneratePerFileCoverageSummary(
       binary_paths, profdata_file_path, absolute_filter_paths,
       args.ignore_filename_regex)
-  _GeneratePerFileLineByLineCoverageInHtml(binary_paths, profdata_file_path,
-                                           absolute_filter_paths,
-                                           args.ignore_filename_regex)
+  _GeneratePerFileLineByLineCoverageInFormat(
+      binary_paths, profdata_file_path, absolute_filter_paths,
+      args.ignore_filename_regex, args.format)
   component_mappings = None
   if not args.no_component_view:
     component_mappings = json.load(urllib2.urlopen(COMPONENT_MAPPING_URL))
@@ -1010,7 +1046,8 @@ def Main():
       no_file_view=args.no_file_view,
       component_mappings=component_mappings)
 
-  processor.PrepareHtmlReport()
+  if args.format == 'html':
+    processor.PrepareHtmlReport()
 
 
 if __name__ == '__main__':

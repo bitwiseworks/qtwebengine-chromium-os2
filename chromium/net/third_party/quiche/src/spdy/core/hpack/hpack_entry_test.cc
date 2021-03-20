@@ -4,13 +4,13 @@
 
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_entry.h"
 
-#include "testing/gtest/include/gtest/gtest.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_test.h"
 
 namespace spdy {
 
 namespace {
 
-class HpackEntryTest : public ::testing::Test {
+class HpackEntryTest : public QuicheTest {
  protected:
   HpackEntryTest()
       : name_("header-name"),
@@ -42,7 +42,7 @@ class HpackEntryTest : public ::testing::Test {
     return name_.size() + value_.size() + HpackEntry::kSizeOverhead;
   }
 
-  SpdyString name_, value_;
+  std::string name_, value_;
 
  private:
   // Referenced by HpackEntry instances.

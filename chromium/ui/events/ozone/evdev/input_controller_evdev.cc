@@ -7,7 +7,9 @@
 #include <linux/input.h>
 
 #include <algorithm>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/events/devices/device_data_manager.h"
@@ -19,8 +21,7 @@ namespace ui {
 
 InputControllerEvdev::InputControllerEvdev(KeyboardEvdev* keyboard,
                                            MouseButtonMapEvdev* button_map)
-    : keyboard_(keyboard), button_map_(button_map), weak_ptr_factory_(this) {
-}
+    : keyboard_(keyboard), button_map_(button_map) {}
 
 InputControllerEvdev::~InputControllerEvdev() {
 }
@@ -123,6 +124,11 @@ void InputControllerEvdev::SetTouchpadSensitivity(int value) {
   ScheduleUpdateDeviceSettings();
 }
 
+void InputControllerEvdev::SetTouchpadScrollSensitivity(int value) {
+  input_device_settings_.touchpad_scroll_sensitivity = value;
+  ScheduleUpdateDeviceSettings();
+}
+
 void InputControllerEvdev::SetTapToClick(bool enabled) {
   input_device_settings_.tap_to_click_enabled = enabled;
   ScheduleUpdateDeviceSettings();
@@ -148,12 +154,37 @@ void InputControllerEvdev::SetMouseSensitivity(int value) {
   ScheduleUpdateDeviceSettings();
 }
 
+void InputControllerEvdev::SetMouseScrollSensitivity(int value) {
+  input_device_settings_.mouse_scroll_sensitivity = value;
+  ScheduleUpdateDeviceSettings();
+}
+
 void InputControllerEvdev::SetPrimaryButtonRight(bool right) {
   button_map_->SetPrimaryButtonRight(right);
 }
 
 void InputControllerEvdev::SetMouseReverseScroll(bool enabled) {
   input_device_settings_.mouse_reverse_scroll_enabled = enabled;
+  ScheduleUpdateDeviceSettings();
+}
+
+void InputControllerEvdev::SetMouseAcceleration(bool enabled) {
+  input_device_settings_.mouse_acceleration_enabled = enabled;
+  ScheduleUpdateDeviceSettings();
+}
+
+void InputControllerEvdev::SetMouseScrollAcceleration(bool enabled) {
+  input_device_settings_.mouse_scroll_acceleration_enabled = enabled;
+  ScheduleUpdateDeviceSettings();
+}
+
+void InputControllerEvdev::SetTouchpadAcceleration(bool enabled) {
+  input_device_settings_.touchpad_acceleration_enabled = enabled;
+  ScheduleUpdateDeviceSettings();
+}
+
+void InputControllerEvdev::SetTouchpadScrollAcceleration(bool enabled) {
+  input_device_settings_.touchpad_scroll_acceleration_enabled = enabled;
   ScheduleUpdateDeviceSettings();
 }
 
@@ -176,6 +207,12 @@ void InputControllerEvdev::GetTouchEventLog(const base::FilePath& out_dir,
     input_device_factory_->GetTouchEventLog(out_dir, std::move(reply));
   else
     std::move(reply).Run(std::vector<base::FilePath>());
+}
+
+void InputControllerEvdev::GetGesturePropertiesService(
+    mojo::PendingReceiver<ozone::mojom::GesturePropertiesService> receiver) {
+  if (input_device_factory_)
+    input_device_factory_->GetGesturePropertiesService(std::move(receiver));
 }
 
 void InputControllerEvdev::ScheduleUpdateDeviceSettings() {

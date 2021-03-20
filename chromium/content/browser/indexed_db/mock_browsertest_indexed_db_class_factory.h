@@ -11,46 +11,43 @@
 #include <memory>
 #include <set>
 
+#include "components/services/storage/indexed_db/scopes/scopes_lock_manager.h"
+#include "components/services/storage/indexed_db/transactional_leveldb/transactional_leveldb_factory.h"
+#include "components/services/storage/public/mojom/indexed_db_control_test.mojom.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_database.h"
-#include "content/browser/indexed_db/scopes/scopes_lock_manager.h"
+#include "content/browser/indexed_db/indexed_db_task_helper.h"
+#include "content/common/content_export.h"
 #include "third_party/blink/public/common/indexeddb/web_idb_types.h"
 
 namespace content {
 
 class IndexedDBConnection;
 class IndexedDBMetadataCoding;
-class LevelDBTransaction;
-class LevelDBDatabase;
+class LevelDBDirectTransaction;
+class LevelDBScope;
+class LevelDBScopes;
+class LevelDBSnapshot;
+class TransactionalLevelDBTransaction;
+class TransactionalLevelDBDatabase;
 
-enum FailClass {
-  FAIL_CLASS_NOTHING,
-  FAIL_CLASS_LEVELDB_ITERATOR,
-  FAIL_CLASS_LEVELDB_TRANSACTION,
-};
-
-enum FailMethod {
-  FAIL_METHOD_NOTHING,
-  FAIL_METHOD_COMMIT,
-  FAIL_METHOD_COMMIT_DISK_FULL,
-  FAIL_METHOD_GET,
-  FAIL_METHOD_SEEK,
-};
-
-// TODO(dmurph): Remove the need for this class. We should be solving these
-// problems with dependency injection, factories, using a failing fake leveldb
-// database, or test-specific settings (like
-// SetUsableMessageSizeInBytesForTesting).
-class MockBrowserTestIndexedDBClassFactory : public IndexedDBClassFactory {
+class CONTENT_EXPORT MockBrowserTestIndexedDBClassFactory
+    : public IndexedDBClassFactory,
+      public DefaultTransactionalLevelDBFactory,
+      public storage::mojom::MockFailureInjector {
  public:
   MockBrowserTestIndexedDBClassFactory();
   ~MockBrowserTestIndexedDBClassFactory() override;
 
-  scoped_refptr<IndexedDBDatabase> CreateIndexedDBDatabase(
+  TransactionalLevelDBFactory& transactional_leveldb_factory() override;
+
+  std::pair<std::unique_ptr<IndexedDBDatabase>, leveldb::Status>
+  CreateIndexedDBDatabase(
       const base::string16& name,
-      scoped_refptr<IndexedDBBackingStore> backing_store,
-      scoped_refptr<IndexedDBFactory> factory,
+      IndexedDBBackingStore* backing_store,
+      IndexedDBFactory* factory,
+      TasksAvailableCallback tasks_available_callback,
       std::unique_ptr<IndexedDBMetadataCoding> metadata_coding,
       const IndexedDBDatabase::Identifier& unique_identifier,
       ScopesLockManager* transaction_lock_manager) override;
@@ -59,26 +56,39 @@ class MockBrowserTestIndexedDBClassFactory : public IndexedDBClassFactory {
       IndexedDBConnection* connection,
       const std::set<int64_t>& scope,
       blink::mojom::IDBTransactionMode mode,
+      TasksAvailableCallback tasks_available_callback,
+      IndexedDBTransaction::TearDownCallback tear_down_callback,
       IndexedDBBackingStore::Transaction* backing_store_transaction) override;
-  scoped_refptr<LevelDBTransaction> CreateLevelDBTransaction(
-      LevelDBDatabase* db) override;
-  std::unique_ptr<LevelDBIteratorImpl> CreateIteratorImpl(
-      std::unique_ptr<leveldb::Iterator> iterator,
-      LevelDBDatabase* db,
-      const leveldb::Snapshot* snapshot) override;
 
-  void FailOperation(FailClass failure_class,
-                     FailMethod failure_method,
+  std::unique_ptr<TransactionalLevelDBDatabase> CreateLevelDBDatabase(
+      scoped_refptr<LevelDBState> state,
+      std::unique_ptr<LevelDBScopes> scopes,
+      scoped_refptr<base::SequencedTaskRunner> task_runner,
+      size_t max_open_iterators) override;
+  std::unique_ptr<LevelDBDirectTransaction> CreateLevelDBDirectTransaction(
+      TransactionalLevelDBDatabase* db) override;
+  scoped_refptr<TransactionalLevelDBTransaction> CreateLevelDBTransaction(
+      TransactionalLevelDBDatabase* db,
+      std::unique_ptr<LevelDBScope> scope) override;
+  std::unique_ptr<TransactionalLevelDBIterator> CreateIterator(
+      std::unique_ptr<leveldb::Iterator> it,
+      base::WeakPtr<TransactionalLevelDBDatabase> db,
+      base::WeakPtr<TransactionalLevelDBTransaction> txn,
+      std::unique_ptr<LevelDBSnapshot> snapshot) override;
+
+  void FailOperation(storage::mojom::FailClass failure_class,
+                     storage::mojom::FailMethod failure_method,
                      int fail_on_instance_num,
-                     int fail_on_call_num);
+                     int fail_on_call_num,
+                     base::OnceClosure callback) override;
   void Reset();
 
  private:
-  FailClass failure_class_;
-  FailMethod failure_method_;
-  std::map<FailClass, int> instance_count_;
-  std::map<FailClass, int> fail_on_instance_num_;
-  std::map<FailClass, int> fail_on_call_num_;
+  storage::mojom::FailClass failure_class_;
+  storage::mojom::FailMethod failure_method_;
+  std::map<storage::mojom::FailClass, int> instance_count_;
+  std::map<storage::mojom::FailClass, int> fail_on_instance_num_;
+  std::map<storage::mojom::FailClass, int> fail_on_call_num_;
   bool only_trace_calls_;
 };
 

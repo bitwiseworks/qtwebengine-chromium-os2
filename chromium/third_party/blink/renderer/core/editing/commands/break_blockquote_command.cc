@@ -39,10 +39,9 @@
 #include "third_party/blink/renderer/core/html/html_quote_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_list_item.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
-
-using namespace html_names;
 
 namespace {
 
@@ -84,7 +83,7 @@ static HTMLQuoteElement* TopBlockquoteOf(const Position& start) {
   // |position| will be in the first node that we need to move (there are a few
   // exceptions to this, see |doApply|).
   const Position& position = MostForwardCaretPosition(start);
-  return ToHTMLQuoteElement(
+  return To<HTMLQuoteElement>(
       HighestEnclosingNodeOfType(position, IsMailHTMLBlockquoteElement));
 }
 
@@ -126,7 +125,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   if (!top_blockquote || !top_blockquote->parentNode())
     return;
 
-  HTMLBRElement* break_element = HTMLBRElement::Create(GetDocument());
+  auto* break_element = MakeGarbageCollected<HTMLBRElement>(GetDocument());
 
   bool is_last_vis_pos_in_node =
       IsLastVisiblePositionInNode(visible_pos, top_blockquote);
@@ -152,7 +151,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   if (editing_state->IsAborted())
     return;
 
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
   // If we're inserting the break at the end of the quoted content, we don't
   // need to break the quote.
@@ -173,7 +172,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
 
   // Adjust the position so we don't split at the beginning of a quote.
   while (IsFirstVisiblePositionInNode(CreateVisiblePosition(pos),
-                                      ToHTMLQuoteElement(EnclosingNodeOfType(
+                                      To<HTMLQuoteElement>(EnclosingNodeOfType(
                                           pos, IsMailHTMLBlockquoteElement)))) {
     pos = PreviousPositionOf(pos, PositionMoveType::kGraphemeCluster);
   }
@@ -183,8 +182,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   DCHECK(start_node);
 
   // Split at pos if in the middle of a text node.
-  if (start_node->IsTextNode()) {
-    Text* text_node = ToText(start_node);
+  if (auto* text_node = DynamicTo<Text>(start_node)) {
     int text_offset = pos.ComputeOffsetInContainerNode();
     if ((unsigned)text_offset >= text_node->length()) {
       start_node = NodeTraversal::Next(*start_node);
@@ -217,8 +215,8 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
     ancestors.push_back(node);
 
   // Insert a clone of the top blockquote after the break.
-  Element* cloned_blockquote = top_blockquote->CloneWithoutChildren();
-  InsertNodeAfter(cloned_blockquote, break_element, editing_state);
+  Element& cloned_blockquote = top_blockquote->CloneWithoutChildren();
+  InsertNodeAfter(&cloned_blockquote, break_element, editing_state);
   if (editing_state->IsAborted())
     return;
 
@@ -226,27 +224,27 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   // On exiting this loop, clonedAncestor is the lowest ancestor
   // that was cloned (i.e. the clone of either ancestors.last()
   // or clonedBlockquote if ancestors is empty).
-  Element* cloned_ancestor = cloned_blockquote;
+  Element* cloned_ancestor = &cloned_blockquote;
   for (wtf_size_t i = ancestors.size(); i != 0; --i) {
-    Element* cloned_child = ancestors[i - 1]->CloneWithoutChildren();
+    Element& cloned_child = ancestors[i - 1]->CloneWithoutChildren();
     // Preserve list item numbering in cloned lists.
-    if (IsHTMLOListElement(*cloned_child)) {
+    if (IsA<HTMLOListElement>(cloned_child)) {
       Node* list_child_node = i > 1 ? ancestors[i - 2].Get() : start_node;
       // The first child of the cloned list might not be a list item element,
       // find the first one so that we know where to start numbering.
-      while (list_child_node && !IsHTMLLIElement(*list_child_node))
+      while (list_child_node && !IsA<HTMLLIElement>(*list_child_node))
         list_child_node = list_child_node->nextSibling();
       if (IsListItem(list_child_node))
         SetNodeAttribute(
-            cloned_child, kStartAttr,
+            &cloned_child, html_names::kStartAttr,
             AtomicString::Number(
                 ToLayoutListItem(list_child_node->GetLayoutObject())->Value()));
     }
 
-    AppendNode(cloned_child, cloned_ancestor, editing_state);
+    AppendNode(&cloned_child, cloned_ancestor, editing_state);
     if (editing_state->IsAborted())
       return;
-    cloned_ancestor = cloned_child;
+    cloned_ancestor = &cloned_child;
   }
 
   MoveRemainingSiblingsToNewParent(start_node, nullptr, cloned_ancestor,
@@ -282,7 +280,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   }
 
   // Make sure the cloned block quote renders.
-  AddBlockPlaceholderIfNeeded(cloned_blockquote, editing_state);
+  AddBlockPlaceholderIfNeeded(&cloned_blockquote, editing_state);
   if (editing_state->IsAborted())
     return;
 

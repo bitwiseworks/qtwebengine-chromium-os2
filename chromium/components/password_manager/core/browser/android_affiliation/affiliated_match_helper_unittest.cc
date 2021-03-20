@@ -9,12 +9,13 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/password_manager/core/browser/android_affiliation/affiliation_service.h"
 #include "components/password_manager/core/browser/android_affiliation/affiliation_utils.h"
 #include "components/password_manager/core/browser/test_password_store.h"
@@ -41,13 +42,12 @@ class MockAffiliationService : public testing::StrictMock<AffiliationService> {
   MOCK_METHOD2(CancelPrefetch, void(const FacetURI&, const base::Time&));
   MOCK_METHOD1(TrimCacheForFacetURI, void(const FacetURI&));
 
-  void GetAffiliationsAndBranding(
-      const FacetURI& facet_uri,
-      StrategyOnCacheMiss cache_miss_strategy,
-      const ResultCallback& result_callback) override {
+  void GetAffiliationsAndBranding(const FacetURI& facet_uri,
+                                  StrategyOnCacheMiss cache_miss_strategy,
+                                  ResultCallback result_callback) override {
     AffiliatedFacets affiliation =
         OnGetAffiliationsAndBrandingCalled(facet_uri, cache_miss_strategy);
-    result_callback.Run(affiliation, !affiliation.empty());
+    std::move(result_callback).Run(affiliation, !affiliation.empty());
   }
 
   void ExpectCallToGetAffiliationsAndBrandingAndSucceedWithResult(
@@ -149,7 +149,7 @@ AffiliatedFacets GetTestEquivalenceClassBeta() {
 
 autofill::PasswordForm GetTestAndroidCredentials(const char* signon_realm) {
   autofill::PasswordForm form;
-  form.scheme = autofill::PasswordForm::SCHEME_HTML;
+  form.scheme = autofill::PasswordForm::Scheme::kHtml;
   form.signon_realm = signon_realm;
   form.username_value = base::ASCIIToUTF16(kTestUsername);
   form.password_value = base::ASCIIToUTF16(kTestPassword);
@@ -165,7 +165,7 @@ autofill::PasswordForm GetTestBlacklistedAndroidCredentials(
 
 PasswordStore::FormDigest GetTestObservedWebForm(const char* signon_realm,
                                                  const char* origin) {
-  return {autofill::PasswordForm::SCHEME_HTML, signon_realm,
+  return {autofill::PasswordForm::Scheme::kHtml, signon_realm,
           origin ? GURL(origin) : GURL()};
 }
 
@@ -270,8 +270,8 @@ class AffiliatedMatchHelperTest : public testing::Test {
     expecting_result_callback_ = true;
     match_helper()->GetAffiliatedAndroidRealms(
         observed_form,
-        base::Bind(&AffiliatedMatchHelperTest::OnAffiliatedRealmsCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&AffiliatedMatchHelperTest::OnAffiliatedRealmsCallback,
+                       base::Unretained(this)));
     RunUntilIdle();
     EXPECT_FALSE(expecting_result_callback_);
     return last_result_realms_;
@@ -282,8 +282,8 @@ class AffiliatedMatchHelperTest : public testing::Test {
     expecting_result_callback_ = true;
     match_helper()->GetAffiliatedWebRealms(
         android_form,
-        base::Bind(&AffiliatedMatchHelperTest::OnAffiliatedRealmsCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&AffiliatedMatchHelperTest::OnAffiliatedRealmsCallback,
+                       base::Unretained(this)));
     RunUntilIdle();
     EXPECT_FALSE(expecting_result_callback_);
     return last_result_realms_;
@@ -295,8 +295,8 @@ class AffiliatedMatchHelperTest : public testing::Test {
     expecting_result_callback_ = true;
     match_helper()->InjectAffiliationAndBrandingInformation(
         std::move(forms),
-        base::Bind(&AffiliatedMatchHelperTest::OnFormsCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&AffiliatedMatchHelperTest::OnFormsCallback,
+                       base::Unretained(this)));
     RunUntilIdle();
     EXPECT_FALSE(expecting_result_callback_);
     return std::move(last_result_forms_);
@@ -334,7 +334,7 @@ class AffiliatedMatchHelperTest : public testing::Test {
     mock_affiliation_service_ = service.get();
 
     password_store_ = new TestPasswordStore;
-    password_store_->Init(syncer::SyncableService::StartSyncFlare(), nullptr);
+    password_store_->Init(nullptr);
 
     match_helper_.reset(
         new AffiliatedMatchHelper(password_store_.get(), std::move(service)));
@@ -348,7 +348,7 @@ class AffiliatedMatchHelperTest : public testing::Test {
     RunUntilIdle();
   }
 
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   base::ScopedMockTimeMessageLoopTaskRunner mock_time_task_runner_;
 
   std::vector<std::string> last_result_realms_;
@@ -395,7 +395,7 @@ TEST_F(AffiliatedMatchHelperTest,
        GetAffiliatedAndroidRealmsYieldsEmptyResultsForHTTPBasicAuthForms) {
   PasswordStore::FormDigest http_auth_observed_form(
       GetTestObservedWebForm(kTestWebRealmAlpha1, nullptr));
-  http_auth_observed_form.scheme = autofill::PasswordForm::SCHEME_BASIC;
+  http_auth_observed_form.scheme = autofill::PasswordForm::Scheme::kBasic;
   EXPECT_THAT(GetAffiliatedAndroidRealms(http_auth_observed_form),
               testing::IsEmpty());
 }
@@ -404,7 +404,7 @@ TEST_F(AffiliatedMatchHelperTest,
        GetAffiliatedAndroidRealmsYieldsEmptyResultsForHTTPDigestAuthForms) {
   PasswordStore::FormDigest http_auth_observed_form(
       GetTestObservedWebForm(kTestWebRealmAlpha1, nullptr));
-  http_auth_observed_form.scheme = autofill::PasswordForm::SCHEME_DIGEST;
+  http_auth_observed_form.scheme = autofill::PasswordForm::Scheme::kDigest;
   EXPECT_THAT(GetAffiliatedAndroidRealms(http_auth_observed_form),
               testing::IsEmpty());
 }

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -64,7 +64,7 @@ egl::Error PbufferSurfaceGLX::initialize(const egl::Display *display)
     return egl::NoError();
 }
 
-egl::Error PbufferSurfaceGLX::makeCurrent()
+egl::Error PbufferSurfaceGLX::makeCurrent(const gl::Context *context)
 {
     return egl::NoError();
 }

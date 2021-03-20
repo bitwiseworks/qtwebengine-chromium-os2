@@ -490,7 +490,7 @@ static unsigned char *SHA3Final(SHA3Context *p){
 ** Implementation of the sha3(X,SIZE) function.
 **
 ** Return a BLOB which is the SIZE-bit SHA3 hash of X.  The default
-** size is 256.  If X is a BLOB, it is hashed as is.
+** size is 256.  If X is a BLOB, it is hashed as is.  
 ** For all other non-NULL types of input, X is converted into a UTF-8 string
 ** and the string is hashed without the trailing 0x00 terminator.  The hash
 ** of a NULL value is NULL.
@@ -696,19 +696,23 @@ int sqlite3_shathree_init(
   int rc = SQLITE_OK;
   SQLITE_EXTENSION_INIT2(pApi);
   (void)pzErrMsg;  /* Unused parameter */
-  rc = sqlite3_create_function(db, "sha3", 1, SQLITE_UTF8, 0,
-                               sha3Func, 0, 0);
+  rc = sqlite3_create_function(db, "sha3", 1,
+                      SQLITE_UTF8 | SQLITE_INNOCUOUS | SQLITE_DETERMINISTIC,
+                      0, sha3Func, 0, 0);
   if( rc==SQLITE_OK ){
-    rc = sqlite3_create_function(db, "sha3", 2, SQLITE_UTF8, 0,
-                                 sha3Func, 0, 0);
+    rc = sqlite3_create_function(db, "sha3", 2,
+                      SQLITE_UTF8 | SQLITE_INNOCUOUS | SQLITE_DETERMINISTIC,
+                      0, sha3Func, 0, 0);
   }
   if( rc==SQLITE_OK ){
-    rc = sqlite3_create_function(db, "sha3_query", 1, SQLITE_UTF8, 0,
-                                 sha3QueryFunc, 0, 0);
+    rc = sqlite3_create_function(db, "sha3_query", 1,
+                      SQLITE_UTF8 | SQLITE_DIRECTONLY,
+                      0, sha3QueryFunc, 0, 0);
   }
   if( rc==SQLITE_OK ){
-    rc = sqlite3_create_function(db, "sha3_query", 2, SQLITE_UTF8, 0,
-                                 sha3QueryFunc, 0, 0);
+    rc = sqlite3_create_function(db, "sha3_query", 2,
+                      SQLITE_UTF8 | SQLITE_DIRECTONLY,
+                      0, sha3QueryFunc, 0, 0);
   }
   return rc;
 }

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/base_export.h"
+#include "base/command_line.h"
 #include "base/environment.h"
 #include "base/macros.h"
 #include "base/process/process.h"
@@ -32,9 +33,11 @@
 #include "base/posix/file_descriptor_shuffle.h"
 #endif
 
-namespace base {
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+#include "base/mac/mach_port_rendezvous.h"
+#endif
 
-class CommandLine;
+namespace base {
 
 #if defined(OS_WIN)
 typedef std::vector<HANDLE> HandlesToInheritVector;
@@ -162,19 +165,21 @@ struct BASE_EXPORT LaunchOptions {
   // the launched process if the current process has such permission.
   bool grant_foreground_privilege = false;
 #elif defined(OS_POSIX) || defined(OS_FUCHSIA)
-  // Set/unset environment variables. These are applied on top of the parent
-  // process environment.  Empty (the default) means to inherit the same
-  // environment. See AlterEnvironment().
-  EnvironmentMap environ;
-
-  // Clear the environment for the new process before processing changes from
-  // |environ|.
-  bool clear_environ = false;
-
   // Remap file descriptors according to the mapping of src_fd->dest_fd to
   // propagate FDs into the child process.
   FileHandleMappingVector fds_to_remap;
 #endif  // defined(OS_WIN)
+
+#if defined(OS_WIN) || defined(OS_POSIX) || defined(OS_FUCHSIA)
+  // Set/unset environment variables. These are applied on top of the parent
+  // process environment.  Empty (the default) means to inherit the same
+  // environment. See internal::AlterEnvironment().
+  EnvironmentMap environment;
+
+  // Clear the environment for the new process before processing changes from
+  // |environment|.
+  bool clear_environment = false;
+#endif  // OS_WIN || OS_POSIX || OS_FUCHSIA
 
 #if defined(OS_LINUX)
   // If non-zero, start the process using clone(), using flags as provided.
@@ -190,6 +195,26 @@ struct BASE_EXPORT LaunchOptions {
   // Sets parent process death signal to SIGKILL.
   bool kill_on_parent_death = false;
 #endif  // defined(OS_LINUX)
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+  // Mach ports that will be accessible to the child process. These are not
+  // directly inherited across process creation, but they are stored by a Mach
+  // IPC server that a child process can communicate with to retrieve them.
+  //
+  // After calling LaunchProcess(), any rights that were transferred with MOVE
+  // dispositions will be consumed, even on failure.
+  //
+  // See base/mac/mach_port_rendezvous.h for details.
+  MachPortsForRendezvous mach_ports_for_rendezvous;
+
+  // When a child process is launched, the system tracks the parent process
+  // with a concept of "responsibility". The responsible process will be
+  // associated with any requests for private data stored on the system via
+  // the TCC subsystem. When launching processes that run foreign/third-party
+  // code, the responsibility for the child process should be disclaimed so
+  // that any TCC requests are not associated with the parent.
+  bool disclaim_responsibility = false;
+#endif
 
 #if defined(OS_FUCHSIA)
   // If valid, launches the application in that job object.
@@ -229,6 +254,10 @@ struct BASE_EXPORT LaunchOptions {
   // child process' namespace. Paths installed by |paths_to_clone| will be
   // overridden by these entries.
   std::vector<PathToTransfer> paths_to_transfer;
+
+  // Suffix that will be added to the process name. When specified process name
+  // will be set to "<binary_name><process_suffix>".
+  std::string process_name_suffix;
 #endif  // defined(OS_FUCHSIA)
 
 #if defined(OS_POSIX)
@@ -294,7 +323,7 @@ BASE_EXPORT Process LaunchProcess(const CommandLine& cmdline,
 //
 // Example (including literal quotes)
 //  cmdline = "c:\windows\explorer.exe" -foo "c:\bar\"
-BASE_EXPORT Process LaunchProcess(const string16& cmdline,
+BASE_EXPORT Process LaunchProcess(const CommandLine::StringType& cmdline,
                                   const LaunchOptions& options);
 
 // Launches a process with elevated privileges.  This does not behave exactly
@@ -352,7 +381,8 @@ BASE_EXPORT bool GetAppOutputWithExitCode(const CommandLine& cl,
 // A Windows-specific version of GetAppOutput that takes a command line string
 // instead of a CommandLine object. Useful for situations where you need to
 // control the command line arguments directly.
-BASE_EXPORT bool GetAppOutput(const StringPiece16& cl, std::string* output);
+BASE_EXPORT bool GetAppOutput(CommandLine::StringPieceType cl,
+                              std::string* output);
 #elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 // A POSIX-specific version of GetAppOutput that takes an argv array
 // instead of a CommandLine.  Useful for situations where you need to

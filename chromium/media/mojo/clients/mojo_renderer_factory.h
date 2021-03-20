@@ -6,19 +6,20 @@
 #define MEDIA_MOJO_CLIENTS_MOJO_RENDERER_FACTORY_H_
 
 #include <memory>
+#include <string>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "media/base/renderer_factory.h"
-#include "media/mojo/interfaces/interface_factory.mojom.h"
-#include "media/mojo/interfaces/renderer.mojom.h"
-
-namespace service_manager {
-class InterfaceProvider;
-}
+#include "media/mojo/buildflags.h"
+#include "media/mojo/mojom/interface_factory.mojom.h"
+#include "media/mojo/mojom/renderer.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 
 namespace media {
 
-class GpuVideoAcceleratorFactories;
+class MojoRenderer;
 
 // The default factory class for creating MojoRenderer.
 //
@@ -29,19 +30,10 @@ class GpuVideoAcceleratorFactories;
 // wrapper factories that use MRF, rather than creating derived MojoRenderer
 // types, or extending MRF. See DecryptingRendererFactory and
 // MediaPlayerRendererClientFactory for examples of small wrappers around MRF.
-//
-// NOTE: MediaPlayerRendererClientFactory uses MojoRenderer specific methods,
-//       and uses a static_cast<MojoRenderer*> internally. |this| should
-//       never return anything but a MojoRenderer. See crbug.com/919494.
 class MojoRendererFactory : public RendererFactory {
  public:
-  using GetGpuFactoriesCB = base::Callback<GpuVideoAcceleratorFactories*()>;
-  using GetTypeSpecificIdCB = base::Callback<std::string()>;
-
-  MojoRendererFactory(mojom::HostedRendererType type,
-                      const GetGpuFactoriesCB& get_gpu_factories_cb,
-                      media::mojom::InterfaceFactory* interface_factory);
-
+  explicit MojoRendererFactory(
+      media::mojom::InterfaceFactory* interface_factory);
   ~MojoRendererFactory() final;
 
   std::unique_ptr<Renderer> CreateRenderer(
@@ -49,29 +41,36 @@ class MojoRendererFactory : public RendererFactory {
       const scoped_refptr<base::TaskRunner>& worker_task_runner,
       AudioRendererSink* audio_renderer_sink,
       VideoRendererSink* video_renderer_sink,
-      const RequestOverlayInfoCB& request_overlay_info_cb,
+      RequestOverlayInfoCB request_overlay_info_cb,
       const gfx::ColorSpace& target_color_space) final;
 
-  // Sets the callback that will fetch the TypeSpecificId when
-  // InterfaceFactory::CreateRenderer() is called. What the string represents
-  // depends on the value of |hosted_renderer_type_|. Currently, we only use it
-  // with mojom::HostedRendererType::kFlinging, in which case
-  // |get_type_specific_id| should return the presentation ID to be given to the
-  // FlingingRenderer in the browser process.
-  void SetGetTypeSpecificIdCB(const GetTypeSpecificIdCB& get_type_specific_id);
+#if BUILDFLAG(ENABLE_CAST_RENDERER)
+  std::unique_ptr<MojoRenderer> CreateCastRenderer(
+      const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
+      VideoRendererSink* video_renderer_sink);
+#endif  // BUILDFLAG(ENABLE_CAST_RENDERER)
+
+#if defined(OS_ANDROID)
+  std::unique_ptr<MojoRenderer> CreateFlingingRenderer(
+      const std::string& presentation_id,
+      mojo::PendingRemote<mojom::FlingingRendererClientExtension>
+          client_extenion_ptr,
+      const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
+      VideoRendererSink* video_renderer_sink);
+
+  std::unique_ptr<MojoRenderer> CreateMediaPlayerRenderer(
+      mojo::PendingReceiver<mojom::MediaPlayerRendererExtension>
+          renderer_extension_receiver,
+      mojo::PendingRemote<mojom::MediaPlayerRendererClientExtension>
+          client_extension_remote,
+      const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
+      VideoRendererSink* video_renderer_sink);
+#endif  // defined (OS_ANDROID)
 
  private:
-  mojom::RendererPtr GetRendererPtr();
-
-  GetGpuFactoriesCB get_gpu_factories_cb_;
-  GetTypeSpecificIdCB get_type_specific_id_;
-
   // InterfaceFactory or InterfaceProvider used to create or connect to remote
   // renderer.
   media::mojom::InterfaceFactory* interface_factory_ = nullptr;
-
-  // Underlying renderer type that will be hosted by the MojoRenderer.
-  mojom::HostedRendererType hosted_renderer_type_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoRendererFactory);
 };

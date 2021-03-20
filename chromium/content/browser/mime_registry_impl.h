@@ -7,7 +7,8 @@
 
 #include "base/macros.h"
 #include "base/sequence_checker.h"
-#include "third_party/blink/public/platform/mime_registry.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "third_party/blink/public/mojom/mime/mime_registry.mojom.h"
 
 namespace content {
 
@@ -16,7 +17,8 @@ class MimeRegistryImpl : public blink::mojom::MimeRegistry {
   MimeRegistryImpl();
   ~MimeRegistryImpl() override;
 
-  static void Create(blink::mojom::MimeRegistryRequest request);
+  static void Create(
+      mojo::PendingReceiver<blink::mojom::MimeRegistry> receiver);
 
  private:
   void GetMimeTypeFromExtension(

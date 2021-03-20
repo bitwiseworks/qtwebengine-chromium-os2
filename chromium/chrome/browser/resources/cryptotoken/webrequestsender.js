@@ -11,8 +11,8 @@
 /**
  * @typedef {{
  *   origin: string,
- *   tlsChannelId: (string|undefined),
  *   tabId: (number|undefined)
+ *   frameId: (number|undefined)
  * }}
  */
 var WebRequestSender;
@@ -30,11 +30,9 @@ function createSenderFromMessageSender(messageSender) {
     return null;
   }
   var sender = {origin: origin};
-  if (messageSender.tlsChannelId) {
-    sender.tlsChannelId = messageSender.tlsChannelId;
-  }
   if (messageSender.tab) {
     sender.tabId = messageSender.tab.id;
+    sender.frameId = messageSender.frameId;
   }
   return sender;
 }
@@ -89,7 +87,7 @@ function getTabIdWhenPossible(sender) {
                     },
                     function() {
                       // Didn't match? Check if the debugger is open.
-                      if (tab.url.indexOf('chrome-devtools://') != 0) {
+                      if (tab.url.indexOf('devtools://') != 0) {
                         reject(false);
                         return;
                       }

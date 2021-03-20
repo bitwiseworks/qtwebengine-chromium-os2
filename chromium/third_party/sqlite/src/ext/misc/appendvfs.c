@@ -137,7 +137,7 @@ static sqlite3_vfs apnd_vfs = {
   1024,                         /* mxPathname */
   0,                            /* pNext */
   "apndvfs",                    /* zName */
-  0,                            /* pAppData (set when registered) */
+  0,                            /* pAppData (set when registered) */ 
   apndOpen,                     /* xOpen */
   apndDelete,                   /* xDelete */
   apndAccess,                   /* xAccess */
@@ -192,9 +192,9 @@ static int apndClose(sqlite3_file *pFile){
 ** Read data from an apnd-file.
 */
 static int apndRead(
-  sqlite3_file *pFile,
-  void *zBuf,
-  int iAmt,
+  sqlite3_file *pFile, 
+  void *zBuf, 
+  int iAmt, 
   sqlite_int64 iOfst
 ){
   ApndFile *p = (ApndFile *)pFile;
@@ -411,7 +411,7 @@ static sqlite3_int64 apndReadMark(sqlite3_int64 sz, sqlite3_file *pFile){
   if( rc ) return -1;
   if( memcmp(a, APND_MARK_PREFIX, APND_MARK_PREFIX_SZ)!=0 ) return -1;
   iMark = ((sqlite3_int64)(a[APND_MARK_PREFIX_SZ]&0x7f))<<56;
-  for(i=1; i<8; i++){
+  for(i=1; i<8; i++){    
     iMark += (sqlite3_int64)a[APND_MARK_PREFIX_SZ+i]<<(56-8*i);
   }
   return iMark;
@@ -473,17 +473,17 @@ static int apndDelete(sqlite3_vfs *pVfs, const char *zPath, int dirSync){
   return ORIGVFS(pVfs)->xDelete(ORIGVFS(pVfs), zPath, dirSync);
 }
 static int apndAccess(
-  sqlite3_vfs *pVfs,
-  const char *zPath,
-  int flags,
+  sqlite3_vfs *pVfs, 
+  const char *zPath, 
+  int flags, 
   int *pResOut
 ){
   return ORIGVFS(pVfs)->xAccess(ORIGVFS(pVfs), zPath, flags, pResOut);
 }
 static int apndFullPathname(
-  sqlite3_vfs *pVfs,
-  const char *zPath,
-  int nOut,
+  sqlite3_vfs *pVfs, 
+  const char *zPath, 
+  int nOut, 
   char *zOut
 ){
   return ORIGVFS(pVfs)->xFullPathname(ORIGVFS(pVfs),zPath,nOut,zOut);
@@ -532,17 +532,17 @@ static const char *apndNextSystemCall(sqlite3_vfs *pVfs, const char *zName){
   return ORIGVFS(pVfs)->xNextSystemCall(ORIGVFS(pVfs), zName);
 }
 
-
+  
 #ifdef _WIN32
 __declspec(dllexport)
 #endif
-/*
+/* 
 ** This routine is called when the extension is loaded.
 ** Register the new VFS.
 */
 int sqlite3_appendvfs_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

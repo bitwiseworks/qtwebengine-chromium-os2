@@ -13,12 +13,14 @@
 #include <portabledevice.h>
 #include <wrl/client.h>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_propvariant.h"
@@ -316,7 +318,8 @@ base::string16 GetDeviceNameOnBlockingThread(
     IPortableDeviceManager* portable_device_manager,
     const base::string16& pnp_device_id) {
   DCHECK(portable_device_manager);
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::string16 name;
   GetFriendlyName(pnp_device_id, portable_device_manager, &name) ||
       GetDeviceDescription(pnp_device_id, portable_device_manager, &name) ||
@@ -330,7 +333,8 @@ bool GetDeviceStorageObjectsOnBlockingThread(
     const base::string16& pnp_device_id,
     PortableDeviceWatcherWin::StorageObjects* storage_objects) {
   DCHECK(storage_objects);
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   Microsoft::WRL::ComPtr<IPortableDevice> device;
   if (!SetUp(pnp_device_id, &device))
     return false;
@@ -370,7 +374,8 @@ bool GetDeviceInfoOnBlockingThread(
   DCHECK(portable_device_manager);
   DCHECK(device_details);
   DCHECK(!pnp_device_id.empty());
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   device_details->name = GetDeviceNameOnBlockingThread(portable_device_manager,
                                                        pnp_device_id);
   if (IsMassStoragePortableDevice(pnp_device_id, device_details->name))
@@ -386,7 +391,8 @@ bool GetDeviceInfoOnBlockingThread(
 // returns true and fills in |portable_device_mgr|. On failure, returns false.
 bool GetPortableDeviceManager(
     Microsoft::WRL::ComPtr<IPortableDeviceManager>* portable_device_mgr) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   HRESULT hr = ::CoCreateInstance(
       __uuidof(PortableDeviceManager), nullptr, CLSCTX_INPROC_SERVER,
       IID_PPV_ARGS(portable_device_mgr->GetAddressOf()));
@@ -405,7 +411,8 @@ bool GetPortableDeviceManager(
 bool EnumerateAttachedDevicesOnBlockingThread(
     PortableDeviceWatcherWin::Devices* devices) {
   DCHECK(devices);
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   Microsoft::WRL::ComPtr<IPortableDeviceManager> portable_device_mgr;
   if (!GetPortableDeviceManager(&portable_device_mgr))
     return false;
@@ -440,7 +447,8 @@ bool HandleDeviceAttachedEventOnBlockingThread(
     const base::string16& pnp_device_id,
     PortableDeviceWatcherWin::DeviceDetails* device_details) {
   DCHECK(device_details);
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   Microsoft::WRL::ComPtr<IPortableDeviceManager> portable_device_mgr;
   if (!GetPortableDeviceManager(&portable_device_mgr))
     return false;
@@ -489,9 +497,7 @@ PortableDeviceWatcherWin::DeviceDetails::~DeviceDetails() {
 }
 
 PortableDeviceWatcherWin::PortableDeviceWatcherWin()
-    : notifications_(nullptr),
-      storage_notifications_(nullptr),
-      weak_ptr_factory_(this) {}
+    : notifications_(nullptr), storage_notifications_(nullptr) {}
 
 PortableDeviceWatcherWin::~PortableDeviceWatcherWin() {
   UnregisterDeviceNotification(notifications_);
@@ -500,7 +506,7 @@ PortableDeviceWatcherWin::~PortableDeviceWatcherWin() {
 void PortableDeviceWatcherWin::Init(HWND hwnd) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   notifications_ = RegisterPortableDeviceNotification(hwnd);
-  media_task_runner_ = base::CreateCOMSTATaskRunnerWithTraits(
+  media_task_runner_ = base::ThreadPool::CreateCOMSTATaskRunner(
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN});
   EnumerateAttachedDevices();
@@ -563,7 +569,7 @@ void PortableDeviceWatcherWin::SetNotifications(
 
 void PortableDeviceWatcherWin::EjectDevice(
     const std::string& device_id,
-    base::Callback<void(StorageMonitor::EjectStatus)> callback) {
+    base::OnceCallback<void(StorageMonitor::EjectStatus)> callback) {
   // MTP devices on Windows don't have a detach API needed -- signal
   // the object as if the device is gone and tell the caller it is OK
   // to remove.
@@ -571,12 +577,12 @@ void PortableDeviceWatcherWin::EjectDevice(
   base::string16 storage_object_id;
   if (!GetMTPStorageInfoFromDeviceId(device_id,
                                      &device_location, &storage_object_id)) {
-    callback.Run(StorageMonitor::EJECT_NO_SUCH_DEVICE);
+    std::move(callback).Run(StorageMonitor::EJECT_NO_SUCH_DEVICE);
     return;
   }
   HandleDeviceDetachEvent(device_location);
 
-  callback.Run(StorageMonitor::EJECT_OK);
+  std::move(callback).Run(StorageMonitor::EJECT_OK);
 }
 
 void PortableDeviceWatcherWin::EnumerateAttachedDevices() {
@@ -585,9 +591,9 @@ void PortableDeviceWatcherWin::EnumerateAttachedDevices() {
   Devices* devices = new Devices;
   base::PostTaskAndReplyWithResult(
       media_task_runner_.get(), FROM_HERE,
-      base::Bind(&EnumerateAttachedDevicesOnBlockingThread, devices),
-      base::Bind(&PortableDeviceWatcherWin::OnDidEnumerateAttachedDevices,
-                 weak_ptr_factory_.GetWeakPtr(), base::Owned(devices)));
+      base::BindOnce(&EnumerateAttachedDevicesOnBlockingThread, devices),
+      base::BindOnce(&PortableDeviceWatcherWin::OnDidEnumerateAttachedDevices,
+                     weak_ptr_factory_.GetWeakPtr(), base::Owned(devices)));
 }
 
 void PortableDeviceWatcherWin::OnDidEnumerateAttachedDevices(
@@ -609,10 +615,11 @@ void PortableDeviceWatcherWin::HandleDeviceAttachEvent(
   DeviceDetails* device_details = new DeviceDetails;
   base::PostTaskAndReplyWithResult(
       media_task_runner_.get(), FROM_HERE,
-      base::Bind(&HandleDeviceAttachedEventOnBlockingThread, pnp_device_id,
-                 device_details),
-      base::Bind(&PortableDeviceWatcherWin::OnDidHandleDeviceAttachEvent,
-                 weak_ptr_factory_.GetWeakPtr(), base::Owned(device_details)));
+      base::BindOnce(&HandleDeviceAttachedEventOnBlockingThread, pnp_device_id,
+                     device_details),
+      base::BindOnce(&PortableDeviceWatcherWin::OnDidHandleDeviceAttachEvent,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     base::Owned(device_details)));
 }
 
 void PortableDeviceWatcherWin::OnDidHandleDeviceAttachEvent(
@@ -625,11 +632,11 @@ void PortableDeviceWatcherWin::OnDidHandleDeviceAttachEvent(
   const StorageObjects& storage_objects = device_details->storage_objects;
   const base::string16& name = device_details->name;
   const base::string16& location = device_details->location;
-  DCHECK(!base::ContainsKey(device_map_, location));
+  DCHECK(!base::Contains(device_map_, location));
   for (StorageObjects::const_iterator storage_iter = storage_objects.begin();
        storage_iter != storage_objects.end(); ++storage_iter) {
     const std::string& storage_id = storage_iter->object_persistent_id;
-    DCHECK(!base::ContainsKey(storage_map_, storage_id));
+    DCHECK(!base::Contains(storage_map_, storage_id));
 
     if (storage_id.empty() || name.empty())
       return;

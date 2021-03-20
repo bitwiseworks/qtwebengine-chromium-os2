@@ -9,9 +9,8 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/encrypted_messages/encrypted_message.pb.h"
-#include "net/url_request/test_url_fetcher_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "services/network/test/test_utils.h"
@@ -41,10 +40,11 @@ class NetMetricsLogUploaderTest : public testing::Test {
     ReportingInfo reporting_info;
     reporting_info.set_attempt_count(10);
     uploader_.reset(new NetMetricsLogUploader(
-        test_shared_url_loader_factory_, "https://dummy_server", "dummy_mime",
-        MetricsLogUploader::UMA,
-        base::Bind(&NetMetricsLogUploaderTest::OnUploadCompleteReuseUploader,
-                   base::Unretained(this))));
+        test_shared_url_loader_factory_, GURL("https://dummy_server"),
+        "dummy_mime", MetricsLogUploader::UMA,
+        base::BindRepeating(
+            &NetMetricsLogUploaderTest::OnUploadCompleteReuseUploader,
+            base::Unretained(this))));
     uploader_->UploadLog("initial_dummy_data", "initial_dummy_hash",
                          "initial_dummy_signature", reporting_info);
   }
@@ -52,10 +52,10 @@ class NetMetricsLogUploaderTest : public testing::Test {
   void CreateUploaderAndUploadToSecureURL(const std::string& url) {
     ReportingInfo dummy_reporting_info;
     uploader_.reset(new NetMetricsLogUploader(
-        test_shared_url_loader_factory_, url, "dummy_mime",
+        test_shared_url_loader_factory_, GURL(url), "dummy_mime",
         MetricsLogUploader::UMA,
-        base::Bind(&NetMetricsLogUploaderTest::DummyOnUploadComplete,
-                   base::Unretained(this))));
+        base::BindRepeating(&NetMetricsLogUploaderTest::DummyOnUploadComplete,
+                            base::Unretained(this))));
     uploader_->UploadLog("dummy_data", "dummy_hash", "dummy_signature",
                          dummy_reporting_info);
   }
@@ -63,10 +63,10 @@ class NetMetricsLogUploaderTest : public testing::Test {
   void CreateUploaderAndUploadToInsecureURL() {
     ReportingInfo dummy_reporting_info;
     uploader_.reset(new NetMetricsLogUploader(
-        test_shared_url_loader_factory_, "http://dummy_insecure_server",
+        test_shared_url_loader_factory_, GURL("http://dummy_insecure_server"),
         "dummy_mime", MetricsLogUploader::UMA,
-        base::Bind(&NetMetricsLogUploaderTest::DummyOnUploadComplete,
-                   base::Unretained(this))));
+        base::BindRepeating(&NetMetricsLogUploaderTest::DummyOnUploadComplete,
+                            base::Unretained(this))));
     std::string compressed_message;
     // Compress the data since the encryption code expects a compressed log,
     // and tries to decompress it before encrypting it.
@@ -113,7 +113,7 @@ class NetMetricsLogUploaderTest : public testing::Test {
   scoped_refptr<network::SharedURLLoaderFactory>
       test_shared_url_loader_factory_;
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   base::RunLoop loop_;
   std::string upload_data_;

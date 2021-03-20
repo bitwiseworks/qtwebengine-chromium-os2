@@ -7,21 +7,25 @@
 
 #include "content/browser/renderer_host/media/video_capture_provider.h"
 #include "content/public/browser/video_capture_device_launcher.h"
-#include "services/video_capture/public/mojom/device.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/video_capture/public/mojom/video_source.mojom.h"
 
 namespace content {
 
-// Implementation of LaunchedVideoCaptureDevice that uses the "video_capture"
-// service.
+// Implementation of LaunchedVideoCaptureDevice that uses
+// video_capture::mojom::VideoCaptureService.
 class ServiceLaunchedVideoCaptureDevice : public LaunchedVideoCaptureDevice {
  public:
-  ServiceLaunchedVideoCaptureDevice(video_capture::mojom::DevicePtr device,
-                                    base::OnceClosure connection_lost_cb);
+  ServiceLaunchedVideoCaptureDevice(
+      mojo::Remote<video_capture::mojom::VideoSource> source,
+      mojo::Remote<video_capture::mojom::PushVideoStreamSubscription>
+          subscription,
+      base::OnceClosure connection_lost_cb);
   ~ServiceLaunchedVideoCaptureDevice() override;
 
   // LaunchedVideoCaptureDevice implementation.
   void GetPhotoState(
-      media::VideoCaptureDevice::GetPhotoStateCallback callback) const override;
+      media::VideoCaptureDevice::GetPhotoStateCallback callback) override;
   void SetPhotoOptions(
       media::mojom::PhotoSettingsPtr settings,
       media::VideoCaptureDevice::SetPhotoOptionsCallback callback) override;
@@ -37,7 +41,7 @@ class ServiceLaunchedVideoCaptureDevice : public LaunchedVideoCaptureDevice {
   void OnUtilizationReport(int frame_feedback_id, double utilization) override;
 
  private:
-  void OnLostConnectionToDevice();
+  void OnLostConnectionToSourceOrSubscription();
   void OnGetPhotoStateResponse(
       media::VideoCaptureDevice::GetPhotoStateCallback callback,
       media::mojom::PhotoStatePtr capabilities) const;
@@ -48,7 +52,8 @@ class ServiceLaunchedVideoCaptureDevice : public LaunchedVideoCaptureDevice {
       media::VideoCaptureDevice::TakePhotoCallback callback,
       media::mojom::BlobPtr blob);
 
-  video_capture::mojom::DevicePtr device_;
+  mojo::Remote<video_capture::mojom::VideoSource> source_;
+  mojo::Remote<video_capture::mojom::PushVideoStreamSubscription> subscription_;
   base::OnceClosure connection_lost_cb_;
   base::SequenceChecker sequence_checker_;
 };

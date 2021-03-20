@@ -43,7 +43,7 @@ class MODULES_EXPORT AXMockObject : public AXObject {
 
   // AXObject overrides.
   AXObject* ComputeParent() const override { return parent_; }
-  AXRestriction Restriction() const override { return kNone; }
+  AXRestriction Restriction() const override { return kRestrictionNone; }
   bool IsMockObject() const final { return true; }
 
  private:
@@ -52,7 +52,12 @@ class MODULES_EXPORT AXMockObject : public AXObject {
   DISALLOW_COPY_AND_ASSIGN(AXMockObject);
 };
 
-DEFINE_AX_OBJECT_TYPE_CASTS(AXMockObject, IsMockObject());
+template <>
+struct DowncastTraits<AXMockObject> {
+  static bool AllowFrom(const AXObject& object) {
+    return object.IsMockObject();
+  }
+};
 
 }  // namespace blink
 

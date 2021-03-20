@@ -8,12 +8,9 @@
 #include <memory>
 
 #include "base/memory/weak_ptr.h"
-#include "third_party/blink/public/platform/web_canvas_capture_handler.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/skia/include/core/SkRefCnt.h"
-
-class SkImage;
 
 namespace blink {
 
@@ -22,16 +19,14 @@ class WebGraphicsContext3DProviderWrapper;
 class CORE_EXPORT CanvasDrawListener : public GarbageCollectedMixin {
  public:
   virtual ~CanvasDrawListener();
-  virtual void SendNewFrame(sk_sp<SkImage>,
-                            base::WeakPtr<WebGraphicsContext3DProviderWrapper>);
-  bool NeedsNewFrame() const;
-  void RequestFrame();
+  virtual void SendNewFrame(
+      scoped_refptr<StaticBitmapImage>,
+      base::WeakPtr<WebGraphicsContext3DProviderWrapper>) = 0;
+  virtual bool NeedsNewFrame() const = 0;
+  virtual void RequestFrame() = 0;
 
  protected:
-  explicit CanvasDrawListener(std::unique_ptr<WebCanvasCaptureHandler>);
-
-  bool frame_capture_requested_;
-  std::unique_ptr<WebCanvasCaptureHandler> handler_;
+  CanvasDrawListener();
 };
 
 }  // namespace blink

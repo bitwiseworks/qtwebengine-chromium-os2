@@ -4,8 +4,8 @@
 
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_decoder_tables.h"
 
-#include "base/logging.h"
 #include "net/third_party/quiche/src/http2/hpack/http2_hpack_constants.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 
 namespace http2 {
 namespace {
@@ -60,7 +60,8 @@ HpackDecoderDynamicTable::HpackDecoderDynamicTable()
 HpackDecoderDynamicTable::~HpackDecoderDynamicTable() = default;
 
 void HpackDecoderDynamicTable::DynamicTableSizeUpdate(size_t size_limit) {
-  DVLOG(3) << "HpackDecoderDynamicTable::DynamicTableSizeUpdate " << size_limit;
+  HTTP2_DVLOG(3) << "HpackDecoderDynamicTable::DynamicTableSizeUpdate "
+                 << size_limit;
   EnsureSizeNoMoreThan(size_limit);
   DCHECK_LE(current_size_, size_limit);
   size_limit_ = size_limit;
@@ -68,34 +69,33 @@ void HpackDecoderDynamicTable::DynamicTableSizeUpdate(size_t size_limit) {
 
 // TODO(jamessynge): Check somewhere before here that names received from the
 // peer are valid (e.g. are lower-case, no whitespace, etc.).
-bool HpackDecoderDynamicTable::Insert(const HpackString& name,
+void HpackDecoderDynamicTable::Insert(const HpackString& name,
                                       const HpackString& value) {
   HpackDecoderTableEntry entry(name, value);
   size_t entry_size = entry.size();
-  DVLOG(2) << "InsertEntry of size=" << entry_size << "\n     name: " << name
-           << "\n    value: " << value;
+  HTTP2_DVLOG(2) << "InsertEntry of size=" << entry_size
+                 << "\n     name: " << name << "\n    value: " << value;
   if (entry_size > size_limit_) {
-    DVLOG(2) << "InsertEntry: entry larger than table, removing "
-             << table_.size() << " entries, of total size " << current_size_
-             << " bytes.";
+    HTTP2_DVLOG(2) << "InsertEntry: entry larger than table, removing "
+                   << table_.size() << " entries, of total size "
+                   << current_size_ << " bytes.";
     table_.clear();
     current_size_ = 0;
-    return false;  // Not inserted because too large.
+    return;
   }
   ++insert_count_;
   if (debug_listener_ != nullptr) {
     entry.time_added = debug_listener_->OnEntryInserted(entry, insert_count_);
-    DVLOG(2) << "OnEntryInserted returned time_added=" << entry.time_added
-             << " for insert_count_=" << insert_count_;
+    HTTP2_DVLOG(2) << "OnEntryInserted returned time_added=" << entry.time_added
+                   << " for insert_count_=" << insert_count_;
   }
   size_t insert_limit = size_limit_ - entry_size;
   EnsureSizeNoMoreThan(insert_limit);
   table_.push_front(entry);
   current_size_ += entry_size;
-  DVLOG(2) << "InsertEntry: current_size_=" << current_size_;
+  HTTP2_DVLOG(2) << "InsertEntry: current_size_=" << current_size_;
   DCHECK_GE(current_size_, entry_size);
   DCHECK_LE(current_size_, size_limit_);
-  return true;
 }
 
 const HpackStringPair* HpackDecoderDynamicTable::Lookup(size_t index) const {
@@ -112,8 +112,8 @@ const HpackStringPair* HpackDecoderDynamicTable::Lookup(size_t index) const {
 }
 
 void HpackDecoderDynamicTable::EnsureSizeNoMoreThan(size_t limit) {
-  DVLOG(2) << "EnsureSizeNoMoreThan limit=" << limit
-           << ", current_size_=" << current_size_;
+  HTTP2_DVLOG(2) << "EnsureSizeNoMoreThan limit=" << limit
+                 << ", current_size_=" << current_size_;
   // Not the most efficient choice, but any easy way to start.
   while (current_size_ > limit) {
     RemoveLastEntry();
@@ -124,8 +124,8 @@ void HpackDecoderDynamicTable::EnsureSizeNoMoreThan(size_t limit) {
 void HpackDecoderDynamicTable::RemoveLastEntry() {
   DCHECK(!table_.empty());
   if (!table_.empty()) {
-    DVLOG(2) << "RemoveLastEntry current_size_=" << current_size_
-             << ", last entry size=" << table_.back().size();
+    HTTP2_DVLOG(2) << "RemoveLastEntry current_size_=" << current_size_
+                   << ", last entry size=" << table_.back().size();
     DCHECK_GE(current_size_, table_.back().size());
     current_size_ -= table_.back().size();
     table_.pop_back();

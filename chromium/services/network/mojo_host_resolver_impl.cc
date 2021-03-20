@@ -5,11 +5,17 @@
 #include "services/network/mojo_host_resolver_impl.h"
 
 #include <utility>
+#include <vector>
 
-#include "net/base/address_list.h"
+#include "base/bind.h"
+#include "base/logging.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/host_port_pair.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_interfaces.h"
+#include "net/base/network_isolation_key.h"
 #include "net/dns/host_resolver.h"
+#include "net/dns/public/dns_query_type.h"
 
 namespace network {
 
@@ -20,9 +26,12 @@ class MojoHostResolverImpl::Job {
  public:
   Job(MojoHostResolverImpl* resolver_service,
       net::HostResolver* resolver,
-      const net::HostResolver::RequestInfo& request_info,
+      const std::string& hostname,
+      const net::NetworkIsolationKey& network_isolation_key,
+      bool is_ex,
       const net::NetLogWithSource& net_log,
-      proxy_resolver::mojom::HostResolverRequestClientPtr client);
+      mojo::PendingRemote<proxy_resolver::mojom::HostResolverRequestClient>
+          client);
   ~Job();
 
   void set_iter(std::list<Job>::iterator iter) { iter_ = iter; }
@@ -33,19 +42,16 @@ class MojoHostResolverImpl::Job {
   // Completion callback for the HostResolver::Resolve request.
   void OnResolveDone(int result);
 
-  // Mojo error handler.
-  void OnConnectionError();
+  // Mojo disconnect handler.
+  void OnMojoDisconnect();
 
   MojoHostResolverImpl* resolver_service_;
   // This Job's iterator in |resolver_service_|, so the Job may be removed on
   // completion.
   std::list<Job>::iterator iter_;
-  net::HostResolver* resolver_;
-  net::HostResolver::RequestInfo request_info_;
-  const net::NetLogWithSource net_log_;
-  proxy_resolver::mojom::HostResolverRequestClientPtr client_;
-  std::unique_ptr<net::HostResolver::Request> request_;
-  net::AddressList result_;
+  mojo::Remote<proxy_resolver::mojom::HostResolverRequestClient> client_;
+  const std::string hostname_;
+  std::unique_ptr<net::HostResolver::ResolveHostRequest> request_;
   base::ThreadChecker thread_checker_;
 };
 
@@ -58,18 +64,15 @@ MojoHostResolverImpl::~MojoHostResolverImpl() {
 }
 
 void MojoHostResolverImpl::Resolve(
-    std::unique_ptr<net::HostResolver::RequestInfo> request_info,
-    proxy_resolver::mojom::HostResolverRequestClientPtr client) {
+    const std::string& hostname,
+    const net::NetworkIsolationKey& network_isolation_key,
+    bool is_ex,
+    mojo::PendingRemote<proxy_resolver::mojom::HostResolverRequestClient>
+        client) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (request_info->is_my_ip_address()) {
-    // The proxy resolver running inside a sandbox may not be able to get the
-    // correct host name. Instead, fill it ourself if the request is for our own
-    // IP address.
-    request_info->set_host_port_pair(net::HostPortPair(net::GetHostName(), 80));
-  }
 
-  pending_jobs_.emplace_front(this, resolver_, *request_info, net_log_,
-                              std::move(client));
+  pending_jobs_.emplace_front(this, resolver_, hostname, network_isolation_key,
+                              is_ex, net_log_, std::move(client));
   auto job = pending_jobs_.begin();
   job->set_iter(job);
   job->Start();
@@ -83,28 +86,33 @@ void MojoHostResolverImpl::DeleteJob(std::list<Job>::iterator job) {
 MojoHostResolverImpl::Job::Job(
     MojoHostResolverImpl* resolver_service,
     net::HostResolver* resolver,
-    const net::HostResolver::RequestInfo& request_info,
+    const std::string& hostname,
+    const net::NetworkIsolationKey& network_isolation_key,
+    bool is_ex,
     const net::NetLogWithSource& net_log,
-    proxy_resolver::mojom::HostResolverRequestClientPtr client)
+    mojo::PendingRemote<proxy_resolver::mojom::HostResolverRequestClient>
+        client)
     : resolver_service_(resolver_service),
-      resolver_(resolver),
-      request_info_(request_info),
-      net_log_(net_log),
-      client_(std::move(client)) {
-  client_.set_connection_error_handler(base::Bind(
-      &MojoHostResolverImpl::Job::OnConnectionError, base::Unretained(this)));
+      client_(std::move(client)),
+      hostname_(hostname) {
+  client_.set_disconnect_handler(base::BindOnce(
+      &MojoHostResolverImpl::Job::OnMojoDisconnect, base::Unretained(this)));
+
+  net::HostResolver::ResolveHostParameters parameters;
+  if (!is_ex)
+    parameters.dns_query_type = net::DnsQueryType::A;
+  request_ =
+      resolver->CreateRequest(net::HostPortPair(hostname_, 0),
+                              network_isolation_key, net_log, parameters);
 }
 
 void MojoHostResolverImpl::Job::Start() {
   // The caller is responsible for setting up |iter_|.
   DCHECK_EQ(this, &*iter_);
 
-  DVLOG(1) << "Resolve " << request_info_.host_port_pair().ToString();
-  int result =
-      resolver_->Resolve(request_info_, net::DEFAULT_PRIORITY, &result_,
-                         base::Bind(&MojoHostResolverImpl::Job::OnResolveDone,
-                                    base::Unretained(this)),
-                         &request_, net_log_);
+  DVLOG(1) << "Resolve " << hostname_;
+  int result = request_->Start(base::BindOnce(
+      &MojoHostResolverImpl::Job::OnResolveDone, base::Unretained(this)));
 
   if (result != net::ERR_IO_PENDING)
     OnResolveDone(result);
@@ -114,23 +122,31 @@ MojoHostResolverImpl::Job::~Job() = default;
 
 void MojoHostResolverImpl::Job::OnResolveDone(int result) {
   DCHECK(thread_checker_.CalledOnValidThread());
+
+  std::vector<net::IPAddress> result_addresses;
+  if (request_->GetAddressResults()) {
+    for (const auto& endpoint :
+         request_->GetAddressResults().value().endpoints()) {
+      result_addresses.push_back(endpoint.address());
+    }
+  }
+
   request_.reset();
-  DVLOG(1) << "Resolved " << request_info_.host_port_pair().ToString()
-           << " with error " << result << " and " << result_.size()
-           << " results!";
-  for (const auto& address : result_) {
+  DVLOG(1) << "Resolved " << hostname_ << " with error " << result << " and "
+           << result_addresses.size() << " results!";
+  for (const auto& address : result_addresses) {
     DVLOG(1) << address.ToString();
   }
-  client_->ReportResult(result, result_);
+  client_->ReportResult(result, result_addresses);
+
   resolver_service_->DeleteJob(iter_);
 }
 
-void MojoHostResolverImpl::Job::OnConnectionError() {
+void MojoHostResolverImpl::Job::OnMojoDisconnect() {
   DCHECK(thread_checker_.CalledOnValidThread());
   // |resolver_service_| should always outlive us.
   DCHECK(resolver_service_);
-  DVLOG(1) << "Connection error on request for "
-           << request_info_.host_port_pair().ToString();
+  DVLOG(1) << "Disconnection on request for " << hostname_;
   resolver_service_->DeleteJob(iter_);
 }
 

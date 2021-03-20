@@ -5,21 +5,24 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FILEAPI_URL_FILE_API_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FILEAPI_URL_FILE_API_H_
 
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
 class ExceptionState;
+class ExecutionContext;
 class ScriptState;
 class Blob;
 
-class URLFileAPI {
+class CORE_EXPORT URLFileAPI {
   STATIC_ONLY(URLFileAPI);
 
  public:
   static String createObjectURL(ScriptState*, Blob*, ExceptionState&);
   static void revokeObjectURL(ScriptState*, const String&);
+  static void revokeObjectURL(ExecutionContext*, const String&);
 };
 
 }  // namespace blink

@@ -13,10 +13,11 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "dbus/bus.h"
@@ -60,7 +61,7 @@ class PropertyTest : public testing::Test {
     // Start the D-Bus thread.
     dbus_thread_.reset(new base::Thread("D-Bus Thread"));
     base::Thread::Options thread_options;
-    thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
+    thread_options.message_pump_type = base::MessagePumpType::IO;
     ASSERT_TRUE(dbus_thread_->StartWithOptions(thread_options));
 
     // Start the test service, using the D-Bus thread.
@@ -84,9 +85,8 @@ class PropertyTest : public testing::Test {
 
     // Create the properties structure
     properties_.reset(new Properties(
-        object_proxy_,
-        base::Bind(&PropertyTest::OnPropertyChanged,
-                   base::Unretained(this))));
+        object_proxy_, base::BindRepeating(&PropertyTest::OnPropertyChanged,
+                                           base::Unretained(this))));
     properties_->ConnectSignals();
     properties_->GetAll();
   }
@@ -158,7 +158,7 @@ class PropertyTest : public testing::Test {
     }
   }
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<base::RunLoop> run_loop_;
   std::unique_ptr<base::Thread> dbus_thread_;
   scoped_refptr<Bus> bus_;
@@ -205,18 +205,16 @@ TEST_F(PropertyTest, UpdatedValues) {
   WaitForGetAll();
 
   // Update the value of the "Name" property, this value should not change.
-  properties_->name.Get(base::Bind(&PropertyTest::PropertyCallback,
-                                   base::Unretained(this),
-                                   "Name"));
+  properties_->name.Get(base::BindOnce(&PropertyTest::PropertyCallback,
+                                       base::Unretained(this), "Name"));
   WaitForCallback("Name");
   WaitForUpdates(1);
 
   EXPECT_EQ("TestService", properties_->name.value());
 
   // Update the value of the "Version" property, this value should be changed.
-  properties_->version.Get(base::Bind(&PropertyTest::PropertyCallback,
-                                      base::Unretained(this),
-                                      "Version"));
+  properties_->version.Get(base::BindOnce(&PropertyTest::PropertyCallback,
+                                          base::Unretained(this), "Version"));
   WaitForCallback("Version");
   WaitForUpdates(1);
 
@@ -224,9 +222,8 @@ TEST_F(PropertyTest, UpdatedValues) {
 
   // Update the value of the "Methods" property, this value should not change
   // and should not grow to contain duplicate entries.
-  properties_->methods.Get(base::Bind(&PropertyTest::PropertyCallback,
-                                      base::Unretained(this),
-                                      "Methods"));
+  properties_->methods.Get(base::BindOnce(&PropertyTest::PropertyCallback,
+                                          base::Unretained(this), "Methods"));
   WaitForCallback("Methods");
   WaitForUpdates(1);
 
@@ -239,9 +236,8 @@ TEST_F(PropertyTest, UpdatedValues) {
 
   // Update the value of the "Objects" property, this value should not change
   // and should not grow to contain duplicate entries.
-  properties_->objects.Get(base::Bind(&PropertyTest::PropertyCallback,
-                                      base::Unretained(this),
-                                      "Objects"));
+  properties_->objects.Get(base::BindOnce(&PropertyTest::PropertyCallback,
+                                          base::Unretained(this), "Objects"));
   WaitForCallback("Objects");
   WaitForUpdates(1);
 
@@ -251,9 +247,8 @@ TEST_F(PropertyTest, UpdatedValues) {
 
   // Update the value of the "Bytes" property, this value should not change
   // and should not grow to contain duplicate entries.
-  properties_->bytes.Get(base::Bind(&PropertyTest::PropertyCallback,
-                                    base::Unretained(this),
-                                   "Bytes"));
+  properties_->bytes.Get(base::BindOnce(&PropertyTest::PropertyCallback,
+                                        base::Unretained(this), "Bytes"));
   WaitForCallback("Bytes");
   WaitForUpdates(1);
 
@@ -269,9 +264,8 @@ TEST_F(PropertyTest, Get) {
   WaitForGetAll();
 
   // Ask for the new Version property.
-  properties_->version.Get(base::Bind(&PropertyTest::PropertyCallback,
-                                      base::Unretained(this),
-                                      "Get"));
+  properties_->version.Get(base::BindOnce(&PropertyTest::PropertyCallback,
+                                          base::Unretained(this), "Get"));
   WaitForCallback("Get");
 
   // Make sure we got a property update too.
@@ -285,9 +279,8 @@ TEST_F(PropertyTest, Set) {
 
   // Set a new name.
   properties_->name.Set("NewService",
-                        base::Bind(&PropertyTest::PropertyCallback,
-                                   base::Unretained(this),
-                                   "Set"));
+                        base::BindOnce(&PropertyTest::PropertyCallback,
+                                       base::Unretained(this), "Set"));
   WaitForCallback("Set");
 
   // TestService sends a property update.
@@ -308,7 +301,7 @@ TEST_F(PropertyTest, Invalidate) {
   writer.AppendObjectPath(ObjectPath("/org/chromium/TestService"));
   object_proxy_->CallMethod(
       &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&PropertyTest::MethodCallback, base::Unretained(this)));
+      base::BindOnce(&PropertyTest::MethodCallback, base::Unretained(this)));
   WaitForMethodCallback();
 
   // TestService sends a property update.
@@ -318,8 +311,8 @@ TEST_F(PropertyTest, Invalidate) {
 
   // Set name to something valid.
   properties_->name.Set("NewService",
-                        base::Bind(&PropertyTest::PropertyCallback,
-                                   base::Unretained(this), "Set"));
+                        base::BindOnce(&PropertyTest::PropertyCallback,
+                                       base::Unretained(this), "Set"));
   WaitForCallback("Set");
 
   // TestService sends a property update.
@@ -341,7 +334,7 @@ TEST(PropertyTestStatic, ReadWriteStringMap) {
   for (unsigned i = 0; i < base::size(items); ++i) {
     variant_array_writer.OpenDictEntry(&struct_entry_writer);
     struct_entry_writer.AppendString(items[i]);
-    struct_entry_writer.AppendString(base::UintToString(i + 1));
+    struct_entry_writer.AppendString(base::NumberToString(i + 1));
     variant_array_writer.CloseContainer(&struct_entry_writer);
   }
   variant_writer.CloseContainer(&variant_array_writer);
@@ -432,7 +425,7 @@ TEST(PropertyTestStatic, SerializeNetAddressArray) {
   EXPECT_EQ(test_list, ip_list.value());
 }
 
-TEST(PropertyTestStatic, ReadWriteStringToByteVectorMap) {
+TEST(PropertyTestStatic, ReadWriteStringToByteVectorMapVariantWrapped) {
   std::unique_ptr<Response> message(Response::CreateEmpty());
   MessageWriter writer(message.get());
   MessageWriter variant_writer(nullptr);
@@ -469,6 +462,39 @@ TEST(PropertyTestStatic, ReadWriteStringToByteVectorMap) {
     EXPECT_EQ(values[i], test_property.value().at(keys[i]));
 }
 
+TEST(PropertyTestStatic, ReadWriteStringToByteVectorMap) {
+  std::unique_ptr<Response> message(Response::CreateEmpty());
+  MessageWriter writer(message.get());
+  MessageWriter variant_writer(nullptr);
+  MessageWriter dict_writer(nullptr);
+
+  writer.OpenVariant("a{say}", &variant_writer);
+  variant_writer.OpenArray("{say}", &dict_writer);
+
+  const char* keys[] = {"One", "Two", "Three", "Four"};
+  const std::vector<uint8_t> values[] = {{1}, {1, 2}, {1, 2, 3}, {1, 2, 3, 4}};
+  for (unsigned i = 0; i < base::size(keys); ++i) {
+    MessageWriter entry_writer(nullptr);
+    dict_writer.OpenDictEntry(&entry_writer);
+
+    entry_writer.AppendString(keys[i]);
+    entry_writer.AppendArrayOfBytes(values[i].data(), values[i].size());
+
+    dict_writer.CloseContainer(&entry_writer);
+  }
+
+  variant_writer.CloseContainer(&dict_writer);
+  writer.CloseContainer(&variant_writer);
+
+  MessageReader reader(message.get());
+  Property<std::map<std::string, std::vector<uint8_t>>> test_property;
+  EXPECT_TRUE(test_property.PopValueFromReader(&reader));
+
+  ASSERT_EQ(base::size(keys), test_property.value().size());
+  for (unsigned i = 0; i < base::size(keys); ++i)
+    EXPECT_EQ(values[i], test_property.value().at(keys[i]));
+}
+
 TEST(PropertyTestStatic, SerializeStringToByteVectorMap) {
   std::map<std::string, std::vector<uint8_t>> test_map;
   test_map["Hi"] = {1, 2, 3};
@@ -487,7 +513,7 @@ TEST(PropertyTestStatic, SerializeStringToByteVectorMap) {
   EXPECT_EQ(test_map, test_property.value());
 }
 
-TEST(PropertyTestStatic, ReadWriteUInt16ToByteVectorMap) {
+TEST(PropertyTestStatic, ReadWriteUInt16ToByteVectorMapVariantWrapped) {
   std::unique_ptr<Response> message(Response::CreateEmpty());
   MessageWriter writer(message.get());
   MessageWriter variant_writer(nullptr);
@@ -508,6 +534,39 @@ TEST(PropertyTestStatic, ReadWriteUInt16ToByteVectorMap) {
     entry_writer.OpenVariant("ay", &value_varient_writer);
     value_varient_writer.AppendArrayOfBytes(values[i].data(), values[i].size());
     entry_writer.CloseContainer(&value_varient_writer);
+
+    dict_writer.CloseContainer(&entry_writer);
+  }
+
+  variant_writer.CloseContainer(&dict_writer);
+  writer.CloseContainer(&variant_writer);
+
+  MessageReader reader(message.get());
+  Property<std::map<uint16_t, std::vector<uint8_t>>> test_property;
+  EXPECT_TRUE(test_property.PopValueFromReader(&reader));
+
+  ASSERT_EQ(base::size(keys), test_property.value().size());
+  for (unsigned i = 0; i < base::size(keys); ++i)
+    EXPECT_EQ(values[i], test_property.value().at(keys[i]));
+}
+
+TEST(PropertyTestStatic, ReadWriteUInt16ToByteVectorMap) {
+  std::unique_ptr<Response> message(Response::CreateEmpty());
+  MessageWriter writer(message.get());
+  MessageWriter variant_writer(nullptr);
+  MessageWriter dict_writer(nullptr);
+
+  writer.OpenVariant("a{qay}", &variant_writer);
+  variant_writer.OpenArray("{qay}", &dict_writer);
+
+  const uint16_t keys[] = {11, 12, 13, 14};
+  const std::vector<uint8_t> values[] = {{1}, {1, 2}, {1, 2, 3}, {1, 2, 3, 4}};
+  for (unsigned i = 0; i < base::size(keys); ++i) {
+    MessageWriter entry_writer(nullptr);
+    dict_writer.OpenDictEntry(&entry_writer);
+
+    entry_writer.AppendUint16(keys[i]);
+    entry_writer.AppendArrayOfBytes(values[i].data(), values[i].size());
 
     dict_writer.CloseContainer(&entry_writer);
   }

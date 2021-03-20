@@ -20,28 +20,37 @@ DEFINE_NON_INTERPOLABLE_VALUE_TYPE(CSSDefaultNonInterpolableValue);
 
 InterpolationValue CSSDefaultInterpolationType::MaybeConvertSingle(
     const PropertySpecificKeyframe& keyframe,
-    const InterpolationEnvironment&,
+    const InterpolationEnvironment& environment,
     const InterpolationValue&,
     ConversionCheckers&) const {
-  if (!ToCSSPropertySpecificKeyframe(keyframe).Value()) {
+  const CSSValue* css_value = To<CSSPropertySpecificKeyframe>(keyframe).Value();
+
+  if (!css_value) {
     DCHECK(keyframe.IsNeutral());
     return nullptr;
   }
-  return InterpolationValue(
-      InterpolableList::Create(0),
-      CSSDefaultNonInterpolableValue::Create(
-          ToCSSPropertySpecificKeyframe(keyframe).Value()));
+
+  if (RuntimeEnabledFeatures::CSSCascadeEnabled()) {
+    css_value = To<CSSInterpolationEnvironment>(environment)
+                    .Resolve(GetProperty(), css_value);
+    if (!css_value)
+      return nullptr;
+  }
+
+  return InterpolationValue(std::make_unique<InterpolableList>(0),
+                            CSSDefaultNonInterpolableValue::Create(css_value));
 }
 
 void CSSDefaultInterpolationType::Apply(
     const InterpolableValue&,
     const NonInterpolableValue* non_interpolable_value,
     InterpolationEnvironment& environment) const {
-  DCHECK(ToCSSDefaultNonInterpolableValue(non_interpolable_value)->CssValue());
+  DCHECK(
+      To<CSSDefaultNonInterpolableValue>(non_interpolable_value)->CssValue());
   StyleBuilder::ApplyProperty(
       GetProperty().GetCSSPropertyName(),
-      ToCSSInterpolationEnvironment(environment).GetState(),
-      *ToCSSDefaultNonInterpolableValue(non_interpolable_value)->CssValue());
+      To<CSSInterpolationEnvironment>(environment).GetState(),
+      *To<CSSDefaultNonInterpolableValue>(non_interpolable_value)->CssValue());
 }
 
 }  // namespace blink

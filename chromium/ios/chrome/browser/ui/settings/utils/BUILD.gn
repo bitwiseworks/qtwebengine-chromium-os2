@@ -10,12 +10,16 @@ source_set("utils") {
     "observable_boolean.h",
     "pref_backed_boolean.h",
     "pref_backed_boolean.mm",
+    "settings_utils.h",
+    "settings_utils.mm",
   ]
   deps = [
     "//base",
     "//components/content_settings/core/browser",
     "//components/content_settings/core/common",
     "//components/prefs",
+    "//ios/chrome/browser",
+    "//ios/chrome/browser/ui/commands",
   ]
 }
 
@@ -26,9 +30,7 @@ source_set("test_support") {
     "fake_observable_boolean.h",
     "fake_observable_boolean.mm",
   ]
-  deps = [
-    ":utils",
-  ]
+  deps = [ ":utils" ]
 }
 
 source_set("unit_tests") {

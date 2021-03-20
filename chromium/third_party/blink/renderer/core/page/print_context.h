@@ -37,8 +37,7 @@ class IntRect;
 class LocalFrame;
 class Node;
 
-class CORE_EXPORT PrintContext
-    : public GarbageCollectedFinalized<PrintContext> {
+class CORE_EXPORT PrintContext : public GarbageCollected<PrintContext> {
  public:
   // By shrinking to a width of 75%, we will render the correct physical
   // dimensions in paged media (i.e. cm, pt,). The shrinkage used
@@ -104,7 +103,7 @@ class CORE_EXPORT PrintContext
                                            int margin_left);
   static int NumberOfPages(LocalFrame*, const FloatSize& page_size_in_pixels);
 
-  virtual void Trace(blink::Visitor*);
+  virtual void Trace(Visitor*);
 
   bool use_printing_layout() const;
 
@@ -140,10 +139,10 @@ class ScopedPrintContext {
   explicit ScopedPrintContext(LocalFrame*);
   ~ScopedPrintContext();
 
-  PrintContext* operator->() const { return context_.Get(); }
+  PrintContext* operator->() const { return context_; }
 
  private:
-  Member<PrintContext> context_;
+  PrintContext* context_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedPrintContext);
 };

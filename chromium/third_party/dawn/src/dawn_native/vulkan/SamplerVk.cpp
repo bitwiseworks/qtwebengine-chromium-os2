@@ -17,64 +17,56 @@
 #include "dawn_native/vulkan/DeviceVk.h"
 #include "dawn_native/vulkan/FencedDeleter.h"
 #include "dawn_native/vulkan/UtilsVulkan.h"
+#include "dawn_native/vulkan/VulkanError.h"
 
 namespace dawn_native { namespace vulkan {
 
     namespace {
-        VkSamplerAddressMode VulkanSamplerAddressMode(dawn::AddressMode mode) {
+        VkSamplerAddressMode VulkanSamplerAddressMode(wgpu::AddressMode mode) {
             switch (mode) {
-                case dawn::AddressMode::Repeat:
+                case wgpu::AddressMode::Repeat:
                     return VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                case dawn::AddressMode::MirroredRepeat:
+                case wgpu::AddressMode::MirrorRepeat:
                     return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-                case dawn::AddressMode::ClampToEdge:
+                case wgpu::AddressMode::ClampToEdge:
                     return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-                case dawn::AddressMode::ClampToBorderColor:
-                    return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
                 default:
                     UNREACHABLE();
             }
         }
 
-        VkFilter VulkanSamplerFilter(dawn::FilterMode filter) {
+        VkFilter VulkanSamplerFilter(wgpu::FilterMode filter) {
             switch (filter) {
-                case dawn::FilterMode::Linear:
+                case wgpu::FilterMode::Linear:
                     return VK_FILTER_LINEAR;
-                case dawn::FilterMode::Nearest:
+                case wgpu::FilterMode::Nearest:
                     return VK_FILTER_NEAREST;
                 default:
                     UNREACHABLE();
             }
         }
 
-        VkSamplerMipmapMode VulkanMipMapMode(dawn::FilterMode filter) {
+        VkSamplerMipmapMode VulkanMipMapMode(wgpu::FilterMode filter) {
             switch (filter) {
-                case dawn::FilterMode::Linear:
+                case wgpu::FilterMode::Linear:
                     return VK_SAMPLER_MIPMAP_MODE_LINEAR;
-                case dawn::FilterMode::Nearest:
+                case wgpu::FilterMode::Nearest:
                     return VK_SAMPLER_MIPMAP_MODE_NEAREST;
-                default:
-                    UNREACHABLE();
-            }
-        }
-
-        VkBorderColor VulkanBorderColor(dawn::BorderColor color) {
-            switch (color) {
-                case dawn::BorderColor::TransparentBlack:
-                    return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-                case dawn::BorderColor::OpaqueBlack:
-                    return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-                case dawn::BorderColor::OpaqueWhite:
-                    return VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
                 default:
                     UNREACHABLE();
             }
         }
     }  // anonymous namespace
 
-    Sampler::Sampler(Device* device, const SamplerDescriptor* descriptor)
-        : SamplerBase(device, descriptor), mDevice(device) {
-        VkSamplerCreateInfo createInfo;
+    // static
+    ResultOrError<Sampler*> Sampler::Create(Device* device, const SamplerDescriptor* descriptor) {
+        std::unique_ptr<Sampler> sampler = std::make_unique<Sampler>(device, descriptor);
+        DAWN_TRY(sampler->Initialize(descriptor));
+        return sampler.release();
+    }
+
+    MaybeError Sampler::Initialize(const SamplerDescriptor* descriptor) {
+        VkSamplerCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         createInfo.pNext = nullptr;
         createInfo.flags = 0;
@@ -87,22 +79,21 @@ namespace dawn_native { namespace vulkan {
         createInfo.mipLodBias = 0.0f;
         createInfo.anisotropyEnable = VK_FALSE;
         createInfo.maxAnisotropy = 1.0f;
-        createInfo.compareOp = ToVulkanCompareOp(descriptor->compareFunction);
+        createInfo.compareOp = ToVulkanCompareOp(descriptor->compare);
         createInfo.compareEnable = createInfo.compareOp == VK_COMPARE_OP_NEVER ? VK_FALSE : VK_TRUE;
         createInfo.minLod = descriptor->lodMinClamp;
         createInfo.maxLod = descriptor->lodMaxClamp;
-        createInfo.borderColor = VulkanBorderColor(descriptor->borderColor);
         createInfo.unnormalizedCoordinates = VK_FALSE;
 
-        if (device->fn.CreateSampler(device->GetVkDevice(), &createInfo, nullptr, &mHandle) !=
-            VK_SUCCESS) {
-            ASSERT(false);
-        }
+        Device* device = ToBackend(GetDevice());
+        return CheckVkSuccess(
+            device->fn.CreateSampler(device->GetVkDevice(), &createInfo, nullptr, &*mHandle),
+            "CreateSampler");
     }
 
     Sampler::~Sampler() {
         if (mHandle != VK_NULL_HANDLE) {
-            mDevice->GetFencedDeleter()->DeleteWhenUnused(mHandle);
+            ToBackend(GetDevice())->GetFencedDeleter()->DeleteWhenUnused(mHandle);
             mHandle = VK_NULL_HANDLE;
         }
     }

@@ -9,7 +9,7 @@
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "components/crash/content/app/crash_reporter_client.h"
+#include "components/crash/core/app/crash_reporter_client.h"
 
 namespace headless {
 
@@ -28,6 +28,10 @@ class HeadlessCrashReporterClient : public crash_reporter::CrashReporterClient {
   // in the crash report.
   void GetProductNameAndVersion(const char** product_name,
                                 const char** version) override;
+
+  void GetProductNameAndVersion(std::string* product_name,
+                                std::string* version,
+                                std::string* channel) override;
 
   base::FilePath GetReporterLogFilename() override;
 #endif  // defined(OS_POSIX) && !defined(OS_MACOSX)

@@ -5,9 +5,14 @@
 #ifndef UI_VIEWS_CONTROLS_COMBOBOX_COMBOBOX_H_
 #define UI_VIEWS_CONTROLS_COMBOBOX_COMBOBOX_H_
 
+#include <memory>
+
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "ui/base/models/combobox_model.h"
+#include "ui/base/models/combobox_model_observer.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/prefix_delegate.h"
 #include "ui/views/style/typography.h"
@@ -17,7 +22,6 @@ class FontList;
 }
 
 namespace ui {
-class ComboboxModel;
 class MenuModel;
 }
 
@@ -35,12 +39,13 @@ class PrefixSelector;
 // Combobox has two distinct parts, the drop down arrow and the text.
 class VIEWS_EXPORT Combobox : public View,
                               public PrefixDelegate,
-                              public ButtonListener {
+                              public ButtonListener,
+                              public ui::ComboboxModelObserver {
  public:
-  // The combobox's class name.
-  static const char kViewClassName[];
-  static const int kDefaultComboboxTextContext = style::CONTEXT_BUTTON;
-  static const int kDefaultComboboxTextStyle = style::STYLE_PRIMARY;
+  METADATA_HEADER(Combobox);
+
+  static constexpr int kDefaultComboboxTextContext = style::CONTEXT_BUTTON;
+  static constexpr int kDefaultComboboxTextStyle = style::STYLE_PRIMARY;
 
   // |model| is owned by the combobox when using this constructor.
   explicit Combobox(std::unique_ptr<ui::ComboboxModel> model,
@@ -57,11 +62,8 @@ class VIEWS_EXPORT Combobox : public View,
   // Sets the listener which will be called when a selection has been made.
   void set_listener(ComboboxListener* listener) { listener_ = listener; }
 
-  // Informs the combobox that its model changed.
-  void ModelChanged();
-
   // Gets/Sets the selected index.
-  int selected_index() const { return selected_index_; }
+  int GetSelectedIndex() const { return selected_index_; }
   void SetSelectedIndex(int index);
 
   // Looks for the first occurrence of |value| in |model()|. If found, selects
@@ -75,16 +77,17 @@ class VIEWS_EXPORT Combobox : public View,
 
   // Set the accessible name of the combobox.
   void SetAccessibleName(const base::string16& name);
+  base::string16 GetAccessibleName() const;
 
   // Visually marks the combobox as having an invalid value selected.
   // When invalid, it paints with white text on a red background.
   // Callers are responsible for restoring validity with selection changes.
   void SetInvalid(bool invalid);
-  bool invalid() const { return invalid_; }
+  bool GetInvalid() const { return invalid_; }
 
   // Overridden from View:
   gfx::Size CalculatePreferredSize() const override;
-  const char* GetClassName() const override;
+  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& e) override;
   bool OnKeyPressed(const ui::KeyEvent& e) override;
   void OnPaint(gfx::Canvas* canvas) override;
@@ -92,8 +95,7 @@ class VIEWS_EXPORT Combobox : public View,
   void OnBlur() override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   bool HandleAccessibleAction(const ui::AXActionData& action_data) override;
-  void Layout() override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
   // Overridden from PrefixDelegate:
   int GetRowCount() override;
@@ -108,6 +110,9 @@ class VIEWS_EXPORT Combobox : public View,
   void set_size_to_largest_label(bool size_to_largest_label) {
     size_to_largest_label_ = size_to_largest_label;
   }
+
+  // Overridden from ComboboxModelObserver:
+  void OnComboboxModelChanged(ui::ComboboxModel* model) override;
 
  private:
   friend class test::ComboboxTestApi;
@@ -132,9 +137,6 @@ class VIEWS_EXPORT Combobox : public View,
   // Called when the selection is changed by the user.
   void OnPerformAction();
 
-  // Returns the size of the disclosure arrow.
-  gfx::Size ArrowSize() const;
-
   // Finds the size of the largest menu label.
   gfx::Size GetContentSize() const;
 
@@ -142,9 +144,6 @@ class VIEWS_EXPORT Combobox : public View,
   void HandleClickEvent();
 
   PrefixSelector* GetPrefixSelector();
-
-  // Returns the width of the combobox's arrow container.
-  int GetArrowContainerWidth() const;
 
   // Returns the color to use for the combobox's focus ring.
   SkColor GetFocusRingColor() const;
@@ -209,6 +208,8 @@ class VIEWS_EXPORT Combobox : public View,
 
   // The focus ring for this Combobox.
   std::unique_ptr<FocusRing> focus_ring_;
+
+  ScopedObserver<ui::ComboboxModel, ui::ComboboxModelObserver> observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Combobox);
 };

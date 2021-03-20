@@ -51,7 +51,6 @@ class CFX_Break {
 
   void SetCharSpace(float fCharSpace);
   void SetParagraphBreakChar(wchar_t wch);
-  void SetDefaultChar(wchar_t wch);
 
   int32_t CountBreakPieces() const;
   const CFX_BreakPiece* GetBreakPieceUnstable(int32_t index) const;
@@ -70,6 +69,7 @@ class CFX_Break {
 
   void SetBreakStatus();
   bool HasLine() const { return m_iReadyLineIndex >= 0; }
+  bool IsGreaterThanLineWidth(int32_t width) const;
   FX_CHARTYPE GetUnifiedCharType(FX_CHARTYPE dwType) const;
 
   FX_CHARTYPE m_eCharType = FX_CHARTYPE::kUnknown;
@@ -86,15 +86,10 @@ class CFX_Break {
   int32_t m_iVerticalScale = 100;
   int32_t m_iTolerance = 0;
   int32_t m_iCharSpace = 0;
-  int32_t m_iDefChar = 0;
-  wchar_t m_wDefChar = 0xFEFF;
   RetainPtr<CFGAS_GEFont> m_pFont;
   UnownedPtr<CFX_BreakLine> m_pCurLine;
   int8_t m_iReadyLineIndex = -1;
-  CFX_BreakLine m_Line[2];
-
- private:
-  void FontChanged();
+  CFX_BreakLine m_Lines[2];
 };
 
 #endif  // XFA_FGAS_LAYOUT_CFX_BREAK_H_

@@ -30,7 +30,7 @@ extern "C" {
  * types, removing or reassigning enums, adding/removing/rearranging
  * fields to structures
  */
-#define AOM_IMAGE_ABI_VERSION (5) /**<\hideinitializer*/
+#define AOM_IMAGE_ABI_VERSION (8) /**<\hideinitializer*/
 
 #define AOM_IMG_FMT_PLANAR 0x100  /**< Image is a planar format. */
 #define AOM_IMG_FMT_UV_FLIP 0x200 /**< V plane precedes U in memory. */
@@ -55,7 +55,7 @@ typedef enum aom_img_fmt {
 } aom_img_fmt_t; /**< alias for enum aom_img_fmt */
 
 /*!\brief List of supported color primaries */
-enum {
+typedef enum aom_color_primaries {
   AOM_CICP_CP_RESERVED_0 = 0,  /**< For future use */
   AOM_CICP_CP_BT_709 = 1,      /**< BT.709 */
   AOM_CICP_CP_UNSPECIFIED = 2, /**< Unspecified */
@@ -66,17 +66,17 @@ enum {
   AOM_CICP_CP_SMPTE_240 = 7,   /**< SMPTE 240 */
   AOM_CICP_CP_GENERIC_FILM =
       8, /**< Generic film (color filters using illuminant C) */
-  AOM_CICP_CP_BT_2020 = 9,           /**< BT.2020, BT.2100 */
-  AOM_CICP_CP_XYZ = 10,              /**< SMPTE 428 (CIE 1921 XYZ) */
-  AOM_CICP_CP_SMPTE_431 = 11,        /**< SMPTE RP 431-2 */
-  AOM_CICP_CP_SMPTE_432 = 12,        /**< SMPTE EG 432-1  */
-  AOM_CICP_CP_RESERVED_13 = 13,      /**< For future use (values 13 - 21)  */
-  AOM_CICP_CP_EBU_3213 = 22,         /**< EBU Tech. 3213-E  */
-  AOM_CICP_CP_RESERVED_23 = 23       /**< For future use (values 23 - 255)  */
-} UENUM1BYTE(aom_color_primaries_t); /**< alias for enum aom_color_primaries */
+  AOM_CICP_CP_BT_2020 = 9,      /**< BT.2020, BT.2100 */
+  AOM_CICP_CP_XYZ = 10,         /**< SMPTE 428 (CIE 1921 XYZ) */
+  AOM_CICP_CP_SMPTE_431 = 11,   /**< SMPTE RP 431-2 */
+  AOM_CICP_CP_SMPTE_432 = 12,   /**< SMPTE EG 432-1  */
+  AOM_CICP_CP_RESERVED_13 = 13, /**< For future use (values 13 - 21)  */
+  AOM_CICP_CP_EBU_3213 = 22,    /**< EBU Tech. 3213-E  */
+  AOM_CICP_CP_RESERVED_23 = 23  /**< For future use (values 23 - 255)  */
+} aom_color_primaries_t;        /**< alias for enum aom_color_primaries */
 
 /*!\brief List of supported transfer functions */
-enum {
+typedef enum aom_transfer_characteristics {
   AOM_CICP_TC_RESERVED_0 = 0,  /**< For future use */
   AOM_CICP_TC_BT_709 = 1,      /**< BT.709 */
   AOM_CICP_TC_UNSPECIFIED = 2, /**< Unspecified */
@@ -98,10 +98,10 @@ enum {
   AOM_CICP_TC_SMPTE_428 = 17,      /**< SMPTE ST 428 */
   AOM_CICP_TC_HLG = 18,            /**< BT.2100 HLG, ARIB STD-B67 */
   AOM_CICP_TC_RESERVED_19 = 19     /**< For future use (values 19-255) */
-} UENUM1BYTE(aom_transfer_characteristics_t); /**<transfer characteristics*/
+} aom_transfer_characteristics_t;  /**< alias for enum aom_transfer_function */
 
 /*!\brief List of supported matrix coefficients */
-enum {
+typedef enum aom_matrix_coefficients {
   AOM_CICP_MC_IDENTITY = 0,    /**< Identity matrix */
   AOM_CICP_MC_BT_709 = 1,      /**< BT.709 */
   AOM_CICP_MC_UNSPECIFIED = 2, /**< Unspecified */
@@ -120,22 +120,52 @@ enum {
   AOM_CICP_MC_CHROMAT_CL = 13, /**< Chromaticity-derived constant luminance */
   AOM_CICP_MC_ICTCP = 14,      /**< BT.2100 ICtCp */
   AOM_CICP_MC_RESERVED_15 = 15 /**< For future use (values 15-255)  */
-} SENUM1BYTE(aom_matrix_coefficients_t); /**<enum type Matrix Coefficients*/
+} aom_matrix_coefficients_t;
 
 /*!\brief List of supported color range */
-enum {
-  AOM_CR_STUDIO_RANGE = 0,       /**< Y [16..235], UV [16..240] */
-  AOM_CR_FULL_RANGE = 1          /**< YUV/RGB [0..255] */
-} UENUM1BYTE(aom_color_range_t); /**< alias for enum aom_color_range */
+typedef enum aom_color_range {
+  AOM_CR_STUDIO_RANGE = 0, /**< Y [16..235], UV [16..240] */
+  AOM_CR_FULL_RANGE = 1    /**< YUV/RGB [0..255] */
+} aom_color_range_t;       /**< alias for enum aom_color_range */
 
 /*!\brief List of chroma sample positions */
-enum {
-  AOM_CSP_UNKNOWN = 0,   /**< Unknown */
-  AOM_CSP_VERTICAL = 1,  /**< Horizontally co-located with luma(0, 0)*/
-                         /**< sample, between two vertical samples */
-  AOM_CSP_COLOCATED = 2, /**< Co-located with luma(0, 0) sample */
-  AOM_CSP_RESERVED = 3   /**< Reserved value */
-} UENUM1BYTE(aom_chroma_sample_position_t); /**<chroma sample positions*/
+typedef enum aom_chroma_sample_position {
+  AOM_CSP_UNKNOWN = 0,          /**< Unknown */
+  AOM_CSP_VERTICAL = 1,         /**< Horizontally co-located with luma(0, 0)*/
+                                /**< sample, between two vertical samples */
+  AOM_CSP_COLOCATED = 2,        /**< Co-located with luma(0, 0) sample */
+  AOM_CSP_RESERVED = 3          /**< Reserved value */
+} aom_chroma_sample_position_t; /**< alias for enum aom_transfer_function */
+
+/*!\brief List of insert flags for Metadata
+ *
+ * These flags control how the library treats metadata during encode.
+ *
+ * While encoding, when metadata is added to an aom_image via
+ * aom_img_add_metadata(), the flag passed along with the metadata will
+ * determine where the metadata OBU will be placed in the encoded OBU stream.
+ * Metadata will be emitted into the output stream within the next temporal unit
+ * if it satisfies the specified insertion flag.
+ *
+ * During decoding, when the library encounters a metadata OBU, it is always
+ * flagged as AOM_MIF_ANY_FRAME and emitted with the next output aom_image.
+ */
+typedef enum aom_metadata_insert_flags {
+  AOM_MIF_NON_KEY_FRAME = 0, /**< Adds metadata if it's not keyframe */
+  AOM_MIF_KEY_FRAME = 1,     /**< Adds metadata only if it's a keyframe */
+  AOM_MIF_ANY_FRAME = 2      /**< Adds metadata to any type of frame */
+} aom_metadata_insert_flags_t;
+
+/*!\brief Array of aom_metadata structs for an image. */
+typedef struct aom_metadata_array aom_metadata_array_t;
+
+/*!\brief Metadata payload. */
+typedef struct aom_metadata {
+  uint32_t type;                           /**< Metadata type */
+  uint8_t *payload;                        /**< Metadata payload data */
+  size_t sz;                               /**< Metadata payload size */
+  aom_metadata_insert_flags_t insert_flag; /**< Metadata insertion flag */
+} aom_metadata_t;
 
 /**\brief Image Descriptor */
 typedef struct aom_image {
@@ -188,6 +218,9 @@ typedef struct aom_image {
   int img_data_owner;      /**< private */
   int self_allocd;         /**< private */
 
+  aom_metadata_array_t
+      *metadata; /**< Metadata payloads associated with the image. */
+
   void *fb_priv; /**< Frame buffer data associated with the image. */
 } aom_image_t;   /**< alias for struct aom_image */
 
@@ -202,7 +235,7 @@ typedef struct aom_image_rect {
 /*!\brief Open a descriptor, allocating storage for the underlying image
  *
  * Returns a descriptor for storing an image of the given format. The
- * storage for the descriptor is allocated on the heap.
+ * storage for the image is allocated on the heap.
  *
  * \param[in]    img       Pointer to storage for descriptor. If this parameter
  *                         is NULL, the storage for the descriptor will be
@@ -211,7 +244,7 @@ typedef struct aom_image_rect {
  * \param[in]    d_w       Width of the image
  * \param[in]    d_h       Height of the image
  * \param[in]    align     Alignment, in bytes, of the image buffer and
- *                         each row in the image(stride).
+ *                         each row in the image (stride).
  *
  * \return Returns a pointer to the initialized image descriptor. If the img
  *         parameter is non-null, the value of the img parameter will be
@@ -224,7 +257,7 @@ aom_image_t *aom_img_alloc(aom_image_t *img, aom_img_fmt_t fmt,
 /*!\brief Open a descriptor, using existing storage for the underlying image
  *
  * Returns a descriptor for storing an image of the given format. The
- * storage for descriptor has been allocated elsewhere, and a descriptor is
+ * storage for the image has been allocated elsewhere, and a descriptor is
  * desired to "wrap" that storage.
  *
  * \param[in]    img       Pointer to storage for descriptor. If this parameter
@@ -233,7 +266,8 @@ aom_image_t *aom_img_alloc(aom_image_t *img, aom_img_fmt_t fmt,
  * \param[in]    fmt       Format for the image
  * \param[in]    d_w       Width of the image
  * \param[in]    d_h       Height of the image
- * \param[in]    align     Alignment, in bytes, of each row in the image.
+ * \param[in]    align     Alignment, in bytes, of each row in the image
+ *                         (stride).
  * \param[in]    img_data  Storage to use for the image
  *
  * \return Returns a pointer to the initialized image descriptor. If the img
@@ -248,7 +282,7 @@ aom_image_t *aom_img_wrap(aom_image_t *img, aom_img_fmt_t fmt, unsigned int d_w,
  * border
  *
  * Returns a descriptor for storing an image of the given format and its
- * borders. The storage for the descriptor is allocated on the heap.
+ * borders. The storage for the image is allocated on the heap.
  *
  * \param[in]    img        Pointer to storage for descriptor. If this parameter
  *                          is NULL, the storage for the descriptor will be
@@ -257,8 +291,8 @@ aom_image_t *aom_img_wrap(aom_image_t *img, aom_img_fmt_t fmt, unsigned int d_w,
  * \param[in]    d_w        Width of the image
  * \param[in]    d_h        Height of the image
  * \param[in]    align      Alignment, in bytes, of the image buffer and
- *                          each row in the image(stride).
- * \param[in]    size_align Alignment, in bytes, of the image width and height.
+ *                          each row in the image (stride).
+ * \param[in]    size_align Alignment, in pixels, of the image width and height.
  * \param[in]    border     A border that is padded on four sides of the image.
  *
  * \return Returns a pointer to the initialized image descriptor. If the img
@@ -322,6 +356,80 @@ int aom_img_plane_width(const aom_image_t *img, int plane);
  * \param[in]    plane     Plane index
  */
 int aom_img_plane_height(const aom_image_t *img, int plane);
+
+/*!\brief Add metadata to image.
+ *
+ * Adds metadata to aom_image_t.
+ * Function makes a copy of the provided data parameter.
+ * Metadata insertion point is controlled by insert_flag.
+ *
+ * \param[in]    img          Image descriptor
+ * \param[in]    type         Metadata type
+ * \param[in]    data         Metadata contents
+ * \param[in]    sz           Metadata contents size
+ * \param[in]    insert_flag  Metadata insert flag
+ */
+int aom_img_add_metadata(aom_image_t *img, uint32_t type, const uint8_t *data,
+                         size_t sz, aom_metadata_insert_flags_t insert_flag);
+
+/*!\brief Return a metadata payload stored within the image metadata array.
+ *
+ * Gets the metadata (aom_metadata_t) at the indicated index in the image
+ * metadata array.
+ *
+ * \param[in] img          Pointer to image descriptor to get metadata from
+ * \param[in] index        Metadata index to get from metadata array
+ *
+ * \return Returns a const pointer to the selected metadata, if img and/or index
+ * is invalid, it returns NULL.
+ */
+const aom_metadata_t *aom_img_get_metadata(const aom_image_t *img,
+                                           size_t index);
+
+/*!\brief Return the number of metadata blocks within the image.
+ *
+ * Gets the number of metadata blocks contained within the provided image
+ * metadata array.
+ *
+ * \param[in] img          Pointer to image descriptor to get metadata number
+ * from.
+ *
+ * \return Returns the size of the metadata array. If img or metadata is NULL,
+ * it returns 0.
+ */
+size_t aom_img_num_metadata(const aom_image_t *img);
+
+/*!\brief Remove metadata from image.
+ *
+ * Removes all metadata in image metadata list and sets metadata list pointer
+ * to NULL.
+ *
+ * \param[in]    img       Image descriptor
+ */
+void aom_img_remove_metadata(aom_image_t *img);
+
+/*!\brief Allocate memory for aom_metadata struct.
+ *
+ * Allocates storage for the metadata payload, sets its type and copies the
+ * payload data into the aom_metadata struct. A metadata payload buffer of size
+ * sz is allocated and sz bytes are copied from data into the payload buffer.
+ *
+ * \param[in]    type         Metadata type
+ * \param[in]    data         Metadata data pointer
+ * \param[in]    sz           Metadata size
+ * \param[in]    insert_flag  Metadata insert flag
+ */
+aom_metadata_t *aom_img_metadata_alloc(uint32_t type, const uint8_t *data,
+                                       size_t sz,
+                                       aom_metadata_insert_flags_t insert_flag);
+
+/*!\brief Free metadata struct.
+ *
+ * Free metadata struct and its buffer.
+ *
+ * \param[in]    metadata       Metadata struct pointer
+ */
+void aom_img_metadata_free(aom_metadata_t *metadata);
 
 #ifdef __cplusplus
 }  // extern "C"

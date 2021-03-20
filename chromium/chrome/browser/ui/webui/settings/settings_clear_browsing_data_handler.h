@@ -12,18 +12,20 @@
 #include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
+#include "chrome/browser/engagement/important_sites_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
 #include "components/signin/core/browser/account_reconcilor.h"
+#include "components/sync/driver/sync_service.h"
 
 namespace base {
 class ListValue;
 }
 
 namespace content {
+class BrowsingDataFilterBuilder;
 class WebUI;
 }
 
@@ -33,7 +35,7 @@ namespace settings {
 class ClearBrowsingDataHandler : public SettingsPageUIHandler,
                                  public syncer::SyncServiceObserver {
  public:
-  explicit ClearBrowsingDataHandler(content::WebUI* webui);
+  ClearBrowsingDataHandler(content::WebUI* webui, Profile* profile);
   ~ClearBrowsingDataHandler() override;
 
   // WebUIMessageHandler implementation.
@@ -44,7 +46,24 @@ class ClearBrowsingDataHandler : public SettingsPageUIHandler,
   // Calls |HandleClearBrowsingData| with test data for browser test.
   void HandleClearBrowsingDataForTest();
 
+ protected:
+  // Fetches a list of installed apps to be displayed in the clear browsing
+  // data confirmation dialog. Called by Javascript.
+  void GetRecentlyLaunchedInstalledApps(const base::ListValue* args);
+
  private:
+  // Respond to the WebUI callback with the list of installed apps.
+  void OnGotInstalledApps(
+      const std::string& webui_callback_id,
+      const std::vector<ImportantSitesUtil::ImportantDomainInfo>&
+          installed_apps);
+
+  // Build a filter of sites to include and exclude from site data removal
+  // based on whether installed apps were marked for deletion by the checkbox on
+  // the installed apps warning dialog.
+  std::unique_ptr<content::BrowsingDataFilterBuilder> ProcessInstalledApps(
+      const base::ListValue* installed_apps);
+
   // Clears browsing data, called by Javascript.
   void HandleClearBrowsingData(const base::ListValue* value);
 
@@ -92,9 +111,9 @@ class ClearBrowsingDataHandler : public SettingsPageUIHandler,
   // Counters that calculate the data volume for individual data types.
   std::vector<std::unique_ptr<browsing_data::BrowsingDataCounter>> counters_;
 
-  // ProfileSyncService to observe sync state changes.
-  browser_sync::ProfileSyncService* sync_service_;
-  ScopedObserver<browser_sync::ProfileSyncService, syncer::SyncServiceObserver>
+  // SyncService to observe sync state changes.
+  syncer::SyncService* sync_service_;
+  ScopedObserver<syncer::SyncService, syncer::SyncServiceObserver>
       sync_service_observer_;
 
   // Whether we should show a dialog informing the user about other forms of
@@ -108,7 +127,7 @@ class ClearBrowsingDataHandler : public SettingsPageUIHandler,
   // A weak pointer factory for asynchronous calls referencing this class.
   // The weak pointers are invalidated in |OnJavascriptDisallowed()| and
   // |HandleInitialize()| to cancel previously initiated tasks.
-  base::WeakPtrFactory<ClearBrowsingDataHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<ClearBrowsingDataHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ClearBrowsingDataHandler);
 };

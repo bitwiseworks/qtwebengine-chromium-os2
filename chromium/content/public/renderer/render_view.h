@@ -12,21 +12,12 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "content/public/common/browser_controls_state.h"
 #include "ipc/ipc_sender.h"
-#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace blink {
-class WebElement;
-class WebFrameWidget;
 class WebView;
-struct WebRect;
 }  // namespace blink
-
-namespace gfx {
-class Size;
-}
 
 namespace content {
 
@@ -34,10 +25,19 @@ class RenderFrame;
 class RenderViewVisitor;
 struct WebPreferences;
 
-// DEPRECATED: RenderView is being removed as part of the SiteIsolation project.
-// New code should be added to RenderFrame instead.
+// RenderView corresponds to the content container of a renderer's subset
+// of the frame tree. A frame tree that spans multiple renderers will have a
+// RenderView in each renderer, containing the local frames that belong to
+// that renderer. The RenderView holds non-frame-related state that is
+// replicated across all renderers, and is a fairly shallow object.
+// Generally, most APIs care about state related to the document content which
+// should be accessed through RenderFrame instead.
 //
-// For context, please see https://crbug.com/467770 and
+// WARNING: Historically RenderView was the path to get to the main frame,
+// and the entire frame tree, but that is no longer the case. Usually
+// RenderFrame is a more appropriate surface for new code, unless the code is
+// agnostic of frames and document content or structure. For more context,
+// please see https://crbug.com/467770 and
 // https://www.chromium.org/developers/design-documents/site-isolation.
 class CONTENT_EXPORT RenderView : public IPC::Sender {
  public:
@@ -64,12 +64,6 @@ class CONTENT_EXPORT RenderView : public IPC::Sender {
   // Get the routing ID of the view.
   virtual int GetRoutingID() = 0;
 
-  // Returns the size of the view.
-  virtual gfx::Size GetSize() = 0;
-
-  // Returns the device scale factor of the display the render view is in.
-  virtual float GetDeviceScaleFactor() = 0;
-
   // Returns the page's zoom level for the render view.
   virtual float GetZoomLevel() = 0;
 
@@ -82,9 +76,6 @@ class CONTENT_EXPORT RenderView : public IPC::Sender {
 
   // Returns the associated WebView. May return NULL when the view is closing.
   virtual blink::WebView* GetWebView() = 0;
-
-  // Returns the associated WebFrameWidget.
-  virtual blink::WebFrameWidget* GetWebFrameWidget() = 0;
 
   // Whether content state (such as form state, scroll position and page
   // contents) should be sent to the browser immediately. This is normally
@@ -101,20 +92,6 @@ class CONTENT_EXPORT RenderView : public IPC::Sender {
 
   // Returns |renderer_preferences_.accept_languages| value.
   virtual const std::string& GetAcceptLanguages() = 0;
-
-  virtual void UpdateBrowserControlsState(BrowserControlsState constraints,
-                                          BrowserControlsState current,
-                                          bool animate) = 0;
-
-  // Converts the |rect| from Viewport coordinates to Window coordinates.
-  // See blink::WebWidgetClient::convertViewportToWindow for more details.
-  virtual void ConvertViewportToWindowViaWidget(blink::WebRect* rect) = 0;
-
-  // Returns the bounds of |element| in Window coordinates. The bounds have been
-  // adjusted to include any transformations, including page scale.
-  // This function will update the layout if required.
-  virtual gfx::RectF ElementBoundsInWindow(const blink::WebElement& element)
-      = 0;
 
  protected:
   ~RenderView() override {}

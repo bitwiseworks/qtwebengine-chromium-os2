@@ -7,10 +7,11 @@
 #include <memory>
 
 #include "base/atomic_sequence_num.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_image_generator.h"
 #include "cc/paint/paint_record.h"
+#include "cc/paint/paint_worklet_input.h"
 #include "cc/paint/skia_paint_image_generator.h"
 #include "ui/gfx/skia_util.h"
 
@@ -26,6 +27,13 @@ const size_t PaintImage::kDefaultFrameIndex = 0u;
 const PaintImage::Id PaintImage::kInvalidId = -2;
 const PaintImage::ContentId PaintImage::kInvalidContentId = -1;
 const PaintImage::GeneratorClientId PaintImage::kDefaultGeneratorClientId = 0;
+
+ImageHeaderMetadata::ImageHeaderMetadata() = default;
+ImageHeaderMetadata::ImageHeaderMetadata(const ImageHeaderMetadata& other) =
+    default;
+ImageHeaderMetadata& ImageHeaderMetadata::operator=(
+    const ImageHeaderMetadata& other) = default;
+ImageHeaderMetadata::ImageHeaderMetadata::~ImageHeaderMetadata() = default;
 
 PaintImage::PaintImage() = default;
 PaintImage::PaintImage(const PaintImage& other) = default;
@@ -154,10 +162,10 @@ void PaintImage::CreateSkImage() {
 
 SkISize PaintImage::GetSupportedDecodeSize(
     const SkISize& requested_size) const {
-  // TODO(vmpstr): If this image is using subset_rect, then we don't support
-  // decoding to any scale other than the original. See the comment in Decode()
-  // explaining this in more detail.
-  if (paint_image_generator_ && subset_rect_.IsEmpty())
+  // TODO(vmpstr): In some cases we do not support decoding to any other
+  // size than the original. See the comment in CanDecodeFromGenerator()
+  // for more detail.
+  if (CanDecodeFromGenerator())
     return paint_image_generator_->GetSupportedDecodeSize(requested_size);
   return SkISize::Make(width(), height());
 }
@@ -167,24 +175,35 @@ bool PaintImage::Decode(void* memory,
                         sk_sp<SkColorSpace> color_space,
                         size_t frame_index,
                         GeneratorClientId client_id) const {
-  // We only support decode to supported decode size.
-  DCHECK(info->dimensions() == GetSupportedDecodeSize(info->dimensions()));
-
   // We don't support SkImageInfo's with color spaces on them. Color spaces
   // should always be passed via the |color_space| arg.
   DCHECK(!info->colorSpace());
 
-  // TODO(vmpstr): If we're using a subset_rect_ then the info specifies the
-  // requested size relative to the subset. However, the generator isn't aware
-  // of this subsetting and would need a size that is relative to the original
-  // image size. We could still implement this case, but we need to convert the
-  // requested size into the space of the original image. For now, fallback to
-  // DecodeFromSkImage().
-  if (paint_image_generator_ && subset_rect_.IsEmpty())
+  // We only support decode to supported decode size.
+  DCHECK(info->dimensions() == GetSupportedDecodeSize(info->dimensions()));
+
+  // TODO(vmpstr): In some cases we do not support decoding to any other
+  // size than the original. See the comment in CanDecodeFromGenerator()
+  // for more detail. For now, fallback to DecodeFromSkImage().
+  if (CanDecodeFromGenerator()) {
     return DecodeFromGenerator(memory, info, std::move(color_space),
                                frame_index, client_id);
+  }
   return DecodeFromSkImage(memory, info, std::move(color_space), frame_index,
                            client_id);
+}
+
+bool PaintImage::DecodeYuv(
+    void* planes[SkYUVASizeInfo::kMaxCount],
+    size_t frame_index,
+    GeneratorClientId client_id,
+    const SkYUVASizeInfo& yuva_size_info,
+    SkYUVAIndex plane_indices[SkYUVAIndex::kIndexCount]) const {
+  DCHECK(plane_indices != nullptr);
+  DCHECK(CanDecodeFromGenerator());
+  const uint32_t lazy_pixel_ref = unique_id();
+  return paint_image_generator_->GetYUVA8Planes(
+      yuva_size_info, plane_indices, planes, frame_index, lazy_pixel_ref);
 }
 
 bool PaintImage::DecodeFromGenerator(void* memory,
@@ -192,13 +211,23 @@ bool PaintImage::DecodeFromGenerator(void* memory,
                                      sk_sp<SkColorSpace> color_space,
                                      size_t frame_index,
                                      GeneratorClientId client_id) const {
-  DCHECK(subset_rect_.IsEmpty());
-
+  DCHECK(CanDecodeFromGenerator());
   // First convert the info to have the requested color space, since the decoder
   // will convert this for us.
   *info = info->makeColorSpace(std::move(color_space));
+  const uint32_t lazy_pixel_ref = unique_id();
   return paint_image_generator_->GetPixels(*info, memory, info->minRowBytes(),
-                                           frame_index, client_id, unique_id());
+                                           frame_index, client_id,
+                                           lazy_pixel_ref);
+}
+
+// TODO(vmpstr): If we're using a subset_rect_ then the info specifies the
+// requested size relative to the subset. However, the generator isn't aware
+// of this subsetting and would need a size that is relative to the original
+// image size. We could still implement this case, but we need to convert the
+// requested size into the space of the original image.
+bool PaintImage::CanDecodeFromGenerator() const {
+  return paint_image_generator_ && subset_rect_.IsEmpty();
 }
 
 bool PaintImage::DecodeFromSkImage(void* memory,
@@ -229,16 +258,16 @@ bool PaintImage::ShouldAnimate() const {
 PaintImage::FrameKey PaintImage::GetKeyForFrame(size_t frame_index) const {
   DCHECK_LT(frame_index, FrameCount());
 
-  // Query the content id that uniquely identifies the content for this frame
-  // from the content provider.
-  ContentId content_id = kInvalidContentId;
-  if (paint_image_generator_)
-    content_id = paint_image_generator_->GetContentIdForFrame(frame_index);
-  else if (paint_record_ || sk_image_)
-    content_id = content_id_;
+  return FrameKey(GetContentIdForFrame(frame_index), frame_index, subset_rect_);
+}
 
-  DCHECK_NE(content_id, kInvalidContentId);
-  return FrameKey(content_id, frame_index, subset_rect_);
+PaintImage::ContentId PaintImage::GetContentIdForFrame(
+    size_t frame_index) const {
+  if (paint_image_generator_)
+    return paint_image_generator_->GetContentIdForFrame(frame_index);
+
+  DCHECK_NE(content_id_, kInvalidContentId);
+  return content_id_;
 }
 
 SkColorType PaintImage::GetColorType() const {
@@ -247,6 +276,60 @@ SkColorType PaintImage::GetColorType() const {
   if (GetSkImage())
     return GetSkImage()->colorType();
   return kUnknown_SkColorType;
+}
+
+int PaintImage::width() const {
+  return paint_worklet_input_
+             ? static_cast<int>(paint_worklet_input_->GetSize().width())
+             : GetSkImage()->width();
+}
+
+int PaintImage::height() const {
+  return paint_worklet_input_
+             ? static_cast<int>(paint_worklet_input_->GetSize().height())
+             : GetSkImage()->height();
+}
+
+bool PaintImage::isSRGB() const {
+  // Right now, JS paint worklets can only be in sRGB
+  if (paint_worklet_input_)
+    return true;
+
+  auto* color_space = GetSkImage()->colorSpace();
+  if (!color_space) {
+    // Assume the image will be sRGB if we don't know yet.
+    return true;
+  }
+
+  return color_space->isSRGB();
+}
+
+const ImageHeaderMetadata* PaintImage::GetImageHeaderMetadata() const {
+  if (paint_image_generator_)
+    return paint_image_generator_->GetMetadataForDecodeAcceleration();
+  return nullptr;
+}
+
+bool PaintImage::IsYuv(SkYUVASizeInfo* yuva_size_info,
+                       SkYUVAIndex* plane_indices,
+                       SkYUVColorSpace* yuv_color_space) const {
+  SkYUVASizeInfo temp_yuva_size_info;
+  SkYUVAIndex temp_plane_indices[SkYUVAIndex::kIndexCount];
+  SkYUVColorSpace temp_yuv_color_space;
+  if (!yuva_size_info) {
+    yuva_size_info = &temp_yuva_size_info;
+  }
+  if (!plane_indices) {
+    plane_indices = temp_plane_indices;
+  }
+  if (!yuv_color_space) {
+    yuv_color_space = &temp_yuv_color_space;
+  }
+  // ImageDecoder will fill out the value of |yuv_color_space| depending on
+  // the codec's specification.
+  return CanDecodeFromGenerator() &&
+         paint_image_generator_->QueryYUVA8(yuva_size_info, plane_indices,
+                                            yuv_color_space);
 }
 
 const std::vector<FrameMetadata>& PaintImage::GetFrameMetadata() const {
@@ -298,7 +381,7 @@ std::string PaintImage::ToString() const {
       << " animation_type_: " << static_cast<int>(animation_type_)
       << " completion_state_: " << static_cast<int>(completion_state_)
       << " subset_rect_: " << subset_rect_.ToString()
-      << " is_multipart_: " << is_multipart_;
+      << " is_multipart_: " << is_multipart_ << " is YUV: " << IsYuv();
   return str.str();
 }
 

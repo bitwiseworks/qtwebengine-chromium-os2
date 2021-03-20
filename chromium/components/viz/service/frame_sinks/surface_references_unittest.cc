@@ -16,6 +16,7 @@
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_manager.h"
 #include "components/viz/test/compositor_frame_helpers.h"
+#include "components/viz/test/surface_id_allocator_set.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -47,11 +48,12 @@ class SurfaceReferencesTest : public testing::Test {
   // Will first create a Surfacesupport for |frame_sink_id| if necessary.
   SurfaceId CreateSurface(const FrameSinkId& frame_sink_id,
                           uint32_t parent_id) {
-    LocalSurfaceId local_surface_id(parent_id,
-                                    base::UnguessableToken::Deserialize(0, 1u));
+    SurfaceId surface_id =
+        allocator_set_.MakeSurfaceId(frame_sink_id, parent_id);
     GetCompositorFrameSinkSupport(frame_sink_id)
-        .SubmitCompositorFrame(local_surface_id, MakeDefaultCompositorFrame());
-    return SurfaceId(frame_sink_id, local_surface_id);
+        .SubmitCompositorFrame(surface_id.local_surface_id(),
+                               MakeDefaultCompositorFrame());
+    return surface_id;
   }
 
   // Destroy Surface with |surface_id|.
@@ -67,9 +69,8 @@ class SurfaceReferencesTest : public testing::Test {
       manager_->RegisterFrameSinkId(frame_sink_id,
                                     true /* report_activation */);
       constexpr bool is_root = false;
-      constexpr bool needs_sync_points = true;
       support_ptr = std::make_unique<CompositorFrameSinkSupport>(
-          nullptr, manager_.get(), frame_sink_id, is_root, needs_sync_points);
+          nullptr, manager_.get(), frame_sink_id, is_root);
     }
     return *support_ptr;
   }
@@ -140,6 +141,7 @@ class SurfaceReferencesTest : public testing::Test {
                      std::unique_ptr<CompositorFrameSinkSupport>,
                      FrameSinkIdHash>
       supports_;
+  SurfaceIdAllocatorSet allocator_set_;
 };
 
 TEST_F(SurfaceReferencesTest, AddReference) {

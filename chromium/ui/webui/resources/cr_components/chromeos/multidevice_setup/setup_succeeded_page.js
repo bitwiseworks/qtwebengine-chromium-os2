@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.exportPath('multidevice_setup');
-
 Polymer({
   is: 'setup-succeeded-page',
 
@@ -13,46 +11,40 @@ Polymer({
       type: String,
       value: 'done',
     },
-
-    /** Overridden from UiPageContainerBehavior. */
-    headerId: {
-      type: String,
-      value: 'setupSucceededPageHeader',
-    },
-
-    /** Overridden from UiPageContainerBehavior. */
-    messageId: {
-      type: String,
-      value: 'setupSucceededPageMessage',
-    },
   },
 
-  behaviors: [
-    UiPageContainerBehavior,
-  ],
+  behaviors: [UiPageContainerBehavior],
 
   /** @private {?multidevice_setup.BrowserProxy} */
   browserProxy_: null,
 
   /** @override */
-  created: function() {
+  created() {
     this.browserProxy_ = multidevice_setup.BrowserProxyImpl.getInstance();
   },
 
   /** @private */
-  openSettings_: function() {
+  openSettings_() {
     this.browserProxy_.openMultiDeviceSettings();
   },
 
   /** @private */
-  onSettingsLinkClicked_: function() {
+  onSettingsLinkClicked_() {
     this.openSettings_();
     this.fire('setup-exited');
   },
 
+  /** @private */
+  getMessageHtml_() {
+    const validNodeFn = (node, value) => node.tagName === 'A';
+    return this.i18nAdvanced(
+        'setupSucceededPageMessage',
+        {attrs: {'id': validNodeFn, 'href': validNodeFn}});
+  },
+
   /** @override */
-  ready: function() {
-    let linkElement = this.$$('#settings-link');
+  ready() {
+    const linkElement = this.$$('#settings-link');
     linkElement.setAttribute('href', '#');
     linkElement.addEventListener('click', () => this.onSettingsLinkClicked_());
   },

@@ -31,21 +31,21 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_NOTIFICATIONS_NOTIFICATION_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_NOTIFICATIONS_NOTIFICATION_H_
 
-#include "mojo/public/cpp/bindings/binding.h"
-#include "third_party/blink/public/platform/modules/notifications/notification_service.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/permissions/permission.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom-blink.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "third_party/blink/public/mojom/notifications/notification_service.mojom-blink.h"
+#include "third_party/blink/public/mojom/permissions/permission.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/dom_time_stamp.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/vibration/navigator_vibration.h"
-#include "third_party/blink/renderer/platform/async_method_runner.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
@@ -55,11 +55,12 @@ class NotificationOptions;
 class NotificationResourcesLoader;
 class ScriptState;
 class V8NotificationPermissionCallback;
+class TimestampTrigger;
 
 class MODULES_EXPORT Notification final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<Notification>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       public mojom::blink::NonPersistentNotificationListener {
   USING_GARBAGE_COLLECTED_MIXIN(Notification);
   DEFINE_WRAPPERTYPEINFO();
@@ -92,10 +93,10 @@ class MODULES_EXPORT Notification final
 
   void close();
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(click, kClick);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(show, kShow);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(close, kClose);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(click, kClick)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(show, kShow)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(close, kClose)
 
   // NonPersistentNotificationListener interface.
   void OnShow() override;
@@ -117,6 +118,7 @@ class MODULES_EXPORT Notification final
   bool requireInteraction() const;
   ScriptValue data(ScriptState* script_state);
   Vector<v8::Local<v8::Value>> actions(ScriptState* script_state) const;
+  TimestampTrigger* showTrigger() const { return show_trigger_; }
 
   static String PermissionString(mojom::blink::PermissionStatus permission);
   static String permission(ExecutionContext* context);
@@ -128,17 +130,17 @@ class MODULES_EXPORT Notification final
 
   // EventTarget interface.
   ExecutionContext* GetExecutionContext() const final {
-    return ContextLifecycleObserver::GetExecutionContext();
+    return ExecutionContextLifecycleObserver::GetExecutionContext();
   }
   const AtomicString& InterfaceName() const override;
 
-  // ContextLifecycleObserver interface.
-  void ContextDestroyed(ExecutionContext* context) override;
+  // ExecutionContextLifecycleObserver interface.
+  void ContextDestroyed() override;
 
   // ScriptWrappable interface.
   bool HasPendingActivity() const final;
 
-  void Trace(blink::Visitor* visitor) override;
+  void Trace(Visitor* visitor) override;
 
  protected:
   // EventTarget interface.
@@ -168,7 +170,7 @@ class MODULES_EXPORT Notification final
 
   // Verifies that permission has been granted, then asynchronously starts
   // loading the resources associated with this notification.
-  void PrepareShow();
+  void PrepareShow(TimerBase* timer);
 
   // Shows the notification through the embedder using the loaded resources.
   void DidLoadResources(NotificationResourcesLoader* loader);
@@ -180,16 +182,18 @@ class MODULES_EXPORT Notification final
 
   mojom::blink::NotificationDataPtr data_;
 
+  Member<TimestampTrigger> show_trigger_;
+
   String notification_id_;
 
   String token_;
 
-  Member<AsyncMethodRunner<Notification>> prepare_show_method_runner_;
+  TaskRunnerTimer<Notification> prepare_show_timer_;
 
   Member<NotificationResourcesLoader> loader_;
 
-  mojo::Binding<mojom::blink::NonPersistentNotificationListener>
-      listener_binding_;
+  mojo::Receiver<mojom::blink::NonPersistentNotificationListener>
+      listener_receiver_{this};
 };
 
 }  // namespace blink

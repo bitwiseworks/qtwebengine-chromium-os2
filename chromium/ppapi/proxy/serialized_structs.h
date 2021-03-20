@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/shared_memory.h"
 #include "build/build_config.h"
 #include "ppapi/c/dev/ppb_truetype_font_dev.h"
 #include "ppapi/c/pp_bool.h"
@@ -118,12 +117,6 @@ struct PPBURLLoader_UpdateProgress_Params {
   int64_t total_bytes_to_be_received;
 };
 
-struct PPPDecryptor_Buffer {
-  ppapi::HostResource resource;
-  uint32_t size;
-  base::SharedMemoryHandle handle;
-};
-
 struct PPB_AudioEncodeParameters {
   uint32_t channels;
   uint32_t input_sample_rate;
@@ -132,9 +125,6 @@ struct PPB_AudioEncodeParameters {
   uint32_t initial_bitrate;
   PP_HardwareAcceleration acceleration;
 };
-
-// TODO(raymes): Make ImageHandle compatible with SerializedHandle.
-typedef base::SharedMemoryHandle ImageHandle;
 
 }  // namespace proxy
 }  // namespace ppapi

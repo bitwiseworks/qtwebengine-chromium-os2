@@ -17,7 +17,7 @@
 
 #include "dawn_native/ShaderModule.h"
 
-#include "glad/glad.h"
+#include "dawn_native/opengl/opengl_platform.h"
 
 namespace dawn_native { namespace opengl {
 
@@ -40,7 +40,8 @@ namespace dawn_native { namespace opengl {
 
     class ShaderModule : public ShaderModuleBase {
       public:
-        ShaderModule(Device* device, const ShaderModuleDescriptor* descriptor);
+        static ResultOrError<ShaderModule*> Create(Device* device,
+                                                   const ShaderModuleDescriptor* descriptor);
 
         using CombinedSamplerInfo = std::vector<CombinedSampler>;
 
@@ -48,6 +49,9 @@ namespace dawn_native { namespace opengl {
         const CombinedSamplerInfo& GetCombinedSamplerInfo() const;
 
       private:
+        ShaderModule(Device* device, const ShaderModuleDescriptor* descriptor);
+        MaybeError Initialize(const ShaderModuleDescriptor* descriptor);
+
         CombinedSamplerInfo mCombinedInfo;
         std::string mGlslSource;
     };

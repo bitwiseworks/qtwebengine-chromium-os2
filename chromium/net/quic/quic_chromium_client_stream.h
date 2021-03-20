@@ -22,8 +22,8 @@
 #include "net/http/http_response_info.h"
 #include "net/http/http_stream.h"
 #include "net/log/net_log_with_source.h"
-#include "net/third_party/quic/core/http/quic_spdy_stream.h"
-#include "net/third_party/quic/platform/api/quic_string_piece.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
+#include "net/third_party/quiche/src/quic/core/http/quic_spdy_stream.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace quic {
@@ -107,8 +107,8 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
     // stream is open.
     void DisableConnectionMigrationToCellularNetwork();
 
-    // Sets the priority of the stream to |priority|.
-    void SetPriority(spdy::SpdyPriority priority);
+    // Sets the precedence of the stream to |precedence|.
+    void SetPriority(const spdy::SpdyStreamPrecedence& precedence);
 
     // Sends a RST_STREAM frame to the peer and closes the streams.
     void Reset(quic::QuicRstStreamErrorCode error_code);
@@ -192,7 +192,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
 
     NetLogWithSource net_log_;
 
-    base::WeakPtrFactory<Handle> weak_factory_;
+    base::WeakPtrFactory<Handle> weak_factory_{this};
 
     DISALLOW_COPY_AND_ASSIGN(Handle);
   };
@@ -204,7 +204,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
       const NetLogWithSource& net_log,
       const NetworkTrafficAnnotationTag& traffic_annotation);
   QuicChromiumClientStream(
-      quic::PendingStream pending,
+      quic::PendingStream* pending,
       quic::QuicSpdyClientSessionBase* session,
       quic::StreamType type,
       const NetLogWithSource& net_log,
@@ -240,7 +240,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
   // Writes |data| to the peer and closes the write side if |fin| is true.
   // Returns true if the data have been fully written. If the data was not fully
   // written, returns false and OnCanWrite() will be invoked later.
-  bool WriteStreamData(quic::QuicStringPiece data, bool fin);
+  bool WriteStreamData(quiche::QuicheStringPiece data, bool fin);
   // Same as WriteStreamData except it writes data from a vector of IOBuffers,
   // with the length of each buffer at the corresponding index in |lengths|.
   bool WritevStreamData(const std::vector<scoped_refptr<IOBuffer>>& buffers,
@@ -271,8 +271,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
   // True if this stream is the first data stream created on this session.
   bool IsFirstStream();
 
-  bool DeliverInitialHeaders(spdy::SpdyHeaderBlock* header_block,
-                             int* frame_len);
+  int DeliverInitialHeaders(spdy::SpdyHeaderBlock* header_block);
 
   bool DeliverTrailingHeaders(spdy::SpdyHeaderBlock* header_block,
                               int* frame_len);
@@ -291,8 +290,6 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
   NetLogWithSource net_log_;
   Handle* handle_;
 
-  bool headers_delivered_;
-
   // True when initial headers have been sent.
   bool initial_headers_sent_;
 
@@ -303,7 +300,11 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
   // during connection migration.
   bool can_migrate_to_cellular_network_;
 
-  // Stores the initial header if they arrive before the handle.
+  // True if initial headers have arrived.
+  bool initial_headers_arrived_;
+  // True if initial headers have been delivered to the handle..
+  bool headers_delivered_;
+  // Stores the initial header until they are delivered to the handle.
   spdy::SpdyHeaderBlock initial_headers_;
   // Length of the HEADERS frame containing initial headers.
   size_t initial_headers_frame_len_;
@@ -311,7 +312,7 @@ class NET_EXPORT_PRIVATE QuicChromiumClientStream
   // Length of the HEADERS frame containing trailing headers.
   size_t trailing_headers_frame_len_;
 
-  base::WeakPtrFactory<QuicChromiumClientStream> weak_factory_;
+  base::WeakPtrFactory<QuicChromiumClientStream> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(QuicChromiumClientStream);
 };

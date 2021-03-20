@@ -8,9 +8,9 @@
 #ifndef GrVkStencil_DEFINED
 #define GrVkStencil_DEFINED
 
-#include "GrStencilAttachment.h"
-#include "GrVkImage.h"
-#include "vk/GrVkTypes.h"
+#include "include/gpu/vk/GrVkTypes.h"
+#include "src/gpu/GrStencilAttachment.h"
+#include "src/gpu/vk/GrVkImage.h"
 
 class GrVkImageView;
 class GrVkGpu;
@@ -29,7 +29,7 @@ public:
 
     ~GrVkStencilAttachment() override;
 
-    const GrVkResource* imageResource() const { return this->resource(); }
+    const GrManagedResource* imageResource() const { return this->resource(); }
     const GrVkImageView* stencilView() const { return fStencilView; }
 
     VkFormat vkFormat() const { return fFormat.fInternalFormat; }

@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "content/public/browser/resource_request_info.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
@@ -16,13 +15,13 @@
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/manifest_handlers/web_accessible_resources_info.h"
 #include "extensions/common/manifest_handlers/webview_info.h"
-#include "net/url_request/url_request.h"
+#include "third_party/blink/public/common/loader/resource_type_util.h"
 
 namespace extensions {
 namespace url_request_util {
 
 bool AllowCrossRendererResourceLoad(const GURL& url,
-                                    content::ResourceType resource_type,
+                                    blink::mojom::ResourceType resource_type,
                                     ui::PageTransition page_transition,
                                     int child_id,
                                     bool is_incognito,
@@ -34,7 +33,8 @@ bool AllowCrossRendererResourceLoad(const GURL& url,
 
   // This logic is performed for main frame requests in
   // ExtensionNavigationThrottle::WillStartRequest.
-  if (child_id != -1 || resource_type != content::RESOURCE_TYPE_MAIN_FRAME) {
+  if (child_id != -1 ||
+      resource_type != blink::mojom::ResourceType::kMainFrame) {
     // Extensions with webview: allow loading certain resources by guest
     // renderers with privileged partition IDs as specified in owner's extension
     // the manifest file.
@@ -81,10 +81,10 @@ bool AllowCrossRendererResourceLoad(const GURL& url,
 
   // Navigating the main frame to an extension URL is allowed, even if not
   // explicitly listed as web_accessible_resource.
-  if (resource_type == content::RESOURCE_TYPE_MAIN_FRAME) {
+  if (resource_type == blink::mojom::ResourceType::kMainFrame) {
     *allowed = true;
     return true;
-  } else if (resource_type == content::RESOURCE_TYPE_SUB_FRAME) {
+  } else if (resource_type == blink::mojom::ResourceType::kSubFrame) {
     // When navigating in subframe, allow if it is the same origin
     // as the top-level frame. This can only be the case if the subframe
     // request is coming from the extension process.
@@ -104,7 +104,7 @@ bool AllowCrossRendererResourceLoad(const GURL& url,
   // Since not all subresources are required to be listed in a v2
   // manifest, we must allow all subresource loads if there are any web
   // accessible resources. See http://crbug.com/179127.
-  if (!content::IsResourceTypeFrame(resource_type) &&
+  if (!blink::IsResourceTypeFrame(resource_type) &&
       WebAccessibleResourcesInfo::HasWebAccessibleResources(extension)) {
     *allowed = true;
     return true;
@@ -150,22 +150,6 @@ bool AllowCrossRendererResourceLoadHelper(bool is_guest,
 bool AllowSpecialCaseExtensionURLInGuest(
     const Extension* extension,
     base::Optional<base::StringPiece> resource_path) {
-  // Exceptionally, the resource at path "/success.html" that belongs to the
-  // sign-in extension (loaded by chrome://chrome-signin) is accessible to
-  // WebViews that are not owned by that extension.
-  // This exception is required as in order to mark the end of the the sign-in
-  // flow, Gaia redirects to the following continue URL:
-  // "chrome-extension://mfffpogegjflfpflabcdkioaeobkgjik/success.html".
-  //
-  // TODO(http://crbug.com/688565) Remove this check once the sign-in
-  // extension is deprecated and removed.
-  bool is_signin_extension =
-      extension && extension->id() == "mfffpogegjflfpflabcdkioaeobkgjik";
-  if (is_signin_extension && (!resource_path.has_value() ||
-                              resource_path.value() == "/success.html")) {
-    return true;
-  }
-
   // Allow mobile setup web UI (chrome://mobilesetup) to embed resources from
   // the component mobile activation extension in a webview. This is needed
   // because the activation web UI relies on the activation extension to

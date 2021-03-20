@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/html/track/text_track.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 class WebInbandTextTrack;
@@ -41,8 +42,6 @@ namespace blink {
 class InbandTextTrack final : public TextTrack,
                               public WebInbandTextTrackClient {
  public:
-  static InbandTextTrack* Create(WebInbandTextTrack*);
-
   explicit InbandTextTrack(WebInbandTextTrack*);
   ~InbandTextTrack() override;
 
@@ -60,7 +59,10 @@ class InbandTextTrack final : public TextTrack,
 
 // All concrete implementations of WebInbandTextTrackClient are
 // InbandTextTracks.
-DEFINE_TYPE_CASTS(InbandTextTrack, WebInbandTextTrackClient, track, true, true);
+template <>
+struct DowncastTraits<InbandTextTrack> {
+  static bool AllowFrom(const WebInbandTextTrackClient& track) { return true; }
+};
 
 }  // namespace blink
 

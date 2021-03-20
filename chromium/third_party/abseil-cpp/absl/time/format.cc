@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,12 +22,16 @@
 namespace cctz = absl::time_internal::cctz;
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
-extern const char RFC3339_full[] = "%Y-%m-%dT%H:%M:%E*S%Ez";
-extern const char RFC3339_sec[] =  "%Y-%m-%dT%H:%M:%S%Ez";
+ABSL_DLL extern const char RFC3339_full[] =
+    "%Y-%m-%dT%H:%M:%E*S%Ez";
+ABSL_DLL extern const char RFC3339_sec[] = "%Y-%m-%dT%H:%M:%S%Ez";
 
-extern const char RFC1123_full[] = "%a, %d %b %E4Y %H:%M:%S %z";
-extern const char RFC1123_no_wday[] =  "%d %b %E4Y %H:%M:%S %z";
+ABSL_DLL extern const char RFC1123_full[] =
+    "%a, %d %b %E4Y %H:%M:%S %z";
+ABSL_DLL extern const char RFC1123_no_wday[] =
+    "%d %b %E4Y %H:%M:%S %z";
 
 namespace {
 
@@ -67,7 +71,8 @@ absl::Time Join(const cctz_parts& parts) {
 
 }  // namespace
 
-std::string FormatTime(const std::string& format, absl::Time t, absl::TimeZone tz) {
+std::string FormatTime(const std::string& format, absl::Time t,
+                       absl::TimeZone tz) {
   if (t == absl::InfiniteFuture()) return kInfiniteFutureStr;
   if (t == absl::InfinitePast()) return kInfinitePastStr;
   const auto parts = Split(t);
@@ -83,15 +88,15 @@ std::string FormatTime(absl::Time t) {
   return absl::FormatTime(RFC3339_full, t, absl::LocalTimeZone());
 }
 
-bool ParseTime(const std::string& format, const std::string& input, absl::Time* time,
-               std::string* err) {
+bool ParseTime(const std::string& format, const std::string& input,
+               absl::Time* time, std::string* err) {
   return absl::ParseTime(format, input, absl::UTCTimeZone(), time, err);
 }
 
 // If the input string does not contain an explicit UTC offset, interpret
 // the fields with respect to the given TimeZone.
-bool ParseTime(const std::string& format, const std::string& input, absl::TimeZone tz,
-               absl::Time* time, std::string* err) {
+bool ParseTime(const std::string& format, const std::string& input,
+               absl::TimeZone tz, absl::Time* time, std::string* err) {
   const char* data = input.c_str();
   while (std::isspace(*data)) ++data;
 
@@ -128,6 +133,14 @@ bool ParseTime(const std::string& format, const std::string& input, absl::TimeZo
 }
 
 // Functions required to support absl::Time flags.
+bool AbslParseFlag(absl::string_view text, absl::Time* t, std::string* error) {
+  return absl::ParseTime(RFC3339_full, std::string(text), absl::UTCTimeZone(),
+                         t, error);
+}
+
+std::string AbslUnparseFlag(absl::Time t) {
+  return absl::FormatTime(RFC3339_full, t, absl::UTCTimeZone());
+}
 bool ParseFlag(const std::string& text, absl::Time* t, std::string* error) {
   return absl::ParseTime(RFC3339_full, text, absl::UTCTimeZone(), t, error);
 }
@@ -136,4 +149,5 @@ std::string UnparseFlag(absl::Time t) {
   return absl::FormatTime(RFC3339_full, t, absl::UTCTimeZone());
 }
 
+ABSL_NAMESPACE_END
 }  // namespace absl

@@ -22,7 +22,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_SIZE_H_
 
 #include "third_party/blink/renderer/platform/geometry/length.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -38,6 +38,7 @@ class LengthSize {
   bool operator==(const LengthSize& o) const {
     return width_ == o.width_ && height_ == o.height_;
   }
+  bool operator!=(const LengthSize& o) const { return !(*this == o); }
 
   void SetWidth(const Length& width) { width_ = width; }
   const Length& Width() const { return width_; }

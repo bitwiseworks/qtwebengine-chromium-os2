@@ -18,6 +18,9 @@ RelList::RelList(Element* element)
     : DOMTokenList(*element, html_names::kRelAttr) {}
 
 static HashSet<AtomicString>& SupportedTokensLink() {
+  // There is a use counter for <link rel="monetization"> but the feature is
+  // actually not implemented yet, so "monetization" is not included in the
+  // list below. See https://crbug.com/1031476
   DEFINE_STATIC_LOCAL(
       HashSet<AtomicString>, tokens,
       ({
@@ -40,7 +43,7 @@ static HashSet<AtomicString>& SupportedTokensAnchorAndArea() {
 
 bool RelList::ValidateTokenValue(const AtomicString& token_value,
                                  ExceptionState&) const {
-  //  https://html.spec.whatwg.org/multipage/links.html#linkTypes
+  //  https://html.spec.whatwg.org/C/#linkTypes
   if (GetElement().HasTagName(html_names::kLinkTag)) {
     if (SupportedTokensLink().Contains(token_value) ||
         token_value == "modulepreload") {

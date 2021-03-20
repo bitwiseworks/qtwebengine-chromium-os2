@@ -40,9 +40,6 @@ class LayoutImageResourceStyleImage final : public LayoutImageResource {
   explicit LayoutImageResourceStyleImage(StyleImage*);
   ~LayoutImageResourceStyleImage() override;
 
-  static LayoutImageResource* Create(StyleImage* style_image) {
-    return MakeGarbageCollected<LayoutImageResourceStyleImage>(style_image);
-  }
   void Initialize(LayoutObject*) override;
   void Shutdown() override;
 
@@ -50,15 +47,15 @@ class LayoutImageResourceStyleImage final : public LayoutImageResource {
   scoped_refptr<Image> GetImage(const FloatSize&) const override;
   bool ErrorOccurred() const override { return style_image_->ErrorOccurred(); }
 
-  bool ImageHasRelativeSize() const override {
-    return style_image_->ImageHasRelativeSize();
+  bool HasIntrinsicSize() const override {
+    return style_image_->HasIntrinsicSize();
   }
   FloatSize ImageSize(float multiplier) const override;
   FloatSize ImageSizeWithDefaultSize(float multiplier,
                                      const LayoutSize&) const override;
   WrappedImagePtr ImagePtr() const override { return style_image_->Data(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<StyleImage> style_image_;

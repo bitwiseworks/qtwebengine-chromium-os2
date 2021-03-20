@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/config/arm.gni")
-import("//build/config/jumbo.gni")
 import("//build/config/linux/pkg_config.gni")
 import("//build_overrides/build.gni")
 import("../pdfium.gni")
@@ -81,7 +80,7 @@ if (pdf_bundle_freetype) {
 
   # Tests may link against this even if the production library doesn't,
   # so it needs to be separate from it.
-  jumbo_source_set("fx_freetype") {
+  source_set("fx_freetype") {
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [
       "//build/config/compiler:no_chromium_code",
@@ -227,7 +226,7 @@ if (!pdf_use_skia && !pdf_use_skia_paths) {
     }
   }
 
-  jumbo_source_set("fx_agg") {
+  source_set("fx_agg") {
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [
       "//build/config/compiler:no_chromium_code",
@@ -253,9 +252,7 @@ if (!pdf_use_skia && !pdf_use_skia_paths) {
       "agg23/agg_vcgen_dash.cpp",
       "agg23/agg_vcgen_stroke.cpp",
     ]
-    deps = [
-      "../core/fxcrt",
-    ]
+    deps = [ "../core/fxcrt" ]
   }
 }
 
@@ -313,9 +310,7 @@ source_set("fx_lcms2") {
     "lcms/src/cmswtpnt.c",
     "lcms/src/cmsxform.c",
   ]
-  deps = [
-    "../core/fxcrt",
-  ]
+  deps = [ "../core/fxcrt" ]
 }
 
 if (!build_with_chromium) {
@@ -344,14 +339,10 @@ if (!build_with_chromium) {
     if (use_system_libjpeg) {
       public_configs = [ ":system_libjpeg_config" ]
     } else if (use_libjpeg_turbo) {
-      public_deps = [
-        "//third_party/libjpeg_turbo:libjpeg",
-      ]
+      public_deps = [ "//third_party/libjpeg_turbo:libjpeg" ]
       public_configs = [ ":libjpeg_turbo_config" ]
     } else {
-      public_deps = [
-        "//third_party/libjpeg:libjpeg",
-      ]
+      public_deps = [ "//third_party/libjpeg:libjpeg" ]
     }
   }
 }
@@ -365,9 +356,7 @@ group("zlib") {
   if (pdfium_use_system_zlib) {
     public_configs = [ ":system_zlib_config" ]
   } else {
-    public_deps = [
-      "//third_party/zlib",
-    ]
+    public_deps = [ "//third_party/zlib" ]
   }
 }
 
@@ -381,9 +370,21 @@ group("lcms2") {
   if (use_system_lcms2) {
     public_configs = [ ":lcms2_from_pkgconfig" ]
   } else {
-    public_deps = [
-      ":fx_lcms2",
-    ]
+    public_deps = [ ":fx_lcms2" ]
+  }
+}
+
+if (use_system_libopenjpeg2) {
+  pkg_config("libopenjpeg2_from_pkgconfig") {
+    defines = [ "USE_SYSTEM_LIBOPENJPEG2" ]
+    packages = [ "libopenjp2" ]
+  }
+}
+group("libopenjpeg2") {
+  if (use_system_libopenjpeg2) {
+    public_configs = [ ":libopenjpeg2_from_pkgconfig" ]
+  } else {
+    public_deps = [ ":fx_libopenjpeg" ]
   }
 }
 
@@ -441,13 +442,11 @@ group("png") {
   if (pdfium_use_system_libpng) {
     public_configs = [ ":system_libpng_config" ]
   } else {
-    public_deps = [
-      ":fx_lpng",
-    ]
+    public_deps = [ ":fx_lpng" ]
   }
 }
 
-jumbo_source_set("fx_lpng") {
+source_set("fx_lpng") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     "//build/config/compiler:no_chromium_code",
@@ -481,9 +480,7 @@ jumbo_source_set("fx_lpng") {
 
   defines = []
   cflags = []
-  deps = [
-    ":zlib",
-  ]
+  deps = [ ":zlib" ]
 
   if (current_cpu == "x86" || current_cpu == "x64") {
     sources += [
@@ -568,7 +565,7 @@ if (pdf_enable_xfa_tiff) {
   }
 }
 
-jumbo_source_set("pdfium_base") {
+source_set("pdfium_base") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     "//build/config/compiler:no_chromium_code",
@@ -600,6 +597,8 @@ jumbo_source_set("pdfium_base") {
     "base/allocator/partition_allocator/partition_page.h",
     "base/allocator/partition_allocator/partition_root_base.cc",
     "base/allocator/partition_allocator/partition_root_base.h",
+    "base/allocator/partition_allocator/random.cc",
+    "base/allocator/partition_allocator/random.h",
     "base/allocator/partition_allocator/spin_lock.cc",
     "base/allocator/partition_allocator/spin_lock.h",
     "base/base_export.h",
@@ -608,7 +607,9 @@ jumbo_source_set("pdfium_base") {
     "base/debug/alias.cc",
     "base/debug/alias.h",
     "base/logging.h",
+    "base/no_destructor.h",
     "base/numerics/safe_conversions.h",
+    "base/numerics/safe_conversions_arm_impl.h",
     "base/numerics/safe_conversions_impl.h",
     "base/numerics/safe_math.h",
     "base/numerics/safe_math_impl.h",
@@ -618,9 +619,35 @@ jumbo_source_set("pdfium_base") {
     "base/sys_byteorder.h",
     "base/template_util.h",
   ]
+
+  if (is_win) {
+    sources += [
+      "base/win/win_util.cc",
+      "base/win/win_util.h",
+    ]
+  }
 }
 
-jumbo_source_set("skia_shared") {
+source_set("pdfium_base_test_support") {
+  testonly = true
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [
+    "//build/config/compiler:no_chromium_code",
+    ":pdfium_third_party_config",
+  ]
+  sources = []
+  deps = []
+
+  if (is_posix || is_fuchsia) {
+    sources += [
+      "base/test/scoped_locale.cc",
+      "base/test/scoped_locale.h",
+    ]
+    deps += [ "//testing/gtest" ]
+  }
+}
+
+source_set("skia_shared") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     "//build/config/compiler:no_chromium_code",

@@ -4,11 +4,15 @@
 
 #include "third_party/blink/renderer/modules/mediastream/media_devices.h"
 
-#include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/blink/public/platform/platform.h"
+#include <utility>
+
+#include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_stream_constraints.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_supported_constraints.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -17,14 +21,13 @@
 #include "third_party/blink/renderer/modules/mediastream/input_device_info.h"
 #include "third_party/blink/renderer/modules/mediastream/media_error_state.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
-#include "third_party/blink/renderer/modules/mediastream/media_stream_constraints.h"
-#include "third_party/blink/renderer/modules/mediastream/media_track_supported_constraints.h"
 #include "third_party/blink/renderer/modules/mediastream/navigator_media_stream.h"
 #include "third_party/blink/renderer/modules/mediastream/user_media_controller.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mediastream/webrtc_uma_histograms.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
-
-using blink::mojom::blink::MediaDeviceType;
 
 namespace blink {
 
@@ -32,10 +35,6 @@ namespace {
 
 class PromiseResolverCallbacks final : public UserMediaRequest::Callbacks {
  public:
-  static PromiseResolverCallbacks* Create(ScriptPromiseResolver* resolver) {
-    return MakeGarbageCollected<PromiseResolverCallbacks>(resolver);
-  }
-
   explicit PromiseResolverCallbacks(ScriptPromiseResolver* resolver)
       : resolver_(resolver) {}
   ~PromiseResolverCallbacks() override = default;
@@ -49,7 +48,7 @@ class PromiseResolverCallbacks final : public UserMediaRequest::Callbacks {
     resolver_->Reject(error);
   }
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(resolver_);
     UserMediaRequest::Callbacks::Trace(visitor);
   }
@@ -60,32 +59,32 @@ class PromiseResolverCallbacks final : public UserMediaRequest::Callbacks {
 
 }  // namespace
 
-MediaDevices* MediaDevices::Create(ExecutionContext* context) {
-  return MakeGarbageCollected<MediaDevices>(context);
-}
-
 MediaDevices::MediaDevices(ExecutionContext* context)
-    : ContextLifecycleObserver(context), stopped_(false), binding_(this) {}
+    : ExecutionContextLifecycleObserver(context),
+      stopped_(false),
+      receiver_(this, context) {}
 
 MediaDevices::~MediaDevices() = default;
 
-ScriptPromise MediaDevices::enumerateDevices(ScriptState* script_state) {
-  Platform::Current()->UpdateWebRTCAPICount(WebRTCAPIName::kEnumerateDevices);
+ScriptPromise MediaDevices::enumerateDevices(ScriptState* script_state,
+                                             ExceptionState& exception_state) {
+  UpdateWebRTCMethodCount(RTCAPIName::kEnumerateDevices);
   LocalFrame* frame =
-      To<Document>(ExecutionContext::From(script_state))->GetFrame();
+      Document::From(ExecutionContext::From(script_state))->GetFrame();
   if (!frame) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kNotSupportedError,
-                                           "Current frame is detached."));
+    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
+                                      "Current frame is detached.");
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
   requests_.insert(resolver);
 
   GetDispatcherHost(frame)->EnumerateDevices(
       true /* audio input */, true /* video input */, true /* audio output */,
       true /* request_video_input_capabilities */,
+      true /* request_audio_input_capabilities */,
       WTF::Bind(&MediaDevices::DevicesEnumerated, WrapPersistent(this),
                 WrapPersistent(resolver)));
   return promise;
@@ -99,32 +98,32 @@ ScriptPromise MediaDevices::getUserMedia(ScriptState* script_state,
                                          const MediaStreamConstraints* options,
                                          ExceptionState& exception_state) {
   return SendUserMediaRequest(script_state,
-                              WebUserMediaRequest::MediaType::kUserMedia,
-                              options, exception_state);
+                              UserMediaRequest::MediaType::kUserMedia, options,
+                              exception_state);
 }
 
 ScriptPromise MediaDevices::SendUserMediaRequest(
     ScriptState* script_state,
-    WebUserMediaRequest::MediaType media_type,
+    UserMediaRequest::MediaType media_type,
     const MediaStreamConstraints* options,
     ExceptionState& exception_state) {
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
-  PromiseResolverCallbacks* callbacks =
-      PromiseResolverCallbacks::Create(resolver);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* callbacks = MakeGarbageCollected<PromiseResolverCallbacks>(resolver);
 
-  Document* document = To<Document>(ExecutionContext::From(script_state));
+  Document* document = Document::From(ExecutionContext::From(script_state));
   UserMediaController* user_media =
       UserMediaController::From(document->GetFrame());
-  if (!user_media)
-    return ScriptPromise::RejectWithDOMException(
-        script_state,
-        DOMException::Create(DOMExceptionCode::kNotSupportedError,
-                             "No media device controller available; is this a "
-                             "detached window?"));
+  if (!user_media) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
+                                      "No media device controller available; "
+                                      "is this a detached window?");
+    return ScriptPromise();
+  }
 
   MediaErrorState error_state;
-  UserMediaRequest* request = UserMediaRequest::Create(
-      document, user_media, media_type, options, callbacks, error_state);
+  UserMediaRequest* request =
+      UserMediaRequest::Create(document->ToExecutionContext(), user_media,
+                               media_type, options, callbacks, error_state);
   if (!request) {
     DCHECK(error_state.HadException());
     if (error_state.CanGenerateException()) {
@@ -138,9 +137,9 @@ ScriptPromise MediaDevices::SendUserMediaRequest(
 
   String error_message;
   if (!request->IsSecureContextUse(error_message)) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kNotSupportedError,
-                                           error_message));
+    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
+                                      error_message);
+    return ScriptPromise();
   }
   auto promise = resolver->Promise();
   request->Start();
@@ -152,7 +151,7 @@ ScriptPromise MediaDevices::getDisplayMedia(
     const MediaStreamConstraints* options,
     ExceptionState& exception_state) {
   return SendUserMediaRequest(script_state,
-                              WebUserMediaRequest::MediaType::kDisplayMedia,
+                              UserMediaRequest::MediaType::kDisplayMedia,
                               options, exception_state);
 }
 
@@ -161,7 +160,7 @@ const AtomicString& MediaDevices::InterfaceName() const {
 }
 
 ExecutionContext* MediaDevices::GetExecutionContext() const {
-  return ContextLifecycleObserver::GetExecutionContext();
+  return ExecutionContextLifecycleObserver::GetExecutionContext();
 }
 
 void MediaDevices::RemoveAllEventListeners() {
@@ -188,24 +187,23 @@ void MediaDevices::RemovedEventListener(
 }
 
 bool MediaDevices::HasPendingActivity() const {
-  DCHECK(stopped_ || binding_.is_bound() == HasEventListeners());
-  return binding_.is_bound();
+  DCHECK(stopped_ || receiver_.is_bound() == HasEventListeners());
+  return receiver_.is_bound();
 }
 
-void MediaDevices::ContextDestroyed(ExecutionContext*) {
+void MediaDevices::ContextDestroyed() {
   if (stopped_)
     return;
 
   stopped_ = true;
-  StopObserving();
   requests_.clear();
   dispatcher_host_.reset();
 }
 
 void MediaDevices::OnDevicesChanged(
     MediaDeviceType type,
-    Vector<mojom::blink::MediaDeviceInfoPtr> device_infos) {
-  Document* document = To<Document>(GetExecutionContext());
+    const Vector<WebMediaDeviceInfo>& device_infos) {
+  Document* document = Document::From(GetExecutionContext());
   DCHECK(document);
 
   if (RuntimeEnabledFeatures::OnDeviceChangeEnabled())
@@ -238,36 +236,34 @@ void MediaDevices::DispatchScheduledEvents() {
 }
 
 void MediaDevices::StartObserving() {
-  if (binding_.is_bound() || stopped_)
+  if (receiver_.is_bound() || stopped_)
     return;
 
-  Document* document = To<Document>(GetExecutionContext());
+  Document* document = Document::From(GetExecutionContext());
   if (!document || !document->GetFrame())
     return;
 
-  mojom::blink::MediaDevicesListenerPtr listener;
-  binding_.Bind(mojo::MakeRequest(&listener));
   GetDispatcherHost(document->GetFrame())
       ->AddMediaDevicesListener(true /* audio input */, true /* video input */,
-                                true /* audio output */, std::move(listener));
+                                true /* audio output */,
+                                receiver_.BindNewPipeAndPassRemote(
+                                    GetExecutionContext()->GetTaskRunner(
+                                        TaskType::kMediaElementEvent)));
 }
 
 void MediaDevices::StopObserving() {
-  if (!binding_.is_bound())
+  if (!receiver_.is_bound())
     return;
-
-  binding_.Close();
-}
-
-void MediaDevices::Dispose() {
-  StopObserving();
+  receiver_.reset();
 }
 
 void MediaDevices::DevicesEnumerated(
     ScriptPromiseResolver* resolver,
-    Vector<Vector<mojom::blink::MediaDeviceInfoPtr>> enumeration,
+    const Vector<Vector<WebMediaDeviceInfo>>& enumeration,
     Vector<mojom::blink::VideoInputDeviceCapabilitiesPtr>
-        video_input_capabilities) {
+        video_input_capabilities,
+    Vector<mojom::blink::AudioInputDeviceCapabilitiesPtr>
+        audio_input_capabilities) {
   if (!requests_.Contains(resolver))
     return;
 
@@ -278,39 +274,55 @@ void MediaDevices::DevicesEnumerated(
     return;
   }
 
-  DCHECK_EQ(static_cast<wtf_size_t>(MediaDeviceType::NUM_MEDIA_DEVICE_TYPES),
+  DCHECK_EQ(static_cast<wtf_size_t>(
+                mojom::blink::MediaDeviceType::NUM_MEDIA_DEVICE_TYPES),
             enumeration.size());
 
   if (!video_input_capabilities.IsEmpty()) {
-    DCHECK_EQ(
-        enumeration[static_cast<wtf_size_t>(MediaDeviceType::MEDIA_VIDEO_INPUT)]
-            .size(),
-        video_input_capabilities.size());
+    DCHECK_EQ(enumeration[static_cast<wtf_size_t>(
+                              mojom::blink::MediaDeviceType::MEDIA_VIDEO_INPUT)]
+                  .size(),
+              video_input_capabilities.size());
+  }
+  if (!audio_input_capabilities.IsEmpty()) {
+    DCHECK_EQ(enumeration[static_cast<wtf_size_t>(
+                              mojom::blink::MediaDeviceType::MEDIA_AUDIO_INPUT)]
+                  .size(),
+              audio_input_capabilities.size());
   }
 
   MediaDeviceInfoVector media_devices;
   for (wtf_size_t i = 0;
-       i < static_cast<wtf_size_t>(MediaDeviceType::NUM_MEDIA_DEVICE_TYPES);
+       i < static_cast<wtf_size_t>(
+               mojom::blink::MediaDeviceType::NUM_MEDIA_DEVICE_TYPES);
        ++i) {
     for (wtf_size_t j = 0; j < enumeration[i].size(); ++j) {
-      MediaDeviceType device_type = static_cast<MediaDeviceType>(i);
-      mojom::blink::MediaDeviceInfoPtr device_info =
-          std::move(enumeration[i][j]);
-      if (device_type == MediaDeviceType::MEDIA_AUDIO_INPUT ||
-          device_type == MediaDeviceType::MEDIA_VIDEO_INPUT) {
+      mojom::blink::MediaDeviceType device_type =
+          static_cast<mojom::blink::MediaDeviceType>(i);
+      WebMediaDeviceInfo device_info = enumeration[i][j];
+      if (device_type == mojom::blink::MediaDeviceType::MEDIA_AUDIO_INPUT ||
+          device_type == mojom::blink::MediaDeviceType::MEDIA_VIDEO_INPUT) {
         InputDeviceInfo* input_device_info =
-            InputDeviceInfo::Create(device_info->device_id, device_info->label,
-                                    device_info->group_id, device_type);
-        if (device_type == MediaDeviceType::MEDIA_VIDEO_INPUT &&
+            MakeGarbageCollected<InputDeviceInfo>(
+                String::FromUTF8(device_info.device_id),
+                String::FromUTF8(device_info.label),
+                String::FromUTF8(device_info.group_id), device_type);
+        if (device_type == mojom::blink::MediaDeviceType::MEDIA_VIDEO_INPUT &&
             !video_input_capabilities.IsEmpty()) {
           input_device_info->SetVideoInputCapabilities(
               std::move(video_input_capabilities[j]));
         }
+        if (device_type == mojom::blink::MediaDeviceType::MEDIA_AUDIO_INPUT &&
+            !audio_input_capabilities.IsEmpty()) {
+          input_device_info->SetAudioInputCapabilities(
+              std::move(audio_input_capabilities[j]));
+        }
         media_devices.push_back(input_device_info);
       } else {
-        media_devices.push_back(
-            MediaDeviceInfo::Create(device_info->device_id, device_info->label,
-                                    device_info->group_id, device_type));
+        media_devices.push_back(MakeGarbageCollected<MediaDeviceInfo>(
+            String::FromUTF8(device_info.device_id),
+            String::FromUTF8(device_info.label),
+            String::FromUTF8(device_info.group_id), device_type));
       }
     }
   }
@@ -323,8 +335,8 @@ void MediaDevices::DevicesEnumerated(
 
 void MediaDevices::OnDispatcherHostConnectionError() {
   for (ScriptPromiseResolver* resolver : requests_) {
-    resolver->Reject(DOMException::Create(DOMExceptionCode::kAbortError,
-                                          "enumerateDevices() failed."));
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kAbortError, "enumerateDevices() failed."));
   }
   requests_.clear();
   dispatcher_host_.reset();
@@ -333,12 +345,12 @@ void MediaDevices::OnDispatcherHostConnectionError() {
     std::move(connection_error_test_callback_).Run();
 }
 
-const mojom::blink::MediaDevicesDispatcherHostPtr&
+const mojo::Remote<mojom::blink::MediaDevicesDispatcherHost>&
 MediaDevices::GetDispatcherHost(LocalFrame* frame) {
   if (!dispatcher_host_) {
-    frame->GetInterfaceProvider().GetInterface(
-        mojo::MakeRequest(&dispatcher_host_));
-    dispatcher_host_.set_connection_error_handler(
+    frame->GetBrowserInterfaceBroker().GetInterface(
+        dispatcher_host_.BindNewPipeAndPassReceiver());
+    dispatcher_host_.set_disconnect_handler(
         WTF::Bind(&MediaDevices::OnDispatcherHostConnectionError,
                   WrapWeakPersistent(this)));
   }
@@ -347,18 +359,20 @@ MediaDevices::GetDispatcherHost(LocalFrame* frame) {
 }
 
 void MediaDevices::SetDispatcherHostForTesting(
-    mojom::blink::MediaDevicesDispatcherHostPtr dispatcher_host) {
-  dispatcher_host_ = std::move(dispatcher_host);
-  dispatcher_host_.set_connection_error_handler(
+    mojo::PendingRemote<mojom::blink::MediaDevicesDispatcherHost>
+        dispatcher_host) {
+  dispatcher_host_.Bind(std::move(dispatcher_host));
+  dispatcher_host_.set_disconnect_handler(
       WTF::Bind(&MediaDevices::OnDispatcherHostConnectionError,
                 WrapWeakPersistent(this)));
 }
 
-void MediaDevices::Trace(blink::Visitor* visitor) {
+void MediaDevices::Trace(Visitor* visitor) {
+  visitor->Trace(receiver_);
   visitor->Trace(scheduled_events_);
   visitor->Trace(requests_);
   EventTargetWithInlineData::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

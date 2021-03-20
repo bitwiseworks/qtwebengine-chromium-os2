@@ -27,8 +27,9 @@
 #include "fpdfsdk/pwl/cpwl_wnd.h"
 #include "public/fpdf_fwlevent.h"
 
-CPWL_Edit::CPWL_Edit(const CreateParams& cp,
-                     std::unique_ptr<PrivateData> pAttachedData)
+CPWL_Edit::CPWL_Edit(
+    const CreateParams& cp,
+    std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
     : CPWL_EditCtrl(cp, std::move(pAttachedData)) {}
 
 CPWL_Edit::~CPWL_Edit() {
@@ -46,8 +47,7 @@ bool CPWL_Edit::RePosChildWnd() {
         CFX_FloatRect(rcWindow.right, rcWindow.bottom,
                       rcWindow.right + PWL_SCROLLBAR_WIDTH, rcWindow.top);
 
-    ObservedPtr thisObserved(this);
-
+    ObservedPtr<CPWL_Edit> thisObserved(this);
     pVSB->Move(rcVScroll, true, false);
     if (!thisObserved)
       return false;
@@ -173,7 +173,7 @@ void CPWL_Edit::DrawThisAppearance(CFX_RenderDevice* pDevice,
     switch (GetBorderStyle()) {
       case BorderStyle::SOLID: {
         CFX_GraphStateData gsd;
-        gsd.m_LineWidth = (float)GetBorderWidth();
+        gsd.m_LineWidth = GetBorderWidth();
 
         CFX_PathData path;
 
@@ -238,10 +238,9 @@ void CPWL_Edit::DrawThisAppearance(CFX_RenderDevice* pDevice,
     pRange = &wrRange;
   }
 
-  CFX_SystemHandler* pSysHandler = GetSystemHandler();
   CPWL_EditImpl::DrawEdit(pDevice, mtUser2Device, m_pEdit.get(),
                           GetTextColor().ToFXColor(GetTransparency()), rcClip,
-                          CFX_PointF(), pRange, pSysHandler,
+                          CFX_PointF(), pRange, GetSystemHandler(),
                           m_pFormFiller.Get());
 }
 
@@ -280,17 +279,13 @@ bool CPWL_Edit::OnRButtonUp(const CFX_PointF& point, uint32_t nFlag) {
   if (!HasFlag(PES_TEXTOVERFLOW) && !ClientHitTest(point))
     return true;
 
-  CFX_SystemHandler* pSH = GetSystemHandler();
-  if (!pSH)
-    return false;
-
   SetFocus();
 
   return false;
 }
 
 void CPWL_Edit::OnSetFocus() {
-  ObservedPtr observed_ptr(this);
+  ObservedPtr<CPWL_Edit> observed_ptr(this);
   SetEditCaret(true);
   if (!observed_ptr)
     return;
@@ -306,8 +301,7 @@ void CPWL_Edit::OnSetFocus() {
 }
 
 void CPWL_Edit::OnKillFocus() {
-  ObservedPtr observed_ptr(this);
-
+  ObservedPtr<CPWL_Edit> observed_ptr(this);
   CPWL_ScrollBar* pScroll = GetVScrollBar();
   if (pScroll && pScroll->IsVisible()) {
     pScroll->SetVisible(false);
@@ -394,7 +388,7 @@ void CPWL_Edit::SetCharArray(int32_t nCharArray) {
   if (!pFontMap)
     return;
 
-  float fFontSize = GetCharArrayAutoFontSize(pFontMap->GetPDFFont(0),
+  float fFontSize = GetCharArrayAutoFontSize(pFontMap->GetPDFFont(0).Get(),
                                              GetClientRect(), nCharArray);
   if (fFontSize <= 0.0f)
     return;
@@ -405,11 +399,6 @@ void CPWL_Edit::SetCharArray(int32_t nCharArray) {
 
 void CPWL_Edit::SetLimitChar(int32_t nLimitChar) {
   m_pEdit->SetLimitChar(nLimitChar);
-}
-
-void CPWL_Edit::ReplaceSel(const WideString& wsText) {
-  m_pEdit->ClearSelection();
-  m_pEdit->InsertText(wsText, FX_CHARSET_Default);
 }
 
 CFX_FloatRect CPWL_Edit::GetFocusRect() const {
@@ -437,7 +426,7 @@ bool CPWL_Edit::OnKeyDown(uint16_t nChar, uint32_t nFlag) {
       if (nSelStart == nSelEnd)
         nSelEnd = nSelStart + 1;
 
-      CPWL_Wnd::ObservedPtr thisObserved(this);
+      ObservedPtr<CPWL_Wnd> thisObserved(this);
 
       bool bRC;
       bool bExit;
@@ -520,7 +509,7 @@ bool CPWL_Edit::OnChar(uint16_t nChar, uint32_t nFlag) {
           break;
       }
 
-      CPWL_Wnd::ObservedPtr thisObserved(this);
+      ObservedPtr<CPWL_Wnd> thisObserved(this);
 
       WideString strChangeEx;
       std::tie(bRC, bExit) = m_pFillerNotify->OnBeforeKeyStroke(

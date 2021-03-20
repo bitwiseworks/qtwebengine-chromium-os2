@@ -28,6 +28,7 @@
 #include "net/log/net_log_with_source.h"
 #include "net/socket/datagram_socket.h"
 #include "net/socket/diff_serv_code_point.h"
+#include "net/socket/udp_socket_global_limits.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
@@ -141,11 +142,11 @@ class NET_EXPORT DscpManager {
   // The remote addresses currently in the flow.
   std::set<IPEndPoint> configured_;
 
-  HANDLE qos_handle_ = NULL;
+  HANDLE qos_handle_ = nullptr;
   bool handle_is_initializing_ = false;
   // 0 means no flow has been constructed.
   QOS_FLOWID flow_id_ = 0;
-  base::WeakPtrFactory<DscpManager> weak_ptr_factory_;
+  base::WeakPtrFactory<DscpManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DscpManager);
 };
@@ -485,11 +486,15 @@ class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
   // Maintains remote addresses for QWAVE qos management.
   std::unique_ptr<DscpManager> dscp_manager_;
 
+  // Manages decrementing the global open UDP socket counter when this
+  // UDPSocket is destroyed.
+  OwnedUDPSocketCount owned_socket_count_;
+
   THREAD_CHECKER(thread_checker_);
 
   // Used to prevent null dereferences in OnObjectSignaled, when passing an
   // error to both read and write callbacks. Cleared in Close()
-  base::WeakPtrFactory<UDPSocketWin> event_pending_;
+  base::WeakPtrFactory<UDPSocketWin> event_pending_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UDPSocketWin);
 };

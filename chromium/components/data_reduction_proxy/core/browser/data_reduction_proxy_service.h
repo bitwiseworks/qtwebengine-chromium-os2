@@ -15,36 +15,39 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/observer_list.h"
 #include "base/sequence_checker.h"
+#include "base/values.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_util.h"
 #include "components/data_reduction_proxy/core/browser/db_data_owner.h"
 #include "components/data_use_measurement/core/data_use_measurement.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/remote_set.h"
 #include "net/nqe/effective_connection_type.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 
 class PrefService;
 
 namespace base {
 class SequencedTaskRunner;
-class SingleThreadTaskRunner;
 class TimeDelta;
-}
+}  // namespace base
 
 namespace net {
 class HttpRequestHeaders;
-class URLRequestContextGetter;
-}
+}  // namespace net
 
 namespace data_reduction_proxy {
 
 class DataReductionProxyCompressionStats;
-class DataReductionProxyIOData;
-class DataReductionProxyPingbackClient;
-class DataReductionProxyServiceObserver;
+class DataReductionProxyConfig;
+class DataReductionProxyConfigServiceClient;
+class DataReductionProxyRequestOptions;
 class DataReductionProxySettings;
 
 // Contains and initializes all Data Reduction Proxy objects that have a
@@ -64,28 +67,20 @@ class DataReductionProxyService
   DataReductionProxyService(
       DataReductionProxySettings* settings,
       PrefService* prefs,
-      net::URLRequestContextGetter* request_context_getter,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       std::unique_ptr<DataStore> store,
-      std::unique_ptr<DataReductionProxyPingbackClient> pingback_client,
       network::NetworkQualityTracker* network_quality_tracker,
       network::NetworkConnectionTracker* network_connection_tracker,
       data_use_measurement::DataUseMeasurement* data_use_measurement,
-      const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
-      const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
-      const base::TimeDelta& commit_delay);
+      const base::TimeDelta& commit_delay,
+      Client client,
+      const std::string& channel,
+      const std::string& user_agent);
 
   ~DataReductionProxyService() override;
 
-  // Sets the DataReductionProxyIOData weak pointer.
-  void SetIOData(base::WeakPtr<DataReductionProxyIOData> io_data);
-
   void Shutdown();
-
-  // Indicates whether |this| has been fully initialized. |SetIOData| is the
-  // final step in initialization.
-  bool Initialized() const;
 
   // Records data usage per host.
   // Virtual for testing.
@@ -119,27 +114,21 @@ class DataReductionProxyService
   virtual void SetProxyPrefs(bool enabled, bool at_startup);
 
   void LoadHistoricalDataUsage(
-      const HistoricalDataUsageCallback& load_data_usage_callback);
+      HistoricalDataUsageCallback load_data_usage_callback);
   void LoadCurrentDataUsageBucket(
-      const LoadCurrentDataUsageCallback& load_current_data_usage_callback);
+      LoadCurrentDataUsageCallback load_current_data_usage_callback);
   void StoreCurrentDataUsageBucket(std::unique_ptr<DataUsageBucket> current);
   void DeleteHistoricalDataUsage();
   void DeleteBrowsingHistory(const base::Time& start, const base::Time& end);
 
-  // Methods for adding/removing observers on |this|.
-  void AddObserver(DataReductionProxyServiceObserver* observer);
-  void RemoveObserver(DataReductionProxyServiceObserver* observer);
+  void SetSettingsForTesting(DataReductionProxySettings* settings) {
+    settings_ = settings;
+  }
 
-  // Sets the reporting fraction in the pingback client.
-  void SetPingbackReportingFraction(float pingback_reporting_fraction);
-
-  // Notifies |this| that the user has requested to clear the browser
-  // cache. This method is not called if only a subset of site entries are
-  // cleared.
-  void OnCacheCleared(const base::Time start, const base::Time end);
-
-  // When triggering previews, prevent long term black list rules.
-  void SetIgnoreLongTermBlackListRules(bool ignore_long_term_black_list_rules);
+  // When triggering previews, prevent long term black list rules. Virtual for
+  // testing.
+  virtual void SetIgnoreLongTermBlackListRules(
+      bool ignore_long_term_black_list_rules);
 
   // Returns the current network quality estimates.
   net::EffectiveConnectionType GetEffectiveConnectionType() const;
@@ -148,39 +137,62 @@ class DataReductionProxyService
   network::mojom::ConnectionType GetConnectionType() const;
 
   // Sends the given |headers| to |DataReductionProxySettings|.
-  void SetProxyRequestHeadersOnUI(const net::HttpRequestHeaders& headers);
+  void UpdateProxyRequestHeaders(const net::HttpRequestHeaders& headers);
 
-  // Sends the given |proxies| to |DataReductionProxySettings|.
-  void SetConfiguredProxiesOnUI(const net::ProxyList& proxies);
+  // Sends the given |prefetch_proxies| to |DataReductionProxySettings|.
+  void UpdatePrefetchProxyHosts(const std::vector<GURL>& prefetch_proxies);
 
-  // Sets a config client that can be used to update Data Reduction Proxy
-  // settings when the network service is enabled.
-  void SetCustomProxyConfigClient(
-      network::mojom::CustomProxyConfigClientPtrInfo config_client_info);
+  // Adds a config client that can be used to update Data Reduction Proxy
+  // settings.
+  void AddCustomProxyConfigClient(
+      mojo::Remote<network::mojom::CustomProxyConfigClient> config_client);
+
+  // Returns the percentage of data savings estimate provided by save-data for
+  // an origin.
+  double GetSaveDataSavingsPercentEstimate(const std::string& origin) const;
 
   // Accessor methods.
   DataReductionProxyCompressionStats* compression_stats() const {
     return compression_stats_.get();
   }
 
-  net::URLRequestContextGetter* url_request_context_getter() const {
-    return url_request_context_getter_;
-  }
-
-  std::unique_ptr<network::SharedURLLoaderFactoryInfo> url_loader_factory_info()
-      const {
+  std::unique_ptr<network::PendingSharedURLLoaderFactory>
+  pending_url_loader_factory() const {
     return url_loader_factory_->Clone();
   }
 
-  DataReductionProxyPingbackClient* pingback_client() const {
-    return pingback_client_.get();
+  DataReductionProxyConfig* config() const { return config_.get(); }
+
+  DataReductionProxyConfigServiceClient* config_client() const {
+    return config_client_.get();
   }
+
+  DataReductionProxyRequestOptions* request_options() const {
+    return request_options_.get();
+  }
+
+  // The production channel of this build.
+  std::string channel() const { return channel_; }
+
+  // The Client type of this build.
+  Client client() const { return client_; }
 
   base::WeakPtr<DataReductionProxyService> GetWeakPtr();
 
+  base::SequencedTaskRunner* GetDBTaskRunnerForTesting() const {
+    return db_task_runner_.get();
+  }
+
+  void SetDependenciesForTesting(
+      std::unique_ptr<DataReductionProxyConfig> config,
+      std::unique_ptr<DataReductionProxyRequestOptions> request_options,
+      std::unique_ptr<DataReductionProxyConfigServiceClient> config_client);
+
  private:
-  FRIEND_TEST_ALL_PREFIXES(DataReductionProxySettingsTest,
-                           TestLoFiSessionStateHistograms);
+  FRIEND_TEST_ALL_PREFIXES(DataReductionProxyConfigServiceClientTest,
+                           MultipleAuthFailures);
+  FRIEND_TEST_ALL_PREFIXES(DataReductionProxyConfigServiceClientTest,
+                           ValidatePersistedClientConfig);
 
   void OnEffectiveConnectionTypeChanged(
       net::EffectiveConnectionType type) override;
@@ -200,13 +212,17 @@ class DataReductionProxyService
   // NetworkConnectionTracker::NetworkConnectionObserver
   void OnConnectionChanged(network::mojom::ConnectionType type) override;
 
-  net::URLRequestContextGetter* url_request_context_getter_;
+  // Called when the list of proxies changes.
+  void OnProxyConfigUpdated();
+
+  // Stores a serialized Data Reduction Proxy configuration in preferences
+  // storage.
+  void StoreSerializedConfig(const std::string& serialized_config);
+
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   // Tracks compression statistics to be displayed to the user.
   std::unique_ptr<DataReductionProxyCompressionStats> compression_stats_;
-
-  std::unique_ptr<DataReductionProxyPingbackClient> pingback_client_;
 
   DataReductionProxySettings* settings_;
 
@@ -215,20 +231,8 @@ class DataReductionProxyService
 
   std::unique_ptr<DBDataOwner> db_data_owner_;
 
-  // Used to post tasks to |io_data_|.
-  scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
-
   // Used to post tasks to |db_data_owner_|.
   scoped_refptr<base::SequencedTaskRunner> db_task_runner_;
-
-  // A weak pointer to DataReductionProxyIOData so that UI based objects can
-  // make calls to IO based objects.
-  base::WeakPtr<DataReductionProxyIOData> io_data_;
-
-  base::ObserverList<DataReductionProxyServiceObserver>::Unchecked
-      observer_list_;
-
-  bool initialized_;
 
   // Must be accessed on UI thread. Guaranteed to be non-null during the
   // lifetime of |this|.
@@ -246,9 +250,32 @@ class DataReductionProxyService
   network::mojom::ConnectionType connection_type_ =
       network::mojom::ConnectionType::CONNECTION_UNKNOWN;
 
+  // The type of Data Reduction Proxy client.
+  const Client client_;
+
+  // Parameters including DNS names and allowable configurations.
+  std::unique_ptr<DataReductionProxyConfig> config_;
+
+  // Constructs credentials suitable for authenticating the client.
+  std::unique_ptr<DataReductionProxyRequestOptions> request_options_;
+
+  // Requests new Data Reduction Proxy configurations from a remote service.
+  // May be null.
+  std::unique_ptr<DataReductionProxyConfigServiceClient> config_client_;
+
+  // The production channel of this build.
+  const std::string channel_;
+
+  // Dictionary of save-data savings estimates by origin.
+  const base::Optional<base::Value> save_data_savings_estimate_dict_;
+
+  // The set of clients that will get updates about changes to the proxy config.
+  mojo::RemoteSet<network::mojom::CustomProxyConfigClient>
+      proxy_config_clients_;
+
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<DataReductionProxyService> weak_factory_;
+  base::WeakPtrFactory<DataReductionProxyService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DataReductionProxyService);
 };

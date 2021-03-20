@@ -38,7 +38,7 @@ class SVGTextPositioningElement : public SVGTextContentElement {
   SVGAnimatedLengthList* dy() { return dy_.Get(); }
   SVGAnimatedNumberList* rotate() { return rotate_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   SVGTextPositioningElement(const QualifiedName&, Document&);
@@ -57,7 +57,13 @@ inline bool IsSVGTextPositioningElement(const SVGElement& element) {
   return element.IsTextPositioning();
 }
 
-DEFINE_SVGELEMENT_TYPE_CASTS_WITH_FUNCTION(SVGTextPositioningElement);
+template <>
+struct DowncastTraits<SVGTextPositioningElement> {
+  static bool AllowFrom(const Node& node) {
+    auto* svg_element = DynamicTo<SVGElement>(node);
+    return svg_element && IsSVGTextPositioningElement(*svg_element);
+  }
+};
 
 }  // namespace blink
 

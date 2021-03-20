@@ -4,9 +4,6 @@
 
 import("//build/config/features.gni")
 import("//ppapi/buildflags/buildflags.gni")
-import("//services/catalog/public/tools/catalog.gni")
-import("//services/service_manager/public/cpp/service_executable.gni")
-import("//services/service_manager/public/service_manifest.gni")
 import("//testing/test.gni")
 
 source_set("lib") {
@@ -19,25 +16,18 @@ source_set("lib") {
 
   deps = [
     "//base",
-    "//components/services/font/public/interfaces",
+    "//components/services/font/public/mojom",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
     "//ppapi/buildflags:buildflags",
-    "//services/service_manager/public/cpp",
     "//third_party/fontconfig",
     "//ui/gfx",
   ]
 
-  public_deps = [
-    "//skia",
-  ]
+  public_deps = [ "//skia" ]
 
   if ((is_linux || is_os2) && enable_plugins) {
     deps += [ ":ppapi_fontconfig_matching" ]
-  }
-
-  if (is_linux) {
-    deps += [ "//base/test:fontconfig_util_linux" ]
   }
 }
 
@@ -56,42 +46,19 @@ if ((is_linux || is_os2) && enable_plugins) {
   }
 }
 
-service_executable("font_service") {
-  sources = [
-    "main.cc",
-  ]
+test("font_service_unittests") {
+  sources = [ "font_loader_unittest.cc" ]
 
   deps = [
     ":lib",
     "//base",
-    "//mojo/public/c/system",
-    "//services/service_manager/public/cpp",
-    "//services/service_manager/public/mojom",
-  ]
-}
-
-service_manifest("manifest") {
-  name = "font_service"
-  source = "manifest.json"
-}
-
-test("font_service_unittests") {
-  sources = [
-    "font_loader_unittest.cc",
-  ]
-
-  deps = [
-    ":font_service_unittests_catalog_source",
-    "//base",
     "//base/test:test_support",
     "//components/services/font/public/cpp",
-    "//components/services/font/public/interfaces",
+    "//components/services/font/public/mojom",
     "//mojo/core/test:run_all_unittests",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
     "//ppapi/buildflags:buildflags",
-    "//services/service_manager/public/cpp",
-    "//services/service_manager/public/cpp/test:test_support",
     "//skia",
     "//testing/gtest",
   ]
@@ -102,24 +69,4 @@ test("font_service_unittests") {
       "//third_party:freetype_harfbuzz",
     ]
   }
-
-  data_deps = [
-    ":font_service",
-  ]
-}
-
-service_manifest("test_manifest") {
-  name = "font_service_unittests"
-  source = "test_manifest.json"
-}
-
-catalog("font_service_unittests_catalog") {
-  embedded_services = [ ":test_manifest" ]
-  standalone_services = [ ":manifest" ]
-}
-
-catalog_cpp_source("font_service_unittests_catalog_source") {
-  testonly = true
-  catalog = ":font_service_unittests_catalog"
-  generated_function_name = "font_service::test::CreateTestCatalog"
 }

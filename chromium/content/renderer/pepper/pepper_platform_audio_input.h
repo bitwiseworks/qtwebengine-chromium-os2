@@ -56,7 +56,7 @@ class PepperPlatformAudioInput
 
   // media::AudioInputIPCDelegate.
   void OnStreamCreated(base::ReadOnlySharedMemoryRegion shared_memory_region,
-                       base::SyncSocket::Handle socket_handle,
+                       base::SyncSocket::ScopedHandle socket_handle,
                        bool initially_muted) override;
   void OnError() override;
   void OnMuted(bool is_muted) override;
@@ -77,7 +77,7 @@ class PepperPlatformAudioInput
                   PepperAudioInputHost* client);
 
   // I/O thread backends to above functions.
-  void InitializeOnIOThread(int session_id);
+  void InitializeOnIOThread(const base::UnguessableToken& session_id);
   void StartCaptureOnIOThread();
   void StopCaptureOnIOThread();
   void ShutDownOnIOThread();

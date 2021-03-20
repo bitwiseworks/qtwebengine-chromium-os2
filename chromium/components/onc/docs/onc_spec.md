@@ -194,7 +194,6 @@ warns admins of the implications of mis-using this policy for Chrome OS.
         * Cellular
         * Ethernet
         * WiFi
-        * WiMAX
         * Tether
     * List of strings containing disabled network interfaces.
 
@@ -278,11 +277,6 @@ Field **NetworkConfigurations** is an array of
     * (required if **Type** is *WiFi*, otherwise ignored) - [WiFi](#WiFi-type)
     * WiFi settings.
 
-* **WiMAX**
-    * (required if **Type** is *WiMAX*, otherwise ignored) -
-      [WiMAX](#WiMAX-type)
-    * WiMAX settings.
-
 * **Cellular**
     * (required if **Type** is *Cellular*, otherwise ignored) -
       [Cellular](#Cellular-type)
@@ -299,7 +293,6 @@ Field **NetworkConfigurations** is an array of
         * *Cellular*
         * *Ethernet*
         * *WiFi*
-        * *WiMAX*
         * *VPN*
     * Indicates which kind of connection this is.
 
@@ -430,19 +423,18 @@ static IP configuration (see **StaticIPConfig**).
     * (optional) - **array of string**
     * An array of strings, each of which is an IP block in CIDR notation,
       whose traffic should be handled by the network. Example:
-      `["10.0.0.0/8", "192.168.5.0/24"]`. If **IncludedRoutes** or
-      **ExcludedRoutes** are not specified, this network
-      will be used to handle traffic for all IPs by default. Currently this
-      property only has an effect if the Network **Type** is *VPN* and the
-      VPN **Type** is *ARCVPN*.
+      `["10.0.0.0/8", "192.168.5.0/24"]`. These routes will supplement the
+      existing routes for this network; physical networks (**Type** *Cellular*,
+      *Ethernet*, or *WiFi*) and *L2TP-IPsec* VPN networks will by default route
+      all traffic sent to them. *ARCVPN* and *ThirdPartyVPN* VPN networks have
+      routes configured by the corresponding VPN app, and *OpenVPN* VPN networks
+      have routes configured by the OpenVPN server.
 
 * **ExcludedRoutes**
     * (optional) - **array of string**
     * An array of strings, each of which is an IP block in CIDR notation,
       whose traffic should **not** be handled by the network. Example:
-      `["10.0.0.0/8", "192.168.5.0/24"]`. Currently this
-      only has an effect if the Network **Type** is *VPN* and the VPN
-      **Type** is *ARCVPN*.
+      `["10.0.0.0/8", "192.168.5.0/24"]`.
 
 * **WebProxyAutoDiscoveryUrl**
     * (optional if part of **IPConfigs**, read-only) - **string**
@@ -494,12 +486,6 @@ field **WiFi** must be set to an object of type [WiFi](#WiFi-type).
       connections. If *WEP-PSK* is used, the passphrase
       must be of the format 0x&lt;hex-number&gt;, where &lt;hex-number&gt; is
       40, 104, 128, or 232 bits.
-
-* **RoamThreshold**
-    * (optional) - **integer**
-    * The roam threshold for this network, which is the signal-to-noise value
-      (in dB) below which we will attempt to roam to a new network. If this
-      value is not set, the default value will be used.
 
 * **Security**
     * (required) - **string**
@@ -809,12 +795,24 @@ L2TP over IPsec with pre-shared key:
 
 * **CompLZO**
     * (optional, defaults to *adaptive*) - **string**
+    * DEPRECATED, use **Compress** with *lzo* option instead.
     * Decides to fast LZO compression with *true*
       and *false* as other values.
 
 * **CompNoAdapt**
     * (optional, defaults to *false*) - **boolean**
+    * DEPRECATED, do not use.
     * Disables adaptive compression.
+
+* **Compress**
+    * (optional, defaults to *None*) - **string**
+    * Specifies the compression algorithm to be used.
+    * Allowed values are:
+        * *None*
+        * *FramingOnly*
+        * *LZ4*
+        * *LZ4-V2*
+        * *LZO*
 
 * **ExtraHosts**
     * (optional) - **array of string**
@@ -824,13 +822,11 @@ L2TP over IPsec with pre-shared key:
 * **IgnoreDefaultRoute**
     * (optional, defaults to *false*) - **boolean**
     * Omits a default route to the VPN gateway while the connection is active.
-      By default, the client creates a default route to the gateway address
-      advertised by the VPN server.  Setting this value to
-      *true* will allow split tunnelling for
-      configurations where the VPN server omits explicit default routes.
-      This is roughly equivalent to omitting "redirect-gateway" OpenVPN client
-      configuration option.  If the server pushes a "redirect-gateway"
-      configuration flag to the client, this option is ignored.
+      The client will create a default route through the VPN **only** if the
+      OpenVPN server pushes a "redirect-gateway" option. Setting this value to
+      *true* will cause the client to ignore any "redirect-gateway" option
+      provided by the server, ensuring that no default route is available for
+      the VPN.
 
 * **KeyDirection**
     * (optional) - **string**
@@ -1144,7 +1140,7 @@ Every network can be configured to use a proxy.
     * (optional) - [ProxyLocation](#ProxyLocation-type)
     * settings for secure HTTP proxy.
 
-* **FTPProxy**
+* **FTPProxy (Unsupported)**
     * (optional) - [ProxyLocation](#ProxyLocation-type)
     * settings for FTP proxy
 
@@ -1277,6 +1273,11 @@ type exists to configure the authentication.
     * WiFi only. A substring which a remote RADIUS service certificate subject
       name must contain in order to connect.
 
+* **SubjectAlternativeNameMatch**
+	* (optional) - [array of AlternativeSubjectName](#AlternativeSubjectName-type)
+	* WiFi only. A list of alternative subject names to be matched against the
+    alternative subject name of an authentication server certificate.
+
 * **TLSVersionMax**
     * (optional) - **string**
     * Sets the maximum TLS protocol version used by the OS for EAP.
@@ -1307,32 +1308,18 @@ type exists to configure the authentication.
     can be set.
 ---
 
-## WiMAX Networks
+### AlternativeSubjectName type
 
-For WiMAX connections, **Type** must be set to
-*WiMAX* and the field **WiMAX** must be set to an object of
-type [WiMAX](#WiMAX-type).
-
-Currently only used for representing an existing configuration;
-ONC configuration of of **WiMAX** networks is not yet fully supported.
-
-### WiMAX type
-
-* **AutoConnect**
-    * (optional, defaults to *false*) - **boolean**
-    * Indicating that the network should be connected to automatically when
-      possible.
-
-* **EAP**
-    * (required) - [EAP](#EAP-type)
-    * EAP settings.
-
-* **SignalStrength**
-    * (optional, read-only) - **integer**
-    * The current signal strength for this network in the range [0, 100],
-      provided by the system. If the network is not in range this field will
-      be set to '0' or not present.
-
+* **Type**
+	* (required) - **string**
+	* Type of the alternative subject name.
+	* Allowed values are:
+		* *EMAIL*
+		* *DNS*
+		* *URI*
+* **Value**
+	 * (required) - **string**
+	 * Value of the alternative subject name.
 
 ## Cellular Networks
 
@@ -1470,10 +1457,6 @@ ONC configuration of of **Cellular** networks is not yet supported.
     * Properties describing the online payment portal (OLP) at which a user can
       sign up for or modify a mobile data plan.
 
-* **PRLVersion**
-    * (optional, read-only) - **integer**
-    * The revision of the Preferred Roaming List that is loaded in the modem.
-
 * **RoamingState**
     * (optional, read-only) - **string**
     * The roaming status of the cellular modem on the current network.
@@ -1513,10 +1496,6 @@ ONC configuration of of **Cellular** networks is not yet supported.
 * **SupportNetworkScan**
     * (optional, read-only) - **boolean**
     * True if the cellular network supports scanning.
-
-* **SupportedCarriers**
-    * (optional, read-only) - **array of string**
-    * A list of supported carriers.
 
 
 ### APN type
@@ -1689,6 +1668,11 @@ objects of [Certificate](#Certificate-type) type.
     * If *true*, remove this certificate (only GUID
       should be set).
 
+* **Scope**
+    * (optional, default Scope if missing) - [Scope](#Scope-type)
+    * If this is given, it specifies the scope in which the certificate should
+      be applied.
+
 * **TrustBits**
     * (optional if **Type**
         is *Server*
@@ -1729,6 +1713,21 @@ objects of [Certificate](#Certificate-type) type.
     If a global-scoped network connection refers to a user-scoped certificate,
     results are undefined, so this configuration should be prohibited by the
     configuration editor.
+
+### Scope type
+* **Id**
+    * (required if **Type** is *Extension*, otherwise ignored) - **string**
+    * If *Type* is *Extension*, this is the ID of the chrome extension for which
+      the certificate should be applied.
+* **Type**
+    * (required) - **string**
+    * Allowed values are:
+        * *Extension*
+        * *Default*
+    * *Extension* indicates that the certificate should only be applied in the
+      scope of a chrome extension.
+      *Default* indicates that the scope the certificate applies in should not
+      be restricted.
 
 
 ## Encrypted Configuration
@@ -1911,8 +1910,7 @@ particular PKCS#11 token, and tying to one OS's connection manager.
 
 In this example, we only allow managed networks to auto connect and
 disallow any other networks if a managed network is available. We also blacklist
-the "Guest" network (hex("Guest")=4775657374) and disable Cellular and WiMAX
-services.
+the "Guest" network (hex("Guest")=4775657374) and disable Cellular services.
 ```
 {
   "Type": "UnencryptedConfiguration",
@@ -1921,7 +1919,7 @@ services.
     “AllowOnlyPolicyNetworksToConnect”: false,
     “AllowOnlyPolicyNetworksToConnectIfAvailable”: true,
     “BlacklistedHexSSIDs”: [“4775657374”],
-    "DisableNetworkTypes": ["Cellular", "WiMAX"]
+    "DisableNetworkTypes": ["Cellular"]
   }
 }
 ```

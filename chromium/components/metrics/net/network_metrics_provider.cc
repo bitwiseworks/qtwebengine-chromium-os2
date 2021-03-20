@@ -6,9 +6,12 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
@@ -18,15 +21,43 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "net/base/net_errors.h"
 #include "net/nqe/effective_connection_type_observer.h"
 #include "net/nqe/network_quality_estimator.h"
 
+#if defined(OS_ANDROID)
+#include "base/metrics/histogram_functions.h"
+#include "net/android/network_library.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
+#endif
+
 #if defined(OS_CHROMEOS)
 #include "components/metrics/net/wifi_access_point_info_provider_chromeos.h"
 #endif  // OS_CHROMEOS
+
+namespace {
+
+#if defined(OS_ANDROID)
+// Log the |NCN.NetworkOperatorMCCMNC| histogram.
+void LogOperatorCodeHistogram(network::mojom::ConnectionType type) {
+  // On a connection type change to cellular, log the network operator MCC/MNC.
+  // Log zero in other cases.
+  unsigned mcc_mnc = 0;
+  if (network::NetworkConnectionTracker::IsConnectionCellular(type)) {
+    // Log zero if not perfectly converted.
+    if (!base::StringToUint(net::android::GetTelephonyNetworkOperator(),
+                            &mcc_mnc)) {
+      mcc_mnc = 0;
+    }
+  }
+  base::UmaHistogramSparse("NCN.NetworkOperatorMCCMNC", mcc_mnc);
+}
+#endif
+
+}  // namespace
 
 namespace metrics {
 
@@ -71,8 +102,7 @@ NetworkMetricsProvider::NetworkMetricsProvider(
           std::move(network_quality_estimator_provider)),
       effective_connection_type_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN),
       min_effective_connection_type_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN),
-      max_effective_connection_type_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN),
-      weak_ptr_factory_(this) {
+      max_effective_connection_type_(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN) {
   network_connection_tracker_async_getter.Run(
       base::BindOnce(&NetworkMetricsProvider::SetNetworkConnectionTracker,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -107,12 +137,29 @@ void NetworkMetricsProvider::SetNetworkConnectionTracker(
     network_connection_tracker_initialized_ = true;
 }
 
+void NetworkMetricsProvider::FinalizingMetricsLogRecord() {
+#if defined(OS_ANDROID)
+  // Metrics logged here will be included in every metrics log record.  It's not
+  // yet clear if these metrics are generally useful enough to warrant being
+  // added to the SystemProfile proto, so they are logged here as histograms for
+  // now.
+  LogOperatorCodeHistogram(connection_type_);
+  if (network::NetworkConnectionTracker::IsConnectionCellular(
+          connection_type_)) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "NCN.CellularConnectionSubtype",
+        net::NetworkChangeNotifier::GetConnectionSubtype(),
+        net::NetworkChangeNotifier::ConnectionSubtype::SUBTYPE_LAST + 1);
+  }
+#endif
+}
+
 void NetworkMetricsProvider::ProvideCurrentSessionData(
     ChromeUserMetricsExtension*) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // ProvideCurrentSessionData is called on the main thread, at the time a
   // metrics record is being finalized.
-  net::NetworkChangeNotifier::FinalizingMetricsLogRecord();
+  FinalizingMetricsLogRecord();
   LogAggregatedMetrics();
 }
 
@@ -255,7 +302,7 @@ NetworkMetricsProvider::GetWifiPHYLayerProtocol() const {
 
 void NetworkMetricsProvider::ProbeWifiPHYLayerProtocol() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},

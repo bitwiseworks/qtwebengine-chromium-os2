@@ -22,10 +22,8 @@ class CFWL_ComboList final : public CFWL_ListBox {
   // CFWL_ListBox.
   void OnProcessMessage(CFWL_Message* pMessage) override;
 
-  int32_t MatchItem(const WideString& wsMatch);
-
+  int32_t MatchItem(WideStringView wsMatch);
   void ChangeSelected(int32_t iSel);
-
   void SetNotifyOwner(bool notify) { m_bNotifyOwner = notify; }
 
  private:
@@ -37,7 +35,7 @@ class CFWL_ComboList final : public CFWL_ListBox {
   bool OnDropListKey(CFWL_MessageKey* pKey);
   void OnDropListKeyDown(CFWL_MessageKey* pKey);
 
-  bool m_bNotifyOwner;
+  bool m_bNotifyOwner = true;
 };
 
 #endif  // XFA_FWL_CFWL_COMBOLIST_H_

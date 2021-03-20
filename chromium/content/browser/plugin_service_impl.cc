@@ -20,16 +20,18 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "content/browser/child_process_security_policy_impl.h"
+#include "content/browser/plugin_list.h"
 #include "content/browser/ppapi_plugin_process_host.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_switches_internal.h"
 #include "content/common/pepper_plugin_list.h"
-#include "content/common/plugin_list.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -38,6 +40,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/process_type.h"
@@ -99,8 +102,6 @@ PluginServiceImpl* PluginServiceImpl::GetInstance() {
 }
 
 PluginServiceImpl::PluginServiceImpl() : filter_(nullptr) {
-  plugin_list_sequence_checker_.DetachFromSequence();
-
   // Collect the total number of browser processes (which create
   // PluginServiceImpl objects, to be precise). The number is used to normalize
   // the number of processes which start at least one NPAPI/PPAPI Flash process.
@@ -116,11 +117,14 @@ PluginServiceImpl::~PluginServiceImpl() {
 }
 
 void PluginServiceImpl::Init() {
-  plugin_list_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
+  plugin_list_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
-  PluginList::Singleton()->set_will_load_plugins_callback(
-      base::Bind(&WillLoadPluginsCallback, &plugin_list_sequence_checker_));
+
+  // Setup the sequence checker right after setting up the task runner.
+  plugin_list_sequence_checker_.DetachFromSequence();
+  PluginList::Singleton()->set_will_load_plugins_callback(base::BindRepeating(
+      &WillLoadPluginsCallback, &plugin_list_sequence_checker_));
 
   RegisterPepperPlugins();
 }
@@ -164,6 +168,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindPpapiBrokerProcess(
 
 PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
     int render_process_id,
+    const url::Origin& embedder_origin,
     const base::FilePath& plugin_path,
     const base::FilePath& profile_data_directory,
     const base::Optional<url::Origin>& origin_lock) {
@@ -182,20 +187,53 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
     return nullptr;
   }
 
-  // Flash has its own flavour of CORS, so CORB needs to allow all responses
-  // and rely on Flash to enforce same-origin policy.  See also
-  // https://crbug.com/874515 and https://crbug.com/816318#c5.
-  //
-  // Note that ppapi::PERMISSION_FLASH is present not only in the Flash plugin.
-  // This permission is also present in plugins added from the cmdline and so
-  // will be also present for "PPAPI Tests" plugin used for
-  // OutOfProcessPPAPITest.URLLoaderTrusted and related tests.
-  //
-  // TODO(lukasza, laforge): https://crbug.com/702995: Remove the code below
-  // once Flash support is removed from Chromium (probably around 2020 - see
-  // https://www.chromium.org/flash-roadmap).
-  if (info->permissions & ppapi::PERMISSION_FLASH)
+  // Validate that |embedder_origin| is allowed to embed the plugin.
+  if (!GetContentClient()->browser()->ShouldAllowPluginCreation(embedder_origin,
+                                                                *info)) {
+    return nullptr;
+  }
+
+  if (info->permissions & ppapi::PERMISSION_FLASH) {
+    // Flash has its own flavour of CORS, so CORB needs to allow all responses
+    // and rely on Flash to enforce same-origin policy.  See also
+    // https://crbug.com/874515 and https://crbug.com/816318#c5.
+    //
+    // Note that ppapi::PERMISSION_FLASH is present not only in the Flash
+    // plugin. This permission is also present in plugins added from the cmdline
+    // and so will be also present for "PPAPI Tests" plugin used for
+    // OutOfProcessPPAPITest.URLLoaderTrusted and related tests.
+    //
+    // TODO(lukasza, laforge): https://crbug.com/702995: Remove the code below
+    // once Flash support is removed from Chromium (probably around 2020 - see
+    // https://www.chromium.org/flash-roadmap).
     RenderProcessHostImpl::AddCorbExceptionForPlugin(render_process_id);
+  } else if (info->permissions & ppapi::PERMISSION_PDF) {
+    // We want to limit ability to bypass |request_initiator_site_lock| to
+    // trustworthy renderers.  PDF plugin is okay, because it is always hosted
+    // by the PDF extension (mhjfbmdgcfjbbpaeojofohoefgiehjai) or
+    // chrome://print, both of which we assume are trustworthy (the extension
+    // process can also host other extensions, but this is okay).
+    //
+    // The CHECKs below help verify that |render_process_id| does not host
+    // web-controlled content.  This is a defense-in-depth for verifying that
+    // ShouldAllowPluginCreation called above is doing the right thing.
+    auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+    GURL renderer_lock = policy->GetOriginLock(render_process_id);
+    CHECK(!renderer_lock.SchemeIsHTTPOrHTTPS());
+    CHECK(embedder_origin.scheme() != url::kHttpScheme);
+    CHECK(embedder_origin.scheme() != url::kHttpsScheme);
+    CHECK(!embedder_origin.opaque());
+
+    // In some scenarios, the PDF plugin can issue fetch requests that will need
+    // to be proxied by |render_process_id| - such proxying needs to bypass
+    // CORB. See also https://crbug.com/1027173.
+    //
+    // TODO(lukasza, kmoon): https://crbug.com/702993: Remove the code here once
+    // PDF support doesn't depend on PPAPI anymore.
+    DCHECK(origin_lock.has_value());
+    RenderProcessHostImpl::AddAllowedRequestInitiatorForPlugin(
+        render_process_id, origin_lock.value());
+  }
 
   PpapiPluginProcessHost* plugin_host =
       FindPpapiPluginProcess(plugin_path, profile_data_directory, origin_lock);
@@ -254,12 +292,14 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiBrokerProcess(
 
 void PluginServiceImpl::OpenChannelToPpapiPlugin(
     int render_process_id,
+    const url::Origin& embedder_origin,
     const base::FilePath& plugin_path,
     const base::FilePath& profile_data_directory,
     const base::Optional<url::Origin>& origin_lock,
     PpapiPluginProcessHost::PluginClient* client) {
   PpapiPluginProcessHost* plugin_host = FindOrStartPpapiPluginProcess(
-      render_process_id, plugin_path, profile_data_directory, origin_lock);
+      render_process_id, embedder_origin, plugin_path, profile_data_directory,
+      origin_lock);
   if (plugin_host) {
     plugin_host->OpenChannelToPlugin(client);
   } else {
@@ -273,9 +313,9 @@ void PluginServiceImpl::OpenChannelToPpapiBroker(
     int render_frame_id,
     const base::FilePath& path,
     PpapiPluginProcessHost::BrokerClient* client) {
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(&PluginServiceImpl::RecordBrokerUsage,
-                                          render_process_id, render_frame_id));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&PluginServiceImpl::RecordBrokerUsage,
+                                render_process_id, render_frame_id));
 
   PpapiPluginProcessHost* plugin_host = FindOrStartPpapiBrokerProcess(
       render_process_id, path);
@@ -293,15 +333,12 @@ bool PluginServiceImpl::GetPluginInfoArray(
     bool allow_wildcard,
     std::vector<WebPluginInfo>* plugins,
     std::vector<std::string>* actual_mime_types) {
-  bool use_stale = false;
-  PluginList::Singleton()->GetPluginInfoArray(
-      url, mime_type, allow_wildcard, &use_stale, plugins, actual_mime_types);
-  return use_stale;
+  return PluginList::Singleton()->GetPluginInfoArray(
+      url, mime_type, allow_wildcard, plugins, actual_mime_types);
 }
 
 bool PluginServiceImpl::GetPluginInfo(int render_process_id,
                                       int render_frame_id,
-                                      ResourceContext* context,
                                       const GURL& url,
                                       const url::Origin& main_frame_origin,
                                       const std::string& mime_type,
@@ -309,6 +346,7 @@ bool PluginServiceImpl::GetPluginInfo(int render_process_id,
                                       bool* is_stale,
                                       WebPluginInfo* info,
                                       std::string* actual_mime_type) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::vector<WebPluginInfo> plugins;
   std::vector<std::string> mime_types;
   bool stale = GetPluginInfoArray(
@@ -318,8 +356,8 @@ bool PluginServiceImpl::GetPluginInfo(int render_process_id,
 
   for (size_t i = 0; i < plugins.size(); ++i) {
     if (!filter_ ||
-        filter_->IsPluginAvailable(render_process_id, render_frame_id, context,
-                                   url, main_frame_origin, &plugins[i])) {
+        filter_->IsPluginAvailable(render_process_id, render_frame_id, url,
+                                   main_frame_origin, &plugins[i])) {
       *info = plugins[i];
       if (actual_mime_type)
         *actual_mime_type = mime_types[i];
@@ -414,7 +452,7 @@ static const unsigned int kMaxCrashesPerInterval = 3;
 static const unsigned int kCrashesInterval = 120;
 
 void PluginServiceImpl::RegisterPluginCrash(const base::FilePath& path) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto i = crash_times_.find(path);
   if (i == crash_times_.end()) {
     crash_times_[path] = std::vector<base::Time>();
@@ -428,7 +466,7 @@ void PluginServiceImpl::RegisterPluginCrash(const base::FilePath& path) {
 }
 
 bool PluginServiceImpl::IsPluginUnstable(const base::FilePath& path) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::map<base::FilePath, std::vector<base::Time> >::const_iterator i =
       crash_times_.find(path);
   if (i == crash_times_.end()) {

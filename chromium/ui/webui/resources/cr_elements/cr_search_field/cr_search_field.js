@@ -21,13 +21,15 @@ Polymer({
   },
 
   /** @return {!CrInputElement} */
-  getSearchInput: function() {
-    return this.$.searchInput;
+  getSearchInput() {
+    return /** @type {!CrInputElement} */ (this.$.searchInput);
   },
 
   /** @private */
-  onTapClear_: function() {
+  onTapClear_() {
     this.setValue('');
-    this.$.searchInput.focus();
+    setTimeout(() => {
+      this.$.searchInput.focus();
+    });
   },
 });

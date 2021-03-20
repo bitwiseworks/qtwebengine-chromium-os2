@@ -15,9 +15,9 @@ String HitTestCanvasResult::GetId() const {
 
 Element* HitTestCanvasResult::GetControl() const {
   return control_.Get();
-};
+}
 
-void HitTestCanvasResult::Trace(blink::Visitor* visitor) {
+void HitTestCanvasResult::Trace(Visitor* visitor) {
   visitor->Trace(control_);
 }
 

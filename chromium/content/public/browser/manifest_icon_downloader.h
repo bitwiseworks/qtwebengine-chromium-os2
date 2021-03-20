@@ -10,6 +10,7 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/global_routing_id.h"
 
 class GURL;
 class SkBitmap;
@@ -22,15 +23,15 @@ namespace content {
 
 class WebContents;
 
-// Helper class which downloads the icon located at a specified. If the icon
-// file contains multiple icons then it attempts to pick the one closest in size
-// bigger than or equal to ideal_icon_size_in_px, taking into account the
+// Helper class which downloads the icon located at a specified URL. If the
+// icon file contains multiple icons then it attempts to pick the one closest in
+// size bigger than or equal to ideal_icon_size_in_px, taking into account the
 // density of the device. If a bigger icon is chosen then, the icon is scaled
 // down to be equal to ideal_icon_size_in_px. Smaller icons will be chosen down
 // to the value specified by |minimum_icon_size_in_px|.
 class CONTENT_EXPORT ManifestIconDownloader final {
  public:
-  using IconFetchCallback = base::Callback<void(const SkBitmap&)>;
+  using IconFetchCallback = base::OnceCallback<void(const SkBitmap&)>;
 
   ManifestIconDownloader() = delete;
   ~ManifestIconDownloader() = delete;
@@ -38,11 +39,20 @@ class CONTENT_EXPORT ManifestIconDownloader final {
   // Returns whether the download has started.
   // It will return false if the current context or information do not allow to
   // download the image.
+  // |global_frame_routing_id| specifies the frame in which to initiate the
+  // download.
   static bool Download(content::WebContents* web_contents,
                        const GURL& icon_url,
                        int ideal_icon_size_in_px,
                        int minimum_icon_size_in_px,
-                       const IconFetchCallback& callback);
+                       IconFetchCallback callback,
+                       bool square_only = true,
+                       const GlobalFrameRoutingId& initiator_frame_routing_id =
+                           GlobalFrameRoutingId());
+
+  // This threshold has been chosen arbitrarily and is open to any necessary
+  // changes in the future.
+  static const int kMaxWidthToHeightRatio = 5;
 
  private:
   class DevToolsConsoleHelper;
@@ -51,20 +61,23 @@ class CONTENT_EXPORT ManifestIconDownloader final {
   // download failed.
   static void OnIconFetched(int ideal_icon_size_in_px,
                             int minimum_icon_size_in_px,
+                            bool square_only,
                             DevToolsConsoleHelper* console_helper,
-                            const IconFetchCallback& callback,
+                            IconFetchCallback callback,
                             int id,
                             int http_status_code,
                             const GURL& url,
                             const std::vector<SkBitmap>& bitmaps,
                             const std::vector<gfx::Size>& sizes);
 
-  static void ScaleIcon(int ideal_icon_size_in_px,
+  static void ScaleIcon(int ideal_icon_width_in_px,
+                        int ideal_icon_height_in_px,
                         const SkBitmap& bitmap,
-                        const IconFetchCallback& callback);
+                        IconFetchCallback callback);
 
   static int FindClosestBitmapIndex(int ideal_icon_size_in_px,
                                     int minimum_icon_size_in_px,
+                                    bool square_only,
                                     const std::vector<SkBitmap>& bitmaps);
 
   friend class ManifestIconDownloaderTest;

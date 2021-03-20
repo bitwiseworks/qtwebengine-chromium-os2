@@ -72,13 +72,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_POD_RED_BLACK_TREE_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_POD_RED_BLACK_TREE_H_
 
+#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
 #include "third_party/blink/renderer/platform/wtf/pod_free_list_arena.h"
 #ifndef NDEBUG
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #endif
@@ -240,7 +239,6 @@ class PODRedBlackTree {
   // they store in it.
   class Node {
     DISALLOW_NEW();
-    WTF_MAKE_NONCOPYABLE(Node);
 
    public:
     // Constructor. Newly-created nodes are colored red.
@@ -258,6 +256,7 @@ class PODRedBlackTree {
 
     // Fetches the user data.
     T& Data() { return data_; }
+    T const& Data() const { return data_; }
 
     // Copies all user-level fields from the source node, but not
     // internal fields. For example, the base implementation of this
@@ -267,13 +266,16 @@ class PODRedBlackTree {
     // superclass implementation.
     virtual void CopyFrom(Node* src) { data_ = src->Data(); }
 
-    Node* Left() const { return left_; }
+    Node* Left() { return left_; }
+    Node const* Left() const { return left_; }
     void SetLeft(Node* node) { left_ = node; }
 
-    Node* Right() const { return right_; }
+    Node const* Right() const { return right_; }
+    Node* Right() { return right_; }
     void SetRight(Node* node) { right_ = node; }
 
-    Node* Parent() const { return parent_; }
+    Node const* Parent() const { return parent_; }
+    Node* Parent() { return parent_; }
     void SetParent(Node* node) { parent_ = node; }
 
    private:
@@ -282,6 +284,8 @@ class PODRedBlackTree {
     Node* parent_;
     NodeColor color_;
     T data_;
+
+    DISALLOW_COPY_AND_ASSIGN(Node);
   };
 
  protected:
@@ -704,7 +708,6 @@ class PODRedBlackTree {
   // A Visitor which simply counts the number of visited elements.
   class Counter final : public Visitor {
     DISALLOW_NEW();
-    WTF_MAKE_NONCOPYABLE(Counter);
 
    public:
     Counter() : count_(0) {}
@@ -714,6 +717,8 @@ class PODRedBlackTree {
 
    private:
     int count_;
+
+    DISALLOW_COPY_AND_ASSIGN(Counter);
   };
 
   //----------------------------------------------------------------------

@@ -4,11 +4,16 @@
 
 '''GRIT tool that runs the unit test suite for GRIT.'''
 
+from __future__ import print_function
+
 import getopt
 import sys
 import unittest
 
-import grit.test_suite_all
+try:
+  import grit.test_suite_all
+except ImportError:
+  pass
 from grit.tool import interface
 
 
@@ -31,7 +36,7 @@ This happens in the environment that is set up by the basic GRIT runner.'''
   def Run(self, opts, args):
     args = self.ParseOptions(args)
     if args:
-      print 'This tool takes no arguments.'
+      print('This tool takes no arguments.')
       return 2
 
     return unittest.TextTestRunner(verbosity=2).run(

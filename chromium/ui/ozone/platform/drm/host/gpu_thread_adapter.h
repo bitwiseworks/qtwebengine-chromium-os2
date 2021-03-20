@@ -8,14 +8,13 @@
 #include "base/file_descriptor_posix.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
-#include "ui/ozone/public/overlay_candidates_ozone.h"
 
 namespace ui {
 
 class DrmDisplayHostManager;
-class DrmOverlayManager;
 class GpuThreadObserver;
 
 // Provides the services that the various host components need
@@ -37,19 +36,11 @@ class GpuThreadAdapter {
   virtual bool GpuTakeDisplayControl() = 0;
   virtual bool GpuRefreshNativeDisplays() = 0;
   virtual bool GpuRelinquishDisplayControl() = 0;
-  virtual bool GpuAddGraphicsDevice(const base::FilePath& path,
-                                    base::ScopedFD fd) = 0;
+  virtual bool GpuAddGraphicsDeviceOnUIThread(const base::FilePath& path,
+                                              base::ScopedFD fd) = 0;
+  virtual void GpuAddGraphicsDeviceOnIOThread(const base::FilePath& path,
+                                              base::ScopedFD fd) = 0;
   virtual bool GpuRemoveGraphicsDevice(const base::FilePath& path) = 0;
-
-  // Methods for DrmOverlayManager.
-  virtual void RegisterHandlerForDrmOverlayManager(
-      DrmOverlayManager* handler) = 0;
-  virtual void UnRegisterHandlerForDrmOverlayManager() = 0;
-
-  // Services needed by DrmOverlayManager
-  virtual bool GpuCheckOverlayCapabilities(
-      gfx::AcceleratedWidget widget,
-      const OverlaySurfaceCandidateList& overlays) = 0;
 
   // Services needed by DrmDisplayHost
   virtual bool GpuConfigureNativeDisplay(
@@ -66,10 +57,12 @@ class GpuThreadAdapter {
       int64_t display_id,
       const std::vector<display::GammaRampRGBEntry>& degamma_lut,
       const std::vector<display::GammaRampRGBEntry>& gamma_lut) = 0;
+  virtual bool GpuSetPrivacyScreen(int64_t display_id, bool enabled) = 0;
 
   // Services needed by DrmWindowHost
   virtual bool GpuDestroyWindow(gfx::AcceleratedWidget widget) = 0;
-  virtual bool GpuCreateWindow(gfx::AcceleratedWidget widget) = 0;
+  virtual bool GpuCreateWindow(gfx::AcceleratedWidget widget,
+                               const gfx::Rect& initial_bounds) = 0;
   virtual bool GpuWindowBoundsChanged(gfx::AcceleratedWidget widget,
                                       const gfx::Rect& bounds) = 0;
 };

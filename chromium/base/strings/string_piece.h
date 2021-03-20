@@ -47,12 +47,6 @@ namespace base {
 // template internal to the .cc file.
 namespace internal {
 
-BASE_EXPORT void CopyToString(const StringPiece& self, std::string* target);
-BASE_EXPORT void CopyToString(const StringPiece16& self, string16* target);
-
-BASE_EXPORT void AppendToString(const StringPiece& self, std::string* target);
-BASE_EXPORT void AppendToString(const StringPiece16& self, string16* target);
-
 BASE_EXPORT size_t copy(const StringPiece& self,
                         char* buf,
                         size_t n,
@@ -141,21 +135,12 @@ BASE_EXPORT StringPiece16 substr(const StringPiece16& self,
                                  size_t pos,
                                  size_t n);
 
-#if DCHECK_IS_ON()
-// Asserts that begin <= end to catch some errors with iterator usage.
-BASE_EXPORT void AssertIteratorsInOrder(std::string::const_iterator begin,
-                                        std::string::const_iterator end);
-BASE_EXPORT void AssertIteratorsInOrder(string16::const_iterator begin,
-                                        string16::const_iterator end);
-#endif
-
 }  // namespace internal
 
 // BasicStringPiece ------------------------------------------------------------
 
 // Defines the types, methods, operators, and data members common to both
-// StringPiece and StringPiece16. Do not refer to this class directly, but
-// rather to BasicStringPiece, StringPiece, or StringPiece16.
+// StringPiece and StringPiece16.
 //
 // This is templatized by string class type rather than character type, so
 // BasicStringPiece<std::string> or BasicStringPiece<base::string16>.
@@ -177,8 +162,12 @@ template <typename STRING_TYPE> class BasicStringPiece {
   // We provide non-explicit singleton constructors so users can pass
   // in a "const char*" or a "string" wherever a "StringPiece" is
   // expected (likewise for char16, string16, StringPiece16).
+#if defined(COMPILER_GCC)
+  constexpr BasicStringPiece() __attribute__((always_inline)) : ptr_(NULL), length_(0) {}
+#else
   constexpr BasicStringPiece() : ptr_(NULL), length_(0) {}
-  // TODO(dcheng): Construction from nullptr is not allowed for
+#endif
+  // TODO(crbug.com/1049498): Construction from nullptr is not allowed for
   // std::basic_string_view, so remove the special handling for it.
   // Note: This doesn't just use STRING_TYPE::traits_type::length(), since that
   // isn't constexpr until C++17.
@@ -188,17 +177,30 @@ template <typename STRING_TYPE> class BasicStringPiece {
   constexpr BasicStringPiece(const value_type* str)
 #endif
       : ptr_(str), length_(!str ? 0 : CharTraits<value_type>::length(str)) {}
+  // Explicitly disallow construction from nullptr. Note that this does not
+  // catch construction from runtime strings that might be null.
+  // Note: The following is just a more elaborate way of spelling
+  // `BasicStringPiece(nullptr_t) = delete`, but unfortunately the terse form is
+  // not supported by the PNaCl toolchain.
+  // TODO(crbug.com/1049498): Remove once we CHECK(str) in the constructor
+  // above.
+  template <class T, class = std::enable_if_t<std::is_null_pointer<T>::value>>
+  BasicStringPiece(T) {
+    static_assert(sizeof(T) == 0,  // Always false.
+                  "StringPiece does not support construction from nullptr, use "
+                  "the default constructor instead.");
+  }
   BasicStringPiece(const STRING_TYPE& str)
       : ptr_(str.data()), length_(str.size()) {}
+#if defined(COMPILER_GCC)
+  constexpr BasicStringPiece(const value_type* offset, size_type len) __attribute__((always_inline))
+#else
   constexpr BasicStringPiece(const value_type* offset, size_type len)
+#endif
       : ptr_(offset), length_(len) {}
   BasicStringPiece(const typename STRING_TYPE::const_iterator& begin,
                    const typename STRING_TYPE::const_iterator& end) {
-#if DCHECK_IS_ON()
-    // This assertion is done out-of-line to avoid bringing in logging.h and
-    // instantiating logging macros for every instantiation.
-    internal::AssertIteratorsInOrder(begin, end);
-#endif
+    DCHECK(begin <= end) << "StringPiece iterators swapped or invalid.";
     length_ = static_cast<size_t>(std::distance(begin, end));
 
     // The length test before assignment is to avoid dereferencing an iterator
@@ -214,19 +216,6 @@ template <typename STRING_TYPE> class BasicStringPiece {
   constexpr size_type size() const noexcept { return length_; }
   constexpr size_type length() const noexcept { return length_; }
   bool empty() const { return length_ == 0; }
-
-  void clear() {
-    ptr_ = NULL;
-    length_ = 0;
-  }
-  void set(const value_type* data, size_type len) {
-    ptr_ = data;
-    length_ = len;
-  }
-  void set(const value_type* str) {
-    ptr_ = str;
-    length_ = str ? STRING_TYPE::traits_type::length(str) : 0;
-  }
 
   constexpr value_type operator[](size_type i) const {
     CHECK(i < length_);
@@ -283,16 +272,6 @@ template <typename STRING_TYPE> class BasicStringPiece {
 
   size_type max_size() const { return length_; }
   size_type capacity() const { return length_; }
-
-  // Sets the value of the given string target type to be the current string.
-  // This saves a temporary over doing |a = b.as_string()|
-  void CopyToString(STRING_TYPE* target) const {
-    internal::CopyToString(*this, target);
-  }
-
-  void AppendToString(STRING_TYPE* target) const {
-    internal::AppendToString(*this, target);
-  }
 
   size_type copy(value_type* buf, size_type n, size_type pos = 0) const {
     return internal::copy(*this, buf, n, pos);
@@ -521,6 +500,9 @@ constexpr bool operator>=(std::common_type_t<BasicStringPiece<StringT>> lhs,
 BASE_EXPORT std::ostream& operator<<(std::ostream& o,
                                      const StringPiece& piece);
 
+BASE_EXPORT std::ostream& operator<<(std::ostream& o,
+                                     const StringPiece16& piece);
+
 // Hashing ---------------------------------------------------------------------
 
 // We provide appropriate hash functions so StringPiece and StringPiece16 can
@@ -529,28 +511,20 @@ BASE_EXPORT std::ostream& operator<<(std::ostream& o,
 // This hash function is copied from base/strings/string16.h. We don't use the
 // ones already defined for string and string16 directly because it would
 // require the string constructors to be called, which we don't want.
-#define HASH_STRING_PIECE(StringPieceType, string_piece)         \
-  std::size_t result = 0;                                        \
-  for (StringPieceType::const_iterator i = string_piece.begin(); \
-       i != string_piece.end(); ++i)                             \
-    result = (result * 131) + *i;                                \
-  return result;
 
-struct StringPieceHash {
-  std::size_t operator()(const StringPiece& sp) const {
-    HASH_STRING_PIECE(StringPiece, sp);
+template <typename StringPieceType>
+struct StringPieceHashImpl {
+  std::size_t operator()(StringPieceType sp) const {
+    std::size_t result = 0;
+    for (auto c : sp)
+      result = (result * 131) + c;
+    return result;
   }
 };
-struct StringPiece16Hash {
-  std::size_t operator()(const StringPiece16& sp16) const {
-    HASH_STRING_PIECE(StringPiece16, sp16);
-  }
-};
-struct WStringPieceHash {
-  std::size_t operator()(const WStringPiece& wsp) const {
-    HASH_STRING_PIECE(WStringPiece, wsp);
-  }
-};
+
+using StringPieceHash = StringPieceHashImpl<StringPiece>;
+using StringPiece16Hash = StringPieceHashImpl<StringPiece16>;
+using WStringPieceHash = StringPieceHashImpl<WStringPiece>;
 
 }  // namespace base
 

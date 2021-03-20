@@ -17,7 +17,7 @@ const NetworkConfigElementBehavior = {
 
     /**
      * Network managed property associated with the config element.
-     * @type {?CrOnc.ManagedProperty}
+     * @type {?OncMojo.ManagedProperty}
      */
     property: {
       type: Object,
@@ -27,11 +27,11 @@ const NetworkConfigElementBehavior = {
 
   /**
    * @param {boolean} disabled
-   * @param {?CrOnc.ManagedProperty} property
+   * @param {?OncMojo.ManagedProperty} property
    * @return {boolean} True if the element should be disabled.
    * @private
    */
-  getDisabled_: function(disabled, property) {
+  getDisabled_(disabled, property) {
     return disabled || (!!property && this.isNetworkPolicyEnforced(property));
   },
 };

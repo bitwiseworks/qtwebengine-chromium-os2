@@ -34,17 +34,17 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/public/common/indexeddb/web_idb_types.h"
-#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_blob_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/modules/v8/idb_object_store_or_idb_index.h"
 #include "third_party/blink/renderer/bindings/modules/v8/idb_object_store_or_idb_index_or_idb_cursor.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/dom_string_list.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/event_queue.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_any.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_transaction.h"
@@ -55,7 +55,6 @@
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -67,7 +66,7 @@ class IDBValue;
 
 class MODULES_EXPORT IDBRequest : public EventTargetWithInlineData,
                                   public ActiveScriptWrappable<IDBRequest>,
-                                  public ContextLifecycleObserver {
+                                  public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(IDBRequest);
 
@@ -75,20 +74,21 @@ class MODULES_EXPORT IDBRequest : public EventTargetWithInlineData,
   using Source = IDBObjectStoreOrIDBIndexOrIDBCursor;
   // Container for async tracing state.
   //
-  // The documentation for TRACE_EVENT_ASYNC_{BEGIN,END} suggests identifying
-  // trace events by using pointers or a counter that is always incremented on
-  // the same thread. This is not viable for IndexedDB, because the same object
-  // can result in multiple trace events (requests associated with cursors), and
-  // IndexedDB can be used from multiple threads in the same renderer (workers).
-  // Furthermore, we want to record the beginning event of an async trace right
-  // when we start serving an IDB API call, before the IDBRequest object is
-  // created, so we can't rely on information in an IDBRequest.
+  // The documentation for TRACE_EVENT_NESTABLE_ASYNC_{BEGIN,END} suggests
+  // identifying trace events by using pointers or a counter that is always
+  // incremented on the same thread. This is not viable for IndexedDB, because
+  // the same object can result in multiple trace events (requests associated
+  // with cursors), and IndexedDB can be used from multiple threads in the same
+  // renderer (workers). Furthermore, we want to record the beginning event of
+  // an async trace right when we start serving an IDB API call, before the
+  // IDBRequest object is created, so we can't rely on information in an
+  // IDBRequest.
   //
   // This class solves the ID uniqueness problem by relying on an atomic counter
   // to generating unique IDs in a threadsafe manner. The atomic machinery is
   // used when tracing is enabled. The recording problem is solved by having
   // instances of this class store the information needed to record async trace
-  // end events (via TRACE_EVENT_ASYNC_END).
+  // end events (via TRACE_EVENT_NESTABLE_ASYNC_END).
   //
   // From a mechanical perspective, creating an AsyncTraceState instance records
   // the beginning event of an async trace. The instance is then moved into an
@@ -180,7 +180,7 @@ class MODULES_EXPORT IDBRequest : public EventTargetWithInlineData,
   IDBRequest(ScriptState*, const Source&, IDBTransaction*, AsyncTraceState);
   ~IDBRequest() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   v8::Isolate* GetIsolate() const { return isolate_; }
   ScriptValue result(ScriptState*, ExceptionState&);
@@ -218,8 +218,8 @@ class MODULES_EXPORT IDBRequest : public EventTargetWithInlineData,
   WebIDBCallbacks* WebCallbacks() const { return web_callbacks_; }
 #endif  // DCHECK_IS_ON()
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(success, kSuccess);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(success, kSuccess)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError)
 
   void SetCursorDetails(indexed_db::CursorType, mojom::IDBCursorDirection);
   void SetPendingCursor(IDBCursor*);
@@ -292,8 +292,8 @@ class MODULES_EXPORT IDBRequest : public EventTargetWithInlineData,
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  // ContextLifecycleObserver
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver
+  void ContextDestroyed() override;
 
   // EventTarget
   const AtomicString& InterfaceName() const override;

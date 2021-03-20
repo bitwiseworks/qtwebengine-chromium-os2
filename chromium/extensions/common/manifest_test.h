@@ -39,11 +39,6 @@ class ManifestTest : public testing::Test {
 
     ManifestData(ManifestData&& other);
 
-    // DEPRECATED. Use one of the above constructors.
-    ManifestData(base::Value* manifest, const char* name);
-    explicit ManifestData(std::unique_ptr<base::Value> manifest,
-                          const char* name);
-
     ~ManifestData();
 
     const std::string& name() const { return name_; }
@@ -87,16 +82,20 @@ class ManifestTest : public testing::Test {
 
   scoped_refptr<extensions::Extension> LoadAndExpectWarning(
       const ManifestData& manifest,
-      const std::string& expected_error,
-      extensions::Manifest::Location location =
-          extensions::Manifest::INTERNAL,
+      const std::string& expected_warning,
+      extensions::Manifest::Location location = extensions::Manifest::INTERNAL,
       int flags = extensions::Extension::NO_FLAGS);
 
   scoped_refptr<extensions::Extension> LoadAndExpectWarning(
       char const* manifest_name,
-      const std::string& expected_error,
-      extensions::Manifest::Location location =
-          extensions::Manifest::INTERNAL,
+      const std::string& expected_warning,
+      extensions::Manifest::Location location = extensions::Manifest::INTERNAL,
+      int flags = extensions::Extension::NO_FLAGS);
+
+  scoped_refptr<extensions::Extension> LoadAndExpectWarnings(
+      char const* manifest_name,
+      const std::vector<std::string>& expected_warnings,
+      extensions::Manifest::Location location = extensions::Manifest::INTERNAL,
       int flags = extensions::Extension::NO_FLAGS);
 
   void VerifyExpectedError(extensions::Extension* extension,

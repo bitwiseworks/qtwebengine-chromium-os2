@@ -6,8 +6,10 @@
 #define COMPONENTS_PAYMENTS_CORE_JOURNEY_LOGGER_H_
 
 #include <string>
+#include <unordered_map>
 
 #include "base/macros.h"
+#include "base/time/time.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
 namespace payments {
@@ -40,6 +42,7 @@ class JourneyLogger {
     COMPLETION_STATUS_COMPLETED = 0,
     COMPLETION_STATUS_USER_ABORTED = 1,
     COMPLETION_STATUS_OTHER_ABORTED = 2,
+    COMPLETION_STATUS_COULD_NOT_SHOW = 3,
     COMPLETION_STATUS_MAX,
   };
 
@@ -91,7 +94,21 @@ class JourneyLogger {
     EVENT_SELECTED_CREDIT_CARD = 1 << 18,
     EVENT_SELECTED_GOOGLE = 1 << 19,
     EVENT_SELECTED_OTHER = 1 << 20,
-    EVENT_ENUM_MAX = 2097152,
+    // hasEnrolledInstrument was called with a result of "true" or "false",
+    // respectively. An absence of both events means hasEnrolledInstrument was
+    // not called, or the user was in incognito mode.
+    EVENT_HAS_ENROLLED_INSTRUMENT_TRUE = 1 << 21,
+    EVENT_HAS_ENROLLED_INSTRUMENT_FALSE = 1 << 22,
+    // True when a NotShownReason is set.
+    EVENT_COULD_NOT_SHOW = 1 << 23,
+    EVENT_NEEDS_COMPLETION_CONTACT_INFO = 1 << 24,
+    EVENT_NEEDS_COMPLETION_PAYMENT = 1 << 25,
+    EVENT_NEEDS_COMPLETION_SHIPPING = 1 << 26,
+    // Payment apps available (after JIT crawling) at the time show() is called.
+    EVENT_AVAILABLE_METHOD_BASIC_CARD = 1 << 27,
+    EVENT_AVAILABLE_METHOD_GOOGLE = 1 << 28,
+    EVENT_AVAILABLE_METHOD_OTHER = 1 << 29,
+    EVENT_ENUM_MAX = 1 << 30,
   };
 
   // The reason why the Payment Request was aborted.
@@ -123,7 +140,19 @@ class JourneyLogger {
     NOT_SHOWN_REASON_MAX = 4,
   };
 
-  JourneyLogger(bool is_incognito, ukm::SourceId source_id);
+  // Transactions fall in one of the following categories after converting to
+  // USD.
+  enum class TransactionSize {
+    // 0$ transactions.
+    kZeroTransaction = 0,
+    // Transaction value <= 1$.
+    kMicroTransaction = 1,
+    // Transaction value > 1$.
+    kRegularTransaction = 2,
+    kMaxValue = kRegularTransaction,
+  };
+
+  JourneyLogger(bool is_incognito, ukm::SourceId payment_request_source_id);
   ~JourneyLogger();
 
   // Increments the number of selection adds for the specified section.
@@ -140,9 +169,13 @@ class JourneyLogger {
                                    int number,
                                    bool has_valid_suggestion);
 
-  // Records the fact that the merchant called CanMakePayment and records it's
+  // Records the fact that the merchant called CanMakePayment and records its
   // return value.
   void SetCanMakePaymentValue(bool value);
+
+  // Records the fact that the merchant called HasEnrolledInstrument and records
+  // its return value.
+  void SetHasEnrolledInstrumentValue(bool value);
 
   // Records that an event occurred.
   void SetEventOccurred(Event event);
@@ -172,6 +205,18 @@ class JourneyLogger {
   // Records that the Payment Request was not shown to the user, along with the
   // reason.
   void SetNotShown(NotShownReason reason);
+
+  // Records the transcation amount after converting to USD separated by
+  // completion status (complete vs triggered).
+  void RecordTransactionAmount(std::string currency,
+                               const std::string& value,
+                               bool completed);
+
+  // Records when Payment Request .show is called.
+  void SetTriggerTime();
+
+  // Sets the ukm source id of the selected app when it gets invoked.
+  void SetPaymentAppUkmSourceId(ukm::SourceId payment_app_source_id);
 
  private:
   static const int NUMBER_OF_SECTIONS = 3;
@@ -216,8 +261,17 @@ class JourneyLogger {
   // Payment Request.
   void RecordEventsMetric(CompletionStatus completion_status);
 
+  // Records the time between request.show() and request completion/abort.
+  void RecordTimeToCheckout(CompletionStatus completion_status) const;
+
+  // Validates the recorded event sequence during the Payment Request.
+  void ValidateEventBits() const;
+
   // Returns whether this Payment Request was triggered (shown or skipped show).
   bool WasPaymentRequestTriggered();
+
+  // Sets needs completion bit in events_ bit field for the given section.
+  void SetSectionNeedsCompletion(Section section);
 
   SectionStats sections_[NUMBER_OF_SECTIONS];
   bool has_recorded_ = false;
@@ -226,7 +280,16 @@ class JourneyLogger {
   // Accumulates the many events that have happened during the Payment Request.
   int events_;
 
-  ukm::SourceId source_id_;
+  // Keeps track of whether transaction amounts are recorded or not to catch
+  // multiple recording. Triggered is the first index and Completed the second.
+  bool has_recorded_transaction_amount_[2] = {false};
+
+  // Stores the time that request.show() is called. This is used to record
+  // checkout duration.
+  base::TimeTicks trigger_time_;
+
+  ukm::SourceId payment_request_source_id_;
+  ukm::SourceId payment_app_source_id_ = ukm::kInvalidSourceId;
 
   DISALLOW_COPY_AND_ASSIGN(JourneyLogger);
 };

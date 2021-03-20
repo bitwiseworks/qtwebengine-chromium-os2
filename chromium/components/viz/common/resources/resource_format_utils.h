@@ -5,22 +5,23 @@
 #ifndef COMPONENTS_VIZ_COMMON_RESOURCES_RESOURCE_FORMAT_UTILS_H_
 #define COMPONENTS_VIZ_COMMON_RESOURCES_RESOURCE_FORMAT_UTILS_H_
 
+#include <dawn/webgpu_cpp.h>
+#include <dawn/webgpu.h>
+
 #include "components/viz/common/resources/resource_format.h"
 #include "components/viz/common/viz_resource_format_export.h"
 #include "gpu/vulkan/buildflags.h"
+#include "skia/buildflags.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/gpu/GrTypes.h"
 #include "ui/gfx/buffer_types.h"
-
-#if BUILDFLAG(ENABLE_VULKAN)
-#include "third_party/vulkan/include/vulkan/vulkan.h"
-#endif
 
 namespace viz {
 
 VIZ_RESOURCE_FORMAT_EXPORT SkColorType
 ResourceFormatToClosestSkColorType(bool gpu_compositing, ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT int BitsPerPixel(ResourceFormat format);
+VIZ_RESOURCE_FORMAT_EXPORT bool HasAlpha(ResourceFormat format);
 
 // The following functions use unsigned int instead of GLenum, since including
 // third_party/khronos/GLES2/gl2.h causes redefinition errors as
@@ -57,9 +58,12 @@ GetResourceFormat(gfx::BufferFormat format);
 
 VIZ_RESOURCE_FORMAT_EXPORT bool GLSupportsFormat(ResourceFormat format);
 
-#if BUILDFLAG(ENABLE_VULKAN)
-VIZ_RESOURCE_FORMAT_EXPORT VkFormat ToVkFormat(ResourceFormat format);
-#endif
+VIZ_RESOURCE_FORMAT_EXPORT wgpu::TextureFormat ToDawnFormat(
+    ResourceFormat format);
+// Same as ToDawnFormat, except it casts from wgpu::TextureFormat to
+// WGPUTextureFormat instead.
+VIZ_RESOURCE_FORMAT_EXPORT WGPUTextureFormat
+ToWGPUFormat(ResourceFormat format);
 
 }  // namespace viz
 

@@ -16,7 +16,7 @@
 #include "base/bind_helpers.h"
 #include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "media/base/audio_renderer_mixer_input.h"
 #include "media/base/audio_renderer_mixer_pool.h"
@@ -77,8 +77,8 @@ class AudioRendererMixerTest
     EXPECT_CALL(*sink_.get(), Start());
     EXPECT_CALL(*sink_.get(), Stop());
 
-    mixer_.reset(
-        new AudioRendererMixer(output_parameters_, sink_, base::Bind(&LogUma)));
+    mixer_.reset(new AudioRendererMixer(output_parameters_, sink_,
+                                        base::BindRepeating(&LogUma)));
     mixer_callback_ = sink_->callback();
 
     audio_bus_ = AudioBus::Create(output_parameters_);
@@ -97,7 +97,7 @@ class AudioRendererMixerTest
                                const OutputDeviceInfo& sink_info,
                                scoped_refptr<AudioRendererSink> sink) final {
     return mixer_.get();
-  };
+  }
 
   void ReturnMixer(AudioRendererMixer* mixer) override {
     EXPECT_EQ(mixer_.get(), mixer);
@@ -351,7 +351,7 @@ class AudioRendererMixerTest
  protected:
   virtual ~AudioRendererMixerTest() = default;
 
-  base::test::ScopedTaskEnvironment task_env_;
+  base::test::TaskEnvironment task_env_;
   scoped_refptr<MockAudioRendererSink> sink_;
   std::unique_ptr<AudioRendererMixer> mixer_;
   AudioRendererSink::RenderCallback* mixer_callback_;
@@ -525,8 +525,8 @@ TEST_P(AudioRendererMixerBehavioralTest, MixerPausesStream) {
   mixer_inputs_[0]->Stop();
 }
 
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     AudioRendererMixerTest,
     testing::Values(
         // No resampling, 1 input sample rate.
@@ -559,8 +559,8 @@ INSTANTIATE_TEST_CASE_P(
 // Test cases for behavior which is independent of parameters.  Values() doesn't
 // support single item lists and we don't want these test cases to run for every
 // parameter set.
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     AudioRendererMixerBehavioralTest,
     testing::ValuesIn(std::vector<AudioRendererMixerTestData>(
         1,

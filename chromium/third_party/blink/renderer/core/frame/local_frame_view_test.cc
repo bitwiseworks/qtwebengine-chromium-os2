@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -28,7 +29,7 @@ using testing::AnyNumber;
 namespace blink {
 namespace {
 
-class AnimationMockChromeClient : public EmptyChromeClient {
+class AnimationMockChromeClient : public RenderingTestChromeClient {
  public:
   AnimationMockChromeClient() : has_scheduled_animation_(false) {}
 
@@ -42,7 +43,8 @@ class AnimationMockChromeClient : public EmptyChromeClient {
     MockSetToolTip(&frame, tooltip_text, dir);
   }
 
-  void ScheduleAnimation(const LocalFrameView*) override {
+  void ScheduleAnimation(const LocalFrameView*,
+                         base::TimeDelta = base::TimeDelta()) override {
     has_scheduled_animation_ = true;
   }
   bool has_scheduled_animation_;
@@ -51,7 +53,7 @@ class AnimationMockChromeClient : public EmptyChromeClient {
 class LocalFrameViewTest : public RenderingTest {
  protected:
   LocalFrameViewTest()
-      : RenderingTest(SingleChildLocalFrameClient::Create()),
+      : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()),
         chrome_client_(MakeGarbageCollected<AnimationMockChromeClient>()) {
     EXPECT_CALL(GetAnimationMockChromeClient(), AttachRootGraphicsLayer(_, _))
         .Times(AnyNumber());
@@ -61,11 +63,13 @@ class LocalFrameViewTest : public RenderingTest {
     testing::Mock::VerifyAndClearExpectations(&GetAnimationMockChromeClient());
   }
 
-  ChromeClient& GetChromeClient() const override { return *chrome_client_; }
+  RenderingTestChromeClient& GetChromeClient() const override {
+    return *chrome_client_;
+  }
 
   void SetUp() override {
-    RenderingTest::SetUp();
     EnableCompositing();
+    RenderingTest::SetUp();
   }
 
   AnimationMockChromeClient& GetAnimationMockChromeClient() const {
@@ -111,16 +115,16 @@ TEST_F(LocalFrameViewTest, HideTooltipWhenScrollPositionChanges) {
 
   EXPECT_CALL(GetAnimationMockChromeClient(),
               MockSetToolTip(GetDocument().GetFrame(), String(), _));
-  GetDocument().View()->LayoutViewport()->SetScrollOffset(ScrollOffset(1, 1),
-                                                          kUserScroll);
+  GetDocument().View()->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(1, 1), mojom::blink::ScrollType::kUser);
 
   // Programmatic scrolling should not dismiss the tooltip, so setToolTip
   // should not be called for this invocation.
   EXPECT_CALL(GetAnimationMockChromeClient(),
               MockSetToolTip(GetDocument().GetFrame(), String(), _))
       .Times(0);
-  GetDocument().View()->LayoutViewport()->SetScrollOffset(ScrollOffset(2, 2),
-                                                          kProgrammaticScroll);
+  GetDocument().View()->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(2, 2), mojom::blink::ScrollType::kProgrammatic);
 }
 
 // NoOverflowInIncrementVisuallyNonEmptyPixelCount tests fail if the number of
@@ -154,8 +158,8 @@ TEST_F(LocalFrameViewTest,
   sticky->Layer()->UpdateAncestorOverflowLayer(nullptr);
 
   // This call should not crash.
-  GetDocument().View()->LayoutViewport()->SetScrollOffset(ScrollOffset(0, 100),
-                                                          kProgrammaticScroll);
+  GetDocument().View()->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(0, 100), mojom::blink::ScrollType::kProgrammatic);
 }
 
 TEST_F(LocalFrameViewTest, UpdateLifecyclePhasesForPrintingDetachedFrame) {
@@ -174,104 +178,137 @@ TEST_F(LocalFrameViewTest, UpdateLifecyclePhasesForPrintingDetachedFrame) {
   EXPECT_TRUE(child_layout_view->FirstFragment().PaintProperties());
 }
 
-class LocalFrameViewSimTest : public SimTest {
-  void SetUp() override {
-    SimTest::SetUp();
-    RuntimeEnabledFeatures::SetCSSFragmentIdentifiersEnabled(true);
-  }
-};
+TEST_F(LocalFrameViewTest, CanHaveScrollbarsIfScrollingAttrEqualsNoChanged) {
+  SetBodyInnerHTML("<iframe scrolling='no'></iframe>");
+  EXPECT_FALSE(ChildDocument().View()->CanHaveScrollbars());
 
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierIsParsed) {
-  SimRequest main_resource("https://example.com/#targetElement=.foobar",
-                           "text/html");
-  LoadURL("https://example.com/#targetElement=.foobar");
-  main_resource.Complete("<div class='foobar' id='target'></div>");
-
-  Element* target = GetDocument().getElementById("target");
-  EXPECT_EQ(target, GetDocument().CssTarget());
+  ChildDocument().WillChangeFrameOwnerProperties(
+      0, 0, mojom::blink::ScrollbarMode::kAlwaysOn, false);
+  EXPECT_TRUE(ChildDocument().View()->CanHaveScrollbars());
 }
 
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierComplexSelector) {
-  SimRequest main_resource(
-      "https://example.com/#targetElement=.outer%3Ediv%3Ep%3Anth-child%282%29",
-      "text/html");
-  LoadURL(
-      "https://example.com/#targetElement=.outer%3Ediv%3Ep%3Anth-child%282%29");
-  main_resource.Complete(R"HTML(
-    <!DOCTYPE html>
-    <html>
-      <head></head>
-      <body>
-        <div class='outer'>
-          <div>
-            <p></p>
-            <p id='target'></p>
-          </div>
-        </div>
-      </body>
-    </html>
-    )HTML");
+TEST_F(LocalFrameViewTest,
+       MainThreadScrollingForBackgroundFixedAttachmentWithCompositing) {
+  GetDocument().GetFrame()->GetSettings()->SetPreferCompositingToLCDTextEnabled(
+      true);
 
-  Element* target = GetDocument().getElementById("target");
-  EXPECT_EQ(target, GetDocument().CssTarget());
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      .fixed-background {
+        background: linear-gradient(blue, red) fixed;
+      }
+    </style>
+    <div id="div" style="width: 5000px; height: 5000px"></div>
+  )HTML");
+
+  auto* frame_view = GetDocument().View();
+  EXPECT_EQ(0u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_FALSE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
+
+  Element* body = GetDocument().body();
+  Element* html = GetDocument().documentElement();
+  Element* div = GetDocument().getElementById("div");
+
+  // Only body has fixed background. No main thread scrolling.
+  body->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(1u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_FALSE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
+
+  // Both body and div have fixed background. Requires main thread scrolling.
+  div->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(2u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
+
+  // Only div has fixed background. Requires main thread scrolling.
+  body->removeAttribute(html_names::kClassAttr);
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(1u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
+
+  // Only html has fixed background. No main thread scrolling.
+  div->removeAttribute(html_names::kClassAttr);
+  html->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(1u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_FALSE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
+
+  // Both html and body have fixed background. Requires main thread scrolling.
+  body->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(2u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 }
 
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierUsesFirstElementFound) {
-  SimRequest main_resource("https://example.com/#targetElement=.foobar",
-                           "text/html");
-  LoadURL("https://example.com/#targetElement=.foobar");
-  main_resource.Complete(
-      "<div class='foobar' id='target'></div><div class='foobar'></div>");
+TEST_F(LocalFrameViewTest,
+       MainThreadScrollingForBackgroundFixedAttachmentWithoutCompositing) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      .fixed-background {
+        background: linear-gradient(blue, red) fixed;
+      }
+    </style>
+    <div id="div" style="width: 5000px; height: 5000px"></div>
+  )HTML");
 
-  Element* target = GetDocument().getElementById("target");
-  EXPECT_EQ(target, GetDocument().CssTarget());
-}
+  auto* frame_view = GetDocument().View();
+  EXPECT_EQ(0u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_FALSE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierIneligibleFragments) {
-  SimRequest main_resource("https://example.com/#targetEl=.foobar",
-                           "text/html");
-  LoadURL("https://example.com/#targetEl=.foobar");
-  main_resource.Complete("<div class='foobar' id='target'></div>");
+  Element* body = GetDocument().body();
+  Element* html = GetDocument().documentElement();
+  Element* div = GetDocument().getElementById("div");
 
-  EXPECT_EQ(nullptr, GetDocument().CssTarget());
+  // When not prefer compositing, we use main thread scrolling when there is
+  // any object with fixed-attachment background.
+  body->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(1u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 
-  SimRequest main_resource2("https://example.com/#path/fragment", "text/html");
-  LoadURL("https://example.com/#path/fragment");
-  main_resource2.Complete("<div class='foobar' id='target'></div>");
+  div->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(2u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 
-  EXPECT_EQ(nullptr, GetDocument().CssTarget());
-}
+  body->removeAttribute(html_names::kClassAttr);
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(1u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierNoMatches) {
-  SimRequest main_resource("https://example.com/#targetElement=.foobar",
-                           "text/html");
-  LoadURL("https://example.com/#targetElement=.foobar");
-  main_resource.Complete("<div class='barbaz' id='target'></div>");
+  div->removeAttribute(html_names::kClassAttr);
+  html->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(1u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 
-  EXPECT_EQ(nullptr, GetDocument().CssTarget());
-}
-
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierInvalidSelector) {
-  SimRequest main_resource("https://example.com/#targetElement=..foobar",
-                           "text/html");
-  LoadURL("https://example.com/#targetElement=..foobar");
-  main_resource.Complete("<div class='foobar' id='target'></div>");
-
-  EXPECT_EQ(nullptr, GetDocument().CssTarget());
-}
-
-TEST_F(LocalFrameViewSimTest, CSSFragmentIdentifierEmptySelector) {
-  SimRequest main_resource("https://example.com/#targetElement=", "text/html");
-  LoadURL("https://example.com/#targetElement=");
-  main_resource.Complete("<div class='foobar' id='target'></div>");
-
-  EXPECT_EQ(nullptr, GetDocument().CssTarget());
+  body->setAttribute(html_names::kClassAttr, "fixed-background");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(2u, frame_view->BackgroundAttachmentFixedObjects().size());
+  EXPECT_TRUE(
+      frame_view->RequiresMainThreadScrollingForBackgroundAttachmentFixed());
 }
 
 // Ensure the fragment navigation "scroll into view and focus" behavior doesn't
 // activate synchronously while rendering is blocked waiting on a stylesheet.
 // See https://crbug.com/851338.
-TEST_F(LocalFrameViewSimTest, FragmentNavChangesFocusWhileRenderingBlocked) {
+TEST_F(SimTest, FragmentNavChangesFocusWhileRenderingBlocked) {
+  // Style-sheets are parser-blocking, not render-blocking when
+  // BlockHTMLParserOnStyleSheets is enabled.
+  ScopedBlockHTMLParserOnStyleSheetsForTest scope(false);
+
   SimRequest main_resource("https://example.com/test.html", "text/html");
   SimSubresourceRequest css_resource("https://example.com/sheet.css",
                                      "text/css");
@@ -290,13 +327,13 @@ TEST_F(LocalFrameViewSimTest, FragmentNavChangesFocusWhileRenderingBlocked) {
 
   // We're still waiting on the stylesheet to load so the load event shouldn't
   // yet dispatch and rendering is deferred.
-  ASSERT_FALSE(GetDocument().IsRenderingReady());
+  ASSERT_FALSE(GetDocument().HaveRenderBlockingResourcesLoaded());
   EXPECT_FALSE(GetDocument().IsLoadCompleted());
 
   // Click on the anchor element. This will cause a synchronous same-document
   //  navigation.
-  HTMLAnchorElement* anchor =
-      ToHTMLAnchorElement(GetDocument().getElementById("anchorlink"));
+  auto* anchor =
+      To<HTMLAnchorElement>(GetDocument().getElementById("anchorlink"));
   anchor->click();
 
   // Even though the navigation is synchronous, the active element shouldn't be
@@ -307,9 +344,9 @@ TEST_F(LocalFrameViewSimTest, FragmentNavChangesFocusWhileRenderingBlocked) {
       << "Scroll offset changed while rendering is blocked";
 
   // Force a layout.
-  anchor->style()->setProperty(&GetDocument(), "display", "block", String(),
-                               ASSERT_NO_EXCEPTION);
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  anchor->style()->setProperty(GetDocument().ToExecutionContext(), "display",
+                               "block", String(), ASSERT_NO_EXCEPTION);
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
   EXPECT_EQ(GetDocument().body(), GetDocument().ActiveElement())
       << "Active element changed due to layout while rendering is blocked";
@@ -327,6 +364,31 @@ TEST_F(LocalFrameViewSimTest, FragmentNavChangesFocusWhileRenderingBlocked) {
       << "Active element wasn't changed after load completed.";
   EXPECT_NE(ScrollOffset(), viewport->GetScrollOffset())
       << "Scroll offset wasn't changed after load completed.";
+}
+
+TEST_F(SimTest, ForcedLayoutWithIncompleteSVGChildFrame) {
+  SimRequest main_resource("https://example.com/test.html", "text/html");
+  SimRequest svg_resource("https://example.com/file.svg", "image/svg+xml");
+
+  LoadURL("https://example.com/test.html");
+
+  main_resource.Complete(R"HTML(
+      <!DOCTYPE html>
+      <object data="file.svg"></object>
+    )HTML");
+
+  // Write the SVG document so that there is something to layout, but don't let
+  // the resource finish loading.
+  svg_resource.Write(R"SVG(
+      <svg xmlns="http://www.w3.org/2000/svg"></svg>
+    )SVG");
+
+  // Mark the top-level document for layout and then force layout. This will
+  // cause the layout tree in the <object> object to be built.
+  GetDocument().View()->SetNeedsLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+
+  svg_resource.Finish();
 }
 
 }  // namespace

@@ -48,7 +48,6 @@
 namespace blink {
 
 class DocumentMarkerList;
-class Node;
 class SuggestionMarkerProperties;
 
 class CORE_EXPORT DocumentMarkerController final
@@ -67,14 +66,19 @@ class CORE_EXPORT DocumentMarkerController final
   void AddTextMatchMarker(const EphemeralRange&, TextMatchMarker::MatchStatus);
   void AddCompositionMarker(const EphemeralRange&,
                             Color underline_color,
-                            ws::mojom::ImeTextSpanThickness,
+                            ui::mojom::ImeTextSpanThickness,
+                            ui::mojom::ImeTextSpanUnderlineStyle,
+                            Color text_color,
                             Color background_color);
   void AddActiveSuggestionMarker(const EphemeralRange&,
                                  Color underline_color,
-                                 ws::mojom::ImeTextSpanThickness,
+                                 ui::mojom::ImeTextSpanThickness,
+                                 ui::mojom::ImeTextSpanUnderlineStyle,
+                                 Color text_color,
                                  Color background_color);
   void AddSuggestionMarker(const EphemeralRange&,
                            const SuggestionMarkerProperties&);
+  void AddTextFragmentMarker(const EphemeralRange&);
 
   void MoveMarkers(const Text& src_node, int length, const Text& dst_node);
 
@@ -92,9 +96,9 @@ class CORE_EXPORT DocumentMarkerController final
       DocumentMarker::MarkerTypes = DocumentMarker::MarkerTypes::All());
   // Returns true if markers within a range are found.
   bool SetTextMatchMarkersActive(const EphemeralRange&, bool);
-  // Returns true if markers within a range defined by a node, |startOffset| and
-  // |endOffset| are found.
-  bool SetTextMatchMarkersActive(const Node*,
+  // Returns true if markers within a range defined by a text node,
+  // |start_offset| and |end_offset| are found.
+  bool SetTextMatchMarkersActive(const Text&,
                                  unsigned start_offset,
                                  unsigned end_offset,
                                  bool);
@@ -135,7 +139,7 @@ class CORE_EXPORT DocumentMarkerController final
   // overlap with the specified range. Note that the range can be collapsed, in
   // in which case markers containing the position in their interiors are
   // returned.
-  HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>
+  HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>
   MarkersIntersectingRange(const EphemeralRangeInFlatTree&,
                            DocumentMarker::MarkerTypes);
   DocumentMarkerVector MarkersFor(
@@ -144,13 +148,14 @@ class CORE_EXPORT DocumentMarkerController final
   DocumentMarkerVector Markers() const;
   DocumentMarkerVector ComputeMarkersToPaint(const Text&) const;
 
+  bool PossiblyHasTextMatchMarkers() const;
   Vector<IntRect> LayoutRectsForTextMatchMarkers();
   void InvalidateRectsForAllTextMatchMarkers();
-  void InvalidateRectsForTextMatchMarkersInNode(const Node&);
+  void InvalidateRectsForTextMatchMarkersInNode(const Text&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   void ShowMarkers() const;
 #endif
 
@@ -165,7 +170,8 @@ class CORE_EXPORT DocumentMarkerController final
  private:
   void AddMarkerInternal(
       const EphemeralRange&,
-      std::function<DocumentMarker*(int, int)> create_marker_from_offsets);
+      std::function<DocumentMarker*(int, int)> create_marker_from_offsets,
+      const TextIteratorBehavior& iterator_behavior = {});
   void AddMarkerToNode(const Text&, DocumentMarker*);
 
   using MarkerLists = HeapVector<Member<DocumentMarkerList>,
@@ -183,7 +189,7 @@ class CORE_EXPORT DocumentMarkerController final
                              DocumentMarker::MarkerTypes);
 
   // Called after weak processing of |markers_| is done.
-  void DidProcessMarkerMap(Visitor* visitor);
+  void DidProcessMarkerMap(const WeakCallbackInfo&);
 
   MarkerMap markers_;
   // Provide a quick way to determine whether a particular marker type is absent
@@ -196,7 +202,7 @@ class CORE_EXPORT DocumentMarkerController final
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void showDocumentMarkers(const blink::DocumentMarkerController*);
 #endif
 

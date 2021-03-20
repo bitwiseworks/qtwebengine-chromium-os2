@@ -32,14 +32,14 @@
 namespace blink {
 
 MessageChannel::MessageChannel(ExecutionContext* context)
-    : port1_(MessagePort::Create(*context)),
-      port2_(MessagePort::Create(*context)) {
+    : port1_(MakeGarbageCollected<MessagePort>(*context)),
+      port2_(MakeGarbageCollected<MessagePort>(*context)) {
   mojo::MessagePipe pipe;
   port1_->Entangle(std::move(pipe.handle0));
   port2_->Entangle(std::move(pipe.handle1));
 }
 
-void MessageChannel::Trace(blink::Visitor* visitor) {
+void MessageChannel::Trace(Visitor* visitor) {
   visitor->Trace(port1_);
   visitor->Trace(port2_);
   ScriptWrappable::Trace(visitor);

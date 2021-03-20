@@ -5,14 +5,14 @@
  * found in the LICENSE file.
  */
 
-#include "SkScan.h"
+#include "src/core/SkScan.h"
 
-#include "SkBlitter.h"
-#include "SkColorData.h"
-#include "SkFDot6.h"
-#include "SkLineClipper.h"
-#include "SkRasterClip.h"
-#include "SkTo.h"
+#include "include/private/SkColorData.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkBlitter.h"
+#include "src/core/SkFDot6.h"
+#include "src/core/SkLineClipper.h"
+#include "src/core/SkRasterClip.h"
 
 #include <utility>
 
@@ -74,8 +74,14 @@ static void call_hline_blitter(SkBlitter* blitter, int x, int y, int count,
     int16_t runs[HLINE_STACK_BUFFER + 1];
     uint8_t  aa[HLINE_STACK_BUFFER];
 
-    aa[0] = ApplyGamma(gGammaTable, alpha);
     do {
+        // In theory, we should be able to just do this once (outside of the loop),
+        // since aa[] and runs[] are supposed" to be const when we call the blitter.
+        // In reality, some wrapper-blitters (e.g. SkRgnClipBlitter) cast away that
+        // constness, and modify the buffers in-place. Hence the need to be defensive
+        // here and reseed the aa value.
+        aa[0] = ApplyGamma(gGammaTable, alpha);
+
         int n = count;
         if (n > HLINE_STACK_BUFFER) {
             n = HLINE_STACK_BUFFER;
@@ -112,7 +118,7 @@ public:
         fy += SK_Fixed1/2;
 
         int y = fy >> 16;
-        uint8_t  a = (uint8_t)(fy >> 8);
+        uint8_t  a = (uint8_t)((fy >> 8) & 0xFF);
 
         // lower line
         unsigned ma = SmallDot6Scale(a, mod64);
@@ -136,7 +142,7 @@ public:
         fy += SK_Fixed1/2;
 
         int y = fy >> 16;
-        uint8_t  a = (uint8_t)(fy >> 8);
+        uint8_t  a = (uint8_t)((fy >> 8) & 0xFF);
 
         // lower line
         if (a) {
@@ -159,7 +165,7 @@ public:
         fy += SK_Fixed1/2;
 
         int lower_y = fy >> 16;
-        uint8_t  a = (uint8_t)(fy >> 8);
+        uint8_t  a = (uint8_t)((fy >> 8) & 0xFF);
         unsigned a0 = SmallDot6Scale(255 - a, mod64);
         unsigned a1 = SmallDot6Scale(a, mod64);
         this->getBlitter()->blitAntiV2(x, lower_y - 1, a0, a1);
@@ -174,7 +180,7 @@ public:
         SkBlitter* blitter = this->getBlitter();
         do {
             int lower_y = fy >> 16;
-            uint8_t  a = (uint8_t)(fy >> 8);
+            uint8_t  a = (uint8_t)((fy >> 8) & 0xFF);
             blitter->blitAntiV2(x, lower_y - 1, 255 - a, a);
             fy += dy;
         } while (++x < stopx);
@@ -190,7 +196,7 @@ public:
         fx += SK_Fixed1/2;
 
         int x = fx >> 16;
-        int a = (uint8_t)(fx >> 8);
+        int a = (uint8_t)((fx >> 8) & 0xFF);
 
         unsigned ma = SmallDot6Scale(a, mod64);
         if (ma) {
@@ -210,7 +216,7 @@ public:
         fx += SK_Fixed1/2;
 
         int x = fx >> 16;
-        int a = (uint8_t)(fx >> 8);
+        int a = (uint8_t)((fx >> 8) & 0xFF);
 
         if (a) {
             this->getBlitter()->blitV(x, y, stopy - y, a);
@@ -230,7 +236,7 @@ public:
         fx += SK_Fixed1/2;
 
         int x = fx >> 16;
-        uint8_t a = (uint8_t)(fx >> 8);
+        uint8_t a = (uint8_t)((fx >> 8) & 0xFF);
         this->getBlitter()->blitAntiH2(x - 1, y,
                                        SmallDot6Scale(255 - a, mod64), SmallDot6Scale(a, mod64));
 
@@ -242,7 +248,7 @@ public:
         fx += SK_Fixed1/2;
         do {
             int x = fx >> 16;
-            uint8_t a = (uint8_t)(fx >> 8);
+            uint8_t a = (uint8_t)((fx >> 8) & 0xFF);
             this->getBlitter()->blitAntiH2(x - 1, y, 255 - a, a);
             fx += dx;
         } while (++y < stopy);
@@ -573,16 +579,16 @@ void SkScan::AntiHairLineRgn(const SkPoint array[], int arrayCount, const SkRegi
         SkFDot6 y1 = SkScalarToFDot6(pts[1].fY);
 
         if (clip) {
-            SkFDot6 left = SkMin32(x0, x1);
-            SkFDot6 top = SkMin32(y0, y1);
-            SkFDot6 right = SkMax32(x0, x1);
-            SkFDot6 bottom = SkMax32(y0, y1);
+            SkFDot6 left = std::min(x0, x1);
+            SkFDot6 top = std::min(y0, y1);
+            SkFDot6 right = std::max(x0, x1);
+            SkFDot6 bottom = std::max(y0, y1);
             SkIRect ir;
 
-            ir.set( SkFDot6Floor(left) - 1,
-                    SkFDot6Floor(top) - 1,
-                    SkFDot6Ceil(right) + 1,
-                    SkFDot6Ceil(bottom) + 1);
+            ir.setLTRB(SkFDot6Floor(left) - 1,
+                       SkFDot6Floor(top) - 1,
+                       SkFDot6Ceil(right) + 1,
+                       SkFDot6Ceil(bottom) + 1);
 
             if (clip->quickReject(ir)) {
                 continue;
@@ -933,7 +939,7 @@ void SkScan::AntiFrameRect(const SkRect& r, const SkPoint& strokeSize,
 
     SkIRect outer;
     // set outer to the outer rect of the outer section
-    outer.set(FDot8Floor(outerL), FDot8Floor(outerT), FDot8Ceil(outerR), FDot8Ceil(outerB));
+    outer.setLTRB(FDot8Floor(outerL), FDot8Floor(outerT), FDot8Ceil(outerR), FDot8Ceil(outerB));
 
     SkBlitterClipper clipper;
     if (clip) {
@@ -971,7 +977,7 @@ void SkScan::AntiFrameRect(const SkRect& r, const SkPoint& strokeSize,
     antifilldot8(outerL, outerT, outerR, outerB, blitter, false);
 
     // set outer to the outer rect of the middle section
-    outer.set(FDot8Ceil(outerL), FDot8Ceil(outerT), FDot8Floor(outerR), FDot8Floor(outerB));
+    outer.setLTRB(FDot8Ceil(outerL), FDot8Ceil(outerT), FDot8Floor(outerR), FDot8Floor(outerB));
 
     if (innerL >= innerR || innerT >= innerB) {
         fillcheckrect(outer.fLeft, outer.fTop, outer.fRight, outer.fBottom,
@@ -979,7 +985,7 @@ void SkScan::AntiFrameRect(const SkRect& r, const SkPoint& strokeSize,
     } else {
         SkIRect inner;
         // set inner to the inner rect of the middle section
-        inner.set(FDot8Floor(innerL), FDot8Floor(innerT), FDot8Ceil(innerR), FDot8Ceil(innerB));
+        inner.setLTRB(FDot8Floor(innerL), FDot8Floor(innerT), FDot8Ceil(innerR), FDot8Ceil(innerB));
 
         // draw the frame in 4 pieces
         fillcheckrect(outer.fLeft, outer.fTop, outer.fRight, inner.fTop,

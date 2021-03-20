@@ -23,11 +23,24 @@ source_set("exo") {
     "data_source_observer.h",
     "display.cc",
     "display.h",
+    "drag_drop_operation.cc",
+    "drag_drop_operation.h",
+    "frame_sink_resource_manager.cc",
+    "frame_sink_resource_manager.h",
+    "input_trace.h",
     "keyboard_delegate.h",
     "keyboard_device_configuration_delegate.h",
     "keyboard_observer.h",
     "layer_tree_frame_sink_holder.cc",
     "layer_tree_frame_sink_holder.h",
+    "mime_utils.cc",
+    "mime_utils.h",
+    "permission.cc",
+    "permission.h",
+    "pointer.cc",
+    "pointer.h",
+    "pointer_constraint_delegate.h",
+    "pointer_delegate.h",
     "seat.cc",
     "seat.h",
     "seat_observer.h",
@@ -46,6 +59,8 @@ source_set("exo") {
     "touch.cc",
     "touch.h",
     "touch_delegate.h",
+    "vsync_timing_manager.cc",
+    "vsync_timing_manager.h",
     "wm_helper.cc",
     "wm_helper.h",
   ]
@@ -53,20 +68,23 @@ source_set("exo") {
   deps = [
     "//base",
     "//cc",
-    "//components/viz/service",
+    "//components/viz/host",
     "//device/gamepad",
     "//device/gamepad/public/cpp:shared_with_blink",
     "//gpu",
-    "//gpu/command_buffer/client:gles2_interface",
-    "//services/ws/public/mojom",
+    "//gpu/command_buffer/client:raster_interface",
+    "//net",
+    "//services/data_decoder/public/cpp",
+    "//services/viz/privileged/mojom/compositing",
     "//skia",
+    "//third_party/blink/public/common",
     "//ui/aura",
     "//ui/base/ime",
     "//ui/compositor",
     "//ui/compositor_extra",
     "//ui/display/manager",
     "//ui/events/devices:devices",
-    "//ui/events/ozone:events_ozone_evdev",
+    "//ui/events/ozone",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//ui/gl",
@@ -74,18 +92,24 @@ source_set("exo") {
     "//ui/message_center/public/cpp",
     "//ui/ozone",
     "//ui/views",
-    "//ui/views/mus",
     "//ui/wm",
     "//ui/wm/public",
   ]
 
+  public_deps = [
+    "//ui/base/cursor",
+    "//ui/base/mojom:cursor_type",
+  ]
+
   if (is_chromeos) {
     deps += [
+      "//ash/keyboard/ui",
       "//ash/public/cpp",
-      "//ui/keyboard",
-      "//ui/keyboard:mojom",
+      "//chromeos/constants",
     ]
     sources += [
+      "client_controlled_accelerators.cc",
+      "client_controlled_accelerators.h",
       "client_controlled_shell_surface.cc",
       "client_controlled_shell_surface.h",
       "gaming_seat.cc",
@@ -100,9 +124,6 @@ source_set("exo") {
       "notification_surface.cc",
       "notification_surface.h",
       "notification_surface_manager.h",
-      "pointer.cc",
-      "pointer.h",
-      "pointer_delegate.h",
       "shell_surface.cc",
       "shell_surface.h",
       "shell_surface_base.cc",
@@ -117,6 +138,7 @@ source_set("exo") {
   }
 
   if (is_chromecast) {
+    deps += [ "//ui/accessibility:accessibility" ]
     sources += [
       "fullscreen_shell_surface.cc",
       "fullscreen_shell_surface.h",
@@ -128,27 +150,30 @@ source_set("test_support") {
   testonly = true
 
   sources = [
-    "test/exo_test_base_aura.cc",
-    "test/exo_test_base_aura.h",
+    "test/exo_test_base_views.cc",
+    "test/exo_test_base_views.h",
     "test/exo_test_suite_aura.cc",
     "test/exo_test_suite_aura.h",
   ]
+
+  public_deps = [ "//testing/gtest" ]
 
   deps = [
     ":exo",
     "//base",
     "//base/test:test_support",
+    "//components/viz/service",
     "//gpu",
     "//skia",
-    "//testing/gtest",
     "//ui/aura",
-    "//ui/aura:test_support",
+    "//ui/base/ime/init",
     "//ui/compositor",
     "//ui/compositor:test_support",
     "//ui/display/manager",
     "//ui/gfx/geometry",
     "//ui/gl:test_support",
     "//ui/views",
+    "//ui/views:test_support",
     "//ui/wm",
   ]
 
@@ -158,8 +183,6 @@ source_set("test_support") {
       "test/exo_test_base.h",
       "test/exo_test_helper.cc",
       "test/exo_test_helper.h",
-      "test/test_client_controlled_state_delegate.cc",
-      "test/test_client_controlled_state_delegate.h",
     ]
     deps += [
       "//ash:test_support",
@@ -181,8 +204,9 @@ source_set("unit_tests") {
     "//components/user_manager",
     "//components/viz/service",
     "//components/viz/test:test_support",
+    "//content/test:test_support",
     "//device/gamepad:test_helpers",
-    "//gpu/command_buffer/client:gles2_interface",
+    "//gpu/command_buffer/client:raster_interface",
     "//skia",
     "//testing/gmock",
     "//testing/gtest",
@@ -191,19 +215,21 @@ source_set("unit_tests") {
     "//ui/compositor_extra",
     "//ui/events:dom_keycode_converter",
     "//ui/events:test_support",
-    "//ui/events/ozone:events_ozone_evdev",
+    "//ui/events/ozone",
     "//ui/gfx",
     "//ui/message_center",
     "//ui/views",
     "//ui/wm",
   ]
 
+  sources = [ "mime_utils_unittest.cc" ]
+
   if (use_ozone) {
     deps += [ "//ui/ozone" ]
   }
 
   if (is_chromeos) {
-    sources = [
+    sources += [
       "../../ui/events/ozone/gamepad/gamepad_event.cc",
       "buffer_unittest.cc",
       "client_controlled_shell_surface_unittest.cc",
@@ -212,8 +238,10 @@ source_set("unit_tests") {
       "data_source_unittest.cc",
       "display_unittest.cc",
       "gaming_seat_unittest.cc",
+      "input_method_surface_unittest.cc",
       "keyboard_unittest.cc",
       "notification_unittest.cc",
+      "permission_unittest.cc",
       "pointer_unittest.cc",
       "seat_unittest.cc",
       "shared_memory_unittest.cc",
@@ -222,27 +250,27 @@ source_set("unit_tests") {
       "surface_unittest.cc",
       "text_input_unittest.cc",
       "touch_unittest.cc",
+      "xdg_shell_surface_unittest.cc",
     ]
 
     deps += [
       "//ash",
       "//ash:test_support",
+      "//ash/keyboard/ui",
       "//ash/public/cpp",
-      "//ui/keyboard",
+      "//chromeos/constants",
+      "//ui/base/mojom:cursor_type",
     ]
   }
 
   if (is_chromecast) {
-    sources = [
-      "fullscreen_shell_surface_unittest.cc",
-    ]
+    deps += [ "//ui/accessibility:accessibility" ]
+    sources += [ "fullscreen_shell_surface_unittest.cc" ]
   }
 }
 
 test("exo_unittests") {
-  sources = [
-    "test/run_all_unittests.cc",
-  ]
+  sources = [ "test/run_all_unittests.cc" ]
 
   deps = [
     ":test_support",
@@ -280,9 +308,9 @@ test("exo_unittests") {
     ]
 
     data_deps += [
-      "//ash/strings:ash_test_strings",
       "//ash/resources:ash_test_resources_100_percent",
       "//ash/resources:ash_test_resources_200_percent",
+      "//ash/strings:ash_test_strings",
     ]
   }
 }

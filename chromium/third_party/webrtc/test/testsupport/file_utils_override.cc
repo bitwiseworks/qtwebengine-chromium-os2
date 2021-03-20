@@ -17,6 +17,7 @@
 #include <direct.h>
 #include <tchar.h>
 #include <windows.h>
+
 #include <algorithm>
 #include <codecvt>
 #include <locale>
@@ -99,7 +100,7 @@ absl::optional<std::string> ProjectRootPath() {
 #elif defined(WEBRTC_WIN)
   wchar_t buf[MAX_PATH];
   buf[0] = 0;
-  if (GetModuleFileName(NULL, buf, MAX_PATH) == 0)
+  if (GetModuleFileNameW(NULL, buf, MAX_PATH) == 0)
     return absl::nullopt;
 
   std::string exe_path = rtc::ToUtf8(std::wstring(buf));
@@ -127,7 +128,7 @@ std::string OutputPath() {
 std::string WorkingDir() {
 #if defined(WEBRTC_ANDROID)
   return kAndroidChromiumTestsRoot;
-#endif
+#else
   char path_buffer[FILENAME_MAX];
   if (!GET_CURRENT_DIR(path_buffer, sizeof(path_buffer))) {
     fprintf(stderr, "Cannot get current directory!\n");
@@ -135,6 +136,7 @@ std::string WorkingDir() {
   } else {
     return std::string(path_buffer);
   }
+#endif
 }
 
 std::string ResourcePath(const std::string& name,

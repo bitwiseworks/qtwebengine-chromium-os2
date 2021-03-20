@@ -16,12 +16,19 @@
 #include "base/single_thread_task_runner.h"
 #include "content/common/content_export.h"
 #include "content/common/navigation_params.h"
-#include "content/public/common/resource_load_info.mojom.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/base/big_buffer.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
 #include "third_party/blink/public/platform/web_navigation_body_loader.h"
+
+namespace blink {
+struct WebNavigationParams;
+}  // namespace blink
 
 namespace network {
 struct URLLoaderCompletionStatus;
@@ -42,15 +49,19 @@ class CONTENT_EXPORT NavigationBodyLoader
     : public blink::WebNavigationBodyLoader,
       public network::mojom::URLLoaderClient {
  public:
-  NavigationBodyLoader(
-      const CommonNavigationParams& common_params,
-      const CommitNavigationParams& commit_params,
+  // This method fills navigation params related to the navigation request,
+  // redirects and response, and also creates a body loader if needed.
+  static void FillNavigationParamsResponseAndBodyLoader(
+      mojom::CommonNavigationParamsPtr common_params,
+      mojom::CommitNavigationParamsPtr commit_params,
       int request_id,
-      const network::ResourceResponseHead& head,
+      network::mojom::URLResponseHeadPtr response_head,
+      mojo::ScopedDataPipeConsumerHandle response_body,
       network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       int render_frame_id,
-      bool is_main_frame);
+      bool is_main_frame,
+      blink::WebNavigationParams* navigation_params);
   ~NavigationBodyLoader() override;
 
  private:
@@ -76,26 +87,44 @@ class CONTENT_EXPORT NavigationBodyLoader
   // NotifyCompletionIfAppropriate
   //   notify client about completion
 
+  // The maximal number of bytes consumed in a task. When there are more bytes
+  // in the data pipe, they will be consumed in following tasks. Setting a too
+  // small number will generate ton of tasks but setting a too large number will
+  // lead to thread janks. Also, some clients cannot handle too large chunks
+  // (512k for example).
+  static constexpr uint32_t kMaxNumConsumedBytesInTask = 64 * 1024;
+
+  NavigationBodyLoader(
+      network::mojom::URLResponseHeadPtr response_head,
+      mojo::ScopedDataPipeConsumerHandle response_body,
+      network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      int render_frame_id,
+      blink::mojom::ResourceLoadInfoPtr resource_load_info);
+
   // blink::WebNavigationBodyLoader
   void SetDefersLoading(bool defers) override;
   void StartLoadingBody(WebNavigationBodyLoader::Client* client,
                         bool use_isolated_code_cache) override;
 
   // network::mojom::URLLoaderClient
-  void OnReceiveResponse(const network::ResourceResponseHead& head) override;
-  void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
-                         const network::ResourceResponseHead& head) override;
+  void OnReceiveResponse(
+      network::mojom::URLResponseHeadPtr response_head) override;
+  void OnReceiveRedirect(
+      const net::RedirectInfo& redirect_info,
+      network::mojom::URLResponseHeadPtr response_head) override;
   void OnUploadProgress(int64_t current_position,
                         int64_t total_size,
                         OnUploadProgressCallback callback) override;
-  void OnReceiveCachedMetadata(const std::vector<uint8_t>& data) override;
+  void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
   void OnTransferSizeUpdated(int32_t transfer_size_diff) override;
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle handle) override;
   void OnComplete(const network::URLLoaderCompletionStatus& status) override;
 
-  void CodeCacheReceived(const base::Time& response_time,
-                         const std::vector<uint8_t>& data);
+  void CodeCacheReceived(base::Time response_head_response_time,
+                         base::Time response_time,
+                         mojo_base::BigBuffer data);
   void BindURLLoaderAndContinue();
   void OnConnectionClosed();
   void OnReadable(MojoResult unused);
@@ -103,19 +132,22 @@ class CONTENT_EXPORT NavigationBodyLoader
   // BodyDataReceived synchronously.
   void ReadFromDataPipe();
   void NotifyCompletionIfAppropriate();
+  void BindURLLoaderAndStartLoadingResponseBodyIfPossible();
 
   // Navigation parameters.
   const int render_frame_id_;
-  const network::ResourceResponseHead head_;
+  network::mojom::URLResponseHeadPtr response_head_;
+  mojo::ScopedDataPipeConsumerHandle response_body_;
   network::mojom::URLLoaderClientEndpointsPtr endpoints_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   // This struct holds stats to notify browser process.
-  mojom::ResourceLoadInfoPtr resource_load_info_;
+  blink::mojom::ResourceLoadInfoPtr resource_load_info_;
 
   // These bindings are live while loading the response.
-  network::mojom::URLLoaderPtr url_loader_;
-  mojo::Binding<network::mojom::URLLoaderClient> url_loader_client_binding_;
+  mojo::Remote<network::mojom::URLLoader> url_loader_;
+  mojo::Receiver<network::mojom::URLLoaderClient> url_loader_client_receiver_{
+      this};
   WebNavigationBodyLoader::Client* client_ = nullptr;
 
   // The handle and watcher are live while loading the body.
@@ -144,7 +176,7 @@ class CONTENT_EXPORT NavigationBodyLoader
   // from iniside BodyDataReceived client notification.
   bool is_in_on_readable_ = false;
 
-  base::WeakPtrFactory<NavigationBodyLoader> weak_factory_;
+  base::WeakPtrFactory<NavigationBodyLoader> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NavigationBodyLoader);
 };

@@ -12,6 +12,7 @@
 #define CALL_VIDEO_SEND_STREAM_H_
 
 #include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
@@ -19,7 +20,7 @@
 #include "absl/types/optional.h"
 #include "api/call/transport.h"
 #include "api/crypto/crypto_options.h"
-#include "api/media_transport_interface.h"
+#include "api/frame_transformer_interface.h"
 #include "api/rtp_parameters.h"
 #include "api/video/video_content_type.h"
 #include "api/video/video_frame.h"
@@ -28,6 +29,8 @@
 #include "api/video/video_stream_encoder_settings.h"
 #include "api/video_codecs/video_encoder_config.h"
 #include "call/rtp_config.h"
+#include "common_video/include/quality_limitation_reason.h"
+#include "modules/rtp_rtcp/include/report_block_data.h"
 #include "modules/rtp_rtcp/include/rtcp_statistics.h"
 #include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 
@@ -37,15 +40,35 @@ class FrameEncryptorInterface;
 
 class VideoSendStream {
  public:
+  // Multiple StreamStats objects are present if simulcast is used (multiple
+  // kMedia streams) or if RTX or FlexFEC is negotiated. Multiple SVC layers, on
+  // the other hand, does not cause additional StreamStats.
   struct StreamStats {
+    enum class StreamType {
+      // A media stream is an RTP stream for audio or video. Retransmissions and
+      // FEC is either sent over the same SSRC or negotiated to be sent over
+      // separate SSRCs, in which case separate StreamStats objects exist with
+      // references to this media stream's SSRC.
+      kMedia,
+      // RTX streams are streams dedicated to retransmissions. They have a
+      // dependency on a single kMedia stream: |referenced_media_ssrc|.
+      kRtx,
+      // FlexFEC streams are streams dedicated to FlexFEC. They have a
+      // dependency on a single kMedia stream: |referenced_media_ssrc|.
+      kFlexfec,
+    };
+
     StreamStats();
     ~StreamStats();
 
     std::string ToString() const;
 
+    StreamType type = StreamType::kMedia;
+    // If |type| is kRtx or kFlexfec this value is present. The referenced SSRC
+    // is the kMedia stream that this stream is performing retransmissions or
+    // FEC for. If |type| is kMedia, this value is null.
+    absl::optional<uint32_t> referenced_media_ssrc;
     FrameCounts frame_counts;
-    bool is_rtx = false;
-    bool is_flexfec = false;
     int width = 0;
     int height = 0;
     // TODO(holmer): Move bitrate_bps out to the webrtc::Call layer.
@@ -53,9 +76,20 @@ class VideoSendStream {
     int retransmit_bitrate_bps = 0;
     int avg_delay_ms = 0;
     int max_delay_ms = 0;
+    uint64_t total_packet_send_delay_ms = 0;
     StreamDataCounters rtp_stats;
     RtcpPacketTypeCounter rtcp_packet_type_counts;
     RtcpStatistics rtcp_stats;
+    // A snapshot of the most recent Report Block with additional data of
+    // interest to statistics. Used to implement RTCRemoteInboundRtpStreamStats.
+    absl::optional<ReportBlockData> report_block_data;
+
+    // These booleans are redundant; this information is already exposed in
+    // |type|.
+    // TODO(hbos): Update downstream projects to use |type| instead and delete
+    // these members.
+    bool is_flexfec = false;
+    bool is_rtx = false;
   };
 
   struct Stats {
@@ -68,9 +102,14 @@ class VideoSendStream {
     int avg_encode_time_ms = 0;
     int encode_usage_percent = 0;
     uint32_t frames_encoded = 0;
+    // https://w3c.github.io/webrtc-stats/#dom-rtcoutboundrtpstreamstats-totalencodetime
+    uint64_t total_encode_time_ms = 0;
+    // https://w3c.github.io/webrtc-stats/#dom-rtcoutboundrtpstreamstats-totalencodedbytestarget
+    uint64_t total_encoded_bytes_target = 0;
     uint32_t frames_dropped_by_capturer = 0;
     uint32_t frames_dropped_by_encoder_queue = 0;
     uint32_t frames_dropped_by_rate_limiter = 0;
+    uint32_t frames_dropped_by_congestion_window = 0;
     uint32_t frames_dropped_by_encoder = 0;
     absl::optional<uint64_t> qp_sum;
     // Bitrate the encoder is currently configured to use due to bandwidth
@@ -83,6 +122,13 @@ class VideoSendStream {
     bool cpu_limited_resolution = false;
     bool bw_limited_framerate = false;
     bool cpu_limited_framerate = false;
+    // https://w3c.github.io/webrtc-stats/#dom-rtcoutboundrtpstreamstats-qualitylimitationreason
+    QualityLimitationReason quality_limitation_reason =
+        QualityLimitationReason::kNone;
+    // https://w3c.github.io/webrtc-stats/#dom-rtcoutboundrtpstreamstats-qualitylimitationdurations
+    std::map<QualityLimitationReason, int64_t> quality_limitation_durations_ms;
+    // https://w3c.github.io/webrtc-stats/#dom-rtcoutboundrtpstreamstats-qualitylimitationresolutionchanges
+    uint32_t quality_limitation_resolution_changes = 0;
     // Total number of times resolution as been requested to be changed due to
     // CPU/quality adaptation.
     int number_of_cpu_adapt_changes = 0;
@@ -98,7 +144,6 @@ class VideoSendStream {
    public:
     Config() = delete;
     Config(Config&&);
-    Config(Transport* send_transport, MediaTransportInterface* media_transport);
     explicit Config(Transport* send_transport);
 
     Config& operator=(Config&&);
@@ -111,17 +156,15 @@ class VideoSendStream {
 
     std::string ToString() const;
 
-    VideoStreamEncoderSettings encoder_settings;
-
     RtpConfig rtp;
+
+    VideoStreamEncoderSettings encoder_settings;
 
     // Time interval between RTCP report for video
     int rtcp_report_interval_ms = 1000;
 
     // Transport for outgoing packets.
     Transport* send_transport = nullptr;
-
-    MediaTransportInterface* media_transport = nullptr;
 
     // Expected delay needed by the renderer, i.e. the frame will be delivered
     // this many milliseconds, if possible, earlier than expected render time.
@@ -140,9 +183,6 @@ class VideoSendStream {
     // Enables periodic bandwidth probing in application-limited region.
     bool periodic_alr_bandwidth_probing = false;
 
-    // Track ID as specified during track creation.
-    std::string track_id;
-
     // An optional custom frame encryptor that allows the entire frame to be
     // encrypted in whatever way the caller chooses. This is not required by
     // default.
@@ -150,6 +190,8 @@ class VideoSendStream {
 
     // Per PeerConnection cryptography options.
     CryptoOptions crypto_options;
+
+    rtc::scoped_refptr<webrtc::FrameTransformerInterface> frame_transformer;
 
    private:
     // Access to the copy constructor is private to force use of the Copy()

@@ -18,10 +18,9 @@ namespace blink {
 PrepopulatedComputedStylePropertyMap::PrepopulatedComputedStylePropertyMap(
     const Document& document,
     const ComputedStyle& style,
-    Node* styled_node,
     const Vector<CSSPropertyID>& native_properties,
     const Vector<AtomicString>& custom_properties)
-    : StylePropertyMapReadOnlyMainThread(), styled_node_(styled_node) {
+    : StylePropertyMapReadOnlyMainThread() {
   // NOTE: This may over-reserve as shorthand properties will get dropped from
   // being in the map.
   native_values_.ReserveCapacityForSize(native_properties.size());
@@ -29,7 +28,7 @@ PrepopulatedComputedStylePropertyMap::PrepopulatedComputedStylePropertyMap(
 
   for (const auto& property_id : native_properties) {
     // Silently drop shorthand properties.
-    DCHECK_NE(property_id, CSSPropertyInvalid);
+    DCHECK_NE(property_id, CSSPropertyID::kInvalid);
     if (CSSProperty::Get(property_id).IsShorthand())
       continue;
 
@@ -41,7 +40,7 @@ PrepopulatedComputedStylePropertyMap::PrepopulatedComputedStylePropertyMap(
   }
 }
 
-unsigned PrepopulatedComputedStylePropertyMap::size() {
+unsigned PrepopulatedComputedStylePropertyMap::size() const {
   return native_values_.size() + custom_values_.size();
 }
 
@@ -49,7 +48,7 @@ void PrepopulatedComputedStylePropertyMap::UpdateStyle(
     const Document& document,
     const ComputedStyle& style) {
   for (const auto& property_id : native_values_.Keys()) {
-    DCHECK_NE(property_id, CSSPropertyInvalid);
+    DCHECK_NE(property_id, CSSPropertyID::kInvalid);
     UpdateNativeProperty(style, property_id);
   }
 
@@ -61,11 +60,10 @@ void PrepopulatedComputedStylePropertyMap::UpdateStyle(
 void PrepopulatedComputedStylePropertyMap::UpdateNativeProperty(
     const ComputedStyle& style,
     CSSPropertyID property_id) {
-  native_values_.Set(property_id,
-                     CSSProperty::Get(property_id)
-                         .CSSValueFromComputedStyle(
-                             style, /* layout_object */ nullptr, styled_node_,
-                             /* allow_visited_style */ false));
+  native_values_.Set(property_id, CSSProperty::Get(property_id)
+                                      .CSSValueFromComputedStyle(
+                                          style, /* layout_object */ nullptr,
+                                          /* allow_visited_style */ false));
 }
 
 void PrepopulatedComputedStylePropertyMap::UpdateCustomProperty(
@@ -74,7 +72,7 @@ void PrepopulatedComputedStylePropertyMap::UpdateCustomProperty(
     const AtomicString& property_name) {
   CSSPropertyRef ref(property_name, document);
   const CSSValue* value = ref.GetProperty().CSSValueFromComputedStyle(
-      style, /* layout_object */ nullptr, styled_node_,
+      style, /* layout_object */ nullptr,
       /* allow_visited_style */ false);
   if (!value)
     value = CSSUnparsedValue::Create()->ToCSSValue();
@@ -83,12 +81,12 @@ void PrepopulatedComputedStylePropertyMap::UpdateCustomProperty(
 }
 
 const CSSValue* PrepopulatedComputedStylePropertyMap::GetProperty(
-    CSSPropertyID property_id) {
+    CSSPropertyID property_id) const {
   return native_values_.at(property_id);
 }
 
 const CSSValue* PrepopulatedComputedStylePropertyMap::GetCustomProperty(
-    AtomicString property_name) {
+    AtomicString property_name) const {
   return custom_values_.at(property_name);
 }
 
@@ -117,14 +115,13 @@ void PrepopulatedComputedStylePropertyMap::ForEachProperty(
 }
 
 String PrepopulatedComputedStylePropertyMap::SerializationForShorthand(
-    const CSSProperty&) {
+    const CSSProperty&) const {
   // TODO(816722): Shorthands not yet supported for this style map.
   NOTREACHED();
   return "";
 }
 
-void PrepopulatedComputedStylePropertyMap::Trace(blink::Visitor* visitor) {
-  visitor->Trace(styled_node_);
+void PrepopulatedComputedStylePropertyMap::Trace(Visitor* visitor) {
   visitor->Trace(native_values_);
   visitor->Trace(custom_values_);
   StylePropertyMapReadOnlyMainThread::Trace(visitor);

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/optional.h"
+#include "media/base/color_plane_layout.h"
 #include "media/base/media_export.h"
 #include "media/base/video_types.h"
 #include "ui/gfx/geometry/size.h"
@@ -36,59 +37,52 @@ class MEDIA_EXPORT VideoFrameLayout {
   // without inspecting av_frame_get_buffer() first.
   static constexpr size_t kBufferAddressAlignment = 32;
 
-  struct Plane {
-    Plane() = default;
-    Plane(int32_t stride, size_t offset) : stride(stride), offset(offset) {}
-    Plane(int32_t stride, size_t offset, uint64_t modifier)
-        : stride(stride), offset(offset), modifier(modifier) {}
-
-    bool operator==(const Plane& rhs) const;
-    bool operator!=(const Plane& rhs) const;
-
-    // Strides of a plane, typically greater or equal to the
-    // width of the surface divided by the horizontal sampling period. Note that
-    // strides can be negative if the image layout is bottom-up.
-    int32_t stride = 0;
-
-    // Offset of a plane, which stands for the offset of a start point of a
-    // color plane from a buffer fd.
-    size_t offset = 0;
-
-    // Modifier of a plane. The modifier is retrieved from GBM library. This can
-    // be a different value from kNoModifier only if the VideoFrame is created
-    // by using NativePixmap.
-    uint64_t modifier = gfx::NativePixmapPlane::kNoModifier;
-  };
-
   // Factory functions.
-  // |format| and |coded_size| must be specified.
-  // |strides|, |planes| and |buffer_sizes| are optional, whereas they should
-  //  be specified if |buffer_sizes| are given.
-  // The size of |buffer_sizes| must be less than or equal to |planes|.
-  // Unless they are specified, num_planes() is NumPlanes(|format|) and
-  // num_buffers() is 0.
+  // |format| and |coded_size| must always be specified.
+  // |planes| info is also optional but useful to represent the layout of a
+  // video frame buffer correctly. When omitted, its information is all set
+  // to zero, so clients should be wary not to use this information.
   // |buffer_addr_align| can be specified to request a specific buffer memory
   // alignment.
+  // |modifier| is the additional information of |format|. It will become some
+  // value else than gfx::NativePixmapHandle::kNoModifier when the underlying
+  // buffer format is different from a standard |format| due to tiling.
   // The returned base::Optional will be base::nullopt if the configured values
   // are invalid.
+
+  // Create a layout suitable for |format| at |coded_size|. The stride, offsets
+  // and size of all planes are set to 0, since that information cannot reliably
+  // be infered from the arguments.
   static base::Optional<VideoFrameLayout> Create(VideoPixelFormat format,
                                                  const gfx::Size& coded_size);
 
-  // The size of |strides| must be NumPlanes(|format|). Planes' offset will be
-  // 0.
+  // Create a layout suitable for |format| at |coded_size|, with the |strides|
+  // for each plane specified. The offsets and size of all planes are set to 0.
+  // The size of |strides| must be equal to NumPlanes(|format|).
   static base::Optional<VideoFrameLayout> CreateWithStrides(
       VideoPixelFormat format,
       const gfx::Size& coded_size,
-      std::vector<int32_t> strides,
-      std::vector<size_t> buffer_sizes = {});
+      std::vector<int32_t> strides);
 
-  // The size of |planes| must be NumPlanes(|format|).
+  // Create a layout suitable for |format| at |coded_size|, with the |planes|
+  // fully provided.
+  // The size of |planes| must be equal to NumPlanes(|format|).
   static base::Optional<VideoFrameLayout> CreateWithPlanes(
       VideoPixelFormat format,
       const gfx::Size& coded_size,
-      std::vector<Plane> planes,
-      std::vector<size_t> buffer_sizes = {},
-      size_t buffer_addr_align = kBufferAddressAlignment);
+      std::vector<ColorPlaneLayout> planes,
+      size_t buffer_addr_align = kBufferAddressAlignment,
+      uint64_t modifier = gfx::NativePixmapHandle::kNoModifier);
+
+  // This constructor should be called for situations where the frames using
+  // this format are backed by multiple physical buffers, instead of having each
+  // plane at different offsets of the same buffer. Currently only used by V4L2.
+  static base::Optional<VideoFrameLayout> CreateMultiPlanar(
+      VideoPixelFormat format,
+      const gfx::Size& coded_size,
+      std::vector<ColorPlaneLayout> planes,
+      size_t buffer_addr_align = kBufferAddressAlignment,
+      uint64_t modifier = gfx::NativePixmapHandle::kNoModifier);
 
   VideoFrameLayout() = delete;
   VideoFrameLayout(const VideoFrameLayout&);
@@ -101,32 +95,29 @@ class MEDIA_EXPORT VideoFrameLayout {
   VideoPixelFormat format() const { return format_; }
   const gfx::Size& coded_size() const { return coded_size_; }
 
-  // Return number of buffers. Note that num_planes >= num_buffers.
-  size_t num_buffers() const { return buffer_sizes_.size(); }
-
   // Returns number of planes. Note that num_planes >= num_buffers.
   size_t num_planes() const { return planes_.size(); }
 
-  const std::vector<Plane>& planes() const { return planes_; }
-  const std::vector<size_t>& buffer_sizes() const { return buffer_sizes_; }
-
-  // Returns sum of bytes of all buffers.
-  size_t GetTotalBufferSize() const;
+  const std::vector<ColorPlaneLayout>& planes() const { return planes_; }
 
   bool operator==(const VideoFrameLayout& rhs) const;
   bool operator!=(const VideoFrameLayout& rhs) const;
 
+  // Return true when a format uses multiple backing buffers to store its
+  // planes.
+  bool is_multi_planar() const { return is_multi_planar_; }
   // Returns the required memory alignment for buffers.
-  size_t buffer_addr_align() const {
-    return buffer_addr_align_;
-  }
+  size_t buffer_addr_align() const { return buffer_addr_align_; }
+  // Return the modifier of buffers.
+  uint64_t modifier() const { return modifier_; }
 
  private:
   VideoFrameLayout(VideoPixelFormat format,
                    const gfx::Size& coded_size,
-                   std::vector<Plane> planes,
-                   std::vector<size_t> buffer_sizes,
-                   size_t buffer_addr_align);
+                   std::vector<ColorPlaneLayout> planes,
+                   bool is_multi_planar,
+                   size_t buffer_addr_align,
+                   uint64_t modifier);
 
   VideoPixelFormat format_;
 
@@ -138,21 +129,22 @@ class MEDIA_EXPORT VideoFrameLayout {
   gfx::Size coded_size_;
 
   // Layout property for each color planes, e.g. stride and buffer offset.
-  std::vector<Plane> planes_;
+  std::vector<ColorPlaneLayout> planes_;
 
-  // Vector of sizes for each buffer, typically greater or equal to the area of
-  // |coded_size_|.
-  std::vector<size_t> buffer_sizes_;
+  // Set to true when a format uses multiple backing buffers to store its
+  // planes. Used by code for V4L2 API at the moment.
+  bool is_multi_planar_;
 
   // Memory address alignment of the buffers. This is only relevant when
   // allocating physical memory for the buffer, so it doesn't need to be
   // serialized when frames are passed through Mojo.
   size_t buffer_addr_align_;
-};
 
-// Outputs VideoFrameLayout::Plane to stream.
-MEDIA_EXPORT std::ostream& operator<<(std::ostream& ostream,
-                                      const VideoFrameLayout::Plane& plane);
+  // Modifier of buffers. The modifier is retrieved from GBM library. This
+  // can be a different value from kNoModifier only if the VideoFrame is created
+  // by using NativePixmap.
+  uint64_t modifier_;
+};
 
 // Outputs VideoFrameLayout to stream.
 MEDIA_EXPORT std::ostream& operator<<(std::ostream& ostream,

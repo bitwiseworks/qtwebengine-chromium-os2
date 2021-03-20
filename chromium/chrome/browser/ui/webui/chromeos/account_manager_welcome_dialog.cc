@@ -7,13 +7,17 @@
 #include <string>
 
 #include "base/logging.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/prefs/pref_service.h"
+#include "components/user_manager/user_manager.h"
 #include "ui/aura/window.h"
+#include "ui/views/widget/widget.h"
+#include "ui/wm/core/shadow_types.h"
 #include "url/gurl.h"
 
 namespace chromeos {
@@ -21,8 +25,8 @@ namespace chromeos {
 namespace {
 
 AccountManagerWelcomeDialog* g_dialog = nullptr;
-constexpr int kSigninDialogWidth = 600;
-constexpr int kSigninDialogHeight = 500;
+constexpr int kSigninDialogWidth = 768;
+constexpr int kSigninDialogHeight = 640;
 constexpr int kMaxNumTimesShown = 1;
 
 }  // namespace
@@ -46,6 +50,10 @@ bool AccountManagerWelcomeDialog::ShowIfRequired() {
   }
 
   // Check if the dialog should be shown.
+  if (user_manager::UserManager::Get()
+          ->IsCurrentUserCryptohomeDataEphemeral()) {
+    return false;
+  }
   PrefService* pref_service =
       ProfileManager::GetActiveUserProfile()->GetPrefs();
   const int num_times_shown = pref_service->GetInteger(
@@ -59,15 +67,23 @@ bool AccountManagerWelcomeDialog::ShowIfRequired() {
   // Will be deleted by |SystemWebDialogDelegate::OnDialogClosed|.
   g_dialog = new AccountManagerWelcomeDialog();
   g_dialog->ShowSystemDialog();
-
   return true;
+}
+
+void AccountManagerWelcomeDialog::AdjustWidgetInitParams(
+    views::Widget::InitParams* params) {
+  params->z_order = ui::ZOrderLevel::kNormal;
+  params->shadow_type = views::Widget::InitParams::ShadowType::kDrop;
+  params->shadow_elevation = wm::kShadowElevationActiveWindow;
 }
 
 void AccountManagerWelcomeDialog::OnDialogClosed(
     const std::string& json_retval) {
-  chrome::SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
-      ProfileManager::GetActiveUserProfile(),
-      GURL("chrome://settings/accountManager"));
+  // Opening Settings during shutdown leads to a crash.
+  if (!chrome::IsAttemptingShutdown()) {
+    chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+        ProfileManager::GetActiveUserProfile(), chrome::kAccountManagerSubPage);
+  }
 
   SystemWebDialogDelegate::OnDialogClosed(json_retval);
 }
@@ -81,6 +97,10 @@ std::string AccountManagerWelcomeDialog::GetDialogArgs() const {
 }
 
 bool AccountManagerWelcomeDialog::ShouldShowDialogTitle() const {
+  return false;
+}
+
+bool AccountManagerWelcomeDialog::ShouldShowCloseButton() const {
   return false;
 }
 

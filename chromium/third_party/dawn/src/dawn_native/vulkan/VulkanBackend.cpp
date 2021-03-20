@@ -24,34 +24,86 @@
 #include "common/SwapChainUtils.h"
 #include "dawn_native/vulkan/DeviceVk.h"
 #include "dawn_native/vulkan/NativeSwapChainImplVk.h"
+#include "dawn_native/vulkan/TextureVk.h"
 
 namespace dawn_native { namespace vulkan {
 
-    dawnDevice CreateDevice() {
-        return reinterpret_cast<dawnDevice>(new Device());
-    }
-
-    VkInstance GetInstance(dawnDevice device) {
+    VkInstance GetInstance(WGPUDevice device) {
         Device* backendDevice = reinterpret_cast<Device*>(device);
-        return backendDevice->GetInstance();
+        return backendDevice->GetVkInstance();
     }
 
-    DAWN_NATIVE_EXPORT dawnSwapChainImplementation
-    CreateNativeSwapChainImpl(dawnDevice device, VkSurfaceKHRNative surfaceNative) {
+    DAWN_NATIVE_EXPORT PFN_vkVoidFunction GetInstanceProcAddr(WGPUDevice device,
+                                                              const char* pName) {
+        Device* backendDevice = reinterpret_cast<Device*>(device);
+        return (*backendDevice->fn.GetInstanceProcAddr)(backendDevice->GetVkInstance(), pName);
+    }
+
+    // Explicitly export this function because it uses the "native" type for surfaces while the
+    // header as seen in this file uses the wrapped type.
+    DAWN_NATIVE_EXPORT DawnSwapChainImplementation
+    CreateNativeSwapChainImpl(WGPUDevice device, ::VkSurfaceKHR surfaceNative) {
         Device* backendDevice = reinterpret_cast<Device*>(device);
         VkSurfaceKHR surface = VkSurfaceKHR::CreateFromHandle(surfaceNative);
 
-        dawnSwapChainImplementation impl;
+        DawnSwapChainImplementation impl;
         impl = CreateSwapChainImplementation(new NativeSwapChainImpl(backendDevice, surface));
-        impl.textureUsage = DAWN_TEXTURE_USAGE_BIT_PRESENT;
+        impl.textureUsage = WGPUTextureUsage_Present;
 
         return impl;
     }
 
-    dawnTextureFormat GetNativeSwapChainPreferredFormat(
-        const dawnSwapChainImplementation* swapChain) {
+    WGPUTextureFormat GetNativeSwapChainPreferredFormat(
+        const DawnSwapChainImplementation* swapChain) {
         NativeSwapChainImpl* impl = reinterpret_cast<NativeSwapChainImpl*>(swapChain->userData);
-        return static_cast<dawnTextureFormat>(impl->GetPreferredFormat());
+        return static_cast<WGPUTextureFormat>(impl->GetPreferredFormat());
     }
+
+#ifdef DAWN_PLATFORM_LINUX
+    ExternalImageDescriptorFD::ExternalImageDescriptorFD(ExternalImageDescriptorType type)
+        : ExternalImageDescriptor(type) {
+    }
+
+    ExternalImageDescriptorOpaqueFD::ExternalImageDescriptorOpaqueFD()
+        : ExternalImageDescriptorFD(ExternalImageDescriptorType::OpaqueFD) {
+    }
+
+    ExternalImageDescriptorDmaBuf::ExternalImageDescriptorDmaBuf()
+        : ExternalImageDescriptorFD(ExternalImageDescriptorType::DmaBuf) {
+    }
+
+    int ExportSignalSemaphoreOpaqueFD(WGPUDevice cDevice, WGPUTexture cTexture) {
+        Device* device = reinterpret_cast<Device*>(cDevice);
+        Texture* texture = reinterpret_cast<Texture*>(cTexture);
+
+        if (!texture) {
+            return -1;
+        }
+
+        ExternalSemaphoreHandle outHandle;
+        if (device->ConsumedError(device->SignalAndExportExternalTexture(texture, &outHandle))) {
+            return -1;
+        }
+
+        return outHandle;
+    }
+
+    WGPUTexture WrapVulkanImage(WGPUDevice cDevice, const ExternalImageDescriptor* descriptor) {
+        Device* device = reinterpret_cast<Device*>(cDevice);
+
+        switch (descriptor->type) {
+            case ExternalImageDescriptorType::OpaqueFD:
+            case ExternalImageDescriptorType::DmaBuf: {
+                const ExternalImageDescriptorFD* fdDescriptor =
+                    static_cast<const ExternalImageDescriptorFD*>(descriptor);
+                TextureBase* texture = device->CreateTextureWrappingVulkanImage(
+                    descriptor, fdDescriptor->memoryFD, fdDescriptor->waitFDs);
+                return reinterpret_cast<WGPUTexture>(texture);
+            }
+            default:
+                return nullptr;
+        }
+    }
+#endif
 
 }}  // namespace dawn_native::vulkan

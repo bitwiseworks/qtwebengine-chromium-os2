@@ -6,7 +6,7 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
-#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_wrapper.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_with_script_scope.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "v8/include/v8.h"
 
@@ -18,8 +18,9 @@ ScriptPromise UnderlyingSourceBase::startWrapper(ScriptState* script_state,
   // construct multiple streams).
   DCHECK(!controller_);
 
-  controller_ = MakeGarbageCollected<ReadableStreamDefaultControllerWrapper>(
-      js_controller);
+  controller_ =
+      MakeGarbageCollected<ReadableStreamDefaultControllerWithScriptScope>(
+          script_state, js_controller);
 
   return Start(script_state);
 }
@@ -30,6 +31,12 @@ ScriptPromise UnderlyingSourceBase::Start(ScriptState* script_state) {
 
 ScriptPromise UnderlyingSourceBase::pull(ScriptState* script_state) {
   return ScriptPromise::CastUndefined(script_state);
+}
+
+ScriptPromise UnderlyingSourceBase::cancelWrapper(ScriptState* script_state) {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  return cancelWrapper(script_state,
+                       ScriptValue(isolate, v8::Undefined(isolate)));
 }
 
 ScriptPromise UnderlyingSourceBase::cancelWrapper(ScriptState* script_state,
@@ -45,36 +52,21 @@ ScriptPromise UnderlyingSourceBase::Cancel(ScriptState* script_state,
 }
 
 ScriptValue UnderlyingSourceBase::type(ScriptState* script_state) const {
-  return ScriptValue(script_state, v8::Undefined(script_state->GetIsolate()));
+  return ScriptValue(script_state->GetIsolate(),
+                     v8::Undefined(script_state->GetIsolate()));
 }
 
-void UnderlyingSourceBase::notifyLockAcquired() {
-  is_stream_locked_ = true;
-}
-
-void UnderlyingSourceBase::notifyLockReleased() {
-  is_stream_locked_ = false;
-}
-
-bool UnderlyingSourceBase::HasPendingActivity() const {
-  // This will return false within a finite time period _assuming_ that
-  // consumers use the controller to close or error the stream.
-  // Browser-created readable streams should always close or error within a
-  // finite time period, due to timeouts etc.
-  return controller_ && controller_->IsActive() && is_stream_locked_;
-}
-
-void UnderlyingSourceBase::ContextDestroyed(ExecutionContext*) {
+void UnderlyingSourceBase::ContextDestroyed() {
   if (controller_) {
     controller_->NoteHasBeenCanceled();
     controller_.Clear();
   }
 }
 
-void UnderlyingSourceBase::Trace(blink::Visitor* visitor) {
+void UnderlyingSourceBase::Trace(Visitor* visitor) {
   visitor->Trace(controller_);
   ScriptWrappable::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

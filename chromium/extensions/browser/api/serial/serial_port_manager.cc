@@ -6,16 +6,16 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
-#include "base/task/post_task.h"
+#include "base/no_destructor.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/device_service.h"
 #include "extensions/browser/api/serial/serial_connection.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "services/device/public/mojom/constants.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 
 namespace extensions {
 
@@ -32,6 +32,11 @@ bool ShouldPauseOnReceiveError(serial::ReceiveError error) {
          error == serial::RECEIVE_ERROR_OVERRUN ||
          error == serial::RECEIVE_ERROR_BUFFER_OVERFLOW ||
          error == serial::RECEIVE_ERROR_PARITY_ERROR;
+}
+
+SerialPortManager::Binder& GetBinderOverride() {
+  static base::NoDestructor<SerialPortManager::Binder> binder;
+  return *binder;
 }
 
 }  // namespace
@@ -51,9 +56,7 @@ SerialPortManager* SerialPortManager::Get(content::BrowserContext* context) {
 }
 
 SerialPortManager::SerialPortManager(content::BrowserContext* context)
-    : thread_id_(SerialConnection::kThreadId),
-      context_(context),
-      weak_factory_(this) {
+    : context_(context) {
   ApiResourceManager<SerialConnection>* manager =
       ApiResourceManager<SerialConnection>::Get(context_);
   DCHECK(manager) << "No serial connection manager.";
@@ -71,54 +74,48 @@ SerialPortManager::ReceiveParams::~ReceiveParams() {}
 
 void SerialPortManager::GetDevices(
     device::mojom::SerialPortManager::GetDevicesCallback callback) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   EnsureConnection();
   port_manager_->GetDevices(std::move(callback));
 }
 
-void SerialPortManager::GetPort(const std::string& path,
-                                device::mojom::SerialPortRequest request) {
+void SerialPortManager::GetPort(
+    const std::string& path,
+    mojo::PendingReceiver<device::mojom::SerialPort> receiver) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   EnsureConnection();
   port_manager_->GetDevices(
       base::BindOnce(&SerialPortManager::OnGotDevicesToGetPort,
-                     weak_factory_.GetWeakPtr(), path, std::move(request)));
+                     weak_factory_.GetWeakPtr(), path, std::move(receiver)));
 }
 
-void SerialPortManager::PollConnection(const std::string& extension_id,
-                                       int connection_id) {
-  DCHECK_CURRENTLY_ON(thread_id_);
+void SerialPortManager::StartConnectionPolling(const std::string& extension_id,
+                                               int connection_id) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  auto* connection = connections_->Get(extension_id, connection_id);
+  if (!connection)
+    return;
+
+  DCHECK_EQ(extension_id, connection->owner_extension_id());
 
   ReceiveParams params;
-  params.thread_id = thread_id_;
   params.browser_context_id = context_;
   params.extension_id = extension_id;
   params.connections = connections_;
   params.connection_id = connection_id;
 
-  StartReceive(params);
+  connection->StartPolling(base::BindRepeating(&DispatchReceiveEvent, params));
 }
 
 // static
-void SerialPortManager::StartReceive(const ReceiveParams& params) {
-  DCHECK_CURRENTLY_ON(params.thread_id);
-
-  SerialConnection* connection =
-      params.connections->Get(params.extension_id, params.connection_id);
-  if (!connection)
-    return;
-  DCHECK(params.extension_id == connection->owner_extension_id());
-
-  if (connection->paused())
-    return;
-
-  connection->Receive(base::BindOnce(&ReceiveCallback, params));
+void SerialPortManager::OverrideBinderForTesting(Binder binder) {
+  GetBinderOverride() = std::move(binder);
 }
 
 // static
-void SerialPortManager::ReceiveCallback(const ReceiveParams& params,
-                                        std::vector<uint8_t> data,
-                                        serial::ReceiveError error) {
-  DCHECK_CURRENTLY_ON(params.thread_id);
-
+void SerialPortManager::DispatchReceiveEvent(const ReceiveParams& params,
+                                             std::vector<uint8_t> data,
+                                             serial::ReceiveError error) {
   // Note that an error (e.g. timeout) does not necessarily mean that no data
   // was read, so we may fire an onReceive regardless of any error code.
   if (data.size() > 0) {
@@ -130,10 +127,16 @@ void SerialPortManager::ReceiveCallback(const ReceiveParams& params,
     std::unique_ptr<extensions::Event> event(
         new extensions::Event(extensions::events::SERIAL_ON_RECEIVE,
                               serial::OnReceive::kEventName, std::move(args)));
-    PostEvent(params, std::move(event));
+    DispatchEvent(params, std::move(event));
   }
 
   if (error != serial::RECEIVE_ERROR_NONE) {
+    if (ShouldPauseOnReceiveError(error)) {
+      SerialConnection* connection =
+          params.connections->Get(params.extension_id, params.connection_id);
+      if (connection)
+        connection->SetPaused(true);
+    }
     serial::ReceiveErrorInfo error_info;
     error_info.connection_id = params.connection_id;
     error_info.error = error;
@@ -142,46 +145,22 @@ void SerialPortManager::ReceiveCallback(const ReceiveParams& params,
     std::unique_ptr<extensions::Event> event(new extensions::Event(
         extensions::events::SERIAL_ON_RECEIVE_ERROR,
         serial::OnReceiveError::kEventName, std::move(args)));
-    PostEvent(params, std::move(event));
-    if (ShouldPauseOnReceiveError(error)) {
-      SerialConnection* connection =
-          params.connections->Get(params.extension_id, params.connection_id);
-      if (connection)
-        connection->set_paused(true);
-    }
+    DispatchEvent(params, std::move(event));
   }
-
-  // Queue up the next read operation.
-  base::PostTaskWithTraits(FROM_HERE, {params.thread_id},
-                           base::BindOnce(&StartReceive, params));
-}
-
-// static
-void SerialPortManager::PostEvent(const ReceiveParams& params,
-                                  std::unique_ptr<extensions::Event> event) {
-  DCHECK_CURRENTLY_ON(params.thread_id);
-
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&DispatchEvent, params.browser_context_id,
-                     params.extension_id, std::move(event)));
 }
 
 // static
 void SerialPortManager::DispatchEvent(
-    void* browser_context_id,
-    const std::string& extension_id,
+    const ReceiveParams& params,
     std::unique_ptr<extensions::Event> event) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
   content::BrowserContext* context =
-      reinterpret_cast<content::BrowserContext*>(browser_context_id);
+      reinterpret_cast<content::BrowserContext*>(params.browser_context_id);
   if (!extensions::ExtensionsBrowserClient::Get()->IsValidContext(context))
     return;
 
   EventRouter* router = EventRouter::Get(context);
   if (router)
-    router->DispatchEventToExtension(extension_id, std::move(event));
+    router->DispatchEventToExtension(params.extension_id, std::move(event));
 }
 
 void SerialPortManager::EnsureConnection() {
@@ -189,26 +168,28 @@ void SerialPortManager::EnsureConnection() {
   if (port_manager_)
     return;
 
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(content::ServiceManagerConnection::GetForProcess());
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindInterface(device::mojom::kServiceName,
-                      mojo::MakeRequest(&port_manager_));
-  port_manager_.set_connection_error_handler(
+  auto receiver = port_manager_.BindNewPipeAndPassReceiver();
+  port_manager_.set_disconnect_handler(
       base::BindOnce(&SerialPortManager::OnPortManagerConnectionError,
                      weak_factory_.GetWeakPtr()));
+
+  const auto& binder = GetBinderOverride();
+  if (binder)
+    binder.Run(std::move(receiver));
+  else
+    content::GetDeviceService().BindSerialPortManager(std::move(receiver));
 }
 
 void SerialPortManager::OnGotDevicesToGetPort(
     const std::string& path,
-    device::mojom::SerialPortRequest request,
+    mojo::PendingReceiver<device::mojom::SerialPort> receiver,
     std::vector<device::mojom::SerialPortInfoPtr> devices) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   for (auto& device : devices) {
     if (device->path.AsUTF8Unsafe() == path) {
-      port_manager_->GetPort(device->token, std::move(request));
+      port_manager_->GetPort(device->token, std::move(receiver),
+                             /*watcher=*/mojo::NullRemote());
       return;
     }
   }

@@ -15,11 +15,6 @@
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-private-field"
-#elif defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable:4056)
-#pragma warning(disable:4065)
-#pragma warning(disable:4756)
 #endif
 
 {%- macro namespace_begin() %}
@@ -51,6 +46,14 @@ namespace {{variant}} {
 {%- if for_blink %}
 #include "mojo/public/cpp/bindings/lib/wtf_serialization.h"
 {%- endif %}
+
+{%- for import in imports %}
+{%-   if variant %}
+#include "{{"%s-%s.h"|format(import.path, variant)}}"
+{%-   else %}
+#include "{{import.path}}.h"
+{%-   endif %}
+{%- endfor %}
 
 {# This is include guard for jumbo build. #}
 #ifndef {{header_guard_for_jumbo}}
@@ -122,6 +125,4 @@ void {{interface.name}}AsyncWaiter::{{method.name}}(
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
-#elif defined(_MSC_VER)
-#pragma warning(pop)
 #endif

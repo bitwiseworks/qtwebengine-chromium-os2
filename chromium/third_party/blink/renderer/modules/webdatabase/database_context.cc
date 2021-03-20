@@ -69,8 +69,8 @@ namespace blink {
 // 1. "outlive" the ExecutionContext.
 //    - This is needed because the DatabaseContext needs to remove itself from
 //    the
-//      ExecutionContext's ContextLifecycleObserver list and
-//      ContextLifecycleObserver
+//      ExecutionContext's ExecutionContextLifecycleObserver list and
+//      ExecutionContextLifecycleObserver
 //      list. This removal needs to be executed on the script's thread. Hence,
 //      we
 //      rely on the ExecutionContext's shutdown process to call
@@ -99,7 +99,7 @@ DatabaseContext* DatabaseContext::Create(ExecutionContext* context) {
 }
 
 DatabaseContext::DatabaseContext(ExecutionContext* context)
-    : ContextLifecycleObserver(context),
+    : ExecutionContextLifecycleObserver(context),
       has_open_databases_(false),
       has_requested_termination_(false) {
   DCHECK(IsMainThread());
@@ -115,9 +115,9 @@ DatabaseContext::~DatabaseContext() {
   DatabaseManager::Manager().DidDestructDatabaseContext();
 }
 
-void DatabaseContext::Trace(blink::Visitor* visitor) {
+void DatabaseContext::Trace(Visitor* visitor) {
   visitor->Trace(database_thread_);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 // This is called if the associated ExecutionContext is destructing while
@@ -125,7 +125,7 @@ void DatabaseContext::Trace(blink::Visitor* visitor) {
 // To do this, we stop the database and let everything shutdown naturally
 // because the database closing process may still make use of this context.
 // It is not safe to just delete the context here.
-void DatabaseContext::ContextDestroyed(ExecutionContext*) {
+void DatabaseContext::ContextDestroyed() {
   StopDatabases();
   DatabaseManager::Manager().UnregisterDatabaseContext(this);
 }
@@ -145,7 +145,7 @@ DatabaseThread* DatabaseContext::GetDatabaseThread() {
     // Create the database thread on first request - but not if at least one
     // database was already opened, because in that case we already had a
     // database thread and terminated it and should not create another.
-    database_thread_ = DatabaseThread::Create();
+    database_thread_ = MakeGarbageCollected<DatabaseThread>();
     database_thread_->Start();
   }
 
@@ -175,7 +175,7 @@ void DatabaseContext::StopDatabases() {
 }
 
 bool DatabaseContext::AllowDatabaseAccess() const {
-  return To<Document>(GetExecutionContext())->IsActive();
+  return Document::From(GetExecutionContext())->IsActive();
 }
 
 const SecurityOrigin* DatabaseContext::GetSecurityOrigin() const {

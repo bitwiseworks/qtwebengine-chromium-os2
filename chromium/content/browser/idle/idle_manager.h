@@ -12,9 +12,13 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "third_party/blink/public/platform/modules/idle/idle_manager.mojom.h"
+#include "content/browser/idle/idle_monitor.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "third_party/blink/public/mojom/idle/idle_manager.mojom.h"
 #include "ui/base/idle/idle.h"
 #include "url/origin.h"
 
@@ -36,8 +40,9 @@ class CONTENT_EXPORT IdleManager : public blink::mojom::IdleManager {
     // See ui/base/idle/idle.h for the semantics of these methods.
     // TODO(goto): should this be made private? Doesn't seem to be necessary
     // as part of a public interface.
-    virtual ui::IdleState CalculateIdleState(int idle_threshold) = 0;
-    virtual int CalculateIdleTime() = 0;
+    virtual ui::IdleState CalculateIdleState(
+        base::TimeDelta idle_threshold) = 0;
+    virtual base::TimeDelta CalculateIdleTime() = 0;
     virtual bool CheckIdleStateIsLocked() = 0;
 
    private:
@@ -47,13 +52,11 @@ class CONTENT_EXPORT IdleManager : public blink::mojom::IdleManager {
   IdleManager();
   ~IdleManager() override;
 
-  // TODO: Origin for permission check; needed?
-  void CreateService(blink::mojom::IdleManagerRequest request,
-                     const url::Origin& origin);
+  void CreateService(mojo::PendingReceiver<blink::mojom::IdleManager> receiver);
 
   // blink.mojom.IdleManager:
-  void AddMonitor(uint32_t threshold,
-                  blink::mojom::IdleMonitorPtr monitor_ptr,
+  void AddMonitor(base::TimeDelta threshold,
+                  mojo::PendingRemote<blink::mojom::IdleMonitor> monitor_remote,
                   AddMonitorCallback callback) override;
 
   // Testing helpers.
@@ -64,15 +67,9 @@ class CONTENT_EXPORT IdleManager : public blink::mojom::IdleManager {
   bool IsPollingForTest();
 
  private:
-  // A Monitor represents a client that is actively listening for state
-  // changes, and wraps an IdleMonitorPtr which is used to send updates. The
-  // class also tracks the last observed state and the threshold. Monitors are
-  // owned by this class and held in the |monitors_| list.
-  class Monitor;
-
   // Called internally when a monitor's pipe closes to remove it from
   // |monitors_|.
-  void RemoveMonitor(Monitor* monitor);
+  void RemoveMonitor(IdleMonitor* monitor);
 
   // Called internally when a monitor is added via AddMonitor() to maybe
   // start the polling timer, if not already started.
@@ -89,20 +86,19 @@ class CONTENT_EXPORT IdleManager : public blink::mojom::IdleManager {
   // Callback for the async state query. Updates monitors as needed.
   void UpdateIdleStateCallback(int idle_time);
 
-  // Cached to update newly registered clients.
-  blink::mojom::IdleState last_state_ = blink::mojom::IdleState::ACTIVE;
+  blink::mojom::IdleStatePtr CheckIdleState(base::TimeDelta threshold);
 
   base::RepeatingTimer poll_timer_;
   std::unique_ptr<IdleTimeProvider> idle_time_provider_;
 
   // Registered clients.
-  mojo::BindingSet<blink::mojom::IdleManager> bindings_;
+  mojo::ReceiverSet<blink::mojom::IdleManager> receivers_;
 
   // Owns Monitor instances, added when clients call AddMonitor().
-  base::LinkedList<Monitor> monitors_;
+  base::LinkedList<IdleMonitor> monitors_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<IdleManager> weak_factory_;
+  base::WeakPtrFactory<IdleManager> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IdleManager);
 };

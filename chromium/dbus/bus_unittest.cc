@@ -9,8 +9,9 @@
 #include "base/files/file_descriptor_watcher_posix.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "dbus/exported_object.h"
 #include "dbus/object_path.h"
@@ -129,12 +130,11 @@ TEST(BusTest, GetObjectProxyIgnoreUnknownService) {
 }
 
 TEST(BusTest, RemoveObjectProxy) {
-  // Setup the current thread's MessageLoop.
-  base::MessageLoop message_loop;
+  base::test::SingleThreadTaskEnvironment task_environment;
 
   // Start the D-Bus thread.
   base::Thread::Options thread_options;
-  thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
+  thread_options.message_pump_type = base::MessagePumpType::IO;
   base::Thread dbus_thread("D-Bus thread");
   dbus_thread.StartWithOptions(thread_options);
 
@@ -212,7 +212,7 @@ TEST(BusTest, GetExportedObject) {
 TEST(BusTest, UnregisterExportedObject) {
   // Start the D-Bus thread.
   base::Thread::Options thread_options;
-  thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
+  thread_options.message_pump_type = base::MessagePumpType::IO;
   base::Thread dbus_thread("D-Bus thread");
   dbus_thread.StartWithOptions(thread_options);
 
@@ -262,7 +262,7 @@ TEST(BusTest, ShutdownAndBlock) {
 TEST(BusTest, ShutdownAndBlockWithDBusThread) {
   // Start the D-Bus thread.
   base::Thread::Options thread_options;
-  thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
+  thread_options.message_pump_type = base::MessagePumpType::IO;
   base::Thread dbus_thread("D-Bus thread");
   dbus_thread.StartWithOptions(thread_options);
 
@@ -318,11 +318,8 @@ TEST(BusTest, DoubleAddAndRemoveMatch) {
 }
 
 TEST(BusTest, ListenForServiceOwnerChange) {
-  base::MessageLoopForIO message_loop;
-
-  // This enables FileDescriptorWatcher, which is required by dbus::Watch.
-  base::FileDescriptorWatcher file_descriptor_watcher(
-      message_loop.task_runner());
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::IO);
 
   RunLoopWithExpectedCount run_loop_state;
 
@@ -333,11 +330,9 @@ TEST(BusTest, ListenForServiceOwnerChange) {
   // Add a listener.
   std::string service_owner1;
   int num_of_owner_changes1 = 0;
-  Bus::GetServiceOwnerCallback callback1 =
-      base::Bind(&OnServiceOwnerChanged,
-                 &run_loop_state,
-                 &service_owner1,
-                 &num_of_owner_changes1);
+  Bus::ServiceOwnerChangeCallback callback1 =
+      base::BindRepeating(&OnServiceOwnerChanged, &run_loop_state,
+                          &service_owner1, &num_of_owner_changes1);
   bus->ListenForServiceOwnerChange("org.chromium.TestService", callback1);
   // This should be a no-op.
   bus->ListenForServiceOwnerChange("org.chromium.TestService", callback1);
@@ -370,11 +365,9 @@ TEST(BusTest, ListenForServiceOwnerChange) {
   // Add a second listener.
   std::string service_owner2;
   int num_of_owner_changes2 = 0;
-  Bus::GetServiceOwnerCallback callback2 =
-      base::Bind(&OnServiceOwnerChanged,
-                 &run_loop_state,
-                 &service_owner2,
-                 &num_of_owner_changes2);
+  Bus::ServiceOwnerChangeCallback callback2 =
+      base::BindRepeating(&OnServiceOwnerChanged, &run_loop_state,
+                          &service_owner2, &num_of_owner_changes2);
   bus->ListenForServiceOwnerChange("org.chromium.TestService", callback2);
   base::RunLoop().RunUntilIdle();
 

@@ -10,7 +10,7 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/devtools/protocol/forward.h"
 #include "chrome/browser/devtools/protocol/target.h"
-#include "chrome/browser/media/router/presentation/independent_otr_profile_manager.h"
+#include "chrome/browser/profiles/independent_otr_profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "net/base/host_port_pair.h"
@@ -34,6 +34,8 @@ class TargetHandler : public protocol::Target::Backend {
       protocol::Maybe<int> height,
       protocol::Maybe<std::string> browser_context_id,
       protocol::Maybe<bool> enable_begin_frame_control,
+      protocol::Maybe<bool> new_window,
+      protocol::Maybe<bool> background,
       std::string* out_target_id) override;
 
  private:

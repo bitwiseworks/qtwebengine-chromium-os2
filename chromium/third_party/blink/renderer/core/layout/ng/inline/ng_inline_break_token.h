@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NGInlineBreakToken_h
-#define NGInlineBreakToken_h
+#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_BREAK_TOKEN_H_
+#define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_BREAK_TOKEN_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_break_token.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -30,13 +31,13 @@ class CORE_EXPORT NGInlineBreakToken final : public NGBreakToken {
       unsigned item_index,
       unsigned text_offset,
       unsigned flags /* NGInlineBreakTokenFlags */) {
-    return base::AdoptRef(
-        new NGInlineBreakToken(node, style, item_index, text_offset, flags));
+    return base::AdoptRef(new NGInlineBreakToken(
+        PassKey(), node, style, item_index, text_offset, flags));
   }
 
   // Creates a break token for a node which cannot produce any more fragments.
   static scoped_refptr<NGInlineBreakToken> Create(NGLayoutInputNode node) {
-    return base::AdoptRef(new NGInlineBreakToken(node));
+    return base::AdoptRef(new NGInlineBreakToken(PassKey(), node));
   }
 
   ~NGInlineBreakToken() override;
@@ -68,39 +69,33 @@ class CORE_EXPORT NGInlineBreakToken final : public NGBreakToken {
     return flags_ & kIsForcedBreak;
   }
 
-  // When a previously laid out line box didn't fit in the current
-  // fragmentainer, and we have to lay it out again in the next fragmentainer,
-  // we need to skip floats associated with that line. The parent block layout
-  // algorithm will take care of any floats that broke and need to be resumed in
-  // the next fragmentainer. Dealing with them as part of line layout as well
-  // would result in duplicate fragments for the floats.
-  void SetIgnoreFloats() { ignore_floats_ = true; }
-  bool IgnoreFloats() const { return ignore_floats_; }
-
-#ifndef NDEBUG
-  String ToString() const override;
-#endif  // NDEBUG
-
- private:
-  NGInlineBreakToken(NGInlineNode node,
+  using PassKey = util::PassKey<NGInlineBreakToken>;
+  NGInlineBreakToken(PassKey,
+                     NGInlineNode node,
                      const ComputedStyle*,
                      unsigned item_index,
                      unsigned text_offset,
                      unsigned flags /* NGInlineBreakTokenFlags */);
 
-  explicit NGInlineBreakToken(NGLayoutInputNode node);
+  explicit NGInlineBreakToken(PassKey, NGLayoutInputNode node);
 
+#if DCHECK_IS_ON()
+  String ToString() const override;
+#endif
+
+ private:
   scoped_refptr<const ComputedStyle> style_;
   unsigned item_index_;
   unsigned text_offset_;
 };
 
-DEFINE_TYPE_CASTS(NGInlineBreakToken,
-                  NGBreakToken,
-                  token,
-                  token->IsInlineType(),
-                  token.IsInlineType());
+template <>
+struct DowncastTraits<NGInlineBreakToken> {
+  static bool AllowFrom(const NGBreakToken& token) {
+    return token.IsInlineType();
+  }
+};
 
 }  // namespace blink
 
-#endif  // NGInlineBreakToken_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_INLINE_BREAK_TOKEN_H_

@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/modules/credentialmanager/federated_credential.h"
 
-#include "third_party/blink/renderer/modules/credentialmanager/federated_credential_init.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_federated_credential_init.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
@@ -37,8 +37,8 @@ FederatedCredential* FederatedCredential::Create(
     scoped_refptr<const SecurityOrigin> provider,
     const String& name,
     const KURL& icon_url) {
-  return MakeGarbageCollected<FederatedCredential>(id, provider, name,
-                                                   icon_url);
+  return MakeGarbageCollected<FederatedCredential>(
+      id, provider, name, icon_url.IsEmpty() ? blink::KURL() : icon_url);
 }
 
 FederatedCredential::FederatedCredential(

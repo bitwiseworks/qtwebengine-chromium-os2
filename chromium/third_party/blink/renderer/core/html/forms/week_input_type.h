@@ -37,8 +37,6 @@ namespace blink {
 
 class WeekInputType final : public BaseTemporalInputType {
  public:
-  static InputType* Create(HTMLInputElement&);
-
   explicit WeekInputType(HTMLInputElement& element)
       : BaseTemporalInputType(element) {}
 
@@ -63,6 +61,7 @@ class WeekInputType final : public BaseTemporalInputType {
                      bool has_hour,
                      bool has_minute,
                      bool has_second) const override;
+  String AriaRoleForPickerIndicator() const override;
 };
 
 }  // namespace blink

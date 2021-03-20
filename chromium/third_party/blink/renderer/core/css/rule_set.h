@@ -30,7 +30,7 @@
 #include "third_party/blink/renderer/core/css/resolver/media_query_result.h"
 #include "third_party/blink/renderer/core/css/rule_feature_set.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
-#include "third_party/blink/renderer/platform/heap/heap_linked_stack.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_linked_stack.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
@@ -41,10 +41,20 @@ enum AddRuleFlags {
   kRuleHasDocumentSecurityOrigin = 1,
 };
 
-enum PropertyWhitelistType {
-  kPropertyWhitelistNone,
-  kPropertyWhitelistCue,
-  kPropertyWhitelistFirstLetter,
+// Some CSS properties do not apply to certain pseudo-elements, and need to be
+// ignored when resolving styles.
+enum class ValidPropertyFilter : unsigned {
+  // All properties are valid. This is the common case.
+  kNoFilter,
+  // Defined in a ::cue pseudo-element scope. Only properties listed
+  // in https://w3c.github.io/webvtt/#the-cue-pseudo-element are valid.
+  kCue,
+  // Defined in a ::first-letter pseudo-element scope. Only properties listed in
+  // https://drafts.csswg.org/css-pseudo-4/#first-letter-styling are valid.
+  kFirstLetter,
+  // Defined in a ::marker pseudo-element scope. Only properties listed in
+  // https://drafts.csswg.org/css-pseudo-4/#marker-pseudo are valid.
+  kMarker,
 };
 
 class CSSSelector;
@@ -58,7 +68,7 @@ class MinimalRuleData {
   MinimalRuleData(StyleRule* rule, unsigned selector_index, AddRuleFlags flags)
       : rule_(rule), selector_index_(selector_index), flags_(flags) {}
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   Member<StyleRule> rule_;
   unsigned selector_index_;
@@ -67,7 +77,7 @@ class MinimalRuleData {
 
 }  // namespace blink
 
-WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::MinimalRuleData);
+WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::MinimalRuleData)
 
 namespace blink {
 
@@ -104,11 +114,11 @@ class CORE_EXPORT RuleData : public GarbageCollected<RuleData> {
   bool HasDocumentSecurityOrigin() const {
     return has_document_security_origin_;
   }
-  PropertyWhitelistType PropertyWhitelist(
+  ValidPropertyFilter GetValidPropertyFilter(
       bool is_matching_ua_rules = false) const {
     return is_matching_ua_rules
-               ? kPropertyWhitelistNone
-               : static_cast<PropertyWhitelistType>(property_whitelist_);
+               ? ValidPropertyFilter::kNoFilter
+               : static_cast<ValidPropertyFilter>(valid_property_filter_);
   }
   // Try to balance between memory usage (there can be lots of RuleData objects)
   // and good filtering performance.
@@ -117,7 +127,7 @@ class CORE_EXPORT RuleData : public GarbageCollected<RuleData> {
     return descendant_selector_identifier_hashes_;
   }
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   // This number is picked fairly arbitrary. If lowered, be aware that there
   // might be sites and extensions using style rules with selector lists
@@ -138,7 +148,7 @@ class CORE_EXPORT RuleData : public GarbageCollected<RuleData> {
   unsigned specificity_ : 24;
   unsigned link_match_type_ : 2;  //  CSSSelector::LinkMatchMask
   unsigned has_document_security_origin_ : 1;
-  unsigned property_whitelist_ : 2;
+  unsigned valid_property_filter_ : 2;
   // 29 bits above
   // Use plain array instead of a Vector to minimize memory overhead.
   unsigned descendant_selector_identifier_hashes_[kMaximumIdentifierCount];
@@ -146,7 +156,7 @@ class CORE_EXPORT RuleData : public GarbageCollected<RuleData> {
 
 }  // namespace blink
 
-WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::RuleData);
+WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(blink::RuleData)
 
 namespace blink {
 
@@ -168,10 +178,8 @@ static_assert(sizeof(RuleData) == sizeof(SameSizeAsRuleData),
 // specific group are appended to the "universal" rules. The grouping is done to
 // optimize finding what rules apply to an element under consideration by
 // ElementRuleCollector::CollectMatchingRules.
-class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
+class CORE_EXPORT RuleSet final : public GarbageCollected<RuleSet> {
  public:
-  static RuleSet* Create() { return MakeGarbageCollected<RuleSet>(); }
-
   RuleSet() : rule_count_(0) {}
 
   void AddRulesFromSheet(StyleSheetContents*,
@@ -215,9 +223,9 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
     return &focus_pseudo_class_rules_;
   }
   const HeapVector<Member<const RuleData>>*
-  SpatialNavigationFocusPseudoClassRules() const {
+  SpatialNavigationInterestPseudoClassRules() const {
     DCHECK(!pending_rules_);
-    return &spatial_navigation_focus_class_rules_;
+    return &spatial_navigation_interest_class_rules_;
   }
   const HeapVector<Member<const RuleData>>* UniversalRules() const {
     DCHECK(!pending_rules_);
@@ -238,12 +246,11 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
   const HeapVector<Member<StyleRuleFontFace>>& FontFaceRules() const {
     return font_face_rules_;
   }
-  const HeapVector<Member<StyleRuleFontFeatureValues>>& FontFeatureValuesRules()
-      const {
-    return font_feature_values_rules_;
-  }
   const HeapVector<Member<StyleRuleKeyframes>>& KeyframesRules() const {
     return keyframes_rules_;
+  }
+  const HeapVector<Member<StyleRuleProperty>>& PropertyRules() const {
+    return property_rules_;
   }
   const HeapVector<MinimalRuleData>& DeepCombinatorOrShadowPseudoRules() const {
     return deep_combinator_or_shadow_pseudo_rules_;
@@ -277,11 +284,13 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
            HasV0BoundaryCrossingRules();
   }
 
+  bool DidMediaQueryResultsChange(const MediaQueryEvaluator& evaluator) const;
+
 #ifndef NDEBUG
   void Show() const;
 #endif
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   using PendingRuleMap =
@@ -294,9 +303,11 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
   void AddPageRule(StyleRulePage*);
   void AddViewportRule(StyleRuleViewport*);
   void AddFontFaceRule(StyleRuleFontFace*);
-  void AddFontFeatureValuesRule(StyleRuleFontFeatureValues*);
   void AddKeyframesRule(StyleRuleKeyframes*);
+  void AddPropertyRule(StyleRuleProperty*);
 
+  bool MatchMediaForAddRules(const MediaQueryEvaluator& evaluator,
+                             const MediaQuerySet* media_queries);
   void AddChildRules(const HeapVector<Member<StyleRuleBase>>&,
                      const MediaQueryEvaluator& medium,
                      AddRuleFlags);
@@ -307,10 +318,6 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
 
   class PendingRuleMaps : public GarbageCollected<PendingRuleMaps> {
    public:
-    static PendingRuleMaps* Create() {
-      return MakeGarbageCollected<PendingRuleMaps>();
-    }
-
     PendingRuleMaps() = default;
 
     PendingRuleMap id_rules;
@@ -318,12 +325,12 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
     PendingRuleMap tag_rules;
     PendingRuleMap shadow_pseudo_element_rules;
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
   };
 
   PendingRuleMaps* EnsurePendingRules() {
     if (!pending_rules_)
-      pending_rules_ = PendingRuleMaps::Create();
+      pending_rules_ = MakeGarbageCollected<PendingRuleMaps>();
     return pending_rules_.Get();
   }
 
@@ -334,18 +341,19 @@ class CORE_EXPORT RuleSet : public GarbageCollectedFinalized<RuleSet> {
   HeapVector<Member<const RuleData>> link_pseudo_class_rules_;
   HeapVector<Member<const RuleData>> cue_pseudo_rules_;
   HeapVector<Member<const RuleData>> focus_pseudo_class_rules_;
-  HeapVector<Member<const RuleData>> spatial_navigation_focus_class_rules_;
+  HeapVector<Member<const RuleData>> spatial_navigation_interest_class_rules_;
   HeapVector<Member<const RuleData>> universal_rules_;
   HeapVector<Member<const RuleData>> shadow_host_rules_;
   HeapVector<Member<const RuleData>> part_pseudo_rules_;
   RuleFeatureSet features_;
   HeapVector<Member<StyleRulePage>> page_rules_;
   HeapVector<Member<StyleRuleFontFace>> font_face_rules_;
-  HeapVector<Member<StyleRuleFontFeatureValues>> font_feature_values_rules_;
   HeapVector<Member<StyleRuleKeyframes>> keyframes_rules_;
+  HeapVector<Member<StyleRuleProperty>> property_rules_;
   HeapVector<MinimalRuleData> deep_combinator_or_shadow_pseudo_rules_;
   HeapVector<MinimalRuleData> content_pseudo_element_rules_;
   HeapVector<MinimalRuleData> slotted_pseudo_element_rules_;
+  Vector<MediaQuerySetResult> media_query_set_results_;
 
   unsigned rule_count_;
   Member<PendingRuleMaps> pending_rules_;

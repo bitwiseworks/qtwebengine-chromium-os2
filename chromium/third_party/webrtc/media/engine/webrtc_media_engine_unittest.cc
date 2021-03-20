@@ -8,15 +8,12 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include <memory>
-
-#include "api/audio_codecs/builtin_audio_decoder_factory.h"
-#include "api/audio_codecs/builtin_audio_encoder_factory.h"
-#include "api/video/builtin_video_bitrate_allocator_factory.h"
-#include "api/video_codecs/builtin_video_decoder_factory.h"
-#include "api/video_codecs/builtin_video_encoder_factory.h"
 #include "media/engine/webrtc_media_engine.h"
-#include "modules/audio_processing/include/audio_processing.h"
+
+#include <memory>
+#include <utility>
+
+#include "media/engine/webrtc_media_engine_defaults.h"
 #include "test/field_trial.h"
 #include "test/gtest.h"
 
@@ -48,11 +45,11 @@ std::vector<RtpExtension> MakeRedundantExtensions() {
   return result;
 }
 
-bool SupportedExtensions1(const std::string& name) {
+bool SupportedExtensions1(absl::string_view name) {
   return name == "c" || name == "i";
 }
 
-bool SupportedExtensions2(const std::string& name) {
+bool SupportedExtensions2(absl::string_view name) {
   return name != "a" && name != "n";
 }
 
@@ -185,6 +182,8 @@ TEST(WebRtcMediaEngineTest, FilterRtpExtensions_RemoveRedundantEncrypted_2) {
 }
 
 TEST(WebRtcMediaEngineTest, FilterRtpExtensions_RemoveRedundantBwe_1) {
+  webrtc::test::ScopedFieldTrials override_field_trials_(
+      "WebRTC-FilterAbsSendTimeExtension/Enabled/");
   std::vector<RtpExtension> extensions;
   extensions.push_back(
       RtpExtension(RtpExtension::kTransportSequenceNumberUri, 3));
@@ -202,8 +201,6 @@ TEST(WebRtcMediaEngineTest, FilterRtpExtensions_RemoveRedundantBwe_1) {
 TEST(WebRtcMediaEngineTest,
      FilterRtpExtensions_RemoveRedundantBwe_1_KeepAbsSendTime) {
   std::vector<RtpExtension> extensions;
-  webrtc::test::ScopedFieldTrials override_field_trials_(
-      "WebRTC-KeepAbsSendTimeExtension/Enabled/");
   extensions.push_back(
       RtpExtension(RtpExtension::kTransportSequenceNumberUri, 3));
   extensions.push_back(RtpExtension(RtpExtension::kTimestampOffsetUri, 9));
@@ -219,6 +216,8 @@ TEST(WebRtcMediaEngineTest,
 }
 
 TEST(WebRtcMediaEngineTest, FilterRtpExtensions_RemoveRedundantBweEncrypted_1) {
+  webrtc::test::ScopedFieldTrials override_field_trials_(
+      "WebRTC-FilterAbsSendTimeExtension/Enabled/");
   std::vector<RtpExtension> extensions;
   extensions.push_back(
       RtpExtension(RtpExtension::kTransportSequenceNumberUri, 3));
@@ -242,8 +241,6 @@ TEST(WebRtcMediaEngineTest, FilterRtpExtensions_RemoveRedundantBweEncrypted_1) {
 TEST(WebRtcMediaEngineTest,
      FilterRtpExtensions_RemoveRedundantBweEncrypted_1_KeepAbsSendTime) {
   std::vector<RtpExtension> extensions;
-  webrtc::test::ScopedFieldTrials override_field_trials_(
-      "WebRTC-KeepAbsSendTimeExtension/Enabled/");
   extensions.push_back(
       RtpExtension(RtpExtension::kTransportSequenceNumberUri, 3));
   extensions.push_back(
@@ -285,24 +282,13 @@ TEST(WebRtcMediaEngineTest, FilterRtpExtensions_RemoveRedundantBwe_3) {
   EXPECT_EQ(RtpExtension::kTimestampOffsetUri, filtered[0].uri);
 }
 
-TEST(WebRtcMediaEngineFactoryTest, CreateWithBuiltinDecoders) {
-  std::unique_ptr<MediaEngineInterface> engine(WebRtcMediaEngineFactory::Create(
-      nullptr /* adm */, webrtc::CreateBuiltinAudioEncoderFactory(),
-      webrtc::CreateBuiltinAudioDecoderFactory(),
-      webrtc::CreateBuiltinVideoEncoderFactory(),
-      webrtc::CreateBuiltinVideoDecoderFactory(), nullptr /* audio_mixer */,
-      webrtc::AudioProcessingBuilder().Create()));
-  EXPECT_TRUE(engine);
-}
+TEST(WebRtcMediaEngineTest, Create) {
+  MediaEngineDependencies deps;
+  webrtc::SetMediaEngineDefaults(&deps);
 
-TEST(WebRtcMediaEngineFactoryTest, CreateWithVideoBitrateFactory) {
-  std::unique_ptr<MediaEngineInterface> engine(WebRtcMediaEngineFactory::Create(
-      nullptr /* adm */, webrtc::CreateBuiltinAudioEncoderFactory(),
-      webrtc::CreateBuiltinAudioDecoderFactory(),
-      webrtc::CreateBuiltinVideoEncoderFactory(),
-      webrtc::CreateBuiltinVideoDecoderFactory(),
-      webrtc::CreateBuiltinVideoBitrateAllocatorFactory(),
-      nullptr /* audio_mixer */, webrtc::AudioProcessingBuilder().Create()));
+  std::unique_ptr<MediaEngineInterface> engine =
+      CreateMediaEngine(std::move(deps));
+
   EXPECT_TRUE(engine);
 }
 

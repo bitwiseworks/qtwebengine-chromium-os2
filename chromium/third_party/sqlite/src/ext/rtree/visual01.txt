@@ -365,11 +365,11 @@ INSERT INTO querypoly(clr, poly) VALUES
 .print '<html>'
 .print '<h1>Everything</h1>'
 .print '<svg width="1000" height="800" style="border:1px solid black">'
-SELECT geopoly_svg(_shape,
+SELECT geopoly_svg(_shape, 
          printf('style="fill:none;stroke:%s;stroke-width:1"',clr)
        )
   FROM geo1;
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -380,7 +380,7 @@ SELECT geopoly_svg(poly,
 .print 'SELECT *'
 .print '  FROM geo1, querypoly'
 .print ' WHERE geopoly_overlap(_shape, poly);'
-.print
+.print 
 EXPLAIN QUERY PLAN
 SELECT geopoly_svg(_shape,
          printf('style="fill:none;stroke:%s;stroke-width:1"',geo1.clr)
@@ -394,7 +394,7 @@ SELECT geopoly_svg(_shape,
        )
   FROM geo1, querypoly
  WHERE geopoly_overlap(_shape, poly);
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -411,7 +411,7 @@ SELECT geopoly_svg(geopoly_bbox(poly),
          'style="fill:none;stroke:black;stroke-width:3"'
        )
   FROM querypoly;
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -432,7 +432,7 @@ SELECT geopoly_svg(_shape,
        )
   FROM geo1, querypoly
  WHERE geopoly_overlap(geopoly_bbox(_shape), geopoly_bbox(poly));
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -447,7 +447,7 @@ SELECT geopoly_svg(geopoly_bbox(poly),
 .print 'SELECT *'
 .print '  FROM geo1, querypoly'
 .print ' WHERE geopoly_within(_shape, poly);'
-.print
+.print 
 EXPLAIN QUERY PLAN
 SELECT geopoly_svg(_shape,
          printf('style="fill:none;stroke:%s;stroke-width:1"',geo1.clr)
@@ -461,7 +461,7 @@ SELECT geopoly_svg(_shape,
        )
   FROM geo1, querypoly
  WHERE geopoly_within(_shape, poly);
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -477,7 +477,7 @@ SELECT geopoly_svg(_shape,
        )
   FROM geo1, querypoly
  WHERE geopoly_within(geopoly_bbox(_shape), geopoly_bbox(poly));
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -492,7 +492,7 @@ SELECT geopoly_svg(geopoly_bbox(poly),
 .print 'SELECT *'
 .print '  FROM geo1, querypoly'
 .print ' WHERE NOT geopoly_overlap(_shape, poly);'
-.print
+.print 
 EXPLAIN QUERY PLAN
 SELECT geopoly_svg(_shape,
          printf('style="fill:none;stroke:%s;stroke-width:1"',geo1.clr)
@@ -506,7 +506,7 @@ SELECT geopoly_svg(_shape,
        )
   FROM geo1, querypoly
  WHERE NOT geopoly_overlap(_shape, poly);
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;
@@ -517,7 +517,7 @@ SELECT geopoly_svg(poly,
 .print 'SELECT *'
 .print '  FROM geo1, querypoly'
 .print ' WHERE NOT geopoly_within(_shape, poly);'
-.print
+.print 
 EXPLAIN QUERY PLAN
 SELECT geopoly_svg(_shape,
          printf('style="fill:none;stroke:%s;stroke-width:1"',geo1.clr)
@@ -531,7 +531,7 @@ SELECT geopoly_svg(_shape,
        )
   FROM geo1, querypoly
  WHERE NOT geopoly_within(_shape, poly);
-SELECT geopoly_svg(poly,
+SELECT geopoly_svg(poly, 
          printf('style="fill:%s;fill-opacity:0.5;"',clr)
        )
   FROM querypoly;

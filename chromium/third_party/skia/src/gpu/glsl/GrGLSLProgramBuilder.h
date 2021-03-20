@@ -8,17 +8,20 @@
 #ifndef GrGLSLProgramBuilder_DEFINED
 #define GrGLSLProgramBuilder_DEFINED
 
-#include "GrCaps.h"
-#include "GrGeometryProcessor.h"
-#include "GrProgramDesc.h"
-#include "glsl/GrGLSLFragmentProcessor.h"
-#include "glsl/GrGLSLFragmentShaderBuilder.h"
-#include "glsl/GrGLSLPrimitiveProcessor.h"
-#include "glsl/GrGLSLProgramDataManager.h"
-#include "glsl/GrGLSLUniformHandler.h"
-#include "glsl/GrGLSLVertexGeoBuilder.h"
-#include "glsl/GrGLSLXferProcessor.h"
+#include "src/gpu/GrCaps.h"
+#include "src/gpu/GrGeometryProcessor.h"
+#include "src/gpu/GrProgramInfo.h"
+#include "src/gpu/GrRenderTarget.h"
+#include "src/gpu/GrRenderTargetPriv.h"
+#include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
+#include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
+#include "src/gpu/glsl/GrGLSLPrimitiveProcessor.h"
+#include "src/gpu/glsl/GrGLSLProgramDataManager.h"
+#include "src/gpu/glsl/GrGLSLUniformHandler.h"
+#include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
+#include "src/gpu/glsl/GrGLSLXferProcessor.h"
 
+class GrProgramDesc;
 class GrShaderVar;
 class GrGLSLVaryingHandler;
 class SkString;
@@ -34,20 +37,39 @@ public:
     virtual const GrCaps* caps() const = 0;
     const GrShaderCaps* shaderCaps() const { return this->caps()->shaderCaps(); }
 
-    const GrPrimitiveProcessor& primitiveProcessor() const { return fPrimProc; }
-    const GrTextureProxy* const* primProcProxies() const { return fPrimProcProxies; }
-    const GrPipeline& pipeline() const { return fPipeline; }
-    GrProgramDesc* desc() { return fDesc; }
-    const GrProgramDesc::KeyHeader& header() const { return fDesc->header(); }
+    GrSurfaceOrigin origin() const { return fProgramInfo.origin(); }
+    const GrPipeline& pipeline() const { return fProgramInfo.pipeline(); }
+    const GrPrimitiveProcessor& primitiveProcessor() const { return fProgramInfo.primProc(); }
+    GrProcessor::CustomFeatures processorFeatures() const {
+        return fProgramInfo.requestedFeatures();
+    }
+    bool snapVerticesToPixelCenters() const {
+        return fProgramInfo.pipeline().snapVerticesToPixelCenters();
+    }
+    bool hasPointSize() const { return fProgramInfo.primitiveType() == GrPrimitiveType::kPoints; }
+
+    // TODO: stop passing in the renderTarget for just the sampleLocations
+    int effectiveSampleCnt() const {
+        SkASSERT(GrProcessor::CustomFeatures::kSampleLocations & fProgramInfo.requestedFeatures());
+        return fRenderTarget->renderTargetPriv().getSampleLocations().count();
+    }
+    const SkTArray<SkPoint>& getSampleLocations() const {
+        return fRenderTarget->renderTargetPriv().getSampleLocations();
+    }
+
+    const GrProgramDesc& desc() const { return fDesc; }
 
     void appendUniformDecls(GrShaderFlags visibility, SkString*) const;
 
-    const GrShaderVar& samplerVariable(SamplerHandle handle) const {
+    const char* samplerVariable(SamplerHandle handle) const {
         return this->uniformHandler()->samplerVariable(handle);
     }
 
     GrSwizzle samplerSwizzle(SamplerHandle handle) const {
-        return this->uniformHandler()->samplerSwizzle(handle);
+        if (this->caps()->shaderCaps()->textureSwizzleAppliedInShader()) {
+            return this->uniformHandler()->samplerSwizzle(handle);
+        }
+        return GrSwizzle::RGBA();
     }
 
     // Used to add a uniform for the RenderTarget width (used for sk_Width) without mangling
@@ -81,11 +103,9 @@ public:
 
     int fStageIndex;
 
-    const GrPipeline&            fPipeline;
-    const GrPrimitiveProcessor&  fPrimProc;
-    const GrTextureProxy* const* fPrimProcProxies;
-
-    GrProgramDesc*               fDesc;
+    const GrRenderTarget*        fRenderTarget; // TODO: remove this
+    const GrProgramDesc&         fDesc;
+    const GrProgramInfo&         fProgramInfo;
 
     GrGLSLBuiltinUniformHandles  fUniformHandles;
 
@@ -95,10 +115,7 @@ public:
     int fFragmentProcessorCnt;
 
 protected:
-    explicit GrGLSLProgramBuilder(const GrPrimitiveProcessor&,
-                                  const GrTextureProxy* const primProcProxies[],
-                                  const GrPipeline&,
-                                  GrProgramDesc*);
+    explicit GrGLSLProgramBuilder(GrRenderTarget*, const GrProgramDesc&, const GrProgramInfo&);
 
     void addFeature(GrShaderFlags shaders, uint32_t featureBit, const char* extensionName);
 
@@ -114,7 +131,7 @@ private:
     // fragment shader are cleared.
     void reset() {
         this->addStage();
-        SkDEBUGCODE(fFS.resetVerification();)
+        SkDEBUGCODE(fFS.debugOnly_resetPerStageVerification();)
     }
     void addStage() { fStageIndex++; }
 
@@ -143,19 +160,19 @@ private:
                                     SkString output,
                                     SkTArray<std::unique_ptr<GrGLSLFragmentProcessor>>*);
     void emitAndInstallXferProc(const SkString& colorIn, const SkString& coverageIn);
-    SamplerHandle emitSampler(const GrTexture*, const GrSamplerState&, const char* name);
-    void emitFSOutputSwizzle(bool hasSecondaryOutput);
+    SamplerHandle emitSampler(const GrBackendFormat&, GrSamplerState, const GrSwizzle&,
+                              const char* name);
     bool checkSamplerCounts();
 
 #ifdef SK_DEBUG
     void verify(const GrPrimitiveProcessor&);
-    void verify(const GrXferProcessor&);
     void verify(const GrFragmentProcessor&);
+    void verify(const GrXferProcessor&);
 #endif
 
     // These are used to check that we don't excede the allowable number of resources in a shader.
-    int                         fNumFragmentSamplers;
-    SkSTArray<4, GrShaderVar>   fTransformedCoordVars;
+    int fNumFragmentSamplers;
+    SkSTArray<4, GrGLSLPrimitiveProcessor::TransformVar> fTransformedCoordVars;
 };
 
 #endif

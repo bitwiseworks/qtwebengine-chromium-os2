@@ -21,16 +21,22 @@ class FontDescription;
 
 class CORE_EXPORT OffscreenFontSelector : public FontSelector {
  public:
-  static OffscreenFontSelector* Create(ExecutionContext* context) {
-    return MakeGarbageCollected<OffscreenFontSelector>(context);
-  }
-
   explicit OffscreenFontSelector(ExecutionContext*);
   ~OffscreenFontSelector() override;
 
   unsigned Version() const override { return 1; }
 
   void ReportNotDefGlyph() const override;
+
+  void ReportSuccessfulFontFamilyMatch(
+      const AtomicString& font_family_name) override;
+
+  void ReportFailedFontFamilyMatch(
+      const AtomicString& font_family_name) override;
+
+  void ReportSuccessfulLocalFontMatch(const AtomicString& font_name) override;
+
+  void ReportFailedLocalFontMatch(const AtomicString& font_name) override;
 
   scoped_refptr<FontData> GetFontData(const FontDescription&,
                                       const AtomicString&) override;
@@ -63,7 +69,7 @@ class CORE_EXPORT OffscreenFontSelector : public FontSelector {
     return execution_context_;
   }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   void DispatchInvalidationCallbacks();

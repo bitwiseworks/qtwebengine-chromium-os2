@@ -8,8 +8,8 @@ DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 cd $DIR
 
 TARGET_DIR=$DIR/wpt
-REMOTE_REPO="https://chromium.googlesource.com/external/github.com/web-platform-tests/wpt.git"
-WPT_HEAD=f759f0b3a8cb7457adbf30dc0734d3a158ce4990
+REMOTE_REPO="https://github.com/web-platform-tests/wpt.git"
+WPT_HEAD=3061f228d3d8b900b3aec8c7642ff58fc04ea011
 
 function clone {
   # Remove existing repo if already exists.
@@ -21,9 +21,8 @@ function clone {
   echo "WPTHead: " `git rev-parse HEAD`
 
   # Apply local changes.
-  git apply $DIR/chromium.patch
-  # Chromium presubmit requires scripts with shebang to be executable.
-  chmod 755 tools/manifest/update.py
+  git cherry-pick 644a206e8ace488eac7e2b2a58a4b5354b02363a
+  git cherry-pick 7e52ecb9b61b73425093d39dbadceb9c6e10b754
 }
 
 function reduce {

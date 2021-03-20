@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -78,7 +81,8 @@ void VideoLayerImpl::DidBecomeActive() {
 }
 
 bool VideoLayerImpl::WillDraw(DrawMode draw_mode,
-                              viz::ClientResourceProvider* resource_provider) {
+                              viz::ClientResourceProvider* resource_provider)
+    NO_THREAD_SAFETY_ANALYSIS {
   if (draw_mode == DRAW_MODE_RESOURCELESS_SOFTWARE)
     return false;
 
@@ -98,14 +102,18 @@ bool VideoLayerImpl::WillDraw(DrawMode draw_mode,
     // Drop any resources used by the updater if there is no frame to display.
     updater_ = nullptr;
 
+    // NO_THREAD_SAFETY_ANALYSIS: Releasing the lock in some return paths only.
     provider_client_impl_->ReleaseLock();
     return false;
   }
 
   if (!updater_) {
     const LayerTreeSettings& settings = layer_tree_impl()->settings();
+    // TODO(sergeyu): Pass RasterContextProvider when it's available. Then
+    // remove ContextProvider parameter from VideoResourceUpdater.
     updater_ = std::make_unique<media::VideoResourceUpdater>(
         layer_tree_impl()->context_provider(),
+        /*raster_context_provider=*/nullptr,
         layer_tree_impl()->layer_tree_frame_sink(),
         layer_tree_impl()->resource_provider(),
         settings.use_stream_video_draw_quad,
@@ -156,11 +164,13 @@ void VideoLayerImpl::AppendQuads(viz::RenderPass* render_pass,
     return;
 
   updater_->AppendQuads(
-      render_pass, frame_, transform, quad_rect, visible_quad_rect, clip_rect(),
-      is_clipped(), contents_opaque(), draw_opacity(), GetSortingContextId());
+      render_pass, frame_, transform, quad_rect, visible_quad_rect,
+      draw_properties().rounded_corner_bounds, clip_rect(), is_clipped(),
+      contents_opaque(), draw_opacity(), GetSortingContextId());
 }
 
 void VideoLayerImpl::DidDraw(viz::ClientResourceProvider* resource_provider) {
+  provider_client_impl_->AssertLocked();
   LayerImpl::DidDraw(resource_provider);
 
   DCHECK(frame_.get());
@@ -183,8 +193,15 @@ void VideoLayerImpl::ReleaseResources() {
   updater_ = nullptr;
 }
 
+gfx::ContentColorUsage VideoLayerImpl::GetContentColorUsage() const {
+  gfx::ColorSpace frame_color_space;
+  if (frame_)
+    frame_color_space = frame_->ColorSpace();
+  return frame_color_space.GetContentColorUsage();
+}
+
 void VideoLayerImpl::SetNeedsRedraw() {
-  SetUpdateRect(gfx::UnionRects(update_rect(), gfx::Rect(bounds())));
+  UnionUpdateRect(gfx::Rect(bounds()));
   layer_tree_impl()->SetNeedsRedraw();
 }
 

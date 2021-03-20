@@ -14,6 +14,7 @@
 
 namespace blink {
 
+struct WebNavigationParams;
 class WebURL;
 class WebURLLoader;
 class WebURLResponse;
@@ -26,10 +27,7 @@ class WebURLLoaderMockFactory {
   virtual ~WebURLLoaderMockFactory() = default;
 
   // Create a WebURLLoader that takes care of mocked requests.
-  // Non-mocked request are forwarded to given loader which should not
-  // be nullptr.
-  virtual std::unique_ptr<WebURLLoader> CreateURLLoader(
-      std::unique_ptr<WebURLLoader>) = 0;
+  virtual std::unique_ptr<WebURLLoader> CreateURLLoader() = 0;
 
   // Registers a response and the file to be served when the specified URL
   // is loaded. If no file is specified then the response content will be empty.
@@ -76,6 +74,9 @@ class WebURLLoaderMockFactory {
   // Set a delegate that allows callbacks for all WebURLLoaderClients to be
   // intercepted.
   virtual void SetLoaderDelegate(WebURLLoaderTestDelegate*) = 0;
+
+  // Fills navigation params by loading a mocked response.
+  virtual void FillNavigationParamsResponse(WebNavigationParams*) = 0;
 };
 
 }  // namespace blink

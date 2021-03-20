@@ -8,7 +8,8 @@
 #include <unordered_set>
 #include <utility>
 
-#include "base/hash.h"
+#include "base/bind.h"
+#include "base/hash/hash.h"
 #include "base/metrics/histogram_functions.h"
 #include "content/public/browser/browser_context.h"
 #include "device/bluetooth/bluetooth_adapter.h"
@@ -123,7 +124,7 @@ BluetoothSocketAsyncApiFunction::BluetoothSocketAsyncApiFunction() {}
 BluetoothSocketAsyncApiFunction::~BluetoothSocketAsyncApiFunction() {}
 
 bool BluetoothSocketAsyncApiFunction::PreRunValidation(std::string* error) {
-  if (!UIThreadExtensionFunction::PreRunValidation(error))
+  if (!ExtensionFunction::PreRunValidation(error))
     return false;
 
   if (!BluetoothManifestData::CheckSocketPermitted(extension())) {

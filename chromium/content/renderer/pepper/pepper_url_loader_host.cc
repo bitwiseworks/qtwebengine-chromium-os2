@@ -6,11 +6,15 @@
 
 #include <stddef.h>
 
+#include "base/feature_list.h"
+#include "base/strings/string_util.h"
+#include "content/public/common/content_features.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
 #include "content/renderer/pepper/url_request_info_util.h"
 #include "content/renderer/pepper/url_response_info_util.h"
 #include "net/base/net_errors.h"
+#include "net/http/http_request_headers.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/host_message_context.h"
@@ -124,6 +128,24 @@ bool PepperURLLoaderHost::WillFollowRedirect(
     const WebURL& new_url,
     const WebURLResponse& redirect_response) {
   DCHECK(out_of_order_replies_.empty());
+  if (base::FeatureList::IsEnabled(
+          features::kPepperCrossOriginRedirectRestriction)) {
+    // Follows the Firefox approach
+    // (https://bugzilla.mozilla.org/show_bug.cgi?id=1436241) to disallow
+    // cross-origin 307/308 POST redirects for requests from plugins. But we try
+    // allowing only GET and HEAD methods rather than disallowing POST.
+    // See http://crbug.com/332023 for details.
+    int status = redirect_response.HttpStatusCode();
+    if ((status == 307 || status == 308)) {
+      std::string method = base::ToUpperASCII(request_data_.method);
+      // method can be an empty string for default behavior, GET.
+      if (!method.empty() && method != net::HttpRequestHeaders::kGetMethod &&
+          method != net::HttpRequestHeaders::kHeadMethod) {
+        return false;
+      }
+    }
+  }
+
   if (!request_data_.follow_redirects) {
     SaveResponse(redirect_response);
     SetDefersLoading(true);
@@ -134,9 +156,8 @@ bool PepperURLLoaderHost::WillFollowRedirect(
   return true;
 }
 
-void PepperURLLoaderHost::DidSendData(
-    unsigned long long bytes_sent,
-    unsigned long long total_bytes_to_be_sent) {
+void PepperURLLoaderHost::DidSendData(uint64_t bytes_sent,
+                                      uint64_t total_bytes_to_be_sent) {
   // TODO(darin): Bounds check input?
   bytes_sent_ = static_cast<int64_t>(bytes_sent);
   total_bytes_to_be_sent_ = static_cast<int64_t>(total_bytes_to_be_sent);
@@ -151,7 +172,7 @@ void PepperURLLoaderHost::DidReceiveResponse(const WebURLResponse& response) {
   SaveResponse(response);
 }
 
-void PepperURLLoaderHost::DidDownloadData(unsigned long long data_length) {
+void PepperURLLoaderHost::DidDownloadData(uint64_t data_length) {
   bytes_received_ += data_length;
   UpdateProgress();
 }
@@ -252,11 +273,10 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
     return PP_ERROR_FAILED;
   }
 
-  web_request.SetRequestContext(blink::mojom::RequestContextType::PLUGIN);
-  web_request.SetPluginChildID(renderer_ppapi_host_->GetPluginChildId());
-
-  // Requests from plug-ins must skip service workers, see the comment in
-  // CreateWebURLRequest.
+  // Requests from plug-ins must be marked as PLUGIN, and must skip service
+  // workers, see the comment in CreateWebURLRequest.
+  DCHECK_EQ(blink::mojom::RequestContextType::PLUGIN,
+            web_request.GetRequestContext());
   DCHECK(web_request.GetSkipServiceWorker());
 
   WebAssociatedURLLoaderOptions options;
@@ -268,14 +288,13 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
     if (filled_in_request_data.allow_cross_origin_requests) {
       // Allow cross-origin requests with access control. The request specifies
       // if credentials are to be sent.
-      web_request.SetFetchRequestMode(network::mojom::FetchRequestMode::kCors);
-      web_request.SetFetchCredentialsMode(
+      web_request.SetMode(network::mojom::RequestMode::kCors);
+      web_request.SetCredentialsMode(
           filled_in_request_data.allow_credentials
-              ? network::mojom::FetchCredentialsMode::kInclude
-              : network::mojom::FetchCredentialsMode::kOmit);
+              ? network::mojom::CredentialsMode::kInclude
+              : network::mojom::CredentialsMode::kOmit);
     } else {
-      web_request.SetFetchRequestMode(
-          network::mojom::FetchRequestMode::kSameOrigin);
+      web_request.SetMode(network::mojom::RequestMode::kSameOrigin);
       // Same-origin requests can always send credentials. Use the default
       // credentials mode "include".
     }

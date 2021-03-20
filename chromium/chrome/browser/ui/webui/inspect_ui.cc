@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/webui/inspect_ui.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/devtools/devtools_targets_ui.h"
@@ -68,14 +71,14 @@ const char kInspectUiNameField[] = "name";
 const char kInspectUiUrlField[] = "url";
 const char kInspectUiIsAdditionalField[] = "isAdditional";
 
-base::ListValue GetUiDevToolsTargets() {
-  base::ListValue targets;
+base::Value GetUiDevToolsTargets() {
+  base::Value targets(base::Value::Type::LIST);
   for (const auto& client_pair :
        ui_devtools::UiDevToolsServer::GetClientNamesAndUrls()) {
-    auto target_data = std::make_unique<base::DictionaryValue>();
-    target_data->SetString(kInspectUiNameField, client_pair.first);
-    target_data->SetString(kInspectUiUrlField, client_pair.second);
-    target_data->SetBoolean(kInspectUiIsAdditionalField, true);
+    base::Value target_data(base::Value::Type::DICTIONARY);
+    target_data.SetStringKey(kInspectUiNameField, client_pair.first);
+    target_data.SetStringKey(kInspectUiUrlField, client_pair.second);
+    target_data.SetBoolKey(kInspectUiIsAdditionalField, true);
     targets.Append(std::move(target_data));
   }
   return targets;
@@ -512,8 +515,7 @@ void InspectUI::StartListeningNotifications() {
   DevToolsTargetsUIHandler::Callback callback =
       base::Bind(&InspectUI::PopulateTargets, base::Unretained(this));
 
-  base::ListValue additional_targets = GetUiDevToolsTargets();
-  PopulateAdditionalTargets(additional_targets);
+  PopulateAdditionalTargets(GetUiDevToolsTargets());
 
   AddTargetUIHandler(
       DevToolsTargetsUIHandler::CreateForLocal(callback, profile));
@@ -626,7 +628,7 @@ void InspectUI::SetPortForwardingDefaults() {
   }
 
   // Do nothing if user already took explicit action.
-  if (enabled || config->size() != 0)
+  if (enabled || !config->empty())
     return;
 
   base::DictionaryValue default_config;
@@ -665,7 +667,7 @@ void InspectUI::PopulateTargets(const std::string& source,
                                          targets);
 }
 
-void InspectUI::PopulateAdditionalTargets(const base::ListValue& targets) {
+void InspectUI::PopulateAdditionalTargets(const base::Value& targets) {
   web_ui()->CallJavascriptFunctionUnsafe("populateAdditionalTargets", targets);
 }
 

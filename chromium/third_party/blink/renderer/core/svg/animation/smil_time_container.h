@@ -26,37 +26,37 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_SVG_ANIMATION_SMIL_TIME_CONTAINER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_ANIMATION_SMIL_TIME_CONTAINER_H_
 
-#include "third_party/blink/renderer/core/dom/qualified_name.h"
+#include "base/time/time.h"
+#include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/svg/animation/priority_queue.h"
+#include "third_party/blink/renderer/core/svg/animation/smil_time.h"
 #include "third_party/blink/renderer/platform/graphics/image_animation_policy.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/timer.h"
-#include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
-#include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
-#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
 class Document;
-class SMILTime;
 class SVGElement;
 class SVGSMILElement;
 class SVGSVGElement;
 
-class SMILTimeContainer : public GarbageCollectedFinalized<SMILTimeContainer> {
+class CORE_EXPORT SMILTimeContainer final
+    : public GarbageCollected<SMILTimeContainer> {
  public:
-  static SMILTimeContainer* Create(SVGSVGElement& owner) {
-    return MakeGarbageCollected<SMILTimeContainer>(owner);
-  }
-
   explicit SMILTimeContainer(SVGSVGElement& owner);
   ~SMILTimeContainer();
 
-  void Schedule(SVGSMILElement*, SVGElement*, const QualifiedName&);
-  void Unschedule(SVGSMILElement*, SVGElement*, const QualifiedName&);
-  void NotifyIntervalsChanged();
+  void Schedule(SVGSMILElement*);
+  void Reschedule(SVGSMILElement*, SMILTime interval_time);
+  void Unschedule(SVGSMILElement*);
 
-  double Elapsed() const;
+  // Returns the current animation time.
+  SMILTime Elapsed() const;
+  // Returns the time that we last updated timed elements to. This differs from
+  // the above in that it only moves during animation update steps.
+  SMILTime LatestUpdatePresentationTime() const;
 
   bool IsPaused() const;
   bool IsStarted() const;
@@ -64,17 +64,19 @@ class SMILTimeContainer : public GarbageCollectedFinalized<SMILTimeContainer> {
   void Start();
   void Pause();
   void Unpause();
-  void SetElapsed(double);
+  void SetElapsed(SMILTime);
 
   void ServiceAnimations();
   bool HasAnimations() const;
 
+  void ResetDocumentTime();
   void SetDocumentOrderIndexesDirty() { document_order_indexes_dirty_ = true; }
 
   // Advance the animation timeline a single frame.
   void AdvanceFrameForTesting();
+  bool EventsDisabled() const { return !should_dispatch_events_; }
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   enum FrameSchedulingState {
@@ -88,32 +90,26 @@ class SMILTimeContainer : public GarbageCollectedFinalized<SMILTimeContainer> {
     kAnimationFrame
   };
 
-  enum AnimationPolicyOnceAction {
-    // Restart OnceTimer if the timeline is not paused.
-    kRestartOnceTimerIfNotPaused,
-    // Restart OnceTimer.
-    kRestartOnceTimer,
-    // Cancel OnceTimer.
-    kCancelOnceTimer
-  };
-
   bool IsTimelineRunning() const;
   void SynchronizeToDocumentTimeline();
-  void ScheduleAnimationFrame(double delay_time);
+  void ScheduleAnimationFrame(base::TimeDelta delay_time);
   void CancelAnimationFrame();
   void WakeupTimerFired(TimerBase*);
-  void ScheduleAnimationPolicyTimer();
-  void CancelAnimationPolicyTimer();
-  void AnimationPolicyTimerFired(TimerBase*);
   ImageAnimationPolicy AnimationPolicy() const;
-  bool HandleAnimationPolicy(AnimationPolicyOnceAction);
-  bool CanScheduleFrame(SMILTime earliest_fire_time) const;
-  void UpdateAnimationsAndScheduleFrameIfNeeded(double elapsed,
-                                                bool seek_to_time = false);
-  SMILTime UpdateAnimations(double elapsed, bool seek_to_time);
+  bool AnimationsDisabled() const;
+  class TimingUpdate;
+  void UpdateAnimationsAndScheduleFrameIfNeeded(TimingUpdate&);
+  void PrepareSeek(TimingUpdate&);
+  void ResetIntervals();
+  void UpdateIntervals(TimingUpdate&);
+  void UpdateTimedElements(TimingUpdate&);
+  void ApplyTimedEffects(SMILTime elapsed);
+  SMILTime NextProgressTime(SMILTime presentation_time) const;
   void ServiceOnNextFrame();
-  void ScheduleWakeUp(double delay_time, FrameSchedulingState);
+  void ScheduleWakeUp(base::TimeDelta delay_time, FrameSchedulingState);
   bool HasPendingSynchronization() const;
+  void SetPresentationTime(SMILTime new_presentation_time);
+  SMILTime ClampPresentationTime(SMILTime presentation_time) const;
 
   void UpdateDocumentOrderIndexes();
 
@@ -122,32 +118,48 @@ class SMILTimeContainer : public GarbageCollectedFinalized<SMILTimeContainer> {
 
   // The latest "restart" time for the time container's timeline. If the
   // timeline has not been manipulated (seeked, paused) this will be zero.
-  double presentation_time_;
-  // The time on the document timeline corresponding to |m_presentationTime|.
-  double reference_time_;
+  SMILTime presentation_time_;
+  // The maximum possible presentation time. When this time is reached
+  // animations will stop.
+  SMILTime max_presentation_time_;
+  // The state all SVGSMILElements should be at.
+  SMILTime latest_update_time_;
+  // The time on the document timeline corresponding to |presentation_time_|.
+  base::TimeDelta reference_time_;
 
   FrameSchedulingState frame_scheduling_state_;
-  bool started_;  // The timeline has been started.
-  bool paused_;   // The timeline is paused.
+  bool started_ : 1;  // The timeline has been started.
+  bool paused_ : 1;   // The timeline is paused.
 
-  bool document_order_indexes_dirty_;
+  const bool should_dispatch_events_ : 1;
+  bool document_order_indexes_dirty_ : 1;
+  bool is_updating_intervals_;
 
   TaskRunnerTimer<SMILTimeContainer> wakeup_timer_;
-  TaskRunnerTimer<SMILTimeContainer> animation_policy_once_timer_;
 
-  using AnimationsLinkedHashSet = HeapLinkedHashSet<WeakMember<SVGSMILElement>>;
-  using AttributeAnimationsMap =
-      HeapHashMap<QualifiedName, Member<AnimationsLinkedHashSet>>;
-  using GroupedAnimationsMap =
-      HeapHashMap<WeakMember<SVGElement>, AttributeAnimationsMap>;
-  GroupedAnimationsMap scheduled_animations_;
+  using AnimatedTargets = HeapHashCountedSet<WeakMember<SVGElement>>;
+  AnimatedTargets animated_targets_;
+
+  PriorityQueue<SMILTime, SVGSMILElement> priority_queue_;
 
   Member<SVGSVGElement> owner_svg_element_;
 
 #if DCHECK_IS_ON()
-  bool prevent_scheduled_animations_changes_ = false;
+  friend class AnimationTargetsMutationsForbidden;
+  // This boolean will catch any attempts to mutate (schedule/unschedule)
+  // |scheduled_animations_| when it is set to true.
+  bool prevent_animation_targets_changes_ = false;
 #endif
+
+  bool AnimationTargetsMutationsAllowed() const {
+#if DCHECK_IS_ON()
+    return !prevent_animation_targets_changes_;
+#else
+    return true;
+#endif
+  }
 };
+
 }  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_SVG_ANIMATION_SMIL_TIME_CONTAINER_H_

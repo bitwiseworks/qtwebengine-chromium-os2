@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/svg/svg_number.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -42,12 +43,6 @@ class SVGNumberOptionalNumber final : public SVGPropertyBase {
   // Tearoff of SVGNumberOptionalNumber is never created.
   typedef void TearOffType;
   typedef void PrimitiveType;
-
-  static SVGNumberOptionalNumber* Create(SVGNumber* first_number,
-                                         SVGNumber* second_number) {
-    return MakeGarbageCollected<SVGNumberOptionalNumber>(first_number,
-                                                         second_number);
-  }
 
   SVGNumberOptionalNumber(SVGNumber* first_number, SVGNumber* second_number);
 
@@ -60,7 +55,7 @@ class SVGNumberOptionalNumber final : public SVGPropertyBase {
   static constexpr int kInitialValueBits = SVGNumber::kInitialValueBits;
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -78,14 +73,19 @@ class SVGNumberOptionalNumber final : public SVGPropertyBase {
   SVGNumber* FirstNumber() const { return first_number_; }
   SVGNumber* SecondNumber() const { return second_number_; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   Member<SVGNumber> first_number_;
   Member<SVGNumber> second_number_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGNumberOptionalNumber);
+template <>
+struct DowncastTraits<SVGNumberOptionalNumber> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGNumberOptionalNumber::ClassType();
+  }
+};
 
 }  // namespace blink
 

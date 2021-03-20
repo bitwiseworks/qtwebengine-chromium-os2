@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/scoped_observer.h"
@@ -53,7 +54,7 @@ struct NamedThreadTraits {
   }
 
   static scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner() {
-    return base::CreateSingleThreadTaskRunnerWithTraits({T::kThreadId});
+    return base::CreateSingleThreadTaskRunner({T::kThreadId});
   }
 };
 
@@ -104,9 +105,7 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
                            public ProcessManagerObserver {
  public:
   explicit ApiResourceManager(content::BrowserContext* context)
-      : data_(new ApiResourceData()),
-        extension_registry_observer_(this),
-        process_manager_observer_(this) {
+      : data_(base::MakeRefCounted<ApiResourceData>()) {
     extension_registry_observer_.Add(ExtensionRegistry::Get(context));
     process_manager_observer_.Add(ProcessManager::Get(context));
   }
@@ -261,20 +260,22 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
     void InitiateExtensionUnloadedCleanup(const std::string& extension_id) {
       ThreadingTraits::GetSequencedTaskRunner()->PostTask(
           FROM_HERE,
-          base::Bind(&ApiResourceData::CleanupResourcesFromUnloadedExtension,
-                     this, extension_id));
+          base::BindOnce(
+              &ApiResourceData::CleanupResourcesFromUnloadedExtension, this,
+              extension_id));
     }
 
     void InitiateExtensionSuspendedCleanup(const std::string& extension_id) {
       ThreadingTraits::GetSequencedTaskRunner()->PostTask(
           FROM_HERE,
-          base::Bind(&ApiResourceData::CleanupResourcesFromSuspendedExtension,
-                     this, extension_id));
+          base::BindOnce(
+              &ApiResourceData::CleanupResourcesFromSuspendedExtension, this,
+              extension_id));
     }
 
     void InititateCleanup() {
       ThreadingTraits::GetSequencedTaskRunner()->PostTask(
-          FROM_HERE, base::Bind(&ApiResourceData::Cleanup, this));
+          FROM_HERE, base::BindOnce(&ApiResourceData::Cleanup, this));
     }
 
    private:
@@ -375,9 +376,9 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
   scoped_refptr<ApiResourceData> data_;
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
   ScopedObserver<ProcessManager, ProcessManagerObserver>
-      process_manager_observer_;
+      process_manager_observer_{this};
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

@@ -60,12 +60,12 @@
 #define LSM_DFLT_MULTIPLE_PROCESSES 1
 #define LSM_DFLT_USE_LOG            1
 
-/* Initial values for log file checksums. These are only used if the
+/* Initial values for log file checksums. These are only used if the 
 ** database file does not contain a valid checkpoint.  */
 #define LSM_CKSUM0_INIT 42
 #define LSM_CKSUM1_INIT 42
 
-/* "mmap" mode is currently only used in environments with 64-bit address
+/* "mmap" mode is currently only used in environments with 64-bit address 
 ** spaces. The following macro is used to test for this.  */
 #define LSM_IS_64_BIT (sizeof(void*)==8)
 
@@ -140,7 +140,7 @@ int lsmErrorBkpt(int);
 /* The number of available read-write client locks. */
 #define LSM_LOCK_NRWCLIENT   16
 
-/* Lock definitions.
+/* Lock definitions. 
 */
 #define LSM_LOCK_DMS1         1   /* Serialize connect/disconnect ops */
 #define LSM_LOCK_DMS2         2   /* Read-write connections */
@@ -162,7 +162,7 @@ int lsmErrorBkpt(int);
 #define LSM_META_RW_PAGE_SIZE (LSM_META_PAGE_SIZE - LSM_N_LOCK)
 
 /*
-** Hard limit on the number of free-list entries that may be stored in
+** Hard limit on the number of free-list entries that may be stored in 
 ** a checkpoint (the remainder are stored as a system record in the LSM).
 ** See also LSM_CONFIG_MAX_FREELIST.
 */
@@ -204,12 +204,12 @@ struct LsmFile {
 
 /*
 ** An instance of the following type is used to store an ordered list of
-** u32 values.
+** u32 values. 
 **
 ** Note: This is a place-holder implementation. It should be replaced by
 ** a version that avoids making a single large allocation when the array
-** contains a large number of values. For this reason, the internals of
-** this object should only manipulated by the intArrayXXX() functions in
+** contains a large number of values. For this reason, the internals of 
+** this object should only manipulated by the intArrayXXX() functions in 
 ** lsm_tree.c.
 */
 typedef struct IntArray IntArray;
@@ -229,7 +229,7 @@ struct Redirect {
 
 /*
 ** An instance of this structure represents a point in the history of the
-** tree structure to roll back to. Refer to comments in lsm_tree.c for
+** tree structure to roll back to. Refer to comments in lsm_tree.c for 
 ** details.
 */
 struct TreeMark {
@@ -283,7 +283,7 @@ struct TreeRoot {
 };
 
 /*
-** Tree header structure.
+** Tree header structure. 
 */
 struct TreeHeader {
   u32 iUsedShmid;                 /* Id of first shm chunk used by this tree */
@@ -298,7 +298,7 @@ struct TreeHeader {
   i64 iOldLog;                    /* Log offset associated with old tree */
   u32 oldcksum0;
   u32 oldcksum1;
-  DbLog log;                      /* Current layout of log file */
+  DbLog log;                      /* Current layout of log file */ 
   u32 aCksum[2];                  /* Checksums 1 and 2. */
 };
 
@@ -308,7 +308,7 @@ struct TreeHeader {
 ** mLock:
 **   A bitmask representing the locks currently held by the connection.
 **   An LSM database supports N distinct locks, where N is some number less
-**   than or equal to 32. Locks are numbered starting from 1 (see the
+**   than or equal to 32. Locks are numbered starting from 1 (see the 
 **   definitions for LSM_LOCK_WRITER and co.).
 **
 **   The least significant 32-bits in mLock represent EXCLUSIVE locks. The
@@ -320,7 +320,7 @@ struct TreeHeader {
 **   Or for an EXCLUSIVE lock:
 **
 **       (mLock & ((iLock-1) << 1))
-**
+** 
 ** pCsr:
 **   Points to the head of a linked list that contains all currently open
 **   cursors. Once this list becomes empty, the user has no outstanding
@@ -328,7 +328,7 @@ struct TreeHeader {
 **
 ** pCsrCache:
 **   This list contains cursor objects that have been closed using
-**   lsm_csr_close(). Each time a cursor is closed, it is shifted from
+**   lsm_csr_close(). Each time a cursor is closed, it is shifted from 
 **   the pCsr list to this list. When a new cursor is opened, this list
 **   is inspected to see if there exists a cursor object that can be
 **   reused. This is an optimization only.
@@ -433,7 +433,7 @@ struct Level {
 ** The Level.flags field is set to a combination of the following bits.
 **
 ** LEVEL_FREELIST_ONLY:
-**   Set if the level consists entirely of free-list entries.
+**   Set if the level consists entirely of free-list entries. 
 **
 ** LEVEL_INCOMPLETE:
 **   This is set while a new toplevel level is being constructed. It is
@@ -452,7 +452,7 @@ struct Level {
 ** access to the associated Level struct.
 **
 ** iOutputOff:
-**   The byte offset to write to next within the last page of the
+**   The byte offset to write to next within the last page of the 
 **   output segment.
 */
 struct MergeInput {
@@ -468,7 +468,7 @@ struct Merge {
   LsmPgno iCurrentPtr;            /* Current pointer value */
 };
 
-/*
+/* 
 ** The first argument to this macro is a pointer to a Segment structure.
 ** Returns true if the structure instance indicates that the separators
 ** array is valid.
@@ -488,8 +488,8 @@ struct ShmReader {
 ** page. The shared-memory header.
 **
 ** bWriter:
-**   Immediately after opening a write transaction taking the WRITER lock,
-**   each writer client sets this flag. It is cleared right before the
+**   Immediately after opening a write transaction taking the WRITER lock, 
+**   each writer client sets this flag. It is cleared right before the 
 **   WRITER lock is relinquished. If a subsequent writer finds that this
 **   flag is already set when a write transaction is opened, this indicates
 **   that a previous writer failed mid-transaction.
@@ -536,15 +536,15 @@ struct ShmChunk {
 /*
 ** An instance of the following structure stores the in-memory part of
 ** the current free block list. This structure is to the free block list
-** as the in-memory tree is to the users database content. The contents
-** of the free block list is found by merging the in-memory components
+** as the in-memory tree is to the users database content. The contents 
+** of the free block list is found by merging the in-memory components 
 ** with those stored in the LSM, just as the contents of the database is
 ** found by merging the in-memory tree with the user data entries in the
 ** LSM.
 **
 ** Each FreelistEntry structure in the array represents either an insert
 ** or delete operation on the free-list. For deletes, the FreelistEntry.iId
-** field is set to -1. For inserts, it is set to zero or greater.
+** field is set to -1. For inserts, it is set to zero or greater. 
 **
 ** The array of FreelistEntry structures is always sorted in order of
 ** block number (ascending).
@@ -552,7 +552,7 @@ struct ShmChunk {
 ** When the in-memory free block list is written into the LSM, each insert
 ** operation is written separately. The entry key is the bitwise inverse
 ** of the block number as a 32-bit big-endian integer. This is done so that
-** the entries in the LSM are sorted in descending order of block id.
+** the entries in the LSM are sorted in descending order of block id. 
 ** The associated value is the snapshot id, formated as a varint.
 */
 struct Freelist {
@@ -620,7 +620,7 @@ int lsmCheckpointSize(lsm_db *db, int *pnByte);
 
 int lsmInfoCompressionId(lsm_db *db, u32 *piCmpId);
 
-/*
+/* 
 ** Functions from file "lsm_tree.c".
 */
 int lsmTreeNew(lsm_env *, int (*)(void *, int, void *, int), Tree **ppTree);
@@ -658,7 +658,7 @@ int lsmTreeCursorSave(TreeCursor *pCsr);
 
 void lsmFlagsToString(int flags, char *zFlags);
 
-/*
+/* 
 ** Functions from file "mem.c".
 */
 void *lsmMalloc(lsm_env*, size_t);
@@ -673,7 +673,7 @@ void *lsmMallocRc(lsm_env*, size_t, int *);
 void *lsmMallocZero(lsm_env *pEnv, size_t);
 char *lsmMallocStrdup(lsm_env *pEnv, const char *);
 
-/*
+/* 
 ** Functions from file "lsm_mutex.c".
 */
 int lsmMutexStatic(lsm_env*, int, lsm_mutex **);
@@ -777,7 +777,7 @@ int lsmEnvClose(lsm_env *pEnv, lsm_file *pFile);
 int lsmEnvLock(lsm_env *pEnv, lsm_file *pFile, int iLock, int eLock);
 int lsmEnvTestLock(lsm_env *pEnv, lsm_file *pFile, int iLock, int nLock, int);
 
-int lsmEnvShmMap(lsm_env *, lsm_file *, int, int, void **);
+int lsmEnvShmMap(lsm_env *, lsm_file *, int, int, void **); 
 void lsmEnvShmBarrier(lsm_env *);
 void lsmEnvShmUnmap(lsm_env *, lsm_file *, int);
 
@@ -793,7 +793,7 @@ void lsmFsPurgeCache(FileSystem *);
 ** End of functions from "lsm_file.c".
 **************************************************************************/
 
-/*
+/* 
 ** Functions from file "lsm_sorted.c".
 */
 int lsmInfoPageDump(lsm_db *, LsmPgno, int, char **);
@@ -856,7 +856,7 @@ int lsmVarintGet64(const u8 *aData, i64 *piVal);
 int lsmVarintLen32(int);
 int lsmVarintSize(u8 c);
 
-/*
+/* 
 ** Functions from file "main.c".
 */
 void lsmLogMessage(lsm_db *, int, const char *, ...);
@@ -981,7 +981,7 @@ int lsmStrlen(const char *zName);
 
 
 
-/*
+/* 
 ** Round up a number to the next larger multiple of 8.  This is used
 ** to force 8-byte alignment on 64-bit architectures.
 */

@@ -19,6 +19,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/metrics/histogram.h"
+#include "base/synchronization/condition_variable.h"
+#include "build/build_config.h"
 #include "leveldb/cache.h"
 #include "leveldb/db.h"
 #include "leveldb/env.h"
@@ -32,6 +34,10 @@ class MemoryAllocatorDump;
 class ProcessMemoryDump;
 }  // namespace trace_event
 }  // namespace base
+
+namespace storage {
+class FilesystemProxy;
+}
 
 namespace leveldb_env {
 
@@ -48,9 +54,9 @@ enum MethodID {
   kNewSequentialFile,
   kNewRandomAccessFile,
   kNewWritableFile,
-  kDeleteFile,
+  kObsoleteDeleteFile,
   kCreateDir,
-  kDeleteDir,
+  kObsoleteDeleteDir,
   kGetFileSize,
   kRenameFile,
   kLockFile,
@@ -60,6 +66,8 @@ enum MethodID {
   kSyncParent,
   kGetChildren,
   kNewAppendableFile,
+  kRemoveFile,
+  kRemoveDir,
   kNumEntries
 };
 
@@ -79,9 +87,19 @@ enum LevelDBStatusValue {
 LEVELDB_EXPORT LevelDBStatusValue
 GetLevelDBStatusUMAValue(const leveldb::Status& s);
 
+using DatabaseErrorReportingCallback =
+    base::RepeatingCallback<void(const leveldb::Status&)>;
+
 // Create the default leveldb options object suitable for leveldb operations.
 struct LEVELDB_EXPORT Options : public leveldb::Options {
   Options();
+
+  // Called when there is a error during the Get() call. Intended for metrics
+  // reporting.
+  DatabaseErrorReportingCallback on_get_error;
+  // Called when there is a error during the Write() call, which is called for
+  // Write(), Put() and Delete(). Intended for metrics reporting.
+  DatabaseErrorReportingCallback on_write_error;
 };
 
 LEVELDB_EXPORT const char* MethodIDToString(MethodID method);
@@ -143,18 +161,23 @@ class LEVELDB_EXPORT ChromiumEnv : public leveldb::Env,
                                    public UMALogger,
                                    public RetrierProvider {
  public:
+  using ScheduleFunc = void(void*);
+
+  // Constructs a ChromiumEnv instance with an unrestricted FilesystemProxy
+  // instance that performs direct filesystem access.
   ChromiumEnv();
 
-  typedef void(ScheduleFunc)(void*);
+  // Constructs a ChromiumEnv instance with a custom FilesystemProxy instance.
+  explicit ChromiumEnv(std::unique_ptr<storage::FilesystemProxy> filesystem);
 
-  virtual ~ChromiumEnv();
+  ~ChromiumEnv() override;
 
   bool FileExists(const std::string& fname) override;
   leveldb::Status GetChildren(const std::string& dir,
                               std::vector<std::string>* result) override;
-  leveldb::Status DeleteFile(const std::string& fname) override;
+  leveldb::Status RemoveFile(const std::string& fname) override;
   leveldb::Status CreateDir(const std::string& name) override;
-  leveldb::Status DeleteDir(const std::string& name) override;
+  leveldb::Status RemoveDir(const std::string& name) override;
   leveldb::Status GetFileSize(const std::string& fname,
                               uint64_t* size) override;
   leveldb::Status RenameFile(const std::string& src,
@@ -181,7 +204,13 @@ class LEVELDB_EXPORT ChromiumEnv : public leveldb::Env,
   void SetReadOnlyFileLimitForTesting(int max_open_files);
 
  protected:
+  // Constructs a ChromiumEnv instance with a local unrestricted FilesystemProxy
+  // instance that performs direct filesystem access.
   explicit ChromiumEnv(const std::string& name);
+
+  // Constructs a ChromiumEnv instance with a custom FilesystemProxy instance.
+  ChromiumEnv(const std::string& name,
+              std::unique_ptr<storage::FilesystemProxy> filesystem);
 
   static const char* FileErrorString(base::File::Error error);
 
@@ -191,24 +220,7 @@ class LEVELDB_EXPORT ChromiumEnv : public leveldb::Env,
   void RecordBytesRead(int amount) const override;
   void RecordBytesWritten(int amount) const override;
   base::HistogramBase* GetOSErrorHistogram(MethodID method, int limit) const;
-  void DeleteBackupFiles(const base::FilePath& dir);
-
-  // File locks may not be exclusive within a process (e.g. on POSIX). Track
-  // locks held by the ChromiumEnv to prevent access within the process.
-  class LockTable {
-   public:
-    bool Insert(const std::string& fname) {
-      leveldb::MutexLock l(&mu_);
-      return locked_files_.insert(fname).second;
-    }
-    bool Remove(const std::string& fname) {
-      leveldb::MutexLock l(&mu_);
-      return locked_files_.erase(fname) == 1;
-    }
-   private:
-    leveldb::port::Mutex mu_;
-    std::set<std::string> locked_files_;
-  };
+  void RemoveBackupFiles(const base::FilePath& dir);
 
   const int kMaxRetryTimeMillis;
   // BGThread() is the body of the background thread
@@ -217,15 +229,15 @@ class LEVELDB_EXPORT ChromiumEnv : public leveldb::Env,
     reinterpret_cast<ChromiumEnv*>(arg)->BGThread();
   }
 
-  void RecordLockFileAncestors(int num_missing_ancestors) const;
   base::HistogramBase* GetMethodIOErrorHistogram() const;
-  base::HistogramBase* GetLockFileAncestorHistogram() const;
 
   // RetrierProvider implementation.
   int MaxRetryTimeMillis() const override { return kMaxRetryTimeMillis; }
   base::HistogramBase* GetRetryTimeHistogram(MethodID method) const override;
   base::HistogramBase* GetRecoveredFromErrorHistogram(
       MethodID method) const override;
+
+  const std::unique_ptr<storage::FilesystemProxy> filesystem_;
 
   base::FilePath test_directory_;
 
@@ -243,7 +255,6 @@ class LEVELDB_EXPORT ChromiumEnv : public leveldb::Env,
   };
   using BGQueue = base::circular_deque<BGItem>;
   BGQueue queue_;
-  LockTable locks_;
   std::unique_ptr<leveldb::Cache> file_cache_;
 };
 
@@ -301,7 +312,7 @@ class LEVELDB_EXPORT DBTracker {
   // memory-infra and is enumerated by VisitDatabases() method.
   // This function is an implementation detail of leveldb_env::OpenDB(), and
   // has similar guarantees regarding |dbptr| argument.
-  leveldb::Status OpenDatabase(const leveldb::Options& options,
+  leveldb::Status OpenDatabase(const leveldb_env::Options& options,
                                const std::string& name,
                                TrackedDB** dbptr);
 
@@ -366,6 +377,7 @@ LEVELDB_EXPORT leveldb::Status RewriteDB(const leveldb_env::Options& options,
 
 LEVELDB_EXPORT base::StringPiece MakeStringPiece(const leveldb::Slice& s);
 LEVELDB_EXPORT leveldb::Slice MakeSlice(const base::StringPiece& s);
+LEVELDB_EXPORT leveldb::Slice MakeSlice(base::span<const uint8_t> s);
 
 }  // namespace leveldb_env
 

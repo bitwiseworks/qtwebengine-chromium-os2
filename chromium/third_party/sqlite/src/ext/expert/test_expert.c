@@ -79,7 +79,7 @@ static int SQLITE_TCLAPI testExpertCmd(
     Tcl_WrongNumArgs(interp, 1, objv, "SUBCOMMAND ...");
     return TCL_ERROR;
   }
-  rc = Tcl_GetIndexFromObjStruct(interp,
+  rc = Tcl_GetIndexFromObjStruct(interp, 
       objv[1], aSub, sizeof(aSub[0]), "sub-command", 0, &iSub
   );
   if( rc!=TCL_OK ) return rc;
@@ -114,7 +114,7 @@ static int SQLITE_TCLAPI testExpertCmd(
       int iStmt;
       const char *zReport;
 
-      if( Tcl_GetIntFromObj(interp, objv[2], &iStmt)
+      if( Tcl_GetIntFromObj(interp, objv[2], &iStmt) 
        || Tcl_GetIndexFromObj(interp, objv[3], aEnum, "report", 0, &iEnum)
       ){
         return TCL_ERROR;
@@ -130,7 +130,7 @@ static int SQLITE_TCLAPI testExpertCmd(
     }
 
     default:       /* destroy */
-      assert( iSub==4 );
+      assert( iSub==4 );     
       Tcl_DeleteCommand(interp, Tcl_GetString(objv[0]));
       break;
   }

@@ -5,13 +5,20 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "SkCanvas.h"
-#include "SkVertices.h"
-#include "SkPoint.h"
+#include "gm/gm.h"
+#include "include/core/SkBlendMode.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkVertices.h"
 
-#include <iostream>
-#include <vector>
+#ifdef SK_SUPPORT_VERTICES_BONES
+
+#include <stdint.h>
 
 using namespace skiagm;
 
@@ -204,3 +211,5 @@ DEF_GM(return new SkinningGM(true, true);)
 DEF_GM(return new SkinningGM(false, true);)
 DEF_GM(return new SkinningGM(true, false);)
 DEF_GM(return new SkinningGM(false, false);)
+
+#endif

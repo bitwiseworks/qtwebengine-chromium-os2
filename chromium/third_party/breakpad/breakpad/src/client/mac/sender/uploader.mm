@@ -28,6 +28,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #import <fcntl.h>
+#include <stdio.h>
 #import <sys/stat.h>
 #include <TargetConditionals.h>
 #import <unistd.h>
@@ -38,7 +39,6 @@
 
 #import "client/apple/Framework/BreakpadDefines.h"
 #import "client/mac/sender/uploader.h"
-#import "common/mac/GTMLogger.h"
 
 const int kMinidumpFileLengthLimit = 2 * 1024 * 1024;  // 2MB
 
@@ -89,17 +89,15 @@ NSData *readData(int fileId, ssize_t length) {
 NSDictionary *readConfigurationData(const char *configFile) {
   int fileId = open(configFile, O_RDONLY, 0600);
   if (fileId == -1) {
-    GTMLoggerDebug(@"Couldn't open config file %s - %s",
-                   configFile,
-                   strerror(errno));
+    fprintf(stderr, "Breakpad Uploader: Couldn't open config file %s - %s",
+            configFile, strerror(errno));
   }
 
   // we want to avoid a build-up of old config files even if they
   // have been incorrectly written by the framework
   if (unlink(configFile)) {
-    GTMLoggerDebug(@"Couldn't unlink config file %s - %s",
-                   configFile,
-                   strerror(errno));
+    fprintf(stderr, "Breakpad Uploader: Couldn't unlink config file %s - %s",
+            configFile, strerror(errno));
   }
 
   if (fileId == -1) {
@@ -360,7 +358,8 @@ NSDictionary *readConfigurationData(const char *configFile) {
   NSString *logTarFile = [NSString stringWithFormat:@"%s/log.tar.bz2",tmpDir];
   logFileData_ = [[NSData alloc] initWithContentsOfFile:logTarFile];
   if (logFileData_ == nil) {
-    GTMLoggerDebug(@"Cannot find temp tar log file: %@", logTarFile);
+    fprintf(stderr, "Breakpad Uploader: Cannot find temp tar log file: %s",
+            [logTarFile UTF8String]);
     return NO;
   }
   return YES;
@@ -511,6 +510,9 @@ NSDictionary *readConfigurationData(const char *configFile) {
     reportID = [[result stringByTrimmingCharactersInSet:trimSet] UTF8String];
     [self logUploadWithID:reportID];
   }
+  if (uploadCompletion_) {
+    uploadCompletion_([NSString stringWithUTF8String:reportID], error);
+  }
 
   // rename the minidump file according to the id returned from the server
   NSString *minidumpDir =
@@ -526,13 +528,14 @@ NSDictionary *readConfigurationData(const char *configFile) {
   const char *dest = [destString fileSystemRepresentation];
 
   if (rename(src, dest) == 0) {
-    GTMLoggerInfo(@"Breakpad Uploader: Renamed %s to %s after successful " \
-                  "upload",src, dest);
+    fprintf(stderr,
+            "Breakpad Uploader: Renamed %s to %s after successful upload", src,
+            dest);
   }
   else {
     // can't rename - don't worry - it's not important for users
-    GTMLoggerDebug(@"Breakpad Uploader: successful upload report ID = %s\n",
-                   reportID );
+    fprintf(stderr, "Breakpad Uploader: successful upload report ID = %s\n",
+            reportID);
   }
   [result release];
 }
@@ -545,6 +548,11 @@ NSDictionary *readConfigurationData(const char *configFile) {
     [value stringByAddingPercentEncodingWithAllowedCharacters:
       [NSCharacterSet URLQueryAllowedCharacterSet]];
   return [NSURLQueryItem queryItemWithName:queryItemName value:escapedValue];
+}
+
+//=============================================================================
+- (void)setUploadCompletionBlock:(UploadCompletionBlock)uploadCompletion {
+  uploadCompletion_ = uploadCompletion;
 }
 
 //=============================================================================

@@ -55,6 +55,7 @@
 //   "walk_keys" : [ list of target walk keys ]
 //   "rebase" : true or false
 //   "output_conversion" : "string for output conversion"
+//   "response_file_contents": [ list of response file contents entries ]
 // }
 //
 // Optionally, if "what" is specified while generating description, two other
@@ -416,6 +417,16 @@ class TargetDescBuilder : public BaseDescBuilder {
 
         res->SetWithoutPathExpansion(variables::kArgs, std::move(args));
       }
+      if (what(variables::kResponseFileContents) &&
+          !target_->action_values().rsp_file_contents().list().empty()) {
+        auto rsp_file_contents = std::make_unique<base::ListValue>();
+        for (const auto& elem :
+             target_->action_values().rsp_file_contents().list())
+          rsp_file_contents->AppendString(elem.AsString());
+
+        res->SetWithoutPathExpansion(variables::kResponseFileContents,
+                                     std::move(rsp_file_contents));
+      }
       if (what(variables::kDepfile) &&
           !target_->action_values().depfile().empty()) {
         res->SetKey(variables::kDepfile,
@@ -496,9 +507,8 @@ class TargetDescBuilder : public BaseDescBuilder {
       res->SetWithoutPathExpansion("runtime_deps", RenderRuntimeDeps());
 
     // libs and lib_dirs are special in that they're inherited. We don't
-    // currently
-    // implement a blame feature for this since the bottom-up inheritance makes
-    // this difficult.
+    // currently implement a blame feature for this since the bottom-up
+    // inheritance makes this difficult.
 
     // Libs can be part of any target and get recursively pushed up the chain,
     // so display them regardless of target type.
@@ -519,6 +529,28 @@ class TargetDescBuilder : public BaseDescBuilder {
         for (size_t i = 0; i < all_lib_dirs.size(); i++)
           lib_dirs->AppendString(FormatSourceDir(all_lib_dirs[i]));
         res->SetWithoutPathExpansion(variables::kLibDirs, std::move(lib_dirs));
+      }
+    }
+
+    if (what(variables::kFrameworks)) {
+      const auto& all_frameworks = target_->all_frameworks();
+      if (!all_frameworks.empty()) {
+        auto frameworks = std::make_unique<base::ListValue>();
+        for (size_t i = 0; i < all_frameworks.size(); i++)
+          frameworks->AppendString(all_frameworks[i]);
+        res->SetWithoutPathExpansion(variables::kFrameworks,
+                                     std::move(frameworks));
+      }
+    }
+
+    if (what(variables::kFrameworkDirs)) {
+      const auto& all_framework_dirs = target_->all_framework_dirs();
+      if (!all_framework_dirs.empty()) {
+        auto framework_dirs = std::make_unique<base::ListValue>();
+        for (size_t i = 0; i < all_framework_dirs.size(); i++)
+          framework_dirs->AppendString(all_framework_dirs[i].value());
+        res->SetWithoutPathExpansion(variables::kFrameworkDirs,
+                                     std::move(framework_dirs));
       }
     }
 
@@ -634,8 +666,8 @@ class TargetDescBuilder : public BaseDescBuilder {
     auto dict = std::make_unique<base::DictionaryValue>();
     for (const auto& source : target_->sources()) {
       std::vector<OutputFile> outputs;
-      Toolchain::ToolType tool_type = Toolchain::TYPE_NONE;
-      if (target_->GetOutputFilesForSource(source, &tool_type, &outputs)) {
+      const char* tool_name = Tool::kToolNone;
+      if (target_->GetOutputFilesForSource(source, &tool_name, &outputs)) {
         auto list = std::make_unique<base::ListValue>();
         for (const auto& output : outputs)
           list->AppendString(output.value());

@@ -28,12 +28,11 @@ namespace consent_auditor {
 
 class ConsentAuditorImpl : public ConsentAuditor {
  public:
-  ConsentAuditorImpl(
-      PrefService* pref_service,
-      std::unique_ptr<syncer::ConsentSyncBridge> consent_sync_bridge,
-      const std::string& app_version,
-      const std::string& app_locale,
-      base::Clock* clock);
+  ConsentAuditorImpl(PrefService* pref_service,
+                     std::unique_ptr<ConsentSyncBridge> consent_sync_bridge,
+                     const std::string& app_version,
+                     const std::string& app_locale,
+                     base::Clock* clock);
   ~ConsentAuditorImpl() override;
 
   // KeyedService (through ConsentAuditor) implementation.
@@ -43,25 +42,22 @@ class ConsentAuditorImpl : public ConsentAuditor {
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
   void RecordArcPlayConsent(
-      const std::string& account_id,
+      const CoreAccountId& account_id,
       const sync_pb::UserConsentTypes::ArcPlayTermsOfServiceConsent& consent)
       override;
   void RecordArcGoogleLocationServiceConsent(
-      const std::string& account_id,
+      const CoreAccountId& account_id,
       const sync_pb::UserConsentTypes::ArcGoogleLocationServiceConsent& consent)
       override;
   void RecordArcBackupAndRestoreConsent(
-      const std::string& account_id,
+      const CoreAccountId& account_id,
       const sync_pb::UserConsentTypes::ArcBackupAndRestoreConsent& consent)
       override;
   void RecordSyncConsent(
-      const std::string& account_id,
+      const CoreAccountId& account_id,
       const sync_pb::UserConsentTypes::SyncConsent& consent) override;
-  void RecordUnifiedConsent(
-      const std::string& account_id,
-      const sync_pb::UserConsentTypes::UnifiedConsent& consent) override;
   void RecordAssistantActivityControlConsent(
-      const std::string& account_id,
+      const CoreAccountId& account_id,
       const sync_pb::UserConsentTypes::AssistantActivityControlConsent& consent)
       override;
   void RecordLocalConsent(const std::string& feature,
@@ -72,14 +68,14 @@ class ConsentAuditorImpl : public ConsentAuditor {
 
  private:
   std::unique_ptr<sync_pb::UserConsentSpecifics> ConstructUserConsentSpecifics(
-      const std::string& account_id,
+      const CoreAccountId& account_id,
       Feature feature,
       const std::vector<int>& description_grd_ids,
       int confirmation_grd_id,
       ConsentStatus status);
 
   PrefService* pref_service_;
-  std::unique_ptr<syncer::ConsentSyncBridge> consent_sync_bridge_;
+  std::unique_ptr<ConsentSyncBridge> consent_sync_bridge_;
   std::string app_version_;
   std::string app_locale_;
   base::Clock* clock_;

@@ -12,6 +12,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "content/browser/net/network_quality_observer_impl.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -79,6 +80,21 @@ void VerifyDownlinkKbps(double expected_kbps, double got_kbps) {
   EXPECT_GE((expected_kbps * 0.1) + 50, std::abs(expected_kbps - got_kbps))
       << " expected_kbps=" << expected_kbps << " got_kbps=" << got_kbps;
 }
+
+class MockNetworkChangeNotifierWifi : public net::NetworkChangeNotifier {
+ public:
+  void GetCurrentMaxBandwidthAndConnectionType(
+      double* max_bandwidth_mbps,
+      ConnectionType* connection_type) const override {
+    *connection_type = NetworkChangeNotifier::CONNECTION_WIFI;
+    *max_bandwidth_mbps =
+        net::NetworkChangeNotifier::GetMaxBandwidthMbpsForConnectionSubtype(
+            net::NetworkChangeNotifier::SUBTYPE_WIFI_N);
+  }
+  ConnectionType GetCurrentConnectionType() const override {
+    return NetworkChangeNotifier::CONNECTION_WIFI;
+  }
+};
 
 }  // namespace
 
@@ -158,20 +174,22 @@ class NetInfoBrowserTest : public content::ContentBrowserTest {
 
 // Make sure the type is correct when the page is first opened.
 IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, VerifyNetworkStateInitialized) {
-  SetConnectionType(net::NetworkChangeNotifier::CONNECTION_ETHERNET,
-                    net::NetworkChangeNotifier::SUBTYPE_GIGABIT_ETHERNET);
-  NavigateToURL(shell(), content::GetTestUrl("", "net_info.html"));
+  // Mock out the NCN.
+  net::NetworkChangeNotifier::DisableForTest disable_for_test;
+  MockNetworkChangeNotifierWifi mock_notifier;
+
+  EXPECT_TRUE(NavigateToURL(shell(), content::GetTestUrl("", "net_info.html")));
   EXPECT_TRUE(RunScriptExtractBool("getOnLine()"));
-  EXPECT_EQ("ethernet", RunScriptExtractString("getType()"));
+  EXPECT_EQ("wifi", RunScriptExtractString("getType()"));
   EXPECT_EQ(net::NetworkChangeNotifier::GetMaxBandwidthMbpsForConnectionSubtype(
-                net::NetworkChangeNotifier::SUBTYPE_GIGABIT_ETHERNET),
+                net::NetworkChangeNotifier::SUBTYPE_WIFI_N),
             RunScriptExtractDouble("getDownlinkMax()"));
 }
 
 // Make sure that type changes in the browser make their way to
 // navigator.connection.type.
 IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, NetworkChangePlumbsToNavigator) {
-  NavigateToURL(shell(), content::GetTestUrl("", "net_info.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), content::GetTestUrl("", "net_info.html")));
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_WIFI,
                     net::NetworkChangeNotifier::SUBTYPE_WIFI_N);
   EXPECT_EQ("wifi", RunScriptExtractString("getType()"));
@@ -190,7 +208,7 @@ IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, NetworkChangePlumbsToNavigator) {
 // Make sure that type changes in the browser make their way to
 // navigator.isOnline.
 IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, IsOnline) {
-  NavigateToURL(shell(), content::GetTestUrl("", "net_info.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), content::GetTestUrl("", "net_info.html")));
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_ETHERNET,
                     net::NetworkChangeNotifier::SUBTYPE_GIGABIT_ETHERNET);
   EXPECT_TRUE(RunScriptExtractBool("getOnLine()"));
@@ -207,7 +225,7 @@ IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, IsOnline) {
 IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, TwoRenderViewsInOneProcess) {
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_ETHERNET,
                     net::NetworkChangeNotifier::SUBTYPE_GIGABIT_ETHERNET);
-  NavigateToURL(shell(), content::GetTestUrl("", "net_info.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), content::GetTestUrl("", "net_info.html")));
   EXPECT_TRUE(RunScriptExtractBool("getOnLine()"));
 
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_NONE,
@@ -268,14 +286,13 @@ IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest,
   // effective connection type.
   GetNetworkQualityTracker()->ReportEffectiveConnectionTypeForTesting(
       net::EFFECTIVE_CONNECTION_TYPE_2G);
-  base::RunLoop().RunUntilIdle();
   EXPECT_EQ("2g", RunScriptExtractString("getEffectiveType()"));
+
   GetNetworkQualityTracker()->ReportEffectiveConnectionTypeForTesting(
       net::EFFECTIVE_CONNECTION_TYPE_3G);
-  base::RunLoop().RunUntilIdle();
   EXPECT_EQ("3g", RunScriptExtractString("getEffectiveType()"));
+
   FetchHistogramsFromChildProcesses();
-  base::RunLoop().RunUntilIdle();
   EXPECT_GT(GetTotalSampleCount(&histogram_tester, "NQE.RenderThreadNotified"),
             samples);
 }
@@ -413,7 +430,7 @@ IN_PROC_BROWSER_TEST_F(NetInfoBrowserTest, NetworkQualityRandomized) {
   for (size_t i = 0; i < 10; ++i) {
     // The noise added is a function of the hostname. Varying the hostname
     // should vary the noise.
-    std::string fake_hostname = "example" + base::IntToString(i) + ".com";
+    std::string fake_hostname = "example" + base::NumberToString(i) + ".com";
     EXPECT_TRUE(NavigateToURL(shell(), embedded_test_server()->GetURL(
                                            fake_hostname, "/net_info.html")));
     VerifyRtt(http_rtt, RunScriptExtractInt("getRtt()"));

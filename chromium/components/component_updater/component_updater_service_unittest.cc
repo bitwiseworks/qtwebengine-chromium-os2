@@ -20,7 +20,7 @@
 #include "base/stl_util.h"
 #include "base/task/post_task.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/component_updater/component_updater_service_internal.h"
@@ -53,6 +53,7 @@ class MockInstaller : public CrxInstaller {
   // move semantics. This function is a shim to work around it.
   void Install(const base::FilePath& unpack_path,
                const std::string& public_key,
+               std::unique_ptr<InstallParams> install_params,
                update_client::CrxInstaller::Callback callback) override {
     DoInstall(unpack_path, callback);
   }
@@ -77,6 +78,7 @@ class MockUpdateClient : public UpdateClient {
   // move semantics. This function is a shim to work around it.
   void Install(const std::string& id,
                CrxDataCallback crx_data_callback,
+               CrxStateChangeCallback crx_state_change_callback,
                Callback callback) override {
     DoInstall(id);
     std::move(callback).Run(update_client::Error::NONE);
@@ -84,6 +86,7 @@ class MockUpdateClient : public UpdateClient {
 
   void Update(const std::vector<std::string>& ids,
               CrxDataCallback crx_data_callback,
+              CrxStateChangeCallback crx_state_change_callback,
               bool is_foreground,
               Callback callback) override {
     // All update calls initiated by the component update service are
@@ -141,10 +144,6 @@ class ComponentUpdaterTest : public testing::Test {
   ComponentUpdaterTest();
   ~ComponentUpdaterTest() override;
 
-  void SetUp() override;
-
-  void TearDown() override;
-
   // Makes the full path to a component updater test file.
   const base::FilePath test_file(const char* file);
 
@@ -153,7 +152,6 @@ class ComponentUpdaterTest : public testing::Test {
   scoped_refptr<TestConfigurator> configurator() const { return config_; }
   base::OnceClosure quit_closure() { return runloop_.QuitClosure(); }
   MockUpdateScheduler& scheduler() { return *scheduler_; }
-  static void ReadyCallback() {}
 
  protected:
   void RunThreads();
@@ -165,7 +163,7 @@ class ComponentUpdaterTest : public testing::Test {
                 const UpdateScheduler::UserTask& user_task,
                 const UpdateScheduler::OnStopTaskCallback& on_stop);
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   base::RunLoop runloop_;
 
   scoped_refptr<TestConfigurator> config_ =
@@ -191,23 +189,12 @@ class OnDemandTester {
   update_client::Error error_ = update_client::Error::NONE;
 };
 
-MockInstaller::MockInstaller() {
-}
-
-MockInstaller::~MockInstaller() {
-}
-
-MockUpdateClient::MockUpdateClient() {
-}
-
-MockUpdateClient::~MockUpdateClient() {
-}
-
-MockServiceObserver::MockServiceObserver() {
-}
-
-MockServiceObserver::~MockServiceObserver() {
-}
+MockInstaller::MockInstaller() = default;
+MockInstaller::~MockInstaller() = default;
+MockUpdateClient::MockUpdateClient() = default;
+MockUpdateClient::~MockUpdateClient() = default;
+MockServiceObserver::MockServiceObserver() = default;
+MockServiceObserver::~MockServiceObserver() = default;
 
 void OnDemandTester::OnDemand(ComponentUpdateService* cus,
                               const std::string& id,
@@ -245,19 +232,13 @@ ComponentUpdaterTest::~ComponentUpdaterTest() {
   component_updater_.reset();
 }
 
-void ComponentUpdaterTest::SetUp() {
-}
-
-void ComponentUpdaterTest::TearDown() {
-}
-
 void ComponentUpdaterTest::RunThreads() {
   runloop_.Run();
 }
 
 void ComponentUpdaterTest::RunUpdateTask(
     const UpdateScheduler::UserTask& user_task) {
-  scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
+  task_environment_.GetMainThreadTaskRunner()->PostTask(
       FROM_HERE, base::BindRepeating(
                      [](const UpdateScheduler::UserTask& user_task,
                         ComponentUpdaterTest* test) {
@@ -332,11 +313,13 @@ TEST_F(ComponentUpdaterTest, RegisterComponent) {
   ids.push_back(id2);
 
   CrxComponent crx_component1;
+  crx_component1.app_id = id1;
   crx_component1.pk_hash.assign(abag_hash, abag_hash + base::size(abag_hash));
   crx_component1.version = base::Version("1.0");
   crx_component1.installer = installer;
 
   CrxComponent crx_component2;
+  crx_component2.app_id = id2;
   crx_component2.pk_hash.assign(jebg_hash, jebg_hash + base::size(jebg_hash));
   crx_component2.version = base::Version("0.9");
   crx_component2.installer = installer;
@@ -427,6 +410,7 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
   {
     using update_client::jebg_hash;
     CrxComponent crx_component;
+    crx_component.app_id = "jebgalgnebhfojomionfpkfelancnnkf";
     crx_component.pk_hash.assign(jebg_hash, jebg_hash + base::size(jebg_hash));
     crx_component.version = base::Version("0.9");
     crx_component.installer = base::MakeRefCounted<MockInstaller>();
@@ -435,6 +419,7 @@ TEST_F(ComponentUpdaterTest, OnDemandUpdate) {
   {
     using update_client::abag_hash;
     CrxComponent crx_component;
+    crx_component.app_id = "abagagagagagagagagagagagagagagag";
     crx_component.pk_hash.assign(abag_hash, abag_hash + base::size(abag_hash));
     crx_component.version = base::Version("0.9");
     crx_component.installer = base::MakeRefCounted<MockInstaller>();
@@ -486,6 +471,7 @@ TEST_F(ComponentUpdaterTest, MaybeThrottle) {
 
   using update_client::jebg_hash;
   CrxComponent crx_component;
+  crx_component.app_id = "jebgalgnebhfojomionfpkfelancnnkf";
   crx_component.pk_hash.assign(jebg_hash, jebg_hash + base::size(jebg_hash));
   crx_component.version = base::Version("0.9");
   crx_component.installer = installer;
@@ -498,9 +484,8 @@ TEST_F(ComponentUpdaterTest, MaybeThrottle) {
   EXPECT_CALL(scheduler(), Stop()).Times(1);
 
   EXPECT_TRUE(component_updater().RegisterComponent(crx_component));
-  component_updater().MaybeThrottle(
-      "jebgalgnebhfojomionfpkfelancnnkf",
-      base::BindOnce(&ComponentUpdaterTest::ReadyCallback));
+  component_updater().MaybeThrottle("jebgalgnebhfojomionfpkfelancnnkf",
+                                    base::BindOnce([]() {}));
 
   RunThreads();
 

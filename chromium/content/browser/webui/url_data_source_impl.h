@@ -13,11 +13,6 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/browser/webui/url_data_manager.h"
 #include "content/common/content_export.h"
-#include "ui/base/template_expressions.h"
-
-namespace base {
-class RefCountedMemory;
-}
 
 namespace content {
 class URLDataManagerBackend;
@@ -57,19 +52,10 @@ class CONTENT_EXPORT URLDataSourceImpl
   URLDataSourceImpl(const std::string& source_name,
                     std::unique_ptr<URLDataSource> source);
 
-  // Report that a request has resulted in the data |bytes|.
-  // If the request can't be satisfied, pass NULL for |bytes| to indicate
-  // the request is over.
-  virtual void SendResponse(int request_id,
-                            scoped_refptr<base::RefCountedMemory> bytes);
-
   const std::string& source_name() const { return source_name_; }
   URLDataSource* source() const { return source_.get(); }
 
   virtual bool IsWebUIDataSourceImpl() const;
-
-  // Replacements for i18n or null if no replacements are desired.
-  virtual const ui::TemplateReplacements* GetReplacements() const;
 
  protected:
   virtual ~URLDataSourceImpl();
@@ -78,12 +64,6 @@ class CONTENT_EXPORT URLDataSourceImpl
   friend class URLDataManager;
   friend class URLDataManagerBackend;
   friend class base::DeleteHelper<URLDataSourceImpl>;
-
-  // SendResponse invokes this on the IO thread. Notifies the backend to
-  // handle the actual work of sending the data.
-  virtual void SendResponseOnIOThread(
-      int request_id,
-      scoped_refptr<base::RefCountedMemory> bytes);
 
   // The name of this source.
   // E.g., for favicons, this could be "favicon", which results in paths for

@@ -6,28 +6,15 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/unrestricted_double_or_keyframe_animation_options.h"
 #include "third_party/blink/renderer/bindings/core/v8/unrestricted_double_or_keyframe_effect_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_effect_timing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_keyframe_effect_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_optional_effect_timing.h"
 #include "third_party/blink/renderer/core/animation/animation_effect.h"
 #include "third_party/blink/renderer/core/animation/animation_input_helpers.h"
-#include "third_party/blink/renderer/core/animation/effect_timing.h"
-#include "third_party/blink/renderer/core/animation/keyframe_effect_options.h"
-#include "third_party/blink/renderer/core/animation/optional_effect_timing.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
 namespace {
-Timing::FillMode ConvertFillMode(const String& fill_mode) {
-  if (fill_mode == "none")
-    return Timing::FillMode::NONE;
-  if (fill_mode == "backwards")
-    return Timing::FillMode::BACKWARDS;
-  if (fill_mode == "both")
-    return Timing::FillMode::BOTH;
-  if (fill_mode == "forwards")
-    return Timing::FillMode::FORWARDS;
-  DCHECK_EQ(fill_mode, "auto");
-  return Timing::FillMode::AUTO;
-}
-
 Timing::PlaybackDirection ConvertPlaybackDirection(const String& direction) {
   if (direction == "reverse")
     return Timing::PlaybackDirection::REVERSE;
@@ -75,7 +62,7 @@ Timing TimingInput::Convert(
     Document* document,
     ExceptionState& exception_state) {
   if (options.IsNull()) {
-    return Timing::Defaults();
+    return Timing();
   }
 
   if (options.IsKeyframeEffectOptions()) {
@@ -99,9 +86,8 @@ Timing TimingInput::Convert(
     const UnrestrictedDoubleOrKeyframeAnimationOptions& options,
     Document* document,
     ExceptionState& exception_state) {
-  if (options.IsNull()) {
-    return Timing::Defaults();
-  }
+  if (options.IsNull())
+    return Timing();
 
   if (options.IsKeyframeAnimationOptions()) {
     return ConvertEffectTiming(options.GetAsKeyframeAnimationOptions(),
@@ -178,30 +164,37 @@ bool TimingInput::Update(Timing& timing,
   if (input->hasDelay()) {
     DCHECK(std::isfinite(input->delay()));
     changed |= UpdateValueIfChanged(timing.start_delay, input->delay() / 1000);
+    timing.SetTimingOverride(Timing::kOverrideStartDelay);
   }
   if (input->hasEndDelay()) {
     DCHECK(std::isfinite(input->endDelay()));
     changed |= UpdateValueIfChanged(timing.end_delay, input->endDelay() / 1000);
+    timing.SetTimingOverride(Timing::kOverrideEndDelay);
   }
   if (input->hasFill()) {
-    changed |=
-        UpdateValueIfChanged(timing.fill_mode, ConvertFillMode(input->fill()));
+    changed |= UpdateValueIfChanged(timing.fill_mode,
+                                    Timing::StringToFillMode(input->fill()));
+    timing.SetTimingOverride(Timing::kOverideFillMode);
   }
   if (input->hasIterationStart()) {
     changed |=
         UpdateValueIfChanged(timing.iteration_start, input->iterationStart());
+    timing.SetTimingOverride(Timing::kOverrideIterationStart);
   }
   if (input->hasIterations()) {
     changed |=
         UpdateValueIfChanged(timing.iteration_count, input->iterations());
+    timing.SetTimingOverride(Timing::kOverrideIterationCount);
   }
   if (input->hasDuration()) {
     changed |= UpdateValueIfChanged(
         timing.iteration_duration, ConvertIterationDuration(input->duration()));
+    timing.SetTimingOverride(Timing::kOverrideDuration);
   }
   if (input->hasDirection()) {
     changed |= UpdateValueIfChanged(
         timing.direction, ConvertPlaybackDirection(input->direction()));
+    timing.SetTimingOverride(Timing::kOverrideDirection);
   }
   if (timing_function) {
     // We need to compare the timing functions by underlying value to see if
@@ -209,8 +202,8 @@ bool TimingInput::Update(Timing& timing,
     // UpdateValueIfChanged.
     changed |= (*timing.timing_function != *timing_function);
     timing.timing_function = timing_function;
+    timing.SetTimingOverride(Timing::kOverrideTimingFunction);
   }
-
   return changed;
 }
 

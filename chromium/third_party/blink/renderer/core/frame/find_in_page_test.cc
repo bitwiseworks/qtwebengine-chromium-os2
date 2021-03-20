@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/frame/find_in_page.h"
 
+#include "base/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/frame/find_in_page.mojom-blink.h"
 #include "third_party/blink/renderer/core/editing/finder/text_finder.h"
@@ -56,11 +57,11 @@ class FindInPageCallbackReceiver {
   bool IsCalled() { return is_called; }
 
   void AssertFindMatchRects(int expected_version,
-                            const WebVector<WebFloatRect>& expected_rects,
-                            const WebFloatRect& expected_active_match_rect,
+                            const WebVector<gfx::RectF>& expected_rects,
+                            const gfx::RectF& expected_active_match_rect,
                             int actual_version,
-                            const Vector<WebFloatRect>& actual_rects,
-                            const WebFloatRect& actual_active_match_rect) {
+                            const Vector<gfx::RectF>& actual_rects,
+                            const gfx::RectF& actual_active_match_rect) {
     is_called = true;
     EXPECT_EQ(expected_version, actual_version);
     EXPECT_EQ(expected_rects.size(), actual_rects.size());
@@ -75,8 +76,8 @@ class FindInPageCallbackReceiver {
 };
 
 TEST_F(FindInPageTest, FindMatchRectsReturnsCorrectRects) {
-  GetDocument().body()->SetInnerHTMLFromString("aAaAbBaBbAaAaA");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().body()->setInnerHTML("aAaAbBaBbAaAaA");
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
   int identifier = 0;
   WebString search_text(String("aA"));

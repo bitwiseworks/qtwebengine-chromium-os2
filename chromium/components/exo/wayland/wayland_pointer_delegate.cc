@@ -9,14 +9,17 @@
 #include <wayland-server-protocol-core.h>
 
 #include "components/exo/pointer.h"
+#include "components/exo/wayland/serial_tracker.h"
 #include "components/exo/wayland/server_util.h"
+#include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 
 namespace exo {
 namespace wayland {
 
-WaylandPointerDelegate::WaylandPointerDelegate(wl_resource* pointer_resource)
-    : pointer_resource_(pointer_resource) {}
+WaylandPointerDelegate::WaylandPointerDelegate(wl_resource* pointer_resource,
+                                               SerialTracker* serial_tracker)
+    : pointer_resource_(pointer_resource), serial_tracker_(serial_tracker) {}
 
 void WaylandPointerDelegate::OnPointerDestroying(Pointer* pointer) {
   delete this;
@@ -38,15 +41,20 @@ void WaylandPointerDelegate::OnPointerEnter(Surface* surface,
   DCHECK(surface_resource);
   // Should we be sending button events to the client before the enter event
   // if client's pressed button state is different from |button_flags|?
-  wl_pointer_send_enter(pointer_resource_, next_serial(), surface_resource,
-                        wl_fixed_from_double(location.x()),
-                        wl_fixed_from_double(location.y()));
+  wl_pointer_send_enter(
+      pointer_resource_,
+      serial_tracker_->GetNextSerial(SerialTracker::EventType::POINTER_ENTER),
+      surface_resource, wl_fixed_from_double(location.x()),
+      wl_fixed_from_double(location.y()));
 }
 
 void WaylandPointerDelegate::OnPointerLeave(Surface* surface) {
   wl_resource* surface_resource = GetSurfaceResource(surface);
   DCHECK(surface_resource);
-  wl_pointer_send_leave(pointer_resource_, next_serial(), surface_resource);
+  wl_pointer_send_leave(
+      pointer_resource_,
+      serial_tracker_->GetNextSerial(SerialTracker::EventType::POINTER_LEAVE),
+      surface_resource);
 }
 
 void WaylandPointerDelegate::OnPointerMotion(base::TimeTicks time_stamp,
@@ -70,11 +78,14 @@ void WaylandPointerDelegate::OnPointerButton(base::TimeTicks time_stamp,
       {ui::EF_FORWARD_MOUSE_BUTTON, BTN_FORWARD},
       {ui::EF_BACK_MOUSE_BUTTON, BTN_BACK},
   };
-  uint32_t serial = next_serial();
   for (auto button : buttons) {
     if (button_flags & button.flag) {
       SendTimestamp(time_stamp);
-      wl_pointer_send_button(pointer_resource_, serial,
+      SerialTracker::EventType event_type =
+          pressed ? SerialTracker::EventType::POINTER_BUTTON_DOWN
+                  : SerialTracker::EventType::POINTER_BUTTON_UP;
+      wl_pointer_send_button(pointer_resource_,
+                             serial_tracker_->GetNextSerial(event_type),
                              TimeTicksToMilliseconds(time_stamp), button.value,
                              pressed ? WL_POINTER_BUTTON_STATE_PRESSED
                                      : WL_POINTER_BUTTON_STATE_RELEASED);
@@ -85,8 +96,25 @@ void WaylandPointerDelegate::OnPointerButton(base::TimeTicks time_stamp,
 void WaylandPointerDelegate::OnPointerScroll(base::TimeTicks time_stamp,
                                              const gfx::Vector2dF& offset,
                                              bool discrete) {
-  // Same as Weston, the reference compositor.
-  const double kAxisStepDistance = 10.0 / ui::MouseWheelEvent::kWheelDelta;
+  // Values here determined by experiment.
+
+  // We treat 16 units as one mouse wheel click instead of using
+  // MouseWheelEvent::kWheelDelta because that appears to be what aura actually
+  // gives us.
+  constexpr int kAuraScrollUnit = 16;
+  // The minimum scroll from a mouse wheel needs to be a multiple of 5 units
+  // because many Linux apps (e.g. VS Code, Firefox, Chromium) only allow
+  // scrolls to happen in multiples of 5 units. We pick 5 here where Weston
+  // chooses 10 both to more closely match what X apps do, and because unlike
+  // Weston we apply scroll acceleration to the mouse wheel. This means users
+  // can easily scroll large distances even with the smaller minimum unit, while
+  // the smaller base unit allows for smaller scrolls to happen at all.
+  constexpr int kWaylandScrollUnit = 5;
+
+  // The ratio between the above two values. Multiplying by this converts from
+  // aura units to wayland units, dividing does the reverse.
+  constexpr double kAxisStepDistance = static_cast<double>(kWaylandScrollUnit) /
+                                       static_cast<double>(kAuraScrollUnit);
 
   if (wl_resource_get_version(pointer_resource_) >=
       WL_POINTER_AXIS_SOURCE_SINCE_VERSION) {
@@ -95,17 +123,31 @@ void WaylandPointerDelegate::OnPointerScroll(base::TimeTicks time_stamp,
     wl_pointer_send_axis_source(pointer_resource_, axis_source);
   }
 
-  double x_value = offset.x() * kAxisStepDistance;
+  double x_value = -offset.x() * kAxisStepDistance;
+  double y_value = -offset.y() * kAxisStepDistance;
+
+  // ::axis_discrete events must be sent before their corresponding ::axis
+  // events, per the specification.
+  if (wl_resource_get_version(pointer_resource_) >=
+          WL_POINTER_AXIS_DISCRETE_SINCE_VERSION &&
+      discrete) {
+    wl_pointer_send_axis_discrete(
+        pointer_resource_, WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+        static_cast<int>(x_value / kWaylandScrollUnit));
+    wl_pointer_send_axis_discrete(
+        pointer_resource_, WL_POINTER_AXIS_VERTICAL_SCROLL,
+        static_cast<int>(y_value / kWaylandScrollUnit));
+  }
+
   SendTimestamp(time_stamp);
   wl_pointer_send_axis(pointer_resource_, TimeTicksToMilliseconds(time_stamp),
                        WL_POINTER_AXIS_HORIZONTAL_SCROLL,
-                       wl_fixed_from_double(-x_value));
+                       wl_fixed_from_double(x_value));
 
-  double y_value = offset.y() * kAxisStepDistance;
   SendTimestamp(time_stamp);
   wl_pointer_send_axis(pointer_resource_, TimeTicksToMilliseconds(time_stamp),
                        WL_POINTER_AXIS_VERTICAL_SCROLL,
-                       wl_fixed_from_double(-y_value));
+                       wl_fixed_from_double(y_value));
 }
 
 void WaylandPointerDelegate::OnPointerScrollStop(base::TimeTicks time_stamp) {
@@ -132,10 +174,6 @@ void WaylandPointerDelegate::OnPointerFrame() {
 
 wl_client* WaylandPointerDelegate::client() const {
   return wl_resource_get_client(pointer_resource_);
-}
-
-uint32_t WaylandPointerDelegate::next_serial() const {
-  return wl_display_next_serial(wl_client_get_display(client()));
 }
 
 }  // namespace wayland

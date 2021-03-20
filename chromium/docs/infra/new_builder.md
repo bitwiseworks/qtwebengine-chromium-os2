@@ -8,24 +8,15 @@ on chromium builders, but parts may be applicable to other projects.
 ## TL;DR
 
 For a typical chromium builder using the chromium recipe,
-you'll need to acquire hardware and then land **three** CLs:
+you'll need to acquire a host and then land **three** CLs:
 
-1. in [infradata/config][16], modifying swarming's bots.cfg.
+1. in [infradata/config][16], modifying `chromium.star`.
 2. in [chromium/tools/build][17], modifying the chromium\_tests
    configuration.
 3. in [chromium/src][18], modifying all of the following:
-    1. LUCI service configurations in `//infra/config/global`
+    1. LUCI service configurations in `//infra/config`
     2. Compile configuration in `//tools/mb`
     3. Test configuration in `//testing/buildbot`
-
-## Obtain hardware
-
-If you're setting up a new builder, you'll typically need hardware to run it.
-For CI / waterfall builders or manually triggered try builders,
-[file a labs bug][1] (internal).
-For CQ try bots, please file a [capacity bug][2] (internal) first.
-In both cases, note that your builder will be running on swarming
-(not on buildbot) and should be provisioned accordingly.
 
 ## Pick a name and a master
 
@@ -38,47 +29,49 @@ though buildbot itself is largely deprecated). FYI builders should use
 > **Note:** If you're creating a try builder, its name should match the
 > name of the CI builder it mirrors.
 
+## Obtain a host
+
+When you're setting up a new builder, you'll need a host to run it. For CQ try
+bots, you'll likely need a large number of hosts to handle the load in parallel.
+For CI / waterfall builders or manually triggered try builders, you'll typically
+only need a single host.
+
+To acquire the hosts, please file a [capacity bug][1] (internal) and describe
+the amount needed, along with any specialized hardware that's required (e.g.
+mac hardware, attached mobile devices, a specific GPU, etc.).
+
 ## Register hardware with swarming
 
-Once you've obtained hardware, you'll need to associate it with your
-new builder in swarming. You can do so by modifying the relevant swarming
-instance's configuration.
+Once your resource request has been approved and you've obtained the hardware,
+you'll need to associate it with your new builder in swarming. You can do so by
+modifying the relevant swarming instance's configuration.
 
-Swarming's bots.cfg schema is [here][20].
-chromium-swarm's bots.cfg instance is [here][4].
+This configuration is written in Starlark, and then used to generate Protobuf
+files which are also checked in to the repo. Chromium's configuration is in
+[`chromium.star`][4] (internal only).
 
-You'll want to add something like the following:
+If you're simply using a generic GCE bot, find the stanza corresponding to
+the OS and size that you want, and increment the number of bots allocated for
+that configuration. For example:
 
-``` sh
-bot_group {
-  dimensions: "builder:$BUILDER_NAME"
-  # Add a brief comment about hardware, particularly if you're doing
-  # anything unique or atypical.
-  # $COMMENT_ABOUT_HARDWARE
-  bot_id: "$HARDWARE"
+```diff
+    # os:Ubuntu-16.04, cpu:x86-64
+    chrome.gce_xenial(
+        prefix = 'luci-chromium-ci-xenial-8',
+        zone = 'us-central1-b',
+        disk_gb = 400,
+        lifetime = time.week,
+-       amount = 20,
++       amount = 21,
+    )
+```
 
-  # luci-eng@google.com is typically fine for generic chromium builders.
-  # If you're doing something more specialized, or if you're creating
-  # a non-chromium builder, consider a different list.
-  owners: "$OWNER_EMAIL"
+If you've been given a specific hostname, instead add an entry for your bot
+name to be mapped to that hostname. For example:
 
-  # See the schema for more information on these options. The values
-  # listed below should be reasonable defaults for chromium builders.
-  auth {
-    require_luci_machine_token: true
-    ip_whitelist: "chromium-swarm-bots"
-  }
-
-  # This is the service account used by the swarming bot to authenticate to
-  # LUCI services for system purposes (i.e., not within tasks).
-  # For chromium builders, the bots-chrome@ account below should be fine.
-  system_service_account: "bots-chrome@chromium-swarm.iam.gserviceaccount.com"
-
-  # POOL_NAME should be:
-  #   - luci.chromium.ci for public chromium CI / waterfall builders
-  #   - luci.chromium.try for public chromium try builders
-  dimensions: "pool:$POOL_NAME"
-}
+```diff
++   # os:Ubuntu-16.04, cpu:x86-64
++   'Linux Tests': 'swarm1234-c4',
 ```
 
 ## Recipe configuration
@@ -170,7 +163,14 @@ It's generally ok to land all of them in a single CL.
 
 ### LUCI services
 
-LUCI services used by chromium are configured in [//infra/config/global][6].
+LUCI services used by chromium are configured in [//infra/config][6].
+
+The configuration is written in Starlark and used to generate Protobuf files
+which are also checked in to the repo.
+
+Generating all of the LUCI services configuration files for the production
+builders is done by executing [main.star][22] or running
+`lucicfg generate main.star`.
 
 #### Buildbucket
 
@@ -182,43 +182,35 @@ includes things like:
   * Swarming dimensions
   * Recipe name and properties
 
+Chromium's buildbucket Starlark configuration is [here][23].
+Chromium's generated buildbucket configuration is [here][8].
 Buildbucket's configuration schema is [here][7].
-Chromium's buildbucket configuration is [here][8].
 
-A typical chromium builder won't need to configure much. Adding a
-`builders` entry to the appropriate bucket
-(`luci.chromium.ci` for CI / waterfall, `luci.chromium.try` for try)
-with the new builder's name, the mixin containing the appropriate
-master name, and perhaps one or two dimensions should be sufficient,
-e.g.:
+Each bucket has a corresponding `.star` file where the builders for the bucket
+are defined.
 
-``` sh
-buckets {
-  name: "luci.chromium.ci"
-  ...
+Most builders are defined using the builder function from [builders.star][24]
+(or some function that wraps it), which simplifies setting the most common
+dimensions and properties and provides a unified interface for setting
+module-level defaults.
 
-  swarming {
-    ...
+A typical chromium builder won't need to configure much; module-level defaults
+apply values that are widely used for the bucket (e.g. bucket and executable).
 
-    builders {
-      name: "your-new-builder"
+Each master has a function (sometimes multiple) defined that can be used to
+define a builder that runs with that mastername and sets master-specific
+defaults. Find the block of builders defined using the appropriate function and
+add a new definition, which may be as simple as:
 
-      # To determine what you should include here, look for an
-      # existing mixin containing
-      #
-      #   recipe {
-      #     properties: "mastername:$MASTER_NAME"
-      #   }
-      #
-      mixins: "$MASTER_NAME_MIXIN"
-
-      # Add other mixins and dimensions as necessary. You will
-      # usually at least want an os dimension configured, so if
-      # none of your included mixins have one, consider adding one.
-    }
-  }
-}
+```starlark
+ci.linux_builder(
+    name = '$BUILDER_NAME',
+)
 ```
+
+You can generate the configuration files and then view the added entry in
+[cr-buildbucket.cfg][8] to make sure all properties and dimensions are set as
+expected and adjust your definition as necessary.
 
 #### Milo
 
@@ -226,73 +218,117 @@ Milo is responsible for displaying builders and build histories on a
 set of consoles. Its configuration includes the definitions of those
 consoles.
 
+Chromium's milo Starlark configuration is [here][25].
+Chromium's generated milo configuration is [here][10].
 Milo's configuration schema is [here][9].
-Chromium's milo configuration is [here][10].
 
-A typical chromium builder should be added to one or two consoles 
+Each console has a corresponding `.star` file that defines the console.
+
+A typical chromium builder should be added to one or two consoles
 at most: one corresponding to its master, and possibly the main
-console, e.g.
+console.
 
-``` sh
-consoles {
-  ...
-  name: "$MASTER_NAME"
-  ...
-  builders {
-    name: "buildbucket/$BUCKET_NAME/$BUILDER_NAME"
+##### CI builders
 
-    # A builder's category is a pipe-delimited list of strings
-    # that determines how a builder is grouped on a console page.
-    category: "$LARGE_GROUP|$MEDIUM_GROUP|$SMALL_GROUP"
+The sequence of CI builds for a builder corresponds to a linear history of
+revisions in the repository, and the console takes advantage of that, allowing
+you to compare what revisions are in what builds for different builders in the
+console.
 
-    # A builder's short name is a string up to three characters
-    # long that lets someone uniquely identify it among builders
-    # in the same category.
-    short_name: "$ID"
-  }
-}
+```starlark
+luci.console_view(
+    name = '$MASTER_NAME',
+    ...
+    entries = [
+        ...
+        luci.console_view(
+            builder = '$BUCKET_NAME/$BUILDER_NAME',
+
+            # A builder's category is a pipe-delimited list of strings
+            # that determines how a builder is grouped on a console page.
+            # N>=0
+            category = '$GROUP1|$GROUP2|...|$GROUPN',
+
+           # A builder's short name is a string up to three characters
+           # long that lets someone uniquely identify it among builders
+           # in the same category.
+           short_name = '$SHORT_NAME',
+       ),
+   ...
+   ],
+),
+```
+
+Both category and short_name can be omitted, but is strongly recommended that
+all entries include short name.
+
+##### Try builders
+
+The sequence of try builders for a builder does not correspond to a linear
+history of revisions. Consequently, the interface for the consoles is different,
+as is the method of defining the console.
+
+```starlark
+luci.list_view(
+    name = '$MASTER_NAME',
+    entries = [
+        ...
+        '$BUCKET_NAME/$BUILDER_NAME',
+        ...
+    ],
+),
 ```
 
 #### Scheduler (CI / waterfall builders only)
 
 The scheduler is responsible for triggering CI / waterfall builders.
 
+Chromium's scheduler Starlark configuration is intermixed with the
+[builder definitions][23].
+Chromium's generated scheduler configuration is [here][12].
 Scheduler's configuration schema is [here][11].
-Chromium's scheduler configuration is [here][12].
 
-A typical chromium builder will need a job configuration. A chromium
-builder that's triggering on new commits or on a regular schedule
-(as opposed to being triggered by a parent builder) will also need
-a trigger entry.
+##### Poller
 
-``` sh
-trigger {
-  id: "master-gitiles-trigger"
+To trigger builders when changes are landed on a repo, a poller needs to be
+defined. The poller defines the repo and refs to watch and triggers builders
+when changes land on one of the watched refs.
 
-  ...
+Pollers are already defined for all of the active refs within chromium/src. The
+modules for the `ci` bucket and its release branch counterparts are written such
+that builders will be triggered by the appropriate poller by default. Setting
+the `triggered_by` field on a builder will disable this default behavior.
 
-  # Adding your builder to the master-gitiles-trigger
-  # will cause your builder to be triggered on new commits
-  # to chromium's master branch.
-  triggers: "your-new-ci-builder"
-}
+##### Triggered by another builder
 
-job {
-  id: "your-new-ci-builder"
+Builders that will be triggered by other builders (e.g. a builder compiles tests
+and then triggers another builder to actually run the tests) call this out in
+their own definition by setting the `triggered_by` field. For builders in the
+`ci` bucket and its release branch counterparts, this will disable the default
+behavior of being triggered by the poller.
 
-  # acl_sets should either be
-  #  - "default" for builders that are triggered by the scheduler
-  #     (i.e. anything triggering on new commits or on a cron)
-  #  - "triggered-by-parent-builders" for builders that are
-  #    triggered by other builders
-  acl_sets: "default"
+```starlark
+ci.linux_builder(
+    name = '$BUILDER_NAME',
+    triggered_by = ['$PARENT_BUILDER_NAME'],
+)
+```
 
-  buildbucket: {
-    server: "cr-buildbucket.appspot.com"
-    bucket: "luci.chromium.ci"
-    builder: "your-new-ci-builder"
-  }
-}
+##### Scheduled
+
+Builders that need to run regularly but not in response to landed code can be
+scheduled using the `schedule` field in their definition. For builders in the
+`ci` bucket and its release branch counterparts, the `triggered_by` field should
+be set to an empty list to disable the default behavior of being triggered by
+the poller. See the documentation of the `schedule` field in the `Job` message
+in the [scheduler schema][11].
+
+```starlark
+ci.builder(
+    name = '$BUILDER_NAME',
+    schedule = 'with 10m interval',
+    triggered_by = [],
+)
 ```
 
 ### Recipe-specific configurations
@@ -317,18 +353,17 @@ If you're in need of further assistance, if you're not sure about
 one or more steps, or if you found this documentation lacking, please
 reach out to infra-dev@chromium.org or [file a bug][19]!
 
-[1]: http://go/infrasys-bug
-[2]: http://go/cci-capacity-bug
+[1]: http://go/file-chrome-resource-bug
 [3]: https://bit.ly/chromium-build-naming
 [4]: https://luci-config.appspot.com/#/services/chromium-swarm
 [5]: https://chromium.googlesource.com/chromium/tools/build/+/master/scripts/slave/recipe_modules/chromium_tests
-[6]: /infra/config/global
+[6]: /infra/config
 [7]: https://luci-config.appspot.com/schemas/projects:cr-buildbucket.cfg
-[8]: /infra/config/global/cr-buildbucket.cfg
+[8]: /infra/config/generated/cr-buildbucket.cfg
 [9]: http://luci-config.appspot.com/schemas/projects:luci-milo.cfg
-[10]: /infra/config/global/luci-milo.cfg
+[10]: /infra/config/generated/luci-milo.cfg
 [11]: https://chromium.googlesource.com/infra/luci/luci-go/+/master/scheduler/appengine/messages/config.proto
-[12]: /infra/config/global/luci-scheduler.cfg
+[12]: /infra/config/generated/luci-scheduler.cfg
 [13]: /tools/mb/README.md
 [14]: /tools/mb/docs/user_guide.md#the-mb_config_pyl-config-file
 [15]: /testing/buildbot/README.md
@@ -338,3 +373,7 @@ reach out to infra-dev@chromium.org or [file a bug][19]!
 [19]: https://g.co/bugatrooper
 [20]: https://chromium.googlesource.com/infra/luci/luci-py/+/master/appengine/swarming/proto/bots.proto
 [21]: https://chromium.googlesource.com/chromium/tools/build/+/master/scripts/slave/recipe_modules/chromium_tests/trybots.py
+[22]: /infra/config/main.star
+[23]: /infra/config/buckets
+[24]: /infra/config/lib/builders.star
+[25]: /infra/config/consoles

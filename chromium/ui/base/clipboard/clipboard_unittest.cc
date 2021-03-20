@@ -4,10 +4,10 @@
 
 #include "ui/base/clipboard/clipboard.h"
 
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(USE_AURA)
+#if defined(USE_X11)
 #include "ui/events/platform/platform_event_source.h"
 #endif
 
@@ -15,12 +15,12 @@ namespace ui {
 
 namespace {
 
-base::test::ScopedTaskEnvironment* g_task_environment = nullptr;
+base::test::TaskEnvironment* g_task_environment = nullptr;
 
 }  // namespace
 
 struct PlatformClipboardTraits {
-#if defined(USE_AURA)
+#if defined(USE_X11)
   static std::unique_ptr<PlatformEventSource> GetEventSource() {
     return PlatformEventSource::CreateDefault();
   }
@@ -28,8 +28,8 @@ struct PlatformClipboardTraits {
 
   static Clipboard* Create() {
     DCHECK(!g_task_environment);
-    g_task_environment = new base::test::ScopedTaskEnvironment(
-        base::test::ScopedTaskEnvironment::MainThreadType::UI);
+    g_task_environment = new base::test::TaskEnvironment(
+        base::test::TaskEnvironment::MainThreadType::UI);
     return Clipboard::GetForCurrentThread();
   }
 
@@ -41,16 +41,16 @@ struct PlatformClipboardTraits {
   }
 };
 
-class BaseClipboardTestName {
+class PlatformClipboardTestName {
  public:
   template <typename T>
   static std::string GetName(int index) {
-    return "BaseClipboardTest";
+    return "PlatformClipboardTest";
   }
 };
 
 using TypesToTest = PlatformClipboardTraits;
-using NamesOfTypesToTest = BaseClipboardTestName;
+using NamesOfTypesToTest = PlatformClipboardTestName;
 
 }  // namespace ui
 

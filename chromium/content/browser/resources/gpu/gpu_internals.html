@@ -1,16 +1,16 @@
 <!doctype html>
-<html>
+<html dir="ltr" lang="en">
 <!--
 Copyright (c) 2012 The Chromium Authors. All rights reserved.
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 -->
-<head i18n-values="dir:textdirection;lang:language">
+<head>
 <meta name="viewport" content="width=device-width" />
 <style>
 * {
   box-sizing: border-box;
-  -webkit-user-select: none;
+  user-select: none;
 }
 
 body {
@@ -20,11 +20,11 @@ body {
 }
 
 #debug-div {
-  display: -webkit-box;
-  position: fixed;
-  top: 0px;
-  left: 50%;
   border: 1px solid red;
+  display: -webkit-box;
+  left: 50%;
+  position: fixed;
+  top: 0;
 }
 
 tabbox tabpanels {
@@ -42,6 +42,9 @@ tabbox tabpanels {
 <script src="chrome://resources/js/cr/ui/tabs.js"></script>
 <script src="chrome://resources/js/load_time_data.js"></script>
 <script src="chrome://resources/js/util.js"></script>
+<script src="chrome://resources/mojo/mojo/public/js/mojo_bindings_lite.js"></script>
+<script src="chrome://resources/gpu/ipc/common/vulkan_types.mojom-lite.js"></script>
+<script src="chrome://resources/gpu/ipc/common/vulkan_info.mojom-lite.js"></script>
 <script src="gpu_internals.js"></script>
 <script src="strings.js"></script>
 </head>
@@ -49,7 +52,6 @@ tabbox tabpanels {
   <div id="debug-div">
   </div>
   <include src="info_view.html">
-  <script src="chrome://resources/js/i18n_template.js"></script>
   <script src="chrome://resources/js/jstemplate_compiled.js"></script>
 </body>
 </html>

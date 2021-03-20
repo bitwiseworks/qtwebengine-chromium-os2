@@ -4,9 +4,11 @@
 
 #include "content/browser/renderer_host/input/synthetic_gesture_target_mac.h"
 
-#include "base/mac/scoped_nsautorelease_pool.h"
+#import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#import "content/browser/renderer_host/render_widget_host_view_cocoa.h"
+#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
+#include "ui/events/cocoa/cocoa_event_utils.h"
+#include "ui/events/gesture_detection/gesture_configuration.h"
 
 // Unlike some event APIs, Apple does not provide a way to programmatically
 // build a zoom event. To work around this, we leverage ObjectiveC's flexible
@@ -30,30 +32,30 @@
 
 @implementation SyntheticPinchEvent
 
-@synthesize magnification = magnification_;
-@synthesize locationInWindow = locationInWindow_;
-@synthesize type = type_;
-@synthesize phase = phase_;
-@synthesize deltaX = deltaX_;
-@synthesize deltaY = deltaY_;
-@synthesize modifierFlags = modifierFlags_;
-@synthesize timestamp = timestamp_;
+@synthesize magnification = _magnification;
+@synthesize locationInWindow = _locationInWindow;
+@synthesize type = _type;
+@synthesize phase = _phase;
+@synthesize deltaX = _deltaX;
+@synthesize deltaY = _deltaY;
+@synthesize modifierFlags = _modifierFlags;
+@synthesize timestamp = _timestamp;
 
 - (id)initWithMagnification:(float)magnification
            locationInWindow:(NSPoint)location {
   self = [super init];
   if (self) {
-    type_ = NSEventTypeMagnify;
-    phase_ = NSEventPhaseChanged;
-    magnification_ = magnification;
-    locationInWindow_ = location;
+    _type = NSEventTypeMagnify;
+    _phase = NSEventPhaseChanged;
+    _magnification = magnification;
+    _locationInWindow = location;
 
-    deltaX_ = 0;
-    deltaY_ = 0;
-    modifierFlags_ = 0;
+    _deltaX = 0;
+    _deltaY = 0;
+    _modifierFlags = 0;
 
     // Default timestamp to current time.
-    timestamp_ = [[NSDate date] timeIntervalSince1970];
+    _timestamp = [[NSDate date] timeIntervalSince1970];
   }
 
   return self;
@@ -86,49 +88,98 @@ void SyntheticGestureTargetMac::DispatchWebGestureEventToPlatform(
     const ui::LatencyInfo& latency_info) {
   // Create an autorelease pool so that we clean up any synthetic events we
   // generate.
-  base::mac::ScopedNSAutoreleasePool pool;
+  @autoreleasepool {
+    NSPoint content_local = NSMakePoint(
+        web_gesture.PositionInWidget().x(),
+        [cocoa_view_ frame].size.height - web_gesture.PositionInWidget().y());
+    NSPoint location_in_window = [cocoa_view_ convertPoint:content_local
+                                                    toView:nil];
 
-  NSPoint content_local = NSMakePoint(
-      web_gesture.PositionInWidget().x,
-      [cocoa_view_ frame].size.height - web_gesture.PositionInWidget().y);
-  NSPoint location_in_window =
-      [cocoa_view_ convertPoint:content_local toView:nil];
-
-  switch (web_gesture.GetType()) {
-    case WebInputEvent::kGesturePinchBegin: {
-      id cocoa_event =
-          [SyntheticPinchEvent eventWithMagnification:0.0f
-                                     locationInWindow:location_in_window
-                                                phase:NSEventPhaseBegan];
-      [cocoa_view_ handleBeginGestureWithEvent:cocoa_event
-                       isSyntheticallyInjected:YES];
-      return;
+    switch (web_gesture.GetType()) {
+      case WebInputEvent::kGesturePinchBegin: {
+        id cocoa_event =
+            [SyntheticPinchEvent eventWithMagnification:0.0f
+                                       locationInWindow:location_in_window
+                                                  phase:NSEventPhaseBegan];
+        [cocoa_view_ handleBeginGestureWithEvent:cocoa_event
+                         isSyntheticallyInjected:YES];
+        return;
+      }
+      case WebInputEvent::kGesturePinchEnd: {
+        id cocoa_event =
+            [SyntheticPinchEvent eventWithMagnification:0.0f
+                                       locationInWindow:location_in_window
+                                                  phase:NSEventPhaseEnded];
+        [cocoa_view_ handleEndGestureWithEvent:cocoa_event];
+        return;
+      }
+      case WebInputEvent::kGesturePinchUpdate: {
+        id cocoa_event = [SyntheticPinchEvent
+            eventWithMagnification:web_gesture.data.pinch_update.scale - 1.0f
+                  locationInWindow:location_in_window
+                             phase:NSEventPhaseChanged];
+        [cocoa_view_ magnifyWithEvent:cocoa_event];
+        return;
+      }
+      default:
+        NOTREACHED();
     }
-    case WebInputEvent::kGesturePinchEnd: {
-      id cocoa_event =
-          [SyntheticPinchEvent eventWithMagnification:0.0f
-                                     locationInWindow:location_in_window
-                                                phase:NSEventPhaseEnded];
-      [cocoa_view_ handleEndGestureWithEvent:cocoa_event];
-      return;
-    }
-    case WebInputEvent::kGesturePinchUpdate: {
-      id cocoa_event = [SyntheticPinchEvent
-          eventWithMagnification:web_gesture.data.pinch_update.scale - 1.0f
-                locationInWindow:location_in_window
-                           phase:NSEventPhaseChanged];
-      [cocoa_view_ magnifyWithEvent:cocoa_event];
-      return;
-    }
-    default:
-      NOTREACHED();
   }
 }
 
 void SyntheticGestureTargetMac::DispatchWebTouchEventToPlatform(
     const blink::WebTouchEvent& web_touch,
     const ui::LatencyInfo& latency_info) {
-  render_widget_host()->GetView()->InjectTouchEvent(web_touch, latency_info);
+  GetView()->InjectTouchEvent(web_touch, latency_info);
+}
+
+void SyntheticGestureTargetMac::DispatchWebMouseWheelEventToPlatform(
+    const blink::WebMouseWheelEvent& web_wheel,
+    const ui::LatencyInfo& latency_info) {
+  blink::WebMouseWheelEvent wheel_event = web_wheel;
+  wheel_event.wheel_ticks_x =
+      web_wheel.delta_x / ui::kScrollbarPixelsPerCocoaTick;
+  wheel_event.wheel_ticks_y =
+      web_wheel.delta_y / ui::kScrollbarPixelsPerCocoaTick;
+  GetView()->RouteOrProcessWheelEvent(wheel_event);
+  if (web_wheel.phase == blink::WebMouseWheelEvent::kPhaseEnded) {
+    // Send the pending wheel end event immediately. Otherwise, the
+    // MouseWheelPhaseHandler will defer the end event in case of momentum
+    // scrolling. We want the end event sent before resolving the completion
+    // callback.
+    GetView()->GetMouseWheelPhaseHandler()->DispatchPendingWheelEndEvent();
+  }
+}
+
+void SyntheticGestureTargetMac::DispatchWebMouseEventToPlatform(
+    const blink::WebMouseEvent& web_mouse,
+    const ui::LatencyInfo& latency_info) {
+  GetView()->RouteOrProcessMouseEvent(web_mouse);
+}
+
+SyntheticGestureParams::GestureSourceType
+SyntheticGestureTargetMac::GetDefaultSyntheticGestureSourceType() const {
+  return SyntheticGestureParams::MOUSE_INPUT;
+}
+
+float SyntheticGestureTargetMac::GetTouchSlopInDips() const {
+  return ui::GestureConfiguration::GetInstance()
+      ->max_touch_move_in_pixels_for_click();
+}
+
+float SyntheticGestureTargetMac::GetSpanSlopInDips() const {
+  return ui::GestureConfiguration::GetInstance()->span_slop();
+}
+
+float SyntheticGestureTargetMac::GetMinScalingSpanInDips() const {
+  return ui::GestureConfiguration::GetInstance()->min_scaling_span_in_pixels();
+}
+
+RenderWidgetHostViewMac* SyntheticGestureTargetMac::GetView() const {
+  auto* view =
+      static_cast<RenderWidgetHostViewMac*>(render_widget_host()->GetView());
+  DCHECK(view);
+  return view;
 }
 
 }  // namespace content

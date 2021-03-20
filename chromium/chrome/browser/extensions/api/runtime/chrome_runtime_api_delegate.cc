@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
@@ -27,7 +28,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/notification_service.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/browser/warning_service.h"
@@ -39,7 +39,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "components/user_manager/user_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #endif
@@ -144,9 +144,7 @@ struct ChromeRuntimeAPIDelegate::UpdateCheckInfo {
 
 ChromeRuntimeAPIDelegate::ChromeRuntimeAPIDelegate(
     content::BrowserContext* context)
-    : browser_context_(context),
-      registered_for_updates_(false),
-      extension_registry_observer_(this) {
+    : browser_context_(context), registered_for_updates_(false) {
   registrar_.Add(this,
                  extensions::NOTIFICATION_EXTENSION_UPDATE_FOUND,
                  content::NotificationService::AllSources());
@@ -266,9 +264,12 @@ bool ChromeRuntimeAPIDelegate::CheckForUpdates(
                                                 true, kUpdateThrottled, "")));
   } else {
     info.callbacks.push_back(callback);
-    updater->CheckExtensionSoon(
-        extension_id, base::Bind(&ChromeRuntimeAPIDelegate::UpdateCheckComplete,
-                                 base::Unretained(this), extension_id));
+
+    extensions::ExtensionUpdater::CheckParams params;
+    params.ids = {extension_id};
+    params.callback = base::Bind(&ChromeRuntimeAPIDelegate::UpdateCheckComplete,
+                                 base::Unretained(this), extension_id);
+    updater->CheckNow(std::move(params));
   }
   return true;
 }
@@ -277,7 +278,9 @@ void ChromeRuntimeAPIDelegate::OpenURL(const GURL& uninstall_url) {
   Profile* profile = Profile::FromBrowserContext(browser_context_);
   Browser* browser = chrome::FindLastActiveWithProfile(profile);
   if (!browser)
-    browser = new Browser(Browser::CreateParams(profile, false));
+    browser = Browser::Create(Browser::CreateParams(profile, false));
+  if (!browser)
+    return;
 
   NavigateParams params(browser, uninstall_url,
                         ui::PAGE_TRANSITION_CLIENT_REDIRECT);
@@ -306,6 +309,8 @@ bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {
   const char* arch = update_client::UpdateQueryParams::GetArch();
   if (strcmp(arch, "arm") == 0) {
     info->arch = extensions::api::runtime::PLATFORM_ARCH_ARM;
+  } else if (strcmp(arch, "arm64") == 0) {
+    info->arch = extensions::api::runtime::PLATFORM_ARCH_ARM64;
   } else if (strcmp(arch, "x86") == 0) {
     info->arch = extensions::api::runtime::PLATFORM_ARCH_X86_32;
   } else if (strcmp(arch, "x64") == 0) {
@@ -321,6 +326,9 @@ bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {
 
   const char* nacl_arch = update_client::UpdateQueryParams::GetNaclArch();
   if (strcmp(nacl_arch, "arm") == 0) {
+    info->nacl_arch = extensions::api::runtime::PLATFORM_NACL_ARCH_ARM;
+  } else if (strcmp(nacl_arch, "arm64") == 0) {
+    // Use ARM for ARM64 NaCl, as ARM64 NaCl is not available.
     info->nacl_arch = extensions::api::runtime::PLATFORM_NACL_ARCH_ARM;
   } else if (strcmp(nacl_arch, "x86-32") == 0) {
     info->nacl_arch = extensions::api::runtime::PLATFORM_NACL_ARCH_X86_32;
@@ -341,7 +349,7 @@ bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {
 bool ChromeRuntimeAPIDelegate::RestartDevice(std::string* error_message) {
 #if defined(OS_CHROMEOS)
   if (user_manager::UserManager::Get()->IsLoggedInAsKioskApp()) {
-    chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart(
+    chromeos::PowerManagerClient::Get()->RequestRestart(
         power_manager::REQUEST_RESTART_OTHER, "chrome.runtime API");
     return true;
   }

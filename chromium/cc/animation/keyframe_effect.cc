@@ -11,6 +11,7 @@
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_curve.h"
 #include "cc/animation/animation_host.h"
+#include "cc/animation/animation_timeline.h"
 #include "cc/animation/keyframe_model.h"
 #include "cc/animation/scroll_offset_animation_curve.h"
 #include "cc/animation/transform_operations.h"
@@ -45,9 +46,8 @@ std::vector<size_t> FindAnimationsWithSameGroupId(
 
 }  // namespace
 
-KeyframeEffect::KeyframeEffect(KeyframeEffectId id)
-    : animation_(),
-      id_(id),
+KeyframeEffect::KeyframeEffect(Animation* animation)
+    : animation_(animation),
       element_animations_(),
       needs_to_start_keyframe_models_(false),
       scroll_offset_animation_was_interrupted_(false),
@@ -56,14 +56,6 @@ KeyframeEffect::KeyframeEffect(KeyframeEffectId id)
 
 KeyframeEffect::~KeyframeEffect() {
   DCHECK(!has_bound_element_animations());
-}
-
-std::unique_ptr<KeyframeEffect> KeyframeEffect::Create(KeyframeEffectId id) {
-  return std::make_unique<KeyframeEffect>(id);
-}
-
-std::unique_ptr<KeyframeEffect> KeyframeEffect::CreateImplInstance() const {
-  return KeyframeEffect::Create(id());
 }
 
 void KeyframeEffect::SetNeedsPushProperties() {
@@ -82,6 +74,9 @@ void KeyframeEffect::BindElementAnimations(
   DCHECK(element_animations);
   DCHECK(!element_animations_);
   element_animations_ = element_animations;
+
+  DCHECK(element_id_);
+  DCHECK(element_id_ == element_animations->element_id());
 
   if (has_any_keyframe_model())
     KeyframeModelAdded();
@@ -174,19 +169,17 @@ void KeyframeEffect::RemoveFromTicking() {
   // Resetting last_tick_time_ here ensures that calling ::UpdateState
   // before ::Animate doesn't start a keyframe model.
   last_tick_time_ = base::TimeTicks();
-  animation_->KeyframeModelRemovedFromTicking();
+  animation_->RemoveFromTicking();
 }
 
 void KeyframeEffect::UpdateState(bool start_ready_keyframe_models,
                                  AnimationEvents* events) {
   DCHECK(has_bound_element_animations());
-  if (!element_animations_->has_element_in_active_list())
-    return;
 
   // Animate hasn't been called, this happens if an element has been added
   // between the Commit and Draw phases.
   if (last_tick_time_ == base::TimeTicks())
-    return;
+    start_ready_keyframe_models = false;
 
   if (start_ready_keyframe_models)
     PromoteStartedKeyframeModels(events);
@@ -201,20 +194,20 @@ void KeyframeEffect::UpdateState(bool start_ready_keyframe_models,
       PromoteStartedKeyframeModels(events);
     }
   }
+
+  if (!element_animations()->has_element_in_any_list())
+    RemoveFromTicking();
 }
 
-void KeyframeEffect::UpdateTickingState(UpdateTickingType type) {
-  bool force = type == UpdateTickingType::FORCE;
+void KeyframeEffect::UpdateTickingState() {
   if (animation_->has_animation_host()) {
     bool was_ticking = is_ticking_;
-    is_ticking_ = HasNonDeletedKeyframeModel();
+    is_ticking_ = HasNonDeletedKeyframeModel() &&
+                  element_animations_->has_element_in_any_list();
 
-    bool has_element_in_any_list =
-        element_animations_->has_element_in_any_list();
-
-    if (is_ticking_ && ((!was_ticking && has_element_in_any_list) || force)) {
+    if (is_ticking_ && !was_ticking) {
       animation_->AddToTicking();
-    } else if (!is_ticking_ && (was_ticking || force)) {
+    } else if (!is_ticking_ && was_ticking) {
       RemoveFromTicking();
     }
   }
@@ -247,6 +240,21 @@ void KeyframeEffect::AddKeyframeModel(
                keyframe_model->group() == existing_keyframe_model->group();
       }));
 
+  if (keyframe_model->target_property_id() == TargetProperty::SCROLL_OFFSET) {
+    // We should never have more than one scroll offset animation queued on the
+    // same scrolling element as this would result in multiple automated
+    // scrolls.
+    DCHECK(std::none_of(
+        keyframe_models_.begin(), keyframe_models_.end(),
+        [&](const auto& existing_keyframe_model) {
+          return existing_keyframe_model->target_property_id() ==
+                     TargetProperty::SCROLL_OFFSET &&
+                 !existing_keyframe_model->is_finished() &&
+                 (!existing_keyframe_model->is_controlling_instance() ||
+                  existing_keyframe_model->affects_pending_elements());
+        }));
+  }
+
   keyframe_models_.push_back(std::move(keyframe_model));
 
   if (has_bound_element_animations()) {
@@ -256,12 +264,10 @@ void KeyframeEffect::AddKeyframeModel(
 }
 
 void KeyframeEffect::PauseKeyframeModel(int keyframe_model_id,
-                                        double time_offset) {
-  const base::TimeDelta pause_offset =
-      base::TimeDelta::FromSecondsD(time_offset);
+                                        base::TimeDelta time_offset) {
   for (auto& keyframe_model : keyframe_models_) {
     if (keyframe_model->id() == keyframe_model_id) {
-      keyframe_model->Pause(pause_offset);
+      keyframe_model->Pause(time_offset);
     }
   }
 
@@ -275,7 +281,7 @@ void KeyframeEffect::RemoveKeyframeModel(int keyframe_model_id) {
   bool keyframe_model_removed = false;
 
   // Since we want to use the KeyframeModels that we're going to remove, we
-  // need to use a stable_parition here instead of remove_if. Remove_if leaves
+  // need to use a stable_partition here instead of remove_if. remove_if leaves
   // the removed items in an unspecified state.
   auto keyframe_models_to_remove = std::stable_partition(
       keyframe_models_.begin(), keyframe_models_.end(),
@@ -296,7 +302,7 @@ void KeyframeEffect::RemoveKeyframeModel(int keyframe_model_id) {
   keyframe_models_.erase(keyframe_models_to_remove, keyframe_models_.end());
 
   if (has_bound_element_animations()) {
-    UpdateTickingState(UpdateTickingType::NORMAL);
+    UpdateTickingState();
     if (keyframe_model_removed)
       element_animations_->UpdateClientAnimationState();
     animation_->SetNeedsCommit();
@@ -349,7 +355,7 @@ void KeyframeEffect::AbortKeyframeModelsWithProperty(
   }
 }
 
-void KeyframeEffect::ActivateKeyframeEffects() {
+void KeyframeEffect::ActivateKeyframeModels() {
   DCHECK(has_bound_element_animations());
 
   bool keyframe_model_activated = false;
@@ -374,66 +380,69 @@ void KeyframeEffect::KeyframeModelAdded() {
   animation_->SetNeedsCommit();
   needs_to_start_keyframe_models_ = true;
 
-  UpdateTickingState(UpdateTickingType::NORMAL);
+  UpdateTickingState();
   element_animations_->UpdateClientAnimationState();
 }
 
-bool KeyframeEffect::NotifyKeyframeModelStarted(const AnimationEvent& event) {
+bool KeyframeEffect::DispatchAnimationEventToKeyframeModel(
+    const AnimationEvent& event) {
   DCHECK(!event.is_impl_only);
-  for (auto& keyframe_model : keyframe_models_) {
-    if (keyframe_model->group() == event.group_id &&
-        keyframe_model->target_property_id() == event.target_property &&
-        keyframe_model->needs_synchronized_start_time()) {
-      keyframe_model->set_needs_synchronized_start_time(false);
-      if (!keyframe_model->has_set_start_time())
-        keyframe_model->set_start_time(event.monotonic_time);
-      animation_->NotifyKeyframeModelStarted(event);
-      return true;
-    }
+  KeyframeModel* keyframe_model = GetKeyframeModelById(event.uid.model_id);
+  bool dispatched = false;
+  switch (event.type) {
+    case AnimationEvent::STARTED:
+      if (keyframe_model && keyframe_model->needs_synchronized_start_time()) {
+        keyframe_model->set_needs_synchronized_start_time(false);
+        if (!keyframe_model->has_set_start_time())
+          keyframe_model->set_start_time(event.monotonic_time);
+        dispatched = true;
+      }
+      break;
+
+    case AnimationEvent::FINISHED:
+      if (keyframe_model) {
+        keyframe_model->set_received_finished_event(true);
+        dispatched = true;
+      } else {
+        // This is for the case when a keyframe_model is already removed on main
+        // thread, but the impl version of it sent a finished event and is now
+        // waiting for deletion. We would need to delete that keyframe_model
+        // during push properties.
+        SetNeedsPushProperties();
+      }
+      break;
+
+    case AnimationEvent::ABORTED:
+      if (keyframe_model) {
+        keyframe_model->SetRunState(KeyframeModel::ABORTED,
+                                    event.monotonic_time);
+        keyframe_model->set_received_finished_event(true);
+        dispatched = true;
+
+        ElementAnimations* element_animations =
+            animation_->animation_host()
+                ->GetElementAnimationsForElementId(element_id())
+                .get();
+        if (element_animations)
+          element_animations->UpdateClientAnimationState();
+      }
+      break;
+
+    case AnimationEvent::TAKEOVER:
+      // TODO(crbug.com/1018213): Routing TAKEOVER events is broken.
+      // We need to purge KeyframeModels marked for deletion on CT.
+      SetNeedsPushProperties();
+      dispatched = true;
+      break;
+
+    case AnimationEvent::TIME_UPDATED:
+      // TIME_UPDATED events are used to synchronize effect time between cc and
+      // main thread worklet animations. Keyframe models are not involved in
+      // this process.
+      NOTREACHED();
+      break;
   }
-  return false;
-}
-
-bool KeyframeEffect::NotifyKeyframeModelFinished(const AnimationEvent& event) {
-  DCHECK(!event.is_impl_only);
-  for (auto& keyframe_model : keyframe_models_) {
-    if (keyframe_model->group() == event.group_id &&
-        keyframe_model->target_property_id() == event.target_property) {
-      keyframe_model->set_received_finished_event(true);
-      animation_->NotifyKeyframeModelFinished(event);
-      return true;
-    }
-  }
-
-  // This is for the case when a keyframe_model is already removed on main
-  // thread, but the impl version of it sent a finished event and is now waiting
-  // for deletion. We would need to delete that keyframe_model during push
-  // properties.
-  SetNeedsPushProperties();
-  return false;
-}
-
-void KeyframeEffect::NotifyKeyframeModelTakeover(const AnimationEvent& event) {
-  DCHECK(!event.is_impl_only);
-
-  // We need to purge KeyframeModels marked for deletion on CT.
-  SetNeedsPushProperties();
-
-  animation_->NotifyKeyframeModelTakeover(event);
-}
-
-bool KeyframeEffect::NotifyKeyframeModelAborted(const AnimationEvent& event) {
-  DCHECK(!event.is_impl_only);
-  for (auto& keyframe_model : keyframe_models_) {
-    if (keyframe_model->group() == event.group_id &&
-        keyframe_model->target_property_id() == event.target_property) {
-      keyframe_model->SetRunState(KeyframeModel::ABORTED, event.monotonic_time);
-      keyframe_model->set_received_finished_event(true);
-      animation_->NotifyKeyframeModelAborted(event);
-      return true;
-    }
-  }
-  return false;
+  return dispatched;
 }
 
 bool KeyframeEffect::HasTickingKeyframeModel() const {
@@ -452,33 +461,19 @@ size_t KeyframeEffect::TickingKeyframeModelsCount() const {
   return ticking_keyframe_models_count;
 }
 
+bool KeyframeEffect::AffectsCustomProperty() const {
+  for (const auto& it : keyframe_models_)
+    if (it->target_property_id() == TargetProperty::CSS_CUSTOM_PROPERTY)
+      return true;
+  return false;
+}
+
 bool KeyframeEffect::HasNonDeletedKeyframeModel() const {
   for (const auto& keyframe_model : keyframe_models_) {
     if (keyframe_model->run_state() != KeyframeModel::WAITING_FOR_DELETION)
       return true;
   }
   return false;
-}
-
-bool KeyframeEffect::HasOnlyTranslationTransforms(
-    ElementListType list_type) const {
-  for (const auto& keyframe_model : keyframe_models_) {
-    if (keyframe_model->is_finished() ||
-        keyframe_model->target_property_id() != TargetProperty::TRANSFORM)
-      continue;
-
-    if ((list_type == ElementListType::ACTIVE &&
-         !keyframe_model->affects_active_elements()) ||
-        (list_type == ElementListType::PENDING &&
-         !keyframe_model->affects_pending_elements()))
-      continue;
-
-    const TransformAnimationCurve* transform_animation_curve =
-        keyframe_model->curve()->ToTransformAnimationCurve();
-    if (!transform_animation_curve->IsTranslation())
-      return false;
-  }
-  return true;
 }
 
 bool KeyframeEffect::AnimationsPreserveAxisAlignment() const {
@@ -495,9 +490,13 @@ bool KeyframeEffect::AnimationsPreserveAxisAlignment() const {
   return true;
 }
 
-bool KeyframeEffect::AnimationStartScale(ElementListType list_type,
-                                         float* start_scale) const {
-  *start_scale = 0.f;
+bool KeyframeEffect::GetAnimationScales(ElementListType list_type,
+                                        float* maximum_scale,
+                                        float* starting_scale) const {
+  *maximum_scale = kNotScaled;
+  *starting_scale = kNotScaled;
+  bool maximum_scale_valid = true;
+  bool starting_scale_valid = true;
   for (const auto& keyframe_model : keyframe_models_) {
     if (keyframe_model->is_finished() ||
         keyframe_model->target_property_id() != TargetProperty::TRANSFORM)
@@ -507,6 +506,11 @@ bool KeyframeEffect::AnimationStartScale(ElementListType list_type,
          !keyframe_model->affects_active_elements()) ||
         (list_type == ElementListType::PENDING &&
          !keyframe_model->affects_pending_elements()))
+      continue;
+
+    const TransformAnimationCurve* transform_animation_curve =
+        keyframe_model->curve()->ToTransformAnimationCurve();
+    if (transform_animation_curve->IsTranslation())
       continue;
 
     bool forward_direction = true;
@@ -521,52 +525,32 @@ bool KeyframeEffect::AnimationStartScale(ElementListType list_type,
         break;
     }
 
-    const TransformAnimationCurve* transform_animation_curve =
-        keyframe_model->curve()->ToTransformAnimationCurve();
-    float keyframe_model_start_scale = 0.f;
-    if (!transform_animation_curve->AnimationStartScale(
-            forward_direction, &keyframe_model_start_scale))
-      return false;
-    *start_scale = std::max(*start_scale, keyframe_model_start_scale);
-  }
-  return true;
-}
-
-bool KeyframeEffect::MaximumTargetScale(ElementListType list_type,
-                                        float* max_scale) const {
-  *max_scale = 0.f;
-  for (const auto& keyframe_model : keyframe_models_) {
-    if (keyframe_model->is_finished() ||
-        keyframe_model->target_property_id() != TargetProperty::TRANSFORM)
-      continue;
-
-    if ((list_type == ElementListType::ACTIVE &&
-         !keyframe_model->affects_active_elements()) ||
-        (list_type == ElementListType::PENDING &&
-         !keyframe_model->affects_pending_elements()))
-      continue;
-
-    bool forward_direction = true;
-    switch (keyframe_model->direction()) {
-      case KeyframeModel::Direction::NORMAL:
-      case KeyframeModel::Direction::ALTERNATE_NORMAL:
-        forward_direction = keyframe_model->playback_rate() >= 0.0;
-        break;
-      case KeyframeModel::Direction::REVERSE:
-      case KeyframeModel::Direction::ALTERNATE_REVERSE:
-        forward_direction = keyframe_model->playback_rate() < 0.0;
-        break;
+    if (maximum_scale_valid) {
+      float keyframe_model_maximum_scale = kNotScaled;
+      if (transform_animation_curve->MaximumTargetScale(
+              forward_direction, &keyframe_model_maximum_scale)) {
+        *maximum_scale = std::max(*maximum_scale, keyframe_model_maximum_scale);
+      } else {
+        maximum_scale_valid = false;
+        *maximum_scale = kNotScaled;
+      }
     }
 
-    const TransformAnimationCurve* transform_animation_curve =
-        keyframe_model->curve()->ToTransformAnimationCurve();
-    float keyframe_model_scale = 0.f;
-    if (!transform_animation_curve->MaximumTargetScale(forward_direction,
-                                                       &keyframe_model_scale))
-      return false;
-    *max_scale = std::max(*max_scale, keyframe_model_scale);
-  }
+    if (starting_scale_valid) {
+      float keyframe_model_starting_scale = kNotScaled;
+      if (transform_animation_curve->AnimationStartScale(
+              forward_direction, &keyframe_model_starting_scale)) {
+        *starting_scale =
+            std::max(*starting_scale, keyframe_model_starting_scale);
+      } else {
+        starting_scale_valid = false;
+        *starting_scale = kNotScaled;
+      }
+    }
 
+    if (!maximum_scale_valid && !starting_scale_valid)
+      return false;
+  }
   return true;
 }
 
@@ -681,6 +665,15 @@ void KeyframeEffect::PurgeKeyframeModelsMarkedForDeletion(bool impl_only) {
       });
 }
 
+void KeyframeEffect::PurgeDeletedKeyframeModels() {
+  base::EraseIf(keyframe_models_,
+                [](const std::unique_ptr<KeyframeModel>& keyframe_model) {
+                  return keyframe_model->run_state() ==
+                             KeyframeModel::WAITING_FOR_DELETION &&
+                         !keyframe_model->affects_pending_elements();
+                });
+}
+
 void KeyframeEffect::PushNewKeyframeModelsToImplThread(
     KeyframeEffect* keyframe_effect_impl) const {
   // Any new KeyframeModels owned by the main thread's Animation are
@@ -746,22 +739,15 @@ void KeyframeEffect::RemoveKeyframeModelsCompletedOnMainThread(
   // elements, and should stop affecting active elements after the next call
   // to ActivateKeyframeEffects. If already WAITING_FOR_DELETION, they can be
   // removed immediately.
-  auto& keyframe_models = keyframe_effect_impl->keyframe_models_;
-  for (const auto& keyframe_model : keyframe_models) {
+  for (const std::unique_ptr<KeyframeModel>& keyframe_model :
+       keyframe_effect_impl->keyframe_models_) {
     if (IsCompleted(keyframe_model.get(), this)) {
       keyframe_model->set_affects_pending_elements(false);
       keyframe_model_completed = true;
     }
   }
-  auto affects_active_only_and_is_waiting_for_deletion =
-      [](const std::unique_ptr<KeyframeModel>& keyframe_model) {
-        return keyframe_model->run_state() ==
-                   KeyframeModel::WAITING_FOR_DELETION &&
-               !keyframe_model->affects_pending_elements();
-      };
-  base::EraseIf(keyframe_models,
-                affects_active_only_and_is_waiting_for_deletion);
 
+  keyframe_effect_impl->PurgeDeletedKeyframeModels();
   if (has_bound_element_animations() && keyframe_model_completed)
     element_animations_->SetNeedsPushProperties();
 }
@@ -775,15 +761,15 @@ void KeyframeEffect::PushPropertiesTo(KeyframeEffect* keyframe_effect_impl) {
   if (element_id_ != keyframe_effect_impl->element_id_) {
     // We have to detach/attach via the Animation as it may need to inform
     // the host as well.
-    if (keyframe_effect_impl->has_attached_element()) {
-      keyframe_effect_impl->animation_->DetachElementForKeyframeEffect(
-          keyframe_effect_impl->element_id_, keyframe_effect_impl->id_);
-    }
-    if (element_id_) {
-      keyframe_effect_impl->animation_->AttachElementForKeyframeEffect(
-          element_id_, id_);
-    }
+    if (keyframe_effect_impl->has_attached_element())
+      keyframe_effect_impl->animation_->DetachElement();
+    if (element_id_)
+      keyframe_effect_impl->animation_->AttachElement(element_id_);
   }
+
+  keyframe_effect_impl->scroll_offset_animation_was_interrupted_ =
+      scroll_offset_animation_was_interrupted_;
+  scroll_offset_animation_was_interrupted_ = false;
 
   // If neither main nor impl have any KeyframeModels, there is nothing further
   // to synchronize.
@@ -806,15 +792,8 @@ void KeyframeEffect::PushPropertiesTo(KeyframeEffect* keyframe_effect_impl) {
     if (current_impl)
       keyframe_model->PushPropertiesTo(current_impl);
   }
-  keyframe_effect_impl->scroll_offset_animation_was_interrupted_ =
-      scroll_offset_animation_was_interrupted_;
-  scroll_offset_animation_was_interrupted_ = false;
 
-  keyframe_effect_impl->UpdateTickingState(UpdateTickingType::NORMAL);
-}
-
-void KeyframeEffect::SetAnimation(Animation* animation) {
-  animation_ = animation;
+  keyframe_effect_impl->UpdateTickingState();
 }
 
 std::string KeyframeEffect::KeyframeModelsToString() const {
@@ -1020,17 +999,18 @@ void KeyframeEffect::MarkKeyframeModelsForDeletion(
     // not yet aborted. These will be set to WAITING_FOR_DELETION which also
     // ensures we don't try to delete them again.
     for (size_t j = 0; j < keyframe_models_in_same_group.size(); ++j) {
-      KeyframeModel* keyframe_model =
+      KeyframeModel* same_group_keyframe_model =
           keyframe_models_[keyframe_models_in_same_group[j]].get();
 
       // Skip any keyframe model in this group which is already processed.
-      if (keyframe_model->run_state() == KeyframeModel::WAITING_FOR_DELETION ||
-          keyframe_model->run_state() == KeyframeModel::ABORTED)
+      if (same_group_keyframe_model->run_state() ==
+              KeyframeModel::WAITING_FOR_DELETION ||
+          same_group_keyframe_model->run_state() == KeyframeModel::ABORTED)
         continue;
 
-      GenerateEvent(events, *keyframe_model, AnimationEvent::FINISHED,
-                    monotonic_time);
-      MarkForDeletion(keyframe_model);
+      GenerateEvent(events, *same_group_keyframe_model,
+                    AnimationEvent::FINISHED, monotonic_time);
+      MarkForDeletion(same_group_keyframe_model);
     }
   }
 
@@ -1088,7 +1068,10 @@ void KeyframeEffect::GenerateEvent(AnimationEvents* events,
   if (!events)
     return;
 
-  AnimationEvent event(type, element_id_, keyframe_model.group(),
+  AnimationEvent event(type,
+                       {animation_->animation_timeline()->id(),
+                        animation_->id(), keyframe_model.id()},
+                       keyframe_model.group(),
                        keyframe_model.target_property_id(), monotonic_time);
   event.is_impl_only = keyframe_model.is_impl_only();
   if (!event.is_impl_only) {
@@ -1096,22 +1079,7 @@ void KeyframeEffect::GenerateEvent(AnimationEvents* events,
     return;
   }
   // For impl only animations notify delegate directly, do not record the event.
-  switch (type) {
-    case AnimationEvent::FINISHED:
-      animation_->NotifyKeyframeModelFinished(event);
-      break;
-    case AnimationEvent::STARTED:
-      animation_->NotifyKeyframeModelStarted(event);
-      break;
-    case AnimationEvent::ABORTED:
-      animation_->NotifyKeyframeModelAborted(event);
-      break;
-    case AnimationEvent::TAKEOVER:
-      // We never expect to receive a TAKEOVER notification on impl only
-      // animations.
-      NOTREACHED();
-      break;
-  }
+  animation_->DispatchAndDelegateAnimationEvent(event);
 }
 
 void KeyframeEffect::GenerateTakeoverEventForScrollAnimation(
@@ -1122,17 +1090,28 @@ void KeyframeEffect::GenerateTakeoverEventForScrollAnimation(
   if (!events)
     return;
 
-  AnimationEvent takeover_event(
-      AnimationEvent::TAKEOVER, element_id_, keyframe_model.group(),
-      keyframe_model.target_property_id(), monotonic_time);
+  AnimationEvent takeover_event(AnimationEvent::TAKEOVER,
+                                {animation_->animation_timeline()->id(),
+                                 animation_->id(), keyframe_model.id()},
+                                keyframe_model.group(),
+                                keyframe_model.target_property_id(),
+                                monotonic_time);
   takeover_event.animation_start_time = keyframe_model.start_time();
   const ScrollOffsetAnimationCurve* scroll_offset_animation_curve =
       keyframe_model.curve()->ToScrollOffsetAnimationCurve();
   takeover_event.curve = scroll_offset_animation_curve->Clone();
-  // Notify the compositor that the animation is finished.
-  animation_->NotifyKeyframeModelFinished(takeover_event);
   // Notify main thread.
   events->events_.push_back(takeover_event);
+
+  AnimationEvent finished_event(AnimationEvent::FINISHED,
+                                {animation_->animation_timeline()->id(),
+                                 animation_->id(), keyframe_model.id()},
+                                keyframe_model.group(),
+                                keyframe_model.target_property_id(),
+                                monotonic_time);
+  // Notify the compositor that the animation is finished.
+  finished_event.is_impl_only = true;
+  animation_->DispatchAndDelegateAnimationEvent(finished_event);
 }
 
 }  // namespace cc

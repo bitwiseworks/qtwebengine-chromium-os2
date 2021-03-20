@@ -15,9 +15,9 @@
 #ifndef DAWNNATIVE_VULKAN_RENDERPASSCACHE_H_
 #define DAWNNATIVE_VULKAN_RENDERPASSCACHE_H_
 
-#include "common/vulkan_platform.h"
-
 #include "common/Constants.h"
+#include "common/vulkan_platform.h"
+#include "dawn_native/Error.h"
 #include "dawn_native/dawn_platform.h"
 
 #include <array>
@@ -34,34 +34,44 @@ namespace dawn_native { namespace vulkan {
     struct RenderPassCacheQuery {
         // Use these helpers to build the query, they make sure all relevant data is initialized and
         // masks set.
-        void SetColor(uint32_t index, dawn::TextureFormat format, dawn::LoadOp loadOp);
-        void SetDepthStencil(dawn::TextureFormat format,
-                             dawn::LoadOp depthLoadOp,
-                             dawn::LoadOp stencilLoadOp);
+        void SetColor(uint32_t index,
+                      wgpu::TextureFormat format,
+                      wgpu::LoadOp loadOp,
+                      bool hasResolveTarget);
+        void SetDepthStencil(wgpu::TextureFormat format,
+                             wgpu::LoadOp depthLoadOp,
+                             wgpu::LoadOp stencilLoadOp);
+        void SetSampleCount(uint32_t sampleCount);
 
         std::bitset<kMaxColorAttachments> colorMask;
-        std::array<dawn::TextureFormat, kMaxColorAttachments> colorFormats;
-        std::array<dawn::LoadOp, kMaxColorAttachments> colorLoadOp;
+        std::bitset<kMaxColorAttachments> resolveTargetMask;
+        std::array<wgpu::TextureFormat, kMaxColorAttachments> colorFormats;
+        std::array<wgpu::LoadOp, kMaxColorAttachments> colorLoadOp;
 
         bool hasDepthStencil = false;
-        dawn::TextureFormat depthStencilFormat;
-        dawn::LoadOp depthLoadOp;
-        dawn::LoadOp stencilLoadOp;
+        wgpu::TextureFormat depthStencilFormat;
+        wgpu::LoadOp depthLoadOp;
+        wgpu::LoadOp stencilLoadOp;
+
+        uint32_t sampleCount;
     };
 
     // Caches VkRenderPasses so that we don't create duplicate ones for every RenderPipeline or
-    // render pass.
+    // render pass. We always arrange the order of attachments in "color-depthstencil-resolve" order
+    // when creating render pass and framebuffer so that we can always make sure the order of
+    // attachments in the rendering pipeline matches the one of the framebuffer.
     // TODO(cwallez@chromium.org): Make it an LRU cache somehow?
     class RenderPassCache {
       public:
         RenderPassCache(Device* device);
         ~RenderPassCache();
 
-        VkRenderPass GetRenderPass(const RenderPassCacheQuery& query);
+        ResultOrError<VkRenderPass> GetRenderPass(const RenderPassCacheQuery& query);
 
       private:
         // Does the actual VkRenderPass creation on a cache miss.
-        VkRenderPass CreateRenderPassForQuery(const RenderPassCacheQuery& query) const;
+        ResultOrError<VkRenderPass> CreateRenderPassForQuery(
+            const RenderPassCacheQuery& query) const;
 
         // Implements the functors necessary for to use RenderPassCacheQueries as unordered_map
         // keys.

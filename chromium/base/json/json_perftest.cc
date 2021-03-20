@@ -5,44 +5,57 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/perf/perf_test.h"
+#include "testing/perf/perf_result_reporter.h"
 
 namespace base {
 
 namespace {
+
+constexpr char kMetricPrefixJSON[] = "JSON.";
+constexpr char kMetricReadTime[] = "read_time";
+constexpr char kMetricWriteTime[] = "write_time";
+
+perf_test::PerfResultReporter SetUpReporter(const std::string& story_name) {
+  perf_test::PerfResultReporter reporter(kMetricPrefixJSON, story_name);
+  reporter.RegisterImportantMetric(kMetricReadTime, "ms");
+  reporter.RegisterImportantMetric(kMetricWriteTime, "ms");
+  return reporter;
+}
+
 // Generates a simple dictionary value with simple data types, a string and a
 // list.
-std::unique_ptr<DictionaryValue> GenerateDict() {
-  auto root = std::make_unique<DictionaryValue>();
-  root->SetDouble("Double", 3.141);
-  root->SetBoolean("Bool", true);
-  root->SetInteger("Int", 42);
-  root->SetString("String", "Foo");
+DictionaryValue GenerateDict() {
+  DictionaryValue root;
+  root.SetDoubleKey("Double", 3.141);
+  root.SetBoolKey("Bool", true);
+  root.SetIntKey("Int", 42);
+  root.SetStringKey("String", "Foo");
 
-  auto list = std::make_unique<ListValue>();
-  list->Set(0, std::make_unique<Value>(2.718));
-  list->Set(1, std::make_unique<Value>(false));
-  list->Set(2, std::make_unique<Value>(123));
-  list->Set(3, std::make_unique<Value>("Bar"));
-  root->Set("List", std::move(list));
+  ListValue list;
+  list.Append(2.718);
+  list.Append(false);
+  list.Append(123);
+  list.Append("Bar");
+  root.SetKey("List", std::move(list));
 
   return root;
 }
 
 // Generates a tree-like dictionary value with a size of O(breadth ** depth).
-std::unique_ptr<DictionaryValue> GenerateLayeredDict(int breadth, int depth) {
+DictionaryValue GenerateLayeredDict(int breadth, int depth) {
   if (depth == 1)
     return GenerateDict();
 
-  auto root = GenerateDict();
-  auto next = GenerateLayeredDict(breadth, depth - 1);
+  DictionaryValue root = GenerateDict();
+  DictionaryValue next = GenerateLayeredDict(breadth, depth - 1);
 
   for (int i = 0; i < breadth; ++i) {
-    root->Set("Dict" + std::to_string(i), next->CreateDeepCopy());
+    root.SetKey("Dict" + base::NumberToString(i), next.Clone());
   }
 
   return root;
@@ -53,24 +66,22 @@ std::unique_ptr<DictionaryValue> GenerateLayeredDict(int breadth, int depth) {
 class JSONPerfTest : public testing::Test {
  public:
   void TestWriteAndRead(int breadth, int depth) {
-    std::string description = "Breadth: " + std::to_string(breadth) +
-                              ", Depth: " + std::to_string(depth);
-    auto dict = GenerateLayeredDict(breadth, depth);
+    std::string description = "Breadth: " + base::NumberToString(breadth) +
+                              ", Depth: " + base::NumberToString(depth);
+    DictionaryValue dict = GenerateLayeredDict(breadth, depth);
     std::string json;
 
     TimeTicks start_write = TimeTicks::Now();
-    JSONWriter::Write(*dict, &json);
+    JSONWriter::Write(dict, &json);
     TimeTicks end_write = TimeTicks::Now();
-    perf_test::PrintResult("Write", "", description,
-                           (end_write - start_write).InMillisecondsF(), "ms",
-                           true);
+    auto reporter = SetUpReporter("breadth_" + base::NumberToString(breadth) +
+                                  "_depth_" + base::NumberToString(depth));
+    reporter.AddResult(kMetricWriteTime, end_write - start_write);
 
     TimeTicks start_read = TimeTicks::Now();
     JSONReader::Read(json);
     TimeTicks end_read = TimeTicks::Now();
-    perf_test::PrintResult("Read", "", description,
-                           (end_read - start_read).InMillisecondsF(), "ms",
-                           true);
+    reporter.AddResult(kMetricReadTime, end_read - start_read);
   }
 };
 

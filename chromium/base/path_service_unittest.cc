@@ -42,22 +42,37 @@ bool ReturnsValidPath(int dir_type) {
   if (dir_type == DIR_USER_DESKTOP)
     check_path_exists = false;
 #endif
-#if defined(OS_IOS)
-  // Bundled unittests on iOS may not have Resources directory in the bundle.
-  if (dir_type == DIR_ASSETS)
+#if defined(OS_WIN)
+  if (dir_type == DIR_TASKBAR_PINS)
     check_path_exists = false;
 #endif
 #if defined(OS_MACOSX)
   if (dir_type != DIR_EXE && dir_type != DIR_MODULE && dir_type != FILE_EXE &&
       dir_type != FILE_MODULE) {
-    if (path.ReferencesParent())
+    if (path.ReferencesParent()) {
+      LOG(INFO) << "Path (" << path << ") references parent.";
       return false;
+    }
   }
 #else
-  if (path.ReferencesParent())
+  if (path.ReferencesParent()) {
+    LOG(INFO) << "Path (" << path << ") references parent.";
     return false;
+  }
 #endif
-  return result && !path.empty() && (!check_path_exists || PathExists(path));
+  if (!result) {
+    LOG(INFO) << "PathService::Get() returned false.";
+    return false;
+  }
+  if (path.empty()) {
+    LOG(INFO) << "PathService::Get() returned an empty path.";
+    return false;
+  }
+  if (check_path_exists && !PathExists(path)) {
+    LOG(INFO) << "Path (" << path << ") does not exist.";
+    return false;
+  }
+  return true;
 }
 
 #if defined(OS_WIN)
@@ -101,12 +116,12 @@ TEST_F(PathServiceTest, Get) {
   for (int key = PATH_WIN_START + 1; key < PATH_WIN_END; ++key) {
     bool valid = true;
     if (key == DIR_APP_SHORTCUTS)
-      valid = base::win::GetVersion() >= base::win::VERSION_WIN8;
+      valid = base::win::GetVersion() >= base::win::Version::WIN8;
 
     if (valid)
-      EXPECT_TRUE(ReturnsValidPath(key)) << key;
+      EXPECT_PRED1(ReturnsValidPath, key);
     else
-      EXPECT_TRUE(ReturnsInvalidPath(key)) << key;
+      EXPECT_PRED1(ReturnsInvalidPath, key);
   }
 #elif defined(OS_MACOSX)
   for (int key = PATH_MAC_START + 1; key < PATH_MAC_END; ++key) {

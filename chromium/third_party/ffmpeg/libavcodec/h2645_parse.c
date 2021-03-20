@@ -292,23 +292,22 @@ static int get_bit_length(H2645NAL *nal, int skip_trailing_zeros)
 static int hevc_parse_nal_header(H2645NAL *nal, void *logctx)
 {
     GetBitContext *gb = &nal->gb;
-    int nuh_layer_id;
 
     if (get_bits1(gb) != 0)
         return AVERROR_INVALIDDATA;
 
     nal->type = get_bits(gb, 6);
 
-    nuh_layer_id   = get_bits(gb, 6);
+    nal->nuh_layer_id = get_bits(gb, 6);
     nal->temporal_id = get_bits(gb, 3) - 1;
     if (nal->temporal_id < 0)
         return AVERROR_INVALIDDATA;
 
     av_log(logctx, AV_LOG_DEBUG,
            "nal_unit_type: %d(%s), nuh_layer_id: %d, temporal_id: %d\n",
-           nal->type, hevc_nal_unit_name(nal->type), nuh_layer_id, nal->temporal_id);
+           nal->type, hevc_nal_unit_name(nal->type), nal->nuh_layer_id, nal->temporal_id);
 
-    return nuh_layer_id == 0;
+    return 1;
 }
 
 static int h264_parse_nal_header(H2645NAL *nal, void *logctx)
@@ -343,9 +342,56 @@ static int find_next_start_code(const uint8_t *buf, const uint8_t *next_avc)
     return i + 3;
 }
 
+static void alloc_rbsp_buffer(H2645RBSP *rbsp, unsigned int size, int use_ref)
+{
+    int min_size = size;
+
+    if (size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+        goto fail;
+    size += AV_INPUT_BUFFER_PADDING_SIZE;
+
+    if (rbsp->rbsp_buffer_alloc_size >= size &&
+        (!rbsp->rbsp_buffer_ref || av_buffer_is_writable(rbsp->rbsp_buffer_ref))) {
+        av_assert0(rbsp->rbsp_buffer);
+        memset(rbsp->rbsp_buffer + min_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+        return;
+    }
+
+    size = FFMIN(size + size / 16 + 32, INT_MAX);
+
+    if (rbsp->rbsp_buffer_ref)
+        av_buffer_unref(&rbsp->rbsp_buffer_ref);
+    else
+        av_free(rbsp->rbsp_buffer);
+
+    rbsp->rbsp_buffer = av_mallocz(size);
+    if (!rbsp->rbsp_buffer)
+        goto fail;
+    rbsp->rbsp_buffer_alloc_size = size;
+
+    if (use_ref) {
+        rbsp->rbsp_buffer_ref = av_buffer_create(rbsp->rbsp_buffer, size,
+                                                 NULL, NULL, 0);
+        if (!rbsp->rbsp_buffer_ref)
+            goto fail;
+    }
+
+    return;
+
+fail:
+    rbsp->rbsp_buffer_alloc_size = 0;
+    if (rbsp->rbsp_buffer_ref) {
+        av_buffer_unref(&rbsp->rbsp_buffer_ref);
+        rbsp->rbsp_buffer = NULL;
+    } else
+        av_freep(&rbsp->rbsp_buffer);
+
+    return;
+}
+
 int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
                           void *logctx, int is_nalff, int nal_length_size,
-                          enum AVCodecID codec_id, int small_padding)
+                          enum AVCodecID codec_id, int small_padding, int use_ref)
 {
     GetByteContext bc;
     int consumed, ret = 0;
@@ -353,7 +399,8 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
     int64_t padding = small_padding ? 0 : MAX_MBPAIR_SIZE;
 
     bytestream2_init(&bc, buf, length);
-    av_fast_padded_malloc(&pkt->rbsp.rbsp_buffer, &pkt->rbsp.rbsp_buffer_alloc_size, length + padding);
+    alloc_rbsp_buffer(&pkt->rbsp, length + padding, use_ref);
+
     if (!pkt->rbsp.rbsp_buffer)
         return AVERROR(ENOMEM);
 
@@ -407,14 +454,17 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
 
         if (pkt->nals_allocated < pkt->nb_nals + 1) {
             int new_size = pkt->nals_allocated + 1;
-            void *tmp = av_realloc_array(pkt->nals, new_size, sizeof(*pkt->nals));
+            void *tmp;
 
+            if (new_size >= INT_MAX / sizeof(*pkt->nals))
+                return AVERROR(ENOMEM);
+
+            tmp = av_fast_realloc(pkt->nals, &pkt->nal_buffer_size, new_size * sizeof(*pkt->nals));
             if (!tmp)
                 return AVERROR(ENOMEM);
 
             pkt->nals = tmp;
-            memset(pkt->nals + pkt->nals_allocated, 0,
-                   (new_size - pkt->nals_allocated) * sizeof(*pkt->nals));
+            memset(pkt->nals + pkt->nals_allocated, 0, sizeof(*pkt->nals));
 
             nal = &pkt->nals[pkt->nb_nals];
             nal->skipped_bytes_pos_size = 1024; // initial buffer size
@@ -456,7 +506,7 @@ int ff_h2645_packet_split(H2645Packet *pkt, const uint8_t *buf, int length,
             ret = h264_parse_nal_header(nal, logctx);
         if (ret <= 0 || nal->size <= 0 || nal->size_bits <= 0) {
             if (ret < 0) {
-                av_log(logctx, AV_LOG_ERROR, "Invalid NAL unit %d, skipping.\n",
+                av_log(logctx, AV_LOG_WARNING, "Invalid NAL unit %d, skipping.\n",
                        nal->type);
             }
             pkt->nb_nals--;
@@ -473,7 +523,11 @@ void ff_h2645_packet_uninit(H2645Packet *pkt)
         av_freep(&pkt->nals[i].skipped_bytes_pos);
     }
     av_freep(&pkt->nals);
-    pkt->nals_allocated = 0;
-    av_freep(&pkt->rbsp.rbsp_buffer);
+    pkt->nals_allocated = pkt->nal_buffer_size = 0;
+    if (pkt->rbsp.rbsp_buffer_ref) {
+        av_buffer_unref(&pkt->rbsp.rbsp_buffer_ref);
+        pkt->rbsp.rbsp_buffer = NULL;
+    } else
+        av_freep(&pkt->rbsp.rbsp_buffer);
     pkt->rbsp.rbsp_buffer_alloc_size = pkt->rbsp.rbsp_buffer_size = 0;
 }

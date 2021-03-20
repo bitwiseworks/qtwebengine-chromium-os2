@@ -28,9 +28,10 @@
 enum ScrollSetting { "" /* none */, "up" };
 
 [
-    Constructor,
+    Exposed=Window,
     RuntimeEnabled=WebVTTRegions
 ] interface VTTRegion {
+    constructor();
     attribute DOMString id;
     [RaisesException=Setter] attribute double width;
     attribute unsigned long lines;

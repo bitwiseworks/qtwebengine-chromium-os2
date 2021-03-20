@@ -2,13 +2,29 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
+
+declare_args() {
+  # Enables Windows sandbox with separate subprocess executable.
+  # The only requirement is then that the sandboxed executable is statically
+  # linked to //sandbox/win:sandbox and makes sure to initialize
+  # SandboxInterfaceInfo using the statically linked methods in case it
+  # has a second copy from dynamically linking the rest of Chromium.
+  heterogeneous_executables = false
+}
+
+config("sandbox_exports") {
+  defines = [ "SANDBOX_EXPORTS=1" ]
+}
 
 # This needs to be a static library rather than a sources set because small
 # portions of this are used in some contexts (like chrome_elf), and it
 # doesn't seem to dead-code strip very well. This saves 12K on chrome_elf.dll,
 # over a source set, for example.
-static_library("sandbox") {
+# QtWebEngine: Needs to be source_set as stripping unreferenced files breaks
+# the sandbox.
+source_set("sandbox") {
   sources = [
     "src/acl.cc",
     "src/acl.h",
@@ -94,6 +110,8 @@ static_library("sandbox") {
     "src/restricted_token_utils.h",
     "src/sandbox.cc",
     "src/sandbox.h",
+    "src/sandbox_constants.cc",
+    "src/sandbox_constants.h",
     "src/sandbox_factory.h",
     "src/sandbox_globals.cc",
     "src/sandbox_nt_types.h",
@@ -102,6 +120,8 @@ static_library("sandbox") {
     "src/sandbox_policy.h",
     "src/sandbox_policy_base.cc",
     "src/sandbox_policy_base.h",
+    "src/sandbox_policy_diagnostic.cc",
+    "src/sandbox_policy_diagnostic.h",
     "src/sandbox_rand.cc",
     "src/sandbox_rand.h",
     "src/sandbox_types.h",
@@ -118,6 +138,12 @@ static_library("sandbox") {
     "src/sharedmem_ipc_server.h",
     "src/sid.cc",
     "src/sid.h",
+    "src/signed_dispatcher.cc",
+    "src/signed_dispatcher.h",
+    "src/signed_interception.cc",
+    "src/signed_interception.h",
+    "src/signed_policy.cc",
+    "src/signed_policy.h",
     "src/sync_dispatcher.cc",
     "src/sync_dispatcher.h",
     "src/sync_interception.cc",
@@ -170,6 +196,10 @@ static_library("sandbox") {
       [ "//build/config/sanitizers:default_sanitizer_flags_but_coverage" ]
 
   configs += [ "//build/config:precompiled_headers" ]
+
+  if (heterogeneous_executables) {
+    configs += [ ":sandbox_exports" ]
+  }
 
   deps = [
     "//base",
@@ -230,9 +260,7 @@ test("sbox_integration_tests") {
 }
 
 executable("cfi_unittest_exe") {
-  sources = [
-    "tests/integration_tests/cfi_unittest_exe.cc",
-  ]
+  sources = [ "tests/integration_tests/cfi_unittest_exe.cc" ]
   deps = [
     "//base",
     "//build/win:default_exe_manifest",
@@ -361,4 +389,19 @@ shared_library("pocdll") {
   ]
 
   defines = [ "POCDLL_EXPORTS" ]
+}
+
+# This fuzzer will only work on Windows, add fuzz targets which could run on Linux
+# to //sandbox/ directly.
+fuzzer_test("sandbox_policy_rule_fuzzer") {
+  set_sources_assignment_filter([])
+  sources = [
+    "fuzzer/fuzzer_types.h",
+    "fuzzer/sandbox_policy_rule_fuzzer.cc",
+  ]
+  dict = "fuzzer/sandbox_policy_rule.dict"
+  deps = [
+    "//base",
+    "//sandbox",
+  ]
 }

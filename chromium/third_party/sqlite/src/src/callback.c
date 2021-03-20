@@ -1,5 +1,5 @@
 /*
-** 2005 May 23
+** 2005 May 23 
 **
 ** The author disclaims copyright to this source code.  In place of
 ** a legal notice, here is a blessing:
@@ -66,58 +66,13 @@ static int synthCollSeq(sqlite3 *db, CollSeq *pColl){
 }
 
 /*
-** This function is responsible for invoking the collation factory callback
-** or substituting a collation sequence of a different encoding when the
-** requested collation sequence is not available in the desired encoding.
-**
-** If it is not NULL, then pColl must point to the database native encoding
-** collation sequence with name zName, length nName.
-**
-** The return value is either the collation sequence to be used in database
-** db for collation type name zName, length nName, or NULL, if no collation
-** sequence can be found.  If no collation is found, leave an error message.
-**
-** See also: sqlite3LocateCollSeq(), sqlite3FindCollSeq()
-*/
-CollSeq *sqlite3GetCollSeq(
-  Parse *pParse,        /* Parsing context */
-  u8 enc,               /* The desired encoding for the collating sequence */
-  CollSeq *pColl,       /* Collating sequence with native encoding, or NULL */
-  const char *zName     /* Collating sequence name */
-){
-  CollSeq *p;
-  sqlite3 *db = pParse->db;
-
-  p = pColl;
-  if( !p ){
-    p = sqlite3FindCollSeq(db, enc, zName, 0);
-  }
-  if( !p || !p->xCmp ){
-    /* No collation sequence of this type for this encoding is registered.
-    ** Call the collation factory to see if it can supply us with one.
-    */
-    callCollNeeded(db, enc, zName);
-    p = sqlite3FindCollSeq(db, enc, zName, 0);
-  }
-  if( p && !p->xCmp && synthCollSeq(db, p) ){
-    p = 0;
-  }
-  assert( !p || p->xCmp );
-  if( p==0 ){
-    sqlite3ErrorMsg(pParse, "no such collation sequence: %s", zName);
-    pParse->rc = SQLITE_ERROR_MISSING_COLLSEQ;
-  }
-  return p;
-}
-
-/*
 ** This routine is called on a collation sequence before it is used to
 ** check that it is defined. An undefined collation sequence exists when
 ** a database is loaded that contains references to collation sequences
 ** that have not been defined by sqlite3_create_collation() etc.
 **
 ** If required, this routine calls the 'collation needed' callback to
-** request a definition of the collating sequence. If this doesn't work,
+** request a definition of the collating sequence. If this doesn't work, 
 ** an equivalent collating sequence that uses a text encoding different
 ** from the main database is substituted, if one is available.
 */
@@ -171,7 +126,7 @@ static CollSeq *findCollSeqEntry(
       memcpy(pColl[0].zName, zName, nName);
       pDel = sqlite3HashInsert(&db->aCollSeq, pColl[0].zName, pColl);
 
-      /* If a malloc() failure occurred in sqlite3HashInsert(), it will
+      /* If a malloc() failure occurred in sqlite3HashInsert(), it will 
       ** return the pColl pointer to be deleted (because it wasn't added
       ** to the hash table).
       */
@@ -202,10 +157,10 @@ static CollSeq *findCollSeqEntry(
 ** See also: sqlite3LocateCollSeq(), sqlite3GetCollSeq()
 */
 CollSeq *sqlite3FindCollSeq(
-  sqlite3 *db,
-  u8 enc,
-  const char *zName,
-  int create
+  sqlite3 *db,          /* Database connection to search */
+  u8 enc,               /* Desired text encoding */
+  const char *zName,    /* Name of the collating sequence.  Might be NULL */
+  int create            /* True to create CollSeq if doesn't already exist */
 ){
   CollSeq *pColl;
   if( zName ){
@@ -219,6 +174,85 @@ CollSeq *sqlite3FindCollSeq(
   return pColl;
 }
 
+/*
+** This function is responsible for invoking the collation factory callback
+** or substituting a collation sequence of a different encoding when the
+** requested collation sequence is not available in the desired encoding.
+** 
+** If it is not NULL, then pColl must point to the database native encoding 
+** collation sequence with name zName, length nName.
+**
+** The return value is either the collation sequence to be used in database
+** db for collation type name zName, length nName, or NULL, if no collation
+** sequence can be found.  If no collation is found, leave an error message.
+**
+** See also: sqlite3LocateCollSeq(), sqlite3FindCollSeq()
+*/
+CollSeq *sqlite3GetCollSeq(
+  Parse *pParse,        /* Parsing context */
+  u8 enc,               /* The desired encoding for the collating sequence */
+  CollSeq *pColl,       /* Collating sequence with native encoding, or NULL */
+  const char *zName     /* Collating sequence name */
+){
+  CollSeq *p;
+  sqlite3 *db = pParse->db;
+
+  p = pColl;
+  if( !p ){
+    p = sqlite3FindCollSeq(db, enc, zName, 0);
+  }
+  if( !p || !p->xCmp ){
+    /* No collation sequence of this type for this encoding is registered.
+    ** Call the collation factory to see if it can supply us with one.
+    */
+    callCollNeeded(db, enc, zName);
+    p = sqlite3FindCollSeq(db, enc, zName, 0);
+  }
+  if( p && !p->xCmp && synthCollSeq(db, p) ){
+    p = 0;
+  }
+  assert( !p || p->xCmp );
+  if( p==0 ){
+    sqlite3ErrorMsg(pParse, "no such collation sequence: %s", zName);
+    pParse->rc = SQLITE_ERROR_MISSING_COLLSEQ;
+  }
+  return p;
+}
+
+/*
+** This function returns the collation sequence for database native text
+** encoding identified by the string zName.
+**
+** If the requested collation sequence is not available, or not available
+** in the database native encoding, the collation factory is invoked to
+** request it. If the collation factory does not supply such a sequence,
+** and the sequence is available in another text encoding, then that is
+** returned instead.
+**
+** If no versions of the requested collations sequence are available, or
+** another error occurs, NULL is returned and an error message written into
+** pParse.
+**
+** This routine is a wrapper around sqlite3FindCollSeq().  This routine
+** invokes the collation factory if the named collation cannot be found
+** and generates an error message.
+**
+** See also: sqlite3FindCollSeq(), sqlite3GetCollSeq()
+*/
+CollSeq *sqlite3LocateCollSeq(Parse *pParse, const char *zName){
+  sqlite3 *db = pParse->db;
+  u8 enc = ENC(db);
+  u8 initbusy = db->init.busy;
+  CollSeq *pColl;
+
+  pColl = sqlite3FindCollSeq(db, enc, zName, initbusy);
+  if( !initbusy && (!pColl || !pColl->xCmp) ){
+    pColl = sqlite3GetCollSeq(pParse, enc, pColl, zName);
+  }
+
+  return pColl;
+}
+
 /* During the search for the best function definition, this procedure
 ** is called to test how well the function passed as the first argument
 ** matches the request for a function with nArg arguments in a system
@@ -229,7 +263,7 @@ CollSeq *sqlite3FindCollSeq(
 ** is also -1.  In other words, we are searching for a function that
 ** takes a variable number of arguments.
 **
-** If nArg is -2 that means that we are searching for any function
+** If nArg is -2 that means that we are searching for any function 
 ** regardless of the number of arguments it uses, so return a positive
 ** match score for any
 **
@@ -254,12 +288,13 @@ static int matchQuality(
   u8 enc          /* Desired text encoding */
 ){
   int match;
-
-  /* nArg of -2 is a special case */
-  if( nArg==(-2) ) return (p->xSFunc==0) ? 0 : FUNC_PERFECT_MATCH;
+  assert( p->nArg>=-1 );
 
   /* Wrong number of arguments means "no match" */
-  if( p->nArg!=nArg && p->nArg>=0 ) return 0;
+  if( p->nArg!=nArg ){
+    if( nArg==(-2) ) return (p->xSFunc==0) ? 0 : FUNC_PERFECT_MATCH;
+    if( p->nArg>=0 ) return 0;
+  }
 
   /* Give a better score to a function with a specific number of arguments
   ** than to function that accepts any number of arguments. */
@@ -322,8 +357,8 @@ void sqlite3InsertBuiltinFuncs(
     }
   }
 }
-
-
+  
+  
 
 /*
 ** Locate a user function given a name, a number of arguments and a flag
@@ -384,7 +419,7 @@ FuncDef *sqlite3FindFunction(
   ** have fields overwritten with new information appropriate for the
   ** new function.  But the FuncDefs for built-in functions are read-only.
   ** So we must not search for built-ins when creating a new function.
-  */
+  */ 
   if( !createFlag && (pBest==0 || (db->mDbFlags & DBFLAG_PreferBuiltin)!=0) ){
     bestScore = 0;
     h = SQLITE_FUNC_HASH(sqlite3UpperToLower[(u8)zName[0]], nName);
@@ -403,7 +438,7 @@ FuncDef *sqlite3FindFunction(
   ** exact match for the name, number of arguments and encoding, then add a
   ** new entry to the hash table and return it.
   */
-  if( createFlag && bestScore<FUNC_PERFECT_MATCH &&
+  if( createFlag && bestScore<FUNC_PERFECT_MATCH && 
       (pBest = sqlite3DbMallocZero(db, sizeof(*pBest)+nName+1))!=0 ){
     FuncDef *pOther;
     u8 *z;
@@ -430,7 +465,7 @@ FuncDef *sqlite3FindFunction(
 
 /*
 ** Free all resources held by the schema structure. The void* argument points
-** at a Schema struct. This function does not call sqlite3DbFree(db, ) on the
+** at a Schema struct. This function does not call sqlite3DbFree(db, ) on the 
 ** pointer itself, it just cleans up subsidiary resources (i.e. the contents
 ** of the schema hash tables).
 **

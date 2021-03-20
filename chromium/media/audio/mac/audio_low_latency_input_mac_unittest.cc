@@ -6,11 +6,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/environment.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "media/audio/audio_device_description.h"
@@ -32,9 +33,9 @@ using ::testing::NotNull;
 
 namespace media {
 
-ACTION_P4(CheckCountAndPostQuitTask, count, limit, loop, closure) {
+ACTION_P4(CheckCountAndPostQuitTask, count, limit, task_runner, closure) {
   if (++*count >= limit) {
-    loop->task_runner()->PostTask(FROM_HERE, closure);
+    task_runner->PostTask(FROM_HERE, closure);
   }
 }
 
@@ -88,12 +89,13 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
               double volume) override {
     const int num_samples = src->frames() * src->channels();
     std::unique_ptr<int16_t> interleaved(new int16_t[num_samples]);
-    const int bytes_per_sample = sizeof(*interleaved);
-    src->ToInterleaved(src->frames(), bytes_per_sample, interleaved.get());
+    src->ToInterleaved<SignedInt16SampleTypeTraits>(src->frames(),
+                                                    interleaved.get());
 
     // Store data data in a temporary buffer to avoid making blocking
     // fwrite() calls in the audio callback. The complete buffer will be
     // written to file in the destructor.
+    const int bytes_per_sample = sizeof(*interleaved);
     const int size = bytes_per_sample * num_samples;
     if (buffer_.Append((const uint8_t*)interleaved.get(), size)) {
       bytes_to_write_ += size;
@@ -111,7 +113,8 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
 class MacAudioInputTest : public testing::Test {
  protected:
   MacAudioInputTest()
-      : message_loop_(base::MessageLoop::TYPE_UI),
+      : task_environment_(
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
         audio_manager_(AudioManager::CreateForTesting(
             std::make_unique<TestAudioThread>())) {
     // Wait for the AudioManager to finish any initialization on the audio loop.
@@ -135,7 +138,8 @@ class MacAudioInputTest : public testing::Test {
         AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                         CHANNEL_LAYOUT_STEREO, fs, samples_per_packet),
         AudioDeviceDescription::kDefaultDeviceId,
-        base::Bind(&MacAudioInputTest::OnLogMessage, base::Unretained(this)));
+        base::BindRepeating(&MacAudioInputTest::OnLogMessage,
+                            base::Unretained(this)));
     EXPECT_TRUE(ais);
     return ais;
   }
@@ -149,14 +153,15 @@ class MacAudioInputTest : public testing::Test {
         AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
                         fs, samples_per_packet),
         AudioDeviceDescription::kDefaultDeviceId,
-        base::Bind(&MacAudioInputTest::OnLogMessage, base::Unretained(this)));
+        base::BindRepeating(&MacAudioInputTest::OnLogMessage,
+                            base::Unretained(this)));
     EXPECT_TRUE(ais);
     return ais;
   }
 
   void OnLogMessage(const std::string& message) { log_message_ = message; }
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<AudioManager> audio_manager_;
   std::string log_message_;
 };
@@ -215,8 +220,9 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyMonoRecording) {
   base::RunLoop run_loop;
   EXPECT_CALL(sink, OnData(NotNull(), _, _))
       .Times(AtLeast(10))
-      .WillRepeatedly(CheckCountAndPostQuitTask(&count, 10, &message_loop_,
-                                                run_loop.QuitClosure()));
+      .WillRepeatedly(CheckCountAndPostQuitTask(
+          &count, 10, task_environment_.GetMainThreadTaskRunner(),
+          run_loop.QuitClosure()));
   ais->Start(&sink);
   run_loop.Run();
   ais->Stop();
@@ -250,8 +256,9 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyStereoRecording) {
   base::RunLoop run_loop;
   EXPECT_CALL(sink, OnData(NotNull(), _, _))
       .Times(AtLeast(10))
-      .WillRepeatedly(CheckCountAndPostQuitTask(&count, 10, &message_loop_,
-                                                run_loop.QuitClosure()));
+      .WillRepeatedly(CheckCountAndPostQuitTask(
+          &count, 10, task_environment_.GetMainThreadTaskRunner(),
+          run_loop.QuitClosure()));
   ais->Start(&sink);
   run_loop.Run();
   ais->Stop();

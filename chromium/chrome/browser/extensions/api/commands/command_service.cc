@@ -19,7 +19,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/accelerator_utils.h"
 #include "chrome/common/extensions/api/commands/commands_handler.h"
-#include "chrome/common/extensions/manifest_handlers/ui_overrides_handler.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -27,7 +26,6 @@
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/extension_prefs.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/common/feature_switch.h"
@@ -109,8 +107,7 @@ void CommandService::RegisterProfilePrefs(
 }
 
 CommandService::CommandService(content::BrowserContext* context)
-    : profile_(Profile::FromBrowserContext(context)),
-      extension_registry_observer_(this) {
+    : profile_(Profile::FromBrowserContext(context)) {
   ExtensionFunctionRegistry::GetInstance()
       .RegisterFunction<GetAllCommandsFunction>();
 
@@ -132,23 +129,6 @@ CommandService::GetFactoryInstance() {
 // static
 CommandService* CommandService::Get(content::BrowserContext* context) {
   return BrowserContextKeyedAPIFactory<CommandService>::Get(context);
-}
-
-// static
-bool CommandService::RemovesBookmarkShortcut(const Extension* extension) {
-  return UIOverrides::RemovesBookmarkShortcut(extension) &&
-      (extension->permissions_data()->HasAPIPermission(
-          APIPermission::kBookmarkManagerPrivate) ||
-       FeatureSwitch::enable_override_bookmarks_ui()->IsEnabled());
-}
-
-// static
-bool CommandService::RemovesBookmarkOpenPagesShortcut(
-    const Extension* extension) {
-  return UIOverrides::RemovesBookmarkOpenPagesShortcut(extension) &&
-      (extension->permissions_data()->HasAPIPermission(
-          APIPermission::kBookmarkManagerPrivate) ||
-       FeatureSwitch::enable_override_bookmarks_ui()->IsEnabled());
 }
 
 bool CommandService::GetBrowserActionCommand(const std::string& extension_id,
@@ -421,14 +401,6 @@ bool CommandService::GetSuggestedExtensionCommand(
   return false;
 }
 
-bool CommandService::RequestsBookmarkShortcutOverride(
-    const Extension* extension) const {
-  return RemovesBookmarkShortcut(extension) &&
-         GetSuggestedExtensionCommand(
-             extension->id(),
-             chrome::GetPrimaryChromeAcceleratorForBookmarkPage(), nullptr);
-}
-
 void CommandService::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);
 }
@@ -554,7 +526,6 @@ bool CommandService::CanAutoAssign(const Command &command,
     return true;
 
   if (command.global()) {
-    using namespace extensions;
     if (command.command_name() == manifest_values::kBrowserActionCommandEvent ||
         command.command_name() == manifest_values::kPageActionCommandEvent)
       return false;  // Browser and page actions are not global in nature.
@@ -575,22 +546,10 @@ bool CommandService::CanAutoAssign(const Command &command,
       return false;
     return (command.accelerator().key_code() >= ui::VKEY_0 &&
             command.accelerator().key_code() <= ui::VKEY_9);
-  } else {
-    // Not a global command, check if Chrome shortcut and whether
-    // we can override it.
-    if (command.accelerator() ==
-            chrome::GetPrimaryChromeAcceleratorForBookmarkPage() &&
-        CommandService::RemovesBookmarkShortcut(extension)) {
-      // If this check fails it either means we have an API to override a
-      // key that isn't a ChromeAccelerator (and the API can therefore be
-      // deprecated) or the IsChromeAccelerator isn't consistently
-      // returning true for all accelerators.
-      DCHECK(chrome::IsChromeAccelerator(command.accelerator(), profile_));
-      return true;
-    }
-
-    return !chrome::IsChromeAccelerator(command.accelerator(), profile_);
   }
+
+  // Not a global command, check if the command is a Chrome shortcut.
+  return !chrome::IsChromeAccelerator(command.accelerator());
 }
 
 void CommandService::UpdateExtensionSuggestedCommandPrefs(

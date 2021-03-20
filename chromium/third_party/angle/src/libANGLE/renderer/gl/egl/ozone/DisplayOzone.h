@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2016 The ANGLE Project Authors. All rights reserved.
+// Copyright 2016 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -120,13 +120,6 @@ class DisplayOzone final : public DisplayEGL
                                      const egl::AttributeMap &attribs) override;
     SurfaceImpl *createPbufferSurface(const egl::SurfaceState &state,
                                       const egl::AttributeMap &attribs) override;
-    SurfaceImpl *createPbufferFromClientBuffer(const egl::SurfaceState &state,
-                                               EGLenum buftype,
-                                               EGLClientBuffer clientBuffer,
-                                               const egl::AttributeMap &attribs) override;
-    SurfaceImpl *createPixmapSurface(const egl::SurfaceState &state,
-                                     NativePixmapType nativePixmap,
-                                     const egl::AttributeMap &attribs) override;
 
     ContextImpl *createContext(const gl::State &state,
                                gl::ErrorSet *errorSet,
@@ -134,21 +127,13 @@ class DisplayOzone final : public DisplayEGL
                                const gl::Context *shareContext,
                                const egl::AttributeMap &attribs) override;
 
+    egl::Error makeCurrent(egl::Surface *drawSurface,
+                           egl::Surface *readSurface,
+                           gl::Context *context) override;
+
     egl::ConfigSet generateConfigs() override;
 
-    bool testDeviceLost() override;
-    egl::Error restoreLostDevice(const egl::Display *display) override;
-
     bool isValidNativeWindow(EGLNativeWindowType window) const override;
-
-    DeviceImpl *createDevice() override;
-
-    egl::Error waitClient(const gl::Context *context) override;
-    egl::Error waitNative(const gl::Context *context, EGLint engine) override;
-
-    gl::Version getMaxSupportedESVersion() const override;
-
-    void destroyNativeContext(EGLContext context) override;
 
     // TODO(fjhenigman) Implement this.
     // Swap interval can be set globally or per drawable.
@@ -163,8 +148,6 @@ class DisplayOzone final : public DisplayEGL
   private:
     void generateExtensions(egl::DisplayExtensions *outExtensions) const override;
 
-    egl::Error makeCurrentSurfaceless(gl::Context *context) override;
-
     GLuint makeShader(GLuint type, const char *src);
     void drawBuffer(const gl::Context *context, Buffer *buffer);
     void drawWithTexture(const gl::Context *context, Buffer *buffer);
@@ -177,8 +160,6 @@ class DisplayOzone final : public DisplayEGL
                                 unsigned int tv_usec,
                                 void *data);
     void pageFlipHandler(unsigned int sequence, uint64_t tv);
-
-    std::shared_ptr<RendererEGL> mRenderer;
 
     gbm_device *mGBM;
     drmModeConnectorPtr mConnector;

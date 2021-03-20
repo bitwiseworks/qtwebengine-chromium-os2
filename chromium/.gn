@@ -8,11 +8,6 @@ import("//third_party/angle/dotfile_settings.gni")
 # The location of the build configuration file.
 buildconfig = "//build/config/BUILDCONFIG.gn"
 
-# The secondary source root is a parallel directory tree where
-# GN build files are placed when they can not be placed directly
-# in the source tree, e.g. for third party source trees.
-secondary_source = "//build/secondary/"
-
 # These arguments override the default values for items in a declare_args
 # block. "gn args" in turn can override these.
 #
@@ -34,20 +29,7 @@ default_args = {
   # also needs to be defined to src/ios/BUILD.gn (respectively removed from both
   # location when it is removed).
 
-  v8_extra_library_files = [
-    # Dependencies used by the extra libraries. Putting them here causes them
-    # to be executed first during snapshot creation.
-    "//third_party/blink/renderer/core/streams/CommonOperations.js",
-    "//third_party/blink/renderer/core/streams/CommonStrings.js",
-    "//third_party/blink/renderer/core/streams/SimpleQueue.js",
-
-    # Extra libraries.
-    "//third_party/blink/renderer/core/streams/ByteLengthQueuingStrategy.js",
-    "//third_party/blink/renderer/core/streams/CountQueuingStrategy.js",
-    "//third_party/blink/renderer/core/streams/ReadableStream.js",
-    "//third_party/blink/renderer/core/streams/WritableStream.js",
-    "//third_party/blink/renderer/core/streams/TransformStream.js",
-  ]
+  v8_extra_library_files = []
   v8_experimental_extra_library_files = []
   v8_enable_gdbjit = false
   v8_imminent_deprecation_warnings = false
@@ -74,14 +56,18 @@ default_args = {
 # their includes checked for proper dependencies when you run either
 # "gn check" or "gn gen --check".
 check_targets = [
+  "//android_webview/*",
   "//apps/*",
   "//ash/*",
   "//base/*",
   "//blink/*",
   "//build/*",
+  "//buildtools/*",
   "//cc/*",
 
-  #"//chrome/android/*",  # 13 errors
+  #"//chrome/*",          # Many errors: https://crbug.com/949535
+
+  "//chrome/android/*",
   "//chrome/app/*",
   "//chrome/app_shim/*",
 
@@ -108,7 +94,6 @@ check_targets = [
   "//chrome/browser/client_hints/*",
   "//chrome/browser/clipboard/*",
   "//chrome/browser/component_updater/*",
-  "//chrome/browser/conflicts/*",
   "//chrome/browser/consent_auditor/*",
   "//chrome/browser/content_settings/*",
   "//chrome/browser/crash_upload_list/*",
@@ -214,7 +199,6 @@ check_targets = [
   "//chrome/browser/tab_contents/*",
   "//chrome/browser/task_manager/*",
   "//chrome/browser/themes/*",
-  "//chrome/browser/thumbnails/*",
   "//chrome/browser/tracing/*",
   "//chrome/browser/translate/*",
   "//chrome/browser/ui/*",
@@ -232,12 +216,13 @@ check_targets = [
   "//chrome/build/*",
 
   #"//chrome/child/*",  # 1 error on Windows
+  "//chrome/chrome_elf/*",
   "//chrome/chrome_cleaner/*",
 
-  #"//chrome/chrome_watcher/*",  # 3 errors on Windows
   "//chrome/common/*",
 
-  #"//chrome/elevation_service/*",  # 1 error on Windows
+  "//chrome/elevation_service/*",
+
   #"//chrome/gpu/*",  # 7 errors
   "//chrome/installer/*",
 
@@ -248,14 +233,15 @@ check_targets = [
   #"//chrome/renderer/*",  # ~30 errors
   #"//chrome/service/*",  # 2 errors
   #"//chrome/services/*",  # ~30 errors
-  #"//chrome/test/*",  # ~3000 errors
+  #"//chrome/test/*",  # ~1900 errors
+  "//chrome/test/chromedriver",
   "//chrome/third_party/*",
   "//chrome/tools/*",
+  "//chrome/updater/*",
   "//chrome/utility/*",
 
   "//chromecast/*",
   "//chromeos/*",
-  "//chrome_elf/*",
   "//cloud_print/*",
   "//components/*",
   "//content/*",
@@ -270,13 +256,18 @@ check_targets = [
   "//extensions:extensions_browsertests",
   "//extensions:extensions_unittests",
   "//extensions/browser",
+  "//extensions/browser:core_api_provider",
   "//extensions/browser:browser_tests",
+  "//extensions/browser:test_support",
   "//extensions/browser:unit_tests",
+  "//extensions/browser/api:api_registration",
   "//extensions/browser/install:*",
+  "//extensions/browser/kiosk/*",
+  "//extensions/browser/guest_view/web_view/web_ui/*",
   "//extensions/common/*",
   "//extensions/components/javascript_dialog_extensions_client",
   "//extensions/components/native_app_window",
-  "//extensions/renderer:unit_tests",
+  "//extensions/renderer/*",
   "//extensions/shell/*",
   "//extensions/strings/*",
   "//fuchsia/*",
@@ -290,7 +281,9 @@ check_targets = [
   "//ipc/*",
 
   #"//jingle/*",
-  "//mash/*",
+
+  "//libassistant/communication/*",
+  "//libinteraction/*",
 
   "//media/*",
   "//mojo/*",
@@ -315,9 +308,9 @@ check_targets = [
   "//testing/*",
 
   #"//third_party/*",  # May not ever want this.
+  "//third_party:freetype_harfbuzz",
   "//third_party/Python-Markdown/*",
-
-  # "//third_party/SPIRV-Tools/*",  # 30ish errors
+  "//third_party/SPIRV-Tools/*",
   "//third_party/abseil-cpp/*",
   "//third_party/accessibility-audit/*",
   "//third_party/accessibility_test_framework/*",
@@ -337,9 +330,7 @@ check_targets = [
   "//third_party/android_swipe_refresh/*",
   "//third_party/android_system_sdk/*",
   "//third_party/android_testrunner/*",
-  "//third_party/android_tools/*",
-
-  # "//third_party/angle/*",  # 30ish errors
+  "//third_party/angle/*",
   "//third_party/apache-portable-runtime/*",
   "//third_party/apache_velocity/*",
   "//third_party/apache-win32/*",
@@ -348,10 +339,8 @@ check_targets = [
   "//third_party/appurify-python/*",
   "//third_party/arcore-android-sdk/*",
   "//third_party/ashmem/*",
-  "//third_party/auto/*",
   "//third_party/axe-core/*",
   "//third_party/bazel/*",
-  "//third_party/bidichecker/*",
   "//third_party/binutils/*",
   "//third_party/blanketjs/*",
 
@@ -366,7 +355,6 @@ check_targets = [
   "//third_party/byte_buddy/*",
   "//third_party/cacheinvalidation/*",
   "//third_party/catapult/*",
-  "//third_party/cct_dynamic_module/*",
 
   # "//third_party/ced/*",  # 6 errors
   "//third_party/chaijs/*",
@@ -381,7 +369,6 @@ check_targets = [
   # "//third_party/crashpad/*", 20ish errors
   "//third_party/crc32c/*",
   "//third_party/cros_system_api/*",
-  "//third_party/custom_tabs_client/*",
   "//third_party/cython/*",
   "//third_party/d3/*",
   "//third_party/dawn/*",
@@ -389,27 +376,20 @@ check_targets = [
   "//third_party/depot_tools/*",
   "//third_party/deqp/*",
   "//third_party/devscripts/*",
-  "//third_party/devtools-node-modules/*",
   "//third_party/dom_distiller_js/*",
   "//third_party/elfutils/*",
-  "//third_party/errorprone/*",
   "//third_party/espresso/*",
-  "//third_party/eu-strip/*",
   "//third_party/expat/*",
   "//third_party/eyesfree/*",
-  "//third_party/feed/*",
 
   # "//third_party/ffmpeg/*",  # android_cronet only https://crbug.com/898793
-  "//third_party/fips181/*",
   "//third_party/flac/*",
   "//third_party/flatbuffers/*",
-  "//third_party/flot/*",
   "//third_party/fontconfig/*",
   "//third_party/freetype/*",
   "//third_party/freetype2/*",
   "//third_party/freetype-android/*",
   "//third_party/fuchsia-sdk/*",
-  "//third_party/gestures/*",
   "//third_party/gif_player/*",
   "//third_party/glfw/*",
   "//third_party/glslang/*",
@@ -419,7 +399,6 @@ check_targets = [
   "//third_party/google_toolbox_for_mac/*",
   "//third_party/google-truth/*",
   "//third_party/gradle_wrapper/*",
-  "//third_party/gson/*",
   "//third_party/guava/*",
   "//third_party/gvr-android-keyboard/*",
   "//third_party/gvr-android-sdk/*",
@@ -437,11 +416,9 @@ check_targets = [
   "//third_party/ink/*",
   "//third_party/inspector_protocol/*",
   "//third_party/instrumented_libraries/*",
-  "//third_party/intellij/*",
   "//third_party/isimpledom/*",
   "//third_party/javax_inject/*",
   "//third_party/jinja2/*",
-  "//third_party/jmake/*",
   "//third_party/jsoncpp/*",
   "//third_party/jsr-305/*",
   "//third_party/jstemplate/*",
@@ -459,8 +436,7 @@ check_targets = [
   "//third_party/libc++abi/*",
   "//third_party/libcxx-pretty-printers/*",
   "//third_party/libdrm/*",
-  "//third_party/libevdev/*",
-  "//third_party/libexif/*",
+  "//third_party/libgav1/*",
   "//third_party/libjingle/*",
 
   # "//third_party/libjingle_xmpp/*",  # 30ish errors
@@ -493,7 +469,6 @@ check_targets = [
   "//third_party/logilab/*",
   "//third_party/lss/*",
   "//third_party/lzma_sdk/*",
-  "//third_party/mach_override/*",
   "//third_party/markdown/*",
   "//third_party/markupsafe/*",
   "//third_party/material_design_icons/*",
@@ -514,12 +489,9 @@ check_targets = [
   "//third_party/objenesis/*",
   "//third_party/ocmock/*",
   "//third_party/openh264/*",
-
-  # "//third_party/openmax_dl/*",  # 1 error
   "//third_party/openvr/*",
   "//third_party/opus/*",
   "//third_party/ots/*",
-  "//third_party/ow2_asm/*",
 
   # "//third_party/pdfium/*",  # 3 errors
   "//third_party/perfetto/*",
@@ -530,13 +502,12 @@ check_targets = [
   "//third_party/protobuf/*",
   "//third_party/pycoverage/*",
   "//third_party/pyelftools/*",
-  "//third_party/pyftpdlib/*",
   "//third_party/pyjson5/*",
   "//third_party/pylint/*",
   "//third_party/pymock/*",
   "//third_party/pystache/*",
   "//third_party/py_trace_event/*",
-  "//third_party/pywebsocket/*",
+  "//third_party/pywebsocket3/*",
   "//third_party/qcms/*",
   "//third_party/quic_trace/*",
   "//third_party/qunit/*",
@@ -549,8 +520,6 @@ check_targets = [
   "//third_party/s2cellid/*",
   "//third_party/safe_browsing/*",
   "//third_party/scan-build/*",
-
-  # "//third_party/sfntly/*",  # 20ish errors
   "//third_party/shaderc/*",
   "//third_party/simplejson/*",
   "//third_party/sinonjs/*",
@@ -564,8 +533,7 @@ check_targets = [
   "//third_party/sqlite4java/*",
   "//third_party/stp/*",
   "//third_party/sudden_motion_sensor/*",
-
-  # "//third_party/swiftshader/*",  # 1 error
+  "//third_party/swiftshader/*",
   "//third_party/swig/*",
   "//third_party/tcmalloc/*",
   "//third_party/test_fonts/*",
@@ -576,7 +544,6 @@ check_targets = [
   "//third_party/usrsctp/*",
   "//third_party/v4l-utils/*",
   "//third_party/valgrind/*",
-  "//third_party/visualmetrics/*",
   "//third_party/vulkan/*",
   "//third_party/vulkan-validation-layers/*",
 
@@ -595,7 +562,6 @@ check_targets = [
   "//third_party/wtl/*",
   "//third_party/xdg-utils/*",
   "//third_party/xstream/*",
-  "//third_party/yara/*",
   "//third_party/yasm/*",
   "//third_party/zlib/*",
   "//third_party/woff2/*",
@@ -605,6 +571,8 @@ check_targets = [
   "//url/*",
 
   #"//v8/*",  # Errors: https://bugs.chromium.org/p/v8/issues/detail?id=7330
+
+  "//weblayer/*",
 ]
 
 # These are the list of GN files that run exec_script. This whitelist exists

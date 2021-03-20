@@ -50,10 +50,11 @@ HitTestLayerRect* HitTestLayerRectList::item(unsigned index) {
 
 void HitTestLayerRectList::Append(DOMRectReadOnly* layer_rect,
                                   DOMRectReadOnly* hit_test_rect) {
-  list_.push_back(HitTestLayerRect::Create(layer_rect, hit_test_rect));
+  list_.push_back(
+      MakeGarbageCollected<HitTestLayerRect>(layer_rect, hit_test_rect));
 }
 
-void HitTestLayerRectList::Trace(blink::Visitor* visitor) {
+void HitTestLayerRectList::Trace(Visitor* visitor) {
   visitor->Trace(list_);
   ScriptWrappable::Trace(visitor);
 }

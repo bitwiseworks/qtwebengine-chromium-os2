@@ -33,6 +33,7 @@
 
 #include "third_party/blink/renderer/core/svg/properties/svg_property_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -41,11 +42,7 @@ class SVGInteger final : public SVGPropertyHelper<SVGInteger> {
   typedef void TearOffType;
   typedef int PrimitiveType;
 
-  static SVGInteger* Create(int value = 0) {
-    return MakeGarbageCollected<SVGInteger>(value);
-  }
-
-  explicit SVGInteger(int);
+  explicit SVGInteger(int = 0);
 
   virtual SVGInteger* Clone() const;
 
@@ -56,7 +53,7 @@ class SVGInteger final : public SVGPropertyHelper<SVGInteger> {
   SVGParsingError SetValueAsString(const String&);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -75,7 +72,12 @@ class SVGInteger final : public SVGPropertyHelper<SVGInteger> {
   int value_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGInteger);
+template <>
+struct DowncastTraits<SVGInteger> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGInteger::ClassType();
+  }
+};
 
 }  // namespace blink
 

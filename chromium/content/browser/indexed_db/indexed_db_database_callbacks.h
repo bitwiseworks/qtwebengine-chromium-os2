@@ -7,11 +7,14 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/browser_thread.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace content {
@@ -19,13 +22,15 @@ class IndexedDBContextImpl;
 class IndexedDBDatabaseError;
 class IndexedDBTransaction;
 
-// Expected to be constructed on IO thread and called/deleted from IDB sequence.
+// Expected to be constructed/called/deleted on IDB sequence.
 class CONTENT_EXPORT IndexedDBDatabaseCallbacks
     : public base::RefCounted<IndexedDBDatabaseCallbacks> {
  public:
   IndexedDBDatabaseCallbacks(
       scoped_refptr<IndexedDBContextImpl> context,
-      blink::mojom::IDBDatabaseCallbacksAssociatedPtrInfo callbacks_info);
+      mojo::PendingAssociatedRemote<blink::mojom::IDBDatabaseCallbacks>
+          callbacks_remote,
+      base::SequencedTaskRunner* idb_runner);
 
   virtual void OnForcedClose();
   virtual void OnVersionChange(int64_t old_version, int64_t new_version);
@@ -35,17 +40,17 @@ class CONTENT_EXPORT IndexedDBDatabaseCallbacks
   virtual void OnComplete(const IndexedDBTransaction& transaction);
   virtual void OnDatabaseChange(blink::mojom::IDBObserverChangesPtr changes);
 
+  void OnConnectionError();
+
  protected:
   virtual ~IndexedDBDatabaseCallbacks();
 
  private:
   friend class base::RefCounted<IndexedDBDatabaseCallbacks>;
 
-  class IOThreadHelper;
-
   bool complete_ = false;
   scoped_refptr<IndexedDBContextImpl> indexed_db_context_;
-  std::unique_ptr<IOThreadHelper, BrowserThread::DeleteOnIOThread> io_helper_;
+  mojo::AssociatedRemote<blink::mojom::IDBDatabaseCallbacks> callbacks_;
   SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBDatabaseCallbacks);

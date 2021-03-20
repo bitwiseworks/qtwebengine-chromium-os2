@@ -21,13 +21,14 @@
 
 #include "third_party/blink/renderer/core/svg/svg_filter_primitive_standard_attributes.h"
 
-#include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_filter_primitive.h"
+#include "third_party/blink/renderer/core/layout/svg/layout_svg_filter_primitive.h"
 #include "third_party/blink/renderer/core/svg/graphics/filters/svg_filter_builder.h"
 #include "third_party/blink/renderer/core/svg/svg_filter_element.h"
 #include "third_party/blink/renderer/core/svg/svg_length.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/graphics/filters/filter.h"
 #include "third_party/blink/renderer/platform/graphics/filters/filter_effect.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -37,25 +38,30 @@ SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(
     : SVGElement(tag_name, document),
       // Spec: If the x/y attribute is not specified, the effect is as if a
       // value of "0%" were specified.
-      x_(SVGAnimatedLength::Create(this,
-                                   svg_names::kXAttr,
-                                   SVGLengthMode::kWidth,
-                                   SVGLength::Initial::kPercent0)),
-      y_(SVGAnimatedLength::Create(this,
-                                   svg_names::kYAttr,
-                                   SVGLengthMode::kHeight,
-                                   SVGLength::Initial::kPercent0)),
+      x_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kXAttr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kPercent0)),
+      y_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kYAttr,
+          SVGLengthMode::kHeight,
+          SVGLength::Initial::kPercent0)),
       // Spec: If the width/height attribute is not specified, the effect is as
       // if a value of "100%" were specified.
-      width_(SVGAnimatedLength::Create(this,
-                                       svg_names::kWidthAttr,
-                                       SVGLengthMode::kWidth,
-                                       SVGLength::Initial::kPercent100)),
-      height_(SVGAnimatedLength::Create(this,
-                                        svg_names::kHeightAttr,
-                                        SVGLengthMode::kHeight,
-                                        SVGLength::Initial::kPercent100)),
-      result_(SVGAnimatedString::Create(this, svg_names::kResultAttr)) {
+      width_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kWidthAttr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kPercent100)),
+      height_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kHeightAttr,
+          SVGLengthMode::kHeight,
+          SVGLength::Initial::kPercent100)),
+      result_(MakeGarbageCollected<SVGAnimatedString>(this,
+                                                      svg_names::kResultAttr)) {
   AddToPropertyMap(x_);
   AddToPropertyMap(y_);
   AddToPropertyMap(width_);
@@ -63,7 +69,7 @@ SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(
   AddToPropertyMap(result_);
 }
 
-void SVGFilterPrimitiveStandardAttributes::Trace(blink::Visitor* visitor) {
+void SVGFilterPrimitiveStandardAttributes::Trace(Visitor* visitor) {
   visitor->Trace(x_);
   visitor->Trace(y_);
   visitor->Trace(width_);
@@ -105,7 +111,7 @@ void SVGFilterPrimitiveStandardAttributes::ChildrenChanged(
     const ChildrenChange& change) {
   SVGElement::ChildrenChanged(change);
 
-  if (!change.by_parser)
+  if (!change.ByParser())
     Invalidate();
 }
 
@@ -159,37 +165,36 @@ void SVGFilterPrimitiveStandardAttributes::SetStandardAttributes(
 }
 
 LayoutObject* SVGFilterPrimitiveStandardAttributes::CreateLayoutObject(
-    const ComputedStyle&) {
-  return new LayoutSVGResourceFilterPrimitive(this);
+    const ComputedStyle&,
+    LegacyLayout) {
+  return new LayoutSVGFilterPrimitive(this);
 }
 
 bool SVGFilterPrimitiveStandardAttributes::LayoutObjectIsNeeded(
     const ComputedStyle& style) const {
-  if (IsSVGFilterElement(parentNode()))
+  if (IsA<SVGFilterElement>(parentNode()))
     return SVGElement::LayoutObjectIsNeeded(style);
 
   return false;
 }
 
 void SVGFilterPrimitiveStandardAttributes::Invalidate() {
-  if (SVGFilterElement* filter = ToSVGFilterElementOrNull(parentElement()))
+  if (auto* filter = DynamicTo<SVGFilterElement>(parentElement()))
     filter->InvalidateFilterChain();
 }
 
 void SVGFilterPrimitiveStandardAttributes::PrimitiveAttributeChanged(
     const QualifiedName& attribute) {
-  if (SVGFilterElement* filter = ToSVGFilterElementOrNull(parentElement()))
+  if (auto* filter = DynamicTo<SVGFilterElement>(parentElement()))
     filter->PrimitiveAttributeChanged(*this, attribute);
 }
 
 void InvalidateFilterPrimitiveParent(SVGElement& element) {
-  Element* parent = element.parentElement();
-  if (!parent || !parent->IsSVGElement())
+  auto* svg_parent =
+      DynamicTo<SVGFilterPrimitiveStandardAttributes>(element.parentElement());
+  if (!svg_parent)
     return;
-  SVGElement& svgparent = ToSVGElement(*parent);
-  if (!IsSVGFilterPrimitiveStandardAttributes(svgparent))
-    return;
-  ToSVGFilterPrimitiveStandardAttributes(svgparent).Invalidate();
+  svg_parent->Invalidate();
 }
 
 }  // namespace blink

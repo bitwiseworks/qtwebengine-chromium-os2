@@ -10,27 +10,31 @@
 #include <utility>
 
 #include "base/base_switches.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/metrics/field_trial.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "content/browser/browser_child_process_host_impl.h"
 #include "content/browser/plugin_service_impl.h"
 #include "content/browser/renderer_host/render_message_filter.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/common/content_switches_internal.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
-#include "content/public/common/service_names.mojom.h"
 #include "ppapi/proxy/ppapi_messages.h"
+#include "ppapi/shared_impl/ppapi_permissions.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 #include "services/service_manager/sandbox/switches.h"
@@ -56,9 +60,15 @@ namespace content {
 class PpapiPluginSandboxedProcessLauncherDelegate
     : public content::SandboxedProcessLauncherDelegate {
  public:
-  explicit PpapiPluginSandboxedProcessLauncherDelegate(bool is_broker)
+  PpapiPluginSandboxedProcessLauncherDelegate(
+      bool is_broker,
+      const ppapi::PpapiPermissions& permissions)
 #if BUILDFLAG(USE_ZYGOTE_HANDLE) || defined(OS_WIN)
       : is_broker_(is_broker)
+#endif
+#if defined(OS_WIN)
+        ,
+        permissions_(permissions)
 #endif
   {
   }
@@ -84,7 +94,7 @@ class PpapiPluginSandboxedProcessLauncherDelegate
 
 #if !defined(NACL_WIN64)
     // We don't support PPAPI win32k lockdown prior to Windows 10.
-    if (base::win::GetVersion() >= base::win::VERSION_WIN10 &&
+    if (base::win::GetVersion() >= base::win::Version::WIN10 &&
         service_manager::IsWin32kLockdownEnabled()) {
       result =
           service_manager::SandboxWin::AddWin32kLockdownPolicy(policy, true);
@@ -96,6 +106,14 @@ class PpapiPluginSandboxedProcessLauncherDelegate
         browser_client->GetAppContainerSidForSandboxType(GetSandboxType());
     if (!sid.empty())
       service_manager::SandboxWin::AddAppContainerPolicy(policy, sid.c_str());
+
+    // Only Flash needs to be able to execute dynamic code.
+    if (!permissions_.HasPermission(ppapi::PERMISSION_FLASH)) {
+      sandbox::MitigationFlags flags = policy->GetDelayedProcessMitigations();
+      flags |= sandbox::MITIGATION_DYNAMIC_CODE_DISABLE;
+      if (sandbox::SBOX_ALL_OK != policy->SetDelayedProcessMitigations(flags))
+        return false;
+    }
 
     return true;
   }
@@ -116,14 +134,21 @@ class PpapiPluginSandboxedProcessLauncherDelegate
   service_manager::SandboxType GetSandboxType() override {
 #if defined(OS_WIN)
     if (is_broker_)
-      return service_manager::SANDBOX_TYPE_NO_SANDBOX;
+      return service_manager::SandboxType::kNoSandbox;
 #endif  // OS_WIN
-    return service_manager::SANDBOX_TYPE_PPAPI;
+    return service_manager::SandboxType::kPpapi;
   }
+
+#if defined(OS_MACOSX)
+  bool DisclaimResponsibility() override { return true; }
+#endif
 
  private:
 #if BUILDFLAG(USE_ZYGOTE_HANDLE) || defined(OS_WIN)
-  bool is_broker_;
+  const bool is_broker_;
+#endif
+#if defined(OS_WIN)
+  const ppapi::PpapiPermissions permissions_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(PpapiPluginSandboxedProcessLauncherDelegate);
@@ -133,9 +158,7 @@ class PpapiPluginProcessHost::PluginNetworkObserver
     : public network::NetworkConnectionTracker::NetworkConnectionObserver {
  public:
   explicit PluginNetworkObserver(PpapiPluginProcessHost* process_host)
-      : process_host_(process_host),
-        network_connection_tracker_(nullptr),
-        weak_factory_(this) {
+      : process_host_(process_host), network_connection_tracker_(nullptr) {
     GetNetworkConnectionTrackerFromUIThread(
         base::BindOnce(&PluginNetworkObserver::SetNetworkConnectionTracker,
                        weak_factory_.GetWeakPtr()));
@@ -161,7 +184,7 @@ class PpapiPluginProcessHost::PluginNetworkObserver
  private:
   PpapiPluginProcessHost* const process_host_;
   network::NetworkConnectionTracker* network_connection_tracker_;
-  base::WeakPtrFactory<PluginNetworkObserver> weak_factory_;
+  base::WeakPtrFactory<PluginNetworkObserver> weak_factory_{this};
 };
 
 PpapiPluginProcessHost::~PpapiPluginProcessHost() {
@@ -298,7 +321,7 @@ PpapiPluginProcessHost::PpapiPluginProcessHost(
   permissions_ = ppapi::PpapiPermissions::GetForCommandLine(base_permissions);
 
   process_ = std::make_unique<BrowserChildProcessHostImpl>(
-      PROCESS_TYPE_PPAPI_PLUGIN, this, mojom::kPluginServiceName);
+      PROCESS_TYPE_PPAPI_PLUGIN, this, ChildProcessHost::IpcMode::kNormal);
 
   host_impl_ = std::make_unique<BrowserPpapiHostImpl>(
       this, permissions_, info.name, info.path, profile_data_directory,
@@ -317,7 +340,7 @@ PpapiPluginProcessHost::PpapiPluginProcessHost(
 
 PpapiPluginProcessHost::PpapiPluginProcessHost() : is_broker_(true) {
   process_ = std::make_unique<BrowserChildProcessHostImpl>(
-      PROCESS_TYPE_PPAPI_BROKER, this, mojom::kPluginServiceName);
+      PROCESS_TYPE_PPAPI_BROKER, this, ChildProcessHost::IpcMode::kNormal);
 
   ppapi::PpapiPermissions permissions;  // No permissions.
   // The plugin name, path and profile data directory shouldn't be needed for
@@ -345,6 +368,11 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
 #if defined(OS_LINUX)
   int flags = plugin_launcher.empty() ? ChildProcessHost::CHILD_ALLOW_SELF :
                                         ChildProcessHost::CHILD_NORMAL;
+#elif defined(OS_MACOSX)
+  // Flash needs to JIT, but other plugins do not.
+  int flags = permissions_.HasPermission(ppapi::PERMISSION_FLASH)
+                  ? ChildProcessHost::CHILD_PLUGIN
+                  : ChildProcessHost::CHILD_NORMAL;
 #else
   int flags = ChildProcessHost::CHILD_NORMAL;
 #endif
@@ -407,10 +435,10 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
   const gfx::FontRenderParams font_params =
       gfx::GetFontRenderParams(gfx::FontRenderParamsQuery(), nullptr);
   cmd_line->AppendSwitchASCII(switches::kPpapiAntialiasedTextEnabled,
-                              base::IntToString(font_params.antialiasing));
+                              base::NumberToString(font_params.antialiasing));
   cmd_line->AppendSwitchASCII(
       switches::kPpapiSubpixelRenderingSetting,
-      base::IntToString(font_params.subpixel_rendering));
+      base::NumberToString(font_params.subpixel_rendering));
 #endif
 
   if (!plugin_launcher.empty())
@@ -420,7 +448,8 @@ bool PpapiPluginProcessHost::Init(const PepperPluginInfo& info) {
   // we are not using a plugin launcher - having a plugin launcher means we need
   // to use another process instead of just forking the zygote.
   process_->Launch(
-      std::make_unique<PpapiPluginSandboxedProcessLauncherDelegate>(is_broker_),
+      std::make_unique<PpapiPluginSandboxedProcessLauncherDelegate>(
+          is_broker_, permissions_),
       std::move(cmd_line), true);
   return true;
 }
@@ -456,7 +485,11 @@ void PpapiPluginProcessHost::OnProcessLaunched() {
 
 void PpapiPluginProcessHost::OnProcessCrashed(int exit_code) {
   VLOG(1) << "ppapi plugin process crashed.";
-  PluginServiceImpl::GetInstance()->RegisterPluginCrash(plugin_path_);
+  base::PostTask(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&PluginServiceImpl::RegisterPluginCrash,
+                     base::Unretained(PluginServiceImpl::GetInstance()),
+                     plugin_path_));
 }
 
 bool PpapiPluginProcessHost::OnMessageReceived(const IPC::Message& msg) {

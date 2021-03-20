@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/task_runner_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "ui/events/ozone/device/device_event.h"
@@ -35,10 +36,9 @@ void ScanDevicesOnWorkerThread(std::vector<base::FilePath>* result) {
 
 DeviceManagerManual::DeviceManagerManual()
     : blocking_task_runner_(
-          base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})),
+          base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})),
       watcher_(new base::FilePathWatcher,
-               base::OnTaskRunnerDeleter(blocking_task_runner_)),
-      weak_ptr_factory_(this) {}
+               base::OnTaskRunnerDeleter(blocking_task_runner_)) {}
 
 DeviceManagerManual::~DeviceManagerManual() {}
 
@@ -81,7 +81,7 @@ void DeviceManagerManual::StartWatching() {
 
 void DeviceManagerManual::InitiateScanDevices() {
   std::vector<base::FilePath>* result = new std::vector<base::FilePath>();
-  base::PostTaskWithTraitsAndReply(
+  base::ThreadPool::PostTaskAndReply(
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&ScanDevicesOnWorkerThread, result),

@@ -39,18 +39,17 @@ double Tween::CalculateValue(Tween::Type type, double state) {
         return pow(state * 2, 2) / 2.0;
       return 1.0 - (pow((state - 1.0) * 2, 2) / 2.0);
 
-    case FAST_IN_OUT:
-      return (pow(state - 0.5, 3) + 0.125) / 0.25;
+    case EASE_IN_OUT_2:
+      return gfx::CubicBezier(0.33, 0, 0.67, 1).Solve(state);
 
     case LINEAR:
       return state;
 
-    case EASE_OUT_SNAP:
-      state = 0.95 * (1.0 - pow(1.0 - state, 2));
-      return state;
-
     case EASE_OUT:
       return 1.0 - pow(1.0 - state, 2);
+
+    case EASE_OUT_2:
+      return gfx::CubicBezier(0.4, 0, 0, 1).Solve(state);
 
     case SMOOTH_IN_OUT:
       return sin(state);
@@ -110,7 +109,7 @@ SkColor Tween::ColorValueBetween(double value, SkColor start, SkColor target) {
   float target_a = SkColorGetA(target) / 255.f;
   float blended_a = FloatValueBetween(value, start_a, target_a);
   if (blended_a <= 0.f)
-    return SkColorSetARGB(0, 0, 0, 0);
+    return SK_ColorTRANSPARENT;
   blended_a = std::min(blended_a, 1.f);
 
   uint8_t blended_r =
@@ -188,6 +187,18 @@ gfx::Rect Tween::RectValueBetween(double value,
 }
 
 // static
+gfx::RectF Tween::RectFValueBetween(double value,
+                                    const gfx::RectF& start,
+                                    const gfx::RectF& target) {
+  const float x = FloatValueBetween(value, start.x(), target.x());
+  const float y = FloatValueBetween(value, start.y(), target.y());
+  const float right = FloatValueBetween(value, start.right(), target.right());
+  const float bottom =
+      FloatValueBetween(value, start.bottom(), target.bottom());
+  return gfx::RectF(x, y, right - x, bottom - y);
+}
+
+// static
 gfx::Transform Tween::TransformValueBetween(double value,
                                             const gfx::Transform& start,
                                             const gfx::Transform& target) {
@@ -201,9 +212,17 @@ gfx::Transform Tween::TransformValueBetween(double value,
   return to_return;
 }
 
-gfx::SizeF Tween::SizeValueBetween(double value,
-                                   const gfx::SizeF& start,
-                                   const gfx::SizeF& target) {
+gfx::Size Tween::SizeValueBetween(double value,
+                                  const gfx::Size& start,
+                                  const gfx::Size& target) {
+  return gfx::Size(
+      Tween::LinearIntValueBetween(value, start.width(), target.width()),
+      Tween::LinearIntValueBetween(value, start.height(), target.height()));
+}
+
+gfx::SizeF Tween::SizeFValueBetween(double value,
+                                    const gfx::SizeF& start,
+                                    const gfx::SizeF& target) {
   return gfx::SizeF(
       Tween::FloatValueBetween(value, start.width(), target.width()),
       Tween::FloatValueBetween(value, start.height(), target.height()));

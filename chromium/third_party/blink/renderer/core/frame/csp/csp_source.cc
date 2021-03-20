@@ -6,7 +6,7 @@
 
 #include "third_party/blink/public/platform/web_content_security_policy_struct.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/weborigin/known_ports.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
@@ -115,7 +115,7 @@ CSPSource::SchemeMatchingResult CSPSource::SchemeMatches(
 bool CSPSource::HostMatches(const String& host) const {
   bool match;
 
-  bool equal_hosts = host_ == host;
+  bool equal_hosts = EqualIgnoringASCIICase(host_, host);
   if (host_wildcard_ == kHasWildcard) {
     if (host_.IsEmpty()) {
       // host-part = "*"
@@ -168,7 +168,7 @@ CSPSource::PortMatchingResult CSPSource::PortMatches(
   is_scheme_http = scheme_.IsEmpty() ? policy_->ProtocolEqualsSelf("http")
                                      : EqualIgnoringASCIICase("http", scheme_);
 
-  if ((port_ == 80 || (port_ == 0 && is_scheme_http)) &&
+  if ((port_ == 80 || ((port_ == 0 || port_ == 443) && is_scheme_http)) &&
       (port == 443 || (port == 0 && DefaultPortForProtocol(protocol) == 443)))
     return PortMatchingResult::kMatchingUpgrade;
 
@@ -290,25 +290,20 @@ bool CSPSource::FirstSubsumesSecond(
   return true;
 }
 
-WebContentSecurityPolicySourceExpression
-CSPSource::ExposeForNavigationalChecks() const {
-  WebContentSecurityPolicySourceExpression source_expression;
-  source_expression.scheme = scheme_;
-  source_expression.host = host_;
-  source_expression.is_host_wildcard =
-      static_cast<WebWildcardDisposition>(host_wildcard_);
-  source_expression.port = port_;
-  source_expression.is_port_wildcard =
-      static_cast<WebWildcardDisposition>(port_wildcard_);
-  source_expression.path = path_;
-  return source_expression;
+network::mojom::blink::CSPSourcePtr CSPSource::ExposeForNavigationalChecks()
+    const {
+  return network::mojom::blink::CSPSource::New(
+      scheme_ ? scheme_ : "",                               // scheme
+      host_ ? host_ : "",                                   // host
+      port_ == 0 ? -1 /* url::PORT_UNSPECIFIED */ : port_,  // port
+      path_ ? path_ : "",                                   // path
+      host_wildcard_ == kHasWildcard,                       // is_host_wildcard
+      port_wildcard_ == kHasWildcard                        // is_port_wildcard
+  );
 }
 
-void CSPSource::Trace(blink::Visitor* visitor) {
+void CSPSource::Trace(Visitor* visitor) {
   visitor->Trace(policy_);
 }
-
-STATIC_ASSERT_ENUM(kWebWildcardDispositionNoWildcard, CSPSource::kNoWildcard);
-STATIC_ASSERT_ENUM(kWebWildcardDispositionHasWildcard, CSPSource::kHasWildcard);
 
 }  // namespace blink

@@ -19,10 +19,6 @@ class ListedElement;
 
 class AXValidationMessage final : public AXMockObject {
  public:
-  static AXValidationMessage* Create(AXObjectCacheImpl& ax_object_cache) {
-    return MakeGarbageCollected<AXValidationMessage>(ax_object_cache);
-  }
-
   explicit AXValidationMessage(AXObjectCacheImpl&);
   ~AXValidationMessage() override;
 
@@ -52,8 +48,6 @@ class AXValidationMessage final : public AXMockObject {
 
   DISALLOW_COPY_AND_ASSIGN(AXValidationMessage);
 };
-
-DEFINE_AX_OBJECT_TYPE_CASTS(AXValidationMessage, IsValidationMessage());
 
 }  // namespace blink
 

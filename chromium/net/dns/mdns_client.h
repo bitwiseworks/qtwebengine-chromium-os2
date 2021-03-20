@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
@@ -69,8 +70,8 @@ class NET_EXPORT MDnsTransaction {
     FLAG_MASK = (1 << 3) - 1,
   };
 
-  typedef base::Callback<void(Result, const RecordParsed*)>
-  ResultCallback;
+  typedef base::RepeatingCallback<void(Result, const RecordParsed*)>
+      ResultCallback;
 
   // Destroying the transaction cancels it.
   virtual ~MDnsTransaction() {}
@@ -170,7 +171,7 @@ class NET_EXPORT MDnsClient {
       int flags,
       const MDnsTransaction::ResultCallback& callback) = 0;
 
-  virtual bool StartListening(MDnsSocketFactory* factory) = 0;
+  virtual int StartListening(MDnsSocketFactory* factory) = 0;
 
   // Do not call this inside callbacks from related MDnsListener and
   // MDnsTransaction objects.

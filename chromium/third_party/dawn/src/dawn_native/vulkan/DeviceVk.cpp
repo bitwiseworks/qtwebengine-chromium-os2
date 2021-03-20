@@ -17,237 +17,163 @@
 #include "common/Platform.h"
 #include "dawn_native/BackendConnection.h"
 #include "dawn_native/Commands.h"
+#include "dawn_native/DynamicUploader.h"
+#include "dawn_native/Error.h"
 #include "dawn_native/ErrorData.h"
+#include "dawn_native/VulkanBackend.h"
+#include "dawn_native/vulkan/AdapterVk.h"
+#include "dawn_native/vulkan/BackendVk.h"
 #include "dawn_native/vulkan/BindGroupLayoutVk.h"
 #include "dawn_native/vulkan/BindGroupVk.h"
-#include "dawn_native/vulkan/BufferUploader.h"
 #include "dawn_native/vulkan/BufferVk.h"
 #include "dawn_native/vulkan/CommandBufferVk.h"
 #include "dawn_native/vulkan/ComputePipelineVk.h"
+#include "dawn_native/vulkan/DescriptorSetService.h"
 #include "dawn_native/vulkan/FencedDeleter.h"
-#include "dawn_native/vulkan/InputStateVk.h"
 #include "dawn_native/vulkan/PipelineLayoutVk.h"
 #include "dawn_native/vulkan/QueueVk.h"
 #include "dawn_native/vulkan/RenderPassCache.h"
-#include "dawn_native/vulkan/RenderPassDescriptorVk.h"
 #include "dawn_native/vulkan/RenderPipelineVk.h"
+#include "dawn_native/vulkan/ResourceMemoryAllocatorVk.h"
 #include "dawn_native/vulkan/SamplerVk.h"
 #include "dawn_native/vulkan/ShaderModuleVk.h"
+#include "dawn_native/vulkan/StagingBufferVk.h"
 #include "dawn_native/vulkan/SwapChainVk.h"
 #include "dawn_native/vulkan/TextureVk.h"
 #include "dawn_native/vulkan/VulkanError.h"
 
-#include <spirv-cross/spirv_cross.hpp>
-
-#include <iostream>
-
-#if DAWN_PLATFORM_LINUX
-const char kVulkanLibName[] = "libvulkan.so.1";
-#elif DAWN_PLATFORM_WINDOWS
-const char kVulkanLibName[] = "vulkan-1.dll";
-#else
-#    error "Unimplemented Vulkan backend platform"
-#endif
-
 namespace dawn_native { namespace vulkan {
 
-    BackendConnection* Connect(InstanceBase* instance) {
-        return nullptr;
-    }
-
-    // Device
-
-    Device::Device() : DeviceBase(nullptr) {
-        MaybeError maybeError = Initialize();
-
-        // In device initialization, the error callback can't have been set yet.
-        // So it's too early to use ConsumedError - consume the error manually.
-        if (DAWN_UNLIKELY(maybeError.IsError())) {
-            ErrorData* error = maybeError.AcquireError();
-            printf("Device initialization error: %s\n", error->GetMessage().c_str());
-            delete error;
-            ASSERT(false);
-            return;
+    Device::Device(Adapter* adapter, const DeviceDescriptor* descriptor)
+        : DeviceBase(adapter, descriptor) {
+        InitTogglesFromDriver();
+        if (descriptor != nullptr) {
+            ApplyToggleOverrides(descriptor);
         }
+
+        // Set the device as lost until successfully created.
+        mLossStatus = LossStatus::AlreadyLost;
     }
 
     MaybeError Device::Initialize() {
-        if (!mVulkanLib.Open(kVulkanLibName)) {
-            return DAWN_CONTEXT_LOST_ERROR(std::string("Couldn't open ") + kVulkanLibName);
-        }
+        // Copy the adapter's device info to the device so that we can change the "knobs"
+        mDeviceInfo = ToBackend(GetAdapter())->GetDeviceInfo();
 
         VulkanFunctions* functions = GetMutableFunctions();
-        DAWN_TRY(functions->LoadGlobalProcs(mVulkanLib));
+        *functions = ToBackend(GetAdapter())->GetBackend()->GetFunctions();
 
-        DAWN_TRY_ASSIGN(mGlobalInfo, GatherGlobalInfo(*this));
-
-        VulkanGlobalKnobs usedGlobalKnobs = {};
-        DAWN_TRY_ASSIGN(usedGlobalKnobs, CreateInstance());
-        *static_cast<VulkanGlobalKnobs*>(&mGlobalInfo) = usedGlobalKnobs;
-
-        DAWN_TRY(functions->LoadInstanceProcs(mInstance, mGlobalInfo));
-
-        if (usedGlobalKnobs.debugReport) {
-            DAWN_TRY(RegisterDebugReport());
-        }
-
-        std::vector<VkPhysicalDevice> physicalDevices;
-        DAWN_TRY_ASSIGN(physicalDevices, GetPhysicalDevices(*this));
-        if (physicalDevices.empty()) {
-            return DAWN_CONTEXT_LOST_ERROR("No physical devices");
-        }
-        // TODO(cwallez@chromium.org): Choose the physical device based on ???
-        mPhysicalDevice = physicalDevices[0];
-
-        DAWN_TRY_ASSIGN(mDeviceInfo, GatherDeviceInfo(*this, mPhysicalDevice));
+        VkPhysicalDevice physicalDevice = ToBackend(GetAdapter())->GetPhysicalDevice();
 
         VulkanDeviceKnobs usedDeviceKnobs = {};
-        DAWN_TRY_ASSIGN(usedDeviceKnobs, CreateDevice());
+        DAWN_TRY_ASSIGN(usedDeviceKnobs, CreateDevice(physicalDevice));
         *static_cast<VulkanDeviceKnobs*>(&mDeviceInfo) = usedDeviceKnobs;
 
         DAWN_TRY(functions->LoadDeviceProcs(mVkDevice, mDeviceInfo));
 
         GatherQueueFromDevice();
-
-        mBufferUploader = std::make_unique<BufferUploader>(this);
+        mDescriptorSetService = std::make_unique<DescriptorSetService>(this);
         mDeleter = std::make_unique<FencedDeleter>(this);
         mMapRequestTracker = std::make_unique<MapRequestTracker>(this);
-        mMemoryAllocator = std::make_unique<MemoryAllocator>(this);
         mRenderPassCache = std::make_unique<RenderPassCache>(this);
+        mResourceMemoryAllocator = std::make_unique<ResourceMemoryAllocator>(this);
 
-        mPCIInfo.deviceId = mDeviceInfo.properties.deviceID;
-        mPCIInfo.vendorId = mDeviceInfo.properties.vendorID;
-        mPCIInfo.name = mDeviceInfo.properties.deviceName;
+        mExternalMemoryService = std::make_unique<external_memory::Service>(this);
+        mExternalSemaphoreService = std::make_unique<external_semaphore::Service>(this);
+
+        DAWN_TRY(PrepareRecordingContext());
+
+        // The environment can request to use D32S8 or D24S8 when it's not available. Override
+        // the decision if it is not applicable.
+        ApplyDepth24PlusS8Toggle();
 
         return {};
     }
 
     Device::~Device() {
-        // Immediately forget about all pending commands so we don't try to submit them in Tick
-        FreeCommands(&mPendingCommands);
+        BaseDestructor();
 
-        if (fn.QueueWaitIdle(mQueue) != VK_SUCCESS) {
-            ASSERT(false);
+        mDescriptorSetService = nullptr;
+
+        // The frontend asserts DynamicUploader is destructed by the backend.
+        // It is usually destructed in Destroy(), but Destroy isn't always called if device
+        // initialization failed.
+        mDynamicUploader = nullptr;
+
+        // We still need to properly handle Vulkan object deletion even if the device has been lost,
+        // so the Deleter and vkDevice cannot be destroyed in Device::Destroy().
+        // We need handle deleting all child objects by calling Tick() again with a large serial to
+        // force all operations to look as if they were completed, and delete all objects before
+        // destroying the Deleter and vkDevice.
+        // The Deleter may be null if initialization failed.
+        if (mDeleter != nullptr) {
+            mCompletedSerial = std::numeric_limits<Serial>::max();
+            mDeleter->Tick(mCompletedSerial);
+            mDeleter = nullptr;
         }
-        CheckPassedFences();
-
-        // Make sure all fences are complete by explicitly waiting on them all
-        while (!mFencesInFlight.empty()) {
-            VkFence fence = mFencesInFlight.front().first;
-            Serial fenceSerial = mFencesInFlight.front().second;
-            ASSERT(fenceSerial > mCompletedSerial);
-
-            VkResult result = VK_TIMEOUT;
-            do {
-                result = fn.WaitForFences(mVkDevice, 1, &fence, true, UINT64_MAX);
-            } while (result == VK_TIMEOUT);
-            fn.DestroyFence(mVkDevice, fence, nullptr);
-
-            mFencesInFlight.pop();
-            mCompletedSerial = fenceSerial;
-        }
-
-        // Some operations might have been started since the last submit and waiting
-        // on a serial that doesn't have a corresponding fence enqueued. Force all
-        // operations to look as if they were completed (because they were).
-        mCompletedSerial = mLastSubmittedSerial + 1;
-        Tick();
-
-        ASSERT(mCommandsInFlight.Empty());
-        for (auto& commands : mUnusedCommands) {
-            FreeCommands(&commands);
-        }
-        mUnusedCommands.clear();
-
-        ASSERT(mWaitSemaphores.empty());
-
-        for (VkFence fence : mUnusedFences) {
-            fn.DestroyFence(mVkDevice, fence, nullptr);
-        }
-        mUnusedFences.clear();
-
-        // Free services explicitly so that they can free Vulkan objects before vkDestroyDevice
-        mBufferUploader = nullptr;
-        mDeleter = nullptr;
-        mMapRequestTracker = nullptr;
-        mMemoryAllocator = nullptr;
-
-        // The VkRenderPasses in the cache can be destroyed immediately since all commands referring
-        // to them are guaranteed to be finished executing.
-        mRenderPassCache = nullptr;
 
         // VkQueues are destroyed when the VkDevice is destroyed
+        // The VkDevice is needed to destroy child objects, so it must be destroyed last after all
+        // child objects have been deleted.
         if (mVkDevice != VK_NULL_HANDLE) {
             fn.DestroyDevice(mVkDevice, nullptr);
             mVkDevice = VK_NULL_HANDLE;
-        }
-
-        if (mDebugReportCallback != VK_NULL_HANDLE) {
-            fn.DestroyDebugReportCallbackEXT(mInstance, mDebugReportCallback, nullptr);
-            mDebugReportCallback = VK_NULL_HANDLE;
-        }
-
-        // VkPhysicalDevices are destroyed when the VkInstance is destroyed
-        if (mInstance != VK_NULL_HANDLE) {
-            fn.DestroyInstance(mInstance, nullptr);
-            mInstance = VK_NULL_HANDLE;
         }
     }
 
     ResultOrError<BindGroupBase*> Device::CreateBindGroupImpl(
         const BindGroupDescriptor* descriptor) {
-        return new BindGroup(this, descriptor);
+        return BindGroup::Create(this, descriptor);
     }
     ResultOrError<BindGroupLayoutBase*> Device::CreateBindGroupLayoutImpl(
         const BindGroupLayoutDescriptor* descriptor) {
-        return new BindGroupLayout(this, descriptor);
+        return BindGroupLayout::Create(this, descriptor);
     }
     ResultOrError<BufferBase*> Device::CreateBufferImpl(const BufferDescriptor* descriptor) {
-        return new Buffer(this, descriptor);
+        return Buffer::Create(this, descriptor);
     }
-    CommandBufferBase* Device::CreateCommandBuffer(CommandBufferBuilder* builder) {
-        return new CommandBuffer(builder);
+    CommandBufferBase* Device::CreateCommandBuffer(CommandEncoder* encoder,
+                                                   const CommandBufferDescriptor* descriptor) {
+        return CommandBuffer::Create(encoder, descriptor);
     }
     ResultOrError<ComputePipelineBase*> Device::CreateComputePipelineImpl(
         const ComputePipelineDescriptor* descriptor) {
-        return new ComputePipeline(this, descriptor);
-    }
-    InputStateBase* Device::CreateInputState(InputStateBuilder* builder) {
-        return new InputState(builder);
+        return ComputePipeline::Create(this, descriptor);
     }
     ResultOrError<PipelineLayoutBase*> Device::CreatePipelineLayoutImpl(
         const PipelineLayoutDescriptor* descriptor) {
-        return new PipelineLayout(this, descriptor);
+        return PipelineLayout::Create(this, descriptor);
     }
     ResultOrError<QueueBase*> Device::CreateQueueImpl() {
-        return new Queue(this);
-    }
-    RenderPassDescriptorBase* Device::CreateRenderPassDescriptor(
-        RenderPassDescriptorBuilder* builder) {
-        return new RenderPassDescriptor(builder);
+        return Queue::Create(this);
     }
     ResultOrError<RenderPipelineBase*> Device::CreateRenderPipelineImpl(
         const RenderPipelineDescriptor* descriptor) {
-        return new RenderPipeline(this, descriptor);
+        return RenderPipeline::Create(this, descriptor);
     }
     ResultOrError<SamplerBase*> Device::CreateSamplerImpl(const SamplerDescriptor* descriptor) {
-        return new Sampler(this, descriptor);
+        return Sampler::Create(this, descriptor);
     }
     ResultOrError<ShaderModuleBase*> Device::CreateShaderModuleImpl(
         const ShaderModuleDescriptor* descriptor) {
-        return new ShaderModule(this, descriptor);
+        return ShaderModule::Create(this, descriptor);
     }
-    SwapChainBase* Device::CreateSwapChain(SwapChainBuilder* builder) {
-        return new SwapChain(builder);
+    ResultOrError<SwapChainBase*> Device::CreateSwapChainImpl(
+        const SwapChainDescriptor* descriptor) {
+        return SwapChain::Create(this, descriptor);
+    }
+    ResultOrError<NewSwapChainBase*> Device::CreateSwapChainImpl(
+        Surface* surface,
+        NewSwapChainBase* previousSwapChain,
+        const SwapChainDescriptor* descriptor) {
+        return DAWN_VALIDATION_ERROR("New swapchains not implemented.");
     }
     ResultOrError<TextureBase*> Device::CreateTextureImpl(const TextureDescriptor* descriptor) {
-        return new Texture(this, descriptor);
+        return Texture::Create(this, descriptor);
     }
-
     ResultOrError<TextureViewBase*> Device::CreateTextureViewImpl(
         TextureBase* texture,
         const TextureViewDescriptor* descriptor) {
-        return new TextureView(texture, descriptor);
+        return TextureView::Create(texture, descriptor);
     }
 
     Serial Device::GetCompletedCommandSerial() const {
@@ -262,40 +188,38 @@ namespace dawn_native { namespace vulkan {
         return mLastSubmittedSerial + 1;
     }
 
-    void Device::TickImpl() {
+    MaybeError Device::TickImpl() {
         CheckPassedFences();
         RecycleCompletedCommands();
 
+        mDescriptorSetService->Tick(mCompletedSerial);
         mMapRequestTracker->Tick(mCompletedSerial);
-        mBufferUploader->Tick(mCompletedSerial);
-        mMemoryAllocator->Tick(mCompletedSerial);
+
+        // Uploader should tick before the resource allocator
+        // as it enqueues resources to be released.
+        mDynamicUploader->Deallocate(mCompletedSerial);
+
+        mResourceMemoryAllocator->Tick(mCompletedSerial);
 
         mDeleter->Tick(mCompletedSerial);
 
-        if (mPendingCommands.pool != VK_NULL_HANDLE) {
-            SubmitPendingCommands();
+        if (mRecordingContext.used) {
+            DAWN_TRY(SubmitPendingCommands());
         } else if (mCompletedSerial == mLastSubmittedSerial) {
             // If there's no GPU work in flight we still need to artificially increment the serial
             // so that CPU operations waiting on GPU completion can know they don't have to wait.
             mCompletedSerial++;
             mLastSubmittedSerial++;
         }
+
+        return {};
     }
 
-    const dawn_native::PCIInfo& Device::GetPCIInfo() const {
-        return mPCIInfo;
+    VkInstance Device::GetVkInstance() const {
+        return ToBackend(GetAdapter())->GetBackend()->GetVkInstance();
     }
-
     const VulkanDeviceInfo& Device::GetDeviceInfo() const {
         return mDeviceInfo;
-    }
-
-    VkInstance Device::GetInstance() const {
-        return mInstance;
-    }
-
-    VkPhysicalDevice Device::GetPhysicalDevice() const {
-        return mPhysicalDevice;
     }
 
     VkDevice Device::GetVkDevice() const {
@@ -314,12 +238,8 @@ namespace dawn_native { namespace vulkan {
         return mMapRequestTracker.get();
     }
 
-    MemoryAllocator* Device::GetMemoryAllocator() const {
-        return mMemoryAllocator.get();
-    }
-
-    BufferUploader* Device::GetBufferUploader() const {
-        return mBufferUploader.get();
+    DescriptorSetService* Device::GetDescriptorSetService() const {
+        return mDescriptorSetService.get();
     }
 
     FencedDeleter* Device::GetFencedDeleter() const {
@@ -330,155 +250,62 @@ namespace dawn_native { namespace vulkan {
         return mRenderPassCache.get();
     }
 
-    VkCommandBuffer Device::GetPendingCommandBuffer() {
-        if (mPendingCommands.pool == VK_NULL_HANDLE) {
-            mPendingCommands = GetUnusedCommands();
-
-            VkCommandBufferBeginInfo beginInfo;
-            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            beginInfo.pNext = nullptr;
-            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            beginInfo.pInheritanceInfo = nullptr;
-
-            if (fn.BeginCommandBuffer(mPendingCommands.commandBuffer, &beginInfo) != VK_SUCCESS) {
-                ASSERT(false);
-            }
-        }
-
-        return mPendingCommands.commandBuffer;
+    CommandRecordingContext* Device::GetPendingRecordingContext() {
+        ASSERT(mRecordingContext.commandBuffer != VK_NULL_HANDLE);
+        mRecordingContext.used = true;
+        return &mRecordingContext;
     }
 
-    void Device::SubmitPendingCommands() {
-        if (mPendingCommands.pool == VK_NULL_HANDLE) {
-            return;
+    MaybeError Device::SubmitPendingCommands() {
+        if (!mRecordingContext.used) {
+            return {};
         }
 
-        if (fn.EndCommandBuffer(mPendingCommands.commandBuffer) != VK_SUCCESS) {
-            ASSERT(false);
-        }
+        DAWN_TRY(CheckVkSuccess(fn.EndCommandBuffer(mRecordingContext.commandBuffer),
+                                "vkEndCommandBuffer"));
 
-        std::vector<VkPipelineStageFlags> dstStageMasks(mWaitSemaphores.size(),
+        std::vector<VkPipelineStageFlags> dstStageMasks(mRecordingContext.waitSemaphores.size(),
                                                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 
         VkSubmitInfo submitInfo;
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.pNext = nullptr;
-        submitInfo.waitSemaphoreCount = static_cast<uint32_t>(mWaitSemaphores.size());
-        submitInfo.pWaitSemaphores = mWaitSemaphores.data();
+        submitInfo.waitSemaphoreCount =
+            static_cast<uint32_t>(mRecordingContext.waitSemaphores.size());
+        submitInfo.pWaitSemaphores = AsVkArray(mRecordingContext.waitSemaphores.data());
         submitInfo.pWaitDstStageMask = dstStageMasks.data();
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &mPendingCommands.commandBuffer;
-        submitInfo.signalSemaphoreCount = 0;
-        submitInfo.pSignalSemaphores = 0;
+        submitInfo.pCommandBuffers = &mRecordingContext.commandBuffer;
+        submitInfo.signalSemaphoreCount =
+            static_cast<uint32_t>(mRecordingContext.signalSemaphores.size());
+        submitInfo.pSignalSemaphores = AsVkArray(mRecordingContext.signalSemaphores.data());
 
-        VkFence fence = GetUnusedFence();
-        if (fn.QueueSubmit(mQueue, 1, &submitInfo, fence) != VK_SUCCESS) {
-            ASSERT(false);
+        VkFence fence = VK_NULL_HANDLE;
+        DAWN_TRY_ASSIGN(fence, GetUnusedFence());
+        DAWN_TRY(CheckVkSuccess(fn.QueueSubmit(mQueue, 1, &submitInfo, fence), "vkQueueSubmit"));
+
+        // Enqueue the semaphores before incrementing the serial, so that they can be deleted as
+        // soon as the current submission is finished.
+        for (VkSemaphore semaphore : mRecordingContext.waitSemaphores) {
+            mDeleter->DeleteWhenUnused(semaphore);
+        }
+        for (VkSemaphore semaphore : mRecordingContext.signalSemaphores) {
+            mDeleter->DeleteWhenUnused(semaphore);
         }
 
         mLastSubmittedSerial++;
-        mCommandsInFlight.Enqueue(mPendingCommands, mLastSubmittedSerial);
-        mPendingCommands = CommandPoolAndBuffer();
         mFencesInFlight.emplace(fence, mLastSubmittedSerial);
 
-        for (VkSemaphore semaphore : mWaitSemaphores) {
-            mDeleter->DeleteWhenUnused(semaphore);
-        }
-        mWaitSemaphores.clear();
+        CommandPoolAndBuffer submittedCommands = {mRecordingContext.commandPool,
+                                                  mRecordingContext.commandBuffer};
+        mCommandsInFlight.Enqueue(submittedCommands, mLastSubmittedSerial);
+        mRecordingContext = CommandRecordingContext();
+        DAWN_TRY(PrepareRecordingContext());
+
+        return {};
     }
 
-    void Device::AddWaitSemaphore(VkSemaphore semaphore) {
-        mWaitSemaphores.push_back(semaphore);
-    }
-
-    ResultOrError<VulkanGlobalKnobs> Device::CreateInstance() {
-        VulkanGlobalKnobs usedKnobs = {};
-
-        std::vector<const char*> layersToRequest;
-        std::vector<const char*> extensionsToRequest;
-
-        // vktrace works by instering a layer, but we hide it behind a macro due to the vktrace
-        // layer crashes when used without vktrace server started, see this vktrace issue:
-        // https://github.com/LunarG/VulkanTools/issues/254
-        // Also it is good to put it in first position so that it doesn't see Vulkan calls inserted
-        // by other layers.
-#if defined(DAWN_USE_VKTRACE)
-        if (mGlobalInfo.vktrace) {
-            layersToRequest.push_back(kLayerNameLunargVKTrace);
-            usedKnobs.vktrace = true;
-        }
-#endif
-        // RenderDoc installs a layer at the system level for its capture but we don't want to use
-        // it unless we are debugging in RenderDoc so we hide it behind a macro.
-#if defined(DAWN_USE_RENDERDOC)
-        if (mGlobalInfo.renderDocCapture) {
-            layersToRequest.push_back(kLayerNameRenderDocCapture);
-            usedKnobs.renderDocCapture = true;
-        }
-#endif
-#if defined(DAWN_ENABLE_ASSERTS)
-        if (mGlobalInfo.standardValidation) {
-            layersToRequest.push_back(kLayerNameLunargStandardValidation);
-            usedKnobs.standardValidation = true;
-        }
-        if (mGlobalInfo.debugReport) {
-            extensionsToRequest.push_back(kExtensionNameExtDebugReport);
-            usedKnobs.debugReport = true;
-        }
-#endif
-        // Always request all extensions used to create VkSurfaceKHR objects so that they are
-        // always available for embedders looking to create VkSurfaceKHR on our VkInstance.
-        if (mGlobalInfo.macosSurface) {
-            extensionsToRequest.push_back(kExtensionNameMvkMacosSurface);
-            usedKnobs.macosSurface = true;
-        }
-        if (mGlobalInfo.surface) {
-            extensionsToRequest.push_back(kExtensionNameKhrSurface);
-            usedKnobs.surface = true;
-        }
-        if (mGlobalInfo.waylandSurface) {
-            extensionsToRequest.push_back(kExtensionNameKhrWaylandSurface);
-            usedKnobs.waylandSurface = true;
-        }
-        if (mGlobalInfo.win32Surface) {
-            extensionsToRequest.push_back(kExtensionNameKhrWin32Surface);
-            usedKnobs.win32Surface = true;
-        }
-        if (mGlobalInfo.xcbSurface) {
-            extensionsToRequest.push_back(kExtensionNameKhrXcbSurface);
-            usedKnobs.xcbSurface = true;
-        }
-        if (mGlobalInfo.xlibSurface) {
-            extensionsToRequest.push_back(kExtensionNameKhrXlibSurface);
-            usedKnobs.xlibSurface = true;
-        }
-
-        VkApplicationInfo appInfo;
-        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pNext = nullptr;
-        appInfo.pApplicationName = nullptr;
-        appInfo.applicationVersion = 0;
-        appInfo.pEngineName = nullptr;
-        appInfo.engineVersion = 0;
-        appInfo.apiVersion = VK_API_VERSION_1_0;
-
-        VkInstanceCreateInfo createInfo;
-        createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pNext = nullptr;
-        createInfo.flags = 0;
-        createInfo.pApplicationInfo = &appInfo;
-        createInfo.enabledLayerCount = static_cast<uint32_t>(layersToRequest.size());
-        createInfo.ppEnabledLayerNames = layersToRequest.data();
-        createInfo.enabledExtensionCount = static_cast<uint32_t>(extensionsToRequest.size());
-        createInfo.ppEnabledExtensionNames = extensionsToRequest.data();
-
-        DAWN_TRY(CheckVkSuccess(fn.CreateInstance(&createInfo, nullptr, &mInstance),
-                                "vkCreateInstance"));
-
-        return usedKnobs;
-    }
-
-    ResultOrError<VulkanDeviceKnobs> Device::CreateDevice() {
+    ResultOrError<VulkanDeviceKnobs> Device::CreateDevice(VkPhysicalDevice physicalDevice) {
         VulkanDeviceKnobs usedKnobs = {};
 
         float zero = 0.0f;
@@ -486,20 +313,68 @@ namespace dawn_native { namespace vulkan {
         std::vector<const char*> extensionsToRequest;
         std::vector<VkDeviceQueueCreateInfo> queuesToRequest;
 
+        if (mDeviceInfo.debugMarker) {
+            extensionsToRequest.push_back(kExtensionNameExtDebugMarker);
+            usedKnobs.debugMarker = true;
+        }
+        if (mDeviceInfo.externalMemory) {
+            extensionsToRequest.push_back(kExtensionNameKhrExternalMemory);
+            usedKnobs.externalMemory = true;
+        }
+        if (mDeviceInfo.externalMemoryFD) {
+            extensionsToRequest.push_back(kExtensionNameKhrExternalMemoryFD);
+            usedKnobs.externalMemoryFD = true;
+        }
+        if (mDeviceInfo.externalMemoryDmaBuf) {
+            extensionsToRequest.push_back(kExtensionNameExtExternalMemoryDmaBuf);
+            usedKnobs.externalMemoryDmaBuf = true;
+        }
+        if (mDeviceInfo.imageDrmFormatModifier) {
+            extensionsToRequest.push_back(kExtensionNameExtImageDrmFormatModifier);
+            usedKnobs.imageDrmFormatModifier = true;
+        }
+        if (mDeviceInfo.externalMemoryZirconHandle) {
+            extensionsToRequest.push_back(kExtensionNameFuchsiaExternalMemory);
+            usedKnobs.externalMemoryZirconHandle = true;
+        }
+        if (mDeviceInfo.externalSemaphore) {
+            extensionsToRequest.push_back(kExtensionNameKhrExternalSemaphore);
+            usedKnobs.externalSemaphore = true;
+        }
+        if (mDeviceInfo.externalSemaphoreFD) {
+            extensionsToRequest.push_back(kExtensionNameKhrExternalSemaphoreFD);
+            usedKnobs.externalSemaphoreFD = true;
+        }
+        if (mDeviceInfo.externalSemaphoreZirconHandle) {
+            extensionsToRequest.push_back(kExtensionNameFuchsiaExternalSemaphore);
+            usedKnobs.externalSemaphoreZirconHandle = true;
+        }
         if (mDeviceInfo.swapchain) {
             extensionsToRequest.push_back(kExtensionNameKhrSwapchain);
             usedKnobs.swapchain = true;
+        }
+        if (mDeviceInfo.maintenance1) {
+            extensionsToRequest.push_back(kExtensionNameKhrMaintenance1);
+            usedKnobs.maintenance1 = true;
         }
 
         // Always require independentBlend because it is a core Dawn feature
         usedKnobs.features.independentBlend = VK_TRUE;
         // Always require imageCubeArray because it is a core Dawn feature
         usedKnobs.features.imageCubeArray = VK_TRUE;
+        // Always require fragmentStoresAndAtomics because it is required by end2end tests.
+        usedKnobs.features.fragmentStoresAndAtomics = VK_TRUE;
+
+        if (IsExtensionEnabled(Extension::TextureCompressionBC)) {
+            ASSERT(ToBackend(GetAdapter())->GetDeviceInfo().features.textureCompressionBC ==
+                   VK_TRUE);
+            usedKnobs.features.textureCompressionBC = VK_TRUE;
+        }
 
         // Find a universal queue family
         {
-            constexpr uint32_t kUniversalFlags =
-                VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT;
+            // Note that GRAPHICS and COMPUTE imply TRANSFER so we don't need to check for it.
+            constexpr uint32_t kUniversalFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
             int universalQueueFamily = -1;
             for (unsigned int i = 0; i < mDeviceInfo.queueFamilies.size(); ++i) {
                 if ((mDeviceInfo.queueFamilies[i].queueFlags & kUniversalFlags) ==
@@ -510,7 +385,7 @@ namespace dawn_native { namespace vulkan {
             }
 
             if (universalQueueFamily == -1) {
-                return DAWN_CONTEXT_LOST_ERROR("No universal queue family");
+                return DAWN_INTERNAL_ERROR("No universal queue family");
             }
             mQueueFamily = static_cast<uint32_t>(universalQueueFamily);
         }
@@ -540,9 +415,11 @@ namespace dawn_native { namespace vulkan {
         createInfo.ppEnabledExtensionNames = extensionsToRequest.data();
         createInfo.pEnabledFeatures = &usedKnobs.features;
 
-        DAWN_TRY(CheckVkSuccess(fn.CreateDevice(mPhysicalDevice, &createInfo, nullptr, &mVkDevice),
+        DAWN_TRY(CheckVkSuccess(fn.CreateDevice(physicalDevice, &createInfo, nullptr, &mVkDevice),
                                 "vkCreateDevice"));
 
+        // Device created. Mark it as alive.
+        mLossStatus = LossStatus::Alive;
         return usedKnobs;
     }
 
@@ -550,41 +427,55 @@ namespace dawn_native { namespace vulkan {
         fn.GetDeviceQueue(mVkDevice, mQueueFamily, 0, &mQueue);
     }
 
-    MaybeError Device::RegisterDebugReport() {
-        VkDebugReportCallbackCreateInfoEXT createInfo;
-        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
-        createInfo.pNext = nullptr;
-        createInfo.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
-        createInfo.pfnCallback = Device::OnDebugReportCallback;
-        createInfo.pUserData = this;
+    void Device::InitTogglesFromDriver() {
+        // TODO(jiawei.shao@intel.com): tighten this workaround when this issue is fixed in both
+        // Vulkan SPEC and drivers.
+        SetToggle(Toggle::UseTemporaryBufferInCompressedTextureToTextureCopy, true);
 
-        return CheckVkSuccess(
-            fn.CreateDebugReportCallbackEXT(mInstance, &createInfo, nullptr, &mDebugReportCallback),
-            "vkCreateDebugReportcallback");
+        // By default try to use D32S8 for Depth24PlusStencil8
+        SetToggle(Toggle::VulkanUseD32S8, true);
     }
 
-    VKAPI_ATTR VkBool32 VKAPI_CALL
-    Device::OnDebugReportCallback(VkDebugReportFlagsEXT flags,
-                                  VkDebugReportObjectTypeEXT /*objectType*/,
-                                  uint64_t /*object*/,
-                                  size_t /*location*/,
-                                  int32_t /*messageCode*/,
-                                  const char* /*pLayerPrefix*/,
-                                  const char* pMessage,
-                                  void* /*pUserdata*/) {
-        std::cout << pMessage << std::endl;
-        ASSERT((flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) == 0);
+    void Device::ApplyDepth24PlusS8Toggle() {
+        VkPhysicalDevice physicalDevice = ToBackend(GetAdapter())->GetPhysicalDevice();
 
-        return VK_FALSE;
+        bool supportsD32s8 = false;
+        {
+            VkFormatProperties properties;
+            fn.GetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_D32_SFLOAT_S8_UINT,
+                                                 &properties);
+            supportsD32s8 =
+                properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        }
+
+        bool supportsD24s8 = false;
+        {
+            VkFormatProperties properties;
+            fn.GetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_D24_UNORM_S8_UINT,
+                                                 &properties);
+            supportsD24s8 =
+                properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        }
+
+        ASSERT(supportsD32s8 || supportsD24s8);
+
+        if (!supportsD24s8) {
+            SetToggle(Toggle::VulkanUseD32S8, true);
+        }
+        if (!supportsD32s8) {
+            SetToggle(Toggle::VulkanUseD32S8, false);
+        }
     }
 
     VulkanFunctions* Device::GetMutableFunctions() {
         return const_cast<VulkanFunctions*>(&fn);
     }
 
-    VkFence Device::GetUnusedFence() {
+    ResultOrError<VkFence> Device::GetUnusedFence() {
         if (!mUnusedFences.empty()) {
             VkFence fence = mUnusedFences.back();
+            DAWN_TRY(CheckVkSuccess(fn.ResetFences(mVkDevice, 1, &*fence), "vkResetFences"));
+
             mUnusedFences.pop_back();
             return fence;
         }
@@ -595,9 +486,8 @@ namespace dawn_native { namespace vulkan {
         createInfo.flags = 0;
 
         VkFence fence = VK_NULL_HANDLE;
-        if (fn.CreateFence(mVkDevice, &createInfo, nullptr, &fence) != VK_SUCCESS) {
-            ASSERT(false);
-        }
+        DAWN_TRY(CheckVkSuccess(fn.CreateFence(mVkDevice, &createInfo, nullptr, &*fence),
+                                "vkCreateFence"));
 
         return fence;
     }
@@ -607,7 +497,9 @@ namespace dawn_native { namespace vulkan {
             VkFence fence = mFencesInFlight.front().first;
             Serial fenceSerial = mFencesInFlight.front().second;
 
-            VkResult result = fn.GetFenceStatus(mVkDevice, fence);
+            VkResult result = VkResult::WrapUnsafe(
+                INJECT_ERROR_OR_RUN(fn.GetFenceStatus(mVkDevice, fence), VK_ERROR_DEVICE_LOST));
+            // TODO: Handle DeviceLost error.
             ASSERT(result == VK_SUCCESS || result == VK_NOT_READY);
 
             // Fence are added in order, so we can stop searching as soon
@@ -616,11 +508,7 @@ namespace dawn_native { namespace vulkan {
                 return;
             }
 
-            if (fn.ResetFences(mVkDevice, 1, &fence) != VK_SUCCESS) {
-                ASSERT(false);
-            }
             mUnusedFences.push_back(fence);
-
             mFencesInFlight.pop();
 
             ASSERT(fenceSerial > mCompletedSerial);
@@ -628,58 +516,308 @@ namespace dawn_native { namespace vulkan {
         }
     }
 
-    Device::CommandPoolAndBuffer Device::GetUnusedCommands() {
+    MaybeError Device::PrepareRecordingContext() {
+        ASSERT(!mRecordingContext.used);
+        ASSERT(mRecordingContext.commandBuffer == VK_NULL_HANDLE);
+        ASSERT(mRecordingContext.commandPool == VK_NULL_HANDLE);
+
+        // First try to recycle unused command pools.
         if (!mUnusedCommands.empty()) {
             CommandPoolAndBuffer commands = mUnusedCommands.back();
             mUnusedCommands.pop_back();
-            return commands;
+            DAWN_TRY(CheckVkSuccess(fn.ResetCommandPool(mVkDevice, commands.pool, 0),
+                                    "vkResetCommandPool"));
+
+            mRecordingContext.commandBuffer = commands.commandBuffer;
+            mRecordingContext.commandPool = commands.pool;
+        } else {
+            // Create a new command pool for our commands and allocate the command buffer.
+            VkCommandPoolCreateInfo createInfo;
+            createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            createInfo.pNext = nullptr;
+            createInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            createInfo.queueFamilyIndex = mQueueFamily;
+
+            DAWN_TRY(CheckVkSuccess(fn.CreateCommandPool(mVkDevice, &createInfo, nullptr,
+                                                         &*mRecordingContext.commandPool),
+                                    "vkCreateCommandPool"));
+
+            VkCommandBufferAllocateInfo allocateInfo;
+            allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocateInfo.pNext = nullptr;
+            allocateInfo.commandPool = mRecordingContext.commandPool;
+            allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocateInfo.commandBufferCount = 1;
+
+            DAWN_TRY(CheckVkSuccess(fn.AllocateCommandBuffers(mVkDevice, &allocateInfo,
+                                                              &mRecordingContext.commandBuffer),
+                                    "vkAllocateCommandBuffers"));
         }
 
-        CommandPoolAndBuffer commands;
+        // Start the recording of commands in the command buffer.
+        VkCommandBufferBeginInfo beginInfo;
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.pNext = nullptr;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        beginInfo.pInheritanceInfo = nullptr;
 
-        VkCommandPoolCreateInfo createInfo;
-        createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        createInfo.pNext = nullptr;
-        createInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        createInfo.queueFamilyIndex = mQueueFamily;
-
-        if (fn.CreateCommandPool(mVkDevice, &createInfo, nullptr, &commands.pool) != VK_SUCCESS) {
-            ASSERT(false);
-        }
-
-        VkCommandBufferAllocateInfo allocateInfo;
-        allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocateInfo.pNext = nullptr;
-        allocateInfo.commandPool = commands.pool;
-        allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocateInfo.commandBufferCount = 1;
-
-        if (fn.AllocateCommandBuffers(mVkDevice, &allocateInfo, &commands.commandBuffer) !=
-            VK_SUCCESS) {
-            ASSERT(false);
-        }
-
-        return commands;
+        return CheckVkSuccess(fn.BeginCommandBuffer(mRecordingContext.commandBuffer, &beginInfo),
+                              "vkBeginCommandBuffer");
     }
 
     void Device::RecycleCompletedCommands() {
         for (auto& commands : mCommandsInFlight.IterateUpTo(mCompletedSerial)) {
-            if (fn.ResetCommandPool(mVkDevice, commands.pool, 0) != VK_SUCCESS) {
-                ASSERT(false);
-            }
             mUnusedCommands.push_back(commands);
         }
         mCommandsInFlight.ClearUpTo(mCompletedSerial);
     }
 
-    void Device::FreeCommands(CommandPoolAndBuffer* commands) {
-        if (commands->pool != VK_NULL_HANDLE) {
-            fn.DestroyCommandPool(mVkDevice, commands->pool, nullptr);
-            commands->pool = VK_NULL_HANDLE;
+    ResultOrError<std::unique_ptr<StagingBufferBase>> Device::CreateStagingBuffer(size_t size) {
+        std::unique_ptr<StagingBufferBase> stagingBuffer =
+            std::make_unique<StagingBuffer>(size, this);
+        DAWN_TRY(stagingBuffer->Initialize());
+        return std::move(stagingBuffer);
+    }
+
+    MaybeError Device::CopyFromStagingToBuffer(StagingBufferBase* source,
+                                               uint64_t sourceOffset,
+                                               BufferBase* destination,
+                                               uint64_t destinationOffset,
+                                               uint64_t size) {
+        CommandRecordingContext* recordingContext = GetPendingRecordingContext();
+
+        // Insert memory barrier to ensure host write operations are made visible before
+        // copying from the staging buffer. However, this barrier can be removed (see note below).
+        //
+        // Note: Depending on the spec understanding, an explicit barrier may not be required when
+        // used with HOST_COHERENT as vkQueueSubmit does an implicit barrier between host and
+        // device. See "Availability, Visibility, and Domain Operations" in Vulkan spec for details.
+
+        // Insert pipeline barrier to ensure correct ordering with previous memory operations on the
+        // buffer.
+        ToBackend(destination)->TransitionUsageNow(recordingContext, wgpu::BufferUsage::CopyDst);
+
+        VkBufferCopy copy;
+        copy.srcOffset = sourceOffset;
+        copy.dstOffset = destinationOffset;
+        copy.size = size;
+
+        this->fn.CmdCopyBuffer(recordingContext->commandBuffer,
+                               ToBackend(source)->GetBufferHandle(),
+                               ToBackend(destination)->GetHandle(), 1, &copy);
+
+        return {};
+    }
+
+    MaybeError Device::ImportExternalImage(const ExternalImageDescriptor* descriptor,
+                                           ExternalMemoryHandle memoryHandle,
+                                           VkImage image,
+                                           const std::vector<ExternalSemaphoreHandle>& waitHandles,
+                                           VkSemaphore* outSignalSemaphore,
+                                           VkDeviceMemory* outAllocation,
+                                           std::vector<VkSemaphore>* outWaitSemaphores) {
+        const TextureDescriptor* textureDescriptor =
+            reinterpret_cast<const TextureDescriptor*>(descriptor->cTextureDescriptor);
+
+        // Check services support this combination of handle type / image info
+        if (!mExternalSemaphoreService->Supported()) {
+            return DAWN_VALIDATION_ERROR("External semaphore usage not supported");
+        }
+        if (!mExternalMemoryService->SupportsImportMemory(
+                VulkanImageFormat(this, textureDescriptor->format), VK_IMAGE_TYPE_2D,
+                VK_IMAGE_TILING_OPTIMAL,
+                VulkanImageUsage(textureDescriptor->usage,
+                                 GetValidInternalFormat(textureDescriptor->format)),
+                VK_IMAGE_CREATE_ALIAS_BIT_KHR)) {
+            return DAWN_VALIDATION_ERROR("External memory usage not supported");
         }
 
-        // Command buffers are implicitly destroyed when the command pool is.
-        commands->commandBuffer = VK_NULL_HANDLE;
+        // Create an external semaphore to signal when the texture is done being used
+        DAWN_TRY_ASSIGN(*outSignalSemaphore,
+                        mExternalSemaphoreService->CreateExportableSemaphore());
+
+        // Import the external image's memory
+        external_memory::MemoryImportParams importParams;
+        DAWN_TRY_ASSIGN(importParams,
+                        mExternalMemoryService->GetMemoryImportParams(descriptor, image));
+        DAWN_TRY_ASSIGN(*outAllocation,
+                        mExternalMemoryService->ImportMemory(memoryHandle, importParams, image));
+
+        // Import semaphores we have to wait on before using the texture
+        for (const ExternalSemaphoreHandle& handle : waitHandles) {
+            VkSemaphore semaphore = VK_NULL_HANDLE;
+            DAWN_TRY_ASSIGN(semaphore, mExternalSemaphoreService->ImportSemaphore(handle));
+            outWaitSemaphores->push_back(semaphore);
+        }
+
+        return {};
+    }
+
+    MaybeError Device::SignalAndExportExternalTexture(Texture* texture,
+                                                      ExternalSemaphoreHandle* outHandle) {
+        DAWN_TRY(ValidateObject(texture));
+
+        VkSemaphore outSignalSemaphore;
+        DAWN_TRY(texture->SignalAndDestroy(&outSignalSemaphore));
+
+        // This has to happen right after SignalAndDestroy, since the semaphore will be
+        // deleted when the fenced deleter runs after the queue submission
+        DAWN_TRY_ASSIGN(*outHandle, mExternalSemaphoreService->ExportSemaphore(outSignalSemaphore));
+
+        return {};
+    }
+
+    TextureBase* Device::CreateTextureWrappingVulkanImage(
+        const ExternalImageDescriptor* descriptor,
+        ExternalMemoryHandle memoryHandle,
+        const std::vector<ExternalSemaphoreHandle>& waitHandles) {
+        const TextureDescriptor* textureDescriptor =
+            reinterpret_cast<const TextureDescriptor*>(descriptor->cTextureDescriptor);
+
+        // Initial validation
+        if (ConsumedError(ValidateTextureDescriptor(this, textureDescriptor))) {
+            return nullptr;
+        }
+        if (ConsumedError(ValidateVulkanImageCanBeWrapped(this, textureDescriptor))) {
+            return nullptr;
+        }
+
+        VkSemaphore signalSemaphore = VK_NULL_HANDLE;
+        VkDeviceMemory allocation = VK_NULL_HANDLE;
+        std::vector<VkSemaphore> waitSemaphores;
+        waitSemaphores.reserve(waitHandles.size());
+
+        // Cleanup in case of a failure, the image creation doesn't acquire the external objects
+        // if a failure happems.
+        Texture* result = nullptr;
+        // TODO(crbug.com/1026480): Consolidate this into a single CreateFromExternal call.
+        if (ConsumedError(Texture::CreateFromExternal(this, descriptor, textureDescriptor,
+                                                      mExternalMemoryService.get()),
+                          &result) ||
+            ConsumedError(ImportExternalImage(descriptor, memoryHandle, result->GetHandle(),
+                                              waitHandles, &signalSemaphore, &allocation,
+                                              &waitSemaphores)) ||
+            ConsumedError(result->BindExternalMemory(descriptor, signalSemaphore, allocation,
+                                                     waitSemaphores))) {
+            // Delete the Texture if it was created
+            if (result != nullptr) {
+                delete result;
+            }
+
+            // Clear the signal semaphore
+            fn.DestroySemaphore(GetVkDevice(), signalSemaphore, nullptr);
+
+            // Clear image memory
+            fn.FreeMemory(GetVkDevice(), allocation, nullptr);
+
+            // Clear any wait semaphores we were able to import
+            for (VkSemaphore semaphore : waitSemaphores) {
+                fn.DestroySemaphore(GetVkDevice(), semaphore, nullptr);
+            }
+            return nullptr;
+        }
+
+        return result;
+    }
+
+    ResultOrError<ResourceMemoryAllocation> Device::AllocateMemory(
+        VkMemoryRequirements requirements,
+        bool mappable) {
+        return mResourceMemoryAllocator->Allocate(requirements, mappable);
+    }
+
+    void Device::DeallocateMemory(ResourceMemoryAllocation* allocation) {
+        mResourceMemoryAllocator->Deallocate(allocation);
+    }
+
+    int Device::FindBestMemoryTypeIndex(VkMemoryRequirements requirements, bool mappable) {
+        return mResourceMemoryAllocator->FindBestTypeIndex(requirements, mappable);
+    }
+
+    ResourceMemoryAllocator* Device::GetResourceMemoryAllocatorForTesting() const {
+        return mResourceMemoryAllocator.get();
+    }
+
+    MaybeError Device::WaitForIdleForDestruction() {
+        VkResult waitIdleResult = VkResult::WrapUnsafe(fn.QueueWaitIdle(mQueue));
+        // Ignore the result of QueueWaitIdle: it can return OOM which we can't really do anything
+        // about, Device lost, which means workloads running on the GPU are no longer accessible
+        // (so they are as good as waited on) or success.
+        DAWN_UNUSED(waitIdleResult);
+
+        CheckPassedFences();
+
+        // Make sure all fences are complete by explicitly waiting on them all
+        while (!mFencesInFlight.empty()) {
+            VkFence fence = mFencesInFlight.front().first;
+            Serial fenceSerial = mFencesInFlight.front().second;
+            ASSERT(fenceSerial > mCompletedSerial);
+
+            VkResult result = VkResult::WrapUnsafe(VK_TIMEOUT);
+            do {
+                result = VkResult::WrapUnsafe(
+                    INJECT_ERROR_OR_RUN(fn.WaitForFences(mVkDevice, 1, &*fence, true, UINT64_MAX),
+                                        VK_ERROR_DEVICE_LOST));
+            } while (result == VK_TIMEOUT);
+
+            // TODO: Handle errors
+            ASSERT(result == VK_SUCCESS);
+            fn.DestroyFence(mVkDevice, fence, nullptr);
+
+            mFencesInFlight.pop();
+            mCompletedSerial = fenceSerial;
+        }
+        return {};
+    }
+
+    void Device::Destroy() {
+        ASSERT(mLossStatus != LossStatus::AlreadyLost);
+
+        // Immediately tag the recording context as unused so we don't try to submit it in Tick.
+        mRecordingContext.used = false;
+        fn.DestroyCommandPool(mVkDevice, mRecordingContext.commandPool, nullptr);
+
+        for (VkSemaphore semaphore : mRecordingContext.waitSemaphores) {
+            fn.DestroySemaphore(mVkDevice, semaphore, nullptr);
+        }
+        mRecordingContext.waitSemaphores.clear();
+
+        for (VkSemaphore semaphore : mRecordingContext.signalSemaphores) {
+            fn.DestroySemaphore(mVkDevice, semaphore, nullptr);
+        }
+        mRecordingContext.signalSemaphores.clear();
+
+        // Some operations might have been started since the last submit and waiting
+        // on a serial that doesn't have a corresponding fence enqueued. Force all
+        // operations to look as if they were completed (because they were).
+        mCompletedSerial = mLastSubmittedSerial + 1;
+
+        // Assert that errors are device loss so that we can continue with destruction
+        AssertAndIgnoreDeviceLossError(TickImpl());
+
+        ASSERT(mCommandsInFlight.Empty());
+        for (const CommandPoolAndBuffer& commands : mUnusedCommands) {
+            fn.DestroyCommandPool(mVkDevice, commands.pool, nullptr);
+        }
+        mUnusedCommands.clear();
+
+        for (VkFence fence : mUnusedFences) {
+            fn.DestroyFence(mVkDevice, fence, nullptr);
+        }
+        mUnusedFences.clear();
+
+        // Free services explicitly so that they can free Vulkan objects before vkDestroyDevice
+        mDynamicUploader = nullptr;
+
+        // Releasing the uploader enqueues buffers to be released.
+        // Call Tick() again to clear them before releasing the deleter.
+        mDeleter->Tick(mCompletedSerial);
+
+        mMapRequestTracker = nullptr;
+
+        // The VkRenderPasses in the cache can be destroyed immediately since all commands referring
+        // to them are guaranteed to be finished executing.
+        mRenderPassCache = nullptr;
     }
 
 }}  // namespace dawn_native::vulkan

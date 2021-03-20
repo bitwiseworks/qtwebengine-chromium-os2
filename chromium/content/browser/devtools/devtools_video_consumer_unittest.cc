@@ -5,13 +5,17 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/memory/read_only_shared_memory_region.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "content/browser/devtools/devtools_video_consumer.h"
 #include "content/public/test/test_utils.h"
 #include "media/base/limits.h"
-#include "mojo/public/cpp/base/shared_memory_utils.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using testing::_;
@@ -33,17 +37,18 @@ constexpr viz::FrameSinkId kInitialFrameSinkId = viz::FrameSinkId(1, 1);
 // Mock for the FrameSinkVideoCapturer running in the VIZ process.
 class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
  public:
-  MockFrameSinkVideoCapturer() : binding_(this) {}
+  MockFrameSinkVideoCapturer() {}
 
-  bool is_bound() const { return binding_.is_bound(); }
+  bool is_bound() const { return receiver_.is_bound(); }
 
-  void Bind(viz::mojom::FrameSinkVideoCapturerRequest request) {
-    DCHECK(!binding_.is_bound());
-    binding_.Bind(std::move(request));
+  void Bind(
+      mojo::PendingReceiver<viz::mojom::FrameSinkVideoCapturer> receiver) {
+    DCHECK(!receiver_.is_bound());
+    receiver_.Bind(std::move(receiver));
   }
 
   void Reset() {
-    binding_.Close();
+    receiver_.reset();
     consumer_.reset();
   }
 
@@ -81,22 +86,25 @@ class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
     MockChangeTarget(frame_sink_id_);
   }
   MOCK_METHOD1(MockChangeTarget, void(const viz::FrameSinkId& frame_sink_id));
-  void Start(viz::mojom::FrameSinkVideoConsumerPtr consumer) final {
+  void Start(
+      mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumer> consumer) final {
     DCHECK(!consumer_);
-    consumer_ = std::move(consumer);
+    consumer_.Bind(std::move(consumer));
     MockStart(consumer_.get());
   }
   MOCK_METHOD1(MockStart, void(viz::mojom::FrameSinkVideoConsumer* consumer));
   void Stop() final {
-    binding_.Close();
+    receiver_.reset();
     consumer_.reset();
     MockStop();
   }
   MOCK_METHOD0(MockStop, void());
   MOCK_METHOD0(RequestRefreshFrame, void());
-  MOCK_METHOD2(CreateOverlay,
-               void(int32_t stacking_index,
-                    viz::mojom::FrameSinkVideoCaptureOverlayRequest request));
+  MOCK_METHOD2(
+      CreateOverlay,
+      void(int32_t stacking_index,
+           mojo::PendingReceiver<viz::mojom::FrameSinkVideoCaptureOverlay>
+               receiver));
 
   // Const accessors to get the cached variables.
   base::TimeDelta min_capture_period() const { return min_capture_period_; }
@@ -113,9 +121,9 @@ class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
   gfx::Size min_frame_size_;
   gfx::Size max_frame_size_;
   viz::FrameSinkId frame_sink_id_;
-  viz::mojom::FrameSinkVideoConsumerPtr consumer_;
+  mojo::Remote<viz::mojom::FrameSinkVideoConsumer> consumer_;
 
-  mojo::Binding<viz::mojom::FrameSinkVideoCapturer> binding_;
+  mojo::Receiver<viz::mojom::FrameSinkVideoCapturer> receiver_{this};
 };
 
 // Represents the FrameSinkVideoConsumerFrameCallbacks instance in the VIZ
@@ -123,17 +131,20 @@ class MockFrameSinkVideoCapturer : public viz::mojom::FrameSinkVideoCapturer {
 class MockFrameSinkVideoConsumerFrameCallbacks
     : public viz::mojom::FrameSinkVideoConsumerFrameCallbacks {
  public:
-  MockFrameSinkVideoConsumerFrameCallbacks() : binding_(this) {}
+  MockFrameSinkVideoConsumerFrameCallbacks() = default;
 
-  void Bind(viz::mojom::FrameSinkVideoConsumerFrameCallbacksRequest request) {
-    binding_.Bind(std::move(request));
+  void Bind(
+      mojo::PendingReceiver<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+          receiver) {
+    receiver_.Bind(std::move(receiver));
   }
 
   MOCK_METHOD0(Done, void());
   MOCK_METHOD1(ProvideFeedback, void(double utilization));
 
  private:
-  mojo::Binding<viz::mojom::FrameSinkVideoConsumerFrameCallbacks> binding_;
+  mojo::Receiver<viz::mojom::FrameSinkVideoConsumerFrameCallbacks> receiver_{
+      this};
 };
 
 // Mock for the classes like TracingHandler that receive frames from
@@ -143,7 +154,7 @@ class MockDevToolsVideoFrameReceiver {
   MOCK_METHOD1(OnFrameFromVideoConsumerMock,
                void(scoped_refptr<media::VideoFrame> frame));
 
-  MockDevToolsVideoFrameReceiver() : weak_factory_(this) {}
+  MockDevToolsVideoFrameReceiver() {}
 
   scoped_refptr<media::VideoFrame> TakeFrameAt(int i) {
     return std::move(frames_[i]);
@@ -162,12 +173,12 @@ class MockDevToolsVideoFrameReceiver {
 
  private:
   std::vector<scoped_refptr<media::VideoFrame>> frames_;
-  base::WeakPtrFactory<MockDevToolsVideoFrameReceiver> weak_factory_;
+  base::WeakPtrFactory<MockDevToolsVideoFrameReceiver> weak_factory_{this};
 };
 
 class DevToolsVideoConsumerTest : public testing::Test {
  public:
-  DevToolsVideoConsumerTest() : weak_factory_(this) {}
+  DevToolsVideoConsumerTest() {}
 
   void SetUp() override {
     consumer_ = receiver_.CreateDevToolsVideoConsumer();
@@ -176,8 +187,9 @@ class DevToolsVideoConsumerTest : public testing::Test {
   }
 
   void SimulateFrameCapture(base::ReadOnlySharedMemoryRegion data) {
-    viz::mojom::FrameSinkVideoConsumerFrameCallbacksPtr callbacks_ptr;
-    callbacks.Bind(mojo::MakeRequest(&callbacks_ptr));
+    mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+        callbacks_remote;
+    callbacks.Bind(callbacks_remote.InitWithNewPipeAndPassReceiver());
 
     media::mojom::VideoFrameInfoPtr info = media::mojom::VideoFrameInfo::New(
         base::TimeDelta(), base::Value(base::Value::Type::DICTIONARY), kFormat,
@@ -185,8 +197,8 @@ class DevToolsVideoConsumerTest : public testing::Test {
         nullptr);
 
     consumer_->OnFrameCaptured(std::move(data), std::move(info),
-                               gfx::Rect(kResolution), gfx::Rect(kResolution),
-                               std::move(callbacks_ptr));
+                               gfx::Rect(kResolution),
+                               std::move(callbacks_remote));
   }
 
   void StartCaptureWithMockCapturer() {
@@ -225,14 +237,13 @@ class DevToolsVideoConsumerTest : public testing::Test {
     return std::make_unique<viz::ClientFrameSinkVideoCapturer>(
         base::BindRepeating(
             [](base::WeakPtr<DevToolsVideoConsumerTest> self,
-               viz::mojom::FrameSinkVideoCapturerRequest request) {
-              self->capturer_.Bind(std::move(request));
-            },
+               mojo::PendingReceiver<viz::mojom::FrameSinkVideoCapturer>
+                   receiver) { self->capturer_.Bind(std::move(receiver)); },
             weak_factory_.GetWeakPtr()));
   }
 
-  base::test::ScopedTaskEnvironment task_environment_;
-  base::WeakPtrFactory<DevToolsVideoConsumerTest> weak_factory_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
+  base::WeakPtrFactory<DevToolsVideoConsumerTest> weak_factory_{this};
 };
 
 // Tests that the OnFrameFromVideoConsumer callbacks is called when
@@ -241,7 +252,7 @@ TEST_F(DevToolsVideoConsumerTest, CallbacksAreCalledWhenBufferValid) {
   // On valid buffer the |receiver_| gets a frame via OnFrameFromVideoConsumer.
   EXPECT_CALL(receiver_, OnFrameFromVideoConsumerMock(_)).Times(1);
 
-  auto region = mojo::CreateReadOnlySharedMemoryRegion(
+  auto region = base::ReadOnlySharedMemoryRegion::Create(
                     media::VideoFrame::AllocationSize(kFormat, kResolution))
                     .region;
   ASSERT_TRUE(region.IsValid());
@@ -269,7 +280,7 @@ TEST_F(DevToolsVideoConsumerTest, CallbackIsNotCalledWhenBufferIsTooSmall) {
   ASSERT_LT(too_few_number_of_bytes,
             media::VideoFrame::AllocationSize(kFormat, kResolution));
   auto region =
-      mojo::CreateReadOnlySharedMemoryRegion(too_few_number_of_bytes).region;
+      base::ReadOnlySharedMemoryRegion::Create(too_few_number_of_bytes).region;
   ASSERT_TRUE(region.IsValid());
   SimulateFrameCapture(std::move(region));
   base::RunLoop().RunUntilIdle();

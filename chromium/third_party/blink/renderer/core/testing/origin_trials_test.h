@@ -6,7 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TESTING_ORIGIN_TRIALS_TEST_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/idl_dictionary_base.h"
-#include "third_party/blink/renderer/core/testing/origin_trials_test_dictionary.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_origin_trials_test_dictionary.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
@@ -22,10 +22,6 @@ class OriginTrialsTest : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static OriginTrialsTest* Create() {
-    return MakeGarbageCollected<OriginTrialsTest>();
-  }
-
   OriginTrialsTest() = default;
   ~OriginTrialsTest() override = default;
 
@@ -33,7 +29,7 @@ class OriginTrialsTest : public ScriptWrappable {
   static bool staticAttribute() { return true; }
   bool normalMethod() { return true; }
   static bool staticMethod() { return true; }
-  static const unsigned short kConstant = 1;
+  static const uint16_t kConstant = 1;
 
   bool throwingAttribute(ScriptState*, ExceptionState&);
   OriginTrialsTestDictionary* getDictionaryMethod() {
@@ -46,7 +42,7 @@ class OriginTrialsTest : public ScriptWrappable {
   bool unconditionalMethod() { return true; }
   void unconditionalDictionaryMethod(const OriginTrialsTestDictionary* dict) {}
   static bool staticUnconditionalMethod() { return true; }
-  static const unsigned short kUnconditionalConstant = 99;
+  static const uint16_t kUnconditionalConstant = 99;
 
   bool secureUnconditionalAttribute() { return true; }
   static bool secureStaticUnconditionalAttribute() { return true; }
@@ -58,7 +54,13 @@ class OriginTrialsTest : public ScriptWrappable {
   bool secureMethod() { return true; }
   static bool secureStaticMethod() { return true; }
 
+  bool deprecationAttribute() { return true; }
+
   bool impliedAttribute() { return true; }
+
+  bool invalidOSAttribute() { return true; }
+
+  bool navigationMethod() { return true; }
 };
 
 }  // namespace blink

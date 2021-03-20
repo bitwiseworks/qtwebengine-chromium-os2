@@ -56,11 +56,11 @@ Crypto* DOMWindowCrypto::crypto(LocalDOMWindow& window) {
 
 Crypto* DOMWindowCrypto::crypto() const {
   if (!crypto_)
-    crypto_ = Crypto::Create();
+    crypto_ = MakeGarbageCollected<Crypto>();
   return crypto_.Get();
 }
 
-void DOMWindowCrypto::Trace(blink::Visitor* visitor) {
+void DOMWindowCrypto::Trace(Visitor* visitor) {
   visitor->Trace(crypto_);
   Supplement<LocalDOMWindow>::Trace(visitor);
 }

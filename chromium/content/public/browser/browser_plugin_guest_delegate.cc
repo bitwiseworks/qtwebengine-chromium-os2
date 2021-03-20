@@ -12,12 +12,8 @@ WebContents* BrowserPluginGuestDelegate::CreateNewGuestWindow(
   return nullptr;
 }
 
-WebContents* BrowserPluginGuestDelegate::GetOwnerWebContents() const {
+WebContents* BrowserPluginGuestDelegate::GetOwnerWebContents() {
   return nullptr;
-}
-
-bool BrowserPluginGuestDelegate::CanUseCrossProcessFrames() {
-  return true;
 }
 
 bool BrowserPluginGuestDelegate::CanBeEmbeddedInsideCrossProcessFrames() {
@@ -29,6 +25,11 @@ RenderWidgetHost* BrowserPluginGuestDelegate::GetOwnerRenderWidgetHost() {
 }
 
 SiteInstance* BrowserPluginGuestDelegate::GetOwnerSiteInstance() {
+  return nullptr;
+}
+
+RenderFrameHost* BrowserPluginGuestDelegate::GetEmbedderFrame() {
+  NOTREACHED();
   return nullptr;
 }
 

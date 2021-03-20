@@ -12,10 +12,10 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "media/filters/vp8_parser.h"
 #include "media/gpu/accelerated_video_decoder.h"
 #include "media/gpu/vp8_picture.h"
 #include "media/gpu/vp8_reference_frame_vector.h"
+#include "media/parsers/vp8_parser.h"
 
 namespace media {
 
@@ -53,7 +53,7 @@ class MEDIA_GPU_EXPORT VP8Decoder : public AcceleratedVideoDecoder {
     // as this method was called for them. Decoder may drop its reference
     // to |pic| after calling this method.
     // Return true if successful.
-    virtual bool OutputPicture(const scoped_refptr<VP8Picture>& pic) = 0;
+    virtual bool OutputPicture(scoped_refptr<VP8Picture> pic) = 0;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(VP8Accelerator);
@@ -63,15 +63,15 @@ class MEDIA_GPU_EXPORT VP8Decoder : public AcceleratedVideoDecoder {
   ~VP8Decoder() override;
 
   // AcceleratedVideoDecoder implementation.
-  void SetStream(int32_t id,
-                 const uint8_t* ptr,
-                 size_t size,
-                 const DecryptConfig* decrypt_config = nullptr) override;
+  void SetStream(int32_t id, const DecoderBuffer& decoder_buffer) override;
   bool Flush() override WARN_UNUSED_RESULT;
   void Reset() override;
   DecodeResult Decode() override WARN_UNUSED_RESULT;
   gfx::Size GetPicSize() const override;
+  gfx::Rect GetVisibleRect() const override;
+  VideoCodecProfile GetProfile() const override;
   size_t GetRequiredNumOfPictures() const override;
+  size_t GetNumReferenceFrames() const override;
 
  private:
   bool DecodeAndOutputCurrentFrame(scoped_refptr<VP8Picture> pic);

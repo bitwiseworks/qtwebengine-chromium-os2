@@ -33,8 +33,8 @@ proc database_cksum {db1} {
   sqlite3 dbtmp $db1
   foreach tbl [dbtmp eval {SELECT name FROM sqlite_master WHERE type='table'}] {
     set cols [list]
-    dbtmp eval "PRAGMA table_info = [sqlesc $tbl]" {
-      lappend cols "quote( $name )"
+    dbtmp eval "PRAGMA table_info = [sqlesc $tbl]" { 
+      lappend cols "quote( $name )" 
     }
     append txt [dbtmp eval \
       "SELECT [join $cols {||'.'||}] FROM [sqlesc $tbl] ORDER BY 1"
@@ -59,12 +59,12 @@ proc get_changeset {db1 db2} {
   return $bin
 }
 
-proc xConflict {args} {
-  return ""
+proc xConflict {args} { 
+  return "" 
 }
 
 proc do_changeset_test {tn sql1 sql2} {
-  forcedelete test.db123 test.db124
+  forcedelete test.db123 test.db124 
 
   sqlite3 db test.db123
   db eval $sql1

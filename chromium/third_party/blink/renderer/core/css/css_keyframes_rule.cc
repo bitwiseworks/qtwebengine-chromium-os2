@@ -26,12 +26,16 @@
 #include "third_party/blink/renderer/core/css/css_keyframes_rule.h"
 
 #include <memory>
+
 #include "third_party/blink/renderer/core/css/css_keyframe_rule.h"
 #include "third_party/blink/renderer/core/css/css_rule_list.h"
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -70,7 +74,7 @@ int StyleRuleKeyframes::FindKeyframeIndex(const String& key) const {
   return -1;
 }
 
-void StyleRuleKeyframes::TraceAfterDispatch(blink::Visitor* visitor) {
+void StyleRuleKeyframes::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(keyframes_);
   StyleRuleBase::TraceAfterDispatch(visitor);
 }
@@ -96,7 +100,7 @@ void CSSKeyframesRule::appendRule(const ExecutionContext* execution_context,
             keyframes_rule_->Keyframes().size());
 
   CSSStyleSheet* style_sheet = parentStyleSheet();
-  CSSParserContext* context = CSSParserContext::CreateWithStyleSheet(
+  auto* context = MakeGarbageCollected<CSSParserContext>(
       ParserContext(execution_context->GetSecureContextMode()), style_sheet);
   StyleRuleKeyframe* keyframe =
       CSSParser::ParseKeyframeRule(context, rule_text);
@@ -176,25 +180,27 @@ CSSKeyframeRule* CSSKeyframesRule::AnonymousIndexedGetter(
   const Document* parent_document =
       CSSStyleSheet::SingleOwnerDocument(parentStyleSheet());
   if (parent_document) {
-    UseCounter::Count(*parent_document,
-                      WebFeature::kCSSKeyframesRuleAnonymousIndexedGetter);
+    parent_document->CountUse(
+        WebFeature::kCSSKeyframesRuleAnonymousIndexedGetter);
   }
   return Item(index);
 }
 
 CSSRuleList* CSSKeyframesRule::cssRules() const {
-  if (!rule_list_cssom_wrapper_)
-    rule_list_cssom_wrapper_ = LiveCSSRuleList<CSSKeyframesRule>::Create(
-        const_cast<CSSKeyframesRule*>(this));
+  if (!rule_list_cssom_wrapper_) {
+    rule_list_cssom_wrapper_ =
+        MakeGarbageCollected<LiveCSSRuleList<CSSKeyframesRule>>(
+            const_cast<CSSKeyframesRule*>(this));
+  }
   return rule_list_cssom_wrapper_.Get();
 }
 
 void CSSKeyframesRule::Reattach(StyleRuleBase* rule) {
   DCHECK(rule);
-  keyframes_rule_ = ToStyleRuleKeyframes(rule);
+  keyframes_rule_ = To<StyleRuleKeyframes>(rule);
 }
 
-void CSSKeyframesRule::Trace(blink::Visitor* visitor) {
+void CSSKeyframesRule::Trace(Visitor* visitor) {
   CSSRule::Trace(visitor);
   visitor->Trace(child_rule_cssom_wrappers_);
   visitor->Trace(keyframes_rule_);

@@ -10,7 +10,7 @@
 
 #include "sdk/android/src/jni/pc/rtp_receiver.h"
 
-#include "sdk/android/generated_peerconnection_jni/jni/RtpReceiver_jni.h"
+#include "sdk/android/generated_peerconnection_jni/RtpReceiver_jni.h"
 #include "sdk/android/native_api/jni/java_types.h"
 #include "sdk/android/src/jni/jni_helpers.h"
 #include "sdk/android/src/jni/pc/media_stream_track.h"
@@ -72,15 +72,6 @@ static jlong JNI_RtpReceiver_GetTrack(JNIEnv* jni,
       reinterpret_cast<RtpReceiverInterface*>(j_rtp_receiver_pointer)
           ->track()
           .release());
-}
-
-static jboolean JNI_RtpReceiver_SetParameters(
-    JNIEnv* jni,
-    jlong j_rtp_receiver_pointer,
-    const JavaParamRef<jobject>& j_parameters) {
-  RtpParameters parameters = JavaToNativeRtpParameters(jni, j_parameters);
-  return reinterpret_cast<RtpReceiverInterface*>(j_rtp_receiver_pointer)
-      ->SetParameters(parameters);
 }
 
 static ScopedJavaLocalRef<jobject> JNI_RtpReceiver_GetParameters(

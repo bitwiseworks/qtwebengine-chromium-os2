@@ -124,7 +124,8 @@ void PepperWebSocketHost::DidReceiveArrayBuffer(
 
   // Send an IPC to transport received data.
   uint8_t* data = static_cast<uint8_t*>(binaryData.Data());
-  std::vector<uint8_t> array_message(data, data + binaryData.ByteLength());
+  std::vector<uint8_t> array_message(data,
+                                     data + binaryData.ByteLengthAsSizeT());
   host()->SendUnsolicitedReply(
       pp_resource(),
       PpapiPluginMsg_WebSocket_ReceiveBinaryReply(array_message));
@@ -142,8 +143,7 @@ void PepperWebSocketHost::DidReceiveMessageError() {
                                PpapiPluginMsg_WebSocket_ErrorReply());
 }
 
-void PepperWebSocketHost::DidUpdateBufferedAmount(
-    unsigned long buffered_amount) {
+void PepperWebSocketHost::DidUpdateBufferedAmount(uint64_t buffered_amount) {
   // Send an IPC to update buffered amount.
   host()->SendUnsolicitedReply(
       pp_resource(),
@@ -159,9 +159,9 @@ void PepperWebSocketHost::DidStartClosingHandshake() {
       PpapiPluginMsg_WebSocket_StateReply(PP_WEBSOCKETREADYSTATE_CLOSING));
 }
 
-void PepperWebSocketHost::DidClose(unsigned long unhandled_buffered_amount,
+void PepperWebSocketHost::DidClose(uint64_t unhandled_buffered_amount,
                                    ClosingHandshakeCompletionStatus status,
-                                   unsigned short code,
+                                   uint16_t code,
                                    const blink::WebString& reason) {
   if (connecting_) {
     connecting_ = false;
@@ -210,7 +210,8 @@ int32_t PepperWebSocketHost::OnHostMsgConnect(
     return PP_ERROR_BADARGUMENT;
   if (gurl.has_ref())
     return PP_ERROR_BADARGUMENT;
-  if (!net::IsPortAllowedForScheme(gurl.EffectiveIntPort(), gurl.scheme()))
+  if (!net::IsPortAllowedForScheme(gurl.EffectiveIntPort(),
+                                   gurl.scheme_piece()))
     return PP_ERROR_BADARGUMENT;
   WebURL web_url(gurl);
 

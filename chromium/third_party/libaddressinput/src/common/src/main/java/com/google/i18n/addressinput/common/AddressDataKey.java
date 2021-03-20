@@ -39,6 +39,11 @@ public enum AddressDataKey {
    */
   ID,
   /**
+   * The CLDR (Common Locale Data Repository) country code (http://goto/iii) for this region, if
+   * there is one. This value must be present.
+   */
+  ISOID,
+  /**
    * The key of the region, unique to its parent. If there is an accepted abbreviation for this
    * region, then the key will be set to this and name will be set to the local name for this
    * region. If there is no accepted abbreviation, then this key will be the local name and there

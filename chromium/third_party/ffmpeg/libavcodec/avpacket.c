@@ -54,7 +54,7 @@ AVPacket *av_packet_alloc(void)
     if (!pkt)
         return pkt;
 
-    av_packet_unref(pkt);
+    av_init_packet(pkt);
 
     return pkt;
 }
@@ -112,7 +112,7 @@ int av_grow_packet(AVPacket *pkt, int grow_by)
     av_assert0((unsigned)pkt->size <= INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE);
     if ((unsigned)grow_by >
         INT_MAX - (pkt->size + AV_INPUT_BUFFER_PADDING_SIZE))
-        return -1;
+        return AVERROR(ENOMEM);
 
     new_size = pkt->size + grow_by + AV_INPUT_BUFFER_PADDING_SIZE;
     if (pkt->buf) {
@@ -124,7 +124,7 @@ int av_grow_packet(AVPacket *pkt, int grow_by)
         } else {
             data_offset = pkt->data - pkt->buf->data;
             if (data_offset > INT_MAX - new_size)
-                return -1;
+                return AVERROR(ENOMEM);
         }
 
         if (new_size + data_offset > pkt->buf->size) {
@@ -522,11 +522,12 @@ fail:
 
 int av_packet_unpack_dictionary(const uint8_t *data, int size, AVDictionary **dict)
 {
-    const uint8_t *end = data + size;
+    const uint8_t *end;
     int ret = 0;
 
     if (!dict || !data || !size)
         return ret;
+    end = data + size;
     if (size && end[-1])
         return AVERROR_INVALIDDATA;
     while (data < end) {
@@ -616,6 +617,7 @@ int av_packet_ref(AVPacket *dst, const AVPacket *src)
         ret = packet_alloc(&dst->buf, src->size);
         if (ret < 0)
             goto fail;
+        av_assert1(!src->size || src->data);
         if (src->size)
             memcpy(dst->buf->data, src->data, src->size);
 
@@ -668,6 +670,7 @@ int av_packet_make_refcounted(AVPacket *pkt)
     ret = packet_alloc(&pkt->buf, pkt->size);
     if (ret < 0)
         return ret;
+    av_assert1(!pkt->size || pkt->data);
     if (pkt->size)
         memcpy(pkt->buf->data, pkt->data, pkt->size);
 
@@ -687,6 +690,7 @@ int av_packet_make_writable(AVPacket *pkt)
     ret = packet_alloc(&buf, pkt->size);
     if (ret < 0)
         return ret;
+    av_assert1(!pkt->size || pkt->data);
     if (pkt->size)
         memcpy(buf->data, pkt->data, pkt->size);
 
@@ -734,6 +738,28 @@ int ff_side_data_set_encoder_stats(AVPacket *pkt, int quality, int64_t *error, i
     side_data[5] = error_count;
     for (i = 0; i<error_count; i++)
         AV_WL64(side_data+8 + 8*i , error[i]);
+
+    return 0;
+}
+
+int ff_side_data_set_prft(AVPacket *pkt, int64_t timestamp)
+{
+    AVProducerReferenceTime *prft;
+    uint8_t *side_data;
+    int side_data_size;
+
+    side_data = av_packet_get_side_data(pkt, AV_PKT_DATA_PRFT, &side_data_size);
+    if (!side_data) {
+        side_data_size = sizeof(AVProducerReferenceTime);
+        side_data = av_packet_new_side_data(pkt, AV_PKT_DATA_PRFT, side_data_size);
+    }
+
+    if (!side_data || side_data_size < sizeof(AVProducerReferenceTime))
+        return AVERROR(ENOMEM);
+
+    prft = (AVProducerReferenceTime *)side_data;
+    prft->wallclock = timestamp;
+    prft->flags = 0;
 
     return 0;
 }

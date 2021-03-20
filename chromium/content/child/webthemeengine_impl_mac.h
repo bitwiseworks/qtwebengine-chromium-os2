@@ -9,7 +9,15 @@
 
 namespace content {
 
-class WebThemeEngineImpl : public blink::WebThemeEngine {
+class WebThemeEngineMac : public blink::WebThemeEngine {
+ public:
+  ~WebThemeEngineMac() override {}
+
+  blink::ForcedColors GetForcedColors() const override;
+  void SetForcedColors(const blink::ForcedColors forced_colors) override;
+
+ private:
+  blink::ForcedColors forced_colors_ = blink::ForcedColors::kNone;
 };
 
 }  // namespace content

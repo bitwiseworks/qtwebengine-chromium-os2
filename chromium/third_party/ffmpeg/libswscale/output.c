@@ -410,7 +410,8 @@ static void yuv2nv12cX_c(SwsContext *c, const int16_t *chrFilter, int chrFilterS
     const uint8_t *chrDither = c->chrDither8;
     int i;
 
-    if (dstFormat == AV_PIX_FMT_NV12)
+    if (dstFormat == AV_PIX_FMT_NV12 ||
+        dstFormat == AV_PIX_FMT_NV24)
         for (i=0; i<chrDstW; i++) {
             int u = chrDither[i & 7] << 12;
             int v = chrDither[(i + 3) & 7] << 12;
@@ -629,28 +630,28 @@ yuv2mono_2_c_template(SwsContext *c, const int16_t *buf[2],
         }
         c->dither_error[0][i] = err;
     } else {
-    for (i = 0; i < dstW; i += 8) {
-        int Y, acc = 0;
+        for (i = 0; i < dstW; i += 8) {
+            int Y, acc = 0;
 
-        Y = (buf0[i + 0] * yalpha1 + buf1[i + 0] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[0]);
-        Y = (buf0[i + 1] * yalpha1 + buf1[i + 1] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[1]);
-        Y = (buf0[i + 2] * yalpha1 + buf1[i + 2] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[2]);
-        Y = (buf0[i + 3] * yalpha1 + buf1[i + 3] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[3]);
-        Y = (buf0[i + 4] * yalpha1 + buf1[i + 4] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[4]);
-        Y = (buf0[i + 5] * yalpha1 + buf1[i + 5] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[5]);
-        Y = (buf0[i + 6] * yalpha1 + buf1[i + 6] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[6]);
-        Y = (buf0[i + 7] * yalpha1 + buf1[i + 7] * yalpha) >> 19;
-        accumulate_bit(acc, Y + d128[7]);
+            Y = (buf0[i + 0] * yalpha1 + buf1[i + 0] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[0]);
+            Y = (buf0[i + 1] * yalpha1 + buf1[i + 1] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[1]);
+            Y = (buf0[i + 2] * yalpha1 + buf1[i + 2] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[2]);
+            Y = (buf0[i + 3] * yalpha1 + buf1[i + 3] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[3]);
+            Y = (buf0[i + 4] * yalpha1 + buf1[i + 4] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[4]);
+            Y = (buf0[i + 5] * yalpha1 + buf1[i + 5] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[5]);
+            Y = (buf0[i + 6] * yalpha1 + buf1[i + 6] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[6]);
+            Y = (buf0[i + 7] * yalpha1 + buf1[i + 7] * yalpha) >> 19;
+            accumulate_bit(acc, Y + d128[7]);
 
-        output_pixel(*dest++, acc);
-    }
+            output_pixel(*dest++, acc);
+        }
     }
 }
 
@@ -686,19 +687,19 @@ yuv2mono_1_c_template(SwsContext *c, const int16_t *buf0,
         }
         c->dither_error[0][i] = err;
     } else {
-    for (i = 0; i < dstW; i += 8) {
-        int acc = 0;
-        accumulate_bit(acc, ((buf0[i + 0] + 64) >> 7) + d128[0]);
-        accumulate_bit(acc, ((buf0[i + 1] + 64) >> 7) + d128[1]);
-        accumulate_bit(acc, ((buf0[i + 2] + 64) >> 7) + d128[2]);
-        accumulate_bit(acc, ((buf0[i + 3] + 64) >> 7) + d128[3]);
-        accumulate_bit(acc, ((buf0[i + 4] + 64) >> 7) + d128[4]);
-        accumulate_bit(acc, ((buf0[i + 5] + 64) >> 7) + d128[5]);
-        accumulate_bit(acc, ((buf0[i + 6] + 64) >> 7) + d128[6]);
-        accumulate_bit(acc, ((buf0[i + 7] + 64) >> 7) + d128[7]);
+        for (i = 0; i < dstW; i += 8) {
+            int acc = 0;
+            accumulate_bit(acc, ((buf0[i + 0] + 64) >> 7) + d128[0]);
+            accumulate_bit(acc, ((buf0[i + 1] + 64) >> 7) + d128[1]);
+            accumulate_bit(acc, ((buf0[i + 2] + 64) >> 7) + d128[2]);
+            accumulate_bit(acc, ((buf0[i + 3] + 64) >> 7) + d128[3]);
+            accumulate_bit(acc, ((buf0[i + 4] + 64) >> 7) + d128[4]);
+            accumulate_bit(acc, ((buf0[i + 5] + 64) >> 7) + d128[5]);
+            accumulate_bit(acc, ((buf0[i + 6] + 64) >> 7) + d128[6]);
+            accumulate_bit(acc, ((buf0[i + 7] + 64) >> 7) + d128[7]);
 
-        output_pixel(*dest++, acc);
-    }
+            output_pixel(*dest++, acc);
+        }
     }
 }
 
@@ -853,11 +854,6 @@ yuv2422_1_c_template(SwsContext *c, const int16_t *buf0,
                 V  = av_clip_uint8(V);
             }
 
-            Y1 = av_clip_uint8(Y1);
-            Y2 = av_clip_uint8(Y2);
-            U  = av_clip_uint8(U);
-            V  = av_clip_uint8(V);
-
             output_pixels(i * 4, Y1, U, Y2, V);
         }
     } else {
@@ -874,11 +870,6 @@ yuv2422_1_c_template(SwsContext *c, const int16_t *buf0,
                 U  = av_clip_uint8(U);
                 V  = av_clip_uint8(V);
             }
-
-            Y1 = av_clip_uint8(Y1);
-            Y2 = av_clip_uint8(Y2);
-            U  = av_clip_uint8(U);
-            V  = av_clip_uint8(V);
 
             output_pixels(i * 4, Y1, U, Y2, V);
         }
@@ -913,25 +904,28 @@ yuv2ya16_X_c_template(SwsContext *c, const int16_t *lumFilter,
 
     for (i = 0; i < dstW; i++) {
         int j;
-        int Y = 1 << 18;
-        int64_t A = 0xffff<<14;
+        int Y = -0x40000000;
+        int A = 0xffff;
 
         for (j = 0; j < lumFilterSize; j++)
             Y += lumSrc[j][i] * lumFilter[j];
 
         Y >>= 15;
+        Y += (1<<3) + 0x8000;
         Y = av_clip_uint16(Y);
 
         if (hasAlpha) {
+            A = -0x40000000 + (1<<14);
             for (j = 0; j < lumFilterSize; j++)
                 A += alpSrc[j][i] * lumFilter[j];
 
             A >>= 15;
+            A += 0x8000;
             A = av_clip_uint16(A);
         }
 
         output_pixel(&dest[2 * i    ], Y);
-        output_pixel(&dest[2 * i + 1], hasAlpha ? A : 65535);
+        output_pixel(&dest[2 * i + 1], A);
     }
 }
 
@@ -2099,7 +2093,7 @@ yuv2rgb_full_1_c_template(SwsContext *c, const int16_t *buf0,
     if (uvalpha < 2048) {
         int A = 0; //init to silence warning
         for (i = 0; i < dstW; i++) {
-            int Y = buf0[i] << 2;
+            int Y = buf0[i] * 4;
             int U = (ubuf0[i] - (128<<7)) * 4;
             int V = (vbuf0[i] - (128<<7)) * 4;
 
@@ -2116,9 +2110,9 @@ yuv2rgb_full_1_c_template(SwsContext *c, const int16_t *buf0,
         const int16_t *ubuf1 = ubuf[1], *vbuf1 = vbuf[1];
         int A = 0; //init to silence warning
         for (i = 0; i < dstW; i++) {
-            int Y = buf0[i] << 2;
-            int U = (ubuf0[i] + ubuf1[i] - (128<<8)) << 1;
-            int V = (vbuf0[i] + vbuf1[i] - (128<<8)) << 1;
+            int Y = buf0[i] * 4;
+            int U = (ubuf0[i] + ubuf1[i] - (128<<8)) * 2;
+            int V = (vbuf0[i] + vbuf1[i] - (128<<8)) * 2;
 
             if (hasAlpha) {
                 A = (abuf0[i] + 64) >> 7;
@@ -2506,7 +2500,8 @@ av_cold void ff_sws_init_output_funcs(SwsContext *c,
     } else {
         *yuv2plane1 = yuv2plane1_8_c;
         *yuv2planeX = yuv2planeX_8_c;
-        if (dstFormat == AV_PIX_FMT_NV12 || dstFormat == AV_PIX_FMT_NV21)
+        if (dstFormat == AV_PIX_FMT_NV12 || dstFormat == AV_PIX_FMT_NV21 ||
+            dstFormat == AV_PIX_FMT_NV24 || dstFormat == AV_PIX_FMT_NV42)
             *yuv2nv12cX = yuv2nv12cX_c;
     }
 

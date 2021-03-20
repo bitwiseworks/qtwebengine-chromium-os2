@@ -24,10 +24,10 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_AREA_ELEMENT_H_
 
 #include <memory>
-#include "third_party/blink/public/platform/web_focus_type.h"
+#include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
+#include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 
 namespace blink {
 
@@ -38,8 +38,6 @@ class CORE_EXPORT HTMLAreaElement final : public HTMLAnchorElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(HTMLAreaElement);
-
   explicit HTMLAreaElement(Document&);
 
   bool IsDefault() const { return shape_ == kDefault; }
@@ -51,9 +49,9 @@ class CORE_EXPORT HTMLAreaElement final : public HTMLAnchorElement {
   // specified container object, e.g.  the rectangle of the default shape will
   // be the border box rect of the container object, and effective zoom factor
   // of the container object will be applied on non-default shape.
-  bool PointInArea(const LayoutPoint&,
+  bool PointInArea(const PhysicalOffset&,
                    const LayoutObject* container_object) const;
-  LayoutRect ComputeAbsoluteRect(const LayoutObject* container_object) const;
+  PhysicalRect ComputeAbsoluteRect(const LayoutObject* container_object) const;
   Path GetPath(const LayoutObject* container_object) const;
 
   // The parent map's image.
@@ -68,7 +66,7 @@ class CORE_EXPORT HTMLAreaElement final : public HTMLAnchorElement {
   bool IsFocusableStyle() const override;
   void UpdateFocusAppearanceWithOptions(SelectionBehaviorOnFocus,
                                         const FocusOptions*) override;
-  void SetFocused(bool, WebFocusType) override;
+  void SetFocused(bool, mojom::blink::FocusType) override;
 
   enum Shape { kDefault, kPoly, kRect, kCircle };
   void InvalidateCachedPath();

@@ -10,6 +10,7 @@
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/current_module.h"
 #include "base/win/scoped_co_mem.h"
@@ -52,8 +53,7 @@ bool PathProviderWin(int key, FilePath* result) {
       cur = FilePath(system_buffer);
       break;
     case base::DIR_PROGRAM_FILESX86:
-      if (base::win::OSInfo::GetInstance()->architecture() !=
-          base::win::OSInfo::X86_ARCHITECTURE) {
+      if (win::OSInfo::GetArchitecture() != win::OSInfo::X86_ARCHITECTURE) {
         if (FAILED(SHGetFolderPath(NULL, CSIDL_PROGRAM_FILESX86, NULL,
                                    SHGFP_TYPE_CURRENT, system_buffer)))
           return false;
@@ -102,8 +102,8 @@ bool PathProviderWin(int key, FilePath* result) {
       cur = FilePath(system_buffer);
       break;
     case base::DIR_START_MENU:
-      if (FAILED(SHGetFolderPath(NULL, CSIDL_PROGRAMS, NULL,
-                                 SHGFP_TYPE_CURRENT, system_buffer)))
+      if (FAILED(SHGetFolderPath(NULL, CSIDL_PROGRAMS, NULL, SHGFP_TYPE_CURRENT,
+                                 system_buffer)))
         return false;
       cur = FilePath(system_buffer);
       break;
@@ -134,7 +134,7 @@ bool PathProviderWin(int key, FilePath* result) {
       break;
     }
     case base::DIR_APP_SHORTCUTS: {
-      if (win::GetVersion() < win::VERSION_WIN8)
+      if (win::GetVersion() < win::Version::WIN8)
         return false;
 
       base::win::ScopedCoMem<wchar_t> path_buf;
@@ -142,7 +142,7 @@ bool PathProviderWin(int key, FilePath* result) {
                                       &path_buf)))
         return false;
 
-      cur = FilePath(string16(path_buf));
+      cur = FilePath(path_buf.get());
       break;
     }
     case base::DIR_USER_DESKTOP:
@@ -172,12 +172,13 @@ bool PathProviderWin(int key, FilePath* result) {
                 .Append(FILE_PATH_LITERAL("Internet Explorer"))
                 .Append(FILE_PATH_LITERAL("Quick Launch"));
       break;
-    case base::DIR_TASKBAR_PINS:
+    case base::DIR_TASKBAR_PINS: {
       if (!PathService::Get(base::DIR_USER_QUICK_LAUNCH, &cur))
         return false;
       cur = cur.Append(FILE_PATH_LITERAL("User Pinned"))
                 .Append(FILE_PATH_LITERAL("TaskBar"));
       break;
+    }
     case base::DIR_IMPLICIT_APP_SHORTCUTS:
       if (!PathService::Get(base::DIR_USER_QUICK_LAUNCH, &cur))
         return false;
@@ -185,8 +186,8 @@ bool PathProviderWin(int key, FilePath* result) {
                 .Append(FILE_PATH_LITERAL("ImplicitAppShortcuts"));
       break;
     case base::DIR_WINDOWS_FONTS:
-      if (FAILED(SHGetFolderPath(
-              NULL, CSIDL_FONTS, NULL, SHGFP_TYPE_CURRENT, system_buffer))) {
+      if (FAILED(SHGetFolderPath(NULL, CSIDL_FONTS, NULL, SHGFP_TYPE_CURRENT,
+                                 system_buffer))) {
         return false;
       }
       cur = FilePath(system_buffer);

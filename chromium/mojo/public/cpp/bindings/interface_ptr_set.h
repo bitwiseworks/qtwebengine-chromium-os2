@@ -8,6 +8,7 @@
 #include <map>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
@@ -20,8 +21,8 @@ using InterfacePtrSetElementId = size_t;
 
 namespace internal {
 
-// TODO(blundell): This class should be rewritten to be structured
-// similarly to BindingSet if possible, with PtrSet owning its
+// TODO(https://crbug.com/965668): This class should be rewritten to be
+// structured similarly to BindingSet if possible, with PtrSet owning its
 // Elements and those Elements calling back into PtrSet on connection
 // error.
 template <typename Interface, template <typename> class Ptr>
@@ -88,9 +89,8 @@ class PtrSet {
  private:
   class Element {
    public:
-    explicit Element(Ptr<Interface> ptr)
-        : ptr_(std::move(ptr)), weak_ptr_factory_(this) {
-      ptr_.set_connection_error_handler(base::Bind(&DeleteElement, this));
+    explicit Element(Ptr<Interface> ptr) : ptr_(std::move(ptr)) {
+      ptr_.set_connection_error_handler(base::BindOnce(&DeleteElement, this));
     }
 
     ~Element() {}
@@ -117,7 +117,7 @@ class PtrSet {
     static void DeleteElement(Element* element) { delete element; }
 
     Ptr<Interface> ptr_;
-    base::WeakPtrFactory<Element> weak_ptr_factory_;
+    base::WeakPtrFactory<Element> weak_ptr_factory_{this};
 
     DISALLOW_COPY_AND_ASSIGN(Element);
   };
@@ -132,9 +132,13 @@ class PtrSet {
 
 }  // namespace internal
 
+// DEPRECATED: Do not introduce new uses of this type. Instead use the
+// RemoteSet type defined in remote_set.h.
 template <typename Interface>
 using InterfacePtrSet = internal::PtrSet<Interface, InterfacePtr>;
 
+// DEPRECATED: Do not introduce new uses of this type. Instead use the
+// AssociatedRemoteSet type defined in remote_set.h.
 template <typename Interface>
 using AssociatedInterfacePtrSet =
     internal::PtrSet<Interface, AssociatedInterfacePtr>;

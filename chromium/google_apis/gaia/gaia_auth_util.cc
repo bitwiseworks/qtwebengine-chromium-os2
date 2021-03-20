@@ -8,15 +8,16 @@
 
 #include <memory>
 
+#include "base/base64url.h"
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/supports_user_data.h"
 #include "base/values.h"
 #include "google_apis/gaia/gaia_urls.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request.h"
+#include "google_apis/gaia/oauth2_mint_token_consent_result.pb.h"
 #include "url/gurl.h"
 
 namespace gaia {
@@ -24,9 +25,8 @@ namespace gaia {
 namespace {
 
 const char kGmailDomain[] = "gmail.com";
+const char kGoogleDomain[] = "google.com";
 const char kGooglemailDomain[] = "googlemail.com";
-
-const void* const kURLRequestUserDataKey = &kURLRequestUserDataKey;
 
 std::string CanonicalizeEmailImpl(const std::string& email_address,
                                   bool change_googlemail_to_gmail) {
@@ -46,13 +46,6 @@ std::string CanonicalizeEmailImpl(const std::string& email_address,
   VLOG(1) << "Canonicalized " << email_address << " to " << new_email;
   return new_email;
 }
-
-class GaiaURLRequestUserData : public base::SupportsUserData::Data {
- public:
-  static std::unique_ptr<base::SupportsUserData::Data> Create() {
-    return std::make_unique<GaiaURLRequestUserData>();
-  }
-};
 
 }  // namespace
 
@@ -105,6 +98,10 @@ std::string ExtractDomainName(const std::string& email_address) {
   return std::string();
 }
 
+bool IsGoogleInternalAccountEmail(const std::string& email) {
+  return ExtractDomainName(SanitizeEmail(email)) == kGoogleDomain;
+}
+
 bool IsGaiaSignonRealm(const GURL& url) {
   if (!url.SchemeIsCryptographic())
     return false;
@@ -123,7 +120,7 @@ bool ParseListAccountsData(const std::string& data,
     signed_out_accounts->clear();
 
   // Parse returned data and make sure we have data.
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data);
   if (!value)
     return false;
 
@@ -140,7 +137,7 @@ bool ParseListAccountsData(const std::string& data,
   // account in the list is the primary account.
   for (size_t i = 0; i < account_list->GetSize(); ++i) {
     base::ListValue* account;
-    if (account_list->GetList(i, &account) && account != NULL) {
+    if (account_list->GetList(i, &account) && account != nullptr) {
       std::string email;
       // Canonicalize the email since ListAccounts returns "display email".
       if (account->GetString(3, &email) && !email.empty()) {
@@ -179,6 +176,31 @@ bool ParseListAccountsData(const std::string& data,
     }
   }
 
+  return true;
+}
+
+bool ParseOAuth2MintTokenConsentResult(const std::string& consent_result,
+                                       bool* approved,
+                                       std::string* gaia_id) {
+  DCHECK(approved);
+  DCHECK(gaia_id);
+
+  std::string decoded_result;
+  if (!base::Base64UrlDecode(consent_result,
+                             base::Base64UrlDecodePolicy::DISALLOW_PADDING,
+                             &decoded_result)) {
+    VLOG(1) << "Base64UrlDecode() failed to decode the consent result";
+    return false;
+  }
+
+  OAuth2MintTokenConsentResult parsed_result;
+  if (!parsed_result.ParseFromString(decoded_result)) {
+    VLOG(1) << "Failed to parse the consent result protobuf message";
+    return false;
+  }
+
+  *approved = parsed_result.approved();
+  *gaia_id = parsed_result.obfuscated_id();
   return true;
 }
 

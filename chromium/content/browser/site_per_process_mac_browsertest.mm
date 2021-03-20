@@ -6,6 +6,7 @@
 
 #include <Cocoa/Cocoa.h>
 
+#include "base/bind.h"
 #include "base/mac/mac_util.h"
 #include "base/task/post_task.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
@@ -32,16 +33,18 @@ class TextInputClientMacHelper {
 
   void WaitForStringFromRange(RenderWidgetHost* rwh, const gfx::Range& range) {
     GetStringFromRangeForRenderWidget(
-        rwh, range, base::Bind(&TextInputClientMacHelper::OnResult,
-                               base::Unretained(this)));
+        rwh, range,
+        base::BindOnce(&TextInputClientMacHelper::OnResult,
+                       base::Unretained(this)));
     loop_runner_ = new MessageLoopRunner();
     loop_runner_->Run();
   }
 
   void WaitForStringAtPoint(RenderWidgetHost* rwh, const gfx::Point& point) {
     GetStringAtPointForRenderWidget(
-        rwh, point, base::Bind(&TextInputClientMacHelper::OnResult,
-                               base::Unretained(this)));
+        rwh, point,
+        base::BindOnce(&TextInputClientMacHelper::OnResult,
+                       base::Unretained(this)));
     loop_runner_ = new MessageLoopRunner();
     loop_runner_->Run();
   }
@@ -51,10 +54,9 @@ class TextInputClientMacHelper {
  private:
   void OnResult(const std::string& string, const gfx::Point& point) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {BrowserThread::UI},
-          base::Bind(&TextInputClientMacHelper::OnResult,
-                     base::Unretained(this), string, point));
+      base::PostTask(FROM_HERE, {BrowserThread::UI},
+                     base::BindOnce(&TextInputClientMacHelper::OnResult,
+                                    base::Unretained(this), string, point));
       return;
     }
     word_ = string;
@@ -173,7 +175,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
       blink::WebInputEvent::kMouseWheel, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   scroll_event.SetPositionInWidget(1, 1);
-  scroll_event.has_precise_scrolling_deltas = true;
+  scroll_event.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
   scroll_event.delta_x = 0.0f;
 
   // Have the RWHVCF process a sequence of touchpad scroll events that contain
@@ -254,7 +256,7 @@ void SendMacTouchpadPinchSequenceWithExpectedTarget(
     RenderWidgetHostViewBase*& router_touchpad_gesture_target,
     RenderWidgetHostViewBase* expected_target) {
   auto* root_view_mac = static_cast<RenderWidgetHostViewMac*>(root_view);
-  RenderWidgetHostViewCocoa* cocoa_view = root_view_mac->cocoa_view();
+  RenderWidgetHostViewCocoa* cocoa_view = root_view_mac->GetInProcessNSView();
 
   NSEvent* pinchBeginEvent =
       MockGestureEvent(NSEventTypeMagnify, 0, gesture_point.x(),
@@ -304,7 +306,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
   // surface information required for event hit testing is ready.
   auto* rwhv_child =
       static_cast<RenderWidgetHostViewBase*>(child_frame_host->GetView());
-  WaitForHitTestDataOrChildSurfaceReady(child_frame_host);
+  WaitForHitTestData(child_frame_host);
 
   // All touches & gestures are sent to the main frame's view, and should be
   // routed appropriately from there.

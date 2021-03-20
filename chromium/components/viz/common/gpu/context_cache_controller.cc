@@ -5,6 +5,7 @@
 #include "components/viz/common/gpu/context_cache_controller.h"
 
 #include <chrono>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
@@ -33,9 +34,7 @@ void ContextCacheController::ScopedToken::Release() {
 ContextCacheController::ContextCacheController(
     gpu::ContextSupport* context_support,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : context_support_(context_support),
-      task_runner_(std::move(task_runner)),
-      weak_factory_(this) {
+    : context_support_(context_support), task_runner_(std::move(task_runner)) {
   // The |weak_factory_| can only be used from a single thread. We
   // create/destroy this class and run callbacks on a single thread, but we
   // want to be able to post callbacks from multiple threads. We need a weak
@@ -163,7 +162,8 @@ void ContextCacheController::InvalidatePendingIdleCallbacks() {
   ++current_idle_generation_;
 }
 
-void ContextCacheController::OnIdle(uint32_t idle_generation) {
+void ContextCacheController::OnIdle(uint32_t idle_generation)
+    NO_THREAD_SAFETY_ANALYSIS {
   // First check if we should run our idle callback at all. If we have become
   // busy since scheduling, just schedule another idle callback and return.
   {
@@ -177,6 +177,8 @@ void ContextCacheController::OnIdle(uint32_t idle_generation) {
   // Try to acquire the context lock - if we can't acquire it then we've become
   // busy since checking |current_idle_generation_| above. In this case, just
   // re-post our idle callback and return.
+  //
+  // NO_THREAD_SAFETY_ANALYSIS: Locking depends on runtime properties.
   if (context_lock_ && !context_lock_->Try()) {
     base::AutoLock hold(current_idle_generation_lock_);
     PostIdleCallback(current_idle_generation_);

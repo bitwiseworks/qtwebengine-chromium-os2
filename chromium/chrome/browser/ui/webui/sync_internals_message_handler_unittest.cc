@@ -13,12 +13,11 @@
 #include "chrome/browser/sync/user_event_service_factory.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/browser_sync/browser_sync_switches.h"
 #include "components/sync/driver/about_sync_util.h"
 #include "components/sync/driver/fake_sync_service.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/js/js_test_util.h"
-#include "components/sync/user_events/fake_user_event_service.h"
+#include "components/sync_user_events/fake_user_event_service.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_web_ui.h"
@@ -66,8 +65,9 @@ class TestSyncService : public syncer::FakeSyncService {
     return js_controller_.AsWeakPtr();
   }
 
-  void GetAllNodes(const base::Callback<void(std::unique_ptr<base::ListValue>)>&
-                       callback) override {
+  void GetAllNodesForDebugging(
+      base::OnceCallback<void(std::unique_ptr<base::ListValue>)> callback)
+      override {
     get_all_nodes_callback_ = std::move(callback);
   }
 
@@ -79,7 +79,7 @@ class TestSyncService : public syncer::FakeSyncService {
   int remove_type_debug_info_observer_count() const {
     return remove_type_debug_info_observer_count_;
   }
-  base::Callback<void(std::unique_ptr<base::ListValue>)>
+  base::OnceCallback<void(std::unique_ptr<base::ListValue>)>
   get_all_nodes_callback() {
     return std::move(get_all_nodes_callback_);
   }
@@ -90,7 +90,7 @@ class TestSyncService : public syncer::FakeSyncService {
   int add_type_debug_info_observer_count_ = 0;
   int remove_type_debug_info_observer_count_ = 0;
   syncer::MockJsController js_controller_;
-  base::Callback<void(std::unique_ptr<base::ListValue>)>
+  base::OnceCallback<void(std::unique_ptr<base::ListValue>)>
       get_all_nodes_callback_;
 };
 
@@ -120,11 +120,11 @@ class SyncInternalsMessageHandlerTest : public ChromeRenderViewHostTestHarness {
         browser_sync::UserEventServiceFactory::GetInstance()
             ->SetTestingFactoryAndUse(
                 profile(), base::BindRepeating(&BuildFakeUserEventService)));
-    handler_.reset(new TestableSyncInternalsMessageHandler(
+    handler_ = std::make_unique<TestableSyncInternalsMessageHandler>(
         &web_ui_,
         base::BindRepeating(
             &SyncInternalsMessageHandlerTest::ConstructAboutInformation,
-            base::Unretained(this))));
+            base::Unretained(this)));
   }
 
   void TearDown() override {

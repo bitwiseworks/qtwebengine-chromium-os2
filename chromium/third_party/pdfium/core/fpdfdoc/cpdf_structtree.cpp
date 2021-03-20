@@ -44,7 +44,7 @@ CPDF_StructTree::CPDF_StructTree(const CPDF_Document* pDoc)
 CPDF_StructTree::~CPDF_StructTree() = default;
 
 void CPDF_StructTree::LoadPageTree(const CPDF_Dictionary* pPageDict) {
-  m_pPage = pPageDict;
+  m_pPage.Reset(pPageDict);
   if (!m_pTreeRoot)
     return;
 
@@ -105,9 +105,12 @@ RetainPtr<CPDF_StructElement> CPDF_StructTree::AddPageNode(
 
   RetainPtr<CPDF_StructElement> pParentElement =
       AddPageNode(pParent, map, nLevel + 1);
+  if (!pParentElement)
+    return pElement;
+
   bool bSave = false;
   for (CPDF_StructKid& kid : *pParentElement->GetKids()) {
-    if (kid.m_Type == CPDF_StructKid::Element && kid.m_pDict == pDict) {
+    if (kid.m_Type == CPDF_StructKid::kElement && kid.m_pDict == pDict) {
       kid.m_pElement = pElement;
       bSave = true;
     }

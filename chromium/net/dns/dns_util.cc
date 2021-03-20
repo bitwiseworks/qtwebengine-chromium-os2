@@ -14,12 +14,15 @@
 #include "base/big_endian.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
 #include "net/base/address_list.h"
 #include "net/base/url_util.h"
 #include "net/dns/public/dns_protocol.h"
+#include "net/dns/public/doh_provider_list.h"
+#include "net/dns/public/util.h"
 #include "net/third_party/uri_template/uri_template.h"
 #include "url/url_canon.h"
 
@@ -51,9 +54,12 @@ const uint16_t kFlagNamePointer = 0xc000;
 #endif
 
 namespace net {
+namespace {
 
 // Based on DJB's public domain code.
-bool DNSDomainFromDot(const base::StringPiece& dotted, std::string* out) {
+bool DNSDomainFromDot(const base::StringPiece& dotted,
+                      bool is_unrestricted,
+                      std::string* out) {
   const char* buf = dotted.data();
   size_t n = dotted.size();
   char label[kMaxLabelLength];
@@ -81,7 +87,7 @@ bool DNSDomainFromDot(const base::StringPiece& dotted, std::string* out) {
     }
     if (labellen >= sizeof label)
       return false;
-    if (!IsValidHostLabelCharacter(ch, labellen == 0)) {
+    if (!is_unrestricted && !IsValidHostLabelCharacter(ch, labellen == 0)) {
       return false;
     }
     label[labellen++] = ch;
@@ -107,9 +113,46 @@ bool DNSDomainFromDot(const base::StringPiece& dotted, std::string* out) {
   return true;
 }
 
+std::vector<const DohProviderEntry*> GetDohProviderEntriesFromNameservers(
+    const std::vector<IPEndPoint>& dns_servers,
+    const std::vector<std::string>& excluded_providers) {
+  const std::vector<DohProviderEntry>& providers = GetDohProviderList();
+  std::vector<const DohProviderEntry*> entries;
+
+  for (const auto& server : dns_servers) {
+    for (const auto& entry : providers) {
+      if (base::Contains(excluded_providers, entry.provider))
+        continue;
+
+      // DoH servers should only be added once.
+      if (base::Contains(entry.ip_addresses, server.address()) &&
+          !base::Contains(entries, &entry)) {
+        entries.push_back(&entry);
+      }
+    }
+  }
+  return entries;
+}
+
+}  // namespace
+
+bool DNSDomainFromDot(const base::StringPiece& dotted, std::string* out) {
+  return DNSDomainFromDot(dotted, false /* is_unrestricted */, out);
+}
+
+bool DNSDomainFromUnrestrictedDot(const base::StringPiece& dotted,
+                                  std::string* out) {
+  return DNSDomainFromDot(dotted, true /* is_unrestricted */, out);
+}
+
 bool IsValidDNSDomain(const base::StringPiece& dotted) {
   std::string dns_formatted;
   return DNSDomainFromDot(dotted, &dns_formatted);
+}
+
+bool IsValidUnrestrictedDNSDomain(const base::StringPiece& dotted) {
+  std::string dns_formatted;
+  return DNSDomainFromUnrestrictedDot(dotted, &dns_formatted);
 }
 
 bool IsValidHostLabelCharacter(char c, bool is_first_char) {
@@ -134,7 +177,7 @@ std::string DNSDomainToString(const base::StringPiece& domain) {
     if (static_cast<unsigned>(domain[i]) + i + 1 > domain.size())
       return std::string();
 
-    domain.substr(i + 1, domain[i]).AppendToString(&ret);
+    ret.append(domain.data() + i + 1, domain[i]);
   }
   return ret;
 }
@@ -246,6 +289,8 @@ uint16_t DnsQueryTypeToQtype(DnsQueryType dns_query_type) {
       return dns_protocol::kTypePTR;
     case DnsQueryType::SRV:
       return dns_protocol::kTypeSRV;
+    case DnsQueryType::ESNI:
+      return dns_protocol::kExperimentalTypeEsniDraft4;
   }
 }
 
@@ -260,6 +305,80 @@ DnsQueryType AddressFamilyToDnsQueryType(AddressFamily address_family) {
     default:
       NOTREACHED();
       return DnsQueryType::UNSPECIFIED;
+  }
+}
+
+std::vector<DnsOverHttpsServerConfig> GetDohUpgradeServersFromDotHostname(
+    const std::string& dot_server,
+    const std::vector<std::string>& excluded_providers) {
+  const std::vector<DohProviderEntry>& entries = GetDohProviderList();
+  std::vector<DnsOverHttpsServerConfig> doh_servers;
+
+  if (dot_server.empty())
+    return doh_servers;
+
+  for (const auto& entry : entries) {
+    if (base::Contains(excluded_providers, entry.provider))
+      continue;
+
+    if (base::Contains(entry.dns_over_tls_hostnames, dot_server)) {
+      std::string server_method;
+      CHECK(dns_util::IsValidDohTemplate(entry.dns_over_https_template,
+                                         &server_method));
+      doh_servers.push_back(DnsOverHttpsServerConfig(
+          entry.dns_over_https_template, server_method == "POST"));
+      break;
+    }
+  }
+  return doh_servers;
+}
+
+std::vector<DnsOverHttpsServerConfig> GetDohUpgradeServersFromNameservers(
+    const std::vector<IPEndPoint>& dns_servers,
+    const std::vector<std::string>& excluded_providers) {
+  std::vector<const DohProviderEntry*> entries =
+      GetDohProviderEntriesFromNameservers(dns_servers, excluded_providers);
+  std::vector<DnsOverHttpsServerConfig> doh_servers;
+  std::string server_method;
+  for (const auto* entry : entries) {
+    CHECK(dns_util::IsValidDohTemplate(entry->dns_over_https_template,
+                                       &server_method));
+    doh_servers.push_back(DnsOverHttpsServerConfig(
+        entry->dns_over_https_template, server_method == "POST"));
+  }
+  return doh_servers;
+}
+
+std::string GetDohProviderIdForHistogramFromDohConfig(
+    const DnsOverHttpsServerConfig& doh_server) {
+  const std::vector<DohProviderEntry>& entries = GetDohProviderList();
+  for (const auto& entry : entries) {
+    if (doh_server.server_template == entry.dns_over_https_template) {
+      return entry.provider;
+    }
+  }
+  return "Other";
+}
+
+std::string GetDohProviderIdForHistogramFromNameserver(
+    const IPEndPoint& nameserver) {
+  std::vector<const DohProviderEntry*> entries =
+      GetDohProviderEntriesFromNameservers({nameserver}, {});
+  if (entries.size() == 0)
+    return "Other";
+  else
+    return entries[0]->provider;
+}
+
+std::string SecureDnsModeToString(
+    const DnsConfig::SecureDnsMode secure_dns_mode) {
+  switch (secure_dns_mode) {
+    case DnsConfig::SecureDnsMode::OFF:
+      return "Off";
+    case DnsConfig::SecureDnsMode::AUTOMATIC:
+      return "Automatic";
+    case DnsConfig::SecureDnsMode::SECURE:
+      return "Secure";
   }
 }
 

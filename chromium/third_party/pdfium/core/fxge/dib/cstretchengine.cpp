@@ -18,7 +18,7 @@
 
 namespace {
 
-const int kMaxDestValue = 16711680;
+constexpr int kMaxDestValue = 16711680;
 
 int GetPitchRoundUpTo4Bytes(int bits_per_pixel) {
   return (bits_per_pixel + 31) / 32 * 4;
@@ -26,12 +26,9 @@ int GetPitchRoundUpTo4Bytes(int bits_per_pixel) {
 
 }  // namespace
 
-CStretchEngine::CWeightTable::CWeightTable()
-    : m_DestMin(0),
-      m_ItemSize(0),
-      m_dwWeightTablesSize(0) {}
+CStretchEngine::CWeightTable::CWeightTable() = default;
 
-CStretchEngine::CWeightTable::~CWeightTable() {}
+CStretchEngine::CWeightTable::~CWeightTable() = default;
 
 size_t CStretchEngine::CWeightTable::GetPixelWeightSize() const {
   return m_ItemSize / sizeof(int) - 2;
@@ -75,9 +72,9 @@ bool CStretchEngine::CWeightTable::Calc(int dest_len,
           pixel_weights.m_Weights[0] = 65536;
         } else {
           pixel_weights.m_Weights[1] =
-              FXSYS_round(static_cast<float>(
-                              src_pos - pixel_weights.m_SrcStart - 1.0f / 2) *
-                          65536);
+              FXSYS_roundf(static_cast<float>(
+                               src_pos - pixel_weights.m_SrcStart - 1.0f / 2) *
+                           65536);
           pixel_weights.m_Weights[0] = 65536 - pixel_weights.m_Weights[1];
         }
       } else if (options.bInterpolateBicubic) {
@@ -94,7 +91,7 @@ bool CStretchEngine::CWeightTable::Calc(int dest_len,
           pixel_weights.m_SrcStart = src_min;
         }
         pixel_weights.m_SrcEnd = std::min(pixel_weights.m_SrcEnd, src_max - 1);
-        int weight = FXSYS_round(
+        int weight = FXSYS_roundf(
             static_cast<float>(src_pos - pixel_weights.m_SrcStart - 1.0f / 2) *
             256);
         if (start == end) {
@@ -201,7 +198,7 @@ bool CStretchEngine::CWeightTable::Calc(int dest_len,
       if (idx >= GetPixelWeightSize())
         return false;
 
-      pixel_weights.m_Weights[idx] = FXSYS_round(weight * 65536);
+      pixel_weights.m_Weights[idx] = FXSYS_roundf(weight * 65536);
     }
   }
   return true;
@@ -233,7 +230,7 @@ CStretchEngine::CStretchEngine(ScanlineComposerIface* pDestBitmap,
     : m_DestFormat(dest_format),
       m_DestBpp(GetBppFromFormat(dest_format)),
       m_SrcBpp(GetBppFromFormat(pSrcBitmap->GetFormat())),
-      m_bHasAlpha(pSrcBitmap->GetFormat() & 0x200),
+      m_bHasAlpha(GetIsAlphaFromFormat(pSrcBitmap->GetFormat())),
       m_pSource(pSrcBitmap),
       m_pSrcPalette(pSrcBitmap->GetPalette()),
       m_SrcWidth(pSrcBitmap->GetWidth()),
@@ -258,7 +255,6 @@ CStretchEngine::CStretchEngine(ScanlineComposerIface* pDestBitmap,
   m_ExtraMaskPitch = GetPitchRoundUpTo4Bytes(m_DestClip.Width() * 8);
   if (options.bNoSmoothing) {
     m_ResampleOptions.bNoSmoothing = true;
-    m_ResampleOptions.bInterpolateDownsample = options.bInterpolateDownsample;
   } else {
     bool bInterpol =
         options.bInterpolateBilinear || options.bInterpolateBicubic;

@@ -27,7 +27,7 @@
 ** closes the current read transaction and opens a new one. And so on.
 ** The result is that at step N (for N > $nReader), there exists a reader
 ** with an open read transaction reading the snapshot committed following
-** steps (N-$nReader-1) to N.
+** steps (N-$nReader-1) to N. 
 */
 typedef struct Mctest Mctest;
 struct Mctest {

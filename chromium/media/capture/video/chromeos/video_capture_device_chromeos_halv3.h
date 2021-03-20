@@ -11,7 +11,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
-#include "chromeos/dbus/power_manager_client.h"
 #include "media/capture/video/chromeos/display_rotation_observer.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
@@ -25,6 +24,7 @@ class Display;
 
 namespace media {
 
+class CameraAppDeviceImpl;
 class CameraHalDelegate;
 class CameraDeviceContext;
 class CameraDeviceDelegate;
@@ -32,14 +32,14 @@ class CameraDeviceDelegate;
 // Implementation of VideoCaptureDevice for ChromeOS with CrOS camera HALv3.
 class CAPTURE_EXPORT VideoCaptureDeviceChromeOSHalv3 final
     : public VideoCaptureDevice,
-      public DisplayRotationObserver,
-      public chromeos::PowerManagerClient::Observer {
+      public DisplayRotationObserver {
  public:
   VideoCaptureDeviceChromeOSHalv3(
-      scoped_refptr<base::SingleThreadTaskRunner>
-          task_runner_for_screen_observer,
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       const VideoCaptureDeviceDescriptor& device_descriptor,
-      scoped_refptr<CameraHalDelegate> camera_hal_delegate);
+      scoped_refptr<CameraHalDelegate> camera_hal_delegate,
+      CameraAppDeviceImpl* camera_app_device,
+      base::OnceClosure cleanup_callback);
 
   ~VideoCaptureDeviceChromeOSHalv3() final;
 
@@ -52,14 +52,12 @@ class CAPTURE_EXPORT VideoCaptureDeviceChromeOSHalv3 final
   void SetPhotoOptions(mojom::PhotoSettingsPtr settings,
                        SetPhotoOptionsCallback callback) final;
 
-  // chromeos::PowerManagerClient::Observer callbacks for system suspend and
-  // resume events.
-  void SuspendImminent(power_manager::SuspendImminent::Reason reason) final;
-  void SuspendDone(const base::TimeDelta& sleep_duration) final;
-
  private:
+  // Helper to interact with PowerManagerClient on DBus original thread.
+  class PowerManagerClientProxy;
+
   void OpenDevice();
-  void CloseDevice(base::OnceClosure callback);
+  void CloseDevice(base::UnguessableToken unblock_suspend_token);
 
   // DisplayRotationDelegate implementation.
   void SetDisplayRotation(const display::Display& display) final;
@@ -94,12 +92,17 @@ class CAPTURE_EXPORT VideoCaptureDeviceChromeOSHalv3 final
 
   scoped_refptr<ScreenObserverDelegate> screen_observer_delegate_;
   const VideoFacingMode lens_facing_;
-  const int camera_orientation_;
   // Whether the incoming frames should rotate when the device rotates.
   const bool rotates_with_device_;
   int rotation_;
 
-  base::WeakPtrFactory<VideoCaptureDeviceChromeOSHalv3> weak_ptr_factory_;
+  CameraAppDeviceImpl* camera_app_device_;  // Weak.
+
+  base::OnceClosure cleanup_callback_;
+
+  scoped_refptr<PowerManagerClientProxy> power_manager_client_proxy_;
+
+  base::WeakPtrFactory<VideoCaptureDeviceChromeOSHalv3> weak_ptr_factory_{this};
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceChromeOSHalv3);
 };

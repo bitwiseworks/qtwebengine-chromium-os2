@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/build_config.h"
@@ -21,8 +22,8 @@ TestStorageMonitor::TestStorageMonitor() : init_called_(false) {
 #if defined(OS_CHROMEOS)
   auto* fake_mtp_manager =
       TestMediaTransferProtocolManagerChromeOS::GetFakeMtpManager();
-  fake_mtp_manager->AddBinding(
-      mojo::MakeRequest(&media_transfer_protocol_manager_));
+  fake_mtp_manager->AddReceiver(
+      media_transfer_protocol_manager_.BindNewPipeAndPassReceiver());
 #endif
 }
 
@@ -63,8 +64,8 @@ void TestStorageMonitor::SyncInitialize() {
 
   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
-  monitor->EnsureInitialized(base::Bind(&base::WaitableEvent::Signal,
-                             base::Unretained(&event)));
+  monitor->EnsureInitialized(
+      base::BindOnce(&base::WaitableEvent::Signal, base::Unretained(&event)));
   while (!event.IsSignaled()) {
     base::RunLoop().RunUntilIdle();
   }
@@ -127,9 +128,9 @@ StorageMonitor::Receiver* TestStorageMonitor::receiver() const {
 
 void TestStorageMonitor::EjectDevice(
     const std::string& device_id,
-    base::Callback<void(EjectStatus)> callback) {
+    base::OnceCallback<void(EjectStatus)> callback) {
   ejected_device_ = device_id;
-  callback.Run(EJECT_OK);
+  std::move(callback).Run(EJECT_OK);
 }
 
 void TestStorageMonitor::AddRemovablePath(const base::FilePath& path) {

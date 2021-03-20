@@ -14,6 +14,8 @@
 #include "base/unguessable_token.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/service_worker_devtools_manager.h"
+#include "services/network/public/cpp/cross_origin_embedder_policy.h"
+#include "services/network/public/mojom/cross_origin_embedder_policy.mojom.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom.h"
 
 namespace content {
@@ -35,6 +37,10 @@ class ServiceWorkerDevToolsAgentHost : public DevToolsAgentHostImpl {
       const GURL& url,
       const GURL& scope,
       bool is_installed_version,
+      base::Optional<network::CrossOriginEmbedderPolicy>
+          cross_origin_embedder_policy,
+      mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
+          coep_reporter,
       const base::UnguessableToken& devtools_worker_token);
 
   // DevToolsAgentHost overrides.
@@ -48,8 +54,12 @@ class ServiceWorkerDevToolsAgentHost : public DevToolsAgentHostImpl {
 
   void WorkerRestarted(int worker_process_id, int worker_route_id);
   void WorkerReadyForInspection(
-      blink::mojom::DevToolsAgentHostAssociatedRequest host_request,
-      blink::mojom::DevToolsAgentAssociatedPtrInfo devtools_agent_ptr_info);
+      mojo::PendingRemote<blink::mojom::DevToolsAgent> agent_remote,
+      mojo::PendingReceiver<blink::mojom::DevToolsAgentHost> host_receiver);
+  void UpdateCrossOriginEmbedderPolicy(
+      network::CrossOriginEmbedderPolicy cross_origin_embedder_policy,
+      mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
+          coep_reporter);
   void WorkerDestroyed();
   void WorkerVersionInstalled();
   void WorkerVersionDoomed();
@@ -79,6 +89,8 @@ class ServiceWorkerDevToolsAgentHost : public DevToolsAgentHostImpl {
   bool AttachSession(DevToolsSession* session) override;
   void DetachSession(DevToolsSession* session) override;
 
+  void UpdateLoaderFactories(base::OnceClosure callback);
+
   enum WorkerState {
     WORKER_NOT_READY,
     WORKER_READY,
@@ -95,6 +107,10 @@ class ServiceWorkerDevToolsAgentHost : public DevToolsAgentHostImpl {
   GURL scope_;
   base::Time version_installed_time_;
   base::Time version_doomed_time_;
+  base::Optional<network::CrossOriginEmbedderPolicy>
+      cross_origin_embedder_policy_;
+  mojo::Remote<network::mojom::CrossOriginEmbedderPolicyReporter>
+      coep_reporter_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerDevToolsAgentHost);
 };

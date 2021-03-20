@@ -13,9 +13,7 @@
 #include "content/renderer/history_entry.h"
 #include "content/renderer/loader/web_url_request_util.h"
 #include "third_party/blink/public/platform/web_data.h"
-#include "third_party/blink/public/platform/web_float_point.h"
 #include "third_party/blink/public/platform/web_http_body.h"
-#include "third_party/blink/public/platform/web_point.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_history_item.h"
@@ -110,7 +108,7 @@ void RecursivelyGenerateHistoryItem(const ExplodedFrameState& state,
   item.SetHTTPContentType(
       WebString::FromUTF16(state.http_body.http_content_type));
   if (state.http_body.request_body != nullptr) {
-    item.SetHTTPBody(
+    item.SetHttpBody(
         GetWebHTTPBodyForRequestBody(*state.http_body.request_body));
   }
 

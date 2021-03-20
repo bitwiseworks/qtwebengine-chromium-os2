@@ -9,8 +9,9 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth2_access_token_consumer.h"
@@ -73,18 +74,13 @@ MATCHER_P(resourceRequestUrlEquals, url, "") {
 class OAuth2AccessTokenFetcherImplTest : public testing::Test {
  public:
   OAuth2AccessTokenFetcherImplTest()
-      : shared_url_loader_factory_(
-            base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-                &url_loader_factory_)),
-        fetcher_(&consumer_, shared_url_loader_factory_, "refresh_token") {
+      : fetcher_(&consumer_,
+                 url_loader_factory_.GetSafeWeakWrapper(),
+                 "refresh_token") {
     url_loader_factory_.SetInterceptor(base::BindRepeating(
         &URLLoaderFactoryInterceptor::Intercept,
         base::Unretained(&url_loader_factory_interceptor_)));
     base::RunLoop().RunUntilIdle();
-  }
-
-  ~OAuth2AccessTokenFetcherImplTest() override {
-    shared_url_loader_factory_->Detach();
   }
 
   void SetupGetAccessToken(int net_error_code,
@@ -95,7 +91,7 @@ class OAuth2AccessTokenFetcherImplTest : public testing::Test {
       url_loader_factory_.AddResponse(url.spec(), body, http_response_code);
     } else {
       url_loader_factory_.AddResponse(
-          url, network::ResourceResponseHead(), body,
+          url, network::mojom::URLResponseHead::New(), body,
           network::URLLoaderCompletionStatus(net_error_code));
     }
 
@@ -107,8 +103,7 @@ class OAuth2AccessTokenFetcherImplTest : public testing::Test {
     GURL url(GaiaUrls::GetInstance()->oauth2_token_url());
     url_loader_factory_.AddResponse(
         url,
-        network::CreateResourceResponseHead(
-            net::HTTP_PROXY_AUTHENTICATION_REQUIRED),
+        network::CreateURLResponseHead(net::HTTP_PROXY_AUTHENTICATION_REQUIRED),
         std::string(),
         network::URLLoaderCompletionStatus(net::ERR_TUNNEL_CONNECTION_FAILED),
         network::TestURLLoaderFactory::Redirects(),
@@ -119,12 +114,10 @@ class OAuth2AccessTokenFetcherImplTest : public testing::Test {
   }
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   MockOAuth2AccessTokenConsumer consumer_;
   URLLoaderFactoryInterceptor url_loader_factory_interceptor_;
   network::TestURLLoaderFactory url_loader_factory_;
-  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
-      shared_url_loader_factory_;
   OAuth2AccessTokenFetcherImpl fetcher_;
 };
 

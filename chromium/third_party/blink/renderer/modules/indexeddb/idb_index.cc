@@ -55,7 +55,7 @@ IDBIndex::IDBIndex(scoped_refptr<IDBIndexMetadata> metadata,
 
 IDBIndex::~IDBIndex() = default;
 
-void IDBIndex::Trace(blink::Visitor* visitor) {
+void IDBIndex::Trace(Visitor* visitor) {
   visitor->Trace(object_store_);
   visitor->Trace(transaction_);
   ScriptWrappable::Trace(visitor);
@@ -250,7 +250,7 @@ IDBRequest* IDBIndex::getAll(ScriptState* script_state,
 
 IDBRequest* IDBIndex::getAll(ScriptState* script_state,
                              const ScriptValue& range,
-                             unsigned long max_count,
+                             uint32_t max_count,
                              ExceptionState& exception_state) {
   IDB_TRACE1("IDBIndex::getAllRequestSetup", "index_name",
              metadata_->name.Utf8());
@@ -328,7 +328,7 @@ IDBRequest* IDBIndex::GetInternal(ScriptState* script_state,
 
 IDBRequest* IDBIndex::GetAllInternal(ScriptState* script_state,
                                      const ScriptValue& range,
-                                     unsigned long max_count,
+                                     uint32_t max_count,
                                      ExceptionState& exception_state,
                                      bool key_only,
                                      IDBRequest::AsyncTraceState metrics) {

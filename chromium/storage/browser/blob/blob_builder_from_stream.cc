@@ -4,10 +4,13 @@
 
 #include "storage/browser/blob/blob_builder_from_stream.h"
 
+#include "base/bind.h"
 #include "base/containers/span.h"
 #include "base/guid.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "storage/browser/blob/blob_data_item.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/blob/shareable_file_reference.h"
@@ -56,14 +59,15 @@ class DataPipeConsumerHelper {
  protected:
   DataPipeConsumerHelper(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       uint64_t max_bytes_to_read)
       : pipe_(std::move(pipe)),
+        progress_client_(std::move(progress_client)),
         watcher_(FROM_HERE,
                  mojo::SimpleWatcher::ArmingPolicy::MANUAL,
                  base::SequencedTaskRunnerHandle::Get()),
         max_bytes_to_read_(max_bytes_to_read) {
-    progress_client_.Bind(std::move(progress_client));
     watcher_.Watch(pipe_.get(), MOJO_HANDLE_SIGNAL_READABLE,
                    MOJO_WATCH_CONDITION_SATISFIED,
                    base::BindRepeating(&DataPipeConsumerHelper::DataPipeReady,
@@ -77,7 +81,8 @@ class DataPipeConsumerHelper {
                         uint64_t bytes_previously_written) = 0;
   virtual void InvokeDone(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       bool success,
       uint64_t bytes_written) = 0;
 
@@ -119,14 +124,15 @@ class DataPipeConsumerHelper {
     delete this;
   }
 
-  blink::mojom::ProgressClientAssociatedPtrInfo PassProgressClient() {
+  mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+  PassProgressClient() {
     if (!progress_client_)
-      return blink::mojom::ProgressClientAssociatedPtrInfo();
-    return progress_client_.PassInterface();
+      return mojo::NullAssociatedRemote();
+    return progress_client_.Unbind();
   }
 
   mojo::ScopedDataPipeConsumerHandle pipe_;
-  blink::mojom::ProgressClientAssociatedPtr progress_client_;
+  mojo::AssociatedRemote<blink::mojom::ProgressClient> progress_client_;
   mojo::SimpleWatcher watcher_;
   const uint64_t max_bytes_to_read_;
   uint64_t current_offset_ = 0;
@@ -140,20 +146,22 @@ class DataPipeConsumerHelper {
 class BlobBuilderFromStream::WritePipeToFileHelper
     : public DataPipeConsumerHelper {
  public:
-  using DoneCallback = base::OnceCallback<void(
-      bool success,
-      uint64_t bytes_written,
-      mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
-      const base::Time& modification_time)>;
+  using DoneCallback =
+      base::OnceCallback<void(bool success,
+                              uint64_t bytes_written,
+                              mojo::ScopedDataPipeConsumerHandle pipe,
+                              mojo::PendingAssociatedRemote<
+                                  blink::mojom::ProgressClient> progress_client,
+                              const base::Time& modification_time)>;
 
   static void CreateAndAppend(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       base::FilePath file_path,
       uint64_t max_file_size,
       DoneCallback callback) {
-    base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})
+    base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})
         ->PostTask(
             FROM_HERE,
             base::BindOnce(
@@ -165,11 +173,12 @@ class BlobBuilderFromStream::WritePipeToFileHelper
 
   static void CreateAndStart(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       base::File file,
       uint64_t max_file_size,
       DoneCallback callback) {
-    base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})
+    base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})
         ->PostTask(
             FROM_HERE,
             base::BindOnce(&WritePipeToFileHelper::CreateAndStartOnFileSequence,
@@ -182,7 +191,8 @@ class BlobBuilderFromStream::WritePipeToFileHelper
  private:
   static void CreateAndAppendOnFileSequence(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       base::FilePath file_path,
       uint64_t max_file_size,
       scoped_refptr<base::TaskRunner> reply_runner,
@@ -195,7 +205,8 @@ class BlobBuilderFromStream::WritePipeToFileHelper
 
   static void CreateAndStartOnFileSequence(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       base::File file,
       uint64_t max_file_size,
       scoped_refptr<base::TaskRunner> reply_runner,
@@ -207,7 +218,8 @@ class BlobBuilderFromStream::WritePipeToFileHelper
 
   WritePipeToFileHelper(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       base::File file,
       uint64_t max_file_size,
       scoped_refptr<base::TaskRunner> reply_runner,
@@ -225,7 +237,8 @@ class BlobBuilderFromStream::WritePipeToFileHelper
   }
 
   void InvokeDone(mojo::ScopedDataPipeConsumerHandle pipe,
-                  blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+                  mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+                      progress_client,
                   bool success,
                   uint64_t bytes_written) override {
     base::Time last_modified;
@@ -253,11 +266,13 @@ class BlobBuilderFromStream::WritePipeToFutureDataHelper
   using DoneCallback = base::OnceCallback<void(
       uint64_t bytes_written,
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client)>;
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client)>;
 
   static void CreateAndStart(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       scoped_refptr<BlobDataItem> item,
       DoneCallback callback) {
     new WritePipeToFutureDataHelper(std::move(pipe), std::move(progress_client),
@@ -267,7 +282,8 @@ class BlobBuilderFromStream::WritePipeToFutureDataHelper
  private:
   WritePipeToFutureDataHelper(
       mojo::ScopedDataPipeConsumerHandle pipe,
-      blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+      mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+          progress_client,
       scoped_refptr<BlobDataItem> item,
       DoneCallback callback)
       : DataPipeConsumerHelper(std::move(pipe),
@@ -288,7 +304,8 @@ class BlobBuilderFromStream::WritePipeToFutureDataHelper
   }
 
   void InvokeDone(mojo::ScopedDataPipeConsumerHandle pipe,
-                  blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+                  mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+                      progress_client,
                   bool success,
                   uint64_t bytes_written) override {
     DCHECK(success);
@@ -304,9 +321,6 @@ BlobBuilderFromStream::BlobBuilderFromStream(
     base::WeakPtr<BlobStorageContext> context,
     std::string content_type,
     std::string content_disposition,
-    uint64_t length_hint,
-    mojo::ScopedDataPipeConsumerHandle data,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
     ResultCallback callback)
     : kMemoryBlockSize(std::min(
           kMaxMemoryChunkSize,
@@ -318,23 +332,32 @@ BlobBuilderFromStream::BlobBuilderFromStream(
       context_(std::move(context)),
       callback_(std::move(callback)),
       content_type_(std::move(content_type)),
-      content_disposition_(std::move(content_disposition)),
-      weak_factory_(this) {
+      content_disposition_(std::move(content_disposition)) {
   DCHECK(context_);
+}
 
+BlobBuilderFromStream::~BlobBuilderFromStream() {
+  DCHECK(!callback_) << "BlobBuilderFromStream was destroyed before finishing";
+}
+
+void BlobBuilderFromStream::Start(
+    uint64_t length_hint,
+    mojo::ScopedDataPipeConsumerHandle data,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+        progress_client) {
   context_->mutable_memory_controller()->CallWhenStorageLimitsAreKnown(
       base::BindOnce(&BlobBuilderFromStream::AllocateMoreMemorySpace,
                      weak_factory_.GetWeakPtr(), length_hint,
                      std::move(progress_client), std::move(data)));
 }
 
-BlobBuilderFromStream::~BlobBuilderFromStream() {
+void BlobBuilderFromStream::Abort() {
   OnError(Result::kAborted);
 }
 
 void BlobBuilderFromStream::AllocateMoreMemorySpace(
     uint64_t length_hint,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient> progress_client,
     mojo::ScopedDataPipeConsumerHandle pipe) {
   if (!context_ || !callback_) {
     OnError(Result::kAborted);
@@ -381,7 +404,7 @@ void BlobBuilderFromStream::AllocateMoreMemorySpace(
 
 void BlobBuilderFromStream::MemoryQuotaAllocated(
     mojo::ScopedDataPipeConsumerHandle pipe,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient> progress_client,
     std::vector<scoped_refptr<ShareableBlobDataItem>> chunk_items,
     size_t item_to_populate,
     bool success) {
@@ -403,7 +426,8 @@ void BlobBuilderFromStream::DidWriteToMemory(
     size_t populated_item_index,
     uint64_t bytes_written,
     mojo::ScopedDataPipeConsumerHandle pipe,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client) {
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient>
+        progress_client) {
   if (!context_ || !callback_) {
     OnError(Result::kAborted);
     return;
@@ -445,7 +469,7 @@ void BlobBuilderFromStream::DidWriteToMemory(
 
 void BlobBuilderFromStream::AllocateMoreFileSpace(
     uint64_t length_hint,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient> progress_client,
     mojo::ScopedDataPipeConsumerHandle pipe) {
   if (!context_ || !callback_) {
     OnError(Result::kAborted);
@@ -472,8 +496,7 @@ void BlobBuilderFromStream::AllocateMoreFileSpace(
       items_.back()->item()->length() < kMaxFileSize) {
     auto item = items_.back()->item();
     uint64_t old_file_size = item->length();
-    scoped_refptr<ShareableFileReference> file_reference =
-        static_cast<ShareableFileReference*>(item->data_handle());
+    scoped_refptr<ShareableFileReference> file_reference = item->file_ref_;
     DCHECK(file_reference);
     auto file_size_delta = std::min(kMaxFileSize - old_file_size, length_hint);
     context_->mutable_memory_controller()->GrowFileAllocation(
@@ -506,7 +529,7 @@ void BlobBuilderFromStream::AllocateMoreFileSpace(
 
 void BlobBuilderFromStream::FileQuotaAllocated(
     mojo::ScopedDataPipeConsumerHandle pipe,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient> progress_client,
     std::vector<scoped_refptr<ShareableBlobDataItem>> chunk_items,
     size_t item_to_populate,
     std::vector<BlobMemoryController::FileCreationInfo> info,
@@ -534,7 +557,7 @@ void BlobBuilderFromStream::DidWriteToFile(
     bool success,
     uint64_t bytes_written,
     mojo::ScopedDataPipeConsumerHandle pipe,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient> progress_client,
     const base::Time& modification_time) {
   if (!success || !context_ || !callback_) {
     OnError(success ? Result::kAborted : Result::kFileWriteFailed);
@@ -586,7 +609,7 @@ void BlobBuilderFromStream::DidWriteToExtendedFile(
     bool success,
     uint64_t bytes_written,
     mojo::ScopedDataPipeConsumerHandle pipe,
-    blink::mojom::ProgressClientAssociatedPtrInfo progress_client,
+    mojo::PendingAssociatedRemote<blink::mojom::ProgressClient> progress_client,
     const base::Time& modification_time) {
   if (!success || !context_ || !callback_) {
     OnError(success ? Result::kAborted : Result::kFileWriteFailed);
@@ -595,7 +618,7 @@ void BlobBuilderFromStream::DidWriteToExtendedFile(
   DCHECK(!items_.empty());
   auto item = items_.back()->item();
   DCHECK_EQ(item->type(), BlobDataItem::Type::kFile);
-  DCHECK_EQ(item->data_handle(), file_reference.get());
+  DCHECK_EQ(item->file_ref_, file_reference.get());
 
   item->SetFileModificationTime(modification_time);
   current_total_size_ += bytes_written;

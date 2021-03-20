@@ -55,12 +55,12 @@ class CORE_EXPORT WorkerGlobalScopePerformance final
 
   explicit WorkerGlobalScopePerformance(WorkerGlobalScope&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   WorkerPerformance* performance(WorkerGlobalScope*);
 
-  TraceWrapperMember<WorkerPerformance> performance_;
+  Member<WorkerPerformance> performance_;
 };
 
 }  // namespace blink

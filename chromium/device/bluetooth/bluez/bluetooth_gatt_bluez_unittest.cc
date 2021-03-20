@@ -9,10 +9,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
+#include "base/test/task_environment.h"
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
@@ -24,7 +25,6 @@
 #include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_remote_gatt_descriptor.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service.h"
-#include "device/bluetooth/bluetooth_uuid.h"
 #include "device/bluetooth/bluez/bluetooth_device_bluez.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_adapter_client.h"
@@ -34,6 +34,7 @@
 #include "device/bluetooth/dbus/fake_bluetooth_gatt_descriptor_client.h"
 #include "device/bluetooth/dbus/fake_bluetooth_gatt_service_client.h"
 #include "device/bluetooth/dbus/fake_bluetooth_input_client.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "device/bluetooth/test/test_bluetooth_adapter_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -81,6 +82,13 @@ bool ValuesEqual(const std::vector<uint8_t>& value0,
     if (value0[i] != value1[i])
       return false;
   return true;
+}
+
+void AddDeviceFilterWithUUID(BluetoothDiscoveryFilter* filter,
+                             BluetoothUUID uuid) {
+  device::BluetoothDiscoveryFilter::DeviceInfoFilter device_filter;
+  device_filter.uuids.insert(uuid);
+  filter->AddDeviceFilter(device_filter);
 }
 
 }  // namespace
@@ -131,7 +139,7 @@ class BluetoothGattBlueZTest : public testing::Test {
   }
 
   void TearDown() override {
-    adapter_ = NULL;
+    adapter_.reset();
     update_sessions_.clear();
     gatt_conn_.reset();
     bluez::BluezDBusManager::Shutdown();
@@ -169,7 +177,7 @@ class BluetoothGattBlueZTest : public testing::Test {
     properties2->connected.ReplaceValue(true);
 
     return adapter_->GetDevice(bluez::FakeBluetoothDeviceClient::kDualAddress);
-  };
+  }
 
   void BatteryServiceShouldBeComplete(BluetoothDevice* device) {
     ASSERT_TRUE(device);
@@ -286,7 +294,7 @@ class BluetoothGattBlueZTest : public testing::Test {
       base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   bluez::FakeBluetoothDeviceClient* fake_bluetooth_device_client_;
   bluez::FakeBluetoothGattServiceClient* fake_bluetooth_gatt_service_client_;
@@ -323,7 +331,7 @@ TEST_F(BluetoothGattBlueZTest,
   AddDualDevice();
 
   BluetoothDiscoveryFilter discovery_filter(device::BLUETOOTH_TRANSPORT_LE);
-  discovery_filter.AddUUID(kBatteryServiceUUID);
+  AddDeviceFilterWithUUID(&discovery_filter, kBatteryServiceUUID);
 
   DeviceToUUIDs result =
       adapter_->RetrieveGattConnectedDevicesWithDiscoveryFilter(
@@ -339,7 +347,9 @@ TEST_F(
   BluetoothDevice* dual = AddDualDevice();
 
   BluetoothDiscoveryFilter discovery_filter(device::BLUETOOTH_TRANSPORT_LE);
-  discovery_filter.AddUUID(kGenericAccessServiceUUID);
+  device::BluetoothDiscoveryFilter::DeviceInfoFilter device_filter;
+  device_filter.uuids.insert(kGenericAccessServiceUUID);
+  discovery_filter.AddDeviceFilter(device_filter);
 
   DeviceToUUIDs result =
       adapter_->RetrieveGattConnectedDevicesWithDiscoveryFilter(
@@ -356,7 +366,7 @@ TEST_F(
   BluetoothDevice* dual = AddDualDevice();
 
   BluetoothDiscoveryFilter discovery_filter(device::BLUETOOTH_TRANSPORT_LE);
-  discovery_filter.AddUUID(kHeartRateServiceUUID);
+  AddDeviceFilterWithUUID(&discovery_filter, kHeartRateServiceUUID);
 
   DeviceToUUIDs result =
       adapter_->RetrieveGattConnectedDevicesWithDiscoveryFilter(
@@ -373,8 +383,8 @@ TEST_F(BluetoothGattBlueZTest,
   BluetoothDevice* dual = AddDualDevice();
 
   BluetoothDiscoveryFilter discovery_filter(device::BLUETOOTH_TRANSPORT_LE);
-  discovery_filter.AddUUID(kGenericAccessServiceUUID);
-  discovery_filter.AddUUID(kHeartRateServiceUUID);
+  AddDeviceFilterWithUUID(&discovery_filter, kGenericAccessServiceUUID);
+  AddDeviceFilterWithUUID(&discovery_filter, kHeartRateServiceUUID);
 
   DeviceToUUIDs result =
       adapter_->RetrieveGattConnectedDevicesWithDiscoveryFilter(
@@ -392,8 +402,12 @@ TEST_F(
   AddLeDevice();
   BluetoothDevice* dual = AddDualDevice();
   BluetoothDiscoveryFilter discovery_filter(device::BLUETOOTH_TRANSPORT_LE);
-  discovery_filter.AddUUID(kGenericAccessServiceUUID);
-  discovery_filter.AddUUID(kBatteryServiceUUID);
+  device::BluetoothDiscoveryFilter::DeviceInfoFilter device_filter;
+  device_filter.uuids.insert(kGenericAccessServiceUUID);
+  device::BluetoothDiscoveryFilter::DeviceInfoFilter device_filter2;
+  device_filter2.uuids.insert(kBatteryServiceUUID);
+  discovery_filter.AddDeviceFilter(device_filter);
+  discovery_filter.AddDeviceFilter(device_filter2);
 
   DeviceToUUIDs result =
       adapter_->RetrieveGattConnectedDevicesWithDiscoveryFilter(
@@ -417,10 +431,10 @@ TEST_F(BluetoothGattBlueZTest, GattConnection) {
   ASSERT_EQ(0, error_callback_count_);
 
   device->CreateGattConnection(
-      base::Bind(&BluetoothGattBlueZTest::GattConnectionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ConnectErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::GattConnectionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ConnectErrorCallback,
+                     base::Unretained(this)));
 
   EXPECT_EQ(1, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
@@ -437,10 +451,10 @@ TEST_F(BluetoothGattBlueZTest, GattConnection) {
   EXPECT_FALSE(gatt_conn_->IsConnected());
 
   device->CreateGattConnection(
-      base::Bind(&BluetoothGattBlueZTest::GattConnectionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ConnectErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::GattConnectionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ConnectErrorCallback,
+                     base::Unretained(this)));
 
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
@@ -462,10 +476,10 @@ TEST_F(BluetoothGattBlueZTest, GattConnection) {
   EXPECT_FALSE(gatt_conn_->IsConnected());
 
   device->CreateGattConnection(
-      base::Bind(&BluetoothGattBlueZTest::GattConnectionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ConnectErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::GattConnectionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ConnectErrorCallback,
+                     base::Unretained(this)));
 
   EXPECT_EQ(4, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
@@ -575,7 +589,7 @@ TEST_F(BluetoothGattBlueZTest, GattServiceAddedAndRemoved) {
 TEST_F(BluetoothGattBlueZTest, ServicesDiscoveredBeforeAdapterIsCreated) {
   // Tests that all GATT objects are created for a device whose D-Bus objects
   // were already exposed and for which services have been resolved.
-  adapter_ = NULL;
+  adapter_.reset();
   ASSERT_FALSE(device::BluetoothAdapterFactory::HasSharedInstanceForTesting());
 
   // Create the fake D-Bus objects.
@@ -649,10 +663,10 @@ TEST_F(BluetoothGattBlueZTest, ServicesDiscoveredAfterAdapterIsCreated) {
 
   // Verify that the device can be connected to again:
   device->CreateGattConnection(
-      base::Bind(&BluetoothGattBlueZTest::GattConnectionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ConnectErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::GattConnectionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ConnectErrorCallback,
+                     base::Unretained(this)));
   properties->connected.ReplaceValue(true);
   EXPECT_TRUE(device->IsConnected());
 
@@ -671,7 +685,7 @@ TEST_F(BluetoothGattBlueZTest, DiscoverCachedServices) {
   // This unit test tests that all remote GATT objects are created for D-Bus
   // objects that were already exposed and all relevant events have been
   // dispatched.
-  adapter_ = NULL;
+  adapter_.reset();
   ASSERT_FALSE(device::BluetoothAdapterFactory::HasSharedInstanceForTesting());
 
   // Create the fake D-Bus objects.
@@ -760,7 +774,7 @@ TEST_F(BluetoothGattBlueZTest, DiscoverNewServices) {
 TEST_F(BluetoothGattBlueZTest, DiscoverCachedAndNewServices) {
   // This unit test tests that all remote GATT objects are created for D-Bus
   // objects that were already exposed and for new GATT Objects.
-  adapter_ = NULL;
+  adapter_.reset();
   ASSERT_FALSE(device::BluetoothAdapterFactory::HasSharedInstanceForTesting());
 
   // Create the fake D-Bus objects.
@@ -1014,10 +1028,11 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
       characteristic->GetIdentifier());
   EXPECT_EQ(kHeartRateMeasurementUUID, characteristic->GetUUID());
   characteristic->WriteRemoteCharacteristic(
-      write_value, base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                              base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      write_value,
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_TRUE(observer.last_gatt_characteristic_id().empty());
   EXPECT_FALSE(observer.last_gatt_characteristic_uuid().IsValid());
   EXPECT_EQ(0, success_callback_count_);
@@ -1036,10 +1051,11 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
       characteristic->GetIdentifier());
   EXPECT_EQ(kBodySensorLocationUUID, characteristic->GetUUID());
   characteristic->WriteRemoteCharacteristic(
-      write_value, base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                              base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      write_value,
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_TRUE(observer.last_gatt_characteristic_id().empty());
   EXPECT_FALSE(observer.last_gatt_characteristic_uuid().IsValid());
   EXPECT_EQ(0, success_callback_count_);
@@ -1062,10 +1078,11 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
       characteristic->GetIdentifier());
   EXPECT_EQ(kHeartRateControlPointUUID, characteristic->GetUUID());
   characteristic->WriteRemoteCharacteristic(
-      write_value, base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                              base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      write_value,
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_TRUE(observer.last_gatt_characteristic_id().empty());
   EXPECT_FALSE(observer.last_gatt_characteristic_uuid().IsValid());
   EXPECT_EQ(1, success_callback_count_);
@@ -1079,10 +1096,11 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
   invalid_write_length.push_back(0x01);
   invalid_write_length.push_back(0x00);
   characteristic->WriteRemoteCharacteristic(
-      invalid_write_length, base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                                       base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      invalid_write_length,
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(1, success_callback_count_);
   EXPECT_EQ(3, error_callback_count_);
   EXPECT_EQ(BluetoothRemoteGattService::GATT_ERROR_INVALID_LENGTH,
@@ -1092,10 +1110,11 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
   std::vector<uint8_t> invalid_write_value;
   invalid_write_value.push_back(0x02);
   characteristic->WriteRemoteCharacteristic(
-      invalid_write_value, base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                                      base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      invalid_write_value,
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(1, success_callback_count_);
   EXPECT_EQ(4, error_callback_count_);
   EXPECT_EQ(BluetoothRemoteGattService::GATT_ERROR_FAILED, last_service_error_);
@@ -1112,10 +1131,10 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
       characteristic->GetIdentifier());
   EXPECT_EQ(kBodySensorLocationUUID, characteristic->GetUUID());
   characteristic->ReadRemoteCharacteristic(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(4, error_callback_count_);
   EXPECT_EQ(0, observer.gatt_characteristic_value_changed_count());
@@ -1133,10 +1152,10 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
       characteristic->GetIdentifier());
   EXPECT_EQ(kBodySensorLocationUUID, characteristic->GetUUID());
   characteristic->ReadRemoteCharacteristic(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
 
   // Callback counts shouldn't change, this one will be delayed until after
   // tne next one.
@@ -1146,10 +1165,10 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
 
   // Next read should error because IN_PROGRESS
   characteristic->ReadRemoteCharacteristic(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(5, error_callback_count_);
   EXPECT_EQ(BluetoothRemoteGattService::GATT_ERROR_IN_PROGRESS,
             last_service_error_);
@@ -1163,10 +1182,10 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
   // Test unauthorized actions.
   fake_bluetooth_gatt_characteristic_client_->SetAuthorized(false);
   characteristic->ReadRemoteCharacteristic(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(3, success_callback_count_);
   EXPECT_EQ(6, error_callback_count_);
   EXPECT_EQ(BluetoothRemoteGattService::GATT_ERROR_NOT_AUTHORIZED,
@@ -1177,10 +1196,10 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue) {
   // Test unauthenticated / needs login.
   fake_bluetooth_gatt_characteristic_client_->SetAuthenticated(false);
   characteristic->ReadRemoteCharacteristic(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(3, success_callback_count_);
   EXPECT_EQ(7, error_callback_count_);
   EXPECT_EQ(BluetoothRemoteGattService::GATT_ERROR_NOT_PAIRED,
@@ -1226,13 +1245,13 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue_Nested_Read_Read) {
         EXPECT_EQ(characteristic->GetValue(), last_read_value_);
 
         characteristic->ReadRemoteCharacteristic(
-            base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                       base::Unretained(this)),
-            base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                       base::Unretained(this)));
+            base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                           base::Unretained(this)),
+            base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                           base::Unretained(this)));
       }),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
   EXPECT_EQ(characteristic->GetValue(), last_read_value_);
@@ -1277,13 +1296,13 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue_Nested_Write_Write) {
 
         characteristic->WriteRemoteCharacteristic(
             write_value,
-            base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                       base::Unretained(this)),
-            base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                       base::Unretained(this)));
+            base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                           base::Unretained(this)),
+            base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                           base::Unretained(this)));
       }),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
 }
@@ -1332,13 +1351,13 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue_Nested_Read_Write) {
 
         characteristic->WriteRemoteCharacteristic(
             std::vector<uint8_t>({0x01}),
-            base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                       base::Unretained(this)),
-            base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                       base::Unretained(this)));
+            base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                           base::Unretained(this)),
+            base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                           base::Unretained(this)));
       }),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
 }
@@ -1385,13 +1404,13 @@ TEST_F(BluetoothGattBlueZTest, GattCharacteristicValue_Nested_Write_Read) {
                 .value());
 
         characteristic->ReadRemoteCharacteristic(
-            base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                       base::Unretained(this)),
-            base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                       base::Unretained(this)));
+            base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                           base::Unretained(this)),
+            base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                           base::Unretained(this)));
       }),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
   EXPECT_EQ(characteristic->GetValue(), last_read_value_);
@@ -1497,10 +1516,10 @@ TEST_F(BluetoothGattBlueZTest, GattDescriptorValue) {
   // Read value. GattDescriptorValueChanged event will be sent after a
   // successful read.
   descriptor->ReadRemoteDescriptor(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(1, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
   EXPECT_TRUE(ValuesEqual(last_read_value_, descriptor->GetValue()));
@@ -1511,10 +1530,11 @@ TEST_F(BluetoothGattBlueZTest, GattDescriptorValue) {
   // Write value. Writes to this descriptor will fail.
   desc_value[0] = 0x03;
   descriptor->WriteRemoteDescriptor(
-      desc_value, base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                             base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      desc_value,
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(1, success_callback_count_);
   EXPECT_EQ(1, error_callback_count_);
   EXPECT_EQ(BluetoothRemoteGattService::GATT_ERROR_NOT_PERMITTED,
@@ -1526,10 +1546,10 @@ TEST_F(BluetoothGattBlueZTest, GattDescriptorValue) {
 
   // Read value. The value should remain unchanged.
   descriptor->ReadRemoteDescriptor(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(2, success_callback_count_);
   EXPECT_EQ(1, error_callback_count_);
   EXPECT_TRUE(ValuesEqual(last_read_value_, descriptor->GetValue()));
@@ -1540,10 +1560,10 @@ TEST_F(BluetoothGattBlueZTest, GattDescriptorValue) {
   // Start notifications on the descriptor's characteristic. The descriptor
   // value should change.
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   base::RunLoop().Run();
   EXPECT_EQ(3, success_callback_count_);
   EXPECT_EQ(1, error_callback_count_);
@@ -1552,10 +1572,10 @@ TEST_F(BluetoothGattBlueZTest, GattDescriptorValue) {
 
   // Read the new descriptor value. We should receive a value updated event.
   descriptor->ReadRemoteDescriptor(
-      base::Bind(&BluetoothGattBlueZTest::ValueCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::ValueCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(4, success_callback_count_);
   EXPECT_EQ(1, error_callback_count_);
   EXPECT_TRUE(ValuesEqual(last_read_value_, descriptor->GetValue()));
@@ -1598,10 +1618,10 @@ TEST_F(BluetoothGattBlueZTest, NotifySessions) {
 
   // Request to start notifications.
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
 
   // The operation still hasn't completed but we should have received the first
   // notification.
@@ -1612,15 +1632,15 @@ TEST_F(BluetoothGattBlueZTest, NotifySessions) {
 
   // Send a two more requests, which should get queued.
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(0, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
   EXPECT_EQ(1, observer.gatt_characteristic_value_changed_count());
@@ -1645,8 +1665,8 @@ TEST_F(BluetoothGattBlueZTest, NotifySessions) {
   // characteristic should still be notifying.
   BluetoothGattNotifySession* session = update_sessions_[0].get();
   EXPECT_TRUE(session->IsActive());
-  session->Stop(base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                           base::Unretained(this)));
+  session->Stop(base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                               base::Unretained(this)));
 
   // Run message loop to stop the notify session.
   base::RunLoop().Run();
@@ -1679,10 +1699,10 @@ TEST_F(BluetoothGattBlueZTest, NotifySessions) {
 
   // Enable notifications again.
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(0, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
   EXPECT_EQ(1, observer.gatt_characteristic_value_changed_count());
@@ -1705,10 +1725,10 @@ TEST_F(BluetoothGattBlueZTest, NotifySessions) {
 
   // Request another session. This should return immediately.
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
 
   // Run message loop to stop the notify session.
   base::RunLoop().Run();
@@ -1761,25 +1781,25 @@ TEST_F(BluetoothGattBlueZTest, NotifySessionsMadeInactive) {
 
   // Send several requests to start notifications.
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
 
   // The operation still hasn't completed but we should have received the first
   // notification.
@@ -1806,10 +1826,10 @@ TEST_F(BluetoothGattBlueZTest, NotifySessionsMadeInactive) {
   // marked as inactive.
   fake_bluetooth_gatt_characteristic_client_->StopNotify(
       fake_bluetooth_gatt_characteristic_client_->GetHeartRateMeasurementPath(),
-      base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::DBusErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::DBusErrorCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(5, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
 
@@ -1828,10 +1848,10 @@ TEST_F(BluetoothGattBlueZTest, NotifySessionsMadeInactive) {
   success_callback_count_ = 0;
   observer.Reset();
   characteristic->StartNotifySession(
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
 
   // Run message loop to start the notify session.
   base::RunLoop().RunUntilIdle();
@@ -1881,10 +1901,10 @@ TEST_F(BluetoothGattBlueZTest, ReliableWrite) {
                               ->GetHeartRateMeasurementPath()
                               .value())
       ->StartNotifySession(
-          base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                     base::Unretained(this)),
-          base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                     base::Unretained(this)));
+          base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                         base::Unretained(this)),
+          base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                         base::Unretained(this)));
   base::RunLoop().Run();
 
   // Obtain writable Heart Rate Control Point characteristic.
@@ -1901,10 +1921,10 @@ TEST_F(BluetoothGattBlueZTest, ReliableWrite) {
   for (int i = 0; i < 1000; ++i) {
     characteristic->PrepareWriteRemoteCharacteristic(
         write_value,
-        base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                   base::Unretained(this)),
-        base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                       base::Unretained(this)),
+        base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                       base::Unretained(this)));
   }
   EXPECT_EQ(1000, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
@@ -1926,10 +1946,10 @@ TEST_F(BluetoothGattBlueZTest, ReliableWrite) {
   for (int i = 0; i < 1000; ++i) {
     characteristic->PrepareWriteRemoteCharacteristic(
         write_value,
-        base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                   base::Unretained(this)),
-        base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                       base::Unretained(this)),
+        base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                       base::Unretained(this)));
   }
   EXPECT_EQ(1000, success_callback_count_);
   EXPECT_EQ(0, error_callback_count_);
@@ -1974,26 +1994,26 @@ TEST_F(BluetoothGattBlueZTest, NotificationType) {
   // Request to start notifications.
   characteristic->StartNotifySession(
       device::BluetoothGattCharacteristic::NotificationType::kNotification,
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   base::RunLoop().Run();
   EXPECT_EQ(1, observer.gatt_characteristic_value_changed_count());
 
   // Request to start indications.
   fake_bluetooth_gatt_characteristic_client_->StopNotify(
       fake_bluetooth_gatt_characteristic_client_->GetHeartRateMeasurementPath(),
-      base::Bind(&BluetoothGattBlueZTest::SuccessCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::DBusErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::SuccessCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::DBusErrorCallback,
+                     base::Unretained(this)));
   characteristic->StartNotifySession(
       device::BluetoothGattCharacteristic::NotificationType::kIndication,
-      base::Bind(&BluetoothGattBlueZTest::NotifySessionCallback,
-                 base::Unretained(this)),
-      base::Bind(&BluetoothGattBlueZTest::ServiceErrorCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&BluetoothGattBlueZTest::NotifySessionCallback,
+                     base::Unretained(this)),
+      base::BindOnce(&BluetoothGattBlueZTest::ServiceErrorCallback,
+                     base::Unretained(this)));
   base::RunLoop().Run();
   EXPECT_EQ(2, observer.gatt_characteristic_value_changed_count());
 }

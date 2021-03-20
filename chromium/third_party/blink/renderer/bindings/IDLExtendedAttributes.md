@@ -47,7 +47,7 @@ Lastly, please do not confuse "_extended_ attributes", which go inside `[...]` a
 
 ### Constants
 
-Only the following (Blink-only) extended attributes apply to constants: `[DeprecateAs]`, `[MeasureAs]`, `[OriginTrialEnabled]`, `[Reflect]`, and `[RuntimeEnabled]`, and the interface extended attribute `[DoNotCheckConstants]` affects constants.
+Only the following (Blink-only) extended attributes apply to constants: `[DeprecateAs]`, `[MeasureAs]`, `[Reflect]`, and `[RuntimeEnabled]`, and the interface extended attribute `[DoNotCheckConstants]` affects constants.
 
 ### Overloaded methods
 
@@ -100,9 +100,9 @@ The following extended attributes are used on special operations, as on methods 
 
 Extended attributes on partial interface members work as normal. However, only the following 4 extended attributes can be used on the partial interface itself; otherwise extended attributes should appear on the main interface definition:
 
-`[Conditional]`, `[ImplementedAs]`, `[OriginTrialEnabled]` and `[RuntimeEnabled]`
+`[Conditional]`, `[ImplementedAs]` and `[RuntimeEnabled]`
 
-3 of these are used to allow the entire partial interface to be selectively enabled or disabled: `[Conditional]`, `[OriginTrialEnabled]` and `[RuntimeEnabled]`, and function as if the extended attribute were applied to each _member_ (methods, attributes, and constants). Style-wise, if the entire partial interface should be enabled or disabled, these extended attributes should be used on the partial interface, not on each individual member; this clarifies intent and simplifies editing. However:
+2 of these are used to allow the entire partial interface to be selectively enabled or disabled: `[Conditional]` and `[RuntimeEnabled]`, and function as if the extended attribute were applied to each _member_ (methods, attributes, and constants). Style-wise, if the entire partial interface should be enabled or disabled, these extended attributes should be used on the partial interface, not on each individual member; this clarifies intent and simplifies editing. However:
 
 * If some members should not be disabled, this cannot be used on the partial interface; this is often the case for constants.
 * If different members should be controlled by different flags, this must be specified individually.
@@ -112,19 +112,15 @@ The remaining extended attribute, `[ImplementedAs]`, is mandatory. A partial
 interface must have `[ImplementedAs]` extended attribute to specify a static-only C++ class.
 This is stored internally via `[PartialInterfaceImplementedAs]` (see below).
 
-### implements
+### interface mixins
 
-Extended attributes on members of an implemented interface work as normal. However, only the following 5 extended attributes can be used on the implemented interface itself; otherwise extended attributes should appear on the main (implementing) interface definition:
+Extended attributes on members of an interface mixin work as normal. However, only the following 4 extended attributes can be used on the interface mixin itself; otherwise extended attributes should appear on the main (including) interface definition:
 
-* `[LegacyTreatAsPartialInterface]` is part of an ongoing change, as implemented interfaces used to be treated internally as partial interfaces.
+* `[LegacyTreatAsPartialInterface]` is part of an ongoing change, as interface mixins used to be treated internally as partial interfaces.
 
-* `[ImplementedAs]` is only necessary for these legacy files: otherwise the class (C++) implementing (IDL) implemented interfaces does not need to be specified, as this is handled in Blink C++.
-
-* `[OriginTrialEnabled]` behaves as for partial interfaces.
+* `[ImplementedAs]` is only necessary for these legacy files: otherwise the class (C++) implementing (IDL) interface mixins does not need to be specified, as this is handled in Blink C++.
 
 * `[RuntimeEnabled]` behaves as for partial interfaces.
-
-* `[NoInterfaceObject]` is _always_ specified on implemented interfaces.
 
 ### Inheritance
 
@@ -142,10 +138,10 @@ Undocumented: `[TreatNonObjectAsNull]`
 
 ### [CEReactions] _(m, a)_
 
-Standard: [CEReactions](https://html.spec.whatwg.org/multipage/scripting.html#cereactions)
+Standard: [CEReactions](https://html.spec.whatwg.org/C/#cereactions)
 
 Summary: `[CEReactions]` indicates that
-[custom element reactions](https://html.spec.whatwg.org/multipage/scripting.html#concept-custom-element-reaction)
+[custom element reactions](https://html.spec.whatwg.org/C/#concept-custom-element-reaction)
 are triggered for this method or attribute.
 
 Usage: `[CEReactions]` takes no arguments.
@@ -182,9 +178,9 @@ Calling the non-`[Clamp]` version of `setColor()` uses **ToUint8()** to coerce t
 
 Calling the `[Clamp]` version of `setColor()` uses **clampTo()** to coerce the Numbers to octets. Hence calling `context.setColor(-1, 255, 257)` is equivalent to calling `setColorClamped(0, 255, 255)`.
 
-### [Constructor] _(i)_
+### [Constructor] _(i)_ _deprecated_
 
-Standard: [Constructor](https://heycam.github.io/webidl/#Constructor)
+`[Constructor]` is deprecated. Use [constructor operations](https://heycam.github.io/webidl/#idl-constructors) instead.
 
 Summary: `[Constructor]` indicates that the interface should have a constructor, i.e. "new XXX()".
 
@@ -304,7 +300,7 @@ The identifier argument or identifier list argument the `[Global]` extended attr
 
 ### [HTMLConstructor]
 
-Standard: [HTMLConstructor](https://html.spec.whatwg.org/multipage/dom.html#html-element-constructors)
+Standard: [HTMLConstructor](https://html.spec.whatwg.org/C/#html-element-constructors)
 
 Summary: HTML Elements have special constructor behavior. Interface object of given interface with the `[HTMLConstructor]` attribute will have specific behavior when called.
 
@@ -337,6 +333,18 @@ In the example above, named properties in `HTMLCollection` instances (such as th
 
 The `[LegacyUnenumerableNamedProperties]` extended attribute must be used **only** in interfaces that support named properties.
 
+### [LegacyWindowAlias] _(i)_
+
+Standard: [LegacyWindowAlias](https://heycam.github.io/webidl/#LegacyWindowAlias)
+
+### [LegacyWindowAlias_Measure] _(i)_
+
+Summary: The same as `[Measure]` and `[MeasureAs]` but applied to the property exposed as `[LegacyWindowAlias]`.  Unlike `[Measure]`, you can optionally provide the feature name like `[LegacyWindowAlias_Measure=FeatureName]`.
+
+### [LegacyWindowAlias_RuntimeEnabled] _(i)_
+
+Summary: The same as `[RuntimeEnabled]` but applied to the property exposed as `[LegacyWindowAlias]`.
+
 ### [NamedConstructor] _(i)_
 
 Standard: [NamedConstructor](https://heycam.github.io/webidl/#NamedConstructor)
@@ -356,6 +364,14 @@ Usage: The possible usage is `[NamedConstructor=YYY(...)]`. Just as with constru
 The semantics are the same as `[Constructor]`, except that the name changes: JavaScript can make a DOM object by `new Audio()` instead of by `new HTMLAudioElement()`.
 
 Whether you should allow an interface to have a named constructor or not depends on the spec of each interface.
+
+### [NamedConstructor_CallWith] _(i)_
+
+Summary: The same as `[CallWith]` but applied to the named constructors.
+
+### [NamedConstructor_RaisesException] _(i)_
+
+Summary: The same as `[RaisesException]` but applied to the named constructors.
 
 ### [NewObject] _(m)_
 
@@ -484,7 +500,7 @@ interface Window {
 
 ### [Serializable] _(i)_
 
-Standard: [Serializable](https://html.spec.whatwg.org/multipage/structured-data.html#serializable)
+Standard: [Serializable](https://html.spec.whatwg.org/C/#serializable)
 
 Summary: Serializable objects support being serialized, and later deserialized, for persistence in storage APIs or for passing with `postMessage()`.
 
@@ -498,7 +514,7 @@ This attribute has no effect on code generation and should simply be used in Bli
 
 ### [Transferable] _(i)_
 
-Standard: [Transferable](https://html.spec.whatwg.org/multipage/structured-data.html#transferable)
+Standard: [Transferable](https://html.spec.whatwg.org/C/#transferable)
 
 Summary: Transferable objects support being transferred across Realms with `postMessage()`.
 
@@ -524,6 +540,20 @@ void func([TreatNullAs=Emptytring] DOMString str);
 ```
 
 Implementation: Given `[TreatNullAs=EmptyString]`, a JavaScript null is converted to a Blink empty string, for which `String::IsEmpty()` returns true, but `String::IsNull()` return false.
+
+### [StringContext=TrustedHTML|TrustedScript|TrustedScriptURL] _(t)_
+
+Standard: [TrustedType](https://w3c.github.io/webappsec-trusted-types/dist/spec/#!trustedtypes-extended-attribute)
+
+Summary: Indicate that a DOMString for HTMLs and scripts or USVString for script URLs is to be supplemented with additional Trusted Types enforcement logic.
+
+Usage: Must be specified on a DOMString or a USVString type.
+
+```webidl
+typedef [StringContext=TrustedHTML] DOMString TrustedString;
+attribute TrustedString str;
+void func(TrustedString str);
+```
 
 ### [Unforgeable] _(m,a)_
 
@@ -616,9 +646,7 @@ Summary: `[CallWith]` indicates that the bindings code calls the Blink implement
 
 Each value changes the signature of the Blink methods by adding an additional parameter to the head of the parameter list, such as `ScriptState*` for `[CallWith=ScriptState]`.
 
-There are also three rarely used values: `CurrentWindow`, `EnteredWindow`, `ThisValue`.
-
-`[SetterCallWith]` applies to attributes, and only affects the signature of the setter; this is only used in Location.idl, with `CurrentWindow&EnteredWindow`.
+`[SetterCallWith]` applies to attributes, and only affects the signature of the setter.
 
 #### [CallWith=ScriptState] _(m, a*)_
 
@@ -673,10 +701,6 @@ String Example::func(ExecutionContext* context, bool a, bool b);
 ```
 
 _(rare CallWith values)_
-
-#### [CallWith=CurrentWindow&EnteredWindow] _(m, a)_
-
-`EnteredWindow` is the `Window` object that corresponds to the responsible document of the entry settings object.
 
 #### [CallWith=ThisValue] _(m)_
 
@@ -753,7 +777,7 @@ Summary: They allow you to write bindings code manually as you like: full bindin
 
 Custom bindings are _strongly discouraged_. They are likely to be buggy, a source of security holes, and represent a significant maintenance burden. Before using `[Custom]`, you should doubly consider if you really need custom bindings. You are recommended to modify code generators and add specialized extended attributes or special cases if necessary to avoid using `[Custom]`.
 
-Usage: `[Custom]` can be specified on methods or attributes. `[Custom=CallEpilogue]` can be specified on methods. `[Custom=Getter]` and `[Custom=Setter]` can be specified on attributes. `[Custom=A|B]` can be specified on interfaces, with various values (see below).
+Usage: `[Custom]` can be specified on methods or attributes. `[Custom=Getter]` and `[Custom=Setter]` can be specified on attributes. `[Custom=A|B]` can be specified on interfaces, with various values (see below).
 
 On read only attributes (that are not `[Replaceable]`), `[Custom]` is equivalent to `[Custom=Getter]` (since there is no setter) and `[Custom=Getter]` is preferred.
 
@@ -771,7 +795,6 @@ The bindings generator largely _ignores_ the specified type information of `[Cus
 Before explaining the details, let us clarify the relationship of these IDL attributes.
 
 * `[Custom]` on a method indicates that you can write V8 custom bindings for the method.
-* `[Custom=CallEpilogue]` on a method indicates that the normal code is generated for the method, but with an extra call to an auxiliary custom bindings callback at the end.
 * `[Custom=Getter]` or `[Custom=Setter]` on an attribute means custom bindings for the attribute getter or setter.
 * `[Custom]` on an attribute means custom bindings for both the getter and the setter
 
@@ -780,7 +803,6 @@ Methods:
 ```webidl
 interface XXX {
     [Custom] void func();
-    [Custom=CallEpilogue] void func2();
 };
 ```
 
@@ -788,10 +810,6 @@ You can write custom bindings in third_party/blink/renderer/bindings/{core,modul
 
 ```c++
 void V8XXX::FuncMethodCustom(const v8::FunctionCallbackInfo<v8::Value>& info) {
-  ...;
-}
-
-void V8XXX::Func2MethodEpilogueCustom(const v8::FunctionCallbackInfo<v8::Value>& info, V8XXX* impl) {
   ...;
 }
 ```
@@ -937,7 +955,7 @@ Usage: `[CustomElementCallbacks]` takes no arguments.
 Summary: Denotes an API that exposes data that folks on the internet find useful for fingerprinting.
 
 Attributes and methods marked as `[HighEntropy]` are known to be practically useful for [identifying particular clients](https://dev.chromium.org/Home/chromium-security/client-identification-mechanisms) on the web today.
-Both methods and attribute/constant getters annotated with this attribute are wired up to [`Dactyloscoper::Record`](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/frame/use_counter.cc&q=Dactyloscoper::Record) for additional processing.
+Both methods and attribute/constant getters annotated with this attribute are wired up to [`Dactyloscoper::Record`](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/frame/dactyloscoper.cc&q=Dactyloscoper::Record) for additional processing.
 
 This attribute must be accompanied by either `[Measure]` or `[MeasureAs]`.
 
@@ -976,7 +994,11 @@ Summary: Measures usage of a specific feature via UseCounter.
 
 In order to measure usage of specific features, Chrome submits anonymous statistics through the Histogram recording system for users who opt-in to sharing usage statistics. This extended attribute hooks up a specific feature to this measurement system.
 
-Usage: `[Measure]` can be specified on interfaces, methods, attributes, and constants. When specified on an interface usage of the constructor will be measured. The generated feature name must be added to [UseCounter::Feature](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/frame/use_counter.h&q=%22enum%20Feature%22&sq=package:chromium&type=cs&l=61) (in [core/frame/use_counter.h](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/frame/use_counter.h)).
+Usage: `[Measure]` can be specified on interfaces, methods, attributes, and constants.
+
+(_deprecated_) When specified on an interface usage of the constructor will be measured. This behavior could be changed in the future. Specify `[Measure]` on constructor operations instead.
+
+The generated feature name must be added to [UseCounter::Feature](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/platform/instrumentation/use_counter.h&q=%22enum%20Feature%22&sq=package:chromium&type=cs&l=61) (in [platform/instrumentation/use_counter.h](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/platform/instrumentation/use_counter.h)).
 
 ```webidl
 [Measure] attribute Node interestingAttribute;
@@ -989,7 +1011,11 @@ Usage: `[Measure]` can be specified on interfaces, methods, attributes, and cons
 Summary: Like `[Measure]`, but the feature name is provided as the extended attribute value.
 This is similar to the standard `[DeprecateAs]` extended attribute, but does not display a deprecation warning.
 
-Usage: `[MeasureAs]` can be specified on interfaces, methods, attributes, and constants. The value must match one of the enumeration values in [UseCounter::Feature](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/frame/use_counter.h&q=%22enum%20Feature%22&sq=package:chromium&type=cs&l=61) (in [core/frame/use_counter.h](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/frame/use_counter.h)).
+Usage: `[MeasureAs]` can be specified on interfaces, methods, attributes, and constants.
+
+(_deprecated_) Specifying `[MeasureAs]` on interfaces is deprecated. Specify `[MeasureAs]` on constructor operations instead.
+
+The value must match one of the enumeration values in [UseCounter::Feature](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/platform/instrumentation/use_counter.h&q=%22enum%20Feature%22&sq=package:chromium&type=cs&l=61) (in [platform/instrumentation/use_counter.h](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/platform/instrumentation/use_counter.h)).
 
 ```webidl
 [MeasureAs=AttributeWeAreInterestedIn] attribute Node interestingAttribute;
@@ -1009,24 +1035,6 @@ Usage: `[NotEnumerable]` can be specified on methods and attributes
 ```
 
 `[NotEnumerable]` indicates that the method or attribute is not enumerable.
-
-### [OriginTrialEnabled] _(i, m, a, c)_
-
-Summary: Like `[RuntimeEnabled]`, it controls at runtime whether bindings are exposed, but uses a different mechanism for enabling experimental features.
-
-Usage: `[OriginTrialEnabled=FeatureName]`. FeatureName must be included in [runtime\_enabled\_features.json5](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/platform/runtime_enabled_features.json5), and is the same value that would be used with `[RuntimeEnabled]`.
-
-```webidl
-[
-    OriginTrialEnabled=MediaSession
-] interface MediaSession { ... };
-```
-
-When there is an active origin trial for the current execution context, the feature is enabled at runtime, and the binding would be exposed to the web. `[OriginTrialEnabled]` also includes a check for the associated runtime flag, so features can be enabled in that fashion, even without an origin trial.
-
-`[OriginTrialEnabled]` has similar semantics to `[RuntimeEnabled]`, and is intended as a drop-in replacement. For example, `[OriginTrialEnabled]` _cannot_ be applied to arguments, see `[RuntimeEnabled]` for reasoning. The key implementation difference is that `[OriginTrialEnabled]` wraps the generated code with `if (origin_trials::FeatureNameEnabled(...)) { ...code... }`.
-
-For more information, see [RuntimeEnabledFeatures](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/platform/runtime_enabled_features.json5) and [OriginTrialContext](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/blink/renderer/core/origin_trials/origin_trial_context.h).
 
 ### [RaisesException] _(i, m, a)_
 
@@ -1141,6 +1149,9 @@ The `[ReflectEmpty]` extended attribute specifies the value that an IDL getter f
 
 `[ReflectEmpty]` should be used if the specification for the content attribute has an empty attribute value mapped to some attribute state. For HTML, this applies to [enumerated attributes](http://www.whatwg.org/specs/web-apps/current-work/#enumerated-attribute) only.
 
+Non-empty string value specified by `[ReflectEmpty]` must be added to
+`core/html/keywords.json5`.
+
 ### [ReflectInvalid] _(a)_
 
 Specification: [Limited value attributes](http://www.whatwg.org/specs/web-apps/current-work/#limited-to-only-known-values) - _defined in spec prose, not as an IDL extended attribute._
@@ -1159,6 +1170,9 @@ The `[ReflectInvalid]` extended attribute specifies the value that an IDL getter
 
 `[ReflectInvalid]` should be used if the specification for the content attribute has an _invalid value state_ defined. For HTML, this applies to [enumerated attributes](http://www.whatwg.org/specs/web-apps/current-work/#enumerated-attribute) only.
 
+Non-empty string value specified by `[ReflectInvalid]` must be added to
+`core/html/keywords.json5`.
+
 ### [ReflectMissing] _(a)_
 
 Specification: [Limited value attributes](http://www.whatwg.org/specs/web-apps/current-work/#limited-to-only-known-values) - _defined in spec prose, not as an IDL extended attribute._
@@ -1176,6 +1190,9 @@ interface HTMLMyElement {
 The `[ReflectMissing]` extended attribute specifies the value that an IDL getter for the `direction` attribute should return when the content attribute is missing (e.g., return `"auto"` when accessing the `preload` IDL attribute on `<my-element>`.) Its (string) literal value must be one of the possible values that the `[ReflectOnly]` extended attribute lists.
 
 `[ReflectMissing]` should be used if the specification for the content attribute has a _missing value state_ defined. For HTML, this applies to [enumerated attributes](http://www.whatwg.org/specs/web-apps/current-work/#enumerated-attribute) only.
+
+Non-empty string value specified by `[ReflectMissing]` must be added to
+`core/html/keywords.json5`.
 
 ### [ReflectOnly] _(a)_
 
@@ -1197,6 +1214,9 @@ The ReflectOnly attribute limits the range of values that the attribute getter c
 If there is no match, the empty string will be returned. As required by the specification, no such checking is performed when the reflected IDL attribute is set.
 
 `[ReflectOnly]` should be used if the specification for a reflected IDL attribute says it is _"limited to only known values"_.
+
+Non-empty string values specified by `[ReflectOnly]` must be added to
+`core/html/keywords.json5`.
 
 ### [RuntimeEnabled] _(i, m, a, c)_
 
@@ -1386,7 +1406,9 @@ reads would leak cross-origin information.
 With both `Getter` and `Setter`, allows both cross-origin reads and cross-origin
 writes. This is used for the `Window.location` attribute.
 
-### [CustomConstructor] _(i)_
+### [CustomConstructor] _(i)_ _deprecated_
+
+`[CustomConstructor]` is deprecated. Use [constructor operations](https://heycam.github.io/webidl/#idl-constructors) with `[Custom]`.
 
 Summary: They allow you to write custom bindings for constructors.
 
@@ -1499,7 +1521,7 @@ These extended attributes are _temporary_ and are only in use while some change 
 
 ### [LegacyTreatAsPartialInterface] _(i)_
 
-Summary: `[LegacyTreatAsPartialInterface]` on an interface that is the target of an `implements` statement means that the interface is treated as a partial interface, meaning members are accessed via static member functions in a separate class, rather than as instance methods on the instance object `*impl` or class methods on the C++ class implementing the (main) interface. This is legacy from original implementation of `implements`, and is being removed ([Bug 360435](https://crbug.com/360435), nbarth@).
+Summary: `[LegacyTreatAsPartialInterface]` on an interface mixin means that the mixin is treated as a partial interface, meaning members are accessed via static member functions in a separate class, rather than as instance methods on the instance object `*impl` or class methods on the C++ class implementing the (main) interface. This is legacy from original implementation of mixins, and is being removed ([Bug 360435](https://crbug.com/360435), nbarth@).
 
 
 ### [CachedAccessor] _(a)_
@@ -1640,10 +1662,8 @@ Added to members of a partial interface definition (and implemented interfaces w
 ***
 
 * `[ImmutablePrototype]`
-* `[LegacyInterfaceTypeChecking]`
 * `[LogAllWorlds]`
 * `[PerWorldBindings]` :: interacts with `[LogActivity]`
-* `[WebAgentAPI]`
 
 -------------
 
@@ -1662,4 +1682,4 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ***
 
-[CrossOriginProperties]: https://html.spec.whatwg.org/multipage/browsers.html#crossoriginproperties-(-o-)
+[CrossOriginProperties]: https://html.spec.whatwg.org/C/#crossoriginproperties-(-o-)

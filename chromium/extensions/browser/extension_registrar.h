@@ -10,7 +10,9 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "extensions/browser/unloaded_extension_reason.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 
 namespace base {
 class FilePath;
@@ -192,7 +194,7 @@ class ExtensionRegistrar {
   // which were disabled for a reload.
   ExtensionIdSet reloading_extensions_;
 
-  base::WeakPtrFactory<ExtensionRegistrar> weak_factory_;
+  base::WeakPtrFactory<ExtensionRegistrar> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionRegistrar);
 };

@@ -10,17 +10,7 @@
 
 namespace gpu {
 
-namespace {
-
-uint64_t g_next_command_buffer_id = 1;
-
-}  // anonymous namespace
-
-CommandBufferDirect::CommandBufferDirect(
-    TransferBufferManager* transfer_buffer_manager)
-    : service_(this, transfer_buffer_manager),
-      command_buffer_id_(
-          CommandBufferId::FromUnsafeValue(g_next_command_buffer_id++)) {}
+CommandBufferDirect::CommandBufferDirect() : service_(this, nullptr) {}
 
 CommandBufferDirect::~CommandBufferDirect() = default;
 
@@ -49,6 +39,8 @@ CommandBuffer::State CommandBufferDirect::WaitForGetOffsetInRange(
 
 void CommandBufferDirect::Flush(int32_t put_offset) {
   DCHECK(handler_);
+  if (GetLastState().error != gpu::error::kNoError)
+    return;
   service_.Flush(put_offset, handler_);
 }
 
@@ -100,6 +92,10 @@ scoped_refptr<Buffer> CommandBufferDirect::CreateTransferBufferWithId(
     uint32_t size,
     int32_t id) {
   return service_.CreateTransferBufferWithId(size, id);
+}
+
+void CommandBufferDirect::HandleReturnData(base::span<const uint8_t> data) {
+  NOTIMPLEMENTED();
 }
 
 }  // namespace gpu

@@ -23,13 +23,10 @@ namespace content {
 // ResourceDispatcherHost. It is initialized on the UI thread, and then passed
 // to the IO thread by a NavigationRequest object.
 struct CONTENT_EXPORT NavigationRequestInfo {
-  NavigationRequestInfo(const CommonNavigationParams& common_params,
+  NavigationRequestInfo(mojom::CommonNavigationParamsPtr common_params,
                         mojom::BeginNavigationParamsPtr begin_params,
-                        const GURL& site_for_cookies,
-#if defined(TOOLKIT_QT)
-                        const GURL& first_party_url,
-#endif
-                        const base::Optional<url::Origin>& top_frame_origin,
+                        const net::SiteForCookies& site_for_cookies,
+                        const net::NetworkIsolationKey& network_isolation_key,
                         bool is_main_frame,
                         bool parent_is_main_frame,
                         bool are_ancestors_secure,
@@ -38,29 +35,24 @@ struct CONTENT_EXPORT NavigationRequestInfo {
                         bool report_raw_headers,
                         bool is_prerendering,
                         bool upgrade_if_insecure,
-                        std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+                        std::unique_ptr<network::PendingSharedURLLoaderFactory>
                             blob_url_loader_factory,
                         const base::UnguessableToken& devtools_navigation_token,
-                        const base::UnguessableToken& devtools_frame_token);
-  NavigationRequestInfo(const NavigationRequestInfo& other);
+                        const base::UnguessableToken& devtools_frame_token,
+                        bool obey_origin_policy);
+  NavigationRequestInfo(const NavigationRequestInfo& other) = delete;
   ~NavigationRequestInfo();
 
-  const CommonNavigationParams common_params;
+  mojom::CommonNavigationParamsPtr common_params;
   mojom::BeginNavigationParamsPtr begin_params;
 
-  // Usually the URL of the document in the top-level window, which may be
-  // checked by the third-party cookie blocking policy.
-  const GURL site_for_cookies;
+  // Used to check which URLs (if any) are third-party for purposes of cookie
+  // blocking policy.
+  const net::SiteForCookies site_for_cookies;
 
-#if defined(TOOLKIT_QT)
-  // The top level frame URL
-  const GURL first_party_url;
-#endif
-  // The origin of the navigation if top frame, else the origin of the top
-  // frame.
-  // TODO(crbug.com/910716) Make this required. I believe we just need to add
-  // support for signed exchange redirects.
-  const base::Optional<url::Origin> top_frame_origin;
+  // Navigation resource requests will be keyed using |network_isolation_key|
+  // for accessing shared network resources like the http cache.
+  const net::NetworkIsolationKey network_isolation_key;
 
   const bool is_main_frame;
   const bool parent_is_main_frame;
@@ -82,11 +74,17 @@ struct CONTENT_EXPORT NavigationRequestInfo {
   const bool upgrade_if_insecure;
 
   // URLLoaderFactory to facilitate loading blob URLs.
-  std::unique_ptr<network::SharedURLLoaderFactoryInfo> blob_url_loader_factory;
+  std::unique_ptr<network::PendingSharedURLLoaderFactory>
+      blob_url_loader_factory;
 
   const base::UnguessableToken devtools_navigation_token;
 
   const base::UnguessableToken devtools_frame_token;
+
+  // If set, the network service will attempt to retrieve the appropriate origin
+  // policy, if necessary, and attach it to the ResourceResponseHead.
+  // Spec: https://wicg.github.io/origin-policy/
+  const bool obey_origin_policy;
 };
 
 }  // namespace content

@@ -15,13 +15,12 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/platform/x11/x11_event_source.h"
-#include "ui/gfx/path_x11.h"
 #include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
+#include "ui/gfx/x/x11_path.h"
 #include "ui/views/test/views_interactive_ui_test_base.h"
 #include "ui/views/test/x11_property_change_waiter.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
-#include "ui/views/widget/desktop_aura/x11_desktop_handler.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
@@ -34,15 +33,14 @@ class MinimizeWaiter : public X11PropertyChangeWaiter {
   explicit MinimizeWaiter(XID window)
       : X11PropertyChangeWaiter(window, "_NET_WM_STATE") {}
 
-  ~MinimizeWaiter() override {}
+  ~MinimizeWaiter() override = default;
 
  private:
   // X11PropertyChangeWaiter:
-  bool ShouldKeepOnWaiting(const ui::PlatformEvent& event) override {
+  bool ShouldKeepOnWaiting(XEvent* event) override {
     std::vector<Atom> wm_states;
     if (ui::GetAtomArrayProperty(xwindow(), "_NET_WM_STATE", &wm_states)) {
-      return !base::ContainsValue(wm_states,
-                                  gfx::GetAtom("_NET_WM_STATE_HIDDEN"));
+      return !base::Contains(wm_states, gfx::GetAtom("_NET_WM_STATE_HIDDEN"));
     }
     return true;
   }
@@ -57,10 +55,9 @@ class StackingClientListWaiter : public X11PropertyChangeWaiter {
   StackingClientListWaiter(XID* expected_windows, size_t count)
       : X11PropertyChangeWaiter(ui::GetX11RootWindow(),
                                 "_NET_CLIENT_LIST_STACKING"),
-        expected_windows_(expected_windows, expected_windows + count) {
-  }
+        expected_windows_(expected_windows, expected_windows + count) {}
 
-  ~StackingClientListWaiter() override {}
+  ~StackingClientListWaiter() override = default;
 
   // X11PropertyChangeWaiter:
   void Wait() override {
@@ -74,14 +71,12 @@ class StackingClientListWaiter : public X11PropertyChangeWaiter {
 
  private:
   // X11PropertyChangeWaiter:
-  bool ShouldKeepOnWaiting(const ui::PlatformEvent& event) override {
+  bool ShouldKeepOnWaiting(XEvent* event) override {
     std::vector<XID> stack;
     ui::GetXWindowStack(ui::GetX11RootWindow(), &stack);
-    for (size_t i = 0; i < expected_windows_.size(); ++i) {
-      if (!base::ContainsValue(stack, expected_windows_[i]))
-        return true;
-    }
-    return false;
+    return !std::all_of(
+        expected_windows_.cbegin(), expected_windows_.cend(),
+        [&stack](XID window) { return base::Contains(stack, window); });
   }
 
   std::vector<XID> expected_windows_;
@@ -93,10 +88,9 @@ class StackingClientListWaiter : public X11PropertyChangeWaiter {
 
 class X11TopmostWindowFinderTest : public ViewsInteractiveUITestBase {
  public:
-  X11TopmostWindowFinderTest() {
-  }
+  X11TopmostWindowFinderTest() = default;
 
-  ~X11TopmostWindowFinderTest() override {}
+  ~X11TopmostWindowFinderTest() override = default;
 
   // Creates and shows a Widget with |bounds|. The caller takes ownership of
   // the returned widget.
@@ -107,7 +101,7 @@ class X11TopmostWindowFinderTest : public ViewsInteractiveUITestBase {
     params.native_widget = new DesktopNativeWidgetAura(toplevel.get());
     params.bounds = bounds;
     params.remove_standard_frame = true;
-    toplevel->Init(params);
+    toplevel->Init(std::move(params));
     toplevel->Show();
     return toplevel;
   }
@@ -115,9 +109,7 @@ class X11TopmostWindowFinderTest : public ViewsInteractiveUITestBase {
   // Creates and shows an X window with |bounds|.
   XID CreateAndShowXWindow(const gfx::Rect& bounds) {
     XID root = DefaultRootWindow(xdisplay());
-    XID xid = XCreateSimpleWindow(xdisplay(),
-                                  root,
-                                  0, 0, 1, 1,
+    XID xid = XCreateSimpleWindow(xdisplay(), root, 0, 0, 1, 1,
                                   0,   // border_width
                                   0,   // border
                                   0);  // background
@@ -136,15 +128,10 @@ class X11TopmostWindowFinderTest : public ViewsInteractiveUITestBase {
     changes.y = bounds.y();
     changes.width = bounds.width();
     changes.height = bounds.height();
-    XConfigureWindow(xdisplay(),
-                     xid,
-                     CWX | CWY | CWWidth | CWHeight,
-                     &changes);
+    XConfigureWindow(xdisplay(), xid, CWX | CWY | CWWidth | CWHeight, &changes);
   }
 
-  Display* xdisplay() {
-    return gfx::GetXDisplay();
-  }
+  Display* xdisplay() { return gfx::GetXDisplay(); }
 
   // Returns the topmost X window at the passed in screen position.
   XID FindTopmostXWindowAt(int screen_x, int screen_y) {
@@ -181,10 +168,6 @@ class X11TopmostWindowFinderTest : public ViewsInteractiveUITestBase {
     // Make X11 synchronous for our display connection. This does not force the
     // window manager to behave synchronously.
     XSynchronize(xdisplay(), x11::True);
-
-    // Ensure that the X11DesktopHandler exists. The X11DesktopHandler is
-    // necessary to properly track menu windows.
-    X11DesktopHandler::get();
   }
 
   void TearDown() override {
@@ -212,7 +195,7 @@ TEST_F(X11TopmostWindowFinderTest, Basic) {
   aura::Window* window3 = widget3->GetNativeWindow();
   XID xid3 = window3->GetHost()->GetAcceleratedWidget();
 
-  XID xids[] = { xid1, xid2, xid3 };
+  XID xids[] = {xid1, xid2, xid3};
   StackingClientListWaiter waiter(xids, base::size(xids));
   waiter.Wait();
   ui::X11EventSource::GetInstance()->DispatchXEvents();
@@ -255,7 +238,7 @@ TEST_F(X11TopmostWindowFinderTest, Minimized) {
   XID xid1 = window1->GetHost()->GetAcceleratedWidget();
   XID xid2 = CreateAndShowXWindow(gfx::Rect(300, 100, 100, 100));
 
-  XID xids[] = { xid1, xid2 };
+  XID xids[] = {xid1, xid2};
   StackingClientListWaiter stack_waiter(xids, base::size(xids));
   stack_waiter.Wait();
   ui::X11EventSource::GetInstance()->DispatchXEvents();
@@ -304,7 +287,7 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangular) {
       region2(gfx::CreateRegionFromSkRegion(skregion2));
   XShapeCombineRegion(xdisplay(), xid2, ShapeBounding, 0, 0, region2.get(),
                       false);
-  XID xids[] = { xid1, xid2 };
+  XID xids[] = {xid1, xid2};
   StackingClientListWaiter stack_waiter(xids, base::size(xids));
   stack_waiter.Wait();
   ui::X11EventSource::GetInstance()->DispatchXEvents();
@@ -335,7 +318,7 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangularEmptyShape) {
   // Widget takes ownership of |shape1|.
   widget1->SetShape(std::move(shape1));
 
-  XID xids[] = { xid1 };
+  XID xids[] = {xid1};
   StackingClientListWaiter stack_waiter(xids, base::size(xids));
   stack_waiter.Wait();
   ui::X11EventSource::GetInstance()->DispatchXEvents();
@@ -358,7 +341,7 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangularNullShape) {
   // Remove the shape - this is now just a normal window.
   widget1->SetShape(nullptr);
 
-  XID xids[] = { xid1 };
+  XID xids[] = {xid1};
   StackingClientListWaiter stack_waiter(xids, base::size(xids));
   stack_waiter.Wait();
   ui::X11EventSource::GetInstance()->DispatchXEvents();
@@ -374,15 +357,12 @@ TEST_F(X11TopmostWindowFinderTest, Menu) {
   XID root = DefaultRootWindow(xdisplay());
   XSetWindowAttributes swa;
   swa.override_redirect = x11::True;
-  XID menu_xid = XCreateWindow(xdisplay(),
-                               root,
-                               0, 0, 1, 1,
-                               0,                  // border width
-                               CopyFromParent,     // depth
+  XID menu_xid = XCreateWindow(xdisplay(), root, 0, 0, 1, 1,
+                               0,               // border width
+                               CopyFromParent,  // depth
                                InputOutput,
-                               CopyFromParent,     // visual
-                               CWOverrideRedirect,
-                               &swa);
+                               CopyFromParent,  // visual
+                               CWOverrideRedirect, &swa);
   {
     ui::SetAtomProperty(menu_xid, "_NET_WM_WINDOW_TYPE", "ATOM",
                         gfx::GetAtom("_NET_WM_WINDOW_TYPE_MENU"));
@@ -392,7 +372,7 @@ TEST_F(X11TopmostWindowFinderTest, Menu) {
   ui::X11EventSource::GetInstance()->DispatchXEvents();
 
   // |menu_xid| is never added to _NET_CLIENT_LIST_STACKING.
-  XID xids[] = { xid };
+  XID xids[] = {xid};
   StackingClientListWaiter stack_waiter(xids, base::size(xids));
   stack_waiter.Wait();
 

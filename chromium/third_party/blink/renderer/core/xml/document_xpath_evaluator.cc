@@ -72,7 +72,7 @@ XPathResult* DocumentXPathEvaluator::evaluate(Document& document,
                                               const String& expression,
                                               Node* context_node,
                                               XPathNSResolver* resolver,
-                                              unsigned short type,
+                                              uint16_t type,
                                               const ScriptValue&,
                                               ExceptionState& exception_state) {
   DocumentXPathEvaluator& suplement = From(document);
@@ -82,7 +82,7 @@ XPathResult* DocumentXPathEvaluator::evaluate(Document& document,
       expression, context_node, resolver, type, ScriptValue(), exception_state);
 }
 
-void DocumentXPathEvaluator::Trace(blink::Visitor* visitor) {
+void DocumentXPathEvaluator::Trace(Visitor* visitor) {
   visitor->Trace(xpath_evaluator_);
   Supplement<Document>::Trace(visitor);
 }

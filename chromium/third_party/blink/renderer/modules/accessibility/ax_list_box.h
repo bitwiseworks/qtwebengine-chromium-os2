@@ -38,8 +38,6 @@ class AXObjectCacheImpl;
 
 class AXListBox final : public AXLayoutObject {
  public:
-  static AXListBox* Create(LayoutObject*, AXObjectCacheImpl&);
-
   AXListBox(LayoutObject*, AXObjectCacheImpl&);
   ~AXListBox() override;
 
@@ -55,7 +53,10 @@ class AXListBox final : public AXLayoutObject {
   DISALLOW_COPY_AND_ASSIGN(AXListBox);
 };
 
-DEFINE_AX_OBJECT_TYPE_CASTS(AXListBox, IsAXListBox());
+template <>
+struct DowncastTraits<AXListBox> {
+  static bool AllowFrom(const AXObject& object) { return object.IsAXListBox(); }
+};
 
 }  // namespace blink
 

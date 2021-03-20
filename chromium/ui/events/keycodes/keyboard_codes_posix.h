@@ -47,6 +47,7 @@ enum KeyboardCode {
   VKEY_CAPITAL = 0x14,
   VKEY_KANA = 0x15,
   VKEY_HANGUL = 0x15,
+  VKEY_PASTE = 0x16,
   VKEY_JUNJA = 0x17,
   VKEY_FINAL = 0x18,
   VKEY_HANJA = 0x19,
@@ -219,6 +220,7 @@ enum KeyboardCode {
   VKEY_POWER = 0x98,
   VKEY_ASSISTANT = 0x99,
   VKEY_SETTINGS = 0x9A,
+  VKEY_PRIVACY_SCREEN_TOGGLE = 0x9B,
   VKEY_BRIGHTNESS_DOWN = 0xD8,
   VKEY_BRIGHTNESS_UP = 0xD9,
   VKEY_KBD_BRIGHTNESS_DOWN = 0xDA,
@@ -231,6 +233,11 @@ enum KeyboardCode {
   // Windows does not have a specific key code for Compose. We use the unused
   // 0xE6 (VK_ICO_CLEAR) code to represent Compose.
   VKEY_COMPOSE = 0xE6,
+  // Windows does not have specific key codes for Media Play and Media Pause. We
+  // use the unused 0xE9 (VK_OEM_RESET) and 0xEA (VK_OEM_JUMP) codes to
+  // represent them.
+  VKEY_MEDIA_PLAY = 0xE9,
+  VKEY_MEDIA_PAUSE = 0xEA,
 };
 
 }  // namespace ui

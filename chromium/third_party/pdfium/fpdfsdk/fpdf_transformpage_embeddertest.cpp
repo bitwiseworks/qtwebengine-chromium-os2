@@ -3,7 +3,13 @@
 // found in the LICENSE file.
 
 #include "public/fpdf_transformpage.h"
+
+#include "build/build_config.h"
 #include "testing/embedder_test.h"
+
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
+#include "third_party/base/test/scoped_locale.h"
+#endif
 
 class FPDFTransformEmbedderTest : public EmbedderTest {};
 
@@ -188,7 +194,13 @@ TEST_F(FPDFTransformEmbedderTest, NoArtBox) {
   UnloadPage(page);
 }
 
-TEST_F(FPDFTransformEmbedderTest, SetCropBox) {
+// TODO(crbug.com/pdfium/11): Fix this test and enable.
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_SetCropBox DISABLED_SetCropBox
+#else
+#define MAYBE_SetCropBox SetCropBox
+#endif
+TEST_F(FPDFTransformEmbedderTest, MAYBE_SetCropBox) {
   const char kOriginalMD5[] = "0a90de37f52127619c3dfb642b5fa2fe";
   const char kCroppedMD5[] = "9937883715d5144c079fb8f7e3d4f395";
 
@@ -238,7 +250,7 @@ TEST_F(FPDFTransformEmbedderTest, SetCropBox) {
     // Save a copy, open the copy, and render it.
     // Note that it renders the rotation.
     EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
-    OpenSavedDocument(nullptr);
+    ASSERT_TRUE(OpenSavedDocument());
     FPDF_PAGE saved_page = LoadSavedPage(0);
     ASSERT_TRUE(saved_page);
 
@@ -261,7 +273,13 @@ TEST_F(FPDFTransformEmbedderTest, SetCropBox) {
   }
 }
 
-TEST_F(FPDFTransformEmbedderTest, SetMediaBox) {
+// TODO(crbug.com/pdfium/11): Fix this test and enable.
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_SetMediaBox DISABLED_SetMediaBox
+#else
+#define MAYBE_SetMediaBox SetMediaBox
+#endif
+TEST_F(FPDFTransformEmbedderTest, MAYBE_SetMediaBox) {
   const char kOriginalMD5[] = "0a90de37f52127619c3dfb642b5fa2fe";
   const char kShrunkMD5[] = "eab5958f62f7ce65d7c32de98389fee1";
 
@@ -311,7 +329,7 @@ TEST_F(FPDFTransformEmbedderTest, SetMediaBox) {
     // Save a copy, open the copy, and render it.
     // Note that it renders the rotation.
     EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
-    OpenSavedDocument(nullptr);
+    ASSERT_TRUE(OpenSavedDocument());
     FPDF_PAGE saved_page = LoadSavedPage(0);
     ASSERT_TRUE(saved_page);
 
@@ -341,18 +359,19 @@ TEST_F(FPDFTransformEmbedderTest, ClipPath) {
   FPDF_PAGE page = LoadPage(0);
   ASSERT_TRUE(page);
 
-  FPDF_CLIPPATH clip = FPDF_CreateClipPath(10.0f, 10.0f, 90.0f, 90.0f);
-  EXPECT_TRUE(clip);
+  {
+    ScopedFPDFClipPath clip(FPDF_CreateClipPath(10.0f, 10.0f, 90.0f, 90.0f));
+    EXPECT_TRUE(clip);
 
-  // NULL arg call is a no-op.
-  FPDFPage_InsertClipPath(nullptr, clip);
+    // NULL arg call is a no-op.
+    FPDFPage_InsertClipPath(nullptr, clip.get());
 
-  // Do actual work.
-  FPDFPage_InsertClipPath(page, clip);
+    // Do actual work.
+    FPDFPage_InsertClipPath(page, clip.get());
 
-  // TODO(tsepez): test how inserting path affects page rendering.
+    // TODO(tsepez): test how inserting path affects page rendering.
+  }
 
-  FPDF_DestroyClipPath(clip);
   UnloadPage(page);
 }
 
@@ -392,3 +411,135 @@ TEST_F(FPDFTransformEmbedderTest, TransFormWithClipWithPatterns) {
 
   UnloadPage(page);
 }
+
+// TODO(crbug.com/pdfium/11): Fix this test and enable.
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_TransFormWithClipAndSave DISABLED_TransFormWithClipAndSave
+#else
+#define MAYBE_TransFormWithClipAndSave TransFormWithClipAndSave
+#endif
+TEST_F(FPDFTransformEmbedderTest, MAYBE_TransFormWithClipAndSave) {
+  const char kOriginalMD5[] = "0a90de37f52127619c3dfb642b5fa2fe";
+  const char kShrunkMD5[] = "f4136cc9209207ab60eb8381a3df2e69";
+
+  {
+    ASSERT_TRUE(OpenDocument("rectangles.pdf"));
+    FPDF_PAGE page = LoadPage(0);
+    ASSERT_TRUE(page);
+
+    {
+      // Render the page as is.
+      const int page_width = static_cast<int>(FPDF_GetPageWidth(page));
+      const int page_height = static_cast<int>(FPDF_GetPageHeight(page));
+      EXPECT_EQ(200, page_width);
+      EXPECT_EQ(300, page_height);
+      ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+      CompareBitmap(bitmap.get(), page_width, page_height, kOriginalMD5);
+    }
+
+    {
+      // Render the page after transforming.
+      // Note that the change should affect the rendering, but does not.
+      // It should behaves just like the case below, rather than the case above.
+      // TODO(bug_1328): The checksum below should be |kShrunkMD5|.
+      const FS_MATRIX half_matrix{0.5, 0, 0, 0.5, 0, 0};
+      EXPECT_TRUE(FPDFPage_TransFormWithClip(page, &half_matrix, nullptr));
+      const int page_width = static_cast<int>(FPDF_GetPageWidth(page));
+      const int page_height = static_cast<int>(FPDF_GetPageHeight(page));
+      EXPECT_EQ(200, page_width);
+      EXPECT_EQ(300, page_height);
+      ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+      CompareBitmap(bitmap.get(), page_width, page_height, kOriginalMD5);
+    }
+
+    UnloadPage(page);
+  }
+
+  {
+    // Save a copy, open the copy, and render it.
+    // Note that it renders the transform.
+    EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+    ASSERT_TRUE(OpenSavedDocument());
+    FPDF_PAGE saved_page = LoadSavedPage(0);
+    ASSERT_TRUE(saved_page);
+
+    const int page_width = static_cast<int>(FPDF_GetPageWidth(saved_page));
+    const int page_height = static_cast<int>(FPDF_GetPageHeight(saved_page));
+    EXPECT_EQ(200, page_width);
+    EXPECT_EQ(300, page_height);
+    ScopedFPDFBitmap bitmap = RenderSavedPage(saved_page);
+    CompareBitmap(bitmap.get(), page_width, page_height, kShrunkMD5);
+
+    CloseSavedPage(saved_page);
+    CloseSavedDocument();
+  }
+}
+
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
+// TODO(crbug.com/pdfium/11): Fix this test and enable.
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_TransFormWithClipAndSaveWithLocale \
+  DISABLED_TransFormWithClipAndSaveWithLocale
+#else
+#define MAYBE_TransFormWithClipAndSaveWithLocale \
+  TransFormWithClipAndSaveWithLocale
+#endif
+TEST_F(FPDFTransformEmbedderTest, MAYBE_TransFormWithClipAndSaveWithLocale) {
+  const char kOriginalMD5[] = "0a90de37f52127619c3dfb642b5fa2fe";
+  const char kShrunkMD5[] = "f4136cc9209207ab60eb8381a3df2e69";
+
+  pdfium::base::ScopedLocale scoped_locale("da_DK.UTF-8");
+
+  {
+    ASSERT_TRUE(OpenDocument("rectangles.pdf"));
+    FPDF_PAGE page = LoadPage(0);
+    ASSERT_TRUE(page);
+
+    {
+      // Render the page as is.
+      const int page_width = static_cast<int>(FPDF_GetPageWidth(page));
+      const int page_height = static_cast<int>(FPDF_GetPageHeight(page));
+      EXPECT_EQ(200, page_width);
+      EXPECT_EQ(300, page_height);
+      ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+      CompareBitmap(bitmap.get(), page_width, page_height, kOriginalMD5);
+    }
+
+    {
+      // Render the page after transforming.
+      // Note that the change should affect the rendering, but does not.
+      // It should behaves just like the case below, rather than the case above.
+      // TODO(bug_1328): The checksum below should be |kShrunkMD5|.
+      const FS_MATRIX half_matrix{0.5, 0, 0, 0.5, 0, 0};
+      EXPECT_TRUE(FPDFPage_TransFormWithClip(page, &half_matrix, nullptr));
+      const int page_width = static_cast<int>(FPDF_GetPageWidth(page));
+      const int page_height = static_cast<int>(FPDF_GetPageHeight(page));
+      EXPECT_EQ(200, page_width);
+      EXPECT_EQ(300, page_height);
+      ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+      CompareBitmap(bitmap.get(), page_width, page_height, kOriginalMD5);
+    }
+
+    UnloadPage(page);
+  }
+
+  {
+    // Save a copy, open the copy, and render it.
+    // Note that it renders the transform.
+    EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+    ASSERT_TRUE(OpenSavedDocument());
+    FPDF_PAGE saved_page = LoadSavedPage(0);
+    ASSERT_TRUE(saved_page);
+
+    const int page_width = static_cast<int>(FPDF_GetPageWidth(saved_page));
+    const int page_height = static_cast<int>(FPDF_GetPageHeight(saved_page));
+    EXPECT_EQ(200, page_width);
+    EXPECT_EQ(300, page_height);
+    ScopedFPDFBitmap bitmap = RenderSavedPage(saved_page);
+    CompareBitmap(bitmap.get(), page_width, page_height, kShrunkMD5);
+
+    CloseSavedPage(saved_page);
+    CloseSavedDocument();
+  }
+}
+#endif  // defined(OS_LINUX) || defined(OS_FUCHSIA)

@@ -14,11 +14,9 @@ namespace views {
 
 RootViewTargeter::RootViewTargeter(ViewTargeterDelegate* delegate,
                                    internal::RootView* root_view)
-    : ViewTargeter(delegate), root_view_(root_view) {
-}
+    : ViewTargeter(delegate), root_view_(root_view) {}
 
-RootViewTargeter::~RootViewTargeter() {
-}
+RootViewTargeter::~RootViewTargeter() = default;
 
 View* RootViewTargeter::FindTargetForGestureEvent(
     View* root,
@@ -51,14 +49,14 @@ ui::EventTarget* RootViewTargeter::FindNextBestTargetForGestureEvent(
   // gesture handler set by a previous gesture, if one exists. Thus we do not
   // permit any re-targeting of ET_GESTURE_END events.
   if (gesture.type() == ui::ET_GESTURE_END)
-    return NULL;
+    return nullptr;
 
   // Prohibit re-targeting of gesture events (except for GESTURE_SCROLL_BEGIN
   // events) if the default gesture handler was set by the dispatch of a
   // previous gesture event.
   if (root_view_->gesture_handler_set_before_processing_ &&
       gesture.type() != ui::ET_GESTURE_SCROLL_BEGIN) {
-    return NULL;
+    return nullptr;
   }
 
   // If |gesture_handler_| is NULL, it is either because the view was removed
@@ -67,7 +65,7 @@ ui::EventTarget* RootViewTargeter::FindNextBestTargetForGestureEvent(
   // point. In either case, no further re-targeting of |gesture| should be
   // permitted.
   if (!root_view_->gesture_handler_)
-    return NULL;
+    return nullptr;
 
   return previous_target->GetParentTarget();
 }

@@ -10,14 +10,12 @@
 #include "core/fpdfdoc/cpdf_aaction.h"
 #include "core/fpdfdoc/cpdf_action.h"
 #include "core/fpdfdoc/cpdf_annot.h"
-#include "core/fpdfdoc/cpdf_defaultappearance.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_string.h"
-#include "fpdfsdk/cfx_systemhandler.h"
+#include "core/fxge/cfx_renderdevice.h"
 #include "fpdfsdk/cpdfsdk_annot.h"
 
 class CFX_Matrix;
-class CFX_RenderDevice;
 class CPDF_Dictionary;
 class CPDF_RenderOptions;
 class CPDFSDK_PageView;
@@ -37,7 +35,6 @@ class CPDFSDK_BAAnnot : public CPDFSDK_Annot {
 
   virtual CPDF_Action GetAAction(CPDF_AAction::AActionType eAAT);
   virtual bool IsAppearanceValid();
-  virtual bool IsAppearanceValid(CPDF_Annot::AppearanceMode mode);
   virtual void DrawAppearance(CFX_RenderDevice* pDevice,
                               const CFX_Matrix& mtUser2Device,
                               CPDF_Annot::AppearanceMode mode,
@@ -45,8 +42,6 @@ class CPDFSDK_BAAnnot : public CPDFSDK_Annot {
 
   CPDF_Dictionary* GetAnnotDict() const;
   CPDF_Annot* GetPDFPopupAnnot() const;
-
-  CPDF_Dictionary* GetAPDict() const;
 
   void SetAnnotName(const WideString& sName);
   WideString GetAnnotName() const;
@@ -69,9 +64,11 @@ class CPDFSDK_BAAnnot : public CPDFSDK_Annot {
 
   CPDF_AAction GetAAction() const;
 
-  void SetOpenState(bool bState);
+  void SetOpenState(bool bOpenState);
 
  protected:
+  CPDF_Dictionary* GetAPDict() const;
+
   UnownedPtr<CPDF_Annot> const m_pAnnot;
 };
 

@@ -12,19 +12,19 @@ OverlayAgentViz::OverlayAgentViz(DOMAgentViz* dom_agent)
 OverlayAgentViz::~OverlayAgentViz() {}
 
 protocol::Response OverlayAgentViz::setInspectMode(
-    const String& in_mode,
+    const protocol::String& in_mode,
     protocol::Maybe<protocol::Overlay::HighlightConfig> in_highlightConfig) {
-  return protocol::Response::OK();
+  return protocol::Response::Success();
 }
 
 protocol::Response OverlayAgentViz::highlightNode(
     std::unique_ptr<protocol::Overlay::HighlightConfig> highlight_config,
     protocol::Maybe<int> node_id) {
-  return protocol::Response::OK();
+  return protocol::Response::Success();
 }
 
 protocol::Response OverlayAgentViz::hideHighlight() {
-  return protocol::Response::OK();
+  return protocol::Response::Success();
 }
 
 }  // namespace ui_devtools

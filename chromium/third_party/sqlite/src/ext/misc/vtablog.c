@@ -285,7 +285,7 @@ static int vtablogClose(sqlite3_vtab_cursor *cur){
 static int vtablogNext(sqlite3_vtab_cursor *cur){
   vtablog_cursor *pCur = (vtablog_cursor*)cur;
   vtablog_vtab *pTab = (vtablog_vtab*)cur->pVtab;
-  printf("vtablogNext(tab=%d, cursor=%d)  rowid %d -> %d\n",
+  printf("vtablogNext(tab=%d, cursor=%d)  rowid %d -> %d\n", 
          pTab->iInst, pCur->iCursor, (int)pCur->iRowid, (int)pCur->iRowid+1);
   pCur->iRowid++;
   return SQLITE_OK;
@@ -305,7 +305,7 @@ static int vtablogColumn(
   char zVal[50];
 
   if( i<26 ){
-    sqlite3_snprintf(sizeof(zVal),zVal,"%c%d",
+    sqlite3_snprintf(sizeof(zVal),zVal,"%c%d", 
                      "abcdefghijklmnopqrstuvwyz"[i], pCur->iRowid);
   }else{
     sqlite3_snprintf(sizeof(zVal),zVal,"{%d}%d", i, pCur->iRowid);
@@ -407,7 +407,7 @@ static void vtablogQuote(sqlite3_value *p){
 /*
 ** This method is called to "rewind" the vtablog_cursor object back
 ** to the first row of output.  This method is always called at least
-** once prior to any call to vtablogColumn() or vtablogRowid() or
+** once prior to any call to vtablogColumn() or vtablogRowid() or 
 ** vtablogEof().
 */
 static int vtablogFilter(
@@ -441,7 +441,7 @@ static int vtablogBestIndex(
 
 /*
 ** SQLite invokes this method to INSERT, UPDATE, or DELETE content from
-** the table.
+** the table. 
 **
 ** This implementation does not actually make any changes to the table
 ** content.  It merely logs the fact that the method was invoked
@@ -465,7 +465,7 @@ static int vtablogUpdate(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** vtablog virtual table.
 */
 static sqlite3_module vtablogModule = {
@@ -499,8 +499,8 @@ static sqlite3_module vtablogModule = {
 __declspec(dllexport)
 #endif
 int sqlite3_vtablog_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc;

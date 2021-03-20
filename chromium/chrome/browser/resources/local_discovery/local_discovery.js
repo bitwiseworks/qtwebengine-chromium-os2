@@ -15,24 +15,6 @@
 cr.define('local_discovery', function() {
   'use strict';
 
-  // Histogram buckets for UMA tracking.
-  /** @const */ const DEVICES_PAGE_EVENTS = {
-    OPENED: 0,
-    LOG_IN_STARTED_FROM_REGISTER_PROMO: 1,
-    LOG_IN_STARTED_FROM_DEVICE_LIST_PROMO: 2,
-    ADD_PRINTER_CLICKED: 3,
-    REGISTER_CLICKED: 4,
-    REGISTER_CONFIRMED: 5,
-    REGISTER_SUCCESS: 6,
-    REGISTER_CANCEL: 7,
-    REGISTER_FAILURE: 8,
-    MANAGE_CLICKED: 9,
-    REGISTER_CANCEL_ON_PRINTER: 10,
-    REGISTER_TIMEOUT: 11,
-    LOG_IN_STARTED_FROM_REGISTER_OVERLAY_PROMO: 12,
-    MAX_EVENT: 13,
-  };
-
   /**
    * Map of service names to corresponding service objects.
    * @type {Object<string,Service>}
@@ -46,10 +28,11 @@ cr.define('local_discovery', function() {
   let isUserLoggedIn = true;
 
   /**
-   * Whether or not the user is supervised or off the record.
+   * Whether or not the user's profile is restricted because of being
+   * supervised, off the record, or limited by an enterprise policy.
    * @type bool
    */
-  let isUserSupervisedOrOffTheRecord = false;
+  let isUserProfileRestricted = false;
 
   /**
    * Whether or not the path-based dialog has been shown.
@@ -79,7 +62,7 @@ cr.define('local_discovery', function() {
      * Update the device.
      * @param {Object} info New information about the device.
      */
-    updateDevice: function(info) {
+    updateDevice(info) {
       this.info = info;
       this.renderDevice();
     },
@@ -87,14 +70,14 @@ cr.define('local_discovery', function() {
     /**
      * Delete the device.
      */
-    removeDevice: function() {
+    removeDevice() {
       this.deviceContainer().removeChild(this.domElement);
     },
 
     /**
      * Render the device to the device list.
      */
-    renderDevice: function() {
+    renderDevice() {
       if (this.domElement) {
         clearElement(this.domElement);
       } else {
@@ -113,23 +96,21 @@ cr.define('local_discovery', function() {
     /**
      * Return the correct container for the device.
      */
-    deviceContainer: function() {
+    deviceContainer() {
       return $('register-device-list');
     },
 
     /**
      * Register the device.
      */
-    register: function() {
-      recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_CONFIRMED);
+    register() {
       chrome.send('registerDevice', [this.info.service_name]);
       setRegisterPage('register-printer-page-adding1');
     },
     /**
      * Show registrtation UI for device.
      */
-    showRegister: function() {
-      recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_CLICKED);
+    showRegister() {
       $('register-continue').onclick = this.register.bind(this);
 
       showRegisterOverlay();
@@ -137,7 +118,7 @@ cr.define('local_discovery', function() {
     /**
      * Set registration button enabled/disabled
      */
-    setRegisterEnabled: function(isEnabled) {
+    setRegisterEnabled(isEnabled) {
       this.registerEnabled = isEnabled;
       if (this.registerButton) {
         this.registerButton.disabled = !isEnabled;
@@ -158,7 +139,7 @@ cr.define('local_discovery', function() {
   LocalDiscoveryFocusManager.prototype = {
     __proto__: cr.ui.FocusManager.prototype,
     /** @override */
-    getFocusParent: function() {
+    getFocusParent() {
       return document.querySelector('#overlay .showing') || $('main-page');
     }
   };
@@ -220,8 +201,6 @@ cr.define('local_discovery', function() {
    * Show the register overlay.
    */
   function showRegisterOverlay() {
-    recordUmaEvent(DEVICES_PAGE_EVENTS.ADD_PRINTER_CLICKED);
-
     const registerOverlay = $('register-overlay');
     registerOverlay.classList.add('showing');
     registerOverlay.focus();
@@ -255,7 +234,6 @@ cr.define('local_discovery', function() {
     $('error-message').textContent =
         loadTimeData.getString('addingErrorMessage');
     setRegisterPage('register-page-error');
-    recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_FAILURE);
   }
 
   /**
@@ -265,7 +243,6 @@ cr.define('local_discovery', function() {
     $('error-message').textContent =
         loadTimeData.getString('addingCanceledMessage');
     setRegisterPage('register-page-error');
-    recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_CANCEL_ON_PRINTER);
   }
 
   /**
@@ -275,7 +252,6 @@ cr.define('local_discovery', function() {
     $('error-message').textContent =
         loadTimeData.getString('addingTimeoutMessage');
     setRegisterPage('register-page-error');
-    recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_TIMEOUT);
   }
 
   /**
@@ -382,7 +358,7 @@ cr.define('local_discovery', function() {
     } else {
       $('no-printers-message').hidden = true;
       $('register-login-promo').hidden =
-          isUserLoggedIn || isUserSupervisedOrOffTheRecord;
+          isUserLoggedIn || isUserProfileRestricted;
     }
     if (!($('register-login-promo').hidden) ||
         !($('cloud-devices-login-promo').hidden) ||
@@ -405,7 +381,6 @@ cr.define('local_discovery', function() {
 
     const deviceDOM = createCloudDeviceDOM(deviceData);
     $('cloud-devices').insertBefore(deviceDOM, $('cloud-devices').firstChild);
-    recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_SUCCESS);
   }
 
   /**
@@ -440,19 +415,7 @@ cr.define('local_discovery', function() {
    * @param {string} deviceId ID of device.
    */
   function manageCloudDevice(deviceId) {
-    recordUmaEvent(DEVICES_PAGE_EVENTS.MANAGE_CLICKED);
     chrome.send('openCloudPrintURL', [deviceId]);
-  }
-
-  /**
-   * Record an event in the UMA histogram.
-   * @param {number} eventId The id of the event to be recorded.
-   * @private
-   */
-  function recordUmaEvent(eventId) {
-    chrome.send(
-        'metricsHandler:recordInHistogram',
-        ['LocalDiscovery.DevicesPage', eventId, DEVICES_PAGE_EVENTS.MAX_EVENT]);
   }
 
   /**
@@ -461,7 +424,6 @@ cr.define('local_discovery', function() {
   function cancelRegistration() {
     hideRegisterOverlay();
     chrome.send('cancelRegistration');
-    recordUmaEvent(DEVICES_PAGE_EVENTS.REGISTER_CANCEL);
   }
 
   /**
@@ -472,26 +434,31 @@ cr.define('local_discovery', function() {
   }
 
   /**
-   * User is not logged in.
+   * Registers whether the user is logged in. Modifies the UI to display the
+   * appropriate content based on user log-in status and profile restrictions.
+   * @param {boolean} userLoggedIn Whether the user is logged in.
+   * @param {boolean} userProfileRestricted Whether the user profile's access to
+   *     the local discovery page is restricted because of being supervised, off
+   *     the record, or disallowed by policy.
    */
-  function setUserLoggedIn(userLoggedIn, userSupervisedOrOffTheRecord) {
+  function setUserLoggedIn(userLoggedIn, userProfileRestricted) {
     isUserLoggedIn = userLoggedIn;
-    isUserSupervisedOrOffTheRecord = userSupervisedOrOffTheRecord;
+    isUserProfileRestricted = userProfileRestricted;
 
     $('cloud-devices-login-promo').hidden =
-        isUserLoggedIn || isUserSupervisedOrOffTheRecord;
+        isUserLoggedIn || isUserProfileRestricted;
     $('register-overlay-login-promo').hidden =
-        isUserLoggedIn || isUserSupervisedOrOffTheRecord;
+        isUserLoggedIn || isUserProfileRestricted;
     $('register-continue').disabled =
-        !isUserLoggedIn || isUserSupervisedOrOffTheRecord;
+        !isUserLoggedIn || isUserProfileRestricted;
 
-    $('my-devices-container').hidden = userSupervisedOrOffTheRecord;
+    $('my-devices-container').hidden = isUserProfileRestricted;
 
-    if (isUserSupervisedOrOffTheRecord) {
+    if (isUserProfileRestricted) {
       $('cloud-print-connector-section').hidden = true;
     }
 
-    if (isUserLoggedIn && !isUserSupervisedOrOffTheRecord) {
+    if (isUserLoggedIn && !isUserProfileRestricted) {
       requestDeviceList();
       $('register-login-promo').hidden = true;
     } else {
@@ -513,18 +480,14 @@ cr.define('local_discovery', function() {
   }
 
   function registerLoginButtonClicked() {
-    recordUmaEvent(DEVICES_PAGE_EVENTS.LOG_IN_STARTED_FROM_REGISTER_PROMO);
     openSignInPage();
   }
 
   function registerOverlayLoginButtonClicked() {
-    recordUmaEvent(
-        DEVICES_PAGE_EVENTS.LOG_IN_STARTED_FROM_REGISTER_OVERLAY_PROMO);
     openSignInPage();
   }
 
   function cloudDevicesLoginButtonClicked() {
-    recordUmaEvent(DEVICES_PAGE_EVENTS.LOG_IN_STARTED_FROM_DEVICE_LIST_PROMO);
     openSignInPage();
   }
 
@@ -563,8 +526,7 @@ cr.define('local_discovery', function() {
 
   function getOverlayIDFromPath() {
     if (document.location.pathname == '/register') {
-      const params = parseQueryParams(document.location);
-      return params['id'] || null;
+      return new URL(document.location).searchParams.get('id');
     }
   }
 
@@ -597,7 +559,6 @@ cr.define('local_discovery', function() {
     focusManager.initialize();
 
     chrome.send('start');
-    recordUmaEvent(DEVICES_PAGE_EVENTS.OPENED);
   });
 
   return {

@@ -221,6 +221,20 @@ FeatureInfo::FeatureInfo(
       gpu_feature_info
           .status_values[GPU_FEATURE_TYPE_ANDROID_SURFACE_CONTROL] ==
       gpu::kGpuFeatureStatusEnabled;
+
+#if defined(OS_CHROMEOS)
+  feature_flags_.chromium_image_ycbcr_420v = base::Contains(
+      gpu_feature_info.supported_buffer_formats_for_allocation_and_texturing,
+      gfx::BufferFormat::YUV_420_BIPLANAR);
+#elif defined(OS_MACOSX)
+  feature_flags_.chromium_image_ycbcr_420v = true;
+#endif
+
+#if defined(OS_CHROMEOS)
+  feature_flags_.chromium_image_ycbcr_p010 = base::Contains(
+      gpu_feature_info.supported_buffer_formats_for_allocation_and_texturing,
+      gfx::BufferFormat::P010);
+#endif
 }
 
 void FeatureInfo::InitializeBasicState(const base::CommandLine* command_line) {
@@ -262,15 +276,6 @@ void FeatureInfo::Initialize(ContextType context_type,
   disallowed_features_ = disallowed_features;
   context_type_ = context_type;
   is_passthrough_cmd_decoder_ = is_passthrough_cmd_decoder;
-  switch (context_type) {
-    case CONTEXT_TYPE_WEBGL1:
-    case CONTEXT_TYPE_OPENGLES2:
-      break;
-    default:
-      // https://crbug.com/826509
-      workarounds_.use_client_side_arrays_for_stream_buffers = false;
-      break;
-  }
   InitializeFeatures();
   initialized_ = true;
 }
@@ -335,6 +340,13 @@ void FeatureInfo::EnableCHROMIUMTextureStorageImage() {
   }
 }
 
+void FeatureInfo::EnableEXTFloatBlend() {
+  if (!feature_flags_.ext_float_blend) {
+    AddExtensionString("GL_EXT_float_blend");
+    feature_flags_.ext_float_blend = true;
+  }
+}
+
 void FeatureInfo::EnableEXTColorBufferFloat() {
   if (!ext_color_buffer_float_available_)
     return;
@@ -376,6 +388,17 @@ void FeatureInfo::EnableEXTColorBufferHalfFloat() {
   feature_flags_.enable_color_buffer_half_float = true;
 }
 
+void FeatureInfo::EnableEXTTextureFilterAnisotropic() {
+  if (!ext_texture_filter_anisotropic_available_)
+    return;
+  AddExtensionString("GL_EXT_texture_filter_anisotropic");
+  validators_.texture_parameter.AddValue(GL_TEXTURE_MAX_ANISOTROPY_EXT);
+  validators_.g_l_state.AddValue(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+  if (IsWebGL2OrES3OrHigherContext()) {
+    validators_.sampler_parameter.AddValue(GL_TEXTURE_MAX_ANISOTROPY_EXT);
+  }
+}
+
 void FeatureInfo::EnableCHROMIUMColorBufferFloatRGBA() {
   if (!feature_flags_.chromium_color_buffer_float_rgba)
     return;
@@ -392,6 +415,13 @@ void FeatureInfo::EnableCHROMIUMColorBufferFloatRGB() {
   validators_.texture_sized_color_renderable_internal_format.AddValue(
       GL_RGB32F);
   AddExtensionString("GL_CHROMIUM_color_buffer_float_rgb");
+}
+
+void FeatureInfo::EnableOESFboRenderMipmap() {
+  if (!feature_flags_.oes_fbo_render_mipmap) {
+    AddExtensionString("GL_OES_fbo_render_mipmap");
+    feature_flags_.oes_fbo_render_mipmap = true;
+  }
 }
 
 void FeatureInfo::EnableOESTextureFloatLinear() {
@@ -414,6 +444,11 @@ void FeatureInfo::EnableOESTextureHalfFloatLinear() {
     return;
   AddExtensionString("GL_OES_texture_half_float_linear");
   feature_flags_.enable_texture_half_float_linear = true;
+
+  // TODO(capn) : Re-enable this once we have ANGLE+SwiftShader supporting
+  // IOSurfaces.
+  if (workarounds_.disable_half_float_for_gmb)
+    return;
   feature_flags_.gpu_memory_buffer_formats.Add(gfx::BufferFormat::RGBA_F16);
 }
 
@@ -494,6 +529,7 @@ void FeatureInfo::InitializeFeatures() {
       gfx::HasExtension(extensions, "GL_ANGLE_texture_compression_dxt5");
 
   if (gfx::HasExtension(extensions, "GL_EXT_texture_compression_dxt1") ||
+      gfx::HasExtension(extensions, "GL_ANGLE_texture_compression_dxt1") ||
       have_s3tc) {
     enable_dxt1 = true;
   }
@@ -507,7 +543,7 @@ void FeatureInfo::InitializeFeatures() {
   if (enable_dxt1) {
     feature_flags_.ext_texture_format_dxt1 = true;
 
-    AddExtensionString("GL_EXT_texture_compression_dxt1");
+    AddExtensionString("GL_ANGLE_texture_compression_dxt1");
     validators_.compressed_texture_format.AddValue(
         GL_COMPRESSED_RGB_S3TC_DXT1_EXT);
     validators_.compressed_texture_format.AddValue(
@@ -521,9 +557,9 @@ void FeatureInfo::InitializeFeatures() {
 
   if (enable_dxt3) {
     // The difference between GL_EXT_texture_compression_s3tc and
-    // GL_CHROMIUM_texture_compression_dxt3 is that the former
+    // GL_ANGLE_texture_compression_dxt3 is that the former
     // requires on the fly compression. The latter does not.
-    AddExtensionString("GL_CHROMIUM_texture_compression_dxt3");
+    AddExtensionString("GL_ANGLE_texture_compression_dxt3");
     validators_.compressed_texture_format.AddValue(
         GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);
     validators_.texture_internal_format_storage.AddValue(
@@ -534,13 +570,62 @@ void FeatureInfo::InitializeFeatures() {
     feature_flags_.ext_texture_format_dxt5 = true;
 
     // The difference between GL_EXT_texture_compression_s3tc and
-    // GL_CHROMIUM_texture_compression_dxt5 is that the former
+    // GL_ANGLE_texture_compression_dxt5 is that the former
     // requires on the fly compression. The latter does not.
-    AddExtensionString("GL_CHROMIUM_texture_compression_dxt5");
+    AddExtensionString("GL_ANGLE_texture_compression_dxt5");
     validators_.compressed_texture_format.AddValue(
         GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);
     validators_.texture_internal_format_storage.AddValue(
         GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);
+  }
+
+  bool have_bptc =
+      gfx::HasExtension(extensions, "GL_EXT_texture_compression_bptc") ||
+      gl_version_info_->IsAtLeastGL(4, 2) ||
+      gfx::HasExtension(extensions, "GL_ARB_texture_compression_bptc");
+  if (have_bptc) {
+    feature_flags_.ext_texture_compression_bptc = true;
+    AddExtensionString("GL_EXT_texture_compression_bptc");
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_RGBA_BPTC_UNORM_EXT);
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT);
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT);
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_RGBA_BPTC_UNORM_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT);
+  }
+
+  bool have_rgtc =
+      gfx::HasExtension(extensions, "GL_EXT_texture_compression_rgtc") ||
+      gl_version_info_->IsAtLeastGL(3, 0) ||
+      gfx::HasExtension(extensions, "GL_ARB_texture_compression_rgtc");
+  if (have_rgtc) {
+    feature_flags_.ext_texture_compression_rgtc = true;
+    AddExtensionString("GL_EXT_texture_compression_rgtc");
+    validators_.compressed_texture_format.AddValue(GL_COMPRESSED_RED_RGTC1_EXT);
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_SIGNED_RED_RGTC1_EXT);
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_RED_GREEN_RGTC2_EXT);
+    validators_.compressed_texture_format.AddValue(
+        GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_RED_RGTC1_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_SIGNED_RED_RGTC1_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_RED_GREEN_RGTC2_EXT);
+    validators_.texture_internal_format_storage.AddValue(
+        GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT);
   }
 
   bool have_astc =
@@ -548,6 +633,13 @@ void FeatureInfo::InitializeFeatures() {
   if (have_astc) {
     feature_flags_.ext_texture_format_astc = true;
     AddExtensionString("GL_KHR_texture_compression_astc_ldr");
+
+    bool have_astc_hdr =
+        gfx::HasExtension(extensions, "GL_KHR_texture_compression_astc_hdr");
+    if (have_astc_hdr) {
+      feature_flags_.ext_texture_format_astc_hdr = true;
+      AddExtensionString("GL_KHR_texture_compression_astc_hdr");
+    }
 
     // GL_COMPRESSED_RGBA_ASTC(0x93B0 ~ 0x93BD)
     GLint astc_format_it = GL_COMPRESSED_RGBA_ASTC_4x4_KHR;
@@ -584,9 +676,9 @@ void FeatureInfo::InitializeFeatures() {
 
   // Check if we should enable GL_EXT_texture_filter_anisotropic.
   if (gfx::HasExtension(extensions, "GL_EXT_texture_filter_anisotropic")) {
-    AddExtensionString("GL_EXT_texture_filter_anisotropic");
-    validators_.texture_parameter.AddValue(GL_TEXTURE_MAX_ANISOTROPY_EXT);
-    validators_.g_l_state.AddValue(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+    ext_texture_filter_anisotropic_available_ = true;
+    if (!disallowed_features_.ext_texture_filter_anisotropic)
+      EnableEXTTextureFilterAnisotropic();
   }
 
   // Check if we should support GL_OES_packed_depth_stencil and/or
@@ -683,6 +775,14 @@ void FeatureInfo::InitializeFeatures() {
     validators_.index_type.AddValue(GL_UNSIGNED_INT);
   }
 
+  if (gl_version_info_->IsAtLeastGL(3, 0) || gl_version_info_->is_es3 ||
+      gfx::HasExtension(extensions, "GL_OES_fbo_render_mipmap") ||
+      gfx::HasExtension(extensions, "GL_EXT_framebuffer_object")) {
+    if (!disallowed_features_.oes_fbo_render_mipmap) {
+      EnableOESFboRenderMipmap();
+    }
+  }
+
   bool has_srgb_framebuffer_support = false;
   if (gl_version_info_->IsAtLeastGL(3, 2) ||
       (gl_version_info_->IsAtLeastGL(2, 0) &&
@@ -718,7 +818,7 @@ void FeatureInfo::InitializeFeatures() {
   if (gl_version_info_->is_es3)
     has_srgb_framebuffer_support = true;
 
-  if (has_srgb_framebuffer_support && !IsWebGLContext()) {
+  if (has_srgb_framebuffer_support) {
     // GL_FRAMEBUFFER_SRGB_EXT is exposed by the GLES extension
     // GL_EXT_sRGB_write_control (which is not part of the core, even in GLES3),
     // and the desktop extension GL_ARB_framebuffer_sRGB (part of the core in
@@ -726,8 +826,12 @@ void FeatureInfo::InitializeFeatures() {
     if (feature_flags_.desktop_srgb_support ||
         gfx::HasExtension(extensions, "GL_EXT_sRGB_write_control")) {
       feature_flags_.ext_srgb_write_control = true;
-      AddExtensionString("GL_EXT_sRGB_write_control");
-      validators_.capability.AddValue(GL_FRAMEBUFFER_SRGB_EXT);
+
+      // Do not expose this extension to WebGL.
+      if (!IsWebGLContext()) {
+        AddExtensionString("GL_EXT_sRGB_write_control");
+        validators_.capability.AddValue(GL_FRAMEBUFFER_SRGB_EXT);
+      }
     }
   }
 
@@ -962,26 +1066,6 @@ void FeatureInfo::InitializeFeatures() {
     validators_.capability.AddValue(GL_SAMPLE_ALPHA_TO_ONE_EXT);
   }
 
-  if (gfx::HasExtension(extensions, "GL_INTEL_framebuffer_CMAA")) {
-    feature_flags_.chromium_screen_space_antialiasing = true;
-    AddExtensionString("GL_CHROMIUM_screen_space_antialiasing");
-  } else if (gl_version_info_->IsAtLeastGLES(3, 1) ||
-             (gl_version_info_->IsAtLeastGL(3, 0) &&
-              gfx::HasExtension(extensions,
-                                "GL_ARB_shading_language_420pack") &&
-              gfx::HasExtension(extensions, "GL_ARB_texture_storage") &&
-              gfx::HasExtension(extensions, "GL_ARB_texture_gather") &&
-              gfx::HasExtension(extensions,
-                                "GL_ARB_explicit_uniform_location") &&
-              gfx::HasExtension(extensions,
-                                "GL_ARB_explicit_attrib_location") &&
-              gfx::HasExtension(extensions,
-                                "GL_ARB_shader_image_load_store"))) {
-    feature_flags_.chromium_screen_space_antialiasing = true;
-    feature_flags_.use_chromium_screen_space_antialiasing_via_shaders = true;
-    AddExtensionString("GL_CHROMIUM_screen_space_antialiasing");
-  }
-
   if (gfx::HasExtension(extensions, "GL_OES_depth24") ||
       gl::HasDesktopGLFeatures() || gl_version_info_->is_es3) {
     AddExtensionString("GL_OES_depth24");
@@ -1008,6 +1092,15 @@ void FeatureInfo::InitializeFeatures() {
   if (gfx::HasExtension(extensions, "GL_OES_EGL_image_external")) {
     AddExtensionString("GL_OES_EGL_image_external");
     feature_flags_.oes_egl_image_external = true;
+
+    // In many places we check oes_egl_image_external to know whether
+    // TEXTURE_EXTERNAL_OES is valid. Drivers with the _essl3 version *should*
+    // have both. But to be safe, only enable the _essl3 version if the
+    // non-_essl3 version is available.
+    if (gfx::HasExtension(extensions, "GL_OES_EGL_image_external_essl3")) {
+      AddExtensionString("GL_OES_EGL_image_external_essl3");
+      feature_flags_.oes_egl_image_external_essl3 = true;
+    }
   }
   if (gfx::HasExtension(extensions, "GL_NV_EGL_stream_consumer_external")) {
     AddExtensionString("GL_NV_EGL_stream_consumer_external");
@@ -1022,23 +1115,21 @@ void FeatureInfo::InitializeFeatures() {
     validators_.g_l_state.AddValue(GL_TEXTURE_BINDING_EXTERNAL_OES);
   }
 
-  // TODO(kainino): If we add a way to query whether ANGLE is exposing
-  // native support for ETC1 textures, require that here. Otherwise, we could
-  // co-opt the native-ETC2-support query discussed below.
-  if (gfx::HasExtension(extensions, "GL_OES_compressed_ETC1_RGB8_texture") &&
-      !gl_version_info_->is_angle) {
+  // ANGLE only exposes this extension when it has native support of the
+  // GL_ETC1_RGB8 format.
+  if (gfx::HasExtension(extensions, "GL_OES_compressed_ETC1_RGB8_texture")) {
     AddExtensionString("GL_OES_compressed_ETC1_RGB8_texture");
     feature_flags_.oes_compressed_etc1_rgb8_texture = true;
     validators_.compressed_texture_format.AddValue(GL_ETC1_RGB8_OES);
     validators_.texture_internal_format_storage.AddValue(GL_ETC1_RGB8_OES);
   }
 
-  // Expose GL_CHROMIUM_compressed_texture_etc when ANGLE exposes it directly or
+  // Expose GL_ANGLE_compressed_texture_etc when ANGLE exposes it directly or
   // running on top of a non-ANGLE ES driver. We assume that this implies native
   // support of these formats.
-  if (gfx::HasExtension(extensions, "GL_CHROMIUM_compressed_texture_etc") ||
+  if (gfx::HasExtension(extensions, "GL_ANGLE_compressed_texture_etc") ||
       (gl_version_info_->is_es3 && !gl_version_info_->is_angle)) {
-    AddExtensionString("GL_CHROMIUM_compressed_texture_etc");
+    AddExtensionString("GL_ANGLE_compressed_texture_etc");
     validators_.UpdateETCCompressedTextureFormats();
   }
 
@@ -1096,49 +1187,43 @@ void FeatureInfo::InitializeFeatures() {
     validators_.g_l_state.AddValue(GL_TEXTURE_BINDING_RECTANGLE_ARB);
   }
 
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
-  // TODO(dcastagna): Determine ycbcr_420v_image on CrOS at runtime
-  // querying minigbm. https://crbug.com/646148
-  AddExtensionString("GL_CHROMIUM_ycbcr_420v_image");
-  feature_flags_.chromium_image_ycbcr_420v = true;
-#endif
   if (feature_flags_.chromium_image_ycbcr_420v) {
+    AddExtensionString("GL_CHROMIUM_ycbcr_420v_image");
     feature_flags_.gpu_memory_buffer_formats.Add(
         gfx::BufferFormat::YUV_420_BIPLANAR);
   }
 
-  if (gfx::HasExtension(extensions, "GL_APPLE_ycbcr_422")) {
-    AddExtensionString("GL_CHROMIUM_ycbcr_422_image");
-    feature_flags_.chromium_image_ycbcr_422 = true;
-    feature_flags_.gpu_memory_buffer_formats.Add(gfx::BufferFormat::UYVY_422);
-  }
-
 #if defined(OS_MACOSX)
-  // Mac can create GLImages out of XR30 IOSurfaces only after High Sierra.
-  feature_flags_.chromium_image_xr30 = base::mac::IsAtLeastOS10_13();
+  // Mac can create GLImages out of AR30 IOSurfaces only after High Sierra.
+  feature_flags_.chromium_image_ar30 = base::mac::IsAtLeastOS10_13();
 #elif !defined(OS_WIN)
   // TODO(mcasas): connect in Windows, https://crbug.com/803451
   // XB30 support was introduced in GLES 3.0/ OpenGL 3.3, before that it was
   // signalled via a specific extension.
-  feature_flags_.chromium_image_xb30 =
+  feature_flags_.chromium_image_ab30 =
       gl_version_info_->IsAtLeastGL(3, 3) ||
       gl_version_info_->IsAtLeastGLES(3, 0) ||
       gfx::HasExtension(extensions, "GL_EXT_texture_type_2_10_10_10_REV");
 #endif
-  if (feature_flags_.chromium_image_xr30 ||
-      feature_flags_.chromium_image_xb30) {
+  if (feature_flags_.chromium_image_ar30 ||
+      feature_flags_.chromium_image_ab30) {
     validators_.texture_internal_format.AddValue(GL_RGB10_A2_EXT);
     validators_.render_buffer_format.AddValue(GL_RGB10_A2_EXT);
     validators_.texture_internal_format_storage.AddValue(GL_RGB10_A2_EXT);
     validators_.pixel_type.AddValue(GL_UNSIGNED_INT_2_10_10_10_REV);
   }
-  if (feature_flags_.chromium_image_xr30) {
+  if (feature_flags_.chromium_image_ar30) {
     feature_flags_.gpu_memory_buffer_formats.Add(
-        gfx::BufferFormat::BGRX_1010102);
+        gfx::BufferFormat::BGRA_1010102);
   }
-  if (feature_flags_.chromium_image_xb30) {
+  if (feature_flags_.chromium_image_ab30) {
     feature_flags_.gpu_memory_buffer_formats.Add(
-        gfx::BufferFormat::RGBX_1010102);
+        gfx::BufferFormat::RGBA_1010102);
+  }
+
+  if (feature_flags_.chromium_image_ycbcr_p010) {
+    AddExtensionString("GL_CHROMIUM_ycbcr_p010_image");
+    feature_flags_.gpu_memory_buffer_formats.Add(gfx::BufferFormat::P010);
   }
 
   // TODO(gman): Add support for these extensions.
@@ -1334,26 +1419,6 @@ void FeatureInfo::InitializeFeatures() {
     validators_.g_l_state.AddValue(GL_COVERAGE_MODULATION_CHROMIUM);
   }
 
-  if (gfx::HasExtension(extensions, "GL_NV_path_rendering")) {
-    bool has_dsa = gl_version_info_->IsAtLeastGL(4, 5) ||
-                   gfx::HasExtension(extensions, "GL_EXT_direct_state_access");
-    bool has_piq =
-        gl_version_info_->IsAtLeastGL(4, 3) ||
-        gfx::HasExtension(extensions, "GL_ARB_program_interface_query");
-    bool has_fms = feature_flags_.chromium_framebuffer_mixed_samples;
-    if ((gl_version_info_->IsAtLeastGLES(3, 1) ||
-         (gl_version_info_->IsAtLeastGL(3, 2) && has_dsa && has_piq)) &&
-        has_fms) {
-      AddExtensionString("GL_CHROMIUM_path_rendering");
-      feature_flags_.chromium_path_rendering = true;
-      validators_.g_l_state.AddValue(GL_PATH_MODELVIEW_MATRIX_CHROMIUM);
-      validators_.g_l_state.AddValue(GL_PATH_PROJECTION_MATRIX_CHROMIUM);
-      validators_.g_l_state.AddValue(GL_PATH_STENCIL_FUNC_CHROMIUM);
-      validators_.g_l_state.AddValue(GL_PATH_STENCIL_REF_CHROMIUM);
-      validators_.g_l_state.AddValue(GL_PATH_STENCIL_VALUE_MASK_CHROMIUM);
-    }
-  }
-
   if ((gl_version_info_->is_es3 || gl_version_info_->is_desktop_core_profile ||
        gfx::HasExtension(extensions, "GL_EXT_texture_rg") ||
        gfx::HasExtension(extensions, "GL_ARB_texture_rg")) &&
@@ -1386,23 +1451,60 @@ void FeatureInfo::InitializeFeatures() {
   }
   UMA_HISTOGRAM_BOOLEAN("GPU.TextureRG", feature_flags_.ext_texture_rg);
 
-  if (gl_version_info_->is_desktop_core_profile ||
-      (gl_version_info_->IsAtLeastGL(2, 1) &&
-       gfx::HasExtension(extensions, "GL_ARB_texture_rg")) ||
-      gfx::HasExtension(extensions, "GL_EXT_texture_norm16")) {
-    // TODO(hubbe): Rename ext_texture_norm16 to texture_r16
+  if (IsWebGL2OrES3OrHigherContext() &&
+      (gl_version_info_->is_desktop_core_profile ||
+       (gl_version_info_->IsAtLeastGL(2, 1) &&
+        gfx::HasExtension(extensions, "GL_ARB_texture_rg")) ||
+       gfx::HasExtension(extensions, "GL_EXT_texture_norm16"))) {
+    AddExtensionString("GL_EXT_texture_norm16");
     feature_flags_.ext_texture_norm16 = true;
     g_r16_is_present = true;
 
-    // Note: EXT_texture_norm16 is not exposed through WebGL API so we validate
-    // only the combinations used internally.
     validators_.pixel_type.AddValue(GL_UNSIGNED_SHORT);
-    validators_.texture_format.AddValue(GL_RED_EXT);
-    validators_.texture_internal_format.AddValue(GL_R16_EXT);
-    validators_.texture_internal_format.AddValue(GL_RED_EXT);
-    validators_.texture_unsized_internal_format.AddValue(GL_RED_EXT);
-    validators_.texture_internal_format_storage.AddValue(GL_R16_EXT);
+    validators_.pixel_type.AddValue(GL_SHORT);
 
+    validators_.texture_format.AddValue(GL_RED_EXT);
+    validators_.texture_format.AddValue(GL_RG_EXT);
+
+    validators_.texture_internal_format.AddValue(GL_R16_EXT);
+    validators_.texture_internal_format.AddValue(GL_RG16_EXT);
+    validators_.texture_internal_format.AddValue(GL_RGB16_EXT);
+    validators_.texture_internal_format.AddValue(GL_RGBA16_EXT);
+    validators_.texture_internal_format.AddValue(GL_R16_SNORM_EXT);
+    validators_.texture_internal_format.AddValue(GL_RG16_SNORM_EXT);
+    validators_.texture_internal_format.AddValue(GL_RGB16_SNORM_EXT);
+    validators_.texture_internal_format.AddValue(GL_RGBA16_SNORM_EXT);
+    validators_.texture_internal_format.AddValue(GL_RED_EXT);
+
+    validators_.read_pixel_format.AddValue(GL_R16_EXT);
+    validators_.read_pixel_format.AddValue(GL_RG16_EXT);
+    validators_.read_pixel_format.AddValue(GL_RGBA16_EXT);
+
+    validators_.render_buffer_format.AddValue(GL_R16_EXT);
+    validators_.render_buffer_format.AddValue(GL_RG16_EXT);
+    validators_.render_buffer_format.AddValue(GL_RGBA16_EXT);
+
+    validators_.texture_unsized_internal_format.AddValue(GL_RED_EXT);
+    validators_.texture_unsized_internal_format.AddValue(GL_RG_EXT);
+
+    validators_.texture_internal_format_storage.AddValue(GL_R16_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_RG16_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_RGB16_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_RGBA16_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_R16_SNORM_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_RG16_SNORM_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_RGB16_SNORM_EXT);
+    validators_.texture_internal_format_storage.AddValue(GL_RGBA16_SNORM_EXT);
+
+    validators_.texture_sized_color_renderable_internal_format.AddValue(
+        GL_R16_EXT);
+    validators_.texture_sized_color_renderable_internal_format.AddValue(
+        GL_RG16_EXT);
+    validators_.texture_sized_color_renderable_internal_format.AddValue(
+        GL_RGBA16_EXT);
+
+    // TODO(shrekshao): gpu_memory_buffer_formats is not used by WebGL
+    // So didn't expose all buffer formats here.
     feature_flags_.gpu_memory_buffer_formats.Add(gfx::BufferFormat::R_16);
   }
 
@@ -1490,12 +1592,6 @@ void FeatureInfo::InitializeFeatures() {
       gfx::HasExtension(extensions, "GL_ANGLE_request_extension");
   feature_flags_.ext_debug_marker =
       gfx::HasExtension(extensions, "GL_EXT_debug_marker");
-  feature_flags_.arb_robustness =
-      gfx::HasExtension(extensions, "GL_ARB_robustness");
-  feature_flags_.khr_robustness =
-      gfx::HasExtension(extensions, "GL_KHR_robustness");
-  feature_flags_.ext_robustness =
-      gfx::HasExtension(extensions, "GL_EXT_robustness");
   feature_flags_.ext_pixel_buffer_object =
       gfx::HasExtension(extensions, "GL_ARB_pixel_buffer_object") ||
       gfx::HasExtension(extensions, "GL_NV_pixel_buffer_object");
@@ -1525,13 +1621,13 @@ void FeatureInfo::InitializeFeatures() {
     AddExtensionString("GL_MESA_framebuffer_flip_y");
   }
 
-  // Only supporting ANGLE_multiview in passthrough mode - not implemented in
+  // Only supporting OVR_multiview in passthrough mode - not implemented in
   // validating command decoder. The extension is only available in ANGLE and in
   // that case Chromium should be using passthrough by default.
   if (is_passthrough_cmd_decoder_ &&
-      gfx::HasExtension(extensions, "GL_ANGLE_multiview")) {
-    AddExtensionString("GL_ANGLE_multiview");
-    feature_flags_.angle_multiview = true;
+      gfx::HasExtension(extensions, "GL_OVR_multiview2")) {
+    AddExtensionString("GL_OVR_multiview2");
+    feature_flags_.ovr_multiview2 = true;
   }
 
   if (is_passthrough_cmd_decoder_ &&
@@ -1543,6 +1639,9 @@ void FeatureInfo::InitializeFeatures() {
     // https://crbug.com/881152
     validators_.shader_parameter.AddValue(GL_COMPLETION_STATUS_KHR);
     validators_.program_parameter.AddValue(GL_COMPLETION_STATUS_KHR);
+
+    AddExtensionString("GL_CHROMIUM_completion_query");
+    feature_flags_.chromium_completion_query = true;
   }
 
   if (gfx::HasExtension(extensions, "GL_KHR_robust_buffer_access_behavior")) {
@@ -1552,15 +1651,58 @@ void FeatureInfo::InitializeFeatures() {
 
   if (!is_passthrough_cmd_decoder_ ||
       gfx::HasExtension(extensions, "GL_ANGLE_multi_draw")) {
-    feature_flags_.webgl_multi_draw = true;
-    AddExtensionString("GL_WEBGL_multi_draw");
 
     if (gfx::HasExtension(extensions, "GL_ANGLE_instanced_arrays") ||
         feature_flags_.angle_instanced_arrays || gl_version_info_->is_es3 ||
         gl_version_info_->is_desktop_core_profile) {
-      feature_flags_.webgl_multi_draw_instanced = true;
-      AddExtensionString("GL_WEBGL_multi_draw_instanced");
+      feature_flags_.webgl_multi_draw = true;
+      AddExtensionString("GL_WEBGL_multi_draw");
     }
+  }
+
+#if defined(OS_MACOSX)
+  if (is_passthrough_cmd_decoder_ &&
+      gfx::HasExtension(extensions, "GL_ANGLE_base_vertex_base_instance")) {
+#else
+  if ((!is_passthrough_cmd_decoder_ &&
+       ((gl_version_info_->IsAtLeastGLES(3, 2) &&
+         gfx::HasExtension(extensions, "GL_EXT_base_instance")) ||
+        (gl_version_info_->is_desktop_core_profile &&
+         gl_version_info_->IsAtLeastGL(4, 2)))) ||
+      gfx::HasExtension(extensions, "GL_ANGLE_base_vertex_base_instance")) {
+#endif
+    // TODO(shrekshao): change condition to the following after workaround for
+    // Mac AMD and non-native base instance support are implemented, or when
+    // angle is universally used.
+    //
+    // if ((!is_passthrough_cmd_decoder_ &&
+    //      ((gl_version_info_->IsAtLeastGLES(3, 2) ||
+    //        gfx::HasExtension(extensions,
+    //          "GL_OES_draw_elements_base_vertex_base_instance") ||
+    //        gfx::HasExtension(extensions,
+    //          "GL_EXT_draw_elements_base_vertex_base_instance")) ||
+    //       (gl_version_info_->is_desktop_core_profile &&
+    //        gl_version_info_->IsAtLeastGL(3, 2)))) ||
+    //     gfx::HasExtension(extensions, "GL_ANGLE_base_vertex_base_instance"))
+    //     {
+    feature_flags_.webgl_draw_instanced_base_vertex_base_instance = true;
+    AddExtensionString("GL_WEBGL_draw_instanced_base_vertex_base_instance");
+    if (feature_flags_.webgl_multi_draw) {
+      feature_flags_.webgl_multi_draw_instanced_base_vertex_base_instance =
+          true;
+      AddExtensionString(
+          "GL_WEBGL_multi_draw_instanced_base_vertex_base_instance");
+    }
+  }
+
+  if (gfx::HasExtension(extensions, "GL_NV_internalformat_sample_query")) {
+    feature_flags_.nv_internalformat_sample_query = true;
+  }
+
+  if (gfx::HasExtension(extensions,
+                        "GL_AMD_framebuffer_multisample_advanced")) {
+    feature_flags_.amd_framebuffer_multisample_advanced = true;
+    AddExtensionString("GL_AMD_framebuffer_multisample_advanced");
   }
 }
 
@@ -1662,6 +1804,15 @@ void FeatureInfo::InitializeFloatAndHalfFloatFeatures(
     feature_flags_.chromium_color_buffer_float_rgba = true;
     if (!disallowed_features_.chromium_color_buffer_float_rgba) {
       EnableCHROMIUMColorBufferFloatRGBA();
+    }
+  }
+
+  // Assume all desktop (!gl_version_info_->is_es) supports float blend.
+  // Floating-point format blending is core of ES 3.2.
+  if (!gl_version_info_->is_es || gl_version_info_->IsAtLeastGLES(3, 2) ||
+      gfx::HasExtension(extensions, "GL_EXT_float_blend")) {
+    if (!disallowed_features_.ext_float_blend) {
+      EnableEXTFloatBlend();
     }
   }
 

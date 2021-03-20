@@ -47,6 +47,9 @@ typedef struct {
   int min_q;
   int scaling_factor_num;
   int scaling_factor_den;
+  // Scaling factors used for internal resize scaling for single layer SVC.
+  int scaling_factor_num_resize;
+  int scaling_factor_den_resize;
   TWO_PASS twopass;
   vpx_fixed_buf_t rc_twopass_stats_in;
   unsigned int current_video_frame_in_layer;
@@ -58,7 +61,6 @@ typedef struct {
   int gold_ref_idx;
   int has_alt_frame;
   size_t layer_size;
-  struct vpx_psnr_pkt psnr_pkt;
   // Cyclic refresh parameters (aq-mode=3), that need to be updated per-frame.
   // TODO(jianj/marpan): Is it better to use the full cyclic refresh struct.
   int sb_index;
@@ -138,6 +140,7 @@ typedef struct SVC {
   int drop_spatial_layer[VPX_MAX_LAYERS];
   int framedrop_thresh[VPX_MAX_LAYERS];
   int drop_count[VPX_MAX_LAYERS];
+  int force_drop_constrained_from_above[VPX_MAX_LAYERS];
   int max_consec_drop;
   SVC_LAYER_DROP_MODE framedrop_mode;
 
@@ -189,6 +192,12 @@ typedef struct SVC {
   int64_t time_stamp_prev[VPX_SS_MAX_LAYERS];
 
   int num_encoded_top_layer;
+
+  // Every spatial layer on a superframe whose base is key is key too.
+  int simulcast_mode;
+
+  // Flag to indicate SVC is dynamically switched to a single layer.
+  int single_layer_svc;
 } SVC;
 
 struct VP9_COMP;
@@ -257,6 +266,8 @@ void vp9_svc_assert_constraints_pattern(struct VP9_COMP *const cpi);
 void vp9_svc_check_spatial_layer_sync(struct VP9_COMP *const cpi);
 
 void vp9_svc_update_ref_frame_buffer_idx(struct VP9_COMP *const cpi);
+
+void vp9_svc_update_ref_frame_key_simulcast(struct VP9_COMP *const cpi);
 
 void vp9_svc_update_ref_frame(struct VP9_COMP *const cpi);
 

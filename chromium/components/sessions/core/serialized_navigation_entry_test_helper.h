@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_SESSIONS_SESSION_TYPES_TEST_HELPER_H_
-#define COMPONENTS_SESSIONS_SESSION_TYPES_TEST_HELPER_H_
+#ifndef COMPONENTS_SESSIONS_CORE_SERIALIZED_NAVIGATION_ENTRY_TEST_HELPER_H_
+#define COMPONENTS_SESSIONS_CORE_SERIALIZED_NAVIGATION_ENTRY_TEST_HELPER_H_
 
 #include <stdint.h>
 
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -26,27 +27,35 @@ namespace test_data {
 
 extern const int kIndex;
 extern const int kUniqueID;
-extern const GURL kReferrerURL;
 extern const int kReferrerPolicy;
-extern const GURL kVirtualURL;
 extern const base::string16 kTitle;
 extern const std::string kEncodedPageState;
 extern const ui::PageTransition kTransitionType;
 extern const bool kHasPostData;
 extern const int64_t kPostID;
-extern const GURL kOriginalRequestURL;
 extern const bool kIsOverridingUserAgent;
 extern const base::Time kTimestamp;
-extern const GURL kFaviconURL;
 extern const int kHttpStatusCode;
-extern const GURL kRedirectURL0;
-extern const GURL kRedirectURL1;
-extern const GURL kOtherURL;
 extern const SerializedNavigationEntry::PasswordState kPasswordState;
 extern const std::string kExtendedInfoKey1;
 extern const std::string kExtendedInfoKey2;
 extern const std::string kExtendedInfoValue1;
 extern const std::string kExtendedInfoValue2;
+extern const int64_t kParentTaskId;
+extern const int64_t kRootTaskId;
+extern const int64_t kTaskId;
+extern const std::vector<int64_t> kChildrenTaskIds;
+
+// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
+// function.
+GURL ReferrerUrl();
+GURL Url();
+GURL VirtualUrl();
+GURL OriginalRequestUrl();
+GURL FaviconUrl();
+GURL RedirectUrl0();
+GURL RedirectUrl1();
+GURL OtherUrl();
 
 }  // namespace test_data
 
@@ -58,13 +67,12 @@ class SerializedNavigationEntryTestHelper {
   static void ExpectNavigationEquals(const SerializedNavigationEntry& expected,
                                      const SerializedNavigationEntry& actual);
 
-  // Creates a SerializedNavigationEntry with the given URL and title and some
-  // common values for the other fields.
-  static SerializedNavigationEntry CreateNavigation(
-      const std::string& virtual_url,
-      const std::string& title);
-
   // Creates a SerializedNavigationEntry using the |test_data| constants above.
+  //
+  // Note that the returned SerializedNavigationEntry will have a bogus
+  // PageState and therefore can only be used in limited unit tests (e.g. it
+  // will most likely hit DCHECKs/NOTREACHEDs when passed to the //content
+  // layer).
   static SerializedNavigationEntry CreateNavigationForTest();
 
   static void SetReferrerPolicy(int policy,
@@ -99,6 +107,6 @@ class SerializedNavigationEntryTestHelper {
   DISALLOW_IMPLICIT_CONSTRUCTORS(SerializedNavigationEntryTestHelper);
 };
 
-}  // sessions
+}  // namespace sessions
 
-#endif  // COMPONENTS_SESSIONS_SESSION_TYPES_TEST_HELPER_H_
+#endif  // COMPONENTS_SESSIONS_CORE_SERIALIZED_NAVIGATION_ENTRY_TEST_HELPER_H_

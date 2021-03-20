@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/shared_memory_security_policy.h"
 #include "base/memory/shared_memory_tracker.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
@@ -37,22 +38,19 @@ namespace base {
 
 SharedMemoryMapping::SharedMemoryMapping() = default;
 
-SharedMemoryMapping::SharedMemoryMapping(SharedMemoryMapping&& mapping)
-    : memory_(mapping.memory_),
+SharedMemoryMapping::SharedMemoryMapping(SharedMemoryMapping&& mapping) noexcept
+    : memory_(std::exchange(mapping.memory_, nullptr)),
       size_(mapping.size_),
       mapped_size_(mapping.mapped_size_),
-      guid_(mapping.guid_) {
-  mapping.memory_ = nullptr;
-}
+      guid_(mapping.guid_) {}
 
 SharedMemoryMapping& SharedMemoryMapping::operator=(
-    SharedMemoryMapping&& mapping) {
+    SharedMemoryMapping&& mapping) noexcept {
   Unmap();
-  memory_ = mapping.memory_;
+  memory_ = std::exchange(mapping.memory_, nullptr);
   size_ = mapping.size_;
   mapped_size_ = mapping.mapped_size_;
   guid_ = mapping.guid_;
-  mapping.memory_ = nullptr;
   return *this;
 }
 
@@ -72,6 +70,7 @@ void SharedMemoryMapping::Unmap() {
   if (!IsValid())
     return;
 
+  SharedMemorySecurityPolicy::ReleaseReservationForMapping(size_);
   SharedMemoryTracker::GetInstance()->DecrementMemoryUsage(*this);
 #if defined(OS_WIN)
   if (!UnmapViewOfFile(memory_))
@@ -97,9 +96,9 @@ void SharedMemoryMapping::Unmap() {
 
 ReadOnlySharedMemoryMapping::ReadOnlySharedMemoryMapping() = default;
 ReadOnlySharedMemoryMapping::ReadOnlySharedMemoryMapping(
-    ReadOnlySharedMemoryMapping&&) = default;
+    ReadOnlySharedMemoryMapping&&) noexcept = default;
 ReadOnlySharedMemoryMapping& ReadOnlySharedMemoryMapping::operator=(
-    ReadOnlySharedMemoryMapping&&) = default;
+    ReadOnlySharedMemoryMapping&&) noexcept = default;
 ReadOnlySharedMemoryMapping::ReadOnlySharedMemoryMapping(
     void* address,
     size_t size,
@@ -109,9 +108,9 @@ ReadOnlySharedMemoryMapping::ReadOnlySharedMemoryMapping(
 
 WritableSharedMemoryMapping::WritableSharedMemoryMapping() = default;
 WritableSharedMemoryMapping::WritableSharedMemoryMapping(
-    WritableSharedMemoryMapping&&) = default;
+    WritableSharedMemoryMapping&&) noexcept = default;
 WritableSharedMemoryMapping& WritableSharedMemoryMapping::operator=(
-    WritableSharedMemoryMapping&&) = default;
+    WritableSharedMemoryMapping&&) noexcept = default;
 WritableSharedMemoryMapping::WritableSharedMemoryMapping(
     void* address,
     size_t size,

@@ -48,6 +48,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
@@ -61,11 +62,11 @@
 #include "third_party/blink/renderer/platform/bindings/v8_binding_macros.h"
 #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
@@ -79,13 +80,25 @@ void V8SetReturnValue(const v8::PropertyCallbackInfo<v8::Value>& info,
                       const v8::PropertyDescriptor& descriptor) {
   DCHECK(descriptor.has_configurable());
   DCHECK(descriptor.has_enumerable());
-  DCHECK(descriptor.has_value());
-  DCHECK(descriptor.has_writable());
+  if (descriptor.has_value()) {
+    // Data property
+    DCHECK(descriptor.has_writable());
+    info.GetReturnValue().Set(
+        V8ObjectBuilder(ScriptState::ForCurrentRealm(info))
+            .Add("configurable", descriptor.configurable())
+            .Add("enumerable", descriptor.enumerable())
+            .Add("value", descriptor.value())
+            .Add("writable", descriptor.writable())
+            .V8Value());
+    return;
+  }
+  // Accessor property
+  DCHECK(descriptor.has_get() || descriptor.has_set());
   info.GetReturnValue().Set(V8ObjectBuilder(ScriptState::ForCurrentRealm(info))
                                 .Add("configurable", descriptor.configurable())
                                 .Add("enumerable", descriptor.enumerable())
-                                .Add("value", descriptor.value())
-                                .Add("writable", descriptor.writable())
+                                .Add("get", descriptor.get())
+                                .Add("set", descriptor.set())
                                 .V8Value());
 }
 
@@ -117,32 +130,42 @@ static double EnforceRange(double x,
 }
 
 template <typename T>
+struct IntTypeNumberOfValues {
+  static constexpr unsigned value =
+      1 << (std::numeric_limits<T>::digits + std::is_signed<T>::value);
+};
+
+template <typename T>
 struct IntTypeLimits {};
 
 template <>
 struct IntTypeLimits<int8_t> {
-  static const int8_t kMinValue = -128;
-  static const int8_t kMaxValue = 127;
-  static const unsigned kNumberOfValues = 256;  // 2^8
+  static constexpr int8_t kMinValue = std::numeric_limits<int8_t>::min();
+  static constexpr int8_t kMaxValue = std::numeric_limits<int8_t>::max();
+  static constexpr unsigned kNumberOfValues =
+      IntTypeNumberOfValues<int8_t>::value;  // 2^8
 };
 
 template <>
 struct IntTypeLimits<uint8_t> {
-  static const uint8_t kMaxValue = 255;
-  static const unsigned kNumberOfValues = 256;  // 2^8
+  static constexpr uint8_t kMaxValue = std::numeric_limits<uint8_t>::max();
+  static constexpr unsigned kNumberOfValues =
+      IntTypeNumberOfValues<uint8_t>::value;  // 2^8
 };
 
 template <>
 struct IntTypeLimits<int16_t> {
-  static const short kMinValue = -32768;
-  static const short kMaxValue = 32767;
-  static const unsigned kNumberOfValues = 65536;  // 2^16
+  static constexpr int16_t kMinValue = std::numeric_limits<int16_t>::min();
+  static constexpr int16_t kMaxValue = std::numeric_limits<int16_t>::max();
+  static constexpr unsigned kNumberOfValues =
+      IntTypeNumberOfValues<int16_t>::value;  // 2^16
 };
 
 template <>
 struct IntTypeLimits<uint16_t> {
-  static const unsigned short kMaxValue = 65535;
-  static const unsigned kNumberOfValues = 65536;  // 2^16
+  static constexpr uint16_t kMaxValue = std::numeric_limits<uint16_t>::max();
+  static constexpr unsigned kNumberOfValues =
+      IntTypeNumberOfValues<uint16_t>::value;  // 2^16
 };
 
 template <typename T>
@@ -610,27 +633,20 @@ XPathNSResolver* ToXPathNSResolver(ScriptState* script_state,
   if (V8XPathNSResolver::HasInstance(value, script_state->GetIsolate())) {
     resolver = V8XPathNSResolver::ToImpl(v8::Local<v8::Object>::Cast(value));
   } else if (value->IsObject()) {
-    resolver =
-        V8CustomXPathNSResolver::Create(script_state, value.As<v8::Object>());
+    resolver = MakeGarbageCollected<V8CustomXPathNSResolver>(
+        script_state, value.As<v8::Object>());
   }
   return resolver;
 }
 
 DOMWindow* ToDOMWindow(v8::Isolate* isolate, v8::Local<v8::Value> value) {
-  if (value.IsEmpty() || !value->IsObject())
-    return nullptr;
-
-  v8::Local<v8::Object> window_wrapper = V8Window::FindInstanceInPrototypeChain(
-      v8::Local<v8::Object>::Cast(value), isolate);
-  if (!window_wrapper.IsEmpty())
-    return V8Window::ToImpl(window_wrapper);
-  return nullptr;
+  return V8Window::ToImplWithTypeCheck(isolate, value);
 }
 
 LocalDOMWindow* ToLocalDOMWindow(v8::Local<v8::Context> context) {
   if (context.IsEmpty())
     return nullptr;
-  return ToLocalDOMWindow(
+  return To<LocalDOMWindow>(
       ToDOMWindow(context->GetIsolate(), context->Global()));
 }
 
@@ -693,17 +709,12 @@ LocalFrame* ToLocalFrameIfNotDetached(v8::Local<v8::Context> context) {
 
 void ToFlexibleArrayBufferView(v8::Isolate* isolate,
                                v8::Local<v8::Value> value,
-                               FlexibleArrayBufferView& result,
-                               void* storage) {
-  DCHECK(value->IsArrayBufferView());
-  v8::Local<v8::ArrayBufferView> buffer = value.As<v8::ArrayBufferView>();
-  if (!storage) {
-    result.SetFull(V8ArrayBufferView::ToImpl(buffer));
+                               FlexibleArrayBufferView& result) {
+  if (!value->IsArrayBufferView()) {
+    result.Clear();
     return;
   }
-  size_t length = buffer->ByteLength();
-  buffer->CopyContents(storage, length);
-  result.SetSmall(storage, SafeCast<uint32_t>(length));
+  result.SetContents(value.As<v8::ArrayBufferView>());
 }
 
 static ScriptState* ToScriptStateImpl(LocalFrame* frame,
@@ -723,7 +734,7 @@ static ScriptState* ToScriptStateImpl(LocalFrame* frame,
 v8::Local<v8::Context> ToV8Context(ExecutionContext* context,
                                    DOMWrapperWorld& world) {
   DCHECK(context);
-  if (auto* document = DynamicTo<Document>(context)) {
+  if (auto* document = Document::DynamicFrom(context)) {
     if (LocalFrame* frame = document->GetFrame())
       return ToV8Context(frame, world);
   } else if (auto* scope = DynamicTo<WorkerOrWorkletGlobalScope>(context)) {
@@ -747,12 +758,19 @@ v8::Local<v8::Context> ToV8ContextEvenIfDetached(LocalFrame* frame,
   // TODO(yukishiino): this method probably should not force context creation,
   // but it does through WindowProxy() call.
   DCHECK(frame);
+
+  // TODO(crbug.com/1046282): The following bailout is a temporary fix
+  // introduced due to crbug.com/1037985 .  Remove this temporary fix once
+  // the root cause is fixed.
+  if (frame->IsProvisional())
+    return v8::Local<v8::Context>();
+
   return frame->WindowProxy(world)->ContextIfInitialized();
 }
 
 ScriptState* ToScriptState(ExecutionContext* context, DOMWrapperWorld& world) {
   DCHECK(context);
-  if (auto* document = DynamicTo<Document>(context)) {
+  if (auto* document = Document::DynamicFrom(context)) {
     if (LocalFrame* frame = document->GetFrame())
       return ToScriptState(frame, world);
   } else if (auto* scope = DynamicTo<WorkerOrWorkletGlobalScope>(context)) {
@@ -772,7 +790,7 @@ ScriptState* ToScriptStateForMainWorld(LocalFrame* frame) {
 }
 
 bool IsValidEnum(const String& value,
-                 const char** valid_values,
+                 const char* const* valid_values,
                  size_t length,
                  const String& enum_name,
                  ExceptionState& exception_state) {
@@ -788,7 +806,7 @@ bool IsValidEnum(const String& value,
 }
 
 bool IsValidEnum(const Vector<String>& values,
-                 const char** valid_values,
+                 const char* const* valid_values,
                  size_t length,
                  const String& enum_name,
                  ExceptionState& exception_state) {
@@ -844,38 +862,14 @@ v8::Local<v8::Object> GetEsIteratorWithMethod(
   return iterator.As<v8::Object>();
 }
 
-v8::Local<v8::Object> GetEsIterator(v8::Isolate* isolate,
-                                    v8::Local<v8::Object> object,
-                                    ExceptionState& exception_state) {
-  v8::Local<v8::Function> iterator_getter =
-      GetEsIteratorMethod(isolate, object, exception_state);
-  if (exception_state.HadException())
-    return v8::Local<v8::Object>();
-
-  if (iterator_getter.IsEmpty()) {
-    exception_state.ThrowTypeError("Iterator getter is not callable.");
-    return v8::Local<v8::Object>();
-  }
-
-  return GetEsIteratorWithMethod(isolate, iterator_getter, object,
-                                 exception_state);
-}
-
 bool HasCallableIteratorSymbol(v8::Isolate* isolate,
                                v8::Local<v8::Value> value,
                                ExceptionState& exception_state) {
   if (!value->IsObject())
     return false;
-  v8::TryCatch block(isolate);
-  v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Local<v8::Value> iterator_getter;
-  if (!value.As<v8::Object>()
-           ->Get(context, v8::Symbol::GetIterator(isolate))
-           .ToLocal(&iterator_getter)) {
-    exception_state.RethrowV8Exception(block.Exception());
-    return false;
-  }
-  return iterator_getter->IsFunction();
+  v8::Local<v8::Function> iterator_method =
+      GetEsIteratorMethod(isolate, value.As<v8::Object>(), exception_state);
+  return !iterator_method.IsEmpty();
 }
 
 v8::Isolate* ToIsolate(const LocalFrame* frame) {
@@ -914,6 +908,16 @@ Vector<String> GetOwnPropertyNames(v8::Isolate* isolate,
 
   return NativeValueTraits<IDLSequence<IDLString>>::NativeValue(
       isolate, property_names, exception_state);
+}
+
+v8::MicrotaskQueue* ToMicrotaskQueue(ExecutionContext* execution_context) {
+  if (!execution_context)
+    return nullptr;
+  return execution_context->GetMicrotaskQueue();
+}
+
+v8::MicrotaskQueue* ToMicrotaskQueue(ScriptState* script_state) {
+  return ToMicrotaskQueue(ExecutionContext::From(script_state));
 }
 
 }  // namespace blink

@@ -8,13 +8,12 @@
 #ifndef SkLocalMatrixShader_DEFINED
 #define SkLocalMatrixShader_DEFINED
 
-#include "SkShaderBase.h"
-#include "SkReadBuffer.h"
-#include "SkWriteBuffer.h"
+#include "src/core/SkReadBuffer.h"
+#include "src/core/SkWriteBuffer.h"
+#include "src/shaders/SkShaderBase.h"
 
 class GrFragmentProcessor;
 class SkArenaAlloc;
-class SkColorSpaceXformer;
 
 class SkLocalMatrixShader final : public SkShaderBase {
 public:
@@ -45,14 +44,14 @@ protected:
     Context* onMakeContext(const ContextRec&, SkArenaAlloc*) const override;
 #endif
 
-    SkImage* onIsAImage(SkMatrix* matrix, TileMode* mode) const override;
+    SkImage* onIsAImage(SkMatrix* matrix, SkTileMode* mode) const override;
 
-    bool onAppendStages(const StageRec&) const override;
+    bool onAppendStages(const SkStageRec&) const override;
 
-    sk_sp<SkShader> onMakeColorSpace(SkColorSpaceXformer* xformer) const override {
-        return as_SB(fProxyShader)->makeColorSpace(xformer)->makeWithLocalMatrix(
-            this->getLocalMatrix());
-    }
+    skvm::Color onProgram(skvm::Builder*, skvm::F32 x, skvm::F32 y, skvm::Color paint,
+                          const SkMatrix& ctm, const SkMatrix* localM,
+                          SkFilterQuality quality, const SkColorInfo& dst,
+                          skvm::Uniforms* uniforms, SkArenaAlloc*) const override;
 
 private:
     SK_FLATTENABLE_HOOKS(SkLocalMatrixShader)

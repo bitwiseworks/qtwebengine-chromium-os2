@@ -17,11 +17,10 @@
 #include "src/tracing/core/trace_writer_for_testing.h"
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/utils.h"
-
+#include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/message.h"
-
-#include "perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/trace/trace.pbzero.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 
@@ -44,13 +43,27 @@ void TraceWriterForTesting::Flush(std::function<void()> callback) {
     callback();
 }
 
-std::unique_ptr<protos::TracePacket> TraceWriterForTesting::ParseProto() {
+std::vector<protos::gen::TracePacket>
+TraceWriterForTesting::GetAllTracePackets() {
   PERFETTO_CHECK(cur_packet_->is_finalized());
-  auto packet = std::unique_ptr<protos::TracePacket>(new protos::TracePacket());
+
   std::vector<uint8_t> buffer = delegate_.StitchSlices();
-  if (!packet->ParseFromArray(buffer.data(), static_cast<int>(buffer.size())))
-    return nullptr;
-  return packet;
+  protozero::ProtoDecoder trace(buffer.data(), buffer.size());
+  std::vector<protos::gen::TracePacket> ret;
+  for (auto fld = trace.ReadField(); fld.valid(); fld = trace.ReadField()) {
+    PERFETTO_CHECK(fld.id() == protos::pbzero::Trace::kPacketFieldNumber);
+    protos::gen::TracePacket packet;
+    packet.ParseFromArray(fld.data(), fld.size());
+    ret.emplace_back(std::move(packet));
+  }
+  PERFETTO_CHECK(trace.bytes_left() == 0);
+  return ret;
+}
+
+protos::gen::TracePacket TraceWriterForTesting::GetOnlyTracePacket() {
+  auto packets = GetAllTracePackets();
+  PERFETTO_CHECK(packets.size() == 1);
+  return packets[0];
 }
 
 TraceWriterForTesting::TracePacketHandle
@@ -59,7 +72,22 @@ TraceWriterForTesting::NewTracePacket() {
   // finalized the previous packet.
   PERFETTO_DCHECK(cur_packet_->is_finalized());
   cur_packet_->Reset(&stream_);
-  return TraceWriter::TracePacketHandle(cur_packet_.get());
+
+  // Instead of storing the contents of the TracePacket directly in the backing
+  // buffer like the real trace writers, we prepend the proto preamble to make
+  // the buffer contents parsable as a sequence of TracePacket protos.
+
+  uint8_t data[protozero::proto_utils::kMaxTagEncodedSize];
+  uint8_t* data_end = protozero::proto_utils::WriteVarInt(
+      protozero::proto_utils::MakeTagLengthDelimited(
+          protos::pbzero::Trace::kPacketFieldNumber),
+      data);
+  stream_.WriteBytes(data, static_cast<uint32_t>(data_end - data));
+
+  auto packet = TraceWriter::TracePacketHandle(cur_packet_.get());
+  packet->set_size_field(
+      stream_.ReserveBytes(protozero::proto_utils::kMessageLengthFieldSize));
+  return packet;
 }
 
 WriterID TraceWriterForTesting::writer_id() const {

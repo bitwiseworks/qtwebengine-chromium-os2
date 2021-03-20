@@ -18,11 +18,11 @@ ProgramNULL::ProgramNULL(const gl::ProgramState &state) : ProgramImpl(state) {}
 
 ProgramNULL::~ProgramNULL() {}
 
-angle::Result ProgramNULL::load(const gl::Context *context,
-                                gl::InfoLog &infoLog,
-                                gl::BinaryInputStream *stream)
+std::unique_ptr<LinkEvent> ProgramNULL::load(const gl::Context *context,
+                                             gl::BinaryInputStream *stream,
+                                             gl::InfoLog &infoLog)
 {
-    return angle::Result::Continue;
+    return std::make_unique<LinkEventDone>(angle::Result::Continue);
 }
 
 void ProgramNULL::save(const gl::Context *context, gl::BinaryOutputStream *stream) {}
@@ -135,11 +135,5 @@ void ProgramNULL::getUniformuiv(const gl::Context *context, GLint location, GLui
 {
     // TODO(jmadill): Write some values.
 }
-
-void ProgramNULL::setPathFragmentInputGen(const std::string &inputName,
-                                          GLenum genMode,
-                                          GLint components,
-                                          const GLfloat *coeffs)
-{}
 
 }  // namespace rx

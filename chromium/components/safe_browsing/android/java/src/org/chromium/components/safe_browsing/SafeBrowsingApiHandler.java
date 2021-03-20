@@ -4,7 +4,7 @@
 
 package org.chromium.components.safe_browsing;
 
-import android.support.annotation.IntDef;
+import androidx.annotation.IntDef;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -26,12 +26,14 @@ public interface SafeBrowsingApiHandler {
     }
 
     // Possible values for resultStatus. Native side has the same definitions.
+    @IntDef({SafeBrowsingResult.INTERNAL_ERROR, SafeBrowsingResult.SUCCESS,
+            SafeBrowsingResult.TIMEOUT})
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef({STATUS_INTERNAL_ERROR, STATUS_SUCCESS, STATUS_TIMEOUT})
-    @interface SafeBrowsingResult {}
-    static final int STATUS_INTERNAL_ERROR = -1;
-    static final int STATUS_SUCCESS = 0;
-    static final int STATUS_TIMEOUT = 1;
+    @interface SafeBrowsingResult {
+        int INTERNAL_ERROR = -1;
+        int SUCCESS = 0;
+        int TIMEOUT = 1;
+    }
 
     /**
      * Verifies that SafeBrowsingApiHandler can operate and initializes if feasible.
@@ -69,4 +71,16 @@ public interface SafeBrowsingApiHandler {
      * This is called on every URL resource Chrome loads, on the same sequence as |init|.
      */
     public void startUriLookup(long callbackId, String uri, int[] threatsOfInterest);
+
+    /**
+     * Start a check to determine if a uri is in an allowlist. If true, password protection
+     * service will consider the uri to be safe.
+     *
+     * @param uri The uri from a password protection event(user focuses on password form
+     *      * or user reuses their password)
+     * @param threatType determines the type of the allowlist that the uri will be matched to.
+     *
+     * @return true if the uri is found in the corresponding allowlist. Otherwise, false.
+     */
+    public boolean startAllowlistLookup(String uri, int threatType);
 }

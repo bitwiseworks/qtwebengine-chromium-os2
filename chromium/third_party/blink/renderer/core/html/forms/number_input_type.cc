@@ -32,6 +32,7 @@
 #include "third_party/blink/renderer/core/html/forms/number_input_type.h"
 
 #include <limits>
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/events/before_text_inserted_event.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
@@ -47,9 +48,6 @@
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
-
-using blink::WebLocalizedString;
-using namespace html_names;
 
 static const int kNumberDefaultStep = 1;
 static const int kNumberDefaultStepBase = 0;
@@ -92,10 +90,6 @@ static RealNumberRenderSize CalculateRenderSize(const Decimal& value) {
   return RealNumberRenderSize(
       size_of_sign + kSizeOfZero,
       number_of_zero_after_decimal_point + size_of_digits);
-}
-
-InputType* NumberInputType::Create(HTMLInputElement& element) {
-  return MakeGarbageCollected<NumberInputType>(element);
 }
 
 void NumberInputType::CountUsage() {
@@ -157,17 +151,18 @@ bool NumberInputType::SizeShouldIncludeDecoration(int default_size,
                                                   int& preferred_size) const {
   preferred_size = default_size;
 
-  const String step_string = GetElement().FastGetAttribute(kStepAttr);
-  if (DeprecatedEqualIgnoringCase(step_string, "any"))
+  const String step_string =
+      GetElement().FastGetAttribute(html_names::kStepAttr);
+  if (EqualIgnoringASCIICase(step_string, "any"))
     return false;
 
-  const Decimal minimum =
-      ParseToDecimalForNumberType(GetElement().FastGetAttribute(kMinAttr));
+  const Decimal minimum = ParseToDecimalForNumberType(
+      GetElement().FastGetAttribute(html_names::kMinAttr));
   if (!minimum.IsFinite())
     return false;
 
-  const Decimal maximum =
-      ParseToDecimalForNumberType(GetElement().FastGetAttribute(kMaxAttr));
+  const Decimal maximum = ParseToDecimalForNumberType(
+      GetElement().FastGetAttribute(html_names::kMaxAttr));
   if (!maximum.IsFinite())
     return false;
 
@@ -251,10 +246,7 @@ void NumberInputType::WarnIfValueIsInvalid(const String& value) const {
   if (value.IsEmpty() || !GetElement().SanitizeValue(value).IsEmpty())
     return;
   AddWarningToConsole(
-      "The specified value %s is not a valid number. The value must match to "
-      "the following regular expression: "
-      "-?(\\d+|\\d+\\.\\d+|\\.\\d+)([eE][-+]?\\d+)?",
-      value);
+      "The specified value %s cannot be parsed, or is out of range.", value);
 }
 
 bool NumberInputType::HasBadInput() const {
@@ -265,17 +257,16 @@ bool NumberInputType::HasBadInput() const {
 }
 
 String NumberInputType::BadInputText() const {
-  return GetLocale().QueryString(
-      WebLocalizedString::kValidationBadInputForNumber);
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_BAD_INPUT_NUMBER);
 }
 
 String NumberInputType::RangeOverflowText(const Decimal& maximum) const {
-  return GetLocale().QueryString(WebLocalizedString::kValidationRangeOverflow,
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_RANGE_OVERFLOW,
                                  LocalizeValue(Serialize(maximum)));
 }
 
 String NumberInputType::RangeUnderflowText(const Decimal& minimum) const {
-  return GetLocale().QueryString(WebLocalizedString::kValidationRangeUnderflow,
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_RANGE_UNDERFLOW,
                                  LocalizeValue(Serialize(minimum)));
 }
 
@@ -289,7 +280,7 @@ void NumberInputType::MinOrMaxAttributeChanged() {
   if (GetElement().GetLayoutObject()) {
     GetElement()
         .GetLayoutObject()
-        ->SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
+        ->SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
             layout_invalidation_reason::kAttributeChanged);
   }
 }
@@ -300,7 +291,7 @@ void NumberInputType::StepAttributeChanged() {
   if (GetElement().GetLayoutObject()) {
     GetElement()
         .GetLayoutObject()
-        ->SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
+        ->SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
             layout_invalidation_reason::kAttributeChanged);
   }
 }

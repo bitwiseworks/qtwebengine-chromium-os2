@@ -8,25 +8,25 @@
 #ifndef GrStencilPathOp_DEFINED
 #define GrStencilPathOp_DEFINED
 
-#include "GrOp.h"
-#include "GrPath.h"
-#include "GrPathRendering.h"
-#include "GrStencilSettings.h"
+#include "src/gpu/GrPath.h"
+#include "src/gpu/GrPathRendering.h"
+#include "src/gpu/GrScissorState.h"
+#include "src/gpu/GrStencilSettings.h"
+#include "src/gpu/ops/GrOp.h"
 
-class GrContext;
 class GrOpFlushState;
+class GrRecordingContext;
 
 class GrStencilPathOp final : public GrOp {
 public:
     DEFINE_OP_CLASS_ID
 
-    static std::unique_ptr<GrOp> Make(GrContext* context,
+    static std::unique_ptr<GrOp> Make(GrRecordingContext* context,
                                       const SkMatrix& viewMatrix,
                                       bool useHWAA,
-                                      GrPathRendering::FillType fillType,
                                       bool hasStencilClip,
                                       const GrScissorState& scissor,
-                                      const GrPath* path);
+                                      sk_sp<const GrPath> path);
 
     const char* name() const override { return "StencilPathOp"; }
 
@@ -44,30 +44,32 @@ private:
 
     GrStencilPathOp(const SkMatrix& viewMatrix,
                     bool useHWAA,
-                    GrPathRendering::FillType fillType,
                     bool hasStencilClip,
                     const GrScissorState& scissor,
-                    const GrPath* path)
+                    sk_sp<const GrPath> path)
             : INHERITED(ClassID())
             , fViewMatrix(viewMatrix)
             , fUseHWAA(useHWAA)
-            , fFillType(fillType)
             , fHasStencilClip(hasStencilClip)
             , fScissor(scissor)
-            , fPath(path) {
-        this->setBounds(path->getBounds(), HasAABloat::kNo, IsZeroArea::kNo);
+            , fPath(std::move(path)) {
+        this->setBounds(fPath->getBounds(), HasAABloat::kNo, IsHairline::kNo);
     }
+
+    void onPrePrepare(GrRecordingContext*,
+                      const GrSurfaceProxyView* outputView,
+                      GrAppliedClip*,
+                      const GrXferProcessor::DstProxyView&) override {}
 
     void onPrepare(GrOpFlushState*) override {}
 
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
 
-    SkMatrix                                          fViewMatrix;
-    bool                                              fUseHWAA;
-    GrPathRendering::FillType                         fFillType;
-    bool                                              fHasStencilClip;
-    GrScissorState                                    fScissor;
-    GrPendingIOResource<const GrPath, kRead_GrIOType> fPath;
+    SkMatrix                  fViewMatrix;
+    bool                      fUseHWAA;
+    bool                      fHasStencilClip;
+    GrScissorState            fScissor;
+    sk_sp<const GrPath>       fPath;
 
     typedef GrOp INHERITED;
 };

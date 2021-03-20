@@ -24,6 +24,7 @@
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
 #include "net/dns/host_resolver.h"
+#include "net/dns/public/dns_query_type.h"
 #include "net/log/net_log_with_source.h"
 #include "net/test/test_data_directory.h"
 #include "url/gurl.h"
@@ -201,9 +202,14 @@ base::FilePath BaseTestServer::SSLOptions::GetCertificateFile() const {
       return base::FilePath(FILE_PATH_LITERAL("redundant-server-chain.pem"));
     case CERT_BAD_VALIDITY:
       return base::FilePath(FILE_PATH_LITERAL("bad_validity.pem"));
+    case CERT_KEY_USAGE_RSA_ENCIPHERMENT:
+      return base::FilePath(
+          FILE_PATH_LITERAL("key_usage_rsa_keyencipherment.pem"));
+    case CERT_KEY_USAGE_RSA_DIGITAL_SIGNATURE:
+      return base::FilePath(
+          FILE_PATH_LITERAL("key_usage_rsa_digitalsignature.pem"));
     case CERT_AUTO:
     case CERT_AUTO_WITH_INTERMEDIATE:
-    case CERT_AUTO_AIA_INTERMEDIATE:
       return base::FilePath();
     default:
       NOTREACHED();
@@ -324,7 +330,7 @@ const HostPortPair& BaseTestServer::host_port_pair() const {
   return host_port_pair_;
 }
 
-const base::DictionaryValue& BaseTestServer::server_data() const {
+const base::Value& BaseTestServer::server_data() const {
   DCHECK(server_data_);
   return *server_data_;
 }
@@ -353,25 +359,29 @@ bool BaseTestServer::GetAddressList(AddressList* address_list) const {
   DCHECK(address_list);
 
   std::unique_ptr<HostResolver> resolver(
-      HostResolver::CreateDefaultResolver(NULL));
-  HostResolver::RequestInfo info(host_port_pair_);
-  // Limit the lookup to IPv4. When started with the default
+      HostResolver::CreateStandaloneResolver(nullptr));
+
+  // Limit the lookup to IPv4 (DnsQueryType::A). When started with the default
   // address of kLocalhost, testserver.py only supports IPv4.
   // If a custom hostname is used, it's possible that the test
   // server will listen on both IPv4 and IPv6, so this will
   // still work. The testserver does not support explicit
   // IPv6 literal hostnames.
-  info.set_address_family(ADDRESS_FAMILY_IPV4);
+  HostResolver::ResolveHostParameters parameters;
+  parameters.dns_query_type = DnsQueryType::A;
+
+  std::unique_ptr<HostResolver::ResolveHostRequest> request =
+      resolver->CreateRequest(host_port_pair_, NetLogWithSource(), parameters);
+
   TestCompletionCallback callback;
-  std::unique_ptr<HostResolver::Request> request;
-  int rv = resolver->Resolve(info, DEFAULT_PRIORITY, address_list,
-                             callback.callback(), &request, NetLogWithSource());
-  if (rv == ERR_IO_PENDING)
-    rv = callback.WaitForResult();
+  int rv = request->Start(callback.callback());
+  rv = callback.GetResult(rv);
   if (rv != OK) {
     LOG(ERROR) << "Failed to resolve hostname: " << host_port_pair_.host();
     return false;
   }
+
+  *address_list = request->GetAddressResults().value();
   return true;
 }
 
@@ -502,18 +512,22 @@ bool BaseTestServer::SetAndParseServerData(const std::string& server_data,
                                            int* port) {
   VLOG(1) << "Server data: " << server_data;
   base::JSONReader json_reader;
-  std::unique_ptr<base::Value> value(json_reader.ReadToValue(server_data));
-  if (!value.get() || !value->is_dict()) {
+  base::Optional<base::Value> value(json_reader.ReadToValue(server_data));
+  if (!value || !value->is_dict()) {
     LOG(ERROR) << "Could not parse server data: "
                << json_reader.GetErrorMessage();
     return false;
   }
 
-  server_data_.reset(static_cast<base::DictionaryValue*>(value.release()));
-  if (!server_data_->GetInteger("port", port)) {
+  server_data_ = std::move(value);
+
+  base::Optional<int> port_value = server_data_->FindIntKey("port");
+  if (!port_value) {
     LOG(ERROR) << "Could not find port value";
     return false;
   }
+
+  *port = *port_value;
   if ((*port <= 0) || (*port > std::numeric_limits<uint16_t>::max())) {
     LOG(ERROR) << "Invalid port value: " << port;
     return false;
@@ -620,10 +634,6 @@ bool BaseTestServer::GenerateArguments(base::DictionaryValue* arguments) const {
 
   if (type_ == TYPE_HTTPS) {
     arguments->Set("https", std::make_unique<base::Value>());
-
-    if (ssl_options_.server_certificate ==
-        SSLOptions::CERT_AUTO_AIA_INTERMEDIATE)
-      arguments->Set("aia-intermediate", std::make_unique<base::Value>());
 
     std::string ocsp_arg = ssl_options_.GetOCSPArgument();
     if (!ocsp_arg.empty())

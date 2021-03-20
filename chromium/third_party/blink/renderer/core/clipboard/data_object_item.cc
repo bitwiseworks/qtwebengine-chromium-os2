@@ -30,15 +30,18 @@
 
 #include "third_party/blink/renderer/core/clipboard/data_object_item.h"
 
+#include "base/time/time.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/clipboard/clipboard_mime_types.h"
 #include "third_party/blink/renderer/core/clipboard/system_clipboard.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/image-encoders/image_encoder.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
-#include "ui/gfx/codec/png_codec.h"
 
 namespace blink {
 
+// static
 DataObjectItem* DataObjectItem::CreateFromString(const String& type,
                                                  const String& data) {
   DataObjectItem* item =
@@ -47,6 +50,7 @@ DataObjectItem* DataObjectItem::CreateFromString(const String& type,
   return item;
 }
 
+// static
 DataObjectItem* DataObjectItem::CreateFromFile(File* file) {
   DataObjectItem* item =
       MakeGarbageCollected<DataObjectItem>(kFileKind, file->type());
@@ -54,6 +58,7 @@ DataObjectItem* DataObjectItem::CreateFromFile(File* file) {
   return item;
 }
 
+// static
 DataObjectItem* DataObjectItem::CreateFromFileWithFileSystemId(
     File* file,
     const String& file_system_id) {
@@ -64,6 +69,7 @@ DataObjectItem* DataObjectItem::CreateFromFileWithFileSystemId(
   return item;
 }
 
+// static
 DataObjectItem* DataObjectItem::CreateFromURL(const String& url,
                                               const String& title) {
   DataObjectItem* item =
@@ -73,6 +79,7 @@ DataObjectItem* DataObjectItem::CreateFromURL(const String& url,
   return item;
 }
 
+// static
 DataObjectItem* DataObjectItem::CreateFromHTML(const String& html,
                                                const KURL& base_url) {
   DataObjectItem* item =
@@ -82,6 +89,7 @@ DataObjectItem* DataObjectItem::CreateFromHTML(const String& html,
   return item;
 }
 
+// static
 DataObjectItem* DataObjectItem::CreateFromSharedBuffer(
     scoped_refptr<SharedBuffer> buffer,
     const KURL& source_url,
@@ -98,26 +106,37 @@ DataObjectItem* DataObjectItem::CreateFromSharedBuffer(
   return item;
 }
 
-DataObjectItem* DataObjectItem::CreateFromClipboard(const String& type,
-                                                    uint64_t sequence_number) {
+// static
+DataObjectItem* DataObjectItem::CreateFromClipboard(
+    SystemClipboard* system_clipboard,
+    const String& type,
+    uint64_t sequence_number) {
   if (type == kMimeTypeImagePng) {
-    return MakeGarbageCollected<DataObjectItem>(kFileKind, type,
-                                                sequence_number);
+    return MakeGarbageCollected<DataObjectItem>(
+        kFileKind, type, sequence_number, system_clipboard);
   }
-  return MakeGarbageCollected<DataObjectItem>(kStringKind, type,
-                                              sequence_number);
+  return MakeGarbageCollected<DataObjectItem>(
+      kStringKind, type, sequence_number, system_clipboard);
 }
 
 DataObjectItem::DataObjectItem(ItemKind kind, const String& type)
-    : source_(kInternalSource), kind_(kind), type_(type), sequence_number_(0) {}
+    : source_(kInternalSource),
+      kind_(kind),
+      type_(type),
+      sequence_number_(0),
+      system_clipboard_(nullptr) {}
 
 DataObjectItem::DataObjectItem(ItemKind kind,
                                const String& type,
-                               uint64_t sequence_number)
+                               uint64_t sequence_number,
+                               SystemClipboard* system_clipboard)
     : source_(kClipboardSource),
       kind_(kind),
       type_(type),
-      sequence_number_(sequence_number) {}
+      sequence_number_(sequence_number),
+      system_clipboard_(system_clipboard) {
+  DCHECK(system_clipboard_);
+}
 
 File* DataObjectItem::GetAsFile() const {
   if (Kind() != kFileKind)
@@ -127,25 +146,36 @@ File* DataObjectItem::GetAsFile() const {
     if (file_)
       return file_.Get();
     DCHECK(shared_buffer_);
-    // FIXME: This code is currently impossible--we never populate
-    // m_sharedBuffer when dragging in. At some point though, we may need to
+    // TODO: This code is currently impossible--we never populate
+    // |shared_buffer_| when dragging in. At some point though, we may need to
     // support correctly converting a shared buffer into a file.
     return nullptr;
   }
 
   DCHECK_EQ(source_, kClipboardSource);
   if (GetType() == kMimeTypeImagePng) {
-    SkBitmap image = SystemClipboard::GetInstance().ReadImage(
-        mojom::ClipboardBuffer::kStandard);
-    std::vector<unsigned char> png_data;
-    if (gfx::PNGCodec::FastEncodeBGRASkBitmap(image, false, &png_data)) {
-      std::unique_ptr<BlobData> data = BlobData::Create();
-      data->SetContentType(kMimeTypeImagePng);
-      data->AppendBytes(png_data.data(), png_data.size());
-      const uint64_t length = data->length();
-      auto blob = BlobDataHandle::Create(std::move(data), length);
-      return File::Create("image.png", CurrentTimeMS(), std::move(blob));
-    }
+    SkBitmap bitmap =
+        system_clipboard_->ReadImage(mojom::ClipboardBuffer::kStandard);
+
+    SkPixmap pixmap;
+    bitmap.peekPixels(&pixmap);
+
+    // Set encoding options to favor speed over size.
+    SkPngEncoder::Options options;
+    options.fZLibLevel = 1;
+    options.fFilterFlags = SkPngEncoder::FilterFlag::kNone;
+
+    Vector<uint8_t> png_data;
+    if (!ImageEncoder::Encode(&png_data, pixmap, options))
+      return nullptr;
+
+    auto data = std::make_unique<BlobData>();
+    data->SetContentType(kMimeTypeImagePng);
+    data->AppendBytes(png_data.data(), png_data.size());
+    const uint64_t length = data->length();
+    auto blob = BlobDataHandle::Create(std::move(data), length);
+    return MakeGarbageCollected<File>("image.png", base::Time::Now(),
+                                      std::move(blob));
   }
 
   return nullptr;
@@ -162,25 +192,23 @@ String DataObjectItem::GetAsString() const {
   String data;
   // This is ugly but there's no real alternative.
   if (type_ == kMimeTypeTextPlain) {
-    data = SystemClipboard::GetInstance().ReadPlainText();
+    data = system_clipboard_->ReadPlainText();
   } else if (type_ == kMimeTypeTextRTF) {
-    data = SystemClipboard::GetInstance().ReadRTF();
+    data = system_clipboard_->ReadRTF();
   } else if (type_ == kMimeTypeTextHTML) {
     KURL ignored_source_url;
     unsigned ignored;
-    data = SystemClipboard::GetInstance().ReadHTML(ignored_source_url, ignored,
-                                                   ignored);
+    data = system_clipboard_->ReadHTML(ignored_source_url, ignored, ignored);
   } else {
-    data = SystemClipboard::GetInstance().ReadCustomData(type_);
+    data = system_clipboard_->ReadCustomData(type_);
   }
 
-  return SystemClipboard::GetInstance().SequenceNumber() == sequence_number_
-             ? data
-             : String();
+  return system_clipboard_->SequenceNumber() == sequence_number_ ? data
+                                                                 : String();
 }
 
 bool DataObjectItem::IsFilename() const {
-  // FIXME: https://bugs.webkit.org/show_bug.cgi?id=81261: When we properly
+  // TODO(https://bugs.webkit.org/show_bug.cgi?id=81261): When we properly
   // support File dragout, we'll need to make sure this works as expected for
   // DragDataChromium.
   return kind_ == kFileKind && file_;
@@ -194,8 +222,9 @@ String DataObjectItem::FileSystemId() const {
   return file_system_id_;
 }
 
-void DataObjectItem::Trace(blink::Visitor* visitor) {
+void DataObjectItem::Trace(Visitor* visitor) {
   visitor->Trace(file_);
+  visitor->Trace(system_clipboard_);
 }
 
 }  // namespace blink

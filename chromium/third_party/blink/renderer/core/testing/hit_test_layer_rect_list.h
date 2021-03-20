@@ -45,17 +45,13 @@ class HitTestLayerRectList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HitTestLayerRectList* Create() {
-    return MakeGarbageCollected<HitTestLayerRectList>();
-  }
-
   HitTestLayerRectList();
 
   unsigned length() const;
   HitTestLayerRect* item(unsigned index);
   void Append(DOMRectReadOnly* layer_rect, DOMRectReadOnly* hit_test_rect);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   HeapVector<Member<HitTestLayerRect>> list_;

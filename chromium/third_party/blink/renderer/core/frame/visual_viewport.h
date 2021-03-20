@@ -34,29 +34,36 @@
 #include <memory>
 
 #include "base/single_thread_task_runner.h"
+#include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator.h"
+#include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
 #include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_layer_client.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"
+#include "third_party/blink/renderer/platform/graphics/paint/property_tree_state.h"
+
+namespace cc {
+class AnimationHost;
+class ScrollbarLayerBase;
+}
 
 namespace blink {
-
+enum class PaintPropertyChangeType : unsigned char;
 class EffectPaintPropertyNode;
 class GraphicsContext;
-class GraphicsLayer;
 class IntRect;
 class IntSize;
 class LocalFrame;
 class Page;
+class PaintArtifactCompositor;
 class RootFrameViewport;
 class ScrollPaintPropertyNode;
+class TracedValue;
 class TransformPaintPropertyNode;
 struct PaintPropertyTreeBuilderFragmentContext;
 
@@ -67,52 +74,35 @@ struct PaintPropertyTreeBuilderFragmentContext;
 // to the outer viewport. The inner viewport is always contained in the outer
 // viewport and can pan within it.
 //
-// When attached, the tree will look like this:
+// When attached, we will create the following layers:
+// - scroll_layer_ (transform: scroll_translation_node_)
+// - scrollbar_layer_horizontal_ (optional, transform: DET_or_parent)
+// - scrollbar_layer_vertical_ (optional, transform: DET_or_parent)
+// (DET_or_parent: device_emulation_transform_node_ if exists,
+//  or the parent transform state)
 //
-// VV::m_rootTransformLayer
-//  +- VV::m_innerViewportContainerLayer
-//     +- VV::m_overscrollElasticityLayer
-//     |   +- VV::m_pageScaleLayer
-//     |       +- VV::m_innerViewportScrollLayer
-//     |           +-- PLC::m_overflowControlsHostLayer
-//     |               +-- PLC::m_containerLayer (fixed pos container)
-//     |                   +-- PLC::m_scrollLayer
-//     |                       +-- PLC::m_rootContentLayer
-//     |                           +-- LayoutView CompositedLayerMapping layers
-//     +- PageOverlay for InspectorOverlay
-//     +- PageOverlay for ColorOverlay
-//     +- PLC::m_layerForHorizontalScrollbar
-//     +- PLC::m_layerForVerticalScrollbar
-//     +- PLC::m_layerForScrollCorner (non-overlay only)
+// After PrePaint, the property trees will look like this:
 //
-class CORE_EXPORT VisualViewport final
-    : public GarbageCollectedFinalized<VisualViewport>,
-      public GraphicsLayerClient,
-      public ScrollableArea {
+// Transform tree:
+//  parent transform state
+//  +- device_emulation_transform_node_ (optional)
+//     +- overscroll_elasticity_transform_node_
+//        +- page_scale_node__
+//           +- scroll_translation_node_ (scroll: scroll_node_)
+// Effect tree:
+//  parent effect state
+//  +- horizontal_scrollbar_effect_node_
+//  +- vertical_scrollbar_effect_node_
+//
+class CORE_EXPORT VisualViewport : public GarbageCollected<VisualViewport>,
+                                   public ScrollableArea {
   USING_GARBAGE_COLLECTED_MIXIN(VisualViewport);
 
  public:
-  static VisualViewport* Create(Page& host) {
-    return MakeGarbageCollected<VisualViewport>(host);
-  }
-
   explicit VisualViewport(Page&);
   ~VisualViewport() override;
 
-  void Trace(blink::Visitor*) override;
-
-  void CreateLayerTree();
-  void AttachLayerTree(GraphicsLayer*);
-
-  GraphicsLayer* RootGraphicsLayer() { return root_transform_layer_.get(); }
-  GraphicsLayer* ContainerLayer() {
-    return inner_viewport_container_layer_.get();
-  }
-  GraphicsLayer* ScrollLayer() { return inner_viewport_scroll_layer_.get(); }
-  GraphicsLayer* PageScaleLayer() { return page_scale_layer_.get(); }
-  GraphicsLayer* OverscrollElasticityLayer() {
-    return overscroll_elasticity_layer_.get();
-  }
+  void Trace(Visitor*) override;
 
   void InitializeScrollbars();
 
@@ -133,11 +123,6 @@ class CORE_EXPORT VisualViewport final
   // +/- zooming).
   FloatRect VisibleRect(IncludeScrollbarsInRect = kExcludeScrollbars) const;
 
-  // Similar to VisibleRect but this returns the rect relative to the main
-  // document's top-left corner.
-  FloatRect VisibleRectInDocument(
-      IncludeScrollbarsInRect = kExcludeScrollbars) const;
-
   // Resets the viewport to initial state.
   void Reset();
 
@@ -146,14 +131,13 @@ class CORE_EXPORT VisualViewport final
   void MainFrameDidChangeSize();
 
   // Sets scale and location in one operation, preventing intermediate clamping.
-  void SetScaleAndLocation(float scale, const FloatPoint& location);
+  void SetScaleAndLocation(float scale,
+                           bool is_pinch_gesture_active,
+                           const FloatPoint& location);
+
   void SetScale(float);
   float Scale() const { return scale_; }
-
-  // Update scale factor, magnifying or minifying by magnifyDelta, centered
-  // around the point specified by anchor in window coordinates. Returns false
-  // if page scale factor is left unchanged.
-  bool MagnifyScaleAroundAnchor(float magnify_delta, const FloatPoint& anchor);
+  bool IsPinchGestureActive() const { return is_pinch_gesture_active_; }
 
   // Convert the given rect in the main LocalFrameView's coordinates into a rect
   // in the viewport. The given and returned rects are in CSS pixels, meaning
@@ -190,9 +174,18 @@ class CORE_EXPORT VisualViewport final
 
   // ScrollableArea implementation
   ChromeClient* GetChromeClient() const override;
+  SmoothScrollSequencer* GetSmoothScrollSequencer() const override;
   void SetScrollOffset(const ScrollOffset&,
-                       ScrollType,
-                       ScrollBehavior = kScrollBehaviorInstant) override;
+                       mojom::blink::ScrollType,
+                       mojom::blink::ScrollBehavior,
+                       ScrollCallback on_finish) override;
+  void SetScrollOffset(const ScrollOffset&,
+                       mojom::blink::ScrollType,
+                       mojom::blink::ScrollBehavior =
+                           mojom::blink::ScrollBehavior::kInstant) override;
+  PhysicalRect ScrollIntoView(
+      const PhysicalRect&,
+      const mojom::blink::ScrollIntoViewParamsPtr&) override;
   bool IsThrottled() const override {
     // VisualViewport is always in the main frame, so the frame does not get
     // throttled.
@@ -212,23 +205,24 @@ class CORE_EXPORT VisualViewport final
   // correct cc Layer sizing.
   IntSize ContentsSize() const override;
   bool ScrollbarsCanBeActive() const override { return false; }
-  IntRect ScrollableAreaBoundingBox() const override;
   bool UserInputScrollable(ScrollbarOrientation) const override;
   bool ShouldPlaceVerticalScrollbarOnLeft() const override { return false; }
-  CompositorElementId GetCompositorElementId() const override;
+  CompositorElementId GetScrollElementId() const override;
   bool ScrollAnimatorEnabled() const override;
   void ScrollControlWasSetNeedsPaintInvalidation() override {}
-  void UpdateScrollOffset(const ScrollOffset&, ScrollType) override;
-  GraphicsLayer* LayerForContainer() const override;
-  GraphicsLayer* LayerForScrolling() const override;
-  GraphicsLayer* LayerForHorizontalScrollbar() const override;
-  GraphicsLayer* LayerForVerticalScrollbar() const override;
+  void UpdateScrollOffset(const ScrollOffset&,
+                          mojom::blink::ScrollType) override;
+  cc::Layer* LayerForScrolling() const override;
+  cc::Layer* LayerForHorizontalScrollbar() const override;
+  cc::Layer* LayerForVerticalScrollbar() const override;
   bool ScheduleAnimation() override;
-  CompositorAnimationHost* GetCompositorAnimationHost() const override;
+  cc::AnimationHost* GetCompositorAnimationHost() const override;
   CompositorAnimationTimeline* GetCompositorAnimationTimeline() const override;
   IntRect VisibleContentRect(
       IncludeScrollbarsInRect = kExcludeScrollbars) const override;
-  scoped_refptr<base::SingleThreadTaskRunner> GetTimerTaskRunner() const final;
+  scoped_refptr<base::SingleThreadTaskRunner> GetTimerTaskRunner()
+      const override;
+  WebColorScheme UsedColorScheme() const override;
 
   // VisualViewport scrolling may involve pinch zoom and gets routed through
   // WebViewImpl explicitly rather than via ScrollingCoordinator::DidScroll
@@ -258,6 +252,8 @@ class CORE_EXPORT VisualViewport final
   ScrollbarTheme& GetPageScrollbarTheme() const override;
   bool VisualViewportSuppliesScrollbars() const override;
 
+  const Document* GetDocument() const override;
+
   TransformPaintPropertyNode* GetDeviceEmulationTransformNode() const;
   TransformPaintPropertyNode* GetOverscrollElasticityTransformNode() const;
   TransformPaintPropertyNode* GetPageScaleNode() const;
@@ -265,49 +261,31 @@ class CORE_EXPORT VisualViewport final
   ScrollPaintPropertyNode* GetScrollNode() const;
 
   // Create/update the page scale translation, viewport scroll, and viewport
-  // translation property nodes. Also set the layer states (inner viewport
-  // container, page scale layer, inner viewport scroll layer) to reference
-  // these nodes.
-  void UpdatePaintPropertyNodesIfNeeded(
+  // translation property nodes. Returns the maximum paint property change
+  // type for any of the viewport's nodes.
+  PaintPropertyChangeType UpdatePaintPropertyNodesIfNeeded(
       PaintPropertyTreeBuilderFragmentContext& context);
-
-  CompositorElementId GetCompositorOverscrollElasticityElementId() const;
 
   void SetNeedsPaintPropertyUpdate() { needs_paint_property_update_ = true; }
   bool NeedsPaintPropertyUpdate() const { return needs_paint_property_update_; }
 
+  void DisposeImpl() override;
+
+  void Paint(GraphicsContext&) const;
+
  private:
-  bool DidSetScaleOrLocation(float scale, const FloatPoint& location);
+  bool DidSetScaleOrLocation(float scale,
+                             bool is_pinch_gesture_active,
+                             const FloatPoint& location);
 
-
-  void UpdateStyleAndLayoutIgnorePendingStylesheets() const;
+  void CreateLayers();
+  void UpdateStyleAndLayout(DocumentUpdateReason) const;
 
   void EnqueueScrollEvent();
   void EnqueueResizeEvent();
 
-  // GraphicsLayerClient implementation.
-  bool NeedsRepaint(const GraphicsLayer&) const override {
-    NOTREACHED();
-    return true;
-  }
-  IntRect ComputeInterestRect(const GraphicsLayer*,
-                              const IntRect&) const override;
-  void PaintContents(const GraphicsLayer*,
-                     GraphicsContext&,
-                     GraphicsLayerPaintingPhase,
-                     const IntRect&) const override;
-  void SetOverlayScrollbarsHidden(bool) override;
-  void SetPaintArtifactCompositorNeedsUpdate() const override;
-  String DebugName(const GraphicsLayer*) const override;
-
-  const ScrollableArea* GetScrollableAreaForTesting(
-      const GraphicsLayer*) const override;
-
   int ScrollbarThickness() const;
-  IntSize ScrollbarSize(ScrollbarOrientation) const;
-  IntPoint ScrollbarOffset(ScrollbarOrientation) const;
-
-  void SetupScrollbar(ScrollbarOrientation);
+  void UpdateScrollbarLayer(ScrollbarOrientation);
 
   void NotifyRootFrameViewport() const;
 
@@ -320,34 +298,26 @@ class CORE_EXPORT VisualViewport final
     return *page_;
   }
 
-  CompositorElementId GetCompositorScrollElementId() const;
+  PaintArtifactCompositor* GetPaintArtifactCompositor() const;
+
+  std::unique_ptr<TracedValue> ViewportToTracedValue() const;
 
   // Contracts the given size by the thickness of any visible scrollbars. Does
   // not contract the size if the scrollbar is overlay.
   IntSize ExcludeScrollbars(const IntSize&) const;
 
   Member<Page> page_;
-  std::unique_ptr<GraphicsLayer> root_transform_layer_;
-  std::unique_ptr<GraphicsLayer> inner_viewport_container_layer_;
-  std::unique_ptr<GraphicsLayer> overscroll_elasticity_layer_;
-  std::unique_ptr<GraphicsLayer> page_scale_layer_;
-  std::unique_ptr<GraphicsLayer> inner_viewport_scroll_layer_;
 
-  // The layers of the ScrollbarLayerGroups are referenced from the
-  // GraphicsLayers, so the GraphicsLayers must be destructed first (declared
-  // after).
-  std::unique_ptr<ScrollingCoordinator::ScrollbarLayerGroup>
-      scrollbar_layer_group_horizontal_;
-  std::unique_ptr<ScrollingCoordinator::ScrollbarLayerGroup>
-      scrollbar_layer_group_vertical_;
-  std::unique_ptr<GraphicsLayer> overlay_scrollbar_horizontal_;
-  std::unique_ptr<GraphicsLayer> overlay_scrollbar_vertical_;
+  scoped_refptr<cc::Layer> scroll_layer_;
+  scoped_refptr<cc::ScrollbarLayerBase> scrollbar_layer_horizontal_;
+  scoped_refptr<cc::ScrollbarLayerBase> scrollbar_layer_vertical_;
 
+  PropertyTreeState parent_property_tree_state_;
   scoped_refptr<TransformPaintPropertyNode> device_emulation_transform_node_;
   scoped_refptr<TransformPaintPropertyNode>
       overscroll_elasticity_transform_node_;
-  scoped_refptr<TransformPaintPropertyNode> scale_transform_node_;
-  scoped_refptr<TransformPaintPropertyNode> translation_transform_node_;
+  scoped_refptr<TransformPaintPropertyNode> page_scale_node_;
+  scoped_refptr<TransformPaintPropertyNode> scroll_translation_node_;
   scoped_refptr<ScrollPaintPropertyNode> scroll_node_;
   scoped_refptr<EffectPaintPropertyNode> horizontal_scrollbar_effect_node_;
   scoped_refptr<EffectPaintPropertyNode> vertical_scrollbar_effect_node_;
@@ -355,6 +325,7 @@ class CORE_EXPORT VisualViewport final
   // Offset of the visual viewport from the main frame's origin, in CSS pixels.
   ScrollOffset offset_;
   float scale_;
+  bool is_pinch_gesture_active_;
 
   // The Blink viewport size. This is effectively the size of the rect Blink is
   // rendering into and includes space consumed by scrollbars. While it will
@@ -375,9 +346,12 @@ class CORE_EXPORT VisualViewport final
   // only to report statistics about pinch-zoom usage.
   float max_page_scale_;
   bool track_pinch_zoom_stats_for_page_;
-  CompositorElementId element_id_;
+
+  // For page scale animation on page_scale_node_.
+  CompositorElementId page_scale_element_id_;
+  // For scrolling, on scroll_layer_, scroll_node_, and scroll element ids of
+  // scrollbar layers.
   CompositorElementId scroll_element_id_;
-  CompositorElementId overscroll_elasticity_element_id_;
 
   bool needs_paint_property_update_;
 };

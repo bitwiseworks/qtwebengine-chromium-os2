@@ -10,7 +10,7 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -20,8 +20,8 @@
 #include "net/base/ip_endpoint.h"
 #include "net/quic/crypto/proof_source_chromium.h"
 #include "net/test/test_data_directory.h"
-#include "net/third_party/quic/core/quic_dispatcher.h"
-#include "net/third_party/quic/tools/quic_memory_cache_backend.h"
+#include "net/third_party/quiche/src/quic/core/quic_dispatcher.h"
+#include "net/third_party/quiche/src/quic/tools/quic_memory_cache_backend.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
 #include "net/tools/quic/quic_simple_server.h"
 
@@ -49,6 +49,8 @@ const char kSimpleStatus[] = "200";
 
 const char kSimpleHeaderName[] = "hello_header";
 const char kSimpleHeaderValue[] = "hello header value";
+const std::string kCombinedHelloHeaderValue = std::string("foo\0bar", 7);
+const char kCombinedHeaderName[] = "combined";
 
 base::Thread* g_quic_server_thread = nullptr;
 quic::QuicMemoryCacheBackend* g_quic_cache_backend = nullptr;
@@ -101,6 +103,10 @@ const std::string QuicSimpleTestServer::GetHelloHeaderValue() {
   return kHelloHeaderValue;
 }
 
+const std::string QuicSimpleTestServer::GetCombinedHeaderName() {
+  return kCombinedHeaderName;
+}
+
 const std::string QuicSimpleTestServer::GetHelloTrailerName() {
   return kHelloTrailerName;
 }
@@ -135,6 +141,7 @@ void SetupQuicMemoryCacheBackend() {
   spdy::SpdyHeaderBlock headers;
   headers[kHelloHeaderName] = kHelloHeaderValue;
   headers[kStatusHeader] = kHelloStatus;
+  headers[kCombinedHeaderName] = kCombinedHelloHeaderValue;
   spdy::SpdyHeaderBlock trailers;
   trailers[kHelloTrailerName] = kHelloTrailerValue;
   g_quic_cache_backend = new quic::QuicMemoryCacheBackend();
@@ -197,7 +204,7 @@ bool QuicSimpleTestServer::Start() {
   DCHECK(!g_quic_server_thread);
   g_quic_server_thread = new base::Thread("quic server thread");
   base::Thread::Options thread_options;
-  thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
+  thread_options.message_pump_type = base::MessagePumpType::IO;
   bool started = g_quic_server_thread->StartWithOptions(thread_options);
   DCHECK(started);
   base::FilePath test_files_root = GetTestCertsDirectory();

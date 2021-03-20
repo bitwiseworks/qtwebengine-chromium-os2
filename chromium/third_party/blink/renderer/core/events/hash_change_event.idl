@@ -17,13 +17,13 @@
  * Boston, MA 02110-1301, USA.
  */
 
-// https://html.spec.whatwg.org/multipage/browsers.html#the-hashchangeevent-interface
+// https://html.spec.whatwg.org/C/#the-hashchangeevent-interface
 
 [
-    Constructor(DOMString type, optional HashChangeEventInit eventInitDict),
     // TODO(foolip): Exposed=(Window,Worker)
     Exposed=Window
 ] interface HashChangeEvent : Event {
+    constructor(DOMString type, optional HashChangeEventInit eventInitDict = {});
     readonly attribute DOMString oldURL;
     readonly attribute DOMString newURL;
 };

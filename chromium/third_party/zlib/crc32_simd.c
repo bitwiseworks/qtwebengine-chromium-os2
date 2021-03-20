@@ -161,13 +161,14 @@ uint32_t ZLIB_INTERNAL crc32_sse42_simd_(  /* SSE4.2+PCLMUL */
  * TODO: implement a version using the PMULL instruction.
  */
 
+#if defined(__clang__)
 /* CRC32 intrinsics are #ifdef'ed out of arm_acle.h unless we build with an
  * armv8 target, which is incompatible with ThinLTO optimizations on Android.
  * (Namely, mixing and matching different module-level targets makes ThinLTO
  * warn, and Android defaults to armv7-a. This restriction does not apply to
  * function-level `target`s, however.)
  *
- * Since we only need three crc intrinsics, and since clang's implementation of
+ * Since we only need four crc intrinsics, and since clang's implementation of
  * those are just wrappers around compiler builtins, it's simplest to #define
  * those builtins directly. If this #define list grows too much (or we depend on
  * an intrinsic that isn't a trivial wrapper), we may have to find a better way
@@ -180,11 +181,22 @@ uint32_t ZLIB_INTERNAL crc32_sse42_simd_(  /* SSE4.2+PCLMUL */
 #define __crc32b __builtin_arm_crc32b
 #define __crc32d __builtin_arm_crc32d
 #define __crc32w __builtin_arm_crc32w
+#define __crc32cw __builtin_arm_crc32cw
 
 #if defined(__aarch64__)
 #define TARGET_ARMV8_WITH_CRC __attribute__((target("crc")))
-#else
+#else  // !defined(__aarch64__)
 #define TARGET_ARMV8_WITH_CRC __attribute__((target("armv8-a,crc")))
+#endif  // defined(__aarch64__)
+
+#elif defined(__GNUC__)
+/* For GCC, we are setting CRC extensions at module level, so ThinLTO is not
+ * allowed. We can just include arm_acle.h.
+ */
+#include <arm_acle.h>
+#define TARGET_ARMV8_WITH_CRC
+#else  // !defined(__GNUC__) && !defined(_aarch64__)
+#error ARM CRC32 SIMD extensions only supported for Clang and GCC
 #endif
 
 TARGET_ARMV8_WITH_CRC
@@ -227,26 +239,5 @@ uint32_t ZLIB_INTERNAL armv8_crc32_little(unsigned long crc,
 
     return ~c;
 }
-
-TARGET_ARMV8_WITH_CRC
-Pos ZLIB_INTERNAL insert_string_arm(deflate_state *const s, const Pos str)
-{
-    Pos ret;
-    unsigned *ip, val, h = 0;
-
-    ip = (unsigned *)&s->window[str];
-    val = *ip;
-
-    if (s->level >= 6)
-        val &= 0xFFFFFF;
-
-    h = __crc32w(h, val);
-
-    ret = s->head[h & s->hash_mask];
-    s->head[h & s->hash_mask] = str;
-    s->prev[str & s->w_mask] = ret;
-    return ret;
-}
-
 
 #endif

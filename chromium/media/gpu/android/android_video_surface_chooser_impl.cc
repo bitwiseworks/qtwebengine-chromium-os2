@@ -18,9 +18,7 @@ constexpr base::TimeDelta MinimumDelayAfterFailedOverlay =
 AndroidVideoSurfaceChooserImpl::AndroidVideoSurfaceChooserImpl(
     bool allow_dynamic,
     const base::TickClock* tick_clock)
-    : allow_dynamic_(allow_dynamic),
-      tick_clock_(tick_clock),
-      weak_factory_(this) {
+    : allow_dynamic_(allow_dynamic), tick_clock_(tick_clock) {
   // Use a DefaultTickClock if one wasn't provided.
   if (!tick_clock_)
     tick_clock_ = base::DefaultTickClock::GetInstance();
@@ -242,8 +240,8 @@ void AndroidVideoSurfaceChooserImpl::OnOverlayReady(AndroidOverlay* overlay) {
   // Notify the overlay that we'd like to know if it's destroyed, so that we can
   // update our internal state if the client drops it without being told.
   overlay_->AddOverlayDeletedCallback(
-      base::Bind(&AndroidVideoSurfaceChooserImpl::OnOverlayDeleted,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&AndroidVideoSurfaceChooserImpl::OnOverlayDeleted,
+                     weak_factory_.GetWeakPtr()));
 
   client_overlay_state_ = kUsingOverlay;
   use_overlay_cb_.Run(std::move(overlay_));

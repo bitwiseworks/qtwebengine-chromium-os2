@@ -8,11 +8,7 @@
 #ifndef GrDefaultGeoProcFactory_DEFINED
 #define GrDefaultGeoProcFactory_DEFINED
 
-#include "GrColorSpaceXform.h"
-#include "GrGeometryProcessor.h"
-#include "GrShaderCaps.h"
-
-constexpr int kMaxBones = 80; // Supports up to 80 bones per mesh.
+#include "src/gpu/GrGeometryProcessor.h"
 
 /*
  * A factory for creating default Geometry Processors which simply multiply position by the uniform
@@ -24,25 +20,18 @@ namespace GrDefaultGeoProcFactory {
             kPremulGrColorUniform_Type,
             kPremulGrColorAttribute_Type,
             kPremulWideColorAttribute_Type,
-            kUnpremulSkColorAttribute_Type,
         };
         explicit Color(const SkPMColor4f& color)
                 : fType(kPremulGrColorUniform_Type)
-                , fColor(color)
-                , fColorSpaceXform(nullptr) {}
+                , fColor(color) {}
         Color(Type type)
                 : fType(type)
-                , fColor(SK_PMColor4fILLEGAL)
-                , fColorSpaceXform(nullptr) {
+                , fColor(SK_PMColor4fILLEGAL) {
             SkASSERT(type != kPremulGrColorUniform_Type);
         }
 
         Type fType;
         SkPMColor4f fColor;
-
-        // This only applies to SkColor. Any GrColors are assumed to have been color converted
-        // during paint conversion.
-        sk_sp<GrColorSpaceXform> fColorSpaceXform;
     };
 
     struct Coverage {
@@ -66,7 +55,6 @@ namespace GrDefaultGeoProcFactory {
             kUnused_Type,
             kUsePosition_Type,
             kHasExplicit_Type,
-            kHasTransformed_Type,
         };
         LocalCoords(Type type) : fType(type), fMatrix(nullptr) {}
         LocalCoords(Type type, const SkMatrix* matrix) : fType(type), fMatrix(matrix) {
@@ -78,43 +66,22 @@ namespace GrDefaultGeoProcFactory {
         const SkMatrix* fMatrix;
     };
 
-    struct Bones {
-        Bones(const float bones[], int boneCount)
-            : fBones(bones)
-            , fBoneCount(boneCount) {}
-
-        const float* fBones;
-        int fBoneCount;
-    };
-
-    sk_sp<GrGeometryProcessor> Make(const GrShaderCaps*,
-                                    const Color&,
-                                    const Coverage&,
-                                    const LocalCoords&,
-                                    const SkMatrix& viewMatrix);
+    GrGeometryProcessor* Make(SkArenaAlloc*,
+                              const Color&,
+                              const Coverage&,
+                              const LocalCoords&,
+                              const SkMatrix& viewMatrix);
 
     /*
      * Use this factory to create a GrGeometryProcessor that expects a device space vertex position
      * attribute. The view matrix must still be provided to compute correctly transformed
      * coordinates for GrFragmentProcessors. It may fail if the view matrix is not invertible.
      */
-    sk_sp<GrGeometryProcessor> MakeForDeviceSpace(const GrShaderCaps*,
-                                                  const Color&,
-                                                  const Coverage&,
-                                                  const LocalCoords&,
-                                                  const SkMatrix& viewMatrix);
-
-    /*
-     * Use this factory to create a GrGeometryProcessor that supports skeletal animation through
-     * deformation of vertices using matrices that are passed in. This should only be called from
-     * GrDrawVerticesOp.
-     */
-    sk_sp<GrGeometryProcessor> MakeWithBones(const GrShaderCaps*,
-                                             const Color&,
-                                             const Coverage&,
-                                             const LocalCoords&,
-                                             const Bones&,
-                                             const SkMatrix& viewMatrix);
+    GrGeometryProcessor* MakeForDeviceSpace(SkArenaAlloc*,
+                                            const Color&,
+                                            const Coverage&,
+                                            const LocalCoords&,
+                                            const SkMatrix& viewMatrix);
 };
 
 #endif

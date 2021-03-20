@@ -15,32 +15,32 @@
 #include "SampleUtils.h"
 
 #include "utils/ComboRenderPipelineDescriptor.h"
-#include "utils/DawnHelpers.h"
 #include "utils/SystemUtils.h"
+#include "utils/WGPUHelpers.h"
 
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-dawn::Device device;
+wgpu::Device device;
 
-dawn::Buffer indexBuffer;
-dawn::Buffer vertexBuffer;
-dawn::Buffer planeBuffer;
-dawn::Buffer cameraBuffer;
-dawn::Buffer transformBuffer[2];
+wgpu::Buffer indexBuffer;
+wgpu::Buffer vertexBuffer;
+wgpu::Buffer planeBuffer;
+wgpu::Buffer cameraBuffer;
+wgpu::Buffer transformBuffer[2];
 
-dawn::BindGroup cameraBindGroup;
-dawn::BindGroup bindGroup[2];
-dawn::BindGroup cubeTransformBindGroup[2];
+wgpu::BindGroup cameraBindGroup;
+wgpu::BindGroup bindGroup[2];
+wgpu::BindGroup cubeTransformBindGroup[2];
 
-dawn::Queue queue;
-dawn::SwapChain swapchain;
-dawn::TextureView depthStencilView;
-dawn::RenderPipeline pipeline;
-dawn::RenderPipeline planePipeline;
-dawn::RenderPipeline reflectionPipeline;
+wgpu::Queue queue;
+wgpu::SwapChain swapchain;
+wgpu::TextureView depthStencilView;
+wgpu::RenderPipeline pipeline;
+wgpu::RenderPipeline planePipeline;
+wgpu::RenderPipeline reflectionPipeline;
 
 void initBuffers() {
     static const uint32_t indexData[6*6] = {
@@ -62,7 +62,8 @@ void initBuffers() {
         20, 21, 22,
         20, 22, 23
     };
-    indexBuffer = utils::CreateBufferFromData(device, indexData, sizeof(indexData), dawn::BufferUsageBit::Index);
+    indexBuffer =
+        utils::CreateBufferFromData(device, indexData, sizeof(indexData), wgpu::BufferUsage::Index);
 
     static const float vertexData[6 * 4 * 6] = {
         -1.0, -1.0,  1.0,    1.0, 0.0, 0.0,
@@ -95,7 +96,8 @@ void initBuffers() {
         -1.0,  1.0,  1.0,    1.0, 1.0, 1.0,
         -1.0,  1.0, -1.0,    1.0, 1.0, 1.0
     };
-    vertexBuffer = utils::CreateBufferFromData(device, vertexData, sizeof(vertexData), dawn::BufferUsageBit::Vertex);
+    vertexBuffer = utils::CreateBufferFromData(device, vertexData, sizeof(vertexData),
+                                               wgpu::BufferUsage::Vertex);
 
     static const float planeData[6 * 4] = {
         -2.0, -1.0, -2.0,    0.5, 0.5, 0.5,
@@ -103,7 +105,8 @@ void initBuffers() {
         2.0, -1.0,  2.0,    0.5, 0.5, 0.5,
         -2.0, -1.0,  2.0,    0.5, 0.5, 0.5,
     };
-    planeBuffer = utils::CreateBufferFromData(device, planeData, sizeof(planeData), dawn::BufferUsageBit::Vertex);
+    planeBuffer = utils::CreateBufferFromData(device, planeData, sizeof(planeData),
+                                              wgpu::BufferUsage::Vertex);
 }
 
 struct CameraData {
@@ -116,12 +119,13 @@ void init() {
 
     queue = device.CreateQueue();
     swapchain = GetSwapChain(device);
-    swapchain.Configure(GetPreferredSwapChainTextureFormat(),
-                        dawn::TextureUsageBit::OutputAttachment, 640, 480);
+    swapchain.Configure(GetPreferredSwapChainTextureFormat(), wgpu::TextureUsage::OutputAttachment,
+                        640, 480);
 
     initBuffers();
 
-    dawn::ShaderModule vsModule = utils::CreateShaderModule(device, dawn::ShaderStage::Vertex, R"(
+    wgpu::ShaderModule vsModule =
+        utils::CreateShaderModule(device, utils::SingleShaderStage::Vertex, R"(
         #version 450
         layout(set = 0, binding = 0) uniform cameraData {
             mat4 view;
@@ -136,10 +140,10 @@ void init() {
         void main() {
             f_col = col;
             gl_Position = camera.proj * camera.view * modelMatrix * vec4(pos, 1.0);
-        })"
-    );
+        })");
 
-    dawn::ShaderModule fsModule = utils::CreateShaderModule(device, dawn::ShaderStage::Fragment, R"(
+    wgpu::ShaderModule fsModule =
+        utils::CreateShaderModule(device, utils::SingleShaderStage::Fragment, R"(
         #version 450
         layout(location = 2) in vec3 f_col;
         layout(location = 0) out vec4 fragColor;
@@ -147,8 +151,8 @@ void init() {
             fragColor = vec4(f_col, 1.0);
         })");
 
-    dawn::ShaderModule fsReflectionModule =
-        utils::CreateShaderModule(device, dawn::ShaderStage::Fragment, R"(
+    wgpu::ShaderModule fsReflectionModule =
+        utils::CreateShaderModule(device, utils::SingleShaderStage::Fragment, R"(
         #version 450
         layout(location = 2) in vec3 f_col;
         layout(location = 0) out vec4 fragColor;
@@ -156,30 +160,36 @@ void init() {
             fragColor = vec4(mix(f_col, vec3(0.5, 0.5, 0.5), 0.5), 1.0);
         })");
 
-    auto inputState = device.CreateInputStateBuilder()
-        .SetAttribute(0, 0, dawn::VertexFormat::FloatR32G32B32, 0)
-        .SetAttribute(1, 0, dawn::VertexFormat::FloatR32G32B32, 3 * sizeof(float))
-        .SetInput(0, 6 * sizeof(float), dawn::InputStepMode::Vertex)
-        .GetResult();
+    utils::ComboVertexStateDescriptor vertexState;
+    vertexState.cVertexBuffers[0].attributeCount = 2;
+    vertexState.cAttributes[0].format = wgpu::VertexFormat::Float3;
+    vertexState.cAttributes[1].shaderLocation = 1;
+    vertexState.cAttributes[1].offset = 3 * sizeof(float);
+    vertexState.cAttributes[1].format = wgpu::VertexFormat::Float3;
+
+    vertexState.vertexBufferCount = 1;
+    vertexState.cVertexBuffers[0].arrayStride = 6 * sizeof(float);
 
     auto bgl = utils::MakeBindGroupLayout(
         device, {
-                    {0, dawn::ShaderStageBit::Vertex, dawn::BindingType::UniformBuffer},
-                    {1, dawn::ShaderStageBit::Vertex, dawn::BindingType::UniformBuffer},
+                    {0, wgpu::ShaderStage::Vertex, wgpu::BindingType::UniformBuffer},
+                    {1, wgpu::ShaderStage::Vertex, wgpu::BindingType::UniformBuffer},
                 });
 
-    dawn::PipelineLayout pl = utils::MakeBasicPipelineLayout(device, &bgl);
+    wgpu::PipelineLayout pl = utils::MakeBasicPipelineLayout(device, &bgl);
 
-    dawn::BufferDescriptor cameraBufDesc;
+    wgpu::BufferDescriptor cameraBufDesc;
     cameraBufDesc.size = sizeof(CameraData);
-    cameraBufDesc.usage = dawn::BufferUsageBit::TransferDst | dawn::BufferUsageBit::Uniform;
+    cameraBufDesc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Uniform;
     cameraBuffer = device.CreateBuffer(&cameraBufDesc);
 
     glm::mat4 transform(1.0);
-    transformBuffer[0] = utils::CreateBufferFromData(device, &transform, sizeof(glm::mat4), dawn::BufferUsageBit::Uniform);
+    transformBuffer[0] = utils::CreateBufferFromData(device, &transform, sizeof(glm::mat4),
+                                                     wgpu::BufferUsage::Uniform);
 
     transform = glm::translate(transform, glm::vec3(0.f, -2.f, 0.f));
-    transformBuffer[1] = utils::CreateBufferFromData(device, &transform, sizeof(glm::mat4), dawn::BufferUsageBit::Uniform);
+    transformBuffer[1] = utils::CreateBufferFromData(device, &transform, sizeof(glm::mat4),
+                                                     wgpu::BufferUsage::Uniform);
 
     bindGroup[0] = utils::MakeBindGroup(device, bgl, {
         {0, cameraBuffer, 0, sizeof(CameraData)},
@@ -195,45 +205,45 @@ void init() {
 
     utils::ComboRenderPipelineDescriptor descriptor(device);
     descriptor.layout = pl;
-    descriptor.cVertexStage.module = vsModule;
+    descriptor.vertexStage.module = vsModule;
     descriptor.cFragmentStage.module = fsModule;
-    descriptor.inputState = inputState;
-    descriptor.cAttachmentsState.hasDepthStencilAttachment = true;
-    descriptor.cDepthStencilAttachment.format = dawn::TextureFormat::D32FloatS8Uint;
-    descriptor.cColorAttachments[0]->format = GetPreferredSwapChainTextureFormat();
+    descriptor.vertexState = &vertexState;
+    descriptor.depthStencilState = &descriptor.cDepthStencilState;
+    descriptor.cDepthStencilState.format = wgpu::TextureFormat::Depth24PlusStencil8;
+    descriptor.cColorStates[0].format = GetPreferredSwapChainTextureFormat();
     descriptor.cDepthStencilState.depthWriteEnabled = true;
-    descriptor.cDepthStencilState.depthCompare = dawn::CompareFunction::Less;
+    descriptor.cDepthStencilState.depthCompare = wgpu::CompareFunction::Less;
 
     pipeline = device.CreateRenderPipeline(&descriptor);
 
     utils::ComboRenderPipelineDescriptor pDescriptor(device);
     pDescriptor.layout = pl;
-    pDescriptor.cVertexStage.module = vsModule;
+    pDescriptor.vertexStage.module = vsModule;
     pDescriptor.cFragmentStage.module = fsModule;
-    pDescriptor.inputState = inputState;
-    pDescriptor.cAttachmentsState.hasDepthStencilAttachment = true;
-    pDescriptor.cDepthStencilAttachment.format = dawn::TextureFormat::D32FloatS8Uint;
-    pDescriptor.cColorAttachments[0]->format = GetPreferredSwapChainTextureFormat();
-    pDescriptor.cDepthStencilState.front.passOp = dawn::StencilOperation::Replace;
-    pDescriptor.cDepthStencilState.back.passOp = dawn::StencilOperation::Replace;
-    pDescriptor.cDepthStencilState.depthCompare = dawn::CompareFunction::Less;
+    pDescriptor.vertexState = &vertexState;
+    pDescriptor.depthStencilState = &pDescriptor.cDepthStencilState;
+    pDescriptor.cDepthStencilState.format = wgpu::TextureFormat::Depth24PlusStencil8;
+    pDescriptor.cColorStates[0].format = GetPreferredSwapChainTextureFormat();
+    pDescriptor.cDepthStencilState.stencilFront.passOp = wgpu::StencilOperation::Replace;
+    pDescriptor.cDepthStencilState.stencilBack.passOp = wgpu::StencilOperation::Replace;
+    pDescriptor.cDepthStencilState.depthCompare = wgpu::CompareFunction::Less;
 
     planePipeline = device.CreateRenderPipeline(&pDescriptor);
 
     utils::ComboRenderPipelineDescriptor rfDescriptor(device);
     rfDescriptor.layout = pl;
-    rfDescriptor.cVertexStage.module = vsModule;
+    rfDescriptor.vertexStage.module = vsModule;
     rfDescriptor.cFragmentStage.module = fsReflectionModule;
-    rfDescriptor.inputState = inputState;
-    rfDescriptor.cAttachmentsState.hasDepthStencilAttachment = true;
-    rfDescriptor.cDepthStencilAttachment.format = dawn::TextureFormat::D32FloatS8Uint;
-    rfDescriptor.cColorAttachments[0]->format = GetPreferredSwapChainTextureFormat();
-    pDescriptor.cDepthStencilState.front.compare = dawn::CompareFunction::Equal;
-    pDescriptor.cDepthStencilState.back.compare = dawn::CompareFunction::Equal;
-    pDescriptor.cDepthStencilState.front.passOp = dawn::StencilOperation::Replace;
-    pDescriptor.cDepthStencilState.back.passOp = dawn::StencilOperation::Replace;
+    rfDescriptor.vertexState = &vertexState;
+    rfDescriptor.depthStencilState = &rfDescriptor.cDepthStencilState;
+    rfDescriptor.cDepthStencilState.format = wgpu::TextureFormat::Depth24PlusStencil8;
+    rfDescriptor.cColorStates[0].format = GetPreferredSwapChainTextureFormat();
+    rfDescriptor.cDepthStencilState.stencilFront.compare = wgpu::CompareFunction::Equal;
+    rfDescriptor.cDepthStencilState.stencilBack.compare = wgpu::CompareFunction::Equal;
+    rfDescriptor.cDepthStencilState.stencilFront.passOp = wgpu::StencilOperation::Replace;
+    rfDescriptor.cDepthStencilState.stencilBack.passOp = wgpu::StencilOperation::Replace;
     rfDescriptor.cDepthStencilState.depthWriteEnabled = true;
-    rfDescriptor.cDepthStencilState.depthCompare = dawn::CompareFunction::Less;
+    rfDescriptor.cDepthStencilState.depthCompare = wgpu::CompareFunction::Less;
 
     reflectionPipeline = device.CreateRenderPipeline(&rfDescriptor);
 
@@ -245,46 +255,44 @@ void frame() {
     s.a = (s.a + 1) % 256;
     s.b += 0.01f;
     if (s.b >= 1.0f) {s.b = 0.0f;}
-    static const uint32_t vertexBufferOffsets[1] = {0};
 
     cameraData.view = glm::lookAt(
         glm::vec3(8.f * std::sin(glm::radians(s.b * 360.f)), 2.f, 8.f * std::cos(glm::radians(s.b * 360.f))),
         glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.0f, -1.0f, 0.0f)
+        glm::vec3(0.0f, 1.0f, 0.0f)
     );
 
-    cameraBuffer.SetSubData(0, sizeof(CameraData), reinterpret_cast<uint8_t*>(&cameraData));
+    cameraBuffer.SetSubData(0, sizeof(CameraData), &cameraData);
 
-    dawn::Texture backbuffer;
-    dawn::RenderPassDescriptor renderPass;
-    GetNextRenderPassDescriptor(device, swapchain, depthStencilView, &backbuffer, &renderPass);
+    wgpu::TextureView backbufferView = swapchain.GetCurrentTextureView();
+    utils::ComboRenderPassDescriptor renderPass({backbufferView}, depthStencilView);
 
-    dawn::CommandBufferBuilder builder = device.CreateCommandBufferBuilder();
+    wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
     {
-        dawn::RenderPassEncoder pass = builder.BeginRenderPass(renderPass);
+        wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderPass);
         pass.SetPipeline(pipeline);
         pass.SetBindGroup(0, bindGroup[0]);
-        pass.SetVertexBuffers(0, 1, &vertexBuffer, vertexBufferOffsets);
-        pass.SetIndexBuffer(indexBuffer, 0);
-        pass.DrawIndexed(36, 1, 0, 0, 0);
+        pass.SetVertexBuffer(0, vertexBuffer);
+        pass.SetIndexBuffer(indexBuffer);
+        pass.DrawIndexed(36);
 
         pass.SetStencilReference(0x1);
         pass.SetPipeline(planePipeline);
         pass.SetBindGroup(0, bindGroup[0]);
-        pass.SetVertexBuffers(0, 1, &planeBuffer, vertexBufferOffsets);
-        pass.DrawIndexed(6, 1, 0, 0, 0);
+        pass.SetVertexBuffer(0, planeBuffer);
+        pass.DrawIndexed(6);
 
         pass.SetPipeline(reflectionPipeline);
-        pass.SetVertexBuffers(0, 1, &vertexBuffer, vertexBufferOffsets);
+        pass.SetVertexBuffer(0, vertexBuffer);
         pass.SetBindGroup(0, bindGroup[1]);
-        pass.DrawIndexed(36, 1, 0, 0, 0);
+        pass.DrawIndexed(36);
 
         pass.EndPass();
     }
 
-    dawn::CommandBuffer commands = builder.GetResult();
+    wgpu::CommandBuffer commands = encoder.Finish();
     queue.Submit(1, &commands);
-    swapchain.Present(backbuffer);
+    swapchain.Present();
     DoFlush();
 }
 

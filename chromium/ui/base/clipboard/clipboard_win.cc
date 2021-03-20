@@ -15,7 +15,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -88,14 +88,13 @@ class ScopedClipboard {
     // shouldn't be contention.
 
     for (int attempts = 0; attempts < kMaxAttemptsToOpenClipboard; ++attempts) {
-      // If we didn't manage to open the clipboard, sleep a bit and be hopeful.
-      if (attempts != 0)
-        ::Sleep(5);
-
       if (::OpenClipboard(owner)) {
         opened_ = true;
         return true;
       }
+
+      // If we didn't manage to open the clipboard, sleep a bit and be hopeful.
+      ::Sleep(5);
     }
 
     // We failed to acquire the clipboard.
@@ -179,7 +178,8 @@ bool BitmapHasInvalidPremultipliedColors(const SkPixmap& pixmap) {
 void MakeBitmapOpaque(SkPixmap* pixmap) {
   for (int x = 0; x < pixmap->width(); ++x) {
     for (int y = 0; y < pixmap->height(); ++y) {
-      *pixmap->writable_addr32(x, y) = SkColorSetA(*pixmap->addr32(x, y), 0xFF);
+      *pixmap->writable_addr32(x, y) =
+          SkColorSetA(*pixmap->addr32(x, y), SK_AlphaOPAQUE);
     }
   }
 }
@@ -230,7 +230,7 @@ Clipboard* Clipboard::Create() {
 // ClipboardWin implementation.
 ClipboardWin::ClipboardWin() {
   if (base::MessageLoopCurrentForUI::IsSet())
-    clipboard_owner_.reset(new base::win::MessageWindow());
+    clipboard_owner_ = std::make_unique<base::win::MessageWindow>();
 }
 
 ClipboardWin::~ClipboardWin() {
@@ -238,19 +238,19 @@ ClipboardWin::~ClipboardWin() {
 
 void ClipboardWin::OnPreShutdown() {}
 
-uint64_t ClipboardWin::GetSequenceNumber(ClipboardType type) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+uint64_t ClipboardWin::GetSequenceNumber(ClipboardBuffer buffer) const {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   return ::GetClipboardSequenceNumber();
 }
 
 bool ClipboardWin::IsFormatAvailable(const ClipboardFormatType& format,
-                                     ClipboardType type) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+                                     ClipboardBuffer buffer) const {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   return ::IsClipboardFormatAvailable(format.ToFormatEtc().cfFormat) != FALSE;
 }
 
-void ClipboardWin::Clear(ClipboardType type) {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+void ClipboardWin::Clear(ClipboardBuffer buffer) {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   ScopedClipboard clipboard;
   if (!clipboard.Acquire(GetClipboardWindow()))
     return;
@@ -258,7 +258,7 @@ void ClipboardWin::Clear(ClipboardType type) {
   ::EmptyClipboard();
 }
 
-void ClipboardWin::ReadAvailableTypes(ClipboardType type,
+void ClipboardWin::ReadAvailableTypes(ClipboardBuffer buffer,
                                       std::vector<base::string16>* types,
                                       bool* contains_filenames) const {
   if (!types || !contains_filenames) {
@@ -268,7 +268,7 @@ void ClipboardWin::ReadAvailableTypes(ClipboardType type,
 
   types->clear();
   if (::IsClipboardFormatAvailable(
-          ClipboardFormatType::GetPlainTextType().ToFormatEtc().cfFormat))
+          ClipboardFormatType::GetPlainTextAType().ToFormatEtc().cfFormat))
     types->push_back(base::UTF8ToUTF16(kMimeTypeText));
   if (::IsClipboardFormatAvailable(
           ClipboardFormatType::GetHtmlType().ToFormatEtc().cfFormat))
@@ -280,7 +280,7 @@ void ClipboardWin::ReadAvailableTypes(ClipboardType type,
     types->push_back(base::UTF8ToUTF16(kMimeTypePNG));
   *contains_filenames = false;
 
-  // Acquire the clipboard.
+  // Acquire the clipboard to read WebCustomDataType types.
   ScopedClipboard clipboard;
   if (!clipboard.Acquire(GetClipboardWindow()))
     return;
@@ -294,8 +294,34 @@ void ClipboardWin::ReadAvailableTypes(ClipboardType type,
   ::GlobalUnlock(hdata);
 }
 
-void ClipboardWin::ReadText(ClipboardType type, base::string16* result) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+std::vector<base::string16>
+ClipboardWin::ReadAvailablePlatformSpecificFormatNames(
+    ClipboardBuffer buffer) const {
+  int count = ::CountClipboardFormats();
+  if (!count)
+    return {};
+
+  std::vector<base::string16> types;
+  types.reserve(count);
+
+  ScopedClipboard clipboard;
+  if (!clipboard.Acquire(GetClipboardWindow()))
+    return {};
+
+  UINT cf_format = 0;
+  cf_format = ::EnumClipboardFormats(cf_format);
+  while (cf_format) {
+    std::string type_name = ClipboardFormatType(cf_format).GetName();
+    if (!type_name.empty())
+      types.push_back(base::UTF8ToUTF16(type_name));
+    cf_format = ::EnumClipboardFormats(cf_format);
+  }
+  return types;
+}
+
+void ClipboardWin::ReadText(ClipboardBuffer buffer,
+                            base::string16* result) const {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   if (!result) {
     NOTREACHED();
     return;
@@ -318,9 +344,9 @@ void ClipboardWin::ReadText(ClipboardType type, base::string16* result) const {
   TrimAfterNull(result);
 }
 
-void ClipboardWin::ReadAsciiText(ClipboardType type,
+void ClipboardWin::ReadAsciiText(ClipboardBuffer buffer,
                                  std::string* result) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   if (!result) {
     NOTREACHED();
     return;
@@ -343,12 +369,12 @@ void ClipboardWin::ReadAsciiText(ClipboardType type,
   TrimAfterNull(result);
 }
 
-void ClipboardWin::ReadHTML(ClipboardType type,
+void ClipboardWin::ReadHTML(ClipboardBuffer buffer,
                             base::string16* markup,
                             std::string* src_url,
                             uint32_t* fragment_start,
                             uint32_t* fragment_end) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
 
   markup->clear();
   // TODO(dcheng): Remove these checks, I don't think they should be optional.
@@ -400,99 +426,22 @@ void ClipboardWin::ReadHTML(ClipboardType type,
   *fragment_end = base::checked_cast<uint32_t>(end);
 }
 
-void ClipboardWin::ReadRTF(ClipboardType type, std::string* result) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+void ClipboardWin::ReadRTF(ClipboardBuffer buffer, std::string* result) const {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
 
   ReadData(ClipboardFormatType::GetRtfType(), result);
   TrimAfterNull(result);
 }
 
-SkBitmap ClipboardWin::ReadImage(ClipboardType type) const {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
-
-  // Acquire the clipboard.
-  ScopedClipboard clipboard;
-  if (!clipboard.Acquire(GetClipboardWindow()))
-    return SkBitmap();
-
-  // We use a DIB rather than a DDB here since ::GetObject() with the
-  // HBITMAP returned from ::GetClipboardData(CF_BITMAP) always reports a color
-  // depth of 32bpp.
-  BITMAPINFO* bitmap = static_cast<BITMAPINFO*>(::GetClipboardData(CF_DIB));
-  if (!bitmap)
-    return SkBitmap();
-  int color_table_length = 0;
-  switch (bitmap->bmiHeader.biBitCount) {
-    case 1:
-    case 4:
-    case 8:
-      color_table_length = bitmap->bmiHeader.biClrUsed
-          ? bitmap->bmiHeader.biClrUsed
-          : 1 << bitmap->bmiHeader.biBitCount;
-      break;
-    case 16:
-    case 32:
-      if (bitmap->bmiHeader.biCompression == BI_BITFIELDS)
-        color_table_length = 3;
-      break;
-    case 24:
-      break;
-    default:
-      NOTREACHED();
-  }
-  const void* bitmap_bits = reinterpret_cast<const char*>(bitmap)
-      + bitmap->bmiHeader.biSize + color_table_length * sizeof(RGBQUAD);
-
-  void* dst_bits;
-  // dst_hbitmap is freed by the release_proc in skia_bitmap (below)
-  HBITMAP dst_hbitmap =
-      skia::CreateHBitmap(bitmap->bmiHeader.biWidth, bitmap->bmiHeader.biHeight,
-                          false, 0, &dst_bits);
-
-  {
-    base::win::ScopedCreateDC hdc(CreateCompatibleDC(NULL));
-    HBITMAP old_hbitmap =
-        static_cast<HBITMAP>(SelectObject(hdc.Get(), dst_hbitmap));
-    ::SetDIBitsToDevice(hdc.Get(), 0, 0, bitmap->bmiHeader.biWidth,
-                        bitmap->bmiHeader.biHeight, 0, 0, 0,
-                        bitmap->bmiHeader.biHeight, bitmap_bits, bitmap,
-                        DIB_RGB_COLORS);
-    SelectObject(hdc.Get(), old_hbitmap);
-  }
-  // Windows doesn't really handle alpha channels well in many situations. When
-  // the source image is < 32 bpp, we force the bitmap to be opaque. When the
-  // source image is 32 bpp, the alpha channel might still contain garbage data.
-  // Since Windows uses premultiplied alpha, we scan for instances where
-  // (R, G, B) > A. If there are any invalid premultiplied colors in the image,
-  // we assume the alpha channel contains garbage and force the bitmap to be
-  // opaque as well. Note that this  heuristic will fail on a transparent bitmap
-  // containing only black pixels...
-  SkPixmap device_pixels(SkImageInfo::MakeN32Premul(bitmap->bmiHeader.biWidth,
-                                                    bitmap->bmiHeader.biHeight),
-                         dst_bits, bitmap->bmiHeader.biWidth * 4);
-
-  {
-    bool has_invalid_alpha_channel = bitmap->bmiHeader.biBitCount < 32 ||
-        BitmapHasInvalidPremultipliedColors(device_pixels);
-    if (has_invalid_alpha_channel) {
-      MakeBitmapOpaque(&device_pixels);
-    }
-  }
-
-  SkBitmap skia_bitmap;
-  skia_bitmap.installPixels(device_pixels.info(), device_pixels.writable_addr(),
-                            device_pixels.rowBytes(),
-                            [](void* pixels, void* hbitmap) {
-                              DeleteObject(static_cast<HBITMAP>(hbitmap));
-                            },
-                            dst_hbitmap);
-  return skia_bitmap;
+void ClipboardWin::ReadImage(ClipboardBuffer buffer,
+                             ReadImageCallback callback) const {
+  std::move(callback).Run(ReadImageInternal(buffer));
 }
 
-void ClipboardWin::ReadCustomData(ClipboardType clipboard_type,
+void ClipboardWin::ReadCustomData(ClipboardBuffer buffer,
                                   const base::string16& type,
                                   base::string16* result) const {
-  DCHECK_EQ(clipboard_type, CLIPBOARD_TYPE_COPY_PASTE);
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
 
   // Acquire the clipboard.
   ScopedClipboard clipboard;
@@ -521,7 +470,7 @@ void ClipboardWin::ReadBookmark(base::string16* title, std::string* url) const {
     return;
 
   HANDLE data = ::GetClipboardData(
-      ClipboardFormatType::GetUrlWType().ToFormatEtc().cfFormat);
+      ClipboardFormatType::GetUrlType().ToFormatEtc().cfFormat);
   if (!data)
     return;
 
@@ -553,8 +502,9 @@ void ClipboardWin::ReadData(const ClipboardFormatType& format,
   ::GlobalUnlock(data);
 }
 
-void ClipboardWin::WriteObjects(ClipboardType type, const ObjectMap& objects) {
-  DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
+void ClipboardWin::WritePortableRepresentations(ClipboardBuffer buffer,
+                                                const ObjectMap& objects) {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
 
   ScopedClipboard clipboard;
   if (!clipboard.Acquire(GetClipboardWindow()))
@@ -562,10 +512,22 @@ void ClipboardWin::WriteObjects(ClipboardType type, const ObjectMap& objects) {
 
   ::EmptyClipboard();
 
-  for (ObjectMap::const_iterator iter = objects.begin(); iter != objects.end();
-       ++iter) {
-    DispatchObject(static_cast<ObjectType>(iter->first), iter->second);
-  }
+  for (const auto& object : objects)
+    DispatchPortableRepresentation(object.first, object.second);
+}
+
+void ClipboardWin::WritePlatformRepresentations(
+    ClipboardBuffer buffer,
+    std::vector<Clipboard::PlatformRepresentation> platform_representations) {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
+
+  ScopedClipboard clipboard;
+  if (!clipboard.Acquire(GetClipboardWindow()))
+    return;
+
+  ::EmptyClipboard();
+
+  DispatchPlatformRepresentations(std::move(platform_representations));
 }
 
 void ClipboardWin::WriteText(const char* text_data, size_t text_len) {
@@ -573,7 +535,7 @@ void ClipboardWin::WriteText(const char* text_data, size_t text_len) {
   base::UTF8ToUTF16(text_data, text_len, &text);
   HGLOBAL glob = CreateGlobalData(text);
 
-  WriteToClipboard(CF_UNICODETEXT, glob);
+  WriteToClipboard(ClipboardFormatType::GetPlainTextType(), glob);
 }
 
 void ClipboardWin::WriteHTML(const char* markup_data,
@@ -589,8 +551,7 @@ void ClipboardWin::WriteHTML(const char* markup_data,
   std::string html_fragment = ClipboardUtil::HtmlToCFHtml(markup, url);
   HGLOBAL glob = CreateGlobalData(html_fragment);
 
-  WriteToClipboard(ClipboardFormatType::GetHtmlType().ToFormatEtc().cfFormat,
-                   glob);
+  WriteToClipboard(ClipboardFormatType::GetHtmlType(), glob);
 }
 
 void ClipboardWin::WriteRTF(const char* rtf_data, size_t data_len) {
@@ -608,19 +569,18 @@ void ClipboardWin::WriteBookmark(const char* title_data,
   base::string16 wide_bookmark = base::UTF8ToUTF16(bookmark);
   HGLOBAL glob = CreateGlobalData(wide_bookmark);
 
-  WriteToClipboard(ClipboardFormatType::GetUrlWType().ToFormatEtc().cfFormat,
-                   glob);
+  WriteToClipboard(ClipboardFormatType::GetUrlType(), glob);
 }
 
 void ClipboardWin::WriteWebSmartPaste() {
-  DCHECK(clipboard_owner_->hwnd() != NULL);
+  DCHECK_NE(clipboard_owner_->hwnd(), nullptr);
   ::SetClipboardData(
       ClipboardFormatType::GetWebKitSmartPasteType().ToFormatEtc().cfFormat,
-      NULL);
+      nullptr);
 }
 
 void ClipboardWin::WriteBitmap(const SkBitmap& in_bitmap) {
-  HDC dc = ::GetDC(NULL);
+  HDC dc = ::GetDC(nullptr);
 
   SkBitmap bitmap;
   // Either points bitmap at in_bitmap, or allocates and converts pixels.
@@ -644,10 +604,11 @@ void ClipboardWin::WriteBitmap(const SkBitmap& in_bitmap) {
 
   // ::CreateDIBSection allocates memory for us to copy our bitmap into.
   // Unfortunately, we can't write the created bitmap to the clipboard,
-  // (see http://msdn2.microsoft.com/en-us/library/ms532292.aspx)
+  // (see
+  // https://docs.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibsection)
   void* bits;
   HBITMAP source_hbitmap =
-      ::CreateDIBSection(dc, &bm_info, DIB_RGB_COLORS, &bits, NULL, 0);
+      ::CreateDIBSection(dc, &bm_info, DIB_RGB_COLORS, &bits, nullptr, 0);
 
   if (bits && source_hbitmap) {
     // Copy the bitmap out of shared memory and into GDI
@@ -659,7 +620,7 @@ void ClipboardWin::WriteBitmap(const SkBitmap& in_bitmap) {
   }
 
   ::DeleteObject(source_hbitmap);
-  ::ReleaseDC(NULL, dc);
+  ::ReleaseDC(nullptr, dc);
 }
 
 void ClipboardWin::WriteData(const ClipboardFormatType& format,
@@ -672,7 +633,7 @@ void ClipboardWin::WriteData(const ClipboardFormatType& format,
   char* data = static_cast<char*>(::GlobalLock(hdata));
   memcpy(data, data_data, data_len);
   ::GlobalUnlock(data);
-  WriteToClipboard(format.ToFormatEtc().cfFormat, hdata);
+  WriteToClipboard(format, hdata);
 }
 
 void ClipboardWin::WriteBitmapFromHandle(HBITMAP source_hbitmap,
@@ -682,9 +643,9 @@ void ClipboardWin::WriteBitmapFromHandle(HBITMAP source_hbitmap,
   // For this reason, we create a new bitmap, copy the bits over, and then
   // write that to the clipboard.
 
-  HDC dc = ::GetDC(NULL);
-  HDC compatible_dc = ::CreateCompatibleDC(NULL);
-  HDC source_dc = ::CreateCompatibleDC(NULL);
+  HDC dc = ::GetDC(nullptr);
+  HDC compatible_dc = ::CreateCompatibleDC(nullptr);
+  HDC source_dc = ::CreateCompatibleDC(nullptr);
 
   // This is the HBITMAP we will eventually write to the clipboard
   HBITMAP hbitmap = ::CreateCompatibleBitmap(dc, size.width(), size.height());
@@ -692,7 +653,7 @@ void ClipboardWin::WriteBitmapFromHandle(HBITMAP source_hbitmap,
     // Failed to create the bitmap
     ::DeleteDC(compatible_dc);
     ::DeleteDC(source_dc);
-    ::ReleaseDC(NULL, dc);
+    ::ReleaseDC(nullptr, dc);
     return;
   }
 
@@ -720,25 +681,115 @@ void ClipboardWin::WriteBitmapFromHandle(HBITMAP source_hbitmap,
   ::DeleteObject(old_source);
   ::DeleteDC(compatible_dc);
   ::DeleteDC(source_dc);
-  ::ReleaseDC(NULL, dc);
+  ::ReleaseDC(nullptr, dc);
 
-  WriteToClipboard(CF_BITMAP, hbitmap);
+  WriteToClipboard(ClipboardFormatType::GetBitmapType(), hbitmap);
 }
 
-void ClipboardWin::WriteToClipboard(unsigned int format, HANDLE handle) {
-  DCHECK(clipboard_owner_->hwnd() != NULL);
-  if (handle && !::SetClipboardData(format, handle)) {
-    DCHECK(ERROR_CLIPBOARD_NOT_OPEN != GetLastError());
-    FreeData(format, handle);
+SkBitmap ClipboardWin::ReadImageInternal(ClipboardBuffer buffer) const {
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
+
+  // Acquire the clipboard.
+  ScopedClipboard clipboard;
+  if (!clipboard.Acquire(GetClipboardWindow()))
+    return SkBitmap();
+
+  // We use a DIB rather than a DDB here since ::GetObject() with the
+  // HBITMAP returned from ::GetClipboardData(CF_BITMAP) always reports a color
+  // depth of 32bpp.
+  BITMAPINFO* bitmap = static_cast<BITMAPINFO*>(::GetClipboardData(CF_DIB));
+  if (!bitmap)
+    return SkBitmap();
+  int color_table_length = 0;
+
+  // For more information on BITMAPINFOHEADER and biBitCount definition,
+  // see https://docs.microsoft.com/en-us/windows/win32/wmdm/-bitmapinfoheader
+  switch (bitmap->bmiHeader.biBitCount) {
+    case 1:
+    case 4:
+    case 8:
+      color_table_length = bitmap->bmiHeader.biClrUsed
+                               ? bitmap->bmiHeader.biClrUsed
+                               : 1 << bitmap->bmiHeader.biBitCount;
+      break;
+    case 16:
+    case 32:
+      if (bitmap->bmiHeader.biCompression == BI_BITFIELDS)
+        color_table_length = 3;
+      break;
+    case 24:
+      break;
+    default:
+      NOTREACHED();
+  }
+  const void* bitmap_bits = reinterpret_cast<const char*>(bitmap) +
+                            bitmap->bmiHeader.biSize +
+                            color_table_length * sizeof(RGBQUAD);
+
+  void* dst_bits;
+  // dst_hbitmap is freed by the release_proc in skia_bitmap (below)
+  HBITMAP dst_hbitmap =
+      skia::CreateHBitmap(bitmap->bmiHeader.biWidth, bitmap->bmiHeader.biHeight,
+                          false, 0, &dst_bits);
+
+  {
+    base::win::ScopedCreateDC hdc(CreateCompatibleDC(nullptr));
+    HBITMAP old_hbitmap =
+        static_cast<HBITMAP>(SelectObject(hdc.Get(), dst_hbitmap));
+    ::SetDIBitsToDevice(hdc.Get(), 0, 0, bitmap->bmiHeader.biWidth,
+                        bitmap->bmiHeader.biHeight, 0, 0, 0,
+                        bitmap->bmiHeader.biHeight, bitmap_bits, bitmap,
+                        DIB_RGB_COLORS);
+    SelectObject(hdc.Get(), old_hbitmap);
+  }
+  // Windows doesn't really handle alpha channels well in many situations. When
+  // the source image is < 32 bpp, we force the bitmap to be opaque. When the
+  // source image is 32 bpp, the alpha channel might still contain garbage data.
+  // Since Windows uses premultiplied alpha, we scan for instances where
+  // (R, G, B) > A. If there are any invalid premultiplied colors in the image,
+  // we assume the alpha channel contains garbage and force the bitmap to be
+  // opaque as well. Note that this heuristic will fail on a transparent bitmap
+  // containing only black pixels...
+  SkPixmap device_pixels(SkImageInfo::MakeN32Premul(bitmap->bmiHeader.biWidth,
+                                                    bitmap->bmiHeader.biHeight),
+                         dst_bits, bitmap->bmiHeader.biWidth * 4);
+
+  {
+    bool has_invalid_alpha_channel =
+        bitmap->bmiHeader.biBitCount < 32 ||
+        BitmapHasInvalidPremultipliedColors(device_pixels);
+    if (has_invalid_alpha_channel) {
+      MakeBitmapOpaque(&device_pixels);
+    }
+  }
+
+  SkBitmap skia_bitmap;
+  skia_bitmap.installPixels(
+      device_pixels.info(), device_pixels.writable_addr(),
+      device_pixels.rowBytes(),
+      [](void* pixels, void* hbitmap) {
+        DeleteObject(static_cast<HBITMAP>(hbitmap));
+      },
+      dst_hbitmap);
+  return skia_bitmap;
+}
+
+void ClipboardWin::WriteToClipboard(ClipboardFormatType format, HANDLE handle) {
+  UINT cf_format = format.ToFormatEtc().cfFormat;
+  DCHECK_NE(clipboard_owner_->hwnd(), nullptr);
+  if (handle && !::SetClipboardData(cf_format, handle)) {
+    DCHECK_NE(GetLastError(),
+              static_cast<unsigned long>(ERROR_CLIPBOARD_NOT_OPEN));
+    FreeData(cf_format, handle);
   }
 }
 
 HWND ClipboardWin::GetClipboardWindow() const {
   if (!clipboard_owner_)
-    return NULL;
+    return nullptr;
 
-  if (clipboard_owner_->hwnd() == NULL)
-    clipboard_owner_->Create(base::Bind(&ClipboardOwnerWndProc));
+  if (clipboard_owner_->hwnd() == nullptr)
+    clipboard_owner_->Create(base::BindRepeating(&ClipboardOwnerWndProc));
 
   return clipboard_owner_->hwnd();
 }

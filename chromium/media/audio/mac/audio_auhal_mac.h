@@ -22,6 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <atomic>
 #include <memory>
 
 #include "base/cancelable_callback.h"
@@ -86,6 +87,7 @@ class AUHALStream : public AudioOutputStream {
   void Close() override;
   void Start(AudioSourceCallback* callback) override;
   void Stop() override;
+  void Flush() override;
   void SetVolume(double volume) override;
   void GetVolume(double* volume) override;
 
@@ -158,7 +160,7 @@ class AUHALStream : public AudioOutputStream {
   std::unique_ptr<ScopedAudioUnit> audio_unit_;
 
   // Volume level from 0 to 1.
-  float volume_;
+  std::atomic<float> volume_;
 
   // Fixed playout hardware latency.
   base::TimeDelta hardware_latency_;
@@ -196,7 +198,7 @@ class AUHALStream : public AudioOutputStream {
   int glitches_detected_;
 
   // Used to defer Start() to workaround http://crbug.com/160920.
-  base::CancelableClosure deferred_start_cb_;
+  base::CancelableOnceClosure deferred_start_cb_;
 
   // Callback to send statistics info.
   AudioManager::LogCallback log_callback_;

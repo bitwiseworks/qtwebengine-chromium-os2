@@ -14,7 +14,6 @@
 #include "testing/embedder_test.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/test_support.h"
 
 class FPDFSaveEmbedderTest : public EmbedderTest {};
 
@@ -82,7 +81,7 @@ TEST_F(FPDFSaveEmbedderTest, SaveLinearizedDoc) {
   EXPECT_EQ(8219u, GetString().length());
 
   // Make sure new document renders the same as the old one.
-  EXPECT_TRUE(OpenSavedDocument(nullptr));
+  ASSERT_TRUE(OpenSavedDocument());
   for (int i = 0; i < kPageCount; ++i) {
     FPDF_PAGE page = LoadSavedPage(i);
     ASSERT_TRUE(page);
@@ -92,6 +91,17 @@ TEST_F(FPDFSaveEmbedderTest, SaveLinearizedDoc) {
   }
   CloseSavedDocument();
 }
+
+#ifdef PDF_ENABLE_XFA
+TEST_F(FPDFSaveEmbedderTest, SaveXFADoc) {
+  ASSERT_TRUE(OpenDocument("simple_xfa.pdf"));
+  EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
+  EXPECT_THAT(GetString(), testing::StartsWith("%PDF-1.7\r\n"));
+  ASSERT_TRUE(OpenSavedDocument());
+  // TODO(tsepez): check for XFA forms in document
+  CloseSavedDocument();
+}
+#endif  // PDF_ENABLE_XFA
 
 TEST_F(FPDFSaveEmbedderTest, BUG_342) {
   EXPECT_TRUE(OpenDocument("hello_world.pdf"));

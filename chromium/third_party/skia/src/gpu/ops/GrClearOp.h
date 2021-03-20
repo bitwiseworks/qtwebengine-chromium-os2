@@ -8,21 +8,22 @@
 #ifndef GrClearOp_DEFINED
 #define GrClearOp_DEFINED
 
-#include "GrFixedClip.h"
-#include "GrOp.h"
+#include "src/gpu/GrFixedClip.h"
+#include "src/gpu/ops/GrOp.h"
 
 class GrOpFlushState;
+class GrRecordingContext;
 
 class GrClearOp final : public GrOp {
 public:
     DEFINE_OP_CLASS_ID
 
-    static std::unique_ptr<GrClearOp> Make(GrContext* context,
+    static std::unique_ptr<GrClearOp> Make(GrRecordingContext* context,
                                            const GrFixedClip& clip,
                                            const SkPMColor4f& color,
                                            GrSurfaceProxy* dstProxy);
 
-    static std::unique_ptr<GrClearOp> Make(GrContext* context,
+    static std::unique_ptr<GrClearOp> Make(GrRecordingContext* context,
                                            const SkIRect& rect,
                                            const SkPMColor4f& color,
                                            bool fullScreen);
@@ -61,10 +62,11 @@ private:
         if (fullScreen) {
             fClip.disableScissor();
         }
-        this->setBounds(SkRect::Make(rect), HasAABloat::kNo, IsZeroArea::kNo);
+        this->setBounds(SkRect::Make(rect), HasAABloat::kNo, IsHairline::kNo);
     }
 
-    CombineResult onCombineIfPossible(GrOp* t, const GrCaps& caps) override {
+    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas*,
+                                      const GrCaps& caps) override {
         // This could be much more complicated. Currently we look at cases where the new clear
         // contains the old clear, or when the new clear is a subset of the old clear and is the
         // same color.
@@ -88,6 +90,11 @@ private:
                (that->fClip.scissorEnabled() &&
                 fClip.scissorRect().contains(that->fClip.scissorRect()));
     }
+
+    void onPrePrepare(GrRecordingContext*,
+                      const GrSurfaceProxyView* outputView,
+                      GrAppliedClip*,
+                      const GrXferProcessor::DstProxyView&) override {}
 
     void onPrepare(GrOpFlushState*) override {}
 

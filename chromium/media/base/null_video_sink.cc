@@ -36,7 +36,7 @@ void NullVideoSink::Start(RenderCallback* callback) {
   started_ = true;
   last_now_ = current_render_time_ = tick_clock_->NowTicks();
   cancelable_worker_.Reset(
-      base::Bind(&NullVideoSink::CallRender, base::Unretained(this)));
+      base::BindRepeating(&NullVideoSink::CallRender, base::Unretained(this)));
   task_runner_->PostTask(FROM_HERE, cancelable_worker_.callback());
 }
 
@@ -87,14 +87,14 @@ void NullVideoSink::CallRender() {
                                 delay);
 }
 
-void NullVideoSink::PaintSingleFrame(const scoped_refptr<VideoFrame>& frame,
+void NullVideoSink::PaintSingleFrame(scoped_refptr<VideoFrame> frame,
                                      bool repaint_duplicate_frame) {
   if (!repaint_duplicate_frame && frame == last_frame_)
     return;
 
   last_frame_ = frame;
   if (new_frame_cb_)
-    new_frame_cb_.Run(frame);
+    new_frame_cb_.Run(std::move(frame));
 }
 
 }  // namespace media

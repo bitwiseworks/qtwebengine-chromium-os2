@@ -11,6 +11,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -34,6 +36,7 @@ namespace {
 
 // Hardcode these constants to avoid dependences on //chrome and //content.
 const char kChromeUIScheme[] = "chrome";
+const char kDevToolsScheme[] = "devtools";
 const char kChromeUIDefaultHost[] = "version";
 const char kViewSourceScheme[] = "view-source";
 
@@ -285,7 +288,7 @@ void FixupHost(const std::string& text,
 void FixupPort(const std::string& text,
                const url::Component& part,
                std::string* url) {
-  if (!part.is_valid())
+  if (!part.is_nonempty())
     return;
 
   // We don't fix up the port at the moment.
@@ -296,7 +299,7 @@ void FixupPort(const std::string& text,
 inline void FixupPath(const std::string& text,
                       const url::Component& part,
                       std::string* url) {
-  if (!part.is_valid() || part.len == 0) {
+  if (!part.is_nonempty()) {
     // We should always have a path.
     url->append("/");
     return;
@@ -330,22 +333,34 @@ inline void FixupRef(const std::string& text,
 
 bool HasPort(const std::string& original_text,
              const url::Component& scheme_component) {
-  // Find the range between the ":" and the "/".
+  // Find the range between the ":" and the "/" and remember it in |port_piece|.
   size_t port_start = scheme_component.end() + 1;
   size_t port_end = port_start;
   while ((port_end < original_text.length()) &&
          !url::IsAuthorityTerminator(original_text[port_end]))
     ++port_end;
-  if (port_end == port_start)
+  base::StringPiece port_piece(original_text.data() + port_start,
+                               port_end - port_start);
+  if (port_piece.empty())
     return false;
 
-  // Scan the range to see if it is entirely digits.
-  for (size_t i = port_start; i < port_end; ++i) {
-    if (!base::IsAsciiDigit(original_text[i]))
-      return false;
+  // Scan the |port_piece| to see if it is entirely digits.  Explicit check is
+  // needed because base::StringToInt will silently ignore a leading '+'
+  // character.
+  //
+  // https://url.spec.whatwg.org/#url-port-string says that "A URL-port string
+  // must be zero or more ASCII digits".
+  if (!std::all_of(port_piece.begin(), port_piece.end(),
+                   base::IsAsciiDigit<char>)) {
+    return false;
   }
 
-  return true;
+  // See if the digits represent a valid port number.
+  //
+  // https://url.spec.whatwg.org/#port-state says "If port is greater than
+  // |2^16 − 1|, validation error, return failure."
+  int port_number;
+  return base::StringToInt(port_piece, &port_number) && (port_number <= 65535);
 }
 
 // Try to extract a valid scheme from the beginning of |text|.
@@ -442,8 +457,10 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
     }
   }
 
-  // Proceed with about and chrome schemes, but not file or nonstandard schemes.
+  // Proceed with about, chrome, and devtools schemes,
+  // but not file or nonstandard schemes.
   if ((scheme != url::kAboutScheme) && (scheme != kChromeUIScheme) &&
+      (scheme != kDevToolsScheme) &&
       !url::IsStandard(scheme.c_str(),
                        url::Component(0, static_cast<int>(scheme.length())))) {
     return scheme;
@@ -551,24 +568,23 @@ GURL FixupURL(const std::string& text, const std::string& desired_tld) {
     return GURL();
   }
 
-  // 'about:blank' is special-cased in various places in the code so it
-  // shouldn't be transformed into 'chrome://blank' as the code below will do.
+  // 'about:blank' and 'about:srcdoc' are special-cased in various places in the
+  // code and shouldn't use the chrome: scheme.
   if (base::LowerCaseEqualsASCII(scheme, url::kAboutScheme)) {
     GURL about_url(base::ToLowerASCII(trimmed));
-    if (about_url.IsAboutBlank())
+    if (about_url.IsAboutBlank() || about_url.IsAboutSrcdoc())
       return about_url;
   }
 
-  // Parse and rebuild about: and chrome: URLs.
+  // For some schemes whose layouts we understand, we rebuild the URL.
   bool chrome_url =
       (scheme == url::kAboutScheme) || (scheme == kChromeUIScheme);
-
-  // For some schemes whose layouts we understand, we rebuild it.
-  if (chrome_url ||
+  bool devtools_url = (scheme == kDevToolsScheme);
+  if (chrome_url || devtools_url ||
       url::IsStandard(scheme.c_str(),
                       url::Component(0, static_cast<int>(scheme.length())))) {
     // Replace the about: scheme with the chrome: scheme.
-    std::string url(chrome_url ? kChromeUIScheme : scheme);
+    std::string url(scheme == url::kAboutScheme ? kChromeUIScheme : scheme);
     url.append(url::kStandardSchemeSeparator);
 
     // We need to check whether the |username| is valid because it is our

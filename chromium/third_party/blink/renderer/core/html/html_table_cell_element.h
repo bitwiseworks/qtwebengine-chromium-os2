@@ -35,7 +35,8 @@ class CORE_EXPORT HTMLTableCellElement final : public HTMLTablePartElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableCellElement);
+
+  HTMLTableCellElement(const QualifiedName&, Document&);
 
   int cellIndex() const;
 
@@ -53,8 +54,6 @@ class CORE_EXPORT HTMLTableCellElement final : public HTMLTablePartElement {
   bool HasNonInBodyInsertionMode() const override { return true; }
 
  private:
-  HTMLTableCellElement(const QualifiedName&, Document&);
-
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
   void CollectStyleForPresentationAttribute(
@@ -68,12 +67,21 @@ class CORE_EXPORT HTMLTableCellElement final : public HTMLTablePartElement {
   const QualifiedName& SubResourceAttributeName() const override;
 };
 
-inline bool IsHTMLTableCellElement(const HTMLElement& element) {
-  return element.HasTagName(html_names::kTdTag) ||
-         element.HasTagName(html_names::kThTag);
+template <>
+inline bool IsElementOfType<const HTMLTableCellElement>(const Node& node) {
+  return IsA<HTMLTableCellElement>(node);
 }
-
-DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLTableCellElement);
+template <>
+struct DowncastTraits<HTMLTableCellElement> {
+  static bool AllowFrom(const Node& node) {
+    auto* html_element = DynamicTo<HTMLElement>(node);
+    return html_element && AllowFrom(*html_element);
+  }
+  static bool AllowFrom(const HTMLElement& html_element) {
+    return html_element.HasTagName(html_names::kTdTag) ||
+           html_element.HasTagName(html_names::kThTag);
+  }
+};
 
 }  // namespace blink
 

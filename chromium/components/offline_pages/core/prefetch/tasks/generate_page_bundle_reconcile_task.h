@@ -25,16 +25,15 @@ class GeneratePageBundleReconcileTask : public Task {
       PrefetchNetworkRequestFactory* request_factory);
   ~GeneratePageBundleReconcileTask() override;
 
+ private:
   // Task implementation.
   void Run() override;
-
- private:
   void FinishedUpdate(bool success);
 
   PrefetchStore* prefetch_store_;
   PrefetchNetworkRequestFactory* request_factory_;
 
-  base::WeakPtrFactory<GeneratePageBundleReconcileTask> weak_factory_;
+  base::WeakPtrFactory<GeneratePageBundleReconcileTask> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(GeneratePageBundleReconcileTask);
 };
 

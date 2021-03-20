@@ -24,7 +24,7 @@ namespace base {
   template <typename signed_type>                                         \
   inline signed_type Name##WithWraparound(signed_type a, signed_type b) { \
     ASSERT_SIGNED_INTEGER_TYPE(signed_type);                              \
-    typedef typename std::make_unsigned<signed_type>::type unsigned_type; \
+    using unsigned_type = typename std::make_unsigned<signed_type>::type; \
     unsigned_type a_unsigned = static_cast<unsigned_type>(a);             \
     unsigned_type b_unsigned = static_cast<unsigned_type>(b);             \
     unsigned_type result = a_unsigned OP b_unsigned;                      \
@@ -57,7 +57,7 @@ inline signed_type NegateWithWraparound(signed_type a) {
 template <typename signed_type>
 inline signed_type ShlWithWraparound(signed_type a, signed_type b) {
   ASSERT_SIGNED_INTEGER_TYPE(signed_type);
-  typedef typename std::make_unsigned<signed_type>::type unsigned_type;
+  using unsigned_type = typename std::make_unsigned<signed_type>::type;
   const unsigned_type kMask = (sizeof(a) * 8) - 1;
   return static_cast<signed_type>(static_cast<unsigned_type>(a) << (b & kMask));
 }
@@ -81,6 +81,13 @@ inline float RecipSqrt(float a) {
   if (a != 0) return 1.0f / std::sqrt(a);
   if (std::signbit(a) == 0) return std::numeric_limits<float>::infinity();
   return -std::numeric_limits<float>::infinity();
+}
+
+template <typename T>
+inline T RoundingAverageUnsigned(T a, T b) {
+  static_assert(std::is_unsigned<T>::value, "Only for unsiged types");
+  static_assert(sizeof(T) < sizeof(uint64_t), "Must be smaller than uint64_t");
+  return (static_cast<uint64_t>(a) + static_cast<uint64_t>(b) + 1) >> 1;
 }
 
 }  // namespace base

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/browsing_data/counters/browsing_data_counter_factory.h"
 #include "chrome/browser/browsing_data/counters/browsing_data_counter_utils.h"
+#include "chrome/browser/engagement/important_sites_util.h"
 #include "chrome/browser/history/web_history_service_factory.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -25,19 +27,20 @@
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/browsing_data/core/history_notice_utils.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/feature_engagement/buildflags.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "services/identity/public/cpp/identity_manager.h"
 #include "ui/base/text/bytes_formatting.h"
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
 #include "chrome/browser/feature_engagement/incognito_window/incognito_window_tracker.h"
 #include "chrome/browser/feature_engagement/incognito_window/incognito_window_tracker_factory.h"
 #endif
@@ -47,6 +50,7 @@ using BrowsingDataType = browsing_data::BrowsingDataType;
 namespace {
 
 const int kMaxTimesHistoryNoticeShown = 1;
+const int kMaxInstalledAppsToWarnOf = 5;
 
 // TODO(msramek): Get the list of deletion preferences from the JS side.
 const char* kCounterPrefsAdvanced[] = {
@@ -65,23 +69,33 @@ const char* kCounterPrefsBasic[] = {
     browsing_data::prefs::kDeleteCacheBasic,
 };
 
+const char kRegisterableDomainField[] = "registerableDomain";
+const char kReasonBitfieldField[] = "reasonBitfield";
+const char kIsCheckedField[] = "isChecked";
+const char kAppName[] = "appName";
+
 } // namespace
 
 namespace settings {
 
 // ClearBrowsingDataHandler ----------------------------------------------------
 
-ClearBrowsingDataHandler::ClearBrowsingDataHandler(content::WebUI* webui)
-    : profile_(Profile::FromWebUI(webui)),
+ClearBrowsingDataHandler::ClearBrowsingDataHandler(content::WebUI* webui,
+                                                   Profile* profile)
+    : profile_(profile),
       sync_service_(ProfileSyncServiceFactory::GetForProfile(profile_)),
       sync_service_observer_(this),
-      show_history_deletion_dialog_(false),
-      weak_ptr_factory_(this) {}
+      show_history_deletion_dialog_(false) {}
 
 ClearBrowsingDataHandler::~ClearBrowsingDataHandler() {
 }
 
 void ClearBrowsingDataHandler::RegisterMessages() {
+  web_ui()->RegisterMessageCallback(
+      "getInstalledApps",
+      base::BindRepeating(
+          &ClearBrowsingDataHandler::GetRecentlyLaunchedInstalledApps,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "clearBrowsingData",
       base::BindRepeating(&ClearBrowsingDataHandler::HandleClearBrowsingData,
@@ -137,16 +151,99 @@ void ClearBrowsingDataHandler::HandleClearBrowsingDataForTest() {
       std::make_unique<base::ListValue>();
   data_types->AppendString("browser.clear_data.browsing_history");
 
+  std::unique_ptr<base::ListValue> installed_apps =
+      std::make_unique<base::ListValue>();
+
   base::ListValue list_args;
   list_args.AppendString("webui_callback_id");
   list_args.Append(std::move(data_types));
   list_args.AppendInteger(1u);
+  list_args.Append(std::move(installed_apps));
   HandleClearBrowsingData(&list_args);
+}
+
+void ClearBrowsingDataHandler::GetRecentlyLaunchedInstalledApps(
+    const base::ListValue* args) {
+  CHECK_EQ(2U, args->GetSize());
+  std::string webui_callback_id;
+  int period_selected;
+  CHECK(args->GetString(0, &webui_callback_id));
+
+  CHECK(args->GetInteger(1, &period_selected));
+  browsing_data::TimePeriod time_period =
+      static_cast<browsing_data::TimePeriod>(period_selected);
+
+  auto installed_apps = ImportantSitesUtil::GetInstalledRegisterableDomains(
+      time_period, profile_, kMaxInstalledAppsToWarnOf);
+
+  OnGotInstalledApps(webui_callback_id, installed_apps);
+}
+
+void ClearBrowsingDataHandler::OnGotInstalledApps(
+    const std::string& webui_callback_id,
+    const std::vector<ImportantSitesUtil::ImportantDomainInfo>&
+        installed_apps) {
+  base::ListValue installed_apps_list;
+  for (const auto& info : installed_apps) {
+    auto entry = std::make_unique<base::DictionaryValue>();
+    // Used to get favicon in ClearBrowsingDataDialog and display URL next to
+    // app name in the dialog.
+    entry->SetString(kRegisterableDomainField, info.registerable_domain);
+    // The |reason_bitfield| is only passed to Javascript to be logged
+    // from |HandleClearBrowsingData|.
+    entry->SetInteger(kReasonBitfieldField, info.reason_bitfield);
+    // Initially all sites are selected for deletion.
+    entry->SetBoolean(kIsCheckedField, true);
+    // User friendly name for the installed app.
+    DCHECK(info.app_name);
+    entry->SetString(kAppName, info.app_name.value());
+    installed_apps_list.Append(std::move(entry));
+  }
+  ResolveJavascriptCallback(base::Value(webui_callback_id),
+                            installed_apps_list);
+}
+
+std::unique_ptr<content::BrowsingDataFilterBuilder>
+ClearBrowsingDataHandler::ProcessInstalledApps(
+    const base::ListValue* installed_apps) {
+  std::vector<std::string> excluded_domains;
+  std::vector<int32_t> excluded_domain_reasons;
+  std::vector<std::string> ignored_domains;
+  std::vector<int32_t> ignored_domain_reasons;
+  for (const auto& item : *installed_apps) {
+    const base::DictionaryValue* site = nullptr;
+    CHECK(item.GetAsDictionary(&site));
+    bool is_checked = false;
+    CHECK(site->GetBoolean(kIsCheckedField, &is_checked));
+    std::string domain;
+    CHECK(site->GetString(kRegisterableDomainField, &domain));
+    int domain_reason = -1;
+    CHECK(site->GetInteger(kReasonBitfieldField, &domain_reason));
+    if (is_checked) {  // Selected installed apps should be deleted.
+      ignored_domains.push_back(domain);
+      ignored_domain_reasons.push_back(domain_reason);
+    } else {  // Unselected sites should be kept.
+      excluded_domains.push_back(domain);
+      excluded_domain_reasons.push_back(domain_reason);
+    }
+  }
+  if (!excluded_domains.empty() || !ignored_domains.empty()) {
+    ImportantSitesUtil::RecordBlacklistedAndIgnoredImportantSites(
+        profile_->GetOriginalProfile(), excluded_domains,
+        excluded_domain_reasons, ignored_domains, ignored_domain_reasons);
+  }
+
+  std::unique_ptr<content::BrowsingDataFilterBuilder> filter_builder(
+      content::BrowsingDataFilterBuilder::Create(
+          content::BrowsingDataFilterBuilder::BLACKLIST));
+  for (const std::string& domain : excluded_domains)
+    filter_builder->AddRegisterableDomain(domain);
+  return filter_builder;
 }
 
 void ClearBrowsingDataHandler::HandleClearBrowsingData(
     const base::ListValue* args) {
-  CHECK_EQ(3U, args->GetSize());
+  CHECK_EQ(4U, args->GetSize());
   std::string webui_callback_id;
   CHECK(args->GetString(0, &webui_callback_id));
 
@@ -245,19 +342,26 @@ void ClearBrowsingDataHandler::HandleClearBrowsingData(
         checked_other_types);
   }
 
-  // If Sync is running, prevent it from being paused during the operation.
-  // However, if Sync is in error, clearing cookies should pause it.
   std::unique_ptr<AccountReconcilor::ScopedSyncedDataDeletion>
       scoped_data_deletion;
-  sync_ui_util::MessageType sync_status = sync_ui_util::GetStatus(
-      profile_, sync_service_, IdentityManagerFactory::GetForProfile(profile_));
-  if (sync_status == sync_ui_util::SYNCED) {
+
+  // If Sync is running, prevent it from being paused during the operation.
+  // However, if Sync is in error, clearing cookies should pause it.
+  if (!profile_->IsGuestSession() &&
+      sync_ui_util::GetStatus(profile_) == sync_ui_util::SYNCED) {
+    // Settings can not be opened in incognito windows.
+    DCHECK(!profile_->IsOffTheRecord());
     scoped_data_deletion = AccountReconcilorFactory::GetForProfile(profile_)
                                ->GetScopedSyncDataDeletion();
   }
 
   int period_selected;
   CHECK(args->GetInteger(2, &period_selected));
+
+  const base::ListValue* installed_apps = nullptr;
+  CHECK(args->GetList(3, &installed_apps));
+  std::unique_ptr<content::BrowsingDataFilterBuilder> filter_builder =
+      ProcessInstalledApps(installed_apps);
 
   content::BrowsingDataRemover* remover =
       content::BrowserContext::GetBrowsingDataRemover(profile_);
@@ -270,12 +374,10 @@ void ClearBrowsingDataHandler::HandleClearBrowsingData(
       static_cast<browsing_data::TimePeriod>(period_selected);
 
   browsing_data_important_sites_util::Remove(
-      remove_mask, origin_mask, time_period,
-      content::BrowsingDataFilterBuilder::Create(
-          content::BrowsingDataFilterBuilder::BLACKLIST),
-      remover, std::move(callback));
+      remove_mask, origin_mask, time_period, std::move(filter_builder), remover,
+      std::move(callback));
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
   feature_engagement::IncognitoWindowTrackerFactory::GetInstance()
       ->GetForProfile(profile_)
       ->OnBrowsingDataCleared();
@@ -337,7 +439,7 @@ void ClearBrowsingDataHandler::OnStateChanged(syncer::SyncService* sync) {
 }
 
 void ClearBrowsingDataHandler::UpdateSyncState() {
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile_);
   FireWebUIListener(
       "update-sync-state",
@@ -358,11 +460,10 @@ void ClearBrowsingDataHandler::RefreshHistoryNotice() {
 
   if (notice_shown_times < kMaxTimesHistoryNoticeShown) {
     browsing_data::ShouldPopupDialogAboutOtherFormsOfBrowsingHistory(
-        sync_service_,
-        WebHistoryServiceFactory::GetForProfile(profile_),
+        sync_service_, WebHistoryServiceFactory::GetForProfile(profile_),
         chrome::GetChannel(),
-        base::Bind(&ClearBrowsingDataHandler::UpdateHistoryDeletionDialog,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&ClearBrowsingDataHandler::UpdateHistoryDeletionDialog,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 

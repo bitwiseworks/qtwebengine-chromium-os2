@@ -10,12 +10,9 @@
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/sequenced_task_runner.h"
 #include "base/task/post_task.h"
-#include "content/browser/dom_storage/dom_storage_context_impl.h"
+#include "components/services/storage/public/mojom/session_storage_control.mojom.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
-#include "content/browser/dom_storage/dom_storage_task_runner.h"
-#include "content/browser/dom_storage/session_storage_context_mojo.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
@@ -38,23 +35,11 @@ scoped_refptr<SessionStorageNamespaceImpl> SessionStorageNamespaceImpl::Create(
       context->MaybeGetExistingNamespace(namespace_id);
   if (existing)
     return existing;
-  if (context->mojo_session_state()) {
-    DCHECK(base::FeatureList::IsEnabled(blink::features::kOnionSoupDOMStorage));
-    auto result = base::WrapRefCounted(
-        new SessionStorageNamespaceImpl(context, std::move(namespace_id)));
-    result->mojo_task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&SessionStorageContextMojo::CreateSessionNamespace,
-                       base::Unretained(context->mojo_session_state()),
-                       result->namespace_id_));
-    return result;
-  }
-  scoped_refptr<DOMStorageContextImpl> context_impl = context->context();
-  context_impl->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&DOMStorageContextImpl::CreateSessionNamespace,
-                                context_impl, namespace_id));
-  return base::WrapRefCounted(new SessionStorageNamespaceImpl(
-      std::move(context), std::move(context_impl), std::move(namespace_id)));
+  auto result = base::WrapRefCounted(
+      new SessionStorageNamespaceImpl(context, std::move(namespace_id)));
+  result->context_wrapper_->GetSessionStorageControl()->CreateNamespace(
+      result->namespace_id_);
+  return result;
 }
 
 // static
@@ -64,31 +49,17 @@ SessionStorageNamespaceImpl::CloneFrom(
     std::string namespace_id,
     const std::string& namespace_id_to_clone,
     bool immediately) {
-  if (context->mojo_session_state()) {
-    DCHECK(base::FeatureList::IsEnabled(blink::features::kOnionSoupDOMStorage));
-    auto result = base::WrapRefCounted(
-        new SessionStorageNamespaceImpl(context, std::move(namespace_id)));
-    result->mojo_task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&SessionStorageContextMojo::CloneSessionNamespace,
-                       base::Unretained(context->mojo_session_state()),
-                       namespace_id_to_clone, result->namespace_id_,
-                       immediately
-                           ? SessionStorageContextMojo::CloneType::kImmediate
-                           : SessionStorageContextMojo::CloneType::
-                                 kWaitForCloneOnNamespace));
-    return result;
-  }
-  scoped_refptr<DOMStorageContextImpl> context_impl = context->context();
-  context_impl->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&DOMStorageContextImpl::CloneSessionNamespace,
-                     context_impl, namespace_id_to_clone, namespace_id));
-  return base::WrapRefCounted(new SessionStorageNamespaceImpl(
-      std::move(context), std::move(context_impl), std::move(namespace_id)));
+  auto result = base::WrapRefCounted(
+      new SessionStorageNamespaceImpl(context, std::move(namespace_id)));
+  result->context_wrapper_->GetSessionStorageControl()->CloneNamespace(
+      namespace_id_to_clone, result->namespace_id_,
+      immediately
+          ? storage::mojom::SessionStorageCloneType::kImmediate
+          : storage::mojom::SessionStorageCloneType::kWaitForCloneOnNamespace);
+  return result;
 }
 
-const std::string& SessionStorageNamespaceImpl::id() const {
+const std::string& SessionStorageNamespaceImpl::id() {
   return namespace_id_;
 }
 
@@ -96,7 +67,7 @@ void SessionStorageNamespaceImpl::SetShouldPersist(bool should_persist) {
   should_persist_ = should_persist;
 }
 
-bool SessionStorageNamespaceImpl::should_persist() const {
+bool SessionStorageNamespaceImpl::should_persist() {
   return should_persist_;
 }
 
@@ -112,65 +83,40 @@ bool SessionStorageNamespaceImpl::IsFromContext(
 }
 
 SessionStorageNamespaceImpl::SessionStorageNamespaceImpl(
-    scoped_refptr<DOMStorageContextWrapper> context_wrapper,
-    scoped_refptr<DOMStorageContextImpl> context,
-    std::string namespace_id)
-    : context_(std::move(context)),
-      context_wrapper_(std::move(context_wrapper)),
-      namespace_id_(std::move(namespace_id)),
-      should_persist_(false) {
-  context_wrapper_->AddNamespace(namespace_id_, this);
-  DCHECK(!base::FeatureList::IsEnabled(blink::features::kOnionSoupDOMStorage));
-}
-
-SessionStorageNamespaceImpl::SessionStorageNamespaceImpl(
     scoped_refptr<DOMStorageContextWrapper> context,
     std::string namespace_id)
     : context_wrapper_(std::move(context)),
-      mojo_task_runner_(context_wrapper_->mojo_task_runner()),
       namespace_id_(std::move(namespace_id)),
       should_persist_(false) {
   context_wrapper_->AddNamespace(namespace_id_, this);
-  DCHECK(base::FeatureList::IsEnabled(blink::features::kOnionSoupDOMStorage));
 }
 
 SessionStorageNamespaceImpl::~SessionStorageNamespaceImpl() {
-  DCHECK(context_ || mojo_task_runner_);
   context_wrapper_->RemoveNamespace(namespace_id_);
-  if (context_) {
-    context_->task_runner()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&DOMStorageContextImpl::DeleteSessionNamespace, context_,
-                       namespace_id_, should_persist_));
-  }
-  if (IsMojoSessionStorage()) {
-    base::ScopedClosureRunner deleteNamespaceRunner =
-        base::ScopedClosureRunner(base::BindOnce(
-            &SessionStorageNamespaceImpl::DeleteSessionNamespaceFromUIThread,
-            std::move(mojo_task_runner_), std::move(context_wrapper_),
-            std::move(namespace_id_), should_persist_));
-    if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      // If this fails to post then that's fine, as the mojo state should
-      // already be destructed.
-      base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                               deleteNamespaceRunner.Release());
-    }
+  // We must hop the the UI thread, as the context_wrapper_ can only be
+  // accessed on that thread.
+  base::ScopedClosureRunner deleteNamespaceRunner =
+      base::ScopedClosureRunner(base::BindOnce(
+          &SessionStorageNamespaceImpl::DeleteSessionNamespaceFromUIThread,
+          std::move(context_wrapper_), std::move(namespace_id_),
+          should_persist_));
+  if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
+    // If this fails to post then that's fine, as the mojo state should
+    // already be destructed.
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   deleteNamespaceRunner.Release());
   }
 }
 
 // static
 void SessionStorageNamespaceImpl::DeleteSessionNamespaceFromUIThread(
-    scoped_refptr<base::SequencedTaskRunner> mojo_task_runner,
     scoped_refptr<DOMStorageContextWrapper> context_wrapper,
     std::string namespace_id,
     bool should_persist) {
-  if (context_wrapper->mojo_session_state()) {
-    mojo_task_runner->PostTask(
-        FROM_HERE,
-        base::BindOnce(&SessionStorageContextMojo::DeleteSessionNamespace,
-                       base::Unretained(context_wrapper->mojo_session_state()),
-                       namespace_id, should_persist));
-  }
+  storage::mojom::SessionStorageControl* session_storage =
+      context_wrapper->GetSessionStorageControl();
+  if (session_storage)
+    session_storage->DeleteNamespace(namespace_id, should_persist);
 }
 
 }  // namespace content

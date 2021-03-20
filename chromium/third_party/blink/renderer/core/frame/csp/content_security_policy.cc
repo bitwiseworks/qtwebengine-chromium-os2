@@ -27,20 +27,20 @@
 
 #include <memory>
 #include <utility>
-#include <vector>
 
-#include "third_party/blink/public/mojom/net/ip_address_space.mojom-blink.h"
+#include "base/debug/dump_without_crashing.h"
+#include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_security_policy_violation_event_init.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_string_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event_queue.h"
-#include "third_party/blink/renderer/core/events/security_policy_violation_event_init.h"
 #include "third_party/blink/renderer/core/frame/csp/csp_directive_list.h"
 #include "third_party/blink/renderer/core/frame/csp/csp_source.h"
 #include "third_party/blink/renderer/core/frame/csp/media_list_directive.h"
@@ -51,10 +51,11 @@
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/location.h"
 #include "third_party/blink/renderer/core/frame/sandbox_flags.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html/html_script_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
@@ -65,14 +66,17 @@
 #include "third_party/blink/renderer/platform/weborigin/known_ports.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
-#include "third_party/blink/renderer/platform/wtf/not_found.h"
-#include "third_party/blink/renderer/platform/wtf/string_hasher.h"
 #include "third_party/blink/renderer/platform/wtf/text/parsing_utilities.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_hasher.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
+#include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 #include "v8/include/v8.h"
 
 namespace blink {
+
+using network::mojom::ContentSecurityPolicySource;
+using network::mojom::ContentSecurityPolicyType;
 
 namespace {
 
@@ -80,14 +84,14 @@ namespace {
 // checked when the CheckHeaderType is |check_header_type|.
 bool CheckHeaderTypeMatches(
     ContentSecurityPolicy::CheckHeaderType check_header_type,
-    ContentSecurityPolicyHeaderType header_type) {
+    ContentSecurityPolicyType header_type) {
   switch (check_header_type) {
     case ContentSecurityPolicy::CheckHeaderType::kCheckAll:
       return true;
     case ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly:
-      return header_type == kContentSecurityPolicyHeaderTypeReport;
+      return header_type == ContentSecurityPolicyType::kReport;
     case ContentSecurityPolicy::CheckHeaderType::kCheckEnforce:
-      return header_type == kContentSecurityPolicyHeaderTypeEnforce;
+      return header_type == ContentSecurityPolicyType::kEnforce;
   }
   NOTREACHED();
   return false;
@@ -136,11 +140,11 @@ bool ContentSecurityPolicy::IsNonceableElement(const Element* element) {
   return nonceable;
 }
 
-static WebFeature GetUseCounterType(ContentSecurityPolicyHeaderType type) {
+static WebFeature GetUseCounterHelperType(ContentSecurityPolicyType type) {
   switch (type) {
-    case kContentSecurityPolicyHeaderTypeEnforce:
+    case ContentSecurityPolicyType::kEnforce:
       return WebFeature::kContentSecurityPolicy;
-    case kContentSecurityPolicyHeaderTypeReport:
+    case ContentSecurityPolicyType::kReport:
       return WebFeature::kContentSecurityPolicyReportOnly;
   }
   NOTREACHED();
@@ -152,10 +156,14 @@ ContentSecurityPolicy::ContentSecurityPolicy()
       override_inline_style_allowed_(false),
       script_hash_algorithms_used_(kContentSecurityPolicyHashAlgorithmNone),
       style_hash_algorithms_used_(kContentSecurityPolicyHashAlgorithmNone),
-      sandbox_mask_(0),
-      treat_as_public_address_(false),
-      require_safe_types_(false),
-      insecure_request_policy_(kLeaveInsecureRequestsAlone) {}
+      sandbox_mask_(mojom::blink::WebSandboxFlags::kNone),
+      require_trusted_types_(false),
+      insecure_request_policy_(
+          mojom::blink::InsecureRequestPolicy::kLeaveInsecureRequestsAlone) {}
+
+bool ContentSecurityPolicy::IsBound() {
+  return delegate_;
+}
 
 void ContentSecurityPolicy::BindToDelegate(
     ContentSecurityPolicyDelegate& delegate) {
@@ -184,22 +192,28 @@ void ContentSecurityPolicy::SetupSelf(const ContentSecurityPolicy& other) {
 void ContentSecurityPolicy::ApplyPolicySideEffectsToDelegate() {
   DCHECK(delegate_);
 
-  const SecurityOrigin* security_origin = delegate_->GetSecurityOrigin();
-  DCHECK(security_origin);
+  const SecurityOrigin* self_origin =
+      delegate_->GetSecurityOrigin()->GetOriginOrPrecursorOriginIfOpaque();
+  DCHECK(self_origin);
 
-  SetupSelf(*security_origin);
+  SetupSelf(*self_origin);
 
   // Set mixed content checking and sandbox flags, then dump all the parsing
   // error messages, then poke at histograms.
-  if (sandbox_mask_ != kSandboxNone) {
+  if (sandbox_mask_ != mojom::blink::WebSandboxFlags::kNone) {
     Count(WebFeature::kSandboxViaCSP);
     delegate_->SetSandboxFlags(sandbox_mask_);
   }
-  if (treat_as_public_address_)
-    delegate_->SetAddressSpace(mojom::IPAddressSpace::kPublic);
 
-  if (require_safe_types_)
-    delegate_->SetRequireTrustedTypes();
+  if (require_trusted_types_) {
+    if (delegate_->GetSecureContextMode() ==
+        SecureContextMode::kSecureContext) {
+      delegate_->SetRequireTrustedTypes();
+      Count(WebFeature::kTrustedTypesEnabled);
+    } else {
+      ReportNonsecureTrustedTypes();
+    }
+  }
 
   delegate_->AddInsecureRequestPolicy(insecure_request_policy_);
 
@@ -208,7 +222,7 @@ void ContentSecurityPolicy::ApplyPolicySideEffectsToDelegate() {
   console_messages_.clear();
 
   for (const auto& policy : policies_) {
-    Count(GetUseCounterType(policy->HeaderType()));
+    Count(GetUseCounterHelperType(policy->HeaderType()));
     if (policy->AllowDynamic(
             ContentSecurityPolicy::DirectiveType::kScriptSrcAttr) ||
         policy->AllowDynamic(
@@ -216,10 +230,54 @@ void ContentSecurityPolicy::ApplyPolicySideEffectsToDelegate() {
       Count(WebFeature::kCSPWithStrictDynamic);
     }
 
-    if (policy->AllowEval(nullptr,
-                          SecurityViolationReportingPolicy::kSuppressReporting,
+    if (policy->AllowEval(ReportingDisposition::kSuppressReporting,
                           kWillNotThrowException, g_empty_string)) {
       Count(WebFeature::kCSPWithUnsafeEval);
+    }
+
+    // We consider a policy to be "reasonably secure" if it:
+    //
+    // 1.  Asserts `object-src 'none'`.
+    // 2.  Asserts `base-uri 'none'` or `base-uri 'self'`.
+    // 3.  Avoids URL-based matching, in favor of hashes and nonces.
+    //
+    // https://chromium.googlesource.com/chromium/src/+/master/docs/security/web-mitigation-metrics.md
+    // has more detail.
+    if (policy->IsObjectRestrictionReasonable()) {
+      Count(policy->HeaderType() == ContentSecurityPolicyType::kEnforce
+                ? WebFeature::kCSPWithReasonableObjectRestrictions
+                : WebFeature::kCSPROWithReasonableObjectRestrictions);
+    }
+    if (policy->IsBaseRestrictionReasonable()) {
+      Count(policy->HeaderType() == ContentSecurityPolicyType::kEnforce
+                ? WebFeature::kCSPWithReasonableBaseRestrictions
+                : WebFeature::kCSPROWithReasonableBaseRestrictions);
+    }
+    if (policy->IsScriptRestrictionReasonable()) {
+      Count(policy->HeaderType() == ContentSecurityPolicyType::kEnforce
+                ? WebFeature::kCSPWithReasonableScriptRestrictions
+                : WebFeature::kCSPROWithReasonableScriptRestrictions);
+    }
+    if (policy->IsObjectRestrictionReasonable() &&
+        policy->IsBaseRestrictionReasonable() &&
+        policy->IsScriptRestrictionReasonable()) {
+      Count(policy->HeaderType() == ContentSecurityPolicyType::kEnforce
+                ? WebFeature::kCSPWithReasonableRestrictions
+                : WebFeature::kCSPROWithReasonableRestrictions);
+
+      if (!policy->AllowDynamic(
+              ContentSecurityPolicy::DirectiveType::kScriptSrcElem)) {
+        Count(policy->HeaderType() == ContentSecurityPolicyType::kEnforce
+                  ? WebFeature::kCSPWithBetterThanReasonableRestrictions
+                  : WebFeature::kCSPROWithBetterThanReasonableRestrictions);
+      }
+    }
+    if (policy->RequiresTrustedTypes()) {
+      Count(policy->IsReportOnly() ? WebFeature::kTrustedTypesEnabledReportOnly
+                                   : WebFeature::kTrustedTypesEnabledEnforcing);
+    }
+    if (policy->TrustedTypesAllowDuplicates()) {
+      Count(WebFeature::kTrustedTypesAllowDuplicates);
     }
   }
 
@@ -232,7 +290,7 @@ void ContentSecurityPolicy::ApplyPolicySideEffectsToDelegate() {
 
 ContentSecurityPolicy::~ContentSecurityPolicy() = default;
 
-void ContentSecurityPolicy::Trace(blink::Visitor* visitor) {
+void ContentSecurityPolicy::Trace(Visitor* visitor) {
   visitor->Trace(delegate_);
   visitor->Trace(policies_);
   visitor->Trace(console_messages_);
@@ -260,23 +318,24 @@ void ContentSecurityPolicy::CopyPluginTypesFrom(
 
 void ContentSecurityPolicy::DidReceiveHeaders(
     const ContentSecurityPolicyResponseHeaders& headers) {
-  if (headers.ShouldParseWasmEval()) {
+  if (headers.ShouldParseWasmEval())
     supports_wasm_eval_ = true;
-  }
-  if (!headers.ContentSecurityPolicy().IsEmpty())
+  if (!headers.ContentSecurityPolicy().IsEmpty()) {
     AddAndReportPolicyFromHeaderValue(headers.ContentSecurityPolicy(),
-                                      kContentSecurityPolicyHeaderTypeEnforce,
-                                      kContentSecurityPolicyHeaderSourceHTTP);
-  if (!headers.ContentSecurityPolicyReportOnly().IsEmpty())
+                                      ContentSecurityPolicyType::kEnforce,
+                                      ContentSecurityPolicySource::kHTTP);
+  }
+  if (!headers.ContentSecurityPolicyReportOnly().IsEmpty()) {
     AddAndReportPolicyFromHeaderValue(headers.ContentSecurityPolicyReportOnly(),
-                                      kContentSecurityPolicyHeaderTypeReport,
-                                      kContentSecurityPolicyHeaderSourceHTTP);
+                                      ContentSecurityPolicyType::kReport,
+                                      ContentSecurityPolicySource::kHTTP);
+  }
 }
 
 void ContentSecurityPolicy::DidReceiveHeader(
     const String& header,
-    ContentSecurityPolicyHeaderType type,
-    ContentSecurityPolicyHeaderSource source) {
+    ContentSecurityPolicyType type,
+    ContentSecurityPolicySource source) {
   AddAndReportPolicyFromHeaderValue(header, type, source);
 
   // This might be called after we've been bound to a delegate. For example, a
@@ -314,16 +373,16 @@ bool ContentSecurityPolicy::ShouldEnforceEmbeddersPolicy(
 
 void ContentSecurityPolicy::AddPolicyFromHeaderValue(
     const String& header,
-    ContentSecurityPolicyHeaderType type,
-    ContentSecurityPolicyHeaderSource source) {
+    ContentSecurityPolicyType type,
+    ContentSecurityPolicySource source) {
   // If this is a report-only header inside a <meta> element, bail out.
-  if (source == kContentSecurityPolicyHeaderSourceMeta &&
-      type == kContentSecurityPolicyHeaderTypeReport) {
+  if (source == ContentSecurityPolicySource::kMeta &&
+      type == ContentSecurityPolicyType::kReport) {
     ReportReportOnlyInMeta(header);
     return;
   }
 
-  if (source == kContentSecurityPolicyHeaderSourceHTTP)
+  if (source == ContentSecurityPolicySource::kHTTP)
     header_delivered_ = true;
 
   Vector<UChar> characters;
@@ -344,10 +403,7 @@ void ContentSecurityPolicy::AddPolicyFromHeaderValue(
     Member<CSPDirectiveList> policy =
         CSPDirectiveList::Create(this, begin, position, type, source);
 
-    if (!policy->AllowEval(nullptr,
-                           SecurityViolationReportingPolicy::kSuppressReporting,
-                           kWillNotThrowException, g_empty_string) &&
-        disable_eval_error_message_.IsNull()) {
+    if (policy->ShouldDisableEval() && disable_eval_error_message_.IsNull()) {
       disable_eval_error_message_ = policy->EvalDisabledErrorMessage();
     }
 
@@ -360,22 +416,18 @@ void ContentSecurityPolicy::AddPolicyFromHeaderValue(
   }
 }
 
-void ContentSecurityPolicy::ReportAccumulatedHeaders(
-    LocalFrameClient* client) const {
-  // Notify the embedder about headers that have accumulated before the
-  // navigation got committed.  See comments in
-  // addAndReportPolicyFromHeaderValue for more details and context.
-  DCHECK(client);
-  WebVector<WebContentSecurityPolicy> policies(policies_.size());
-  for (wtf_size_t i = 0; i < policies_.size(); ++i)
-    policies[i] = policies_[i]->ExposeForNavigationalChecks();
-  client->DidAddContentSecurityPolicies(policies);
+void ContentSecurityPolicy::ReportAccumulatedHeaders(LocalFrame* frame) const {
+  WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr> policies;
+  for (const auto& policy : policies_)
+    policies.push_back(policy->ExposeForNavigationalChecks());
+  frame->GetLocalFrameHostRemote().DidAddContentSecurityPolicies(
+      std::move(policies));
 }
 
 void ContentSecurityPolicy::AddAndReportPolicyFromHeaderValue(
     const String& header,
-    ContentSecurityPolicyHeaderType type,
-    ContentSecurityPolicyHeaderSource source) {
+    ContentSecurityPolicyType type,
+    ContentSecurityPolicySource source) {
   wtf_size_t previous_policy_count = policies_.size();
   AddPolicyFromHeaderValue(header, type, source);
   // Notify about the new header, so that it can be reported back to the
@@ -387,15 +439,15 @@ void ContentSecurityPolicy::AddAndReportPolicyFromHeaderValue(
   // TODO(arthursonzogni): policies are actually replicated (1) and some of
   // them are enforced on the browser process (2). Stop doing (1) when (2) is
   // finished.
-  WebVector<WebContentSecurityPolicy> policies(policies_.size() -
-                                               previous_policy_count);
+  WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr> policies(
+      policies_.size() - previous_policy_count);
   for (wtf_size_t i = previous_policy_count; i < policies_.size(); ++i) {
     policies[i - previous_policy_count] =
         policies_[i]->ExposeForNavigationalChecks();
   }
 
   if (delegate_)
-    delegate_->DidAddContentSecurityPolicies(policies);
+    delegate_->DidAddContentSecurityPolicies(std::move(policies));
 }
 
 void ContentSecurityPolicy::SetOverrideAllowInlineStyle(bool value) {
@@ -452,8 +504,8 @@ void ContentSecurityPolicy::FillInCSPHashValues(
     DigestValue digest;
     if (algorithm_map.csp_hash_algorithm & hash_algorithms_used) {
       bool digest_success =
-          ComputeDigest(algorithm_map.algorithm, utf8_source.Data(),
-                        utf8_source.length(), digest);
+          ComputeDigest(algorithm_map.algorithm, utf8_source.data(),
+                        utf8_source.size(), digest);
       if (digest_success) {
         csp_hash_values->push_back(
             CSPHashValue(algorithm_map.csp_hash_algorithm, digest));
@@ -463,163 +515,107 @@ void ContentSecurityPolicy::FillInCSPHashValues(
 }
 
 // static
-bool ContentSecurityPolicy::CheckScriptHashAgainstPolicy(
+bool ContentSecurityPolicy::CheckHashAgainstPolicy(
     Vector<CSPHashValue>& csp_hash_values,
     const Member<CSPDirectiveList>& policy,
     InlineType inline_type) {
   for (const auto& csp_hash_value : csp_hash_values) {
-    if (policy->AllowScriptHash(csp_hash_value, inline_type)) {
+    if (policy->AllowHash(csp_hash_value, inline_type))
       return true;
-    }
   }
   return false;
 }
 
-// static
-bool ContentSecurityPolicy::CheckStyleHashAgainstPolicy(
-    Vector<CSPHashValue>& csp_hash_values,
-    const Member<CSPDirectiveList>& policy,
-    InlineType inline_type) {
-  for (const auto& csp_hash_value : csp_hash_values) {
-    if (policy->AllowStyleHash(csp_hash_value, inline_type)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool ContentSecurityPolicy::AllowJavaScriptURLs(
-    Element* element,
-    const String& source,
-    const String& context_url,
-    const WTF::OrdinalNumber& context_line,
-    SecurityViolationReportingPolicy reporting_policy) const {
-  // Javascript URLs may be whitelisted by hash, if
-  // 'unsafe-hashes' is present in a policy. Check against the digest
-  // of the |source| and also check whether inline script is allowed.
-  Vector<CSPHashValue> csp_hash_values;
-  FillInCSPHashValues(source, script_hash_algorithms_used_, &csp_hash_values);
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    is_allowed &= CheckScriptHashAgainstPolicy(csp_hash_values, policy,
-                                               InlineType::kAttribute) ||
-                  policy->AllowJavaScriptURLs(element, source, context_url,
-                                              context_line, reporting_policy);
-  }
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowInlineEventHandler(
-    Element* element,
-    const String& source,
-    const String& context_url,
-    const WTF::OrdinalNumber& context_line,
-    SecurityViolationReportingPolicy reporting_policy) const {
-  // Inline event handlers may be whitelisted by hash, if
-  // 'unsafe-hashes' is present in a policy. Check against the digest
-  // of the |source| and also check whether inline script is allowed.
-  Vector<CSPHashValue> csp_hash_values;
-  FillInCSPHashValues(source, script_hash_algorithms_used_, &csp_hash_values);
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    is_allowed &=
-        CheckScriptHashAgainstPolicy(csp_hash_values, policy,
-                                     InlineType::kAttribute) ||
-        policy->AllowInlineEventHandlers(element, source, context_url,
-                                         context_line, reporting_policy);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowInlineScript(
-    Element* element,
-    const String& context_url,
-    const String& nonce,
-    const WTF::OrdinalNumber& context_line,
-    const String& script_content,
+// https://w3c.github.io/webappsec-csp/#should-block-inline
+bool ContentSecurityPolicy::AllowInline(
     InlineType inline_type,
-    SecurityViolationReportingPolicy reporting_policy) const {
-  DCHECK(element);
-
-  Vector<CSPHashValue> csp_hash_values;
-  FillInCSPHashValues(script_content, script_hash_algorithms_used_,
-                      &csp_hash_values);
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    is_allowed &=
-        CheckScriptHashAgainstPolicy(csp_hash_values, policy, inline_type) ||
-        policy->AllowInlineScript(element, context_url, nonce, context_line,
-                                  reporting_policy, script_content);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowInlineStyle(
     Element* element,
-    const String& context_url,
+    const String& content,
     const String& nonce,
+    const String& context_url,
     const WTF::OrdinalNumber& context_line,
-    const String& style_content,
-    InlineType inline_type,
-    SecurityViolationReportingPolicy reporting_policy) const {
-  DCHECK(element);
+    ReportingDisposition reporting_disposition) const {
+  DCHECK(element || inline_type == InlineType::kScriptAttribute ||
+         inline_type == InlineType::kNavigation);
 
-  if (override_inline_style_allowed_)
+  const bool is_script = IsScriptInlineType(inline_type);
+  if (!is_script && override_inline_style_allowed_) {
     return true;
+  }
 
   Vector<CSPHashValue> csp_hash_values;
-  FillInCSPHashValues(style_content, style_hash_algorithms_used_,
-                      &csp_hash_values);
+  FillInCSPHashValues(
+      content,
+      is_script ? script_hash_algorithms_used_ : style_hash_algorithms_used_,
+      &csp_hash_values);
 
+  // Step 2. Let result be "Allowed". [spec text]
   bool is_allowed = true;
+
+  // Step 3. For each policy in element’s Document's global object’s CSP list:
+  // [spec text]
   for (const auto& policy : policies_) {
+    // May be whitelisted by hash, if 'unsafe-hashes' is present in a policy.
+    // Check against the digest of the |content| and also check whether inline
+    // script is allowed.
     is_allowed &=
-        CheckStyleHashAgainstPolicy(csp_hash_values, policy, inline_type) ||
-        policy->AllowInlineStyle(element, context_url, nonce, context_line,
-                                 reporting_policy, style_content, inline_type);
+        CheckHashAgainstPolicy(csp_hash_values, policy, inline_type) ||
+        policy->AllowInline(inline_type, element, content, nonce, context_url,
+                            context_line, reporting_disposition);
   }
 
   return is_allowed;
+}
+
+bool ContentSecurityPolicy::IsScriptInlineType(InlineType inline_type) {
+  switch (inline_type) {
+    case ContentSecurityPolicy::InlineType::kNavigation:
+    case ContentSecurityPolicy::InlineType::kScriptAttribute:
+    case ContentSecurityPolicy::InlineType::kScript:
+      return true;
+
+    case ContentSecurityPolicy::InlineType::kStyleAttribute:
+    case ContentSecurityPolicy::InlineType::kStyle:
+      return false;
+  }
+}
+
+bool ContentSecurityPolicy::ShouldCheckEval() const {
+  for (const auto& policy : policies_) {
+    if (policy->ShouldCheckEval())
+      return true;
+  }
+  return IsRequireTrustedTypes();
 }
 
 bool ContentSecurityPolicy::AllowEval(
-    ScriptState* script_state,
-    SecurityViolationReportingPolicy reporting_policy,
+    ReportingDisposition reporting_disposition,
     ContentSecurityPolicy::ExceptionStatus exception_status,
     const String& script_content) const {
   bool is_allowed = true;
   for (const auto& policy : policies_) {
-    is_allowed &= policy->AllowEval(script_state, reporting_policy,
-                                    exception_status, script_content);
+    is_allowed &= policy->AllowEval(reporting_disposition, exception_status,
+                                    script_content);
   }
   return is_allowed;
 }
 
 bool ContentSecurityPolicy::AllowWasmEval(
-    ScriptState* script_state,
-    SecurityViolationReportingPolicy reporting_policy,
+    ReportingDisposition reporting_disposition,
     ContentSecurityPolicy::ExceptionStatus exception_status,
     const String& script_content) const {
   bool is_allowed = true;
   for (const auto& policy : policies_) {
-    is_allowed &= policy->AllowWasmEval(script_state, reporting_policy,
-                                        exception_status, script_content);
+    is_allowed &= policy->AllowWasmEval(reporting_disposition, exception_status,
+                                        script_content);
   }
   return is_allowed;
 }
 
 String ContentSecurityPolicy::EvalDisabledErrorMessage() const {
   for (const auto& policy : policies_) {
-    if (!policy->AllowEval(nullptr,
-                           SecurityViolationReportingPolicy::kSuppressReporting,
-                           kWillNotThrowException, g_empty_string)) {
+    if (policy->ShouldDisableEval())
       return policy->EvalDisabledErrorMessage();
-    }
   }
   return String();
 }
@@ -628,9 +624,10 @@ bool ContentSecurityPolicy::AllowPluginType(
     const String& type,
     const String& type_attribute,
     const KURL& url,
-    SecurityViolationReportingPolicy reporting_policy) const {
+    ReportingDisposition reporting_disposition) const {
   for (const auto& policy : policies_) {
-    if (!policy->AllowPluginType(type, type_attribute, url, reporting_policy))
+    if (!policy->AllowPluginType(type, type_attribute, url,
+                                 reporting_disposition))
       return false;
   }
   return true;
@@ -641,24 +638,149 @@ bool ContentSecurityPolicy::AllowPluginTypeForDocument(
     const String& type,
     const String& type_attribute,
     const KURL& url,
-    SecurityViolationReportingPolicy reporting_policy) const {
+    ReportingDisposition reporting_disposition) const {
   if (document.GetContentSecurityPolicy() &&
       !document.GetContentSecurityPolicy()->AllowPluginType(
-          type, type_attribute, url, reporting_policy))
+          type, type_attribute, url, reporting_disposition))
     return false;
 
   return true;
 }
 
-bool ContentSecurityPolicy::AllowScriptFromSource(
+bool ContentSecurityPolicy::AllowRequestWithoutIntegrity(
+    mojom::RequestContextType context,
+    const KURL& url,
+    const KURL& url_before_redirect,
+    RedirectStatus redirect_status,
+    ReportingDisposition reporting_disposition,
+    CheckHeaderType check_header_type) const {
+  for (const auto& policy : policies_) {
+    if (CheckHeaderTypeMatches(check_header_type, policy->HeaderType()) &&
+        !policy->AllowRequestWithoutIntegrity(context, url, redirect_status,
+                                              reporting_disposition))
+      return false;
+  }
+  return true;
+}
+
+static base::Optional<ContentSecurityPolicy::DirectiveType>
+GetDirectiveTypeFromRequestContextType(mojom::RequestContextType context) {
+  switch (context) {
+    case mojom::RequestContextType::AUDIO:
+    case mojom::RequestContextType::TRACK:
+    case mojom::RequestContextType::VIDEO:
+      return ContentSecurityPolicy::DirectiveType::kMediaSrc;
+
+    case mojom::RequestContextType::BEACON:
+    case mojom::RequestContextType::EVENT_SOURCE:
+    case mojom::RequestContextType::FETCH:
+    case mojom::RequestContextType::PING:
+    case mojom::RequestContextType::XML_HTTP_REQUEST:
+    case mojom::RequestContextType::SUBRESOURCE:
+      return ContentSecurityPolicy::DirectiveType::kConnectSrc;
+
+    case mojom::RequestContextType::EMBED:
+    case mojom::RequestContextType::OBJECT:
+      return ContentSecurityPolicy::DirectiveType::kObjectSrc;
+
+    case mojom::RequestContextType::PREFETCH:
+      return ContentSecurityPolicy::DirectiveType::kPrefetchSrc;
+
+    case mojom::RequestContextType::FAVICON:
+    case mojom::RequestContextType::IMAGE:
+    case mojom::RequestContextType::IMAGE_SET:
+      return ContentSecurityPolicy::DirectiveType::kImgSrc;
+
+    case mojom::RequestContextType::FONT:
+      return ContentSecurityPolicy::DirectiveType::kFontSrc;
+
+    case mojom::RequestContextType::FORM:
+      return ContentSecurityPolicy::DirectiveType::kFormAction;
+
+    case mojom::RequestContextType::FRAME:
+    case mojom::RequestContextType::IFRAME:
+      return ContentSecurityPolicy::DirectiveType::kFrameSrc;
+
+    case mojom::RequestContextType::IMPORT:
+    case mojom::RequestContextType::SCRIPT:
+    case mojom::RequestContextType::XSLT:
+      return ContentSecurityPolicy::DirectiveType::kScriptSrcElem;
+
+    case mojom::RequestContextType::MANIFEST:
+      return ContentSecurityPolicy::DirectiveType::kManifestSrc;
+
+    case mojom::RequestContextType::SERVICE_WORKER:
+    case mojom::RequestContextType::SHARED_WORKER:
+    case mojom::RequestContextType::WORKER:
+      return ContentSecurityPolicy::DirectiveType::kWorkerSrc;
+
+    case mojom::RequestContextType::STYLE:
+      return ContentSecurityPolicy::DirectiveType::kStyleSrcElem;
+
+    case mojom::RequestContextType::CSP_REPORT:
+    case mojom::RequestContextType::DOWNLOAD:
+    case mojom::RequestContextType::HYPERLINK:
+    case mojom::RequestContextType::INTERNAL:
+    case mojom::RequestContextType::LOCATION:
+    case mojom::RequestContextType::PLUGIN:
+    case mojom::RequestContextType::UNSPECIFIED:
+      return base::nullopt;
+  }
+}
+
+bool ContentSecurityPolicy::AllowRequest(
+    mojom::RequestContextType context,
     const KURL& url,
     const String& nonce,
-    const IntegrityMetadataSet& hashes,
+    const IntegrityMetadataSet& integrity_metadata,
     ParserDisposition parser_disposition,
+    const KURL& url_before_redirects,
     RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
+    ReportingDisposition reporting_disposition,
     CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url)) {
+  if (integrity_metadata.IsEmpty() &&
+      !AllowRequestWithoutIntegrity(context, url, url_before_redirects, redirect_status,
+                                    reporting_disposition, check_header_type)) {
+    return false;
+  }
+
+  base::Optional<ContentSecurityPolicy::DirectiveType> type =
+      GetDirectiveTypeFromRequestContextType(context);
+  if (!type)
+    return true;
+  return AllowFromSource(*type, url, url_before_redirects, redirect_status,
+                         reporting_disposition, check_header_type, nonce,
+                         integrity_metadata, parser_disposition);
+}
+
+void ContentSecurityPolicy::UsesScriptHashAlgorithms(uint8_t algorithms) {
+  script_hash_algorithms_used_ |= algorithms;
+}
+
+void ContentSecurityPolicy::UsesStyleHashAlgorithms(uint8_t algorithms) {
+  style_hash_algorithms_used_ |= algorithms;
+}
+
+bool ContentSecurityPolicy::AllowFromSource(
+    ContentSecurityPolicy::DirectiveType type,
+    const KURL& url,
+    const KURL& url_before_redirects,
+    RedirectStatus redirect_status,
+    ReportingDisposition reporting_disposition,
+    CheckHeaderType check_header_type,
+    const String& nonce,
+    const IntegrityMetadataSet& hashes,
+    ParserDisposition parser_disposition) const {
+  SchemeRegistry::PolicyAreas area = SchemeRegistry::kPolicyAreaAll;
+  if (type == ContentSecurityPolicy::DirectiveType::kImgSrc)
+    area = SchemeRegistry::kPolicyAreaImage;
+  else if (type == ContentSecurityPolicy::DirectiveType::kStyleSrcElem)
+    area = SchemeRegistry::kPolicyAreaStyle;
+
+  if (ShouldBypassContentSecurityPolicy(url, area)) {
+    if (type != ContentSecurityPolicy::DirectiveType::kScriptSrcElem)
+      return true;
+
     Count(parser_disposition == kParserInserted
               ? WebFeature::kScriptWithCSPBypassingSchemeParserInserted
               : WebFeature::kScriptWithCSPBypassingSchemeNotParserInserted);
@@ -671,8 +793,8 @@ bool ContentSecurityPolicy::AllowScriptFromSource(
     // behavior to ship. https://crbug.com/653521
     if ((parser_disposition == kNotParserInserted ||
          !ExperimentalFeaturesEnabled()) &&
-        // The schemes where javascript:-URLs are blocked are usually privileged
-        // pages, so do not allow the CSP to be bypassed either.
+        // The schemes where javascript:-URLs are blocked are usually
+        // privileged pages, so do not allow the CSP to be bypassed either.
         !SchemeRegistry::ShouldTreatURLSchemeAsNotAllowingJavascriptURLs(
             delegate_->GetSecurityOrigin()->Protocol())) {
       return true;
@@ -683,355 +805,89 @@ bool ContentSecurityPolicy::AllowScriptFromSource(
   for (const auto& policy : policies_) {
     if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
       continue;
-    is_allowed &=
-        policy->AllowScriptFromSource(url, nonce, hashes, parser_disposition,
-                                      redirect_status, reporting_policy);
-  }
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowRequestWithoutIntegrity(
-    mojom::RequestContextType context,
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  for (const auto& policy : policies_) {
-    if (CheckHeaderTypeMatches(check_header_type, policy->HeaderType()) &&
-        !policy->AllowRequestWithoutIntegrity(context, url, redirect_status,
-                                              reporting_policy))
-      return false;
-  }
-  return true;
-}
-
-bool ContentSecurityPolicy::AllowRequest(
-    mojom::RequestContextType context,
-    const KURL& url,
-    const String& nonce,
-    const IntegrityMetadataSet& integrity_metadata,
-    ParserDisposition parser_disposition,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (integrity_metadata.IsEmpty() &&
-      !AllowRequestWithoutIntegrity(context, url, redirect_status,
-                                    reporting_policy, check_header_type)) {
-    return false;
-  }
-
-  switch (context) {
-    case mojom::RequestContextType::AUDIO:
-    case mojom::RequestContextType::TRACK:
-    case mojom::RequestContextType::VIDEO:
-      return AllowMediaFromSource(url, redirect_status, reporting_policy,
-                                  check_header_type);
-    case mojom::RequestContextType::BEACON:
-    case mojom::RequestContextType::EVENT_SOURCE:
-    case mojom::RequestContextType::FETCH:
-    case mojom::RequestContextType::PING:
-    case mojom::RequestContextType::XML_HTTP_REQUEST:
-    case mojom::RequestContextType::SUBRESOURCE:
-      return AllowConnectToSource(url, redirect_status, reporting_policy,
-                                  check_header_type);
-    case mojom::RequestContextType::EMBED:
-    case mojom::RequestContextType::OBJECT:
-      return AllowObjectFromSource(url, redirect_status, reporting_policy,
-                                   check_header_type);
-    case mojom::RequestContextType::PREFETCH:
-      return AllowPrefetchFromSource(url, redirect_status, reporting_policy,
-                                     check_header_type);
-    case mojom::RequestContextType::FAVICON:
-    case mojom::RequestContextType::IMAGE:
-    case mojom::RequestContextType::IMAGE_SET:
-      return AllowImageFromSource(url, redirect_status, reporting_policy,
-                                  check_header_type);
-    case mojom::RequestContextType::FONT:
-      return AllowFontFromSource(url, redirect_status, reporting_policy,
-                                 check_header_type);
-    case mojom::RequestContextType::FORM:
-      return AllowFormAction(url, redirect_status, reporting_policy,
-                             check_header_type);
-    case mojom::RequestContextType::FRAME:
-    case mojom::RequestContextType::IFRAME:
-      return AllowFrameFromSource(url, redirect_status, reporting_policy,
-                                  check_header_type);
-    case mojom::RequestContextType::IMPORT:
-    case mojom::RequestContextType::SCRIPT:
-    case mojom::RequestContextType::XSLT:
-      return AllowScriptFromSource(url, nonce, integrity_metadata,
-                                   parser_disposition, redirect_status,
-                                   reporting_policy, check_header_type);
-    case mojom::RequestContextType::MANIFEST:
-      return AllowManifestFromSource(url, redirect_status, reporting_policy,
-                                     check_header_type);
-    case mojom::RequestContextType::SERVICE_WORKER:
-    case mojom::RequestContextType::SHARED_WORKER:
-    case mojom::RequestContextType::WORKER:
-      return AllowWorkerContextFromSource(url, redirect_status,
-                                          reporting_policy, check_header_type);
-    case mojom::RequestContextType::STYLE:
-      return AllowStyleFromSource(url, nonce, redirect_status, reporting_policy,
-                                  check_header_type);
-    case mojom::RequestContextType::CSP_REPORT:
-    case mojom::RequestContextType::DOWNLOAD:
-    case mojom::RequestContextType::HYPERLINK:
-    case mojom::RequestContextType::INTERNAL:
-    case mojom::RequestContextType::LOCATION:
-    case mojom::RequestContextType::PLUGIN:
-    case mojom::RequestContextType::UNSPECIFIED:
-      return true;
-  }
-  NOTREACHED();
-  return true;
-}
-
-void ContentSecurityPolicy::UsesScriptHashAlgorithms(uint8_t algorithms) {
-  script_hash_algorithms_used_ |= algorithms;
-}
-
-void ContentSecurityPolicy::UsesStyleHashAlgorithms(uint8_t algorithms) {
-  style_hash_algorithms_used_ |= algorithms;
-}
-
-bool ContentSecurityPolicy::AllowObjectFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowObjectFromSource(url, redirect_status, reporting_policy);
+    is_allowed &= policy->AllowFromSource(
+        type, url, url_before_redirects, redirect_status, reporting_disposition,
+        nonce, hashes, parser_disposition);
   }
 
   return is_allowed;
 }
 
-bool ContentSecurityPolicy::AllowPrefetchFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowPrefetchFromSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowFrameFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowFrameFromSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowImageFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url, SchemeRegistry::kPolicyAreaImage))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowImageFromSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowStyleFromSource(
-    const KURL& url,
-    const String& nonce,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url, SchemeRegistry::kPolicyAreaStyle))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &= policy->AllowStyleFromSource(url, nonce, redirect_status,
-                                               reporting_policy);
-  }
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowFontFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowFontFromSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowMediaFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowMediaFromSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
+bool ContentSecurityPolicy::AllowBaseURI(const KURL& url) const {
+  // `base-uri` isn't affected by 'upgrade-insecure-requests', so we use
+  // CheckHeaderType::kCheckAll to check both report-only and enforce headers
+  // here.
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kBaseURI, url,
+                         url, RedirectStatus::kNoRedirect);
 }
 
 bool ContentSecurityPolicy::AllowConnectToSource(
     const KURL& url,
+    const KURL& url_before_redirects,
     RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
+    ReportingDisposition reporting_disposition,
     CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowConnectToSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kConnectSrc, url,
+                         url_before_redirects, redirect_status,
+                         reporting_disposition, check_header_type);
 }
 
-bool ContentSecurityPolicy::AllowFormAction(
+bool ContentSecurityPolicy::AllowFormAction(const KURL& url) const {
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kFormAction, url,
+                         url, RedirectStatus::kNoRedirect);
+}
+
+bool ContentSecurityPolicy::AllowImageFromSource(
     const KURL& url,
+    const KURL& url_before_redirects,
     RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
+    ReportingDisposition reporting_disposition,
     CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowFormAction(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kImgSrc, url,
+                         url_before_redirects, redirect_status,
+                         reporting_disposition, check_header_type);
 }
 
-bool ContentSecurityPolicy::AllowBaseURI(
+bool ContentSecurityPolicy::AllowMediaFromSource(const KURL& url) const {
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kMediaSrc, url,
+                         url, RedirectStatus::kNoRedirect);
+}
+
+bool ContentSecurityPolicy::AllowObjectFromSource(const KURL& url) const {
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kObjectSrc, url,
+                         url, RedirectStatus::kNoRedirect);
+}
+
+bool ContentSecurityPolicy::AllowScriptFromSource(
     const KURL& url,
+    const String& nonce,
+    const IntegrityMetadataSet& hashes,
+    ParserDisposition parser_disposition,
+    const KURL& url_before_redirects,
     RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy) const {
-  // `base-uri` isn't affected by 'upgrade-insecure-requests', so we'll check
-  // both report-only and enforce headers here.
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(CheckHeaderType::kCheckAll,
-                                policy->HeaderType()))
-      continue;
-    is_allowed &= policy->AllowBaseURI(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
+    ReportingDisposition reporting_disposition,
+    CheckHeaderType check_header_type) const {
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                         url, url_before_redirects, redirect_status,
+                         reporting_disposition, check_header_type, nonce,
+                         hashes, parser_disposition);
 }
 
-bool ContentSecurityPolicy::AllowTrustedTypePolicy(
-    const String& policy_name) const {
+bool ContentSecurityPolicy::AllowWorkerContextFromSource(
+    const KURL& url) const {
+  return AllowFromSource(ContentSecurityPolicy::DirectiveType::kWorkerSrc, url,
+                         url, RedirectStatus::kNoRedirect);
+}
+
+bool ContentSecurityPolicy::AllowTrustedTypePolicy(const String& policy_name,
+                                                   bool is_duplicate) const {
   bool is_allowed = true;
   for (const auto& policy : policies_) {
     if (!CheckHeaderTypeMatches(CheckHeaderType::kCheckAll,
                                 policy->HeaderType())) {
       continue;
     }
-    is_allowed &= policy->AllowTrustedTypePolicy(policy_name);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowWorkerContextFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowWorkerFromSource(url, redirect_status, reporting_policy);
-  }
-
-  return is_allowed;
-}
-
-bool ContentSecurityPolicy::AllowManifestFromSource(
-    const KURL& url,
-    RedirectStatus redirect_status,
-    SecurityViolationReportingPolicy reporting_policy,
-    CheckHeaderType check_header_type) const {
-  if (ShouldBypassContentSecurityPolicy(url))
-    return true;
-
-  bool is_allowed = true;
-  for (const auto& policy : policies_) {
-    if (!CheckHeaderTypeMatches(check_header_type, policy->HeaderType()))
-      continue;
-    is_allowed &=
-        policy->AllowManifestFromSource(url, redirect_status, reporting_policy);
+    is_allowed &= policy->AllowTrustedTypePolicy(policy_name, is_duplicate);
   }
 
   return is_allowed;
@@ -1040,10 +896,10 @@ bool ContentSecurityPolicy::AllowManifestFromSource(
 bool ContentSecurityPolicy::AllowAncestors(
     LocalFrame* frame,
     const KURL& url,
-    SecurityViolationReportingPolicy reporting_policy) const {
+    ReportingDisposition reporting_disposition) const {
   bool is_allowed = true;
   for (const auto& policy : policies_)
-    is_allowed &= policy->AllowAncestors(frame, url, reporting_policy);
+    is_allowed &= policy->AllowAncestors(frame, url, reporting_disposition);
   return is_allowed;
 }
 
@@ -1053,6 +909,18 @@ bool ContentSecurityPolicy::IsFrameAncestorsEnforced() const {
       return true;
   }
   return false;
+}
+
+bool ContentSecurityPolicy::AllowTrustedTypeAssignmentFailure(
+    const String& message,
+    const String& sample,
+    const String& sample_prefix) const {
+  bool allow = true;
+  for (const auto& policy : policies_) {
+    allow &= policy->AllowTrustedTypeAssignmentFailure(message, sample,
+                                                       sample_prefix);
+  }
+  return allow;
 }
 
 bool ContentSecurityPolicy::IsActive() const {
@@ -1075,24 +943,20 @@ void ContentSecurityPolicy::EnforceSandboxFlags(SandboxFlags mask) {
   sandbox_mask_ |= mask;
 }
 
-void ContentSecurityPolicy::TreatAsPublicAddress() {
-  if (!RuntimeEnabledFeatures::CorsRFC1918Enabled())
-    return;
-  treat_as_public_address_ = true;
-}
-
 void ContentSecurityPolicy::RequireTrustedTypes() {
   // We store whether CSP demands a policy. The caller still needs to check
   // whether the feature is enabled in the first place.
-  require_safe_types_ = true;
+  require_trusted_types_ = true;
 }
 
 void ContentSecurityPolicy::EnforceStrictMixedContentChecking() {
-  insecure_request_policy_ |= kBlockAllMixedContent;
+  insecure_request_policy_ |=
+      mojom::blink::InsecureRequestPolicy::kBlockAllMixedContent;
 }
 
 void ContentSecurityPolicy::UpgradeInsecureRequests() {
-  insecure_request_policy_ |= kUpgradeInsecureRequests;
+  insecure_request_policy_ |=
+      mojom::blink::InsecureRequestPolicy::kUpgradeInsecureRequests;
 }
 
 static String StripURLForUseInReport(
@@ -1132,10 +996,11 @@ static void GatherSecurityPolicyViolationEventData(
     const KURL& blocked_url,
     const String& header,
     RedirectStatus redirect_status,
-    ContentSecurityPolicyHeaderType header_type,
+    ContentSecurityPolicyType header_type,
     ContentSecurityPolicy::ViolationType violation_type,
     std::unique_ptr<SourceLocation> source_location,
-    const String& script_source) {
+    const String& script_source,
+    const String& sample_prefix) {
   if (effective_type == ContentSecurityPolicy::DirectiveType::kFrameAncestors) {
     // If this load was blocked via 'frame-ancestors', then the URL of
     // |document| has not yet been initialized. In this case, we'll set both
@@ -1159,9 +1024,19 @@ static void GatherSecurityPolicyViolationEventData(
         init->setBlockedURI("eval");
         break;
       case ContentSecurityPolicy::kURLViolation:
-        init->setBlockedURI(
-            StripURLForUseInReport(delegate->GetSecurityOrigin(), blocked_url,
-                                   redirect_status, effective_type));
+        // We pass RedirectStatus::kNoRedirect so that StripURLForUseInReport
+        // does not strip path and query from the URL. This is safe since
+        // blocked_url at this point is always the original url (before
+        // redirects).
+        init->setBlockedURI(StripURLForUseInReport(
+            delegate->GetSecurityOrigin(), blocked_url,
+            RedirectStatus::kNoRedirect, effective_type));
+        break;
+      case ContentSecurityPolicy::kTrustedTypesSinkViolation:
+        init->setBlockedURI("trusted-types-sink");
+        break;
+      case ContentSecurityPolicy::kTrustedTypesPolicyViolation:
+        init->setBlockedURI("trusted-types-policy");
         break;
     }
   }
@@ -1171,7 +1046,7 @@ static void GatherSecurityPolicyViolationEventData(
   init->setViolatedDirective(effective_directive);
   init->setEffectiveDirective(effective_directive);
   init->setOriginalPolicy(header);
-  init->setDisposition(header_type == kContentSecurityPolicyHeaderTypeEnforce
+  init->setDisposition(header_type == ContentSecurityPolicyType::kEnforce
                            ? "enforce"
                            : "report");
   init->setStatusCode(0);
@@ -1198,10 +1073,25 @@ static void GatherSecurityPolicyViolationEventData(
   if (!source_location)
     source_location = delegate->GetSourceLocation();
   if (source_location && source_location->LineNumber()) {
-    KURL source = KURL(source_location->Url());
-    init->setSourceFile(StripURLForUseInReport(delegate->GetSecurityOrigin(),
-                                               source, redirect_status,
-                                               effective_type));
+    KURL source_url = KURL(source_location->Url());
+    // The source file might be a script loaded from a redirect. Web browser
+    // usually tries to hide post-redirect information. The script might be
+    // cross-origin with the document, but also with other scripts. As a result,
+    // everything is cleared no matter the |source_url| origin.
+    // See https://crbug.com/1074317
+    //
+    // Note: The username, password and ref are stripped later below by
+    // StripURLForUseInReport(..)
+    source_url.SetQuery(String());
+
+    // TODO(arthursonzogni): |redirect_status| refers to the redirect status of
+    // the |blocked_url|. This is unrelated to |source_url|. Why using it in
+    // this case? This is obviously wrong:
+    String source_file =
+        StripURLForUseInReport(delegate->GetSecurityOrigin(), source_url,
+                               redirect_status, effective_type);
+
+    init->setSourceFile(source_file);
     init->setLineNumber(source_location->LineNumber());
     init->setColumnNumber(source_location->ColumnNumber());
   } else {
@@ -1210,10 +1100,23 @@ static void GatherSecurityPolicyViolationEventData(
     init->setColumnNumber(0);
   }
 
+  // Build the sample string. CSP demands that the sample is restricted to
+  // 40 characters (kMaxSampleLength), to prevent inadvertent exfiltration of
+  // user data. For some use cases, we also have a sample prefix, which
+  // must not depend on user data and where we will apply the sample limit
+  // separately.
+  StringBuilder sample;
+  if (!sample_prefix.IsEmpty()) {
+    sample.Append(sample_prefix.StripWhiteSpace().Left(
+        ContentSecurityPolicy::kMaxSampleLength));
+    sample.Append("|");
+  }
   if (!script_source.IsEmpty()) {
-    init->setSample(script_source.StripWhiteSpace().Left(
+    sample.Append(script_source.StripWhiteSpace().Left(
         ContentSecurityPolicy::kMaxSampleLength));
   }
+  if (!sample.IsEmpty())
+    init->setSample(sample.ToString());
 }
 
 void ContentSecurityPolicy::ReportViolation(
@@ -1224,13 +1127,14 @@ void ContentSecurityPolicy::ReportViolation(
     const Vector<String>& report_endpoints,
     bool use_reporting_api,
     const String& header,
-    ContentSecurityPolicyHeaderType header_type,
+    ContentSecurityPolicyType header_type,
     ViolationType violation_type,
     std::unique_ptr<SourceLocation> source_location,
     LocalFrame* context_frame,
     RedirectStatus redirect_status,
     Element* element,
-    const String& source) {
+    const String& source,
+    const String& source_prefix) {
   DCHECK(violation_type == kURLViolation || blocked_url.IsEmpty());
 
   // TODO(lukasza): Support sending reports from OOPIFs -
@@ -1239,7 +1143,9 @@ void ContentSecurityPolicy::ReportViolation(
   if (!delegate_ && !context_frame) {
     DCHECK(effective_type == DirectiveType::kChildSrc ||
            effective_type == DirectiveType::kFrameSrc ||
-           effective_type == DirectiveType::kPluginTypes);
+           effective_type == DirectiveType::kPluginTypes ||
+           effective_type == DirectiveType::kTrustedTypes ||
+           effective_type == DirectiveType::kRequireTrustedTypesFor);
     return;
   }
 
@@ -1260,7 +1166,7 @@ void ContentSecurityPolicy::ReportViolation(
   GatherSecurityPolicyViolationEventData(
       violation_data, relevant_delegate, directive_text, effective_type,
       blocked_url, header, redirect_status, header_type, violation_type,
-      std::move(source_location), source);
+      std::move(source_location), source, source_prefix);
 
   // TODO(mkwst): Obviously, we shouldn't hit this check, as extension-loaded
   // resources should be allowed regardless. We apparently do, however, so
@@ -1298,7 +1204,7 @@ void ContentSecurityPolicy::PostViolationReport(
   // TODO(mkwst): This justification is BS. Insecure reports are mixed content,
   // let's kill them. https://crbug.com/695363
 
-  std::unique_ptr<JSONObject> csp_report = JSONObject::Create();
+  auto csp_report = std::make_unique<JSONObject>();
   csp_report->SetString("document-uri", violation_data->documentURI());
   csp_report->SetString("referrer", violation_data->referrer());
   csp_report->SetString("violated-directive",
@@ -1318,7 +1224,7 @@ void ContentSecurityPolicy::PostViolationReport(
 
   csp_report->SetString("script-sample", violation_data->sample());
 
-  std::unique_ptr<JSONObject> report_object = JSONObject::Create();
+  auto report_object = std::make_unique<JSONObject>();
   report_object->SetObject("csp-report", std::move(csp_report));
   String stringified_report = report_object->ToJSONString();
 
@@ -1346,10 +1252,10 @@ void ContentSecurityPolicy::PostViolationReport(
 }
 
 void ContentSecurityPolicy::ReportMixedContent(
-    const KURL& mixed_url,
+    const KURL& blocked_url,
     RedirectStatus redirect_status) const {
   for (const auto& policy : policies_)
-    policy->ReportMixedContent(mixed_url, redirect_status);
+    policy->ReportMixedContent(blocked_url, redirect_status);
 }
 
 void ContentSecurityPolicy::ReportReportOnlyInMeta(const String& header) {
@@ -1370,6 +1276,13 @@ void ContentSecurityPolicy::ReportValueForEmptyDirective(const String& name,
                "' should be empty, but was delivered with a value of '" +
                value +
                "'. The directive has been applied, and the value ignored.");
+}
+
+void ContentSecurityPolicy::ReportNonsecureTrustedTypes() {
+  LogToConsole(
+      "The Content Security Policy directive "
+      "'require-trusted-types-for' only has an effect in a secure "
+      "context. The directive has been ignored.");
 }
 
 void ContentSecurityPolicy::ReportInvalidInReportOnly(const String& name) {
@@ -1404,7 +1317,7 @@ void ContentSecurityPolicy::ReportUnsupportedDirective(const String& name) {
 
   String message =
       "Unrecognized Content-Security-Policy directive '" + name + "'.\n";
-  MessageLevel level = kErrorMessageLevel;
+  mojom::ConsoleMessageLevel level = mojom::ConsoleMessageLevel::kError;
   if (EqualIgnoringASCIICase(name, kAllow)) {
     message = kAllowMessage;
   } else if (EqualIgnoringASCIICase(name, kOptions)) {
@@ -1414,7 +1327,7 @@ void ContentSecurityPolicy::ReportUnsupportedDirective(const String& name) {
   } else if (GetDirectiveType(name) != DirectiveType::kUndefined) {
     message = "The Content-Security-Policy directive '" + name +
               "' is implemented behind a flag which is currently disabled.\n";
-    level = kInfoMessageLevel;
+    level = mojom::ConsoleMessageLevel::kInfo;
   }
 
   LogToConsole(message, level);
@@ -1523,8 +1436,9 @@ void ContentSecurityPolicy::ReportMissingReportURI(const String& policy) {
 }
 
 void ContentSecurityPolicy::LogToConsole(const String& message,
-                                         MessageLevel level) {
-  LogToConsole(ConsoleMessage::Create(kSecurityMessageSource, level, message));
+                                         mojom::ConsoleMessageLevel level) {
+  LogToConsole(MakeGarbageCollected<ConsoleMessage>(
+      mojom::ConsoleMessageSource::kSecurity, level, message));
 }
 
 void ContentSecurityPolicy::LogToConsole(ConsoleMessage* console_message,
@@ -1653,8 +1567,6 @@ const char* ContentSecurityPolicy::GetDirectiveName(const DirectiveType& type) {
       return "style-src-attr";
     case DirectiveType::kStyleSrcElem:
       return "style-src-elem";
-    case DirectiveType::kTreatAsPublicAddress:
-      return "treat-as-public-address";
     case DirectiveType::kUpgradeInsecureRequests:
       return "upgrade-insecure-requests";
     case DirectiveType::kWorkerSrc:
@@ -1663,6 +1575,8 @@ const char* ContentSecurityPolicy::GetDirectiveName(const DirectiveType& type) {
       return "report-to";
     case DirectiveType::kNavigateTo:
       return "navigate-to";
+    case DirectiveType::kRequireTrustedTypesFor:
+      return "require-trusted-types-for";
     case DirectiveType::kUndefined:
       NOTREACHED();
       return "";
@@ -1708,6 +1622,8 @@ ContentSecurityPolicy::DirectiveType ContentSecurityPolicy::GetDirectiveType(
     return DirectiveType::kReportURI;
   if (name == "require-sri-for")
     return DirectiveType::kRequireSRIFor;
+  if (name == "require-trusted-types-for")
+    return DirectiveType::kRequireTrustedTypesFor;
   if (name == "trusted-types")
     return DirectiveType::kTrustedTypes;
   if (name == "sandbox")
@@ -1724,8 +1640,6 @@ ContentSecurityPolicy::DirectiveType ContentSecurityPolicy::GetDirectiveType(
     return DirectiveType::kStyleSrcAttr;
   if (name == "style-src-elem")
     return DirectiveType::kStyleSrcElem;
-  if (name == "treat-as-public-address")
-    return DirectiveType::kTreatAsPublicAddress;
   if (name == "upgrade-insecure-requests")
     return DirectiveType::kUpgradeInsecureRequests;
   if (name == "worker-src")
@@ -1782,10 +1696,10 @@ bool ContentSecurityPolicy::IsValidCSPAttr(const String& attr,
   if (attr.Contains('\n') || attr.Contains('\r'))
     return false;
 
-  ContentSecurityPolicy* attr_policy = ContentSecurityPolicy::Create();
+  auto* attr_policy = MakeGarbageCollected<ContentSecurityPolicy>();
   attr_policy->AddPolicyFromHeaderValue(attr,
-                                        kContentSecurityPolicyHeaderTypeEnforce,
-                                        kContentSecurityPolicyHeaderSourceHTTP);
+                                        ContentSecurityPolicyType::kEnforce,
+                                        ContentSecurityPolicySource::kHTTP);
   if (!attr_policy->console_messages_.IsEmpty() ||
       attr_policy->policies_.size() != 1) {
     return false;
@@ -1801,10 +1715,10 @@ bool ContentSecurityPolicy::IsValidCSPAttr(const String& attr,
     return true;
   }
 
-  ContentSecurityPolicy* context_policy = ContentSecurityPolicy::Create();
-  context_policy->AddPolicyFromHeaderValue(
-      context_required_csp, kContentSecurityPolicyHeaderTypeEnforce,
-      kContentSecurityPolicyHeaderSourceHTTP);
+  auto* context_policy = MakeGarbageCollected<ContentSecurityPolicy>();
+  context_policy->AddPolicyFromHeaderValue(context_required_csp,
+                                           ContentSecurityPolicyType::kEnforce,
+                                           ContentSecurityPolicySource::kHTTP);
 
   DCHECK(context_policy->console_messages_.IsEmpty() &&
          context_policy->policies_.size() == 1);
@@ -1812,24 +1726,16 @@ bool ContentSecurityPolicy::IsValidCSPAttr(const String& attr,
   return context_policy->Subsumes(*attr_policy);
 }
 
-WebContentSecurityPolicyList
+WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>
 ContentSecurityPolicy::ExposeForNavigationalChecks() const {
-  std::vector<WebContentSecurityPolicy> policies;
-  for (const auto& policy : policies_) {
-    policies.push_back(policy->ExposeForNavigationalChecks());
-  }
-
-  WebContentSecurityPolicyList list;
-  list.policies = policies;
-
-  if (self_source_)
-    list.self_source = self_source_->ExposeForNavigationalChecks();
-
+  WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr> list;
+  for (const auto& policy : policies_)
+    list.push_back(policy->ExposeForNavigationalChecks());
   return list;
 }
 
 bool ContentSecurityPolicy::HasPolicyFromSource(
-    ContentSecurityPolicyHeaderSource source) const {
+    ContentSecurityPolicySource source) const {
   for (const auto& policy : policies_) {
     if (policy->HeaderSource() == source)
       return true;

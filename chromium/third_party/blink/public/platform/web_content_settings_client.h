@@ -5,14 +5,15 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_CONTENT_SETTINGS_CLIENT_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_CONTENT_SETTINGS_CLIENT_H_
 
+#include <memory>
+#include <utility>
+
+#include "base/callback.h"
 #include "base/time/time.h"
 #include "third_party/blink/public/platform/web_client_hints_type.h"
-#include "third_party/blink/public/platform/web_content_setting_callbacks.h"
 
 namespace blink {
 
-class WebSecurityOrigin;
-class WebString;
 class WebURL;
 
 // This class provides the content settings information which tells
@@ -24,20 +25,15 @@ class WebContentSettingsClient {
   virtual std::unique_ptr<WebContentSettingsClient> Clone() { return nullptr; }
 
   // Controls whether access to Web Databases is allowed for this frame.
-  virtual bool AllowDatabase(const WebString& name,
-                             const WebString& display_name,
-                             unsigned estimated_size) {
-    return true;
-  }
+  virtual bool AllowDatabase() { return true; }
 
   // Controls whether access to File System is allowed for this frame.
   virtual bool RequestFileSystemAccessSync() { return true; }
 
   // Controls whether access to File System is allowed for this frame.
   virtual void RequestFileSystemAccessAsync(
-      const WebContentSettingCallbacks& callbacks) {
-    WebContentSettingCallbacks permission_callbacks(callbacks);
-    permission_callbacks.DoAllow();
+      base::OnceCallback<void(bool)> callback) {
+    std::move(callback).Run(true);
   }
 
   // Controls whether images are allowed for this frame.
@@ -46,7 +42,13 @@ class WebContentSettingsClient {
   }
 
   // Controls whether access to Indexed DB are allowed for this frame.
-  virtual bool AllowIndexedDB(const WebSecurityOrigin&) { return true; }
+  virtual bool AllowIndexedDB() { return true; }
+
+  // Controls whether access to CacheStorage is allowed for this frame.
+  virtual bool AllowCacheStorage() { return true; }
+
+  // Controls whether access to Web Locks is allowed for this frame.
+  virtual bool AllowWebLocks() { return true; }
 
   // Controls whether scripts are allowed to execute for this frame.
   virtual bool AllowScript(bool enabled_per_settings) {
@@ -67,7 +69,6 @@ class WebContentSettingsClient {
 
   // Controls whether insecure scripts are allowed to execute for this frame.
   virtual bool AllowRunningInsecureContent(bool enabled_per_settings,
-                                           const WebSecurityOrigin&,
                                            const WebURL&) {
     return enabled_per_settings;
   }
@@ -96,9 +97,6 @@ class WebContentSettingsClient {
   // interface.
   virtual bool AllowMutationEvents(bool default_value) { return default_value; }
 
-  // Controls whether autoplay is allowed for this frame.
-  virtual bool AllowAutoplay(bool default_value) { return default_value; }
-
   virtual bool AllowPopupsAndRedirects(bool default_value) {
     return default_value;
   }
@@ -120,6 +118,10 @@ class WebContentSettingsClient {
       const WebEnabledClientHints& enabled_client_hints,
       base::TimeDelta duration,
       const blink::WebURL& url) {}
+
+  // Controls whether mixed content autoupgrades should be allowed in this
+  // frame.
+  virtual bool ShouldAutoupgradeMixedContent() { return true; }
 
   virtual ~WebContentSettingsClient() = default;
 };

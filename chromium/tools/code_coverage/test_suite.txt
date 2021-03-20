@@ -7,6 +7,7 @@ base_unittests
 blink_common_unittests
 blink_heap_unittests
 blink_platform_unittests
+blink_unittests
 boringssl_crypto_tests
 boringssl_ssl_tests
 breakpad_unittests
@@ -45,7 +46,6 @@ interactive_ui_tests
 ipc_tests
 jingle_unittests
 latency_unittests
-leveldb_service_unittests
 libjingle_xmpp_unittests
 media_blink_unittests
 media_mojo_unittests
@@ -81,7 +81,6 @@ url_unittests
 views_unittests
 viz_unittests
 vr_common_unittests
-webkit_unit_tests
 wm_unittests
 wtf_unittests
 zucchini_unittests

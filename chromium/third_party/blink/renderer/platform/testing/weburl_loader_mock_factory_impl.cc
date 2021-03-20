@@ -18,7 +18,11 @@
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/web_navigation_params.h"
+#include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
+#include "third_party/blink/renderer/platform/loader/static_data_navigation_body_loader.h"
+#include "third_party/blink/renderer/platform/network/network_utils.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/weburl_loader_mock.h"
@@ -35,9 +39,8 @@ WebURLLoaderMockFactoryImpl::WebURLLoaderMockFactoryImpl(
 
 WebURLLoaderMockFactoryImpl::~WebURLLoaderMockFactoryImpl() = default;
 
-std::unique_ptr<WebURLLoader> WebURLLoaderMockFactoryImpl::CreateURLLoader(
-    std::unique_ptr<WebURLLoader> default_loader) {
-  return std::make_unique<WebURLLoaderMock>(this, std::move(default_loader));
+std::unique_ptr<WebURLLoader> WebURLLoaderMockFactoryImpl::CreateURLLoader() {
+  return std::make_unique<WebURLLoaderMock>(this);
 }
 
 void WebURLLoaderMockFactoryImpl::RegisterURL(const WebURL& url,
@@ -115,17 +118,18 @@ void WebURLLoaderMockFactoryImpl::ServeAsynchronousRequests() {
   while (!pending_loaders_.IsEmpty()) {
     LoaderToRequestMap::iterator iter = pending_loaders_.begin();
     base::WeakPtr<WebURLLoaderMock> loader(iter->key->GetWeakPtr());
-    const WebURLRequest request = iter->value;
+    std::unique_ptr<network::ResourceRequest> request = std::move(iter->value);
     pending_loaders_.erase(loader.get());
 
     WebURLResponse response;
     base::Optional<WebURLError> error;
     WebData data;
-    LoadRequest(request.Url(), &response, &error, &data);
+    LoadRequest(WebURL(KURL(request->url)), &response, &error, &data);
     // Follow any redirects while the loader is still active.
     while (response.HttpStatusCode() >= 300 &&
            response.HttpStatusCode() < 400) {
-      WebURL new_url = loader->ServeRedirect(request, response);
+      WebURL new_url = loader->ServeRedirect(
+          WebString::FromLatin1(request->method), response);
       RunUntilIdle();
       if (!loader || loader->is_cancelled() || loader->is_deferred())
         break;
@@ -140,6 +144,56 @@ void WebURLLoaderMockFactoryImpl::ServeAsynchronousRequests() {
   RunUntilIdle();
 }
 
+void WebURLLoaderMockFactoryImpl::FillNavigationParamsResponse(
+    WebNavigationParams* params) {
+  KURL kurl = params->url;
+  if (kurl.ProtocolIsData()) {
+    ResourceResponse response;
+    scoped_refptr<SharedBuffer> buffer;
+    int result;
+    std::tie(result, response, buffer) =
+        network_utils::ParseDataURL(kurl, params->http_method);
+    DCHECK(buffer);
+    DCHECK_EQ(net::OK, result);
+    params->response = WrappedResourceResponse(response);
+    auto body_loader = std::make_unique<StaticDataNavigationBodyLoader>();
+    body_loader->Write(*buffer);
+    body_loader->Finish();
+    params->body_loader = std::move(body_loader);
+    return;
+  }
+
+  if (delegate_ && delegate_->FillNavigationParamsResponse(params))
+    return;
+
+  base::Optional<WebURLError> error;
+  WebData data;
+
+  size_t redirects = 0;
+  LoadRequest(params->url, &params->response, &error, &data);
+  DCHECK(!error);
+  while (params->response.HttpStatusCode() >= 300 &&
+         params->response.HttpStatusCode() < 400) {
+    WebURL new_url(KURL(params->response.HttpHeaderField("Location")));
+    ++redirects;
+    params->redirects.reserve(redirects);
+    params->redirects.resize(redirects);
+    params->redirects[redirects - 1].redirect_response = params->response;
+    params->redirects[redirects - 1].new_url = new_url;
+    params->redirects[redirects - 1].new_http_method = "GET";
+    LoadRequest(new_url, &params->response, &error, &data);
+    DCHECK(!error);
+  }
+
+  auto body_loader = std::make_unique<StaticDataNavigationBodyLoader>();
+  if (!data.IsNull()) {
+    scoped_refptr<SharedBuffer> buffer = data;
+    body_loader->Write(*buffer);
+    body_loader->Finish();
+  }
+  params->body_loader = std::move(body_loader);
+}
+
 bool WebURLLoaderMockFactoryImpl::IsMockedURL(const blink::WebURL& url) {
   base::Optional<WebURLError> error;
   ResponseInfo response_info;
@@ -151,20 +205,20 @@ void WebURLLoaderMockFactoryImpl::CancelLoad(WebURLLoaderMock* loader) {
 }
 
 void WebURLLoaderMockFactoryImpl::LoadSynchronously(
-    const WebURLRequest& request,
+    std::unique_ptr<network::ResourceRequest> request,
     WebURLResponse* response,
     base::Optional<WebURLError>* error,
     WebData* data,
     int64_t* encoded_data_length) {
-  LoadRequest(request.Url(), response, error, data);
+  LoadRequest(WebURL(KURL(request->url)), response, error, data);
   *encoded_data_length = data->size();
 }
 
 void WebURLLoaderMockFactoryImpl::LoadAsynchronouly(
-    const WebURLRequest& request,
+    std::unique_ptr<network::ResourceRequest> request,
     WebURLLoaderMock* loader) {
   DCHECK(!pending_loaders_.Contains(loader));
-  pending_loaders_.Set(loader, request);
+  pending_loaders_.Set(loader, std::move(request));
 }
 
 void WebURLLoaderMockFactoryImpl::RunUntilIdle() {
@@ -210,7 +264,7 @@ bool WebURLLoaderMockFactoryImpl::LookupURL(const WebURL& url,
 
   for (const auto& key_value_pair : protocol_to_response_info_) {
     String protocol = key_value_pair.key;
-    if (url.ProtocolIs(protocol.Ascii().data())) {
+    if (url.ProtocolIs(protocol.Ascii().c_str())) {
       *response_info = key_value_pair.value;
       return true;
     }

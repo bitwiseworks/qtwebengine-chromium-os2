@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
@@ -82,7 +82,6 @@ bool GuidToSsid(const std::string& guid, std::string* ssid) {
 std::unique_ptr<base::ListValue> CopyNetworkMapToList(
     const NetworkingPrivateLinux::NetworkMap& network_map) {
   auto network_list = std::make_unique<base::ListValue>();
-  network_list->GetList().reserve(network_map.size());
 
   for (const auto& network : network_map) {
     network_list->Append(network.second->CreateDeepCopy());
@@ -138,15 +137,20 @@ void GetCachedNetworkPropertiesCallback(
 
 NetworkingPrivateLinux::NetworkingPrivateLinux()
     : dbus_thread_("Networking Private DBus"), network_manager_proxy_(NULL) {
-  base::Thread::Options thread_options(base::MessageLoop::Type::TYPE_IO, 0);
+  base::Thread::Options thread_options(base::MessagePumpType::IO, 0);
 
   dbus_thread_.StartWithOptions(thread_options);
   dbus_thread_.task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&NetworkingPrivateLinux::Initialize, base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&NetworkingPrivateLinux::Initialize,
+                                base::Unretained(this)));
 }
 
 NetworkingPrivateLinux::~NetworkingPrivateLinux() {
+  if (dbus_) {
+    // dbus_thread_.Stop() below will wait for this task.
+    dbus_thread_.task_runner()->PostTask(
+        FROM_HERE, base::BindOnce(&dbus::Bus::ShutdownAndBlock, dbus_));
+  }
   dbus_thread_.Stop();
 }
 
@@ -164,7 +168,7 @@ void NetworkingPrivateLinux::Initialize() {
   dbus_options.connection_type = dbus::Bus::PRIVATE;
   dbus_options.dbus_task_runner = dbus_task_runner_;
 
-  dbus_ = new dbus::Bus(dbus_options);
+  dbus_ = base::MakeRefCounted<dbus::Bus>(dbus_options);
   network_manager_proxy_ = dbus_->GetObjectProxy(
       networking_private::kNetworkManagerNamespace,
       dbus::ObjectPath(networking_private::kNetworkManagerPath));
@@ -1217,10 +1221,10 @@ void NetworkingPrivateLinux::PostOnNetworksChangedToUIThread(
     std::unique_ptr<GuidList> guid_list) {
   AssertOnDBusThread();
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&NetworkingPrivateLinux::OnNetworksChangedEventTask,
-                 base::Unretained(this), base::Passed(&guid_list)));
+      base::BindOnce(&NetworkingPrivateLinux::OnNetworksChangedEventTask,
+                     base::Unretained(this), std::move(guid_list)));
 }
 
 void NetworkingPrivateLinux::OnNetworksChangedEventTask(

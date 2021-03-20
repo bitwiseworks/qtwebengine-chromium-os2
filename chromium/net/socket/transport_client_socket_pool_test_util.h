@@ -87,12 +87,13 @@ class MockTransportClientSocketFactory : public ClientSocketFactory {
       const NetLogSource& /* source */) override;
 
   std::unique_ptr<SSLClientSocket> CreateSSLClientSocket(
-      std::unique_ptr<ClientSocketHandle> transport_socket,
+      SSLClientContext* context,
+      std::unique_ptr<StreamSocket> nested_socket,
       const HostPortPair& host_and_port,
-      const SSLConfig& ssl_config,
-      const SSLClientSocketContext& context) override;
+      const SSLConfig& ssl_config) override;
+
   std::unique_ptr<ProxyClientSocket> CreateProxyClientSocket(
-      std::unique_ptr<ClientSocketHandle> transport_socket,
+      std::unique_ptr<StreamSocket> stream_socket,
       const std::string& user_agent,
       const HostPortPair& endpoint,
       const ProxyServer& proxy_server,
@@ -101,10 +102,7 @@ class MockTransportClientSocketFactory : public ClientSocketFactory {
       bool using_spdy,
       NextProto negotiated_protocol,
       ProxyDelegate* proxy_delegate,
-      bool is_https_proxy,
       const NetworkTrafficAnnotationTag& traffic_annotation) override;
-
-  void ClearSSLSessionCache() override;
 
   int allocation_count() const { return allocation_count_; }
 
@@ -124,7 +122,7 @@ class MockTransportClientSocketFactory : public ClientSocketFactory {
   // have been created yet, wait for one to be created before returning the
   // Closure. This method should be called the same number of times as
   // MOCK_TRIGGERABLE_CLIENT_SOCKETs are created in the test.
-  base::Closure WaitForTriggerableSocketCreation();
+  base::OnceClosure WaitForTriggerableSocketCreation();
 
  private:
   NetLog* net_log_;
@@ -134,8 +132,8 @@ class MockTransportClientSocketFactory : public ClientSocketFactory {
   int client_socket_index_;
   int client_socket_index_max_;
   base::TimeDelta delay_;
-  base::queue<base::Closure> triggerable_sockets_;
-  base::Closure run_loop_quit_closure_;
+  base::queue<base::OnceClosure> triggerable_sockets_;
+  base::OnceClosure run_loop_quit_closure_;
 
   DISALLOW_COPY_AND_ASSIGN(MockTransportClientSocketFactory);
 };

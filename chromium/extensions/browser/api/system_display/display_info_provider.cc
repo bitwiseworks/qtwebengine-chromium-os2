@@ -4,8 +4,10 @@
 
 #include "extensions/browser/api/system_display/display_info_provider.h"
 
+#include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/api/system_display.h"
 #include "ui/display/display.h"
@@ -41,8 +43,11 @@ DisplayInfoProvider::~DisplayInfoProvider() = default;
 
 // static
 DisplayInfoProvider* DisplayInfoProvider::Get() {
-  if (!g_display_info_provider)
-    g_display_info_provider = DisplayInfoProvider::Create();
+  if (!g_display_info_provider) {
+    // Let the DisplayInfoProvider leak.
+    g_display_info_provider =
+        ExtensionsAPIClient::Get()->CreateDisplayInfoProvider().release();
+  }
   return g_display_info_provider;
 }
 
@@ -55,6 +60,11 @@ void DisplayInfoProvider::InitializeForTesting(
 }
 
 // static
+void DisplayInfoProvider::ResetForTesting() {
+  g_display_info_provider = nullptr;
+}
+
+// static
 // Creates new DisplayUnitInfo struct for |display|.
 api::system_display::DisplayUnitInfo DisplayInfoProvider::CreateDisplayUnitInfo(
     const display::Display& display,
@@ -62,7 +72,7 @@ api::system_display::DisplayUnitInfo DisplayInfoProvider::CreateDisplayUnitInfo(
   api::system_display::DisplayUnitInfo unit;
   const gfx::Rect& bounds = display.bounds();
   const gfx::Rect& work_area = display.work_area();
-  unit.id = base::Int64ToString(display.id());
+  unit.id = base::NumberToString(display.id());
   unit.is_primary = (display.id() == primary_display_id);
   unit.is_internal = display.IsInternal();
   unit.is_enabled = true;
@@ -183,10 +193,16 @@ void DisplayInfoProvider::SetMirrorMode(
 }
 
 void DisplayInfoProvider::DispatchOnDisplayChangedEvent() {
+  // This function will dispatch the OnDisplayChangedEvent to both on-the-record
+  // and off-the-record profiles. This allows extensions running in incognito
+  // to be notified mirroring is enabled / disabled, which allows the Virtual
+  // keyboard on ChromeOS to correctly disable key highlighting when typing
+  // passwords on the login page (crbug/824656)
+  constexpr bool dispatch_to_off_the_record_profiles = true;
   ExtensionsBrowserClient::Get()->BroadcastEventToRenderers(
       events::SYSTEM_DISPLAY_ON_DISPLAY_CHANGED,
       extensions::api::system_display::OnDisplayChanged::kEventName,
-      std::make_unique<base::ListValue>());
+      std::make_unique<base::ListValue>(), dispatch_to_off_the_record_profiles);
 }
 
 void DisplayInfoProvider::UpdateDisplayUnitInfoForPlatform(

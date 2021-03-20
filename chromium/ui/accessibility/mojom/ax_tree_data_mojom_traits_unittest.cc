@@ -26,12 +26,14 @@ TEST(AXTreeDataMojomTraitsTest, TestSerializeAndDeserializeAXTreeData) {
   input.title = "7";
   input.url = "8";
   input.focus_id = 9;
+  input.sel_is_backward = true;  // Set to true only for testing purposes.
   input.sel_anchor_object_id = 10;
   input.sel_anchor_offset = 11;
   input.sel_anchor_affinity = ax::mojom::TextAffinity::kUpstream;
   input.sel_focus_object_id = 12;
   input.sel_focus_offset = 13;
   input.sel_focus_affinity = ax::mojom::TextAffinity::kDownstream;
+  input.root_scroller_id = 14;
 
   EXPECT_TRUE(SerializeAndDeserialize<ax::mojom::AXTreeData>(&input, &output));
 
@@ -45,10 +47,12 @@ TEST(AXTreeDataMojomTraitsTest, TestSerializeAndDeserializeAXTreeData) {
   EXPECT_EQ("7", output.title);
   EXPECT_EQ("8", output.url);
   EXPECT_EQ(9, output.focus_id);
+  EXPECT_TRUE(output.sel_is_backward);
   EXPECT_EQ(10, output.sel_anchor_object_id);
   EXPECT_EQ(11, output.sel_anchor_offset);
   EXPECT_EQ(ax::mojom::TextAffinity::kUpstream, output.sel_anchor_affinity);
   EXPECT_EQ(12, output.sel_focus_object_id);
   EXPECT_EQ(13, output.sel_focus_offset);
   EXPECT_EQ(ax::mojom::TextAffinity::kDownstream, output.sel_focus_affinity);
+  EXPECT_EQ(14, output.root_scroller_id);
 }

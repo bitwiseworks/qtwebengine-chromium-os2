@@ -9,6 +9,7 @@
 #include "base/files/file_util.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 
 namespace password_manager {
@@ -16,7 +17,8 @@ namespace password_manager {
 namespace {
 // Synchronously deletes passwords directoy.
 void DeletePasswordsDirectorySync() {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::FilePath downloads_directory;
   if (GetPasswordsDirectory(&downloads_directory)) {
     // It is assumed that deleting the directory always succeeds.
@@ -34,10 +36,10 @@ bool GetPasswordsDirectory(base::FilePath* directory_path) {
 }
 
 void DeletePasswordsDirectory() {
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
-                            base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
-                           base::BindOnce(&DeletePasswordsDirectorySync));
+  base::ThreadPool::PostTask(FROM_HERE,
+                             {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+                              base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+                             base::BindOnce(&DeletePasswordsDirectorySync));
 }
 
 }  // namespace password_manager

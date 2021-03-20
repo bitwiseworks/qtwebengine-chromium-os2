@@ -13,10 +13,15 @@
 #include "libANGLE/renderer/ContextImpl.h"
 #include "libANGLE/renderer/gl/RendererGL.h"
 
+namespace angle
+{
+struct FeaturesGL;
+}  // namespace angle
+
 namespace sh
 {
 struct BlockMemberInfo;
-}
+}  // namespace sh
 
 namespace rx
 {
@@ -25,7 +30,6 @@ class ClearMultiviewGL;
 class FunctionsGL;
 class RendererGL;
 class StateManagerGL;
-struct WorkaroundsGL;
 
 class ContextGL : public ContextImpl
 {
@@ -72,8 +76,14 @@ class ContextGL : public ContextImpl
     // Program Pipeline object creation
     ProgramPipelineImpl *createProgramPipeline(const gl::ProgramPipelineState &data) override;
 
-    // Path object creation
-    std::vector<PathImpl *> createPaths(GLsizei range) override;
+    // Memory object creation.
+    MemoryObjectImpl *createMemoryObject() override;
+
+    // Semaphore creation.
+    SemaphoreImpl *createSemaphore() override;
+
+    // Overlay creation.
+    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
 
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
@@ -89,18 +99,45 @@ class ContextGL : public ContextImpl
                                       GLint first,
                                       GLsizei count,
                                       GLsizei instanceCount) override;
+    angle::Result drawArraysInstancedBaseInstance(const gl::Context *context,
+                                                  gl::PrimitiveMode mode,
+                                                  GLint first,
+                                                  GLsizei count,
+                                                  GLsizei instanceCount,
+                                                  GLuint baseInstance) override;
 
     angle::Result drawElements(const gl::Context *context,
                                gl::PrimitiveMode mode,
                                GLsizei count,
                                gl::DrawElementsType type,
                                const void *indices) override;
+    angle::Result drawElementsBaseVertex(const gl::Context *context,
+                                         gl::PrimitiveMode mode,
+                                         GLsizei count,
+                                         gl::DrawElementsType type,
+                                         const void *indices,
+                                         GLint baseVertex) override;
     angle::Result drawElementsInstanced(const gl::Context *context,
                                         gl::PrimitiveMode mode,
                                         GLsizei count,
                                         gl::DrawElementsType type,
                                         const void *indices,
                                         GLsizei instances) override;
+    angle::Result drawElementsInstancedBaseVertex(const gl::Context *context,
+                                                  gl::PrimitiveMode mode,
+                                                  GLsizei count,
+                                                  gl::DrawElementsType type,
+                                                  const void *indices,
+                                                  GLsizei instanceCount,
+                                                  GLint baseVertex) override;
+    angle::Result drawElementsInstancedBaseVertexBaseInstance(const gl::Context *context,
+                                                              gl::PrimitiveMode mode,
+                                                              GLsizei count,
+                                                              gl::DrawElementsType type,
+                                                              const void *indices,
+                                                              GLsizei instances,
+                                                              GLint baseVertex,
+                                                              GLuint baseInstance) override;
     angle::Result drawRangeElements(const gl::Context *context,
                                     gl::PrimitiveMode mode,
                                     GLuint start,
@@ -108,6 +145,14 @@ class ContextGL : public ContextImpl
                                     GLsizei count,
                                     gl::DrawElementsType type,
                                     const void *indices) override;
+    angle::Result drawRangeElementsBaseVertex(const gl::Context *context,
+                                              gl::PrimitiveMode mode,
+                                              GLuint start,
+                                              GLuint end,
+                                              GLsizei count,
+                                              gl::DrawElementsType type,
+                                              const void *indices,
+                                              GLint baseVertex) override;
     angle::Result drawArraysIndirect(const gl::Context *context,
                                      gl::PrimitiveMode mode,
                                      const void *indirect) override;
@@ -116,65 +161,24 @@ class ContextGL : public ContextImpl
                                        gl::DrawElementsType type,
                                        const void *indirect) override;
 
-    // CHROMIUM_path_rendering implementation
-    void stencilFillPath(const gl::Path *path, GLenum fillMode, GLuint mask) override;
-    void stencilStrokePath(const gl::Path *path, GLint reference, GLuint mask) override;
-    void coverFillPath(const gl::Path *path, GLenum coverMode) override;
-    void coverStrokePath(const gl::Path *path, GLenum coverMode) override;
-    void stencilThenCoverFillPath(const gl::Path *path,
-                                  GLenum fillMode,
-                                  GLuint mask,
-                                  GLenum coverMode) override;
-    void stencilThenCoverStrokePath(const gl::Path *path,
-                                    GLint reference,
-                                    GLuint mask,
-                                    GLenum coverMode) override;
-    void coverFillPathInstanced(const std::vector<gl::Path *> &paths,
-                                GLenum coverMode,
-                                GLenum transformType,
-                                const GLfloat *transformValues) override;
-    void coverStrokePathInstanced(const std::vector<gl::Path *> &paths,
-                                  GLenum coverMode,
-                                  GLenum transformType,
-                                  const GLfloat *transformValues) override;
-    void stencilFillPathInstanced(const std::vector<gl::Path *> &paths,
-                                  GLenum fillMode,
-                                  GLuint mask,
-                                  GLenum transformType,
-                                  const GLfloat *transformValues) override;
-    void stencilStrokePathInstanced(const std::vector<gl::Path *> &paths,
-                                    GLint reference,
-                                    GLuint mask,
-                                    GLenum transformType,
-                                    const GLfloat *transformValues) override;
-    void stencilThenCoverFillPathInstanced(const std::vector<gl::Path *> &paths,
-                                           GLenum coverMode,
-                                           GLenum fillMode,
-                                           GLuint mask,
-                                           GLenum transformType,
-                                           const GLfloat *transformValues) override;
-    void stencilThenCoverStrokePathInstanced(const std::vector<gl::Path *> &paths,
-                                             GLenum coverMode,
-                                             GLint reference,
-                                             GLuint mask,
-                                             GLenum transformType,
-                                             const GLfloat *transformValues) override;
-
     // Device loss
-    GLenum getResetStatus() override;
+    gl::GraphicsResetStatus getResetStatus() override;
 
     // Vendor and description strings.
     std::string getVendorString() const override;
     std::string getRendererDescription() const override;
 
     // EXT_debug_marker
-    void insertEventMarker(GLsizei length, const char *marker) override;
-    void pushGroupMarker(GLsizei length, const char *marker) override;
-    void popGroupMarker() override;
+    angle::Result insertEventMarker(GLsizei length, const char *marker) override;
+    angle::Result pushGroupMarker(GLsizei length, const char *marker) override;
+    angle::Result popGroupMarker() override;
 
     // KHR_debug
-    void pushDebugGroup(GLenum source, GLuint id, GLsizei length, const char *message) override;
-    void popDebugGroup() override;
+    angle::Result pushDebugGroup(const gl::Context *context,
+                                 GLenum source,
+                                 GLuint id,
+                                 const std::string &message) override;
+    angle::Result popDebugGroup(const gl::Context *context) override;
 
     // State sync with dirty bits.
     angle::Result syncState(const gl::Context *context,
@@ -194,13 +198,11 @@ class ContextGL : public ContextImpl
     const gl::Extensions &getNativeExtensions() const override;
     const gl::Limitations &getNativeLimitations() const override;
 
-    void applyNativeWorkarounds(gl::Workarounds *workarounds) const override;
-
     // Handle helpers
     ANGLE_INLINE const FunctionsGL *getFunctions() const { return mRenderer->getFunctions(); }
 
     StateManagerGL *getStateManager();
-    const WorkaroundsGL &getWorkaroundsGL() const;
+    const angle::FeaturesGL &getFeaturesGL() const;
     BlitGL *getBlitter() const;
     ClearMultiviewGL *getMultiviewClearer() const;
 
@@ -212,6 +214,15 @@ class ContextGL : public ContextImpl
 
     angle::Result memoryBarrier(const gl::Context *context, GLbitfield barriers) override;
     angle::Result memoryBarrierByRegion(const gl::Context *context, GLbitfield barriers) override;
+
+    void setMaxShaderCompilerThreads(GLuint count) override;
+
+    void invalidateTexture(gl::TextureType target) override;
+
+    void validateState() const;
+
+    void setNeedsFlushBeforeDeleteTextures();
+    void flushIfNecessaryBeforeDeleteTextures();
 
   private:
     angle::Result setDrawArraysState(const gl::Context *context,
@@ -226,7 +237,9 @@ class ContextGL : public ContextImpl
                                        GLsizei instanceCount,
                                        const void **outIndices);
 
-    angle::Result setDrawIndirectState(const gl::Context *context);
+    gl::AttributesMask updateAttributesForBaseInstance(const gl::Program *program,
+                                                       GLuint baseInstance);
+    void resetUpdatedAttributes(gl::AttributesMask attribMask);
 
   protected:
     std::shared_ptr<RendererGL> mRenderer;

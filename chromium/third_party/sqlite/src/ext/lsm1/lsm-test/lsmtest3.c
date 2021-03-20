@@ -9,7 +9,7 @@
 /*
 ** Repeat 2000 times (until the db contains 100,000 entries):
 **
-**   1. Open a transaction and insert 500 rows, opening a nested
+**   1. Open a transaction and insert 500 rows, opening a nested 
 **      sub-transaction each 100 rows.
 **
 **   2. Roll back to each sub-transaction savepoint. Check the database
@@ -31,9 +31,9 @@ struct CksumDb {
 };
 
 CksumDb *testCksumArrayNew(
-  Datasource *pData,
-  int nFirst,
-  int nLast,
+  Datasource *pData, 
+  int nFirst, 
+  int nLast, 
   int nStep
 ){
   TestDb *pDb;
@@ -43,7 +43,7 @@ CksumDb *testCksumArrayNew(
   int rc = 0;
 
   assert( nLast>=nFirst && ((nLast-nFirst)%nStep)==0 );
-
+ 
   pRet = malloc(sizeof(CksumDb));
   memset(pRet, 0, sizeof(CksumDb));
   pRet->nFirst = nFirst;
@@ -92,7 +92,7 @@ void testCksumArrayFree(CksumDb *p){
 **************************************************************************/
 
 /*
-** Test utility function. Write key-value pair $i from datasource pData
+** Test utility function. Write key-value pair $i from datasource pData 
 ** into database pDb.
 */
 void testWriteDatasource(TestDb *pDb, Datasource *pData, int i, int *pRc){
@@ -141,8 +141,8 @@ void testDeleteDatasourceRange(
   }
 }
 
-static char *getName(const char *zSystem){
-  char *zRet;
+static char *getName(const char *zSystem){ 
+  char *zRet; 
   zRet = testMallocPrintf("rollback.%s", zSystem);
   return zRet;
 }
@@ -215,8 +215,8 @@ static int rollback_test_1(
 }
 
 void test_rollback(
-  const char *zSystem,
-  const char *zPattern,
+  const char *zSystem, 
+  const char *zPattern, 
   int *pRc
 ){
   if( *pRc==0 ){

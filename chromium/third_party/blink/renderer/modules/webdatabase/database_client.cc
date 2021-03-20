@@ -41,7 +41,7 @@ namespace blink {
 
 DatabaseClient::DatabaseClient() : inspector_agent_(nullptr) {}
 
-void DatabaseClient::Trace(blink::Visitor* visitor) {
+void DatabaseClient::Trace(Visitor* visitor) {
   visitor->Trace(inspector_agent_);
   Supplement<Page>::Trace(visitor);
 }
@@ -51,19 +51,16 @@ DatabaseClient* DatabaseClient::FromPage(Page* page) {
 }
 
 DatabaseClient* DatabaseClient::From(ExecutionContext* context) {
-  return DatabaseClient::FromPage(To<Document>(context)->GetPage());
+  return DatabaseClient::FromPage(Document::From(context)->GetPage());
 }
 
 const char DatabaseClient::kSupplementName[] = "DatabaseClient";
 
-bool DatabaseClient::AllowDatabase(ExecutionContext* context,
-                                   const String& name,
-                                   const String& display_name,
-                                   unsigned estimated_size) {
+bool DatabaseClient::AllowDatabase(ExecutionContext* context) {
   DCHECK(context->IsContextThread());
-  Document* document = To<Document>(context);
+  Document* document = Document::From(context);
   if (auto* client = document->GetFrame()->GetContentSettingsClient())
-    return client->AllowDatabase(name, display_name, estimated_size);
+    return client->AllowDatabase();
   return true;
 }
 

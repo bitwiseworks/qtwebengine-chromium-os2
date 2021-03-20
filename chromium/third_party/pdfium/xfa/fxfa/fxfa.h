@@ -9,18 +9,18 @@
 
 #include <memory>
 
+#include "core/fxcrt/cfx_timer.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxge/fx_dib.h"
 #include "xfa/fxfa/fxfa_basic.h"
 
-class CFXJSE_Value;
 class CXFA_FFDoc;
 class CXFA_FFPageView;
 class CXFA_FFWidget;
 class CXFA_Submit;
-class IFWL_AdapterTimerMgr;
 class IFX_SeekableReadStream;
+class IJS_Runtime;
 
 // Note, values must match fpdf_formfill.h JSPLATFORM_ALERT_BUTTON_* flags.
 enum class AlertButton {
@@ -68,13 +68,12 @@ enum class FormType {
 #define XFA_PAGEVIEWEVENT_PostRemoved 3
 #define XFA_PAGEVIEWEVENT_StopLayout 4
 
-#define XFA_EVENTERROR_Success 1
-#define XFA_EVENTERROR_Error -1
-#define XFA_EVENTERROR_NotExist 0
-#define XFA_EVENTERROR_Disabled 2
-
-#define XFA_TRAVERSEWAY_Tranvalse 0x0001
-#define XFA_TRAVERSEWAY_Form 0x0002
+enum class XFA_EventError {
+  kError = -1,
+  kNotExist = 0,
+  kSuccess = 1,
+  kDisabled = 2,
+};
 
 enum XFA_WidgetStatus {
   XFA_WidgetStatus_None = 0,
@@ -83,36 +82,11 @@ enum XFA_WidgetStatus {
   XFA_WidgetStatus_ButtonDown = 1 << 1,
   XFA_WidgetStatus_Disabled = 1 << 2,
   XFA_WidgetStatus_Focused = 1 << 3,
-  XFA_WidgetStatus_Highlight = 1 << 4,
-  XFA_WidgetStatus_Printable = 1 << 5,
-  XFA_WidgetStatus_RectCached = 1 << 6,
-  XFA_WidgetStatus_TextEditValueChanged = 1 << 7,
-  XFA_WidgetStatus_Viewable = 1 << 8,
-  XFA_WidgetStatus_Visible = 1 << 9
-};
-
-enum XFA_WIDGETTYPE {
-  XFA_WIDGETTYPE_Barcode,
-  XFA_WIDGETTYPE_PushButton,
-  XFA_WIDGETTYPE_CheckButton,
-  XFA_WIDGETTYPE_RadioButton,
-  XFA_WIDGETTYPE_DatetimeEdit,
-  XFA_WIDGETTYPE_DecimalField,
-  XFA_WIDGETTYPE_NumericField,
-  XFA_WIDGETTYPE_Signature,
-  XFA_WIDGETTYPE_TextEdit,
-  XFA_WIDGETTYPE_DropdownList,
-  XFA_WIDGETTYPE_ListBox,
-  XFA_WIDGETTYPE_ImageField,
-  XFA_WIDGETTYPE_PasswordEdit,
-  XFA_WIDGETTYPE_Arc,
-  XFA_WIDGETTYPE_Rectangle,
-  XFA_WIDGETTYPE_Image,
-  XFA_WIDGETTYPE_Line,
-  XFA_WIDGETTYPE_Text,
-  XFA_WIDGETTYPE_ExcludeGroup,
-  XFA_WIDGETTYPE_Subform,
-  XFA_WIDGETTYPE_Unknown,
+  XFA_WidgetStatus_Printable = 1 << 4,
+  XFA_WidgetStatus_RectCached = 1 << 5,
+  XFA_WidgetStatus_TextEditValueChanged = 1 << 6,
+  XFA_WidgetStatus_Viewable = 1 << 7,
+  XFA_WidgetStatus_Visible = 1 << 8
 };
 
 // Probably should be called IXFA_AppDelegate.
@@ -216,7 +190,7 @@ class IXFA_AppProvider {
                              const WideString& wsData,
                              const WideString& wsEncode) = 0;
 
-  virtual std::unique_ptr<IFWL_AdapterTimerMgr> NewTimerMgr() = 0;
+  virtual TimerHandlerIface* GetTimerHandler() const = 0;
 };
 
 class IXFA_DocEnvironment {
@@ -226,19 +200,23 @@ class IXFA_DocEnvironment {
   virtual void SetChangeMark(CXFA_FFDoc* hDoc) = 0;
   virtual void InvalidateRect(CXFA_FFPageView* pPageView,
                               const CFX_RectF& rt) = 0;
+  // Show or hide caret.
   virtual void DisplayCaret(CXFA_FFWidget* hWidget,
                             bool bVisible,
                             const CFX_RectF* pRtAnchor) = 0;
+
   virtual bool GetPopupPos(CXFA_FFWidget* hWidget,
                            float fMinPopup,
                            float fMaxPopup,
                            const CFX_RectF& rtAnchor,
                            CFX_RectF* pPopupRect) = 0;
-  virtual bool PopupMenu(CXFA_FFWidget* hWidget, CFX_PointF ptPopup) = 0;
+  virtual bool PopupMenu(CXFA_FFWidget* hWidget, const CFX_PointF& ptPopup) = 0;
+
+  // Specify dwFlags XFA_PAGEVIEWEVENT_Added, XFA_PAGEVIEWEVENT_Removing
   virtual void PageViewEvent(CXFA_FFPageView* pPageView, uint32_t dwFlags) = 0;
+
   virtual void WidgetPostAdd(CXFA_FFWidget* hWidget) = 0;
   virtual void WidgetPreRemove(CXFA_FFWidget* hWidget) = 0;
-
   virtual int32_t CountPages(CXFA_FFDoc* hDoc) = 0;
   virtual int32_t GetCurrentPage(CXFA_FFDoc* hDoc) = 0;
   virtual void SetCurrentPage(CXFA_FFDoc* hDoc, int32_t iCurPage) = 0;
@@ -258,20 +236,14 @@ class IXFA_DocEnvironment {
                      int32_t nEndPage,
                      uint32_t dwOptions) = 0;
   virtual FX_ARGB GetHighlightColor(CXFA_FFDoc* hDoc) = 0;
+  virtual IJS_Runtime* GetIJSRuntime(CXFA_FFDoc* hDoc) const = 0;
+  virtual RetainPtr<IFX_SeekableReadStream> OpenLinkedFile(
+      CXFA_FFDoc* hDoc,
+      const WideString& wsLink) = 0;
 
 #ifdef PDF_XFA_ELEMENT_SUBMIT_ENABLED
   virtual bool Submit(CXFA_FFDoc* hDoc, CXFA_Submit* submit) = 0;
 #endif  // PDF_XFA_ELEMENT_SUBMIT_ENABLED
-
-  virtual bool GetPropertyFromNonXFAGlobalObject(CXFA_FFDoc* hDoc,
-                                                 ByteStringView szPropName,
-                                                 CFXJSE_Value* pValue) = 0;
-  virtual bool SetPropertyInNonXFAGlobalObject(CXFA_FFDoc* hDoc,
-                                               ByteStringView szPropName,
-                                               CFXJSE_Value* pValue) = 0;
-  virtual RetainPtr<IFX_SeekableReadStream> OpenLinkedFile(
-      CXFA_FFDoc* hDoc,
-      const WideString& wsLink) = 0;
 };
 
 class IXFA_WidgetIterator {

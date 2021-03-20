@@ -50,8 +50,9 @@ union HandleUnion {
   handle<data_pipe_consumer> f_data_pipe_consumer;
   handle<data_pipe_producer> f_data_pipe_producer;
   handle<shared_buffer> f_shared_buffer;
-  SmallCache f_small_cache;
-  SmallCache& f_small_cache_request;
+  handle<platform> f_platform;
+  pending_remote<SmallCache> f_small_cache;
+  pending_receiver<SmallCache> f_small_cache_receiver;
 };
 
 struct WrapperStruct {

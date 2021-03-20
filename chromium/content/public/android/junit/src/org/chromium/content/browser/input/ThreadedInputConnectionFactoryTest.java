@@ -33,6 +33,7 @@ import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.util.ReflectionHelpers;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -45,7 +46,7 @@ import java.util.concurrent.Callable;
  * Unit tests for {@ThreadedInputConnectionFactory}.
  */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.LOLLIPOP)
+@Config(manifest = Config.NONE)
 public class ThreadedInputConnectionFactoryTest {
     /**
      * A testable version of ThreadedInputConnectionFactory.
@@ -63,11 +64,6 @@ public class ThreadedInputConnectionFactoryTest {
         protected ThreadedInputConnectionProxyView createProxyView(Handler handler,
                 View containerView) {
             return mProxyView;
-        }
-
-        @Override
-        protected InputMethodUma createInputMethodUma() {
-            return null;
         }
 
         @Override
@@ -116,7 +112,13 @@ public class ThreadedInputConnectionFactoryTest {
     private boolean mHasWindowFocus;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
+        // ThreadedInputConnectionFactory#initializeAndGet() logic is activated under N, so pretend
+        // that we're in L. Note that this is to workaround crbug.com/944476 that
+        // @Config(..., sdk = Build.VERSION_CODES.LOLLIPOP) doesn't work.
+        ReflectionHelpers.setStaticField(
+                Build.VERSION.class, "SDK_INT", Build.VERSION_CODES.LOLLIPOP);
+
         MockitoAnnotations.initMocks(this);
 
         mEditorInfo = new EditorInfo();
@@ -127,7 +129,7 @@ public class ThreadedInputConnectionFactoryTest {
         mImeAdapter = Mockito.mock(ImeAdapterImpl.class);
         mInputMethodManager = Mockito.mock(InputMethodManager.class);
 
-        mFactory = new TestFactory(new InputMethodManagerWrapperImpl(mContext));
+        mFactory = new TestFactory(new InputMethodManagerWrapperImpl(mContext, null, null));
         mFactory.onWindowFocusChanged(true);
         mImeHandler = mFactory.getHandler();
         mImeShadowLooper = (ShadowLooper) Shadow.extract(mImeHandler.getLooper());
@@ -145,9 +147,9 @@ public class ThreadedInputConnectionFactoryTest {
         when(mProxyView.getHandler()).thenReturn(mImeHandler);
         final Callable<InputConnection> callable = new Callable<InputConnection>() {
             @Override
-            public InputConnection call() throws Exception {
+            public InputConnection call() {
                 return mFactory.initializeAndGet(
-                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, mEditorInfo);
+                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, 0, mEditorInfo);
             }
         };
         when(mProxyView.onCreateInputConnection(any(EditorInfo.class)))
@@ -163,7 +165,7 @@ public class ThreadedInputConnectionFactoryTest {
             private int mCount;
 
             @Override
-            public Boolean answer(InvocationOnMock invocation) throws Throwable {
+            public Boolean answer(InvocationOnMock invocation) {
                 mCount++;
                 // To simplify IMM's behavior, let's say that it succeeds input method activation
                 // only when the view has a window focus.
@@ -177,7 +179,7 @@ public class ThreadedInputConnectionFactoryTest {
         });
         when(mInputMethodManager.isActive(mProxyView)).thenAnswer(new Answer<Boolean>() {
             @Override
-            public Boolean answer(InvocationOnMock invocation) throws Throwable {
+            public Boolean answer(InvocationOnMock invocation) {
                 return mInputConnection != null;
             }
         });
@@ -190,7 +192,7 @@ public class ThreadedInputConnectionFactoryTest {
             @Override
             public void run() {
                 assertNull(mFactory.initializeAndGet(
-                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, mEditorInfo));
+                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, 0, mEditorInfo));
             }
         });
     }

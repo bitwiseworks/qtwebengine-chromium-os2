@@ -453,9 +453,11 @@ class UnitTest(unittest.TestCase):
     self.assertEqual(files, [
         '../../.vpython',
         '../../testing/test_env.py',
+        '../../tools_webrtc/flags_compatibility.py',
         'base_unittests',
     ])
     self.assertEqual(command, [
+        '../../tools_webrtc/flags_compatibility.py',
         '../../testing/test_env.py',
         './base_unittests',
         '--asan=0',
@@ -758,16 +760,11 @@ class UnitTest(unittest.TestCase):
       '/fake_src/out/Default/base_unittests.runtime_deps': (
           "base_unittests\n"
       ),
+      'out/Default/base_unittests.archive.json': (
+          "{\"base_unittests\":\"fake_hash\"}"),
     }
 
-    def run_stub(cmd, **_kwargs):
-      if 'isolate.py' in cmd[1]:
-        return 0, 'fake_hash base_unittests', ''
-      else:
-        return 0, '', ''
-
     mbw = self.fake_mbw(files=files)
-    mbw.Run = run_stub
     self.check(['run', '-s', '-c', 'debug_goma', '//out/Default',
                 'base_unittests'], mbw=mbw, ret=0)
     self.check(['run', '-s', '-c', 'debug_goma', '-d', 'os', 'Win7',
@@ -775,6 +772,11 @@ class UnitTest(unittest.TestCase):
 
   def test_lookup(self):
     self.check(['lookup', '-c', 'debug_goma'], ret=0)
+
+  def test_quiet_lookup(self):
+    self.check(['lookup', '-c', 'debug_goma', '--quiet'], ret=0,
+               out=('is_debug = true\n'
+                    'use_goma = true\n'))
 
   def test_lookup_goma_dir_expansion(self):
     self.check(['lookup', '-c', 'rel_bot', '-g', '/foo'], ret=0,

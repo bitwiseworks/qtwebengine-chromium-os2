@@ -5,11 +5,11 @@
  * found in the LICENSE file.
  */
 
-#include "SkSGPath.h"
+#include "modules/sksg/include/SkSGPath.h"
 
-#include "SkCanvas.h"
-#include "SkPaint.h"
-#include "SkRectPriv.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkPaint.h"
+#include "src/core/SkRectPriv.h"
 
 namespace sksg {
 
@@ -23,11 +23,15 @@ void Path::onDraw(SkCanvas* canvas, const SkPaint& paint) const {
     canvas->drawPath(fPath, paint);
 }
 
+bool Path::onContains(const SkPoint& p) const {
+    return fPath.contains(p.x(), p.y());
+}
+
 SkRect Path::onRevalidate(InvalidationController*, const SkMatrix&) {
     SkASSERT(this->hasInval());
 
     const auto ft = fPath.getFillType();
-    return (ft == SkPath::kWinding_FillType || ft == SkPath::kEvenOdd_FillType)
+    return (ft == SkPathFillType::kWinding || ft == SkPathFillType::kEvenOdd)
         // "Containing" fills have finite bounds.
         ? fPath.computeTightBounds()
         // Inverse fills are "infinite".

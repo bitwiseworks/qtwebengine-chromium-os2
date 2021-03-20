@@ -4,6 +4,10 @@
 
 #include "ui/ozone/demo/window_manager.h"
 
+#include <memory>
+#include <utility>
+
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/display/types/display_snapshot.h"
@@ -65,8 +69,8 @@ void WindowManager::OnConfigurationChanged() {
   }
 
   is_configuring_ = true;
-  delegate_->GetDisplays(base::BindRepeating(&WindowManager::OnDisplaysAquired,
-                                             base::Unretained(this)));
+  delegate_->GetDisplays(base::BindOnce(&WindowManager::OnDisplaysAquired,
+                                        base::Unretained(this)));
 }
 
 void WindowManager::OnDisplaySnapshotsInvalidated() {}

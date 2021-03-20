@@ -7,60 +7,20 @@
 #include "cc/paint/display_item_list.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_chunks_to_cc_layer.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
+#include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
-#include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
-#include "third_party/blink/renderer/platform/graphics/paint/hit_test_display_item.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
-#include "third_party/skia/include/core/SkRegion.h"
 
 namespace blink {
 
 namespace {
-
-void ComputeChunkDerivedData(const DisplayItemList& display_items,
-                             PaintChunk& chunk) {
-  // This happens in tests testing paint chunks without display items.
-  if (!chunk.size())
-    return;
-
-  SkRegion known_to_be_opaque_region;
-  for (const DisplayItem& item : display_items.ItemsInPaintChunk(chunk)) {
-    chunk.bounds.Unite(item.VisualRect());
-    chunk.outset_for_raster_effects = std::max(chunk.outset_for_raster_effects,
-                                               item.OutsetForRasterEffects());
-
-    if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
-        item.IsDrawing()) {
-      const auto& drawing = static_cast<const DrawingDisplayItem&>(item);
-      if (drawing.GetPaintRecord() && drawing.KnownToBeOpaque()) {
-        known_to_be_opaque_region.op(
-            SkIRect(EnclosedIntRect(drawing.VisualRect())),
-            SkRegion::kUnion_Op);
-      }
-    }
-
-    if (RuntimeEnabledFeatures::PaintTouchActionRectsEnabled() &&
-        item.IsHitTest()) {
-      const auto& hit_test = static_cast<const HitTestDisplayItem&>(item);
-      if (!chunk.hit_test_data)
-        chunk.hit_test_data = std::make_unique<HitTestData>();
-      chunk.hit_test_data->Append(hit_test.GetHitTestRect());
-    }
-  }
-
-  if (known_to_be_opaque_region.contains(EnclosingIntRect(chunk.bounds)))
-    chunk.known_to_be_opaque = true;
-}
 
 // For PaintArtifact::AppendDebugDrawing().
 class DebugDrawingClient final : public DisplayItemClient {
  public:
   DebugDrawingClient() { Invalidate(PaintInvalidationReason::kUncacheable); }
   String DebugName() const final { return "DebugDrawing"; }
-  LayoutRect VisualRect() const final {
-    return LayoutRect(LayoutRect::InfiniteIntRect());
-  }
+  IntRect VisualRect() const final { return LayoutRect::InfiniteIntRect(); }
 };
 
 }  // namespace
@@ -70,8 +30,6 @@ PaintArtifact::PaintArtifact() : display_item_list_(0) {}
 PaintArtifact::PaintArtifact(DisplayItemList display_items,
                              Vector<PaintChunk> chunks)
     : display_item_list_(std::move(display_items)), chunks_(std::move(chunks)) {
-  for (auto& chunk : chunks_)
-    ComputeChunkDerivedData(display_item_list_, chunk);
 }
 
 PaintArtifact::~PaintArtifact() = default;
@@ -109,7 +67,8 @@ void PaintArtifact::AppendDebugDrawing(
   // Create a PaintChunk for the debug drawing.
   chunks_.emplace_back(display_item_list_.size() - 1, display_item_list_.size(),
                        display_item.GetId(), property_tree_state);
-  ComputeChunkDerivedData(display_item_list_, chunks_.back());
+  chunks_.back().bounds = chunks_.back().drawable_bounds =
+      display_item_list_.Last().VisualRect();
 }
 
 void PaintArtifact::Replay(GraphicsContext& graphics_context,
@@ -135,12 +94,23 @@ sk_sp<PaintRecord> PaintArtifact::GetPaintRecord(
       ->ReleaseAsRecord();
 }
 
+SkColor PaintArtifact::SafeOpaqueBackgroundColor(
+    const PaintChunkSubset& chunks) const {
+  // Find the background color from the first drawing display item.
+  for (const auto& chunk : chunks) {
+    for (const auto& item : display_item_list_.ItemsInPaintChunk(chunk)) {
+      if (item.IsDrawing() && item.DrawsContent())
+        return static_cast<const DrawingDisplayItem&>(item).BackgroundColor();
+    }
+  }
+  return SK_ColorTRANSPARENT;
+}
+
 void PaintArtifact::FinishCycle() {
-  // BlinkGenPropertyTrees uses PaintController::ClearPropertyTreeChangedStateTo
-  // for clearing the property tree changed state at the end of paint instead of
-  // in FinishCycle. See: LocalFrameView::RunPaintLifecyclePhase.
+  // Until CompositeAfterPaint, PaintController::ClearPropertyTreeChangedStateTo
+  // is used for clearing the property tree changed state at the end of paint
+  // instead of in FinishCycle. See: LocalFrameView::RunPaintLifecyclePhase.
   bool clear_property_tree_changed =
-      !RuntimeEnabledFeatures::BlinkGenPropertyTreesEnabled() ||
       RuntimeEnabledFeatures::CompositeAfterPaintEnabled();
   for (auto& chunk : chunks_) {
     chunk.client_is_just_created = false;

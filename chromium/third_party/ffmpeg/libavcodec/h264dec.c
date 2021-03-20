@@ -472,7 +472,7 @@ static void idr(H264Context *h)
     h->poc.prev_frame_num        =
     h->poc.prev_frame_num_offset = 0;
     h->poc.prev_poc_msb          = 1<<16;
-    h->poc.prev_poc_lsb          = 0;
+    h->poc.prev_poc_lsb          = -1;
     for (i = 0; i < MAX_DELAYED_PIC_COUNT; i++)
         h->last_pocs[i] = INT_MIN;
 }
@@ -620,8 +620,8 @@ static int decode_nal_units(H264Context *h, const uint8_t *buf, int buf_size)
             h->is_avc = 1;
     }
 
-    ret = ff_h2645_packet_split(&h->pkt, buf, buf_size, avctx, h->is_avc,
-                                h->nal_length_size, avctx->codec_id, avctx->flags2 & AV_CODEC_FLAG2_FAST);
+    ret = ff_h2645_packet_split(&h->pkt, buf, buf_size, avctx, h->is_avc, h->nal_length_size,
+                                avctx->codec_id, avctx->flags2 & AV_CODEC_FLAG2_FAST, 0);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR,
                "Error splitting the input into NAL units.\n");
@@ -759,6 +759,11 @@ static int decode_nal_units(H264Context *h, const uint8_t *buf, int buf_size)
     if (ret < 0 && (h->avctx->err_recognition & AV_EF_EXPLODE))
         goto end;
 
+    // set decode_error_flags to allow users to detect concealed decoding errors
+    if ((ret < 0 || h->slice_ctx->er.error_occurred) && h->cur_pic_ptr) {
+        h->cur_pic_ptr->f->decode_error_flags |= FF_DECODE_ERROR_DECODE_SLICES;
+    }
+
     ret = 0;
 end:
 
@@ -888,10 +893,14 @@ static int finalize_frame(H264Context *h, AVFrame *dst, H264Picture *out, int *g
             const uint8_t *src_data[4];
 
             av_log(h->avctx, AV_LOG_DEBUG, "Duplicating field %d to fill missing\n", field);
-
             for (p = 0; p<4; p++) {
-                dst_data[p] = f->data[p] + (field^1)*f->linesize[p];
-                src_data[p] = f->data[p] +  field   *f->linesize[p];
+                if(f->data[p] == NULL) {
+                    dst_data[p] = NULL;
+                    src_data[p] = NULL;
+                } else {
+                    dst_data[p] = f->data[p] + (field^1)*f->linesize[p];
+                    src_data[p] = f->data[p] +  field   *f->linesize[p];
+                }
                 linesizes[p] = 2*f->linesize[p];
             }
 

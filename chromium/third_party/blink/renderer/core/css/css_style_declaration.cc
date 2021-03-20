@@ -41,8 +41,8 @@
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/wtf/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -78,10 +78,11 @@ bool HasCSSPropertyNamePrefix(const AtomicString& property_name,
   return false;
 }
 
-CSSPropertyID ParseCSSPropertyID(const AtomicString& property_name) {
+CSSPropertyID ParseCSSPropertyID(const ExecutionContext* execution_context,
+                                 const AtomicString& property_name) {
   unsigned length = property_name.length();
   if (!length)
-    return CSSPropertyInvalid;
+    return CSSPropertyID::kInvalid;
 
   StringBuilder builder;
   builder.ReserveCapacity(length);
@@ -92,7 +93,7 @@ CSSPropertyID ParseCSSPropertyID(const AtomicString& property_name) {
   if (HasCSSPropertyNamePrefix(property_name, "webkit"))
     builder.Append('-');
   else if (IsASCIIUpper(property_name[0]))
-    return CSSPropertyInvalid;
+    return CSSPropertyID::kInvalid;
 
   bool has_seen_upper = IsASCIIUpper(property_name[i]);
 
@@ -114,10 +115,10 @@ CSSPropertyID ParseCSSPropertyID(const AtomicString& property_name) {
   // Reject names containing both dashes and upper-case characters, such as
   // "border-rightColor".
   if (has_seen_dash && has_seen_upper)
-    return CSSPropertyInvalid;
+    return CSSPropertyID::kInvalid;
 
   String prop_name = builder.ToString();
-  return unresolvedCSSPropertyID(prop_name);
+  return unresolvedCSSPropertyID(execution_context, prop_name);
 }
 
 // When getting properties on CSSStyleDeclarations, the name used from
@@ -129,49 +130,58 @@ CSSPropertyID ParseCSSPropertyID(const AtomicString& property_name) {
 // Example: 'backgroundPositionY' -> 'background-position-y'
 //
 // Also, certain prefixes such as 'css-' are stripped.
-CSSPropertyID CssPropertyInfo(const AtomicString& name) {
+CSSPropertyID CssPropertyInfo(const ExecutionContext* execution_context,
+                              const AtomicString& name) {
   typedef HashMap<String, CSSPropertyID> CSSPropertyIDMap;
   DEFINE_STATIC_LOCAL(CSSPropertyIDMap, map, ());
   CSSPropertyIDMap::iterator iter = map.find(name);
   if (iter != map.end())
     return iter->value;
 
-  CSSPropertyID unresolved_property = ParseCSSPropertyID(name);
-  if (unresolved_property == CSSPropertyVariable)
-    unresolved_property = CSSPropertyInvalid;
+  CSSPropertyID unresolved_property =
+      ParseCSSPropertyID(execution_context, name);
+  if (unresolved_property == CSSPropertyID::kVariable)
+    unresolved_property = CSSPropertyID::kInvalid;
   map.insert(name, unresolved_property);
-  DCHECK(
-      !unresolved_property ||
-      CSSProperty::Get(resolveCSSPropertyID(unresolved_property)).IsEnabled());
+  DCHECK(!isValidCSSPropertyID(unresolved_property) ||
+         CSSProperty::Get(resolveCSSPropertyID(unresolved_property))
+             .IsWebExposed(execution_context));
   return unresolved_property;
 }
 
 }  // namespace
 
+void CSSStyleDeclaration::Trace(Visitor* visitor) {
+  ExecutionContextClient::Trace(visitor);
+  ScriptWrappable::Trace(visitor);
+}
+
 String CSSStyleDeclaration::AnonymousNamedGetter(const AtomicString& name) {
   // Search the style declaration.
-  CSSPropertyID unresolved_property = CssPropertyInfo(name);
+  CSSPropertyID unresolved_property =
+      CssPropertyInfo(GetExecutionContext(), name);
 
   // Do not handle non-property names.
-  if (!unresolved_property)
+  if (!isValidCSSPropertyID(unresolved_property))
     return String();
 
   return GetPropertyValueInternal(resolveCSSPropertyID(unresolved_property));
 }
 
-bool CSSStyleDeclaration::AnonymousNamedSetter(ScriptState* script_state,
-                                               const AtomicString& name,
-                                               const String& value) {
+NamedPropertySetterResult CSSStyleDeclaration::AnonymousNamedSetter(
+    ScriptState* script_state,
+    const AtomicString& name,
+    const String& value) {
   const ExecutionContext* execution_context =
       ExecutionContext::From(script_state);
   if (!execution_context)
-    return false;
-  CSSPropertyID unresolved_property = CssPropertyInfo(name);
-  if (!unresolved_property)
-    return false;
+    return NamedPropertySetterResult::kDidNotIntercept;
+  CSSPropertyID unresolved_property = CssPropertyInfo(execution_context, name);
+  if (!isValidCSSPropertyID(unresolved_property))
+    return NamedPropertySetterResult::kDidNotIntercept;
   // We create the ExceptionState manually due to performance issues: adding
   // [RaisesException] to the IDL causes the bindings layer to expensively
-  // create a CString to set the ExceptionState's |property_name| argument,
+  // create a std::string to set the ExceptionState's |property_name| argument,
   // while we can use CSSProperty::GetPropertyName() here (see bug 829408).
   ExceptionState exception_state(
       script_state->GetIsolate(), ExceptionState::kSetterContext,
@@ -182,8 +192,8 @@ bool CSSStyleDeclaration::AnonymousNamedSetter(ScriptState* script_state,
                       execution_context->GetSecureContextMode(),
                       exception_state);
   if (exception_state.HadException())
-    return false;
-  return true;
+    return NamedPropertySetterResult::kIntercepted;
+  return NamedPropertySetterResult::kIntercepted;
 }
 
 void CSSStyleDeclaration::NamedPropertyEnumerator(Vector<String>& names,
@@ -191,29 +201,30 @@ void CSSStyleDeclaration::NamedPropertyEnumerator(Vector<String>& names,
   typedef Vector<String, numCSSProperties - 1> PreAllocatedPropertyVector;
   DEFINE_STATIC_LOCAL(PreAllocatedPropertyVector, property_names, ());
 
+  const ExecutionContext* execution_context = GetExecutionContext();
+
   if (property_names.IsEmpty()) {
-    for (int id = firstCSSProperty; id <= lastCSSProperty; ++id) {
-      CSSPropertyID property_id = static_cast<CSSPropertyID>(id);
+    for (CSSPropertyID property_id : CSSPropertyIDList()) {
       const CSSProperty& property_class =
           CSSProperty::Get(resolveCSSPropertyID(property_id));
-      if (property_class.IsEnabled())
+      if (property_class.IsWebExposed(execution_context))
         property_names.push_back(property_class.GetJSPropertyName());
     }
     for (CSSPropertyID property_id : kCSSPropertyAliasList) {
       const CSSUnresolvedProperty* property_class =
           CSSUnresolvedProperty::GetAliasProperty(property_id);
-      if (property_class->IsEnabled())
+      if (property_class->IsWebExposed(execution_context))
         property_names.push_back(property_class->GetJSPropertyName());
     }
     std::sort(property_names.begin(), property_names.end(),
-              WTF::CodePointCompareLessThan);
+              WTF::CodeUnitCompareLessThan);
   }
   names = property_names;
 }
 
 bool CSSStyleDeclaration::NamedPropertyQuery(const AtomicString& name,
                                              ExceptionState&) {
-  return CssPropertyInfo(name);
+  return isValidCSSPropertyID(CssPropertyInfo(GetExecutionContext(), name));
 }
 
 }  // namespace blink

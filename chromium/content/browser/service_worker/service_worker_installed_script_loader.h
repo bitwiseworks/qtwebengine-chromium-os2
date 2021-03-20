@@ -5,10 +5,10 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INSTALLED_SCRIPT_LOADER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INSTALLED_SCRIPT_LOADER_H_
 
-#include "content/browser/service_worker/service_worker_disk_cache.h"
 #include "content/browser/service_worker/service_worker_installed_script_reader.h"
 #include "content/common/content_export.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/data_pipe_drainer.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
@@ -16,9 +16,10 @@
 
 namespace content {
 
-// S13nServiceWorker: A URLLoader that loads an installed service worker script
-// for a service worker that doesn't have a
-// ServiceWorkerInstalledScriptsManager.
+class ServiceWorkerVersion;
+
+// A URLLoader that loads an installed service worker script for a service
+// worker that doesn't have a ServiceWorkerInstalledScriptsManager.
 //
 // Some cases where this happens:
 // - a new (non-installed) service worker requests a script that it already
@@ -33,19 +34,17 @@ class CONTENT_EXPORT ServiceWorkerInstalledScriptLoader
  public:
   ServiceWorkerInstalledScriptLoader(
       uint32_t options,
-      network::mojom::URLLoaderClientPtr client,
-      std::unique_ptr<ServiceWorkerResponseReader> response_reader);
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+      std::unique_ptr<ServiceWorkerResponseReader> response_reader,
+      scoped_refptr<ServiceWorkerVersion>
+          version_for_main_script_http_response_info,
+      const GURL& request_url);
   ~ServiceWorkerInstalledScriptLoader() override;
 
   // ServiceWorkerInstalledScriptReader::Client overrides:
-  void OnStarted(std::string encoding,
-                 base::flat_map<std::string, std::string> headers,
+  void OnStarted(scoped_refptr<HttpResponseInfoIOBuffer> http_info,
                  mojo::ScopedDataPipeConsumerHandle body_handle,
-                 uint64_t body_size,
-                 mojo::ScopedDataPipeConsumerHandle meta_data_handle,
-                 uint64_t meta_data_size) override;
-  void OnHttpInfoRead(
-      scoped_refptr<HttpResponseInfoIOBuffer> http_info) override;
+                 mojo::ScopedDataPipeConsumerHandle meta_data_handle) override;
   void OnFinished(
       ServiceWorkerInstalledScriptReader::FinishedReason reason) override;
 
@@ -53,7 +52,6 @@ class CONTENT_EXPORT ServiceWorkerInstalledScriptLoader
   void FollowRedirect(const std::vector<std::string>& removed_headers,
                       const net::HttpRequestHeaders& modified_headers,
                       const base::Optional<GURL>& new_url) override;
-  void ProceedWithResponse() override;
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override;
   void PauseReadingBodyFromNet() override;
@@ -66,7 +64,9 @@ class CONTENT_EXPORT ServiceWorkerInstalledScriptLoader
   void OnDataComplete() override {}
 
   uint32_t options_ = network::mojom::kURLLoadOptionNone;
-  network::mojom::URLLoaderClientPtr client_;
+  mojo::Remote<network::mojom::URLLoaderClient> client_;
+  scoped_refptr<ServiceWorkerVersion>
+      version_for_main_script_http_response_info_;
   base::TimeTicks request_start_;
   std::unique_ptr<ServiceWorkerInstalledScriptReader> reader_;
 

@@ -6,14 +6,13 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PRESENTATION_PRESENTATION_AVAILABILITY_STATE_H_
 
 #include <memory>
-#include <set>
-#include <vector>
 
 #include "base/macros.h"
 #include "third_party/blink/public/mojom/presentation/presentation.mojom-blink.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_availability_callbacks.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -29,8 +28,8 @@ class PresentationAvailabilityObserver;
 // TODO(crbug.com/780109): Improve encapsulation of PresentationAvailability and
 // this class by moving the multiple URL tracking logic to the former, and
 // consolidating this class's APIs to take repeating callbacks.
-class MODULES_EXPORT PresentationAvailabilityState
-    : public GarbageCollectedFinalized<PresentationAvailabilityState> {
+class MODULES_EXPORT PresentationAvailabilityState final
+    : public GarbageCollected<PresentationAvailabilityState> {
  public:
   explicit PresentationAvailabilityState(mojom::blink::PresentationService*);
   ~PresentationAvailabilityState();
@@ -49,7 +48,7 @@ class MODULES_EXPORT PresentationAvailabilityState
   // callbacks and observers.
   void UpdateAvailability(const KURL&, mojom::blink::ScreenAvailability);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   enum class ListeningState {
@@ -61,8 +60,8 @@ class MODULES_EXPORT PresentationAvailabilityState
   // Tracks listeners of presentation displays availability for
   // |availability_urls|. Shared with PresentationRequest objects with the same
   // set of URLs.
-  class AvailabilityListener
-      : public GarbageCollectedFinalized<AvailabilityListener> {
+  class AvailabilityListener final
+      : public GarbageCollected<AvailabilityListener> {
    public:
     explicit AvailabilityListener(const Vector<KURL>& availability_urls);
     ~AvailabilityListener();
@@ -72,7 +71,7 @@ class MODULES_EXPORT PresentationAvailabilityState
         availability_callbacks;
     HeapVector<Member<PresentationAvailabilityObserver>> availability_observers;
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
 
    private:
     DISALLOW_COPY_AND_ASSIGN(AvailabilityListener);
@@ -119,7 +118,7 @@ class MODULES_EXPORT PresentationAvailabilityState
   ListeningStatus* GetListeningStatus(const KURL&) const;
 
   // ListeningStatus for known URLs.
-  std::vector<std::unique_ptr<ListeningStatus>> availability_listening_status_;
+  Vector<std::unique_ptr<ListeningStatus>> availability_listening_status_;
 
   // Set of AvailabilityListener for known PresentationRequests.
   HeapVector<Member<AvailabilityListener>> availability_listeners_;

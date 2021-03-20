@@ -7,26 +7,14 @@
 
 #include <memory>
 
-#include "third_party/blink/public/platform/web_rtc_stats.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_stats_report.h"
+#include "third_party/blink/renderer/platform/peerconnection/rtc_stats.h"
 
 namespace blink {
 
-class WebRTCStatsReportCallbackResolver : public WebRTCStatsReportCallback {
- public:
-  // Takes ownership of |resolver|.
-  static std::unique_ptr<WebRTCStatsReportCallback> Create(
-      ScriptPromiseResolver*);
-  ~WebRTCStatsReportCallbackResolver() override;
-
- private:
-  explicit WebRTCStatsReportCallbackResolver(ScriptPromiseResolver*);
-
-  void OnStatsDelivered(std::unique_ptr<WebRTCStatsReport>) override;
-
-  Persistent<ScriptPromiseResolver> resolver_;
-};
+void WebRTCStatsReportCallbackResolver(ScriptPromiseResolver*,
+                                       std::unique_ptr<RTCStatsReportPlatform>);
 
 }  // namespace blink
 

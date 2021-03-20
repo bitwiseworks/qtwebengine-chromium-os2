@@ -11,16 +11,15 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/sequence_checker.h"
 #include "base/time/tick_clock.h"
+#include "base/timer/timer.h"
 #include "base/token.h"
 #include "base/values.h"
 #include "components/cast_channel/cast_message_util.h"
 #include "components/cast_channel/cast_socket.h"
-
-namespace service_manager {
-class Connector;
-}
+#include "services/data_decoder/public/cpp/data_decoder.h"
 
 namespace cast_channel {
 
@@ -99,10 +98,18 @@ struct VirtualConnection {
 };
 
 struct InternalMessage {
-  InternalMessage(CastMessageType type, base::Value message);
+  InternalMessage(CastMessageType type,
+                  const std::string& message_namespace,
+                  base::Value message);
   ~InternalMessage();
 
   CastMessageType type;
+  // TODO(jrw): This field is only needed to communicate the namespace
+  // information from CastMessageHandler::OnMessage to
+  // MirroringActivityRecord::OnInternalMessage.  Maybe there's a better way?
+  // One possibility is to derive namespace when it's needed based on the
+  // context and/or message type.
+  std::string message_namespace;
   base::Value message;
 };
 
@@ -125,12 +132,13 @@ class CastMessageHandler : public CastSocket::Observer {
                                    const InternalMessage& message) {}
   };
 
-  // |connector|: Connector to be used for data_decoder service. The connector
-  // must not be bound to any thread.
-  // |data_decoder_batch_id|: Batch ID used for data_decoder service.
+  // |parse_json|: A callback which can be used to parse a string of potentially
+  // unsafe JSON data.
+  using ParseJsonCallback = base::RepeatingCallback<void(
+      const std::string& string,
+      data_decoder::DataDecoder::ValueParseCallback callback)>;
   CastMessageHandler(CastSocketService* socket_service,
-                     std::unique_ptr<service_manager::Connector> connector,
-                     const base::Token& data_decoder_batch_id,
+                     ParseJsonCallback parse_json,
                      const std::string& user_agent,
                      const std::string& browser_version,
                      const std::string& locale);
@@ -144,6 +152,13 @@ class CastMessageHandler : public CastSocket::Observer {
   virtual void EnsureConnection(int channel_id,
                                 const std::string& source_id,
                                 const std::string& destination_id);
+
+  // Closes any virtual connection on (|source_id|, |destination_id|) on the
+  // device given by |channel_id|, sending a virtual connection close request to
+  // the device if necessary.
+  virtual void CloseConnection(int channel_id,
+                               const std::string& source_id,
+                               const std::string& destination_id);
 
   // Sends an app availability for |app_id| to the device given by |socket|.
   // |callback| is always invoked asynchronously, and will be invoked when a
@@ -175,7 +190,21 @@ class CastMessageHandler : public CastSocket::Observer {
   // request.
   virtual void StopSession(int channel_id,
                            const std::string& session_id,
+                           const base::Optional<std::string>& client_id,
                            ResultCallback callback);
+
+  // Sends |message| to the device given by |channel_id|. The caller may use
+  // this method to forward app messages from the SDK client to the device.
+  //
+  // TODO(jrw): Could this be merged with SendAppMessage()?  Note from mfoltz:
+  //
+  // The two differences between an app message and a protocol message:
+  // - app message has a sender ID that comes from the clientId of the SDK
+  // - app message has a custom (non-Cast) namespace
+  //
+  // So if you added senderId to CastMessage, it seems like you could have one
+  // method for both.
+  virtual Result SendCastMessage(int channel_id, const CastMessage& message);
 
   // Sends |message| to the device given by |channel_id|. The caller may use
   // this method to forward app messages from the SDK client to the device. It
@@ -203,10 +232,10 @@ class CastMessageHandler : public CastSocket::Observer {
   // Sends a set system volume command |body|. |callback| will be invoked
   // with the result of the operation. It is invalid to call this with
   // a message body that is not a volume request.
-  virtual Result SendSetVolumeRequest(int channel_id,
-                                      const base::Value& body,
-                                      const std::string& source_id,
-                                      ResultCallback callback);
+  virtual void SendSetVolumeRequest(int channel_id,
+                                    const base::Value& body,
+                                    const std::string& source_id,
+                                    ResultCallback callback);
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -263,7 +292,7 @@ class CastMessageHandler : public CastSocket::Observer {
 
   // Sends |message| over |socket|. This also ensures the necessary virtual
   // connection exists before sending the message.
-  void SendCastMessage(CastSocket* socket, const CastMessage& message);
+  void SendCastMessageToSocket(CastSocket* socket, const CastMessage& message);
 
   // Sends a virtual connection request to |socket| if the virtual connection
   // for (|source_id|, |destination_id|) does not yet exist.
@@ -274,10 +303,12 @@ class CastMessageHandler : public CastSocket::Observer {
   // Callback for CastTransport::SendMessage.
   void OnMessageSent(int result);
 
-  void HandleCastInternalMessage(int channel_id,
-                                 const std::string& source_id,
-                                 const std::string& destination_id,
-                                 std::unique_ptr<base::Value> payload);
+  void HandleCastInternalMessage(
+      int channel_id,
+      const std::string& source_id,
+      const std::string& destination_id,
+      const std::string& namespace_,
+      data_decoder::DataDecoder::ValueOrError parse_result);
 
   // Set of pending requests keyed by socket ID.
   base::flat_map<int, std::unique_ptr<PendingRequests>> pending_requests_;
@@ -287,8 +318,7 @@ class CastMessageHandler : public CastSocket::Observer {
   const std::string sender_id_;
 
   // Used for parsing JSON payload from receivers.
-  std::unique_ptr<service_manager::Connector> connector_;
-  const base::Token data_decoder_batch_id_;
+  ParseJsonCallback parse_json_;
 
   // User agent and browser version strings included in virtual connection
   // messages.
@@ -311,7 +341,7 @@ class CastMessageHandler : public CastSocket::Observer {
   const base::TickClock* const clock_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<CastMessageHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<CastMessageHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastMessageHandler);
 };

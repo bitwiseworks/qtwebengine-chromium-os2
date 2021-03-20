@@ -10,14 +10,17 @@
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/workers/threaded_object_proxy_base.h"
+#include "third_party/blink/renderer/core/workers/threaded_worklet_object_proxy.h"
 #include "third_party/blink/renderer/core/workers/worker_reporting_proxy.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
 
 class ThreadedWorkletMessagingProxy;
 class WorkletPendingTasks;
 class WorkerThread;
+class WorkerResourceTimingNotifier;
 struct CrossThreadFetchClientSettingsObjectData;
 
 // A proxy to talk to the parent worker object. See class comments on
@@ -36,9 +39,10 @@ class CORE_EXPORT ThreadedWorkletObjectProxy : public ThreadedObjectProxyBase {
 
   void FetchAndInvokeScript(
       const KURL& module_url_record,
-      network::mojom::FetchCredentialsMode,
+      network::mojom::CredentialsMode,
       std::unique_ptr<CrossThreadFetchClientSettingsObjectData>
           outside_settings_object,
+      WorkerResourceTimingNotifier* outside_resource_timing_notifier,
       scoped_refptr<base::SingleThreadTaskRunner> outside_settings_task_runner,
       WorkletPendingTasks*,
       WorkerThread*);

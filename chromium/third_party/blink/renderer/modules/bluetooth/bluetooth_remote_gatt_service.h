@@ -6,7 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BLUETOOTH_BLUETOOTH_REMOTE_GATT_SERVICE_H_
 
 #include <memory>
-#include "third_party/blink/public/platform/modules/bluetooth/web_bluetooth.mojom-blink.h"
+#include "third_party/blink/public/mojom/bluetooth/web_bluetooth.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/modules/v8/string_or_unsigned_long.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_device.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
@@ -16,6 +16,7 @@
 
 namespace blink {
 
+class ExceptionState;
 class ScriptPromise;
 class ScriptState;
 
@@ -37,7 +38,7 @@ class BluetoothRemoteGATTService final : public ScriptWrappable {
                              BluetoothDevice*);
 
   // Interface required by garbage collection.
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // IDL exposed interface:
   String uuid() { return service_->uuid; }
@@ -64,6 +65,7 @@ class BluetoothRemoteGATTService final : public ScriptWrappable {
 
   ScriptPromise GetCharacteristicsImpl(
       ScriptState*,
+      ExceptionState&,
       mojom::blink::WebBluetoothGATTQueryQuantity,
       const String& characteristic_uuid = String());
 

@@ -27,6 +27,11 @@ class RenderWidget;
 // content/browser/renderer_host/text_input_client_mac.h for more information.
 class TextInputClientObserver : public IPC::Listener, public IPC::Sender {
  public:
+  // Pass a null RenderWidget when the TextInputClientObserver is for a
+  // RenderWidget not associated with a RenderFrame. The TextInputClientObserver
+  // expects that the RenderWidget's WebWidget will always be a WebFrameWidget.
+  // When given a null, the TextInputClientObserver can still reply to IPC
+  // messages with empty results.
   explicit TextInputClientObserver(RenderWidget* render_widget);
   ~TextInputClientObserver() override;
 
@@ -37,7 +42,7 @@ class TextInputClientObserver : public IPC::Listener, public IPC::Sender {
   bool Send(IPC::Message* message) override;
 
  private:
-  // The render widget corresponding to this TextInputClientObserver.
+  // The WebFrameWidget corresponding to this TextInputClientObserver.
   blink::WebFrameWidget* GetWebFrameWidget() const;
 
   blink::WebLocalFrame* GetFocusedFrame() const;

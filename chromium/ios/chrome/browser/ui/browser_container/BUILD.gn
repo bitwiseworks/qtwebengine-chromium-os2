@@ -13,7 +13,10 @@ source_set("browser_container") {
   deps = [
     ":ui",
     "//base",
+    "//ios/chrome/browser/main",
+    "//ios/chrome/browser/overlays",
     "//ios/chrome/browser/ui/coordinators:chrome_coordinators",
+    "//ios/chrome/browser/ui/overlays",
   ]
 }
 
@@ -28,7 +31,6 @@ source_set("ui") {
   deps = [
     "//base",
     "//ios/chrome/browser/ui/dialogs:feature_flags",
-    "//ios/chrome/browser/ui/fullscreen:ui",
     "//ios/chrome/browser/ui/util",
   ]
 }
@@ -36,15 +38,12 @@ source_set("ui") {
 source_set("unit_tests") {
   testonly = true
 
-  sources = [
-    "browser_container_view_controller_unittest.mm",
-  ]
+  sources = [ "browser_container_view_controller_unittest.mm" ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
 
   deps = [
     ":ui",
-    "//base",
     "//testing/gtest",
   ]
 }

@@ -12,25 +12,25 @@ source_set("bluetooth_internals") {
     "bluetooth_internals_ui.h",
   ]
 
-  public_deps = [
-    "//device/bluetooth:deprecated_experimental_mojo",
-  ]
+  public_deps = [ "//device/bluetooth:deprecated_experimental_mojo" ]
 
   deps = [
     ":mojo_bindings",
+    "//chrome/browser/resources/bluetooth_internals:resources",
     "//chrome/common",
     "//content/public/browser",
     "//device/bluetooth",
     "//ui/webui",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//chrome/browser/chromeos" ]
+  }
 }
 
 mojom("mojo_bindings") {
-  sources = [
-    "bluetooth_internals.mojom",
-  ]
+  sources = [ "bluetooth_internals.mojom" ]
 
-  deps = [
-    "//device/bluetooth/public/mojom:deprecated_experimental_interfaces",
-  ]
+  deps =
+      [ "//device/bluetooth/public/mojom:deprecated_experimental_interfaces" ]
 }

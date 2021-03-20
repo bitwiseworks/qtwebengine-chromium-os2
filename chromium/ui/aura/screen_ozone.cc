@@ -4,15 +4,24 @@
 
 #include "ui/aura/screen_ozone.h"
 
+#include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/ozone/public/ozone_platform.h"
+#include "ui/ozone/public/platform_screen.h"
 
 namespace aura {
 
-ScreenOzone::ScreenOzone(std::unique_ptr<ui::PlatformScreen> platform_screen)
-    : platform_screen_(std::move(platform_screen)) {}
+ScreenOzone::ScreenOzone() {
+  platform_screen_ = ui::OzonePlatform::GetInstance()->CreateScreen();
+  if (!platform_screen_) {
+    NOTREACHED()
+        << "PlatformScreen is not implemented for this ozone platform.";
+  }
+}
+
 ScreenOzone::~ScreenOzone() = default;
 
 gfx::Point ScreenOzone::GetCursorScreenPoint() {
@@ -30,7 +39,18 @@ gfx::NativeWindow ScreenOzone::GetWindowAtScreenPoint(const gfx::Point& point) {
 
   aura::WindowTreeHost* host =
       aura::WindowTreeHost::GetForAcceleratedWidget(widget);
-  return host ? host->window() : nullptr;
+  if (!host)
+    return nullptr;
+
+  gfx::NativeWindow window = host->window();
+  gfx::Point local_point = point;
+
+  aura::client::ScreenPositionClient* position_client =
+      aura::client::GetScreenPositionClient(window);
+  if (position_client)
+    position_client->ConvertPointFromScreen(window, &local_point);
+
+  return window->GetEventHandlerForPoint(local_point);
 }
 
 int ScreenOzone::GetNumDisplays() const {
@@ -75,6 +95,10 @@ void ScreenOzone::AddObserver(display::DisplayObserver* observer) {
 
 void ScreenOzone::RemoveObserver(display::DisplayObserver* observer) {
   platform_screen_->RemoveObserver(observer);
+}
+
+std::string ScreenOzone::GetCurrentWorkspace() {
+  return platform_screen_->GetCurrentWorkspace();
 }
 
 gfx::AcceleratedWidget ScreenOzone::GetAcceleratedWidgetForWindow(

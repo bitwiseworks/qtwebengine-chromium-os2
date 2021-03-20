@@ -7,6 +7,7 @@
 #ifndef CC_BASE_SWITCHES_H_
 #define CC_BASE_SWITCHES_H_
 
+#include "base/logging.h"
 #include "cc/base/base_export.h"
 
 // Since cc is used from the render process, anything that goes here also needs
@@ -47,11 +48,15 @@ CC_BASE_EXPORT extern const char kUIEnableLayerLists[];
 CC_BASE_EXPORT extern const char kCompositedRenderPassBorders[];
 CC_BASE_EXPORT extern const char kCompositedSurfaceBorders[];
 CC_BASE_EXPORT extern const char kCompositedLayerBorders[];
+#if DCHECK_IS_ON()
+CC_BASE_EXPORT extern const char kLogOnUIDoubleBackgroundBlur[];
+#endif
 
 // Test related.
 CC_BASE_EXPORT extern const char kCCLayerTreeTestNoTimeout[];
 CC_BASE_EXPORT extern const char kCCLayerTreeTestLongTimeout[];
 CC_BASE_EXPORT extern const char kCCRebaselinePixeltests[];
+CC_BASE_EXPORT extern const char kCCScrollAnimationDurationForTesting[];
 
 }  // namespace switches
 }  // namespace cc

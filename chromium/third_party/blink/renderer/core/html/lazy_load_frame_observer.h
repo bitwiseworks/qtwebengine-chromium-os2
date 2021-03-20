@@ -11,18 +11,17 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
 class IntersectionObserver;
 class IntersectionObserverEntry;
 class HTMLFrameOwnerElement;
-class ResourceRequest;
+class ResourceRequestHead;
 class Visitor;
 
-class LazyLoadFrameObserver
-    : public GarbageCollectedFinalized<LazyLoadFrameObserver> {
+class LazyLoadFrameObserver final
+    : public GarbageCollected<LazyLoadFrameObserver> {
  public:
   // This enum is logged to histograms, so values should not be reordered or
   // reused, and it must match the corresponding enum
@@ -45,7 +44,7 @@ class LazyLoadFrameObserver
   explicit LazyLoadFrameObserver(HTMLFrameOwnerElement&);
   ~LazyLoadFrameObserver();
 
-  void DeferLoadUntilNearViewport(const ResourceRequest&, WebFrameLoadType);
+  void DeferLoadUntilNearViewport(const ResourceRequestHead&, WebFrameLoadType);
   bool IsLazyLoadPending() const { return lazy_load_intersection_observer_; }
   void CancelPendingLazyLoad();
 
@@ -88,9 +87,9 @@ class LazyLoadFrameObserver
   bool has_above_the_fold_been_set_ = false;
 
   // Set when the frame first becomes visible (i.e. appears in the viewport).
-  TimeTicks time_when_first_visible_;
+  base::TimeTicks time_when_first_visible_;
   // Set when the first load event is dispatched for the frame.
-  TimeTicks time_when_first_load_finished_;
+  base::TimeTicks time_when_first_load_finished_;
 
   // Keeps track of whether the frame was initially recorded as having been
   // deferred, so that the appropriate histograms can be recorded if the frame

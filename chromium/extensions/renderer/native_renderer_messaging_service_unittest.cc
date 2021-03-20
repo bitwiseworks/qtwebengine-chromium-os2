@@ -10,6 +10,7 @@
 #include "base/stl_util.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/common/child_process_host.h"
+#include "extensions/common/api/messaging/messaging_endpoint.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_messages.h"
@@ -80,7 +81,7 @@ TEST_F(NativeRendererMessagingServiceTest, ValidateMessagePort) {
       messaging_service()->HasPortForTesting(script_context(), port_id));
   EXPECT_CALL(*ipc_message_sender(),
               SendCloseMessagePort(MSG_ROUTING_NONE, port_id, false));
-  messaging_service()->ValidateMessagePort(*script_context_set(), port_id,
+  messaging_service()->ValidateMessagePort(script_context_set(), port_id,
                                            nullptr);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
 
@@ -90,7 +91,7 @@ TEST_F(NativeRendererMessagingServiceTest, ValidateMessagePort) {
       messaging_service()->HasPortForTesting(script_context(), port_id));
 
   // With a valid port, we shouldn't dispatch a message to close it.
-  messaging_service()->ValidateMessagePort(*script_context_set(), port_id,
+  messaging_service()->ValidateMessagePort(script_context_set(), port_id,
                                            nullptr);
 }
 
@@ -112,7 +113,8 @@ TEST_F(NativeRendererMessagingServiceTest, OpenMessagePort) {
       DictionaryBuilder().Set("tabId", tab_id).Build().get());
   ExtensionMsg_ExternalConnectionInfo external_connection_info;
   external_connection_info.target_id = extension()->id();
-  external_connection_info.source_id = extension()->id();
+  external_connection_info.source_endpoint =
+      MessagingEndpoint::ForExtension(extension()->id());
   external_connection_info.source_url = source_url;
   external_connection_info.guest_process_id =
       content::ChildProcessHost::kInvalidUniqueID;
@@ -131,7 +133,7 @@ TEST_F(NativeRendererMessagingServiceTest, OpenMessagePort) {
 
   EXPECT_CALL(*ipc_message_sender(),
               SendOpenMessagePort(MSG_ROUTING_NONE, port_id));
-  messaging_service()->DispatchOnConnect(*script_context_set(), port_id,
+  messaging_service()->DispatchOnConnect(script_context_set(), port_id,
                                          channel_name, tab_connection_info,
                                          external_connection_info, nullptr);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
@@ -198,7 +200,7 @@ TEST_F(NativeRendererMessagingServiceTest, DeliverMessageToPort) {
             GetStringPropertyFromObject(global, context, kPort2Message));
 
   const char kMessageString[] = R"({"data":"hello"})";
-  messaging_service()->DeliverMessage(*script_context_set(), port_id1,
+  messaging_service()->DeliverMessage(script_context_set(), port_id1,
                                       Message(kMessageString, false), nullptr);
 
   // Only port1 should have been notified of the message (ports only receive
@@ -253,7 +255,7 @@ TEST_F(NativeRendererMessagingServiceTest, DisconnectMessagePort) {
   EXPECT_EQ("undefined",
             GetStringPropertyFromObject(global, context, kPort2Disconnect));
 
-  messaging_service()->DispatchOnDisconnect(*script_context_set(), port_id1,
+  messaging_service()->DispatchOnDisconnect(script_context_set(), port_id1,
                                             std::string(), nullptr);
 
   EXPECT_EQ("true",
@@ -281,9 +283,9 @@ TEST_F(NativeRendererMessagingServiceTest, PostMessageFromJS) {
       FunctionFromString(context, kDispatchMessage);
   v8::Local<v8::Value> args[] = {port_object};
 
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id,
-                                    Message(R"({"data":"hello"})", false)));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendPostMessageToPort(port_id, Message(R"({"data":"hello"})", false)));
   RunFunctionOnGlobal(post_message, context, base::size(args), args);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
 }
@@ -321,9 +323,9 @@ TEST_F(NativeRendererMessagingServiceTest, Connect) {
   MessageTarget target(MessageTarget::ForExtension(extension()->id()));
   EXPECT_CALL(*ipc_message_sender(),
               SendOpenMessageChannel(script_context(), expected_port_id, target,
-                                     kChannel, false));
+                                     kChannel));
   gin::Handle<GinPort> new_port =
-      messaging_service()->Connect(script_context(), target, "channel", false);
+      messaging_service()->Connect(script_context(), target, "channel");
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   ASSERT_FALSE(new_port.IsEmpty());
 
@@ -349,16 +351,13 @@ TEST_F(NativeRendererMessagingServiceTest, SendOneTimeMessage) {
   // Send a message and expect a reply. A new port should be created, and should
   // remain open (waiting for the response).
   const Message message("\"hi\"", false);
-  bool include_tls_channel_id = false;
   MessageTarget target(MessageTarget::ForExtension(extension()->id()));
-  EXPECT_CALL(*ipc_message_sender(),
-              SendOpenMessageChannel(script_context(), port_id, target,
-                                     kChannel, include_tls_channel_id));
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id, message));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendOpenMessageChannel(script_context(), port_id, target, kChannel));
+  EXPECT_CALL(*ipc_message_sender(), SendPostMessageToPort(port_id, message));
   messaging_service()->SendOneTimeMessage(script_context(), target, kChannel,
-                                          include_tls_channel_id, message,
-                                          response_callback);
+                                          message, response_callback);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   EXPECT_TRUE(
       messaging_service()->HasPortForTesting(script_context(), port_id));
@@ -367,7 +366,7 @@ TEST_F(NativeRendererMessagingServiceTest, SendOneTimeMessage) {
   // port should be closed.
   EXPECT_CALL(*ipc_message_sender(),
               SendCloseMessagePort(MSG_ROUTING_NONE, port_id, true));
-  messaging_service()->DeliverMessage(*script_context_set(), port_id,
+  messaging_service()->DeliverMessage(script_context_set(), port_id,
                                       Message("\"reply\"", false), nullptr);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   EXPECT_EQ("[\"reply\"]", GetStringPropertyFromObject(context->Global(),
@@ -407,7 +406,8 @@ TEST_F(NativeRendererMessagingServiceTest, ReceiveOneTimeMessage) {
       DictionaryBuilder().Set("tabId", tab_id).Build().get());
   ExtensionMsg_ExternalConnectionInfo external_connection_info;
   external_connection_info.target_id = extension()->id();
-  external_connection_info.source_id = extension()->id();
+  external_connection_info.source_endpoint =
+      MessagingEndpoint::ForExtension(extension()->id());
   external_connection_info.source_url = source_url;
   external_connection_info.guest_process_id =
       content::ChildProcessHost::kInvalidUniqueID;
@@ -416,7 +416,7 @@ TEST_F(NativeRendererMessagingServiceTest, ReceiveOneTimeMessage) {
   // Open a receiver for the message.
   EXPECT_CALL(*ipc_message_sender(),
               SendOpenMessagePort(MSG_ROUTING_NONE, port_id));
-  messaging_service()->DispatchOnConnect(*script_context_set(), port_id,
+  messaging_service()->DispatchOnConnect(script_context_set(), port_id,
                                          kChannel, tab_connection_info,
                                          external_connection_info, nullptr);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
@@ -425,12 +425,12 @@ TEST_F(NativeRendererMessagingServiceTest, ReceiveOneTimeMessage) {
 
   // Post the message to the receiver. The receiver should respond, and the
   // port should close.
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id,
-                                    Message(R"({"data":"hi"})", false)));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendPostMessageToPort(port_id, Message(R"({"data":"hi"})", false)));
   EXPECT_CALL(*ipc_message_sender(),
               SendCloseMessagePort(MSG_ROUTING_NONE, port_id, true));
-  messaging_service()->DeliverMessage(*script_context_set(), port_id,
+  messaging_service()->DeliverMessage(script_context_set(), port_id,
                                       Message("\"message\"", false), nullptr);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   EXPECT_FALSE(
@@ -475,7 +475,8 @@ TEST_F(NativeRendererMessagingServiceTest, TestExternalOneTimeMessages) {
 
     ExtensionMsg_ExternalConnectionInfo external_connection_info;
     external_connection_info.target_id = extension()->id();
-    external_connection_info.source_id = source_id;
+    external_connection_info.source_endpoint =
+        MessagingEndpoint::ForExtension(source_id);
     external_connection_info.source_url = source_url;
     external_connection_info.guest_process_id =
         content::ChildProcessHost::kInvalidUniqueID;
@@ -485,7 +486,7 @@ TEST_F(NativeRendererMessagingServiceTest, TestExternalOneTimeMessages) {
     EXPECT_CALL(*ipc_message_sender(),
                 SendOpenMessagePort(MSG_ROUTING_NONE, port_id));
     messaging_service()->DispatchOnConnect(
-        *script_context_set(), port_id, messaging_util::kSendMessageChannel,
+        script_context_set(), port_id, messaging_util::kSendMessageChannel,
         tab_connection_info, external_connection_info, nullptr);
     ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
     EXPECT_TRUE(
@@ -497,7 +498,7 @@ TEST_F(NativeRendererMessagingServiceTest, TestExternalOneTimeMessages) {
       crx_file::id_util::GenerateId("different");
   open_port(on_message_external_port_id, other_extension);
 
-  messaging_service()->DeliverMessage(*script_context_set(), on_message_port_id,
+  messaging_service()->DeliverMessage(script_context_set(), on_message_port_id,
                                       Message("\"onMessage\"", false), nullptr);
   EXPECT_EQ("\"onMessage\"",
             GetStringPropertyFromObject(context->Global(), context,
@@ -507,7 +508,7 @@ TEST_F(NativeRendererMessagingServiceTest, TestExternalOneTimeMessages) {
                                         "onMessageExternalReceived"));
 
   messaging_service()->DeliverMessage(
-      *script_context_set(), on_message_external_port_id,
+      script_context_set(), on_message_external_port_id,
       Message("\"onMessageExternal\"", false), nullptr);
   EXPECT_EQ("\"onMessage\"",
             GetStringPropertyFromObject(context->Global(), context,

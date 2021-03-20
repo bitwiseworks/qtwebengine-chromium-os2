@@ -25,21 +25,17 @@ namespace blink {
 class CORE_EXPORT ComputedStylePropertyMap
     : public StylePropertyMapReadOnlyMainThread {
  public:
-  static ComputedStylePropertyMap* Create(Node* node) {
-    return MakeGarbageCollected<ComputedStylePropertyMap>(node);
-  }
-
   ComputedStylePropertyMap(Node* node, const String& pseudo_element = String())
       : StylePropertyMapReadOnlyMainThread(),
         pseudo_id_(CSSSelector::ParsePseudoId(pseudo_element)),
         node_(node) {}
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(node_);
     StylePropertyMapReadOnlyMainThread::Trace(visitor);
   }
 
-  unsigned int size() override;
+  unsigned int size() const override;
 
   // ComputedStylePropertyMap needs to be sorted. This puts CSS properties
   // first, then prefixed properties, then custom properties. Everything is
@@ -48,11 +44,11 @@ class CORE_EXPORT ComputedStylePropertyMap
                                    const CSSPropertyName&);
 
  protected:
-  const CSSValue* GetProperty(CSSPropertyID) override;
-  const CSSValue* GetCustomProperty(AtomicString) override;
+  const CSSValue* GetProperty(CSSPropertyID) const override;
+  const CSSValue* GetCustomProperty(AtomicString) const override;
   void ForEachProperty(const IterationCallback&) override;
 
-  String SerializationForShorthand(const CSSProperty&) final;
+  String SerializationForShorthand(const CSSProperty&) const final;
 
  private:
   // TODO: Pseudo-element support requires reintroducing Element.pseudo(...).
@@ -62,7 +58,7 @@ class CORE_EXPORT ComputedStylePropertyMap
   Member<Node> node_;
 
   Node* StyledNode() const;
-  const ComputedStyle* UpdateStyle();
+  const ComputedStyle* UpdateStyle() const;
   DISALLOW_COPY_AND_ASSIGN(ComputedStylePropertyMap);
 };
 

@@ -9,7 +9,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "media/base/bind_to_current_loop.h"
-#include "third_party/blink/public/web/web_user_gesture_indicator.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "url/gurl.h"
 
 namespace {
@@ -46,8 +46,7 @@ MediaPermissionDispatcher::MediaPermissionDispatcher(
     RenderFrameImpl* render_frame)
     : task_runner_(base::ThreadTaskRunnerHandle::Get()),
       next_request_id_(0),
-      render_frame_(render_frame),
-      weak_factory_(this) {
+      render_frame_(render_frame) {
   DCHECK(render_frame_);
   weak_ptr_ = weak_factory_.GetWeakPtr();
 }
@@ -67,18 +66,19 @@ void MediaPermissionDispatcher::OnNavigation() {
 
 void MediaPermissionDispatcher::HasPermission(
     Type type,
-    const PermissionStatusCB& permission_status_cb) {
+    PermissionStatusCB permission_status_cb) {
   if (!task_runner_->RunsTasksInCurrentSequence()) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::BindOnce(&MediaPermissionDispatcher::HasPermission, weak_ptr_,
-                       type, media::BindToCurrentLoop(permission_status_cb)));
+        base::BindOnce(
+            &MediaPermissionDispatcher::HasPermission, weak_ptr_, type,
+            media::BindToCurrentLoop(std::move(permission_status_cb))));
     return;
   }
 
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
-  int request_id = RegisterCallback(permission_status_cb);
+  int request_id = RegisterCallback(std::move(permission_status_cb));
   DVLOG(2) << __func__ << ": request ID " << request_id;
 
   GetPermissionService()->HasPermission(
@@ -89,24 +89,24 @@ void MediaPermissionDispatcher::HasPermission(
 
 void MediaPermissionDispatcher::RequestPermission(
     Type type,
-    const PermissionStatusCB& permission_status_cb) {
+    PermissionStatusCB permission_status_cb) {
   if (!task_runner_->RunsTasksInCurrentSequence()) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::BindOnce(&MediaPermissionDispatcher::RequestPermission, weak_ptr_,
-                       type, media::BindToCurrentLoop(permission_status_cb)));
+        base::BindOnce(
+            &MediaPermissionDispatcher::RequestPermission, weak_ptr_, type,
+            media::BindToCurrentLoop(std::move(permission_status_cb))));
     return;
   }
 
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
-  int request_id = RegisterCallback(permission_status_cb);
+  int request_id = RegisterCallback(std::move(permission_status_cb));
   DVLOG(2) << __func__ << ": request ID " << request_id;
 
   GetPermissionService()->RequestPermission(
       MediaPermissionTypeToPermissionDescriptor(type),
-      blink::WebUserGestureIndicator::IsProcessingUserGesture(
-          render_frame_->GetWebFrame()),
+      render_frame_->GetWebFrame()->HasTransientUserActivation(),
       base::BindOnce(&MediaPermissionDispatcher::OnPermissionStatus, weak_ptr_,
                      request_id));
 }
@@ -116,12 +116,12 @@ bool MediaPermissionDispatcher::IsEncryptedMediaEnabled() {
 }
 
 uint32_t MediaPermissionDispatcher::RegisterCallback(
-    const PermissionStatusCB& permission_status_cb) {
+    PermissionStatusCB permission_status_cb) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   uint32_t request_id = next_request_id_++;
   DCHECK(!requests_.count(request_id));
-  requests_[request_id] = permission_status_cb;
+  requests_[request_id] = std::move(permission_status_cb);
 
   return request_id;
 }
@@ -129,9 +129,9 @@ uint32_t MediaPermissionDispatcher::RegisterCallback(
 blink::mojom::PermissionService*
 MediaPermissionDispatcher::GetPermissionService() {
   if (!permission_service_) {
-    render_frame_->GetRemoteInterfaces()->GetInterface(
-        mojo::MakeRequest(&permission_service_));
-    permission_service_.set_connection_error_handler(base::BindOnce(
+    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
+        permission_service_.BindNewPipeAndPassReceiver());
+    permission_service_.set_disconnect_handler(base::BindOnce(
         &MediaPermissionDispatcher::OnConnectionError, base::Unretained(this)));
   }
 
@@ -147,7 +147,7 @@ void MediaPermissionDispatcher::OnPermissionStatus(
   auto iter = requests_.find(request_id);
   DCHECK(iter != requests_.end()) << "Request not found.";
 
-  PermissionStatusCB permission_status_cb = iter->second;
+  PermissionStatusCB permission_status_cb = std::move(iter->second);
   requests_.erase(iter);
 
   std::move(permission_status_cb)
@@ -161,7 +161,7 @@ void MediaPermissionDispatcher::OnConnectionError() {
   RequestMap requests;
   requests.swap(requests_);
   for (auto& request : requests)
-    request.second.Run(false);
+    std::move(request.second).Run(false);
 }
 
 }  // namespace content

@@ -30,29 +30,23 @@
 
 #include "third_party/blink/renderer/core/html/forms/month_input_type.h"
 
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/date_time_fields_state.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
-#include "third_party/blink/renderer/platform/date_components.h"
+#include "third_party/blink/renderer/platform/text/date_components.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
-
-using namespace html_names;
 
 static const int kMonthDefaultStep = 1;
 static const int kMonthDefaultStepBase = 0;
 static const int kMonthStepScaleFactor = 1;
-
-InputType* MonthInputType::Create(HTMLInputElement& element) {
-  return MakeGarbageCollected<MonthInputType>(element);
-}
 
 void MonthInputType::CountUsage() {
   CountUsageIfVisible(WebFeature::kInputTypeMonth);
@@ -71,16 +65,19 @@ double MonthInputType::ValueAsDate() const {
   return msec;
 }
 
-String MonthInputType::SerializeWithMilliseconds(double value) const {
+String MonthInputType::SerializeWithDate(
+    const base::Optional<base::Time>& value) const {
   DateComponents date;
-  if (!date.SetMillisecondsSinceEpochForMonth(value))
+  if (!value ||
+      !date.SetMillisecondsSinceEpochForMonth(value->ToJsTimeIgnoringNull()))
     return String();
   return SerializeWithComponents(date);
 }
 
 Decimal MonthInputType::DefaultValueForStepUp() const {
   DateComponents date;
-  date.SetMillisecondsSinceEpochForMonth(ConvertToLocalTime(CurrentTimeMS()));
+  date.SetMillisecondsSinceEpochForMonth(
+      ConvertToLocalTime(base::Time::Now()).InMillisecondsF());
   double months = date.MonthsSinceEpoch();
   DCHECK(std::isfinite(months));
   return Decimal::FromDouble(months);
@@ -149,11 +146,13 @@ void MonthInputType::SetupLayoutParameters(
     const DateComponents& date) const {
   layout_parameters.date_time_format = layout_parameters.locale.MonthFormat();
   layout_parameters.fallback_date_time_format = "yyyy-MM";
-  if (!ParseToDateComponents(GetElement().FastGetAttribute(kMinAttr),
-                             &layout_parameters.minimum))
+  if (!ParseToDateComponents(
+          GetElement().FastGetAttribute(html_names::kMinAttr),
+          &layout_parameters.minimum))
     layout_parameters.minimum = DateComponents();
-  if (!ParseToDateComponents(GetElement().FastGetAttribute(kMaxAttr),
-                             &layout_parameters.maximum))
+  if (!ParseToDateComponents(
+          GetElement().FastGetAttribute(html_names::kMaxAttr),
+          &layout_parameters.maximum))
     layout_parameters.maximum = DateComponents();
   layout_parameters.placeholder_for_month = "--";
   layout_parameters.placeholder_for_year = "----";
@@ -168,6 +167,10 @@ bool MonthInputType::IsValidFormat(bool has_year,
                                    bool has_minute,
                                    bool has_second) const {
   return has_year && has_month;
+}
+
+String MonthInputType::AriaRoleForPickerIndicator() const {
+  return GetLocale().QueryString(IDS_AX_CALENDAR_SHOW_MONTH_PICKER);
 }
 
 }  // namespace blink

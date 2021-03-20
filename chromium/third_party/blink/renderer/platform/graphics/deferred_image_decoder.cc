@@ -35,22 +35,95 @@
 #include "third_party/blink/renderer/platform/graphics/image_frame_generator.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/image-decoders/segment_reader.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/skia/include/core/SkImage.h"
 
 namespace blink {
+
+namespace {
+
+// Do not rename entries or reuse numeric values to ensure the histogram is
+// consistent over time.
+enum IncrementalDecodePerImageType {
+  kJpegIncrementalNeeded = 0,
+  kJpegAllDataReceivedInitially = 1,
+  kWebPIncrementalNeeded = 2,
+  kWebPAllDataReceivedInitially = 3,
+  kBoundaryValue
+};
+
+void ReportIncrementalDecodeNeeded(bool all_data_received,
+                                   const String& image_type) {
+  DCHECK(IsMainThread());
+  DEFINE_STATIC_LOCAL(EnumerationHistogram, incremental_decode_needed_histogram,
+                      ("Blink.ImageDecoders.IncrementalDecodeNeeded",
+                       IncrementalDecodePerImageType::kBoundaryValue));
+  if (image_type == "jpg") {
+    incremental_decode_needed_histogram.Count(
+        all_data_received
+            ? IncrementalDecodePerImageType::kJpegAllDataReceivedInitially
+            : IncrementalDecodePerImageType::kJpegIncrementalNeeded);
+  } else if (image_type == "webp") {
+    incremental_decode_needed_histogram.Count(
+        all_data_received
+            ? IncrementalDecodePerImageType::kWebPAllDataReceivedInitially
+            : IncrementalDecodePerImageType::kWebPIncrementalNeeded);
+  }
+}
+
+void RecordByteSizeAndWhetherIncrementalDecode(const String& image_type,
+                                               bool incrementally_decoded,
+                                               size_t bytes) {
+  DCHECK(IsMainThread());
+  // A base::HistogramBase::Sample may not fit the number of bytes of the image.
+  base::HistogramBase::Sample sample_bytes =
+      base::saturated_cast<base::HistogramBase::Sample>(bytes);
+  if (image_type == "jpg") {
+    if (incrementally_decoded) {
+      DEFINE_STATIC_LOCAL(
+          CustomCountHistogram, jpeg_byte_size_incrementally_decoded_histogram,
+          ("Blink.ImageDecoders.IncrementallyDecodedByteSize.Jpeg",
+           125 /* min */, 15000000 /* 15 MB */, 100 /* bucket count */));
+      jpeg_byte_size_incrementally_decoded_histogram.Count(sample_bytes);
+    } else {
+      DEFINE_STATIC_LOCAL(
+          CustomCountHistogram,
+          jpeg_byte_size_initially_fully_decoded_histogram,
+          ("Blink.ImageDecoders.InitiallyFullyDecodedByteSize.Jpeg",
+           125 /* min */, 15000000 /* 15 MB */, 100 /* bucket count */));
+      jpeg_byte_size_initially_fully_decoded_histogram.Count(sample_bytes);
+    }
+  } else {
+    DCHECK_EQ(image_type, "webp");
+    if (incrementally_decoded) {
+      DEFINE_STATIC_LOCAL(
+          CustomCountHistogram, webp_byte_size_incrementally_decoded_histogram,
+          ("Blink.ImageDecoders.IncrementallyDecodedByteSize.WebP",
+           125 /* min */, 15000000 /* 15 MB */, 100 /* bucket count */));
+      webp_byte_size_incrementally_decoded_histogram.Count(sample_bytes);
+    } else {
+      DEFINE_STATIC_LOCAL(
+          CustomCountHistogram,
+          webp_byte_size_initially_fully_decoded_histogram,
+          ("Blink.ImageDecoders.InitiallyFullyDecodedByteSize.WebP",
+           125 /* min */, 15000000 /* 15 MB */, 100 /* bucket count */));
+      webp_byte_size_initially_fully_decoded_histogram.Count(sample_bytes);
+    }
+  }
+}
+
+}  // namespace
 
 struct DeferredFrameData {
   DISALLOW_NEW();
 
  public:
   DeferredFrameData()
-      : orientation_(kDefaultImageOrientation),
-        is_received_(false) {}
+      : orientation_(kDefaultImageOrientation), is_received_(false) {}
 
   ImageOrientation orientation_;
-  TimeDelta duration_;
+  base::TimeDelta duration_;
   bool is_received_;
 
  private:
@@ -89,6 +162,7 @@ DeferredImageDecoder::DeferredImageDecoder(
     : metadata_decoder_(std::move(metadata_decoder)),
       repetition_count_(kAnimationNone),
       all_data_received_(false),
+      first_decoding_generator_created_(false),
       can_yuv_decode_(false),
       has_hot_spot_(false),
       image_is_high_bit_depth_(false),
@@ -101,15 +175,11 @@ String DeferredImageDecoder::FilenameExtension() const {
                            : filename_extension_;
 }
 
-sk_sp<PaintImageGenerator> DeferredImageDecoder::CreateGenerator(size_t index) {
+sk_sp<PaintImageGenerator> DeferredImageDecoder::CreateGenerator() {
   if (frame_generator_ && frame_generator_->DecodeFailed())
     return nullptr;
 
-  PrepareLazyDecodedFrames();
-
-  // PrepareLazyDecodedFrames should populate the metadata for each frame in
-  // this image and create the |frame_generator_|, if enough data is available.
-  if (index >= frame_data_.size())
+  if (invalid_image_ || frame_data_.IsEmpty())
     return nullptr;
 
   DCHECK(frame_generator_);
@@ -122,26 +192,66 @@ sk_sp<PaintImageGenerator> DeferredImageDecoder::CreateGenerator(size_t index) {
       SegmentReader::CreateFromSkROBuffer(std::move(ro_buffer));
 
   // ImageFrameGenerator has the latest known alpha state. There will be a
-  // performance boost if this frame is opaque.
-  SkAlphaType alpha_type = frame_generator_->HasAlpha(index)
-                               ? kPremul_SkAlphaType
-                               : kOpaque_SkAlphaType;
+  // performance boost if the image is opaque since we can avoid painting
+  // the background in this case.
+  // For multi-frame images, these maybe animated on the compositor thread.
+  // So we can not mark them as opaque unless all frames are opaque.
+  // TODO(khushalsagar): Check whether all frames being added to the
+  // generator are opaque when populating FrameMetadata below.
+  SkAlphaType alpha_type = kPremul_SkAlphaType;
+  if (frame_data_.size() == 1u && !frame_generator_->HasAlpha(0u))
+    alpha_type = kOpaque_SkAlphaType;
+
   SkImageInfo info =
       SkImageInfo::MakeN32(decoded_size.width(), decoded_size.height(),
                            alpha_type, color_space_for_sk_images_);
   if (image_is_high_bit_depth_)
     info = info.makeColorType(kRGBA_F16_SkColorType);
 
-  std::vector<FrameMetadata> frames(frame_data_.size());
+  WebVector<FrameMetadata> frames(frame_data_.size());
   for (size_t i = 0; i < frame_data_.size(); ++i) {
     frames[i].complete = frame_data_[i].is_received_;
     frames[i].duration = FrameDurationAtIndex(i);
   }
 
+  // Report UMA about whether incremental decoding is done for JPEG/WebP images.
+  const String image_type = FilenameExtension();
+  if (!first_decoding_generator_created_) {
+    DCHECK(!incremental_decode_needed_.has_value());
+    incremental_decode_needed_ = !all_data_received_;
+    if (image_type == "jpg" || image_type == "webp") {
+      ReportIncrementalDecodeNeeded(all_data_received_, image_type);
+    }
+  }
+  DCHECK(incremental_decode_needed_.has_value());
+
+  // TODO(crbug.com/943519):
+  // If we haven't received all data, we might veto YUV and begin doing
+  // incremental RGB decoding until all data were received. Then the final
+  // decode would be in YUV (but from the beginning of the image).
+  //
+  // The memory/speed tradeoffs of mixing RGB and YUV decoding are unclear due
+  // to caching at various levels. Additionally, incremental decoding is less
+  // common, so we avoid worrying about this with the line below.
+  can_yuv_decode_ &= !incremental_decode_needed_.value();
+
+  DCHECK(image_metadata_);
+  image_metadata_->all_data_received_prior_to_decode =
+      !incremental_decode_needed_.value();
+
   auto generator = DecodingImageGenerator::Create(
       frame_generator_, info, std::move(segment_reader), std::move(frames),
-      complete_frame_content_id_, all_data_received_);
-  generator->SetCanYUVDecode(can_yuv_decode_);
+      complete_frame_content_id_, all_data_received_, can_yuv_decode_,
+      *image_metadata_);
+  first_decoding_generator_created_ = true;
+
+  size_t image_byte_size = ByteSize();
+  if (all_data_received_ && (image_type == "jpg" || image_type == "webp")) {
+    DCHECK(incremental_decode_needed_.has_value());
+    DCHECK(image_byte_size);
+    RecordByteSizeAndWhetherIncrementalDecode(
+        image_type, incremental_decode_needed_.value(), image_byte_size);
+  }
 
   return generator;
 }
@@ -233,8 +343,8 @@ bool DeferredImageDecoder::FrameIsReceivedAtIndex(size_t index) const {
   return false;
 }
 
-TimeDelta DeferredImageDecoder::FrameDurationAtIndex(size_t index) const {
-  TimeDelta duration;
+base::TimeDelta DeferredImageDecoder::FrameDurationAtIndex(size_t index) const {
+  base::TimeDelta duration;
   if (metadata_decoder_)
     duration = metadata_decoder_->FrameDurationAtIndex(index);
   if (index < frame_data_.size())
@@ -244,8 +354,8 @@ TimeDelta DeferredImageDecoder::FrameDurationAtIndex(size_t index) const {
   // possible. We follow Firefox's behavior and use a duration of 100 ms for any
   // frames that specify a duration of <= 10 ms. See <rdar://problem/7689300>
   // and <http://webkit.org/b/36082> for more information.
-  if (duration <= TimeDelta::FromMilliseconds(10))
-    duration = TimeDelta::FromMilliseconds(100);
+  if (duration <= base::TimeDelta::FromMilliseconds(10))
+    duration = base::TimeDelta::FromMilliseconds(100);
 
   return duration;
 }
@@ -256,6 +366,10 @@ ImageOrientation DeferredImageDecoder::OrientationAtIndex(size_t index) const {
   if (index < frame_data_.size())
     return frame_data_[index].orientation_;
   return kDefaultImageOrientation;
+}
+
+size_t DeferredImageDecoder::ByteSize() const {
+  return rw_buffer_ ? rw_buffer_->size() : 0u;
 }
 
 void DeferredImageDecoder::ActivateLazyDecoding() {
@@ -284,14 +398,36 @@ void DeferredImageDecoder::PrepareLazyDecodedFrames() {
   if (!metadata_decoder_ || !metadata_decoder_->IsSizeAvailable())
     return;
 
+  if (invalid_image_)
+    return;
+
+  if (!image_metadata_)
+    image_metadata_ = metadata_decoder_->MakeMetadataForDecodeAcceleration();
+
+  // If the image contains a coded size with zero in either or both size
+  // dimensions, the image is invalid.
+  if (image_metadata_->coded_size.has_value() &&
+      image_metadata_->coded_size.value().IsEmpty()) {
+    invalid_image_ = true;
+    return;
+  }
+
   ActivateLazyDecoding();
 
   const size_t previous_size = frame_data_.size();
   frame_data_.resize(metadata_decoder_->FrameCount());
 
-  // We have encountered a broken image file. Simply bail.
-  if (frame_data_.size() < previous_size)
+  // The decoder may be invalidated during a FrameCount(). Simply bail if so.
+  if (metadata_decoder_->Failed()) {
+    invalid_image_ = true;
     return;
+  }
+
+  // We have encountered a broken image file. Simply bail.
+  if (frame_data_.size() < previous_size) {
+    invalid_image_ = true;
+    return;
+  }
 
   for (size_t i = previous_size; i < frame_data_.size(); ++i) {
     frame_data_[i].duration_ = metadata_decoder_->FrameDurationAtIndex(i);
@@ -307,11 +443,9 @@ void DeferredImageDecoder::PrepareLazyDecodedFrames() {
         metadata_decoder_->FrameIsReceivedAtIndex(last_frame);
   }
 
-  // YUV decoding does not currently support progressive decoding. See comment
-  // in image_frame_generator.h.
-  can_yuv_decode_ = RuntimeEnabledFeatures::DecodeToYUVEnabled() &&
-                    metadata_decoder_->CanDecodeToYUV() && all_data_received_ &&
-                    !frame_generator_->IsMultiFrame();
+  can_yuv_decode_ =
+      metadata_decoder_->CanDecodeToYUV() && all_data_received_ &&
+      !frame_generator_->IsMultiFrame();
 
   // If we've received all of the data, then we can reset the metadata decoder,
   // since everything we care about should now be stored in |frame_data_|.
@@ -340,4 +474,4 @@ struct VectorTraits<blink::DeferredFrameData>
   static const bool kCanInitializeWithMemset =
       false;  // Not all DeferredFrameData members initialize to 0.
 };
-}
+}  // namespace WTF

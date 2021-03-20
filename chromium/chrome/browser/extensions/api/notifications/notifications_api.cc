@@ -48,7 +48,6 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/skia_util.h"
-#include "ui/message_center/public/cpp/features.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_delegate.h"
@@ -226,21 +225,22 @@ NotificationsApiFunction::~NotificationsApiFunction() {
 
 bool NotificationsApiFunction::CreateNotification(
     const std::string& id,
-    api::notifications::NotificationOptions* options) {
+    api::notifications::NotificationOptions* options,
+    std::string* error) {
   // First, make sure the required fields exist: type, title, message, icon.
   // These fields are defined as optional in IDL such that they can be used as
   // optional for notification updates. But for notification creations, they
   // should be present.
   if (options->type == api::notifications::TEMPLATE_TYPE_NONE ||
       !options->icon_url || !options->title || !options->message) {
-    SetError(kMissingRequiredPropertiesForCreateNotification);
+    *error = kMissingRequiredPropertiesForCreateNotification;
     return false;
   }
 
 #if !defined(OS_CHROMEOS)
   if (options->priority &&
       *options->priority < message_center::DEFAULT_PRIORITY) {
-    SetError(kLowPriorityDeprecatedOnPlatform);
+    *error = kLowPriorityDeprecatedOnPlatform;
     return false;
   }
 #endif
@@ -263,7 +263,7 @@ bool NotificationsApiFunction::CreateNotification(
   if (!options->icon_bitmap.get() ||
       !NotificationBitmapToGfxImage(
           image_scale, bitmap_sizes.icon_size, *options->icon_bitmap, &icon)) {
-    SetError(kUnableToDecodeIconError);
+    *error = kUnableToDecodeIconError;
     return false;
   }
 
@@ -274,7 +274,7 @@ bool NotificationsApiFunction::CreateNotification(
     if (!NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.app_icon_mask_size,
             *options->app_icon_mask_bitmap, &small_icon_mask)) {
-      SetError(kUnableToDecodeIconError);
+      *error = kUnableToDecodeIconError;
       return false;
     }
     optional_fields.small_image =
@@ -328,27 +328,27 @@ bool NotificationsApiFunction::CreateNotification(
 
   // We should have an image if and only if the type is an image type.
   if (has_image != (type == message_center::NOTIFICATION_TYPE_IMAGE)) {
-    SetError(kExtraImageProvided);
+    *error = kExtraImageProvided;
     return false;
   }
 
   // We should have list items if and only if the type is a multiple type.
-  bool has_list_items = options->items.get() && options->items->size() > 0;
+  bool has_list_items = options->items.get() && !options->items->empty();
   if (has_list_items != (type == message_center::NOTIFICATION_TYPE_MULTIPLE)) {
-    SetError(kExtraListItemsProvided);
+    *error = kExtraListItemsProvided;
     return false;
   }
 
   if (options->progress.get() != NULL) {
     // We should have progress if and only if the type is a progress type.
     if (type != message_center::NOTIFICATION_TYPE_PROGRESS) {
-      SetError(kUnexpectedProgressValueForNonProgressType);
+      *error = kUnexpectedProgressValueForNonProgressType;
       return false;
     }
     optional_fields.progress = *options->progress;
     // Progress value should range from 0 to 100.
     if (optional_fields.progress < 0 || optional_fields.progress > 100) {
-      SetError(kInvalidProgressValue);
+      *error = kInvalidProgressValue;
       return false;
     }
   }
@@ -362,15 +362,13 @@ bool NotificationsApiFunction::CreateNotification(
   }
 
   optional_fields.settings_button_handler =
-      base::FeatureList::IsEnabled(message_center::kNewStyleNotifications)
-          ? message_center::SettingsButtonHandler::INLINE
-          : message_center::SettingsButtonHandler::NONE;
+      message_center::SettingsButtonHandler::INLINE;
 
   // TODO(crbug.com/772004): Remove the manual limitation in favor of an IDL
   // annotation once supported.
   if (id.size() > kNotificationIdLengthLimit) {
-    SetError(
-        base::StringPrintf(kNotificationIdTooLong, kNotificationIdLengthLimit));
+    *error =
+        base::StringPrintf(kNotificationIdTooLong, kNotificationIdLengthLimit);
     return false;
   }
 
@@ -399,11 +397,12 @@ bool NotificationsApiFunction::CreateNotification(
 bool NotificationsApiFunction::UpdateNotification(
     const std::string& id,
     api::notifications::NotificationOptions* options,
-    message_center::Notification* notification) {
+    message_center::Notification* notification,
+    std::string* error) {
 #if !defined(OS_CHROMEOS)
   if (options->priority &&
       *options->priority < message_center::DEFAULT_PRIORITY) {
-    SetError(kLowPriorityDeprecatedOnPlatform);
+    *error = kLowPriorityDeprecatedOnPlatform;
     return false;
   }
 #endif
@@ -425,7 +424,7 @@ bool NotificationsApiFunction::UpdateNotification(
     if (!NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.icon_size, *options->icon_bitmap,
             &icon)) {
-      SetError(kUnableToDecodeIconError);
+      *error = kUnableToDecodeIconError;
       return false;
     }
     notification->set_icon(icon);
@@ -436,7 +435,7 @@ bool NotificationsApiFunction::UpdateNotification(
     if (!NotificationBitmapToGfxImage(
             image_scale, bitmap_sizes.app_icon_mask_size,
             *options->app_icon_mask_bitmap, &app_icon_mask)) {
-      SetError(kUnableToDecodeIconError);
+      *error = kUnableToDecodeIconError;
       return false;
     }
     notification->set_small_image(
@@ -487,7 +486,7 @@ bool NotificationsApiFunction::UpdateNotification(
   if (has_image) {
     // We should have an image if and only if the type is an image type.
     if (notification->type() != message_center::NOTIFICATION_TYPE_IMAGE) {
-      SetError(kExtraImageProvided);
+      *error = kExtraImageProvided;
       return false;
     }
     notification->set_image(image);
@@ -496,22 +495,22 @@ bool NotificationsApiFunction::UpdateNotification(
   if (options->progress) {
     // We should have progress if and only if the type is a progress type.
     if (notification->type() != message_center::NOTIFICATION_TYPE_PROGRESS) {
-      SetError(kUnexpectedProgressValueForNonProgressType);
+      *error = kUnexpectedProgressValueForNonProgressType;
       return false;
     }
     int progress = *options->progress;
     // Progress value should range from 0 to 100.
     if (progress < 0 || progress > 100) {
-      SetError(kInvalidProgressValue);
+      *error = kInvalidProgressValue;
       return false;
     }
     notification->set_progress(progress);
   }
 
-  if (options->items.get() && options->items->size() > 0) {
+  if (options->items.get() && !options->items->empty()) {
     // We should have list items if and only if the type is a multiple type.
     if (notification->type() != message_center::NOTIFICATION_TYPE_MULTIPLE) {
-      SetError(kExtraListItemsProvided);
+      *error = kExtraListItemsProvided;
       return false;
     }
 
@@ -552,12 +551,15 @@ ExtensionNotificationDisplayHelper* NotificationsApiFunction::GetDisplayHelper()
   return ExtensionNotificationDisplayHelperFactory::GetForProfile(GetProfile());
 }
 
-bool NotificationsApiFunction::RunAsync() {
+Profile* NotificationsApiFunction::GetProfile() const {
+  return details_.GetProfile();
+}
+
+ExtensionFunction::ResponseAction NotificationsApiFunction::Run() {
   if (IsNotificationsApiAvailable() && IsNotificationsApiEnabled()) {
     return RunNotificationsApi();
   } else {
-    SendResponse(false);
-    return true;
+    return RespondNow(Error(""));
   }
 }
 
@@ -587,7 +589,8 @@ NotificationsCreateFunction::NotificationsCreateFunction() {
 NotificationsCreateFunction::~NotificationsCreateFunction() {
 }
 
-bool NotificationsCreateFunction::RunNotificationsApi() {
+ExtensionFunction::ResponseAction
+NotificationsCreateFunction::RunNotificationsApi() {
   params_ = api::notifications::Create::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params_.get());
 
@@ -604,20 +607,15 @@ bool NotificationsCreateFunction::RunNotificationsApi() {
       notification_id = base::RandBytesAsString(16);
   }
 
-  SetResult(std::make_unique<base::Value>(notification_id));
-
-  // TODO(crbug.com/749402): Cap the length of notification Ids to a certain
-  // limit if the histogram indicates that this is safe to do.
-  UMA_HISTOGRAM_COUNTS_1000("Notifications.ExtensionNotificationIdLength",
-                            notification_id.size());
-
   // TODO(dewittj): Add more human-readable error strings if this fails.
-  if (!CreateNotification(notification_id, &params_->options))
-    return false;
+  std::string error;
+  if (!CreateNotification(notification_id, &params_->options, &error)) {
+    return RespondNow(ErrorWithArguments(
+        api::notifications::Create::Results::Create(notification_id), error));
+  }
 
-  SendResponse(true);
-
-  return true;
+  return RespondNow(
+      OneArgument(std::make_unique<base::Value>(notification_id)));
 }
 
 NotificationsUpdateFunction::NotificationsUpdateFunction() {
@@ -626,7 +624,8 @@ NotificationsUpdateFunction::NotificationsUpdateFunction() {
 NotificationsUpdateFunction::~NotificationsUpdateFunction() {
 }
 
-bool NotificationsUpdateFunction::RunNotificationsApi() {
+ExtensionFunction::ResponseAction
+NotificationsUpdateFunction::RunNotificationsApi() {
   params_ = api::notifications::Update::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params_.get());
 
@@ -637,9 +636,7 @@ bool NotificationsUpdateFunction::RunNotificationsApi() {
           CreateScopedIdentifier(extension_->id(), params_->notification_id));
 
   if (!matched_notification) {
-    SetResult(std::make_unique<base::Value>(false));
-    SendResponse(true);
-    return true;
+    return RespondNow(OneArgument(std::make_unique<base::Value>(false)));
   }
 
   // Copy the existing notification to get a writable version of it.
@@ -649,16 +646,17 @@ bool NotificationsUpdateFunction::RunNotificationsApi() {
   // or some other reason), mark the function as failed, calling the callback
   // with false.
   // TODO(dewittj): Add more human-readable error strings if this fails.
+  std::string error;
   bool could_update_notification = UpdateNotification(
-      params_->notification_id, &params_->options, &notification);
-  SetResult(std::make_unique<base::Value>(could_update_notification));
-  if (!could_update_notification)
-    return false;
+      params_->notification_id, &params_->options, &notification, &error);
+  if (!could_update_notification) {
+    return RespondNow(ErrorWithArguments(
+        api::notifications::Update::Results::Create(false), error));
+  }
 
   // No trouble, created the notification, send true to the callback and
   // succeed.
-  SendResponse(true);
-  return true;
+  return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
 }
 
 NotificationsClearFunction::NotificationsClearFunction() {
@@ -667,24 +665,23 @@ NotificationsClearFunction::NotificationsClearFunction() {
 NotificationsClearFunction::~NotificationsClearFunction() {
 }
 
-bool NotificationsClearFunction::RunNotificationsApi() {
+ExtensionFunction::ResponseAction
+NotificationsClearFunction::RunNotificationsApi() {
   params_ = api::notifications::Clear::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params_.get());
 
   bool cancel_result = GetDisplayHelper()->Close(
       CreateScopedIdentifier(extension_->id(), params_->notification_id));
 
-  SetResult(std::make_unique<base::Value>(cancel_result));
-  SendResponse(true);
-
-  return true;
+  return RespondNow(OneArgument(std::make_unique<base::Value>(cancel_result)));
 }
 
 NotificationsGetAllFunction::NotificationsGetAllFunction() {}
 
 NotificationsGetAllFunction::~NotificationsGetAllFunction() {}
 
-bool NotificationsGetAllFunction::RunNotificationsApi() {
+ExtensionFunction::ResponseAction
+NotificationsGetAllFunction::RunNotificationsApi() {
   std::set<std::string> notification_ids =
       GetDisplayHelper()->GetNotificationIdsForExtension(extension_->url());
 
@@ -696,10 +693,7 @@ bool NotificationsGetAllFunction::RunNotificationsApi() {
                    base::Value(true));
   }
 
-  SetResult(std::move(result));
-  SendResponse(true);
-
-  return true;
+  return RespondNow(OneArgument(std::move(result)));
 }
 
 NotificationsGetPermissionLevelFunction::
@@ -712,17 +706,15 @@ bool NotificationsGetPermissionLevelFunction::CanRunWhileDisabled() const {
   return true;
 }
 
-bool NotificationsGetPermissionLevelFunction::RunNotificationsApi() {
+ExtensionFunction::ResponseAction
+NotificationsGetPermissionLevelFunction::RunNotificationsApi() {
   api::notifications::PermissionLevel result =
       AreExtensionNotificationsAllowed()
           ? api::notifications::PERMISSION_LEVEL_GRANTED
           : api::notifications::PERMISSION_LEVEL_DENIED;
 
-  SetResult(
-      std::make_unique<base::Value>(api::notifications::ToString(result)));
-  SendResponse(true);
-
-  return true;
+  return RespondNow(OneArgument(
+      std::make_unique<base::Value>(api::notifications::ToString(result))));
 }
 
 }  // namespace extensions

@@ -7,31 +7,29 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
-#include "net/third_party/quiche/src/http2/platform/api/http2_test_helpers.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_headers_handler_interface.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_bug_tracker.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string_piece.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_test_helpers.h"
 
 namespace spdy {
 
-inline bool operator==(SpdyStringPiece x,
+inline bool operator==(quiche::QuicheStringPiece x,
                        const SpdyHeaderBlock::ValueProxy& y) {
-  return x == y.as_string();
+  return y.operator==(x);
 }
 
 namespace test {
 
-SpdyString HexDumpWithMarks(const unsigned char* data,
-                            int length,
-                            const bool* marks,
-                            int mark_length);
+std::string HexDumpWithMarks(const unsigned char* data,
+                             int length,
+                             const bool* marks,
+                             int mark_length);
 
-void CompareCharArraysWithHexError(const SpdyString& description,
+void CompareCharArraysWithHexError(const std::string& description,
                                    const unsigned char* actual,
                                    const int actual_len,
                                    const unsigned char* expected,
@@ -51,7 +49,8 @@ class TestHeadersHandler : public SpdyHeadersHandlerInterface {
 
   void OnHeaderBlockStart() override;
 
-  void OnHeader(SpdyStringPiece name, SpdyStringPiece value) override;
+  void OnHeader(quiche::QuicheStringPiece name,
+                quiche::QuicheStringPiece value) override;
 
   void OnHeaderBlockEnd(size_t header_bytes_parsed,
                         size_t compressed_header_bytes_parsed) override;

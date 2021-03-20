@@ -8,13 +8,16 @@
 #include "cc/animation/animation_id_provider.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_client.h"
-#include "third_party/blink/renderer/platform/animation/compositor_animation_host.h"
 
 namespace blink {
 
 CompositorAnimationTimeline::CompositorAnimationTimeline()
     : animation_timeline_(cc::AnimationTimeline::Create(
           cc::AnimationIdProvider::NextTimelineId())) {}
+
+CompositorAnimationTimeline::CompositorAnimationTimeline(
+    scoped_refptr<cc::AnimationTimeline> timeline)
+    : animation_timeline_(timeline) {}
 
 CompositorAnimationTimeline::~CompositorAnimationTimeline() {
   // Detach timeline from host, otherwise it stays there (leaks) until

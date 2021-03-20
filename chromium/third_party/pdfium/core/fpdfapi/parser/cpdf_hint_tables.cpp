@@ -61,7 +61,7 @@ std::unique_ptr<CPDF_HintTables> CPDF_HintTables::Parse(
   }
 
   parser->SetPos(szHintStart);
-  std::unique_ptr<CPDF_Stream> hints_stream = ToStream(
+  RetainPtr<CPDF_Stream> hints_stream = ToStream(
       parser->GetIndirectObject(nullptr, CPDF_SyntaxParser::ParseType::kLoose));
 
   if (!hints_stream)
@@ -69,7 +69,7 @@ std::unique_ptr<CPDF_HintTables> CPDF_HintTables::Parse(
 
   auto pHintTables = pdfium::MakeUnique<CPDF_HintTables>(
       parser->GetValidator().Get(), pLinearized);
-  if (!pHintTables->LoadHintStream(hints_stream.get()))
+  if (!pHintTables->LoadHintStream(hints_stream.Get()))
     return nullptr;
 
   return pHintTables;
@@ -469,7 +469,7 @@ bool CPDF_HintTables::LoadHintStream(CPDF_Stream* pHintStream) {
     return false;
   }
 
-  CFX_BitStream bs(pdfium::make_span(pAcc->GetData(), size));
+  CFX_BitStream bs(pAcc->GetSpan().subspan(0, size));
   return ReadPageHintTable(&bs) &&
          ReadSharedObjHintTable(&bs, shared_hint_table_offset);
 }

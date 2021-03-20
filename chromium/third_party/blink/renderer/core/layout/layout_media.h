@@ -80,7 +80,7 @@ class LayoutMedia : public LayoutImage {
 
   bool IsImage() const final { return false; }
   void PaintReplaced(const PaintInfo&,
-                     const LayoutPoint& paint_offset) const override;
+                     const PhysicalOffset& paint_offset) const override;
 
   bool BackgroundShouldAlwaysBeClipped() const final { return false; }
 
@@ -88,8 +88,6 @@ class LayoutMedia : public LayoutImage {
 
   LayoutObjectChildList children_;
 };
-
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutMedia, IsMedia());
 
 }  // namespace blink
 

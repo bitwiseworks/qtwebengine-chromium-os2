@@ -27,22 +27,30 @@
 
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "third_party/blink/public/common/feature_policy/document_policy_features.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-blink.h"
+#include "third_party/blink/public/mojom/feature_policy/policy_disposition.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/events/error_event.h"
-#include "third_party/blink/renderer/core/execution_context/pausable_object.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_state_observer.h"
 #include "third_party/blink/renderer/core/fileapi/public_url_manager.h"
 #include "third_party/blink/renderer/core/frame/csp/execution_context_csp_delegate.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/script/fetch_client_settings_object_impl.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
+#include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 namespace blink {
@@ -51,11 +59,11 @@ ExecutionContext::ExecutionContext(v8::Isolate* isolate)
     : isolate_(isolate),
       circular_sequential_id_(0),
       in_dispatch_error_event_(false),
+      lifecycle_state_(mojom::FrameLifecycleState::kRunning),
       is_context_destroyed_(false),
       csp_delegate_(MakeGarbageCollected<ExecutionContextCSPDelegate>(*this)),
       window_interaction_tokens_(0),
-      referrer_policy_(network::mojom::ReferrerPolicy::kDefault),
-      invalidator_(std::make_unique<InterfaceInvalidator>()) {}
+      referrer_policy_(network::mojom::ReferrerPolicy::kDefault) {}
 
 ExecutionContext::~ExecutionContext() = default;
 
@@ -63,6 +71,11 @@ ExecutionContext::~ExecutionContext() = default;
 ExecutionContext* ExecutionContext::From(const ScriptState* script_state) {
   v8::HandleScope scope(script_state->GetIsolate());
   return ToExecutionContext(script_state->GetContext());
+}
+
+// static
+ExecutionContext* ExecutionContext::From(v8::Local<v8::Context> context) {
+  return ToExecutionContext(context);
 }
 
 // static
@@ -77,41 +90,74 @@ ExecutionContext* ExecutionContext::ForRelevantRealm(
   return ToExecutionContext(info.Holder()->CreationContext());
 }
 
-void ExecutionContext::PausePausableObjects(PauseState state) {
-  DCHECK(!pause_state_);
-  pause_state_ = state;
-  NotifySuspendingPausableObjects(state);
-}
-
-void ExecutionContext::UnpausePausableObjects() {
-  DCHECK(pause_state_.has_value());
-  pause_state_.reset();
-  NotifyResumingPausableObjects();
+void ExecutionContext::SetLifecycleState(mojom::FrameLifecycleState state) {
+  DCHECK(lifecycle_state_ != state);
+  lifecycle_state_ = state;
+  context_lifecycle_observer_list_.ForEachObserver(
+      [&](ContextLifecycleObserver* observer) {
+        if (!observer->IsExecutionContextLifecycleObserver())
+          return;
+        ExecutionContextLifecycleObserver* execution_context_observer =
+            static_cast<ExecutionContextLifecycleObserver*>(observer);
+        if (execution_context_observer->ObserverType() !=
+            ExecutionContextLifecycleObserver::kStateObjectType)
+          return;
+        ExecutionContextLifecycleStateObserver* state_observer =
+            static_cast<ExecutionContextLifecycleStateObserver*>(
+                execution_context_observer);
+#if DCHECK_IS_ON()
+        DCHECK_EQ(state_observer->GetExecutionContext(), this);
+        DCHECK(state_observer->UpdateStateIfNeededCalled());
+#endif
+        state_observer->ContextLifecycleStateChanged(state);
+      });
 }
 
 void ExecutionContext::NotifyContextDestroyed() {
   is_context_destroyed_ = true;
-  invalidator_.reset();
-  ContextLifecycleNotifier::NotifyContextDestroyed();
+  context_lifecycle_observer_list_.ForEachObserver(
+      [](ContextLifecycleObserver* observer) {
+        observer->ContextDestroyed();
+        observer->ObserverListWillBeCleared();
+      });
+  context_lifecycle_observer_list_.Clear();
 }
 
-void ExecutionContext::PauseScheduledTasks(PauseState state) {
-  PausePausableObjects(state);
-  TasksWerePaused();
+void ExecutionContext::AddContextLifecycleObserver(
+    ContextLifecycleObserver* observer) {
+  context_lifecycle_observer_list_.AddObserver(observer);
 }
 
-void ExecutionContext::UnpauseScheduledTasks() {
-  UnpausePausableObjects();
-  TasksWereUnpaused();
+void ExecutionContext::RemoveContextLifecycleObserver(
+    ContextLifecycleObserver* observer) {
+  DCHECK(context_lifecycle_observer_list_.HasObserver(observer));
+  context_lifecycle_observer_list_.RemoveObserver(observer);
 }
 
-void ExecutionContext::PausePausableObjectIfNeeded(PausableObject* object) {
-#if DCHECK_IS_ON()
-  DCHECK(Contains(object));
-#endif
-  // Ensure all PausableObjects are paused also newly created ones.
-  if (pause_state_)
-    object->ContextPaused(pause_state_.value());
+unsigned ExecutionContext::ContextLifecycleStateObserverCountForTesting()
+    const {
+  DCHECK(!context_lifecycle_observer_list_.IsIteratingOverObservers());
+  unsigned lifecycle_state_observers = 0;
+  context_lifecycle_observer_list_.ForEachObserver(
+      [&](ContextLifecycleObserver* observer) {
+        if (!observer->IsExecutionContextLifecycleObserver())
+          return;
+        if (static_cast<ExecutionContextLifecycleObserver*>(observer)
+                ->ObserverType() !=
+            ExecutionContextLifecycleObserver::kStateObjectType)
+          return;
+        lifecycle_state_observers++;
+      });
+  return lifecycle_state_observers;
+}
+
+void ExecutionContext::AddConsoleMessageImpl(mojom::ConsoleMessageSource source,
+                                             mojom::ConsoleMessageLevel level,
+                                             const String& message,
+                                             bool discard_duplicates) {
+  AddConsoleMessage(
+      MakeGarbageCollected<ConsoleMessage>(source, level, message),
+      discard_duplicates);
 }
 
 void ExecutionContext::DispatchErrorEvent(
@@ -152,6 +198,10 @@ bool ExecutionContext::DispatchErrorEventInternal(
   return error_event->defaultPrevented();
 }
 
+bool ExecutionContext::IsContextPaused() const {
+  return lifecycle_state_ != mojom::FrameLifecycleState::kRunning;
+}
+
 int ExecutionContext::CircularSequentialID() {
   ++circular_sequential_id_;
   if (circular_sequential_id_ > ((1U << 31) - 1U))
@@ -162,7 +212,7 @@ int ExecutionContext::CircularSequentialID() {
 
 PublicURLManager& ExecutionContext::GetPublicURLManager() {
   if (!public_url_manager_)
-    public_url_manager_ = PublicURLManager::Create(this);
+    public_url_manager_ = MakeGarbageCollected<PublicURLManager>(this);
   return *public_url_manager_;
 }
 
@@ -177,7 +227,7 @@ ContentSecurityPolicy* ExecutionContext::GetContentSecurityPolicyForWorld() {
   return GetContentSecurityPolicy();
 }
 
-const SecurityOrigin* ExecutionContext::GetSecurityOrigin() {
+const SecurityOrigin* ExecutionContext::GetSecurityOrigin() const {
   return GetSecurityContext().GetSecurityOrigin();
 }
 
@@ -185,8 +235,20 @@ SecurityOrigin* ExecutionContext::GetMutableSecurityOrigin() {
   return GetSecurityContext().GetMutableSecurityOrigin();
 }
 
-ContentSecurityPolicy* ExecutionContext::GetContentSecurityPolicy() {
+ContentSecurityPolicy* ExecutionContext::GetContentSecurityPolicy() const {
   return GetSecurityContext().GetContentSecurityPolicy();
+}
+
+mojom::blink::WebSandboxFlags ExecutionContext::GetSandboxFlags() const {
+  return GetSecurityContext().GetSandboxFlags();
+}
+
+bool ExecutionContext::IsSandboxed(mojom::blink::WebSandboxFlags mask) const {
+  return GetSecurityContext().IsSandboxed(mask);
+}
+
+const base::UnguessableToken& ExecutionContext::GetAgentClusterID() const {
+  return GetAgent()->cluster_id();
 }
 
 void ExecutionContext::AllowWindowInteraction() {
@@ -203,9 +265,12 @@ bool ExecutionContext::IsWindowInteractionAllowed() const {
   return window_interaction_tokens_ > 0;
 }
 
-bool ExecutionContext::IsSecureContext() const {
-  String unused_error_message;
-  return IsSecureContext(unused_error_message);
+bool ExecutionContext::IsSecureContext(String& error_message) const {
+  if (!IsSecureContext()) {
+    error_message = SecurityOrigin::IsPotentiallyTrustworthyErrorMessage();
+    return false;
+  }
+  return true;
 }
 
 // https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
@@ -226,8 +291,9 @@ void ExecutionContext::ParseAndSetReferrerPolicy(const String& policies,
           support_legacy_keywords ? kSupportReferrerPolicyLegacyKeywords
                                   : kDoNotSupportReferrerPolicyLegacyKeywords,
           &referrer_policy)) {
-    AddConsoleMessage(ConsoleMessage::Create(
-        kRenderingMessageSource, kErrorMessageLevel,
+    AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::ConsoleMessageSource::kRendering,
+        mojom::ConsoleMessageLevel::kError,
         "Failed to set referrer policy: The value '" + policies +
             "' is not one of " +
             (support_legacy_keywords
@@ -259,12 +325,14 @@ void ExecutionContext::RemoveURLFromMemoryCache(const KURL& url) {
   GetMemoryCache()->RemoveURLFromCache(url);
 }
 
-void ExecutionContext::Trace(blink::Visitor* visitor) {
+void ExecutionContext::Trace(Visitor* visitor) {
   visitor->Trace(public_url_manager_);
   visitor->Trace(pending_exceptions_);
   visitor->Trace(csp_delegate_);
+  visitor->Trace(timers_);
+  visitor->Trace(context_lifecycle_observer_list_);
   ContextLifecycleNotifier::Trace(visitor);
-  ConsoleLoggerImplBase::Trace(visitor);
+  ConsoleLogger::Trace(visitor);
   Supplementable<ExecutionContext>::Trace(visitor);
 }
 
@@ -276,6 +344,165 @@ bool ExecutionContext::IsSameAgentCluster(
   if (this_id.is_empty() || other_id.is_empty())
     return false;
   return this_id == other_id;
+}
+
+v8::MicrotaskQueue* ExecutionContext::GetMicrotaskQueue() const {
+  // TODO(keishi): Convert to DCHECK once we assign agents everywhere.
+  if (!GetAgent())
+    return nullptr;
+  DCHECK(GetAgent()->event_loop());
+  return GetAgent()->event_loop()->microtask_queue();
+}
+
+bool ExecutionContext::FeatureEnabled(OriginTrialFeature feature) const {
+  return GetOriginTrialContext() &&
+         GetOriginTrialContext()->IsFeatureEnabled(feature);
+}
+
+void ExecutionContext::CountFeaturePolicyUsage(mojom::WebFeature feature) {
+  UseCounter::Count(*this, feature);
+}
+
+bool ExecutionContext::FeaturePolicyFeatureObserved(
+    mojom::blink::FeaturePolicyFeature feature) {
+  size_t feature_index = static_cast<size_t>(feature);
+  if (parsed_feature_policies_.size() == 0) {
+    parsed_feature_policies_.resize(
+        static_cast<size_t>(mojom::blink::FeaturePolicyFeature::kMaxValue) + 1);
+  } else if (parsed_feature_policies_[feature_index]) {
+    return true;
+  }
+  parsed_feature_policies_[feature_index] = true;
+  return false;
+}
+
+void ExecutionContext::FeaturePolicyPotentialBehaviourChangeObserved(
+    mojom::blink::FeaturePolicyFeature feature) const {
+  size_t feature_index = static_cast<size_t>(feature);
+  if (feature_policy_behaviour_change_counted_.size() == 0) {
+    feature_policy_behaviour_change_counted_.resize(
+        static_cast<size_t>(mojom::blink::FeaturePolicyFeature::kMaxValue) + 1);
+  } else if (feature_policy_behaviour_change_counted_[feature_index]) {
+    return;
+  }
+  feature_policy_behaviour_change_counted_[feature_index] = true;
+  UMA_HISTOGRAM_ENUMERATION(
+      "Blink.UseCounter.FeaturePolicy.ProposalWouldChangeBehaviour", feature);
+}
+
+bool ExecutionContext::IsFeatureEnabled(
+    mojom::blink::FeaturePolicyFeature feature,
+    ReportOptions report_on_failure,
+    const String& message,
+    const String& source_file) const {
+  PolicyValue threshold_value =
+      PolicyValue::CreateMaxPolicyValue(GetSecurityContext()
+                                            .GetFeaturePolicy()
+                                            ->GetFeatureList()
+                                            .at(feature)
+                                            .second);
+  return IsFeatureEnabled(feature, threshold_value, report_on_failure, message,
+                          source_file);
+}
+
+bool ExecutionContext::IsFeatureEnabled(
+    mojom::blink::FeaturePolicyFeature feature,
+    PolicyValue threshold_value,
+    ReportOptions report_on_failure,
+    const String& message,
+    const String& source_file) const {
+  if (report_on_failure == ReportOptions::kReportOnFailure) {
+    // We are expecting a violation report in case the feature is disabled in
+    // the context. Therefore, this qualifies as a potential violation (i.e.,
+    // if the feature was disabled it would generate a report).
+    CountPotentialFeaturePolicyViolation(feature);
+  }
+
+  bool should_report;
+  bool enabled = GetSecurityContext().IsFeatureEnabled(feature, threshold_value,
+                                                       &should_report);
+
+  if (enabled) {
+    // Report if the proposed header semantics change would have affected the
+    // outcome. (https://crbug.com/937131)
+    const FeaturePolicy* policy = GetSecurityContext().GetFeaturePolicy();
+    url::Origin origin = GetSecurityOrigin()->ToUrlOrigin();
+    if (policy->GetProposedFeatureValueForOrigin(feature, origin) <
+        threshold_value) {
+      // Count that there was a change in this page load.
+      const_cast<ExecutionContext*>(this)->CountUse(
+          WebFeature::kFeaturePolicyProposalWouldChangeBehaviour);
+      // Record the specific feature whose behaviour was changed.
+      FeaturePolicyPotentialBehaviourChangeObserved(feature);
+    }
+  }
+
+  if (should_report && report_on_failure == ReportOptions::kReportOnFailure) {
+    mojom::blink::PolicyDisposition disposition =
+        enabled ? mojom::blink::PolicyDisposition::kReport
+                : mojom::blink::PolicyDisposition::kEnforce;
+    ReportFeaturePolicyViolation(feature, disposition, message, source_file);
+  }
+  return enabled;
+}
+
+bool ExecutionContext::IsFeatureEnabled(
+    mojom::blink::DocumentPolicyFeature feature,
+    ReportOptions report_option,
+    const String& message,
+    const String& source_file) const {
+  DCHECK(GetDocumentPolicyFeatureInfoMap().at(feature).default_value.Type() ==
+         mojom::blink::PolicyValueType::kBool);
+  return IsFeatureEnabled(feature, PolicyValue(true), report_option, message,
+                          source_file);
+}
+
+bool ExecutionContext::IsFeatureEnabled(
+    mojom::blink::DocumentPolicyFeature feature,
+    PolicyValue threshold_value,
+    ReportOptions report_option,
+    const String& message,
+    const String& source_file) const {
+  // The default value for any feature should be true unless restricted by
+  // document policy
+  if (!RuntimeEnabledFeatures::DocumentPolicyEnabled(this))
+    return true;
+
+  SecurityContext::FeatureStatus status =
+      GetSecurityContext().IsFeatureEnabled(feature, threshold_value);
+  if (status.should_report &&
+      report_option == ReportOptions::kReportOnFailure) {
+    // If both |enabled| and |should_report| are true, the usage must have
+    // violated the report-only policy, i.e. |disposition| ==
+    // mojom::blink::PolicyDisposition::kReport.
+    ReportDocumentPolicyViolation(
+        feature,
+        status.enabled ? mojom::blink::PolicyDisposition::kReport
+                       : mojom::blink::PolicyDisposition::kEnforce,
+        message, source_file);
+  }
+  return status.enabled;
+}
+
+bool ExecutionContext::RequireTrustedTypes() const {
+  return GetSecurityContext().TrustedTypesRequiredByPolicy() &&
+         RuntimeEnabledFeatures::TrustedDOMTypesEnabled(this);
+}
+
+String ExecutionContext::addressSpaceForBindings() const {
+  switch (GetSecurityContext().AddressSpace()) {
+    case network::mojom::IPAddressSpace::kPublic:
+    case network::mojom::IPAddressSpace::kUnknown:
+      return "public";
+
+    case network::mojom::IPAddressSpace::kPrivate:
+      return "private";
+
+    case network::mojom::IPAddressSpace::kLocal:
+      return "local";
+  }
+  NOTREACHED();
+  return "public";
 }
 
 }  // namespace blink

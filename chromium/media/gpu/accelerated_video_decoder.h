@@ -9,8 +9,10 @@
 #include <stdint.h>
 
 #include "base/macros.h"
-#include "media/base/decrypt_config.h"
+#include "media/base/decoder_buffer.h"
+#include "media/base/video_codecs.h"
 #include "media/gpu/media_gpu_export.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
@@ -24,15 +26,12 @@ class MEDIA_GPU_EXPORT AcceleratedVideoDecoder {
   AcceleratedVideoDecoder() {}
   virtual ~AcceleratedVideoDecoder() {}
 
-  // Set the buffer at |ptr| of |size| bytes as the current source of encoded
-  // stream data. Pictures produced as a result of this call should be assigned
-  // the passed stream |id|. |decrypt_config| may specify the decryption
-  // configuration of the specified buffer, and in that case, Decode() may
-  // return kNoKey.
-  virtual void SetStream(int32_t id,
-                         const uint8_t* ptr,
-                         size_t size,
-                         const DecryptConfig* decrypt_config = nullptr) = 0;
+  // Set the buffer owned by |decoder_buffer| as the current source of encoded
+  // stream data. AcceleratedVideoDecoder doesn't have an ownership of the
+  // buffer. |decoder_buffer| must be kept alive until Decode() returns
+  // kRanOutOfStreamData. Pictures produced as a result of this call should be
+  // assigned the passed stream |id|.
+  virtual void SetStream(int32_t id, const DecoderBuffer& decoder_buffer) = 0;
 
   // Have the decoder flush its state and trigger output of all previously
   // decoded surfaces. Return false on failure.
@@ -50,11 +49,15 @@ class MEDIA_GPU_EXPORT AcceleratedVideoDecoder {
     // in decoding; in future it could perhaps be possible to fall back
     // to software decoding instead.
     // kStreamError,  // Error in stream.
-    kAllocateNewSurfaces,  // Need a new set of surfaces to be allocated.
-    kRanOutOfStreamData,   // Need more stream data to proceed.
-    kRanOutOfSurfaces,     // Waiting for the client to free up output surfaces.
-    kNeedContextUpdate,    // Waiting for the client to update decoding context
-                           // with data acquired from the accelerator.
+    kConfigChange,        // This is returned when some configuration (e.g.
+                          // profile or picture size) is changed. A client may
+                          // need to apply the client side the configuration
+                          // properly (e.g. allocate buffers with the new
+                          // resolution).
+    kRanOutOfStreamData,  // Need more stream data to proceed.
+    kRanOutOfSurfaces,    // Waiting for the client to free up output surfaces.
+    kNeedContextUpdate,   // Waiting for the client to update decoding context
+                          // with data acquired from the accelerator.
     kTryAgain,  // The accelerator needs additional data (independently
     // provided) in order to proceed. This may be a new key in order to decrypt
     // encrypted data, or existing hardware resources freed so that they can be
@@ -66,11 +69,15 @@ class MEDIA_GPU_EXPORT AcceleratedVideoDecoder {
   // we need a new set of them, or when an error occurs.
   virtual DecodeResult Decode() WARN_UNUSED_RESULT = 0;
 
-  // Return dimensions/required number of output surfaces that client should
-  // be ready to provide for the decoder to function properly.
-  // To be used after Decode() returns kAllocateNewSurfaces.
+  // Return dimensions/visible rectangle/profile/required number of pictures
+  // that client should be ready to provide for the decoder to function properly
+  // (of which up to GetNumReferenceFrames() might be needed for internal
+  // decoding). To be used after Decode() returns kConfigChange.
   virtual gfx::Size GetPicSize() const = 0;
+  virtual gfx::Rect GetVisibleRect() const = 0;
+  virtual VideoCodecProfile GetProfile() const = 0;
   virtual size_t GetRequiredNumOfPictures() const = 0;
+  virtual size_t GetNumReferenceFrames() const = 0;
 
   // About 3 secs for 30 fps video. When the new sized keyframe is missed, the
   // decoder cannot decode the frame. The number of frames are skipped until

@@ -14,6 +14,14 @@ cr.define('cr.ui', function() {
   const INDENT = 20;
 
   /**
+   * A custom rowElement depth (indent) style handler where undefined uses the
+   * default depth INDENT styling, see cr.ui.TreeItem.setDepth_().
+   *
+   * @type {function(!cr.ui.TreeItem,number)|undefined}
+   */
+  let customRowElementDepthStyleHandler = undefined;
+
+  /**
    * Returns the computed style for an element.
    * @param {!Element} el The element to get the computed style for.
    * @return {!CSSStyleDeclaration} The computed style.
@@ -48,7 +56,7 @@ cr.define('cr.ui', function() {
     /**
      * Initializes the element.
      */
-    decorate: function() {
+    decorate() {
       // Make list focusable
       if (!this.hasAttribute('tabindex')) {
         this.tabIndex = 0;
@@ -60,8 +68,27 @@ cr.define('cr.ui', function() {
       this.addEventListener('keydown', this.handleKeyDown);
 
       if (!this.hasAttribute('role')) {
-        this.setAttribute('role', 'group');
+        this.setAttribute('role', 'tree');
       }
+    },
+
+    /**
+     * Returns the tree item rowElement style handler.
+     *
+     * @return {function(!cr.ui.TreeItem,number)|undefined}
+     */
+    get rowElementDepthStyleHandler() {
+      return customRowElementDepthStyleHandler;
+    },
+
+    /**
+     * Sets a tree item rowElement style handler, which allows Tree users to
+     * customize the depth (indent) style of tree item rowElements.
+     *
+     * @param {function(!cr.ui.TreeItem,number)|undefined} handler
+     */
+    set rowElementDepthStyleHandler(handler) {
+      customRowElementDepthStyleHandler = handler;
     },
 
     /**
@@ -75,7 +102,7 @@ cr.define('cr.ui', function() {
      * Adds a tree item to the tree.
      * @param {!cr.ui.TreeItem} treeItem The item to add.
      */
-    add: function(treeItem) {
+    add(treeItem) {
       this.addAt(treeItem, 0xffffffff);
     },
 
@@ -84,7 +111,7 @@ cr.define('cr.ui', function() {
      * @param {!cr.ui.TreeItem} treeItem The item to add.
      * @param {number} index The index where we want to add the item.
      */
-    addAt: function(treeItem, index) {
+    addAt(treeItem, index) {
       this.insertBefore(treeItem, this.children[index]);
       treeItem.setDepth_(this.depth + 1);
     },
@@ -97,7 +124,7 @@ cr.define('cr.ui', function() {
      *
      * @param {!cr.ui.TreeItem=} treeItem The tree item to remove.
      */
-    remove: function(treeItem) {
+    remove(treeItem) {
       this.removeChild(/** @type {!cr.ui.TreeItem} */ (treeItem));
     },
 
@@ -111,18 +138,18 @@ cr.define('cr.ui', function() {
 
     /**
      * Handles click events on the tree and forwards the event to the relevant
-     * tree items as necesary.
+     * tree items as necessary.
      * @param {Event} e The click event object.
      */
-    handleClick: function(e) {
+    handleClick(e) {
       const treeItem = findTreeItem(/** @type {!Node} */ (e.target));
       if (treeItem) {
         treeItem.handleClick(e);
       }
     },
 
-    handleMouseDown: function(e) {
-      if (e.button == 2) {  // right
+    handleMouseDown(e) {
+      if (e.button === 2) {  // right
         this.handleClick(e);
       }
     },
@@ -131,7 +158,7 @@ cr.define('cr.ui', function() {
      * Handles double click events on the tree.
      * @param {Event} e The dblclick event object.
      */
-    handleDblClick: function(e) {
+    handleDblClick(e) {
       const treeItem = findTreeItem(/** @type {!Node} */ (e.target));
       if (treeItem) {
         treeItem.expanded = !treeItem.expanded;
@@ -143,7 +170,7 @@ cr.define('cr.ui', function() {
      * of tree items.
      * @param {Event} e The click event object.
      */
-    handleKeyDown: function(e) {
+    handleKeyDown(e) {
       let itemToSelect;
       if (e.ctrlKey) {
         return;
@@ -154,7 +181,7 @@ cr.define('cr.ui', function() {
         return;
       }
 
-      const rtl = getComputedStyle(item).direction == 'rtl';
+      const rtl = getComputedStyle(item).direction === 'rtl';
 
       switch (e.key) {
         case 'ArrowUp':
@@ -171,7 +198,7 @@ cr.define('cr.ui', function() {
             break;
           }
 
-          if (e.key == 'ArrowLeft' && !rtl || e.key == 'ArrowRight' && rtl) {
+          if (e.key === 'ArrowLeft' && !rtl || e.key === 'ArrowRight' && rtl) {
             if (item.expanded) {
               item.expanded = false;
             } else {
@@ -208,7 +235,7 @@ cr.define('cr.ui', function() {
     },
     set selectedItem(item) {
       const oldSelectedItem = this.selectedItem_;
-      if (oldSelectedItem != item) {
+      if (oldSelectedItem !== item) {
         // Set the selectedItem_ before deselecting the old item since we only
         // want one change when moving between items.
         this.selectedItem_ = item;
@@ -232,7 +259,7 @@ cr.define('cr.ui', function() {
     /**
      * @return {!ClientRect} The rect to use for the context menu.
      */
-    getRectForContextMenu: function() {
+    getRectForContextMenu() {
       // TODO(arv): Add trait support so we can share more code between trees
       // and lists.
       if (this.selectedItem) {
@@ -265,10 +292,11 @@ cr.define('cr.ui', function() {
    * @type {!HTMLElement}
    */
   const treeItemProto = (function() {
-    const treeItem = cr.doc.createElement('div');
+    const treeItem = document.createElement('div');
     treeItem.className = 'tree-item';
     treeItem.innerHTML = '<div class="tree-row">' +
         '<span class="expand-icon"></span>' +
+        '<span class="tree-label-icon"></span>' +
         '<span class="tree-label"></span>' +
         '</div>' +
         '<div class="tree-children" role="group"></div>';
@@ -294,7 +322,7 @@ cr.define('cr.ui', function() {
     /**
      * Initializes the element.
      */
-    decorate: function() {
+    decorate() {
       const labelId =
           'tree-item-label-autogen-id-' + treeItemAutoGeneratedIdCounter;
       this.labelElement.id = labelId;
@@ -322,10 +350,15 @@ cr.define('cr.ui', function() {
      * @param {number} depth The new depth.
      * @private
      */
-    setDepth_: function(depth) {
-      if (depth != this.depth_) {
-        this.rowElement.style.paddingInlineStart =
-            Math.max(0, depth - 1) * INDENT + 'px';
+    setDepth_(depth) {
+      if (depth !== this.depth_) {
+        const rowDepth = Math.max(0, depth - 1);
+        if (!customRowElementDepthStyleHandler) {
+          this.rowElement.style.paddingInlineStart = rowDepth * INDENT + 'px';
+        } else {
+          customRowElementDepthStyleHandler(this, rowDepth);
+        }
+
         this.depth_ = depth;
         const items = this.items;
         for (let i = 0, item; item = items[i]; i++) {
@@ -338,7 +371,7 @@ cr.define('cr.ui', function() {
      * Adds a tree item as a child.
      * @param {!cr.ui.TreeItem} child The child to add.
      */
-    add: function(child) {
+    add(child) {
       this.addAt(child, 0xffffffff);
     },
 
@@ -347,9 +380,9 @@ cr.define('cr.ui', function() {
      * @param {!cr.ui.TreeItem} child The child to add.
      * @param {number} index The index where to add the child.
      */
-    addAt: function(child, index) {
+    addAt(child, index) {
       this.lastElementChild.insertBefore(child, this.items[index]);
-      if (this.items.length == 1) {
+      if (this.items.length === 1) {
         this.hasChildren = true;
       }
       child.setDepth_(this.depth + 1);
@@ -360,7 +393,7 @@ cr.define('cr.ui', function() {
      * @param {!cr.ui.TreeItem=} child The tree item child to remove.
      * @override
      */
-    remove: function(child) {
+    remove(child) {
       // If we removed the selected item we should become selected.
       const tree = this.tree;
       const selectedItem = tree.selectedItem;
@@ -369,7 +402,7 @@ cr.define('cr.ui', function() {
       }
 
       this.lastElementChild.removeChild(/** @type {!cr.ui.TreeItem} */ (child));
-      if (this.items.length == 0) {
+      if (this.items.length === 0) {
         this.hasChildren = false;
       }
     },
@@ -406,7 +439,7 @@ cr.define('cr.ui', function() {
       return this.hasAttribute('expanded');
     },
     set expanded(b) {
-      if (this.expanded == b) {
+      if (this.expanded === b) {
         return;
       }
 
@@ -442,7 +475,7 @@ cr.define('cr.ui', function() {
     /**
      * Expands all parent items.
      */
-    reveal: function() {
+    reveal() {
       let pi = this.parentItem;
       while (pi && !(pi instanceof Tree)) {
         pi.expanded = true;
@@ -459,11 +492,11 @@ cr.define('cr.ui', function() {
     },
 
     /**
-     * The element containing the label text and the icon.
+     * The element containing the label text.
      * @type {!HTMLElement}
      */
     get labelElement() {
-      return this.firstElementChild.lastElementChild;
+      return this.rowElement.lastElementChild;
     },
 
     /**
@@ -478,17 +511,6 @@ cr.define('cr.ui', function() {
     },
 
     /**
-     * The URL for the icon.
-     * @type {string}
-     */
-    get icon() {
-      return getComputedStyle(this.labelElement).backgroundImage.slice(4, -1);
-    },
-    set icon(icon) {
-      return this.labelElement.style.backgroundImage = getUrlForCss(icon);
-    },
-
-    /**
      * Whether the tree item is selected or not.
      * @type {boolean}
      */
@@ -496,10 +518,10 @@ cr.define('cr.ui', function() {
       return this.hasAttribute('selected');
     },
     set selected(b) {
-      if (this.selected == b) {
+      if (this.selected === b) {
         return;
       }
-      const rowItem = this.firstElementChild;
+      const rowItem = this.rowElement;
       const tree = this.tree;
       if (b) {
         this.setAttribute('selected', '');
@@ -512,7 +534,7 @@ cr.define('cr.ui', function() {
       } else {
         this.removeAttribute('selected');
         rowItem.removeAttribute('selected');
-        if (tree && tree.selectedItem == this) {
+        if (tree && tree.selectedItem === this) {
           tree.selectedItem = null;
         }
       }
@@ -526,7 +548,7 @@ cr.define('cr.ui', function() {
       return this.hasAttribute('may-have-children');
     },
     set mayHaveChildren_(b) {
-      const rowItem = this.firstElementChild;
+      const rowItem = this.rowElement;
       if (b) {
         this.setAttribute('may-have-children', '');
         rowItem.setAttribute('may-have-children', '');
@@ -549,12 +571,12 @@ cr.define('cr.ui', function() {
      * @type {boolean}
      */
     set hasChildren(b) {
-      const rowItem = this.firstElementChild;
+      const rowItem = this.rowElement;
       this.setAttribute('has-children', b);
       rowItem.setAttribute('has-children', b);
       if (b) {
         this.mayHaveChildren_ = true;
-        this.setAttribute('aria-expanded', 'false');
+        this.setAttribute('aria-expanded', this.expanded);
       }
     },
 
@@ -563,8 +585,8 @@ cr.define('cr.ui', function() {
      * cr.ui.Tree.
      * @param {Event} e The click event.
      */
-    handleClick: function(e) {
-      if (e.target.className == 'expand-icon') {
+    handleClick(e) {
+      if (e.target.className === 'expand-icon') {
         this.expanded = !this.expanded;
       } else {
         this.selected = true;
@@ -578,7 +600,7 @@ cr.define('cr.ui', function() {
      */
     set editing(editing) {
       const oldEditing = this.editing;
-      if (editing == oldEditing) {
+      if (editing === oldEditing) {
         return;
       }
 
@@ -656,7 +678,7 @@ cr.define('cr.ui', function() {
           labelEl.textContent = this.oldLabel_;
         } else {
           labelEl.textContent = value;
-          if (value != this.oldLabel_) {
+          if (value !== this.oldLabel_) {
             cr.dispatchSimpleEvent(this, 'rename', true);
           }
         }

@@ -28,10 +28,9 @@ class InitializeStoreTask : public Task {
                       RequestQueueStore::InitializeCallback callback);
   ~InitializeStoreTask() override;
 
+ private:
   // TaskQueue::Task implementation.
   void Run() override;
-
- private:
   // Step 1. Initialize store.
   void InitializeStore();
   // Step 2a. Completes initialization if successful or tries to reset if there
@@ -49,7 +48,7 @@ class InitializeStoreTask : public Task {
   // Callback to complete the task.
   RequestQueueStore::InitializeCallback callback_;
 
-  base::WeakPtrFactory<InitializeStoreTask> weak_ptr_factory_;
+  base::WeakPtrFactory<InitializeStoreTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(InitializeStoreTask);
 };
 

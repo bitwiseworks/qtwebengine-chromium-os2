@@ -49,29 +49,33 @@ class CSSVisibilityNonInterpolableValue : public NonInterpolableValue {
 };
 
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(CSSVisibilityNonInterpolableValue);
-DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(CSSVisibilityNonInterpolableValue);
+template <>
+struct DowncastTraits<CSSVisibilityNonInterpolableValue> {
+  static bool AllowFrom(const NonInterpolableValue* value) {
+    return value && AllowFrom(*value);
+  }
+  static bool AllowFrom(const NonInterpolableValue& value) {
+    return value.GetType() == CSSVisibilityNonInterpolableValue::static_type_;
+  }
+};
 
 class UnderlyingVisibilityChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  ~UnderlyingVisibilityChecker() final = default;
-
-  static std::unique_ptr<UnderlyingVisibilityChecker> Create(
-      EVisibility visibility) {
-    return base::WrapUnique(new UnderlyingVisibilityChecker(visibility));
-  }
-
- private:
-  UnderlyingVisibilityChecker(EVisibility visibility)
+  explicit UnderlyingVisibilityChecker(EVisibility visibility)
       : visibility_(visibility) {}
 
+  ~UnderlyingVisibilityChecker() final = default;
+
+
+ private:
   bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     double underlying_fraction =
-        ToInterpolableNumber(*underlying.interpolable_value).Value();
-    EVisibility underlying_visibility =
-        ToCSSVisibilityNonInterpolableValue(*underlying.non_interpolable_value)
-            .Visibility(underlying_fraction);
+        To<InterpolableNumber>(*underlying.interpolable_value).Value();
+    EVisibility underlying_visibility = To<CSSVisibilityNonInterpolableValue>(
+                                            *underlying.non_interpolable_value)
+                                            .Visibility(underlying_fraction);
     return visibility_ == underlying_visibility;
   }
 
@@ -81,15 +85,10 @@ class UnderlyingVisibilityChecker
 class InheritedVisibilityChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<InheritedVisibilityChecker> Create(
-      EVisibility visibility) {
-    return base::WrapUnique(new InheritedVisibilityChecker(visibility));
-  }
-
- private:
-  InheritedVisibilityChecker(EVisibility visibility)
+  explicit InheritedVisibilityChecker(EVisibility visibility)
       : visibility_(visibility) {}
 
+ private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     return visibility_ == state.ParentStyle()->Visibility();
@@ -101,7 +100,7 @@ class InheritedVisibilityChecker
 InterpolationValue CSSVisibilityInterpolationType::CreateVisibilityValue(
     EVisibility visibility) const {
   return InterpolationValue(
-      InterpolableNumber::Create(0),
+      std::make_unique<InterpolableNumber>(0),
       CSSVisibilityNonInterpolableValue::Create(visibility, visibility));
 }
 
@@ -109,12 +108,12 @@ InterpolationValue CSSVisibilityInterpolationType::MaybeConvertNeutral(
     const InterpolationValue& underlying,
     ConversionCheckers& conversion_checkers) const {
   double underlying_fraction =
-      ToInterpolableNumber(*underlying.interpolable_value).Value();
+      To<InterpolableNumber>(*underlying.interpolable_value).Value();
   EVisibility underlying_visibility =
-      ToCSSVisibilityNonInterpolableValue(*underlying.non_interpolable_value)
+      To<CSSVisibilityNonInterpolableValue>(*underlying.non_interpolable_value)
           .Visibility(underlying_fraction);
   conversion_checkers.push_back(
-      UnderlyingVisibilityChecker::Create(underlying_visibility));
+      std::make_unique<UnderlyingVisibilityChecker>(underlying_visibility));
   return CreateVisibilityValue(underlying_visibility);
 }
 
@@ -131,7 +130,7 @@ InterpolationValue CSSVisibilityInterpolationType::MaybeConvertInherit(
     return nullptr;
   EVisibility inherited_visibility = state.ParentStyle()->Visibility();
   conversion_checkers.push_back(
-      InheritedVisibilityChecker::Create(inherited_visibility));
+      std::make_unique<InheritedVisibilityChecker>(inherited_visibility));
   return CreateVisibilityValue(inherited_visibility);
 }
 
@@ -139,17 +138,17 @@ InterpolationValue CSSVisibilityInterpolationType::MaybeConvertValue(
     const CSSValue& value,
     const StyleResolverState*,
     ConversionCheckers& conversion_checkers) const {
-  if (!value.IsIdentifierValue())
+  const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
+  if (!identifier_value)
     return nullptr;
 
-  const CSSIdentifierValue& identifier_value = ToCSSIdentifierValue(value);
-  CSSValueID keyword = identifier_value.GetValueID();
+  CSSValueID keyword = identifier_value->GetValueID();
 
   switch (keyword) {
-    case CSSValueHidden:
-    case CSSValueVisible:
-    case CSSValueCollapse:
-      return CreateVisibilityValue(identifier_value.ConvertTo<EVisibility>());
+    case CSSValueID::kHidden:
+    case CSSValueID::kVisible:
+    case CSSValueID::kCollapse:
+      return CreateVisibilityValue(identifier_value->ConvertTo<EVisibility>());
     default:
       return nullptr;
   }
@@ -165,10 +164,10 @@ PairwiseInterpolationValue CSSVisibilityInterpolationType::MaybeMergeSingles(
     InterpolationValue&& start,
     InterpolationValue&& end) const {
   EVisibility start_visibility =
-      ToCSSVisibilityNonInterpolableValue(*start.non_interpolable_value)
+      To<CSSVisibilityNonInterpolableValue>(*start.non_interpolable_value)
           .Visibility();
   EVisibility end_visibility =
-      ToCSSVisibilityNonInterpolableValue(*end.non_interpolable_value)
+      To<CSSVisibilityNonInterpolableValue>(*end.non_interpolable_value)
           .Visibility();
   // One side must be "visible".
   // Spec: https://drafts.csswg.org/css-transitions/#animtype-visibility
@@ -177,8 +176,8 @@ PairwiseInterpolationValue CSSVisibilityInterpolationType::MaybeMergeSingles(
       end_visibility != EVisibility::kVisible) {
     return nullptr;
   }
-  return PairwiseInterpolationValue(InterpolableNumber::Create(0),
-                                    InterpolableNumber::Create(1),
+  return PairwiseInterpolationValue(std::make_unique<InterpolableNumber>(0),
+                                    std::make_unique<InterpolableNumber>(1),
                                     CSSVisibilityNonInterpolableValue::Create(
                                         start_visibility, end_visibility));
 }
@@ -197,9 +196,9 @@ void CSSVisibilityInterpolationType::ApplyStandardPropertyValue(
     StyleResolverState& state) const {
   // Visibility interpolation has been deferred to application time here due to
   // its non-linear behaviour.
-  double fraction = ToInterpolableNumber(interpolable_value).Value();
+  double fraction = To<InterpolableNumber>(interpolable_value).Value();
   EVisibility visibility =
-      ToCSSVisibilityNonInterpolableValue(non_interpolable_value)
+      To<CSSVisibilityNonInterpolableValue>(non_interpolable_value)
           ->Visibility(fraction);
   state.Style()->SetVisibility(visibility);
 }

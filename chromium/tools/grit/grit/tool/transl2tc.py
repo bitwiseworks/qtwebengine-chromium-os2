@@ -5,7 +5,7 @@
 '''The 'grit transl2tc' tool.
 '''
 
-import sys
+from __future__ import print_function
 
 from grit import grd_reader
 from grit import util
@@ -58,7 +58,7 @@ Bulk Translation Upload tool.
     self.rc2grd.SetOptions(globopt)
     self.limits = None
     if len(args) and args[0] == '-l':
-      self.limits = util.ReadFile(args[1], util.RAW_TEXT).split('\n')
+      self.limits = util.ReadFile(args[1], 'utf-8').splitlines()
       args = args[2:]
     return self.rc2grd.ParseOptions(args, help_func=self.ShowUsage)
 
@@ -81,7 +81,7 @@ Bulk Translation Upload tool.
                                             source_rc, args[0],
                                             transl_rc, args[1])
 
-    with util.WrapOutputStream(open(args[2], 'w')) as output_file:
+    with util.WrapOutputStream(open(args[2], 'wb')) as output_file:
       self.WriteTranslations(output_file, translations.items())
 
     self.Out('Wrote output file %s' % args[2])
@@ -222,7 +222,7 @@ Bulk Translation Upload tool.
     # or have been marked as not translateable, or do not occur in the 'limits'
     # list (if it has been set).
     current_message_ids = current_grd.UberClique().AllMessageIds()
-    for message_id in id2transl.keys():
+    for message_id in list(id2transl.keys()):
       if (message_id not in current_message_ids or
           not current_grd.UberClique().BestClique(message_id).IsTranslateable() or
           (self.limits and message_id not in self.limits)):
@@ -237,7 +237,7 @@ Bulk Translation Upload tool.
     must be UTF-8 encoded.
 
     Args:
-      output_file: util.WrapOutputStream(open('bingo.out', 'w'))
+      output_file: util.WrapOutputStream(open('bingo.out', 'wb'))
       translations: [ [id1, text1], ['12345678', 'Hello USERNAME, howzit?'] ]
 
     Return:

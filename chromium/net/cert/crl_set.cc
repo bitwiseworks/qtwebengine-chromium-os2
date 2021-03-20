@@ -4,6 +4,8 @@
 
 #include "net/cert/crl_set.h"
 
+#include <algorithm>
+
 #include "base/base64.h"
 #include "base/json/json_reader.h"
 #include "base/time/time.h"
@@ -32,10 +34,21 @@ namespace {
 //
 // header_bytes consists of a JSON dictionary with the following keys:
 //   Version (int): currently 0
-//   ContentType (string): "CRLSet" or "CRLSetDelta" (magic value)
-//   DeltaFrom (int32_t): if this is a delta update (see below), then this
-//       contains the sequence number of the base CRLSet.
+//   ContentType (string): "CRLSet" (magic value)
 //   Sequence (int32_t): the monotonic sequence number of this CRL set.
+//   NotAfter (optional) (double/int64_t): The number of seconds since the
+//     Unix epoch, after which, this CRLSet is expired.
+//   BlockedSPKIs (array of string): An array of Base64 encoded, SHA-256 hashed
+//     SubjectPublicKeyInfos that should be blocked.
+//   LimitedSubjects (object/map of string -> array of string): A map between
+//     the Base64-encoded SHA-256 hash of the DER-encoded Subject and the
+//     Base64-encoded SHA-256 hashes of the SubjectPublicKeyInfos that are
+//     allowed for that subject.
+//   KnownInterceptionSPKIs (array of string): An array of Base64-encoded
+//     SHA-256 hashed SubjectPublicKeyInfos known to be used for interception.
+//   BlockedInterceptionSPKIs (array of string): An array of Base64-encoded
+//     SHA-256 hashed SubjectPublicKeyInfos known to be used for interception
+//     and that should be actively blocked.
 //
 // ReadHeader reads the header (including length prefix) from |data| and
 // updates |data| to remove the header on return. Caller takes ownership of the
@@ -54,8 +67,8 @@ base::DictionaryValue* ReadHeader(base::StringPiece* data) {
   const base::StringPiece header_bytes(data->data(), header_len);
   data->remove_prefix(header_len);
 
-  std::unique_ptr<base::Value> header =
-      base::JSONReader::Read(header_bytes, base::JSON_ALLOW_TRAILING_COMMAS);
+  std::unique_ptr<base::Value> header = base::JSONReader::ReadDeprecated(
+      header_bytes, base::JSON_ALLOW_TRAILING_COMMAS);
   if (header.get() == nullptr)
     return nullptr;
 
@@ -245,25 +258,53 @@ bool CRLSet::Parse(base::StringPiece data, scoped_refptr<CRLSet>* out_crl_set) {
     crl_set->crls_[std::move(spki_hash)] = std::move(blocked_serials);
   }
 
+  std::vector<std::string> blocked_interception_spkis;
   if (!CopyHashListFromHeader(header_dict.get(), "BlockedSPKIs",
                               &crl_set->blocked_spkis_) ||
       !CopyHashToHashesMapFromHeader(header_dict.get(), "LimitedSubjects",
-                                     &crl_set->limited_subjects_)) {
+                                     &crl_set->limited_subjects_) ||
+      !CopyHashListFromHeader(header_dict.get(), "KnownInterceptionSPKIs",
+                              &crl_set->known_interception_spkis_) ||
+      !CopyHashListFromHeader(header_dict.get(), "BlockedInterceptionSPKIs",
+                              &blocked_interception_spkis)) {
     return false;
   }
+
+  // Add the BlockedInterceptionSPKIs to both lists; these are provided as
+  // a separate list to allow less data to be sent over the wire, even though
+  // they are duplicated in-memory.
+  crl_set->blocked_spkis_.insert(crl_set->blocked_spkis_.end(),
+                                 blocked_interception_spkis.begin(),
+                                 blocked_interception_spkis.end());
+  crl_set->known_interception_spkis_.insert(
+      crl_set->known_interception_spkis_.end(),
+      blocked_interception_spkis.begin(), blocked_interception_spkis.end());
+
+  // Defines kSPKIBlockList and kKnownInterceptionList
+#include "net/cert/cert_verify_proc_blocklist.inc"
+  for (const auto& hash : kSPKIBlockList) {
+    crl_set->blocked_spkis_.push_back(std::string(
+        reinterpret_cast<const char*>(hash), crypto::kSHA256Length));
+  }
+
+  for (const auto& hash : kKnownInterceptionList) {
+    crl_set->known_interception_spkis_.push_back(std::string(
+        reinterpret_cast<const char*>(hash), crypto::kSHA256Length));
+  }
+
+  // Sort, as these will be std::binary_search()'d.
+  std::sort(crl_set->blocked_spkis_.begin(), crl_set->blocked_spkis_.end());
+  std::sort(crl_set->known_interception_spkis_.begin(),
+            crl_set->known_interception_spkis_.end());
 
   *out_crl_set = std::move(crl_set);
   return true;
 }
 
 CRLSet::Result CRLSet::CheckSPKI(const base::StringPiece& spki_hash) const {
-  for (auto i = blocked_spkis_.begin(); i != blocked_spkis_.end(); ++i) {
-    if (spki_hash.size() == i->size() &&
-        memcmp(spki_hash.data(), i->data(), i->size()) == 0) {
-      return REVOKED;
-    }
-  }
-
+  if (std::binary_search(blocked_spkis_.begin(), blocked_spkis_.end(),
+                         spki_hash))
+    return REVOKED;
   return GOOD;
 }
 
@@ -311,6 +352,11 @@ CRLSet::Result CRLSet::CheckSerial(
   return GOOD;
 }
 
+bool CRLSet::IsKnownInterceptionKey(base::StringPiece spki_hash) const {
+  return std::binary_search(known_interception_spkis_.begin(),
+                            known_interception_spkis_.end(), spki_hash);
+}
+
 bool CRLSet::IsExpired() const {
   if (not_after_ == 0)
     return false;
@@ -325,6 +371,16 @@ uint32_t CRLSet::sequence() const {
 
 const CRLSet::CRLList& CRLSet::CrlsForTesting() const {
   return crls_;
+}
+
+// static
+scoped_refptr<CRLSet> CRLSet::BuiltinCRLSet() {
+  constexpr char kCRLSet[] =
+      "\x31\x00{\"ContentType\":\"CRLSet\",\"Sequence\":0,\"Version\":0}";
+  scoped_refptr<CRLSet> ret;
+  bool parsed = CRLSet::Parse({kCRLSet, sizeof(kCRLSet) - 1}, &ret);
+  DCHECK(parsed);
+  return ret;
 }
 
 // static
@@ -382,8 +438,22 @@ scoped_refptr<CRLSet> CRLSet::ForTesting(
     const std::string spki(reinterpret_cast<const char*>(issuer_spki->data),
                            sizeof(issuer_spki->data));
     std::vector<std::string> serials;
-    if (!serial_number.empty())
+    if (!serial_number.empty()) {
       serials.push_back(serial_number);
+      // |serial_number| is in DER-encoded form, which means it may have a
+      // leading 0x00 to indicate it is a positive INTEGER. CRLSets are stored
+      // without these leading 0x00, as handled in CheckSerial(), so remove
+      // that here. As DER-encoding means that any sequences of leading zeroes
+      // should be omitted, except to indicate sign, there should only ever
+      // be one, and the next byte should have the high bit set.
+      DCHECK_EQ(serials[0][0] & 0x80, 0);  // Negative serials are not allowed.
+      if (serials[0][0] == 0x00) {
+        serials[0].erase(0, 1);
+        // If there was a leading 0x00, then the high-bit of the next byte
+        // should have been set.
+        DCHECK(!serials[0].empty() && serials[0][0] & 0x80);
+      }
+    }
 
     crl_set->crls_.emplace(std::move(spki), std::move(serials));
   }

@@ -17,15 +17,15 @@
 #include "public/fpdf_fwlevent.h"
 #include "third_party/base/ptr_util.h"
 
-CPWL_EditCtrl::CPWL_EditCtrl(const CreateParams& cp,
-                             std::unique_ptr<PrivateData> pAttachedData)
+CPWL_EditCtrl::CPWL_EditCtrl(
+    const CreateParams& cp,
+    std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
     : CPWL_Wnd(cp, std::move(pAttachedData)),
       m_pEdit(pdfium::MakeUnique<CPWL_EditImpl>()) {
   GetCreationParams()->eCursorType = FXCT_VBEAM;
 }
 
 CPWL_EditCtrl::~CPWL_EditCtrl() = default;
-
 
 void CPWL_EditCtrl::OnCreated() {
   SetFontSize(GetCreationParams()->fFontSize);
@@ -34,20 +34,14 @@ void CPWL_EditCtrl::OnCreated() {
   m_pEdit->Initialize();
 }
 
-bool CPWL_EditCtrl::IsWndHorV() {
+bool CPWL_EditCtrl::IsWndHorV() const {
   CFX_Matrix mt = GetWindowMatrix();
   return mt.Transform(CFX_PointF(1, 1)).y == mt.Transform(CFX_PointF(0, 1)).y;
 }
 
 void CPWL_EditCtrl::SetCursor() {
-  if (IsValid()) {
-    if (CFX_SystemHandler* pSH = GetSystemHandler()) {
-      if (IsWndHorV())
-        pSH->SetCursor(FXCT_VBEAM);
-      else
-        pSH->SetCursor(FXCT_HBEAM);
-    }
-  }
+  if (IsValid())
+    GetSystemHandler()->SetCursor(IsWndHorV() ? FXCT_VBEAM : FXCT_HBEAM);
 }
 
 WideString CPWL_EditCtrl::GetSelectedText() {
@@ -55,8 +49,7 @@ WideString CPWL_EditCtrl::GetSelectedText() {
 }
 
 void CPWL_EditCtrl::ReplaceSelection(const WideString& text) {
-  m_pEdit->ClearSelection();
-  m_pEdit->InsertText(text, FX_CHARSET_Default);
+  m_pEdit->ReplaceSelection(text);
 }
 
 bool CPWL_EditCtrl::RePosChildWnd() {
@@ -331,7 +324,7 @@ bool CPWL_EditCtrl::SetCaret(bool bVisible,
   if (!IsFocused() || m_pEdit->IsSelected())
     bVisible = false;
 
-  ObservedPtr thisObserved(this);
+  ObservedPtr<CPWL_EditCtrl> thisObserved(this);
   m_pEditCaret->SetCaret(bVisible, ptHead, ptFoot);
   if (!thisObserved)
     return false;

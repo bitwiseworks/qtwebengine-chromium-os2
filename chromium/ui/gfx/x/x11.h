@@ -31,12 +31,11 @@ extern "C" {
 #include <X11/extensions/XShm.h>
 #include <X11/extensions/XTest.h>
 #include <X11/extensions/Xfixes.h>
-#if !defined(TOOLKIT_QT)
 #include <X11/extensions/Xrandr.h>
-#endif
 #include <X11/extensions/Xrender.h>
 #include <X11/extensions/record.h>
 #include <X11/extensions/shape.h>
+#include <X11/extensions/sync.h>
 
 #if defined(USE_XSCRNSAVER)
 #include <X11/extensions/scrnsaver.h>
@@ -94,6 +93,7 @@ extern "C" {
 #undef Bool           // Defined by X11/Xlib.h to int
 #undef RootWindow     // Defined by X11/Xlib.h
 #undef DestroyAll     // Defined by X11/X.h to 0
+#undef Always         // Defined by X11/X.h to 2
 #undef AddToList      // Defined by X11/extensions/XI.h to 0
 #undef COUNT          // Defined by X11/extensions/XI.h to 0
 #undef CREATE         // Defined by X11/extensions/XI.h to 1
@@ -125,13 +125,13 @@ static_assert(Success == 0, "Unexpected value for X11 'Success'");
 // The x11 namespace allows to scope X11 constants and types that
 // would be problematic at the default preprocessor level.
 namespace x11 {
-static const long None = 0L;
-static const long CurrentTime = 0L;
-static const int False = 0;
-static const int True = 1;
-static const int Success = 0;
-static const int FocusIn = 9;
-static const int FocusOut = 10;
+static constexpr unsigned long None = 0L;
+static constexpr long CurrentTime = 0L;
+static constexpr int False = 0;
+static constexpr int True = 1;
+static constexpr int Success = 0;
+static constexpr int FocusIn = 9;
+static constexpr int FocusOut = 10;
 typedef int Bool;
 typedef int Status;
 }  // namespace x11

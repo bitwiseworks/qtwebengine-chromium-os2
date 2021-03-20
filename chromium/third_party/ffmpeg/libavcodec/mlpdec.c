@@ -34,7 +34,7 @@
 #include "internal.h"
 #include "libavutil/crc.h"
 #include "parser.h"
-#include "mlp_parser.h"
+#include "mlp_parse.h"
 #include "mlpdsp.h"
 #include "mlp.h"
 #include "config.h"
@@ -266,7 +266,7 @@ static inline int read_huff_channels(MLPDecodeContext *m, GetBitContext *gbp,
             return AVERROR_INVALIDDATA;
 
         if (lsb_bits > 0)
-            result = (result << lsb_bits) + get_bits(gbp, lsb_bits);
+            result = (result << lsb_bits) + get_bits_long(gbp, lsb_bits);
 
         result  += cp->sign_huff_offset;
         result *= 1 << quant_step_size;
@@ -829,7 +829,7 @@ static int read_channel_params(MLPDecodeContext *m, unsigned int substr,
     cp->codebook  = get_bits(gbp, 2);
     cp->huff_lsbs = get_bits(gbp, 5);
 
-    if (cp->huff_lsbs > 24) {
+    if (cp->codebook > 0 && cp->huff_lsbs > 24) {
         av_log(m->avctx, AV_LOG_ERROR, "Invalid huff_lsbs.\n");
         cp->huff_lsbs = 0;
         return AVERROR_INVALIDDATA;
@@ -1195,7 +1195,7 @@ static int read_access_unit(AVCodecContext *avctx, void* data,
         }
 
         if (length < header_size + substr_header_size) {
-            av_log(m->avctx, AV_LOG_ERROR, "Insuffient data for headers\n");
+            av_log(m->avctx, AV_LOG_ERROR, "Insufficient data for headers\n");
             goto error;
         }
 

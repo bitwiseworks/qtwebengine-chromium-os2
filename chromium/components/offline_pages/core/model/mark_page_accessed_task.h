@@ -27,10 +27,10 @@ class MarkPageAccessedTask : public Task {
                        const base::Time& access_time);
   ~MarkPageAccessedTask() override;
 
+ private:
   // Task implementation.
   void Run() override;
 
- private:
   void OnMarkPageAccessedDone(bool result);
 
   // The metadata store used to update the page. Not owned.
@@ -39,7 +39,7 @@ class MarkPageAccessedTask : public Task {
   int64_t offline_id_;
   base::Time access_time_;
 
-  base::WeakPtrFactory<MarkPageAccessedTask> weak_ptr_factory_;
+  base::WeakPtrFactory<MarkPageAccessedTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(MarkPageAccessedTask);
 };
 

@@ -6,7 +6,6 @@
 #define UI_OZONE_PLATFORM_CAST_GL_OZONE_EGL_CAST_H_
 
 #include <stdint.h>
-
 #include <memory>
 
 #include "base/macros.h"
@@ -33,7 +32,7 @@ class GLOzoneEglCast : public GLOzoneEGL {
       gfx::AcceleratedWidget widget) override;
   scoped_refptr<gl::GLSurface> CreateOffscreenGLSurface(
       const gfx::Size& size) override;
-  intptr_t GetNativeDisplay() override;
+  gl::EGLDisplayPlatform GetNativeDisplay() override;
   bool LoadGLES2Bindings(gl::GLImplementation implementation) override;
 
   intptr_t GetNativeWindow();

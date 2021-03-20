@@ -24,6 +24,7 @@
  */
 
 #include "third_party/blink/renderer/bindings/core/v8/array_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/dictionary.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_array_buffer_view.h"
@@ -130,43 +131,41 @@ bool GetNumericType(const Dictionary& dictionary,
 template <>
 bool DictionaryHelper::Get(const Dictionary& dictionary,
                            const StringView& key,
-                           short& value) {
-  return GetNumericType<short>(dictionary, key, value);
+                           int16_t& value) {
+  return GetNumericType<int16_t>(dictionary, key, value);
 }
 
 template <>
 CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
                                        const StringView& key,
-                                       unsigned short& value) {
-  return GetNumericType<unsigned short>(dictionary, key, value);
+                                       uint16_t& value) {
+  return GetNumericType<uint16_t>(dictionary, key, value);
 }
 
 template <>
 bool DictionaryHelper::Get(const Dictionary& dictionary,
                            const StringView& key,
-                           unsigned& value) {
-  return GetNumericType<unsigned>(dictionary, key, value);
+                           uint32_t& value) {
+  return GetNumericType<uint32_t>(dictionary, key, value);
 }
 
 template <>
 bool DictionaryHelper::Get(const Dictionary& dictionary,
                            const StringView& key,
-                           unsigned long& value) {
+                           int64_t& value) {
   v8::Local<v8::Value> v8_value;
   if (!dictionary.Get(key, v8_value))
     return false;
 
-  int64_t int64_value;
-  if (!v8_value->IntegerValue(dictionary.V8Context()).To(&int64_value))
+  if (!v8_value->IntegerValue(dictionary.V8Context()).To(&value))
     return false;
-  value = static_cast<unsigned long>(int64_value);
   return true;
 }
 
 template <>
 bool DictionaryHelper::Get(const Dictionary& dictionary,
                            const StringView& key,
-                           unsigned long long& value) {
+                           uint64_t& value) {
   v8::Local<v8::Value> v8_value;
   if (!dictionary.Get(key, v8_value))
     return false;
@@ -200,18 +199,9 @@ bool DictionaryHelper::Get(const Dictionary& dictionary,
   if (!dictionary.Get(key, v8_value))
     return false;
 
-  TrackBase* source = nullptr;
-  if (v8_value->IsObject()) {
-    v8::Local<v8::Object> wrapper = v8::Local<v8::Object>::Cast(v8_value);
-
-    // FIXME: this will need to be changed so it can also return an AudioTrack
-    // or a VideoTrack once we add them.
-    v8::Local<v8::Object> track = V8TextTrack::FindInstanceInPrototypeChain(
-        wrapper, dictionary.GetIsolate());
-    if (!track.IsEmpty())
-      source = V8TextTrack::ToImpl(track);
-  }
-  value = source;
+  // FIXME: this will need to be changed so it can also return an AudioTrack
+  // or a VideoTrack once we add them.
+  value = V8TextTrack::ToImplWithTypeCheck(dictionary.GetIsolate(), v8_value);
   return true;
 }
 

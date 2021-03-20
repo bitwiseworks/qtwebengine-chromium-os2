@@ -27,7 +27,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_NETWORK_MIME_CONTENT_TYPE_H_
 
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -44,6 +44,8 @@ class PLATFORM_EXPORT ContentType {
   const String& Raw() const { return type_; }
 
  private:
+  void ParseParameters(Vector<String>& result) const;
+
   String type_;
 };
 

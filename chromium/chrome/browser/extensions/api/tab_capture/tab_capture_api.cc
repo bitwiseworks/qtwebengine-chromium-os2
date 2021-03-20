@@ -22,12 +22,12 @@
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -247,7 +247,7 @@ ExtensionFunction::ResponseAction TabCaptureCaptureFunction::Run() {
   // Make sure either we have been granted permission to capture through an
   // extension icon click or our extension is whitelisted.
   if (!extension()->permissions_data()->HasAPIPermissionForTab(
-          SessionTabHelper::IdForTab(target_contents).id(),
+          sessions::SessionTabHelper::IdForTab(target_contents).id(),
           APIPermission::kTabCaptureForTab) &&
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kWhitelistedExtensionID) != extension_id &&
@@ -412,8 +412,8 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
   content::WebContents* target_contents = nullptr;
   if (params->options && params->options->target_tab_id) {
     if (!ExtensionTabUtil::GetTabById(*(params->options->target_tab_id),
-                                      browser_context(), true, nullptr, nullptr,
-                                      &target_contents, nullptr)) {
+                                      browser_context(), true,
+                                      &target_contents)) {
       return RespondNow(Error(kInvalidTabIdError));
     }
   } else {
@@ -434,7 +434,7 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
   // Make sure either we have been granted permission to capture through an
   // extension icon click or our extension is whitelisted.
   if (!extension()->permissions_data()->HasAPIPermissionForTab(
-          SessionTabHelper::IdForTab(target_contents).id(),
+          sessions::SessionTabHelper::IdForTab(target_contents).id(),
           APIPermission::kTabCaptureForTab) &&
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kWhitelistedExtensionID) != extension_id) {
@@ -447,8 +447,8 @@ ExtensionFunction::ResponseAction TabCaptureGetMediaStreamIdFunction::Run() {
   GURL origin;
   if (params->options && params->options->consumer_tab_id) {
     if (!ExtensionTabUtil::GetTabById(*(params->options->consumer_tab_id),
-                                      browser_context(), true, nullptr, nullptr,
-                                      &consumer_contents, nullptr)) {
+                                      browser_context(), true,
+                                      &consumer_contents)) {
       return RespondNow(Error(kInvalidTabIdError));
     }
 

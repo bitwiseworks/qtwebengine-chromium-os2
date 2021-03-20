@@ -9,7 +9,7 @@
 #include "third_party/blink/renderer/platform/heap/heap_buildflags.h"
 #include "third_party/blink/renderer/platform/heap/heap_page.h"
 #include "third_party/blink/renderer/platform/heap/marking_visitor.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
 #include "third_party/blink/renderer/platform/wtf/hash_traits.h"
 
@@ -22,8 +22,6 @@ namespace blink {
 
 template <typename T>
 class Persistent;
-template <typename T>
-class TraceWrapperMember;
 
 enum class TracenessMemberConfiguration {
   kTraced,
@@ -48,20 +46,15 @@ class MemberPointerVerifier {
       DCHECK(creation_thread_state_ || !pointer);
     }
   }
+
   void CheckPointer(T* pointer) {
     if (!pointer)
       return;
-    // HashTable can store a special value (which is not aligned to the
-    // allocation granularity) to Member<> to represent a deleted entry.
-    // Thus we treat a pointer that is not aligned to the granularity
-    // as a valid pointer.
-    if (reinterpret_cast<intptr_t>(pointer) % kAllocationGranularity)
-      return;
 
+    ThreadState* current = ThreadState::Current();
+    DCHECK(current);
     if (tracenessConfiguration != TracenessMemberConfiguration::kUntraced) {
-      ThreadState* current = ThreadState::Current();
-      DCHECK(current);
-      // m_creationThreadState may be null when this is used in a heap
+      // creation_thread_state_ may be null when this is used in a heap
       // collection which initialized the Member with memset and the
       // constructor wasn't called.
       if (creation_thread_state_) {
@@ -74,20 +67,15 @@ class MemberPointerVerifier {
       }
     }
 
-#if defined(ADDRESS_SANITIZER)
-    // TODO(haraken): What we really want to check here is that the pointer
-    // is a traceable object. In other words, the pointer is either of:
-    //
-    //   (a) a pointer to the head of an on-heap object.
-    //   (b) a pointer to the head of an on-heap mixin object.
-    //
-    // We can check it by calling ThreadHeap::isHeapObjectAlive(pointer),
-    // but we cannot call it here because it requires to include T.h.
-    // So we currently only try to implement the check for (a), but do
-    // not insist that T's definition is in scope.
-    if (IsFullyDefined<T>::value && !IsGarbageCollectedMixin<T>::value)
-      HeapObjectHeader::CheckFromPayload(pointer);
-#endif  // ADDRESS_SANITIZER
+    if (current->IsSweepingInProgress()) {
+      // During sweeping the object start bitmap is invalid. Check the header
+      // when the type is available and not pointing to a mixin.
+      if (IsFullyDefined<T>::value && !IsGarbageCollectedMixin<T>::value)
+        HeapObjectHeader::CheckFromPayload(pointer);
+    } else {
+      DCHECK(HeapObjectHeader::FromInnerAddress<
+             HeapObjectHeader::AccessMode::kAtomic>(pointer));
+    }
   }
 
  private:
@@ -122,36 +110,36 @@ class MemberBase {
     SaveCreationThreadState();
   }
 
-  MemberBase(const MemberBase& other) : raw_(other.raw_) {
+  MemberBase(const MemberBase& other) : raw_(other) {
     SaveCreationThreadState();
     CheckPointer();
-    WriteBarrier();
+    // No write barrier for initializing stores.
   }
 
   template <typename U>
   MemberBase(const Persistent<U>& other) : raw_(other) {
     SaveCreationThreadState();
     CheckPointer();
-    WriteBarrier();
+    // No write barrier for initializing stores.
   }
 
   template <typename U>
   MemberBase(const MemberBase<U>& other) : raw_(other) {
     SaveCreationThreadState();
     CheckPointer();
-    WriteBarrier();
+    // No write barrier for initializing stores.
   }
 
   template <typename U>
   MemberBase& operator=(const Persistent<U>& other) {
-    raw_ = other;
+    SetRaw(other);
     CheckPointer();
     WriteBarrier();
     return *this;
   }
 
   MemberBase& operator=(const MemberBase& other) {
-    raw_ = other;
+    SetRaw(other);
     CheckPointer();
     WriteBarrier();
     return *this;
@@ -159,7 +147,7 @@ class MemberBase {
 
   template <typename U>
   MemberBase& operator=(const MemberBase<U>& other) {
-    raw_ = other;
+    SetRaw(other);
     CheckPointer();
     WriteBarrier();
     return *this;
@@ -167,74 +155,116 @@ class MemberBase {
 
   template <typename U>
   MemberBase& operator=(U* other) {
-    raw_ = other;
+    SetRaw(other);
     CheckPointer();
     WriteBarrier();
     return *this;
   }
 
   MemberBase& operator=(WTF::HashTableDeletedValueType) {
-    raw_ = reinterpret_cast<T*>(-1);
+    SetRaw(reinterpret_cast<T*>(-1));
     return *this;
   }
 
   MemberBase& operator=(std::nullptr_t) {
-    raw_ = nullptr;
+    SetRaw(nullptr);
     return *this;
   }
 
   void Swap(MemberBase<T>& other) {
-    std::swap(raw_, other.raw_);
+    T* tmp = GetRaw();
+    SetRaw(other.GetRaw());
+    other.SetRaw(tmp);
     CheckPointer();
     WriteBarrier();
     other.WriteBarrier();
   }
 
-  explicit operator bool() const { return raw_; }
-  operator T*() const { return raw_; }
-  T* operator->() const { return raw_; }
-  T& operator*() const { return *raw_; }
+  explicit operator bool() const { return GetRaw(); }
+  operator T*() const { return GetRaw(); }
+  T* operator->() const { return GetRaw(); }
+  T& operator*() const { return *GetRaw(); }
 
-  T* Get() const { return raw_; }
+  T* Get() const { return GetRaw(); }
 
-  void Clear() { raw_ = nullptr; }
+  void Clear() { SetRaw(nullptr); }
 
   T* Release() {
-    T* result = raw_;
-    raw_ = nullptr;
+    T* result = GetRaw();
+    SetRaw(nullptr);
     return result;
   }
 
+  static bool IsMemberHashTableDeletedValue(const T* t) {
+    return t == reinterpret_cast<T*>(kHashTableDeletedRawValue);
+  }
+
   bool IsHashTableDeletedValue() const {
-    return raw_ == reinterpret_cast<T*>(kHashTableDeletedRawValue);
+    return IsMemberHashTableDeletedValue(GetRaw());
   }
 
  protected:
   static constexpr intptr_t kHashTableDeletedRawValue = -1;
 
-  ALWAYS_INLINE void WriteBarrier() const {
-#if BUILDFLAG(BLINK_HEAP_INCREMENTAL_MARKING)
-    MarkingVisitor::WriteBarrier(
-        const_cast<typename std::remove_const<T>::type*>(this->raw_));
-#endif  // BUILDFLAG(BLINK_HEAP_INCREMENTAL_MARKING)
+  enum class AtomicCtorTag { Atomic };
+
+  // MemberBase ctors that use atomic write to set raw_.
+
+  MemberBase(AtomicCtorTag, T* raw) {
+    SetRaw(raw);
+    SaveCreationThreadState();
+    CheckPointer();
+    // No write barrier for initializing stores.
+  }
+
+  MemberBase(AtomicCtorTag, T& raw) {
+    SetRaw(&raw);
+    SaveCreationThreadState();
+    CheckPointer();
+    // No write barrier for initializing stores.
+  }
+
+  void WriteBarrier() const {
+    MarkingVisitor::WriteBarrier(const_cast<std::remove_const_t<T>**>(&raw_));
   }
 
   void CheckPointer() {
 #if DCHECK_IS_ON()
-    pointer_verifier_.CheckPointer(raw_);
+    // Should not be called for deleted hash table values. A value can be
+    // propagated here if a MemberBase containing the deleted value is copied.
+    if (IsHashTableDeletedValue())
+      return;
+    pointer_verifier_.CheckPointer(GetRaw());
 #endif  // DCHECK_IS_ON()
   }
 
   void SaveCreationThreadState() {
 #if DCHECK_IS_ON()
-    pointer_verifier_.SaveCreationThreadState(raw_);
+    pointer_verifier_.SaveCreationThreadState(GetRaw());
 #endif  // DCHECK_IS_ON()
+  }
+
+  ALWAYS_INLINE void SetRaw(T* raw) {
+    WTF::AsAtomicPtr(&raw_)->store(raw, std::memory_order_relaxed);
+  }
+  ALWAYS_INLINE T* GetRaw() const { return raw_; }
+
+ private:
+  // Thread safe version of Get() for marking visitors.
+  // This is used to prevent data races between concurrent marking visitors
+  // and writes on the main thread.
+  const T* GetSafe() const {
+    // TOOD(omerkatz): replace this cast with std::atomic_ref (C++20) once it
+    // becomes available
+    return WTF::AsAtomicPtr(&raw_)->load(std::memory_order_relaxed);
   }
 
   T* raw_;
 #if DCHECK_IS_ON()
   MemberPointerVerifier<T, tracenessConfiguration> pointer_verifier_;
 #endif  // DCHECK_IS_ON()
+
+  friend class Visitor;
 };
 
 // Members are used in classes to contain strong pointers to other oilpan heap
@@ -302,102 +332,13 @@ class Member : public MemberBase<T, TracenessMemberConfiguration::kTraced> {
     return *this;
   }
 
- protected:
+ private:
+  using typename Parent::AtomicCtorTag;
+  Member(AtomicCtorTag atomic, T* raw) : Parent(atomic, raw) {}
+  Member(AtomicCtorTag atomic, T& raw) : Parent(atomic, raw) {}
+
   template <typename P, typename Traits, typename Allocator>
   friend class WTF::ConstructTraits;
-};
-
-// A checked version of Member<>, verifying that only same-thread references
-// are kept in the smart pointer. Intended to be used to diagnose unclean
-// thread reference usage in release builds. It simply exposes the debug-only
-// MemberBase<> checking we already have in place for select usage to diagnose
-// per-thread issues. Only intended used temporarily while diagnosing suspected
-// problems with cross-thread references.
-template <typename T>
-class SameThreadCheckedMember : public Member<T> {
-  DISALLOW_NEW();
-  typedef Member<T> Parent;
-
- public:
-  SameThreadCheckedMember() : Parent() { SaveCreationThreadState(); }
-  SameThreadCheckedMember(std::nullptr_t) : Parent(nullptr) {
-    SaveCreationThreadState();
-  }
-
-  SameThreadCheckedMember(T* raw) : Parent(raw) {
-    SaveCreationThreadState();
-    CheckPointer();
-  }
-
-  SameThreadCheckedMember(T& raw) : Parent(raw) {
-    SaveCreationThreadState();
-    CheckPointer();
-  }
-
-  SameThreadCheckedMember(WTF::HashTableDeletedValueType x) : Parent(x) {
-    SaveCreationThreadState();
-    CheckPointer();
-  }
-
-  SameThreadCheckedMember(const SameThreadCheckedMember& other)
-      : Parent(other) {
-    SaveCreationThreadState();
-  }
-  template <typename U>
-  SameThreadCheckedMember(const SameThreadCheckedMember<U>& other)
-      : Parent(other) {
-    SaveCreationThreadState();
-    CheckPointer();
-  }
-
-  template <typename U>
-  SameThreadCheckedMember(const Persistent<U>& other) : Parent(other) {
-    SaveCreationThreadState();
-    CheckPointer();
-  }
-
-  template <typename U>
-  SameThreadCheckedMember& operator=(const Persistent<U>& other) {
-    Parent::operator=(other);
-    CheckPointer();
-    return *this;
-  }
-
-  template <typename U>
-  SameThreadCheckedMember& operator=(const SameThreadCheckedMember<U>& other) {
-    Parent::operator=(other);
-    CheckPointer();
-    return *this;
-  }
-
-  template <typename U>
-  SameThreadCheckedMember& operator=(const WeakMember<U>& other) {
-    Parent::operator=(other);
-    CheckPointer();
-    return *this;
-  }
-
-  template <typename U>
-  SameThreadCheckedMember& operator=(U* other) {
-    Parent::operator=(other);
-    CheckPointer();
-    return *this;
-  }
-
-  SameThreadCheckedMember& operator=(std::nullptr_t) {
-    Parent::operator=(nullptr);
-    return *this;
-  }
-
- private:
-  void CheckPointer() { pointer_verifier_.CheckPointer(this->raw_); }
-
-  void SaveCreationThreadState() {
-    pointer_verifier_.SaveCreationThreadState(this->raw_);
-  }
-
-  MemberPointerVerifier<T, TracenessMemberConfiguration::kTraced>
-      pointer_verifier_;
 };
 
 // WeakMember is similar to Member in that it is used to point to other oilpan
@@ -445,14 +386,9 @@ class WeakMember : public MemberBase<T, TracenessMemberConfiguration::kTraced> {
   }
 
   WeakMember& operator=(std::nullptr_t) {
-    this->raw_ = nullptr;
+    this->SetRaw(nullptr);
     return *this;
   }
-
- private:
-  T** Cell() const { return const_cast<T**>(&this->raw_); }
-
-  friend class Visitor;
 };
 
 // UntracedMember is a pointer to an on-heap object that is not traced for some
@@ -483,29 +419,35 @@ class UntracedMember final
 
   UntracedMember(WTF::HashTableDeletedValueType x) : Parent(x) {}
 
+  UntracedMember& operator=(const UntracedMember& other) {
+    this->SetRaw(other);
+    this->CheckPointer();
+    return *this;
+  }
+
   template <typename U>
   UntracedMember& operator=(const Persistent<U>& other) {
-    this->raw_ = other;
+    this->SetRaw(other);
     this->CheckPointer();
     return *this;
   }
 
   template <typename U>
   UntracedMember& operator=(const Member<U>& other) {
-    this->raw_ = other;
+    this->SetRaw(other);
     this->CheckPointer();
     return *this;
   }
 
   template <typename U>
   UntracedMember& operator=(U* other) {
-    this->raw_ = other;
+    this->SetRaw(other);
     this->CheckPointer();
     return *this;
   }
 
   UntracedMember& operator=(std::nullptr_t) {
-    this->raw_ = nullptr;
+    this->SetRaw(nullptr);
     return *this;
   }
 };
@@ -547,43 +489,16 @@ struct DefaultHash<blink::UntracedMember<T>> {
 };
 
 template <typename T>
-struct DefaultHash<blink::SameThreadCheckedMember<T>> {
-  STATIC_ONLY(DefaultHash);
-  using Hash = MemberHash<T>;
-};
-
-template <typename T>
-struct DefaultHash<blink::TraceWrapperMember<T>> {
-  STATIC_ONLY(DefaultHash);
-  using Hash = MemberHash<T>;
-};
-
-template <typename T>
 struct IsTraceable<blink::Member<T>> {
   STATIC_ONLY(IsTraceable);
   static const bool value = true;
 };
 
 template <typename T>
-struct IsWeak<blink::WeakMember<T>> {
-  STATIC_ONLY(IsWeak);
-  static const bool value = true;
-};
+struct IsWeak<blink::WeakMember<T>> : std::true_type {};
 
 template <typename T>
 struct IsTraceable<blink::WeakMember<T>> {
-  STATIC_ONLY(IsTraceable);
-  static const bool value = true;
-};
-
-template <typename T>
-struct IsTraceable<blink::SameThreadCheckedMember<T>> {
-  STATIC_ONLY(IsTraceable);
-  static const bool value = true;
-};
-
-template <typename T>
-struct IsTraceable<blink::TraceWrapperMember<T>> {
   STATIC_ONLY(IsTraceable);
   static const bool value = true;
 };
@@ -594,11 +509,25 @@ class ConstructTraits<blink::Member<T>, Traits, Allocator> {
 
  public:
   template <typename... Args>
+  static blink::Member<T>* Construct(void* location, Args&&... args) {
+    return new (NotNull, location)
+        blink::Member<T>(std::forward<Args>(args)...);
+  }
+
+  static void NotifyNewElement(blink::Member<T>* element) {
+    element->WriteBarrier();
+  }
+
+  template <typename... Args>
   static blink::Member<T>* ConstructAndNotifyElement(void* location,
                                                      Args&&... args) {
+    // ConstructAndNotifyElement updates an existing Member which might
+    // also be comncurrently traced while we update it. The regular ctors
+    // for Member don't use an atomic write which can lead to data races.
     blink::Member<T>* object =
-        new (NotNull, location) blink::Member<T>(std::forward<Args>(args)...);
-    object->WriteBarrier();
+        Construct(location, blink::Member<T>::AtomicCtorTag::Atomic,
+                  std::forward<Args>(args)...);
+    NotifyNewElement(object);
     return object;
   }
 

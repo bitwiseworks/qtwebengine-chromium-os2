@@ -9,6 +9,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/animation/animation_export.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/transform.h"
 
@@ -23,12 +24,13 @@ class ANIMATION_EXPORT Tween {
   enum Type {
     LINEAR,              // Linear.
     EASE_OUT,            // Fast in, slow out (default).
+    EASE_OUT_2,          // Variant of EASE_OUT that ends slower than EASE_OUT.
     EASE_IN,             // Slow in, fast out.
     EASE_IN_2,           // Variant of EASE_IN that starts out slower than
                          // EASE_IN.
     EASE_IN_OUT,         // Slow in and out, fast in the middle.
-    FAST_IN_OUT,         // Fast in and out, slow in the middle.
-    EASE_OUT_SNAP,       // Fast in, slow out, snap to final value.
+    EASE_IN_OUT_2,       // Variant of EASE_IN_OUT that starts and ends slower
+                         // than EASE_IN_OUT.
     SMOOTH_IN_OUT,       // Smooth, consistent speeds in and out (sine wave).
     FAST_OUT_SLOW_IN,    // Variant of EASE_IN_OUT which should be used in most
                          // cases.
@@ -73,13 +75,21 @@ class ANIMATION_EXPORT Tween {
                                     const gfx::Rect& start,
                                     const gfx::Rect& target);
 
+  static gfx::RectF RectFValueBetween(double value,
+                                      const gfx::RectF& start,
+                                      const gfx::RectF& target);
+
   static gfx::Transform TransformValueBetween(double value,
                                               const gfx::Transform& start,
                                               const gfx::Transform& target);
 
-  static gfx::SizeF SizeValueBetween(double value,
-                                     const gfx::SizeF& start,
-                                     const gfx::SizeF& target);
+  static gfx::Size SizeValueBetween(double value,
+                                    const gfx::Size& start,
+                                    const gfx::Size& target);
+
+  static gfx::SizeF SizeFValueBetween(double value,
+                                      const gfx::SizeF& start,
+                                      const gfx::SizeF& target);
 
  private:
   Tween();

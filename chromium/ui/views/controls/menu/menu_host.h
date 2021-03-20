@@ -9,6 +9,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
@@ -24,11 +25,11 @@ namespace internal {
 // This class is internal to views.
 class PreMenuEventDispatchHandler;
 
-}  // internal
+}  // namespace internal
 
 namespace test {
 class MenuControllerTest;
-}  // test
+}  // namespace test
 
 // SubmenuView uses a MenuHost to house the SubmenuView.
 //

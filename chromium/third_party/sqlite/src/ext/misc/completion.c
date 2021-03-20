@@ -118,6 +118,7 @@ static int completionConnect(
 #define COMPLETION_COLUMN_WHOLELINE 2  /* Entire line seen so far */
 #define COMPLETION_COLUMN_PHASE     3  /* ePhase - used for debugging only */
 
+  sqlite3_vtab_config(db, SQLITE_VTAB_INNOCUOUS);
   rc = sqlite3_declare_vtab(db,
       "CREATE TABLE x("
       "  candidate TEXT,"
@@ -346,11 +347,11 @@ static int completionEof(sqlite3_vtab_cursor *cur){
 /*
 ** This method is called to "rewind" the completion_cursor object back
 ** to the first row of output.  This method is always called at least
-** once prior to any call to completionColumn() or completionRowid() or
+** once prior to any call to completionColumn() or completionRowid() or 
 ** completionEof().
 */
 static int completionFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -442,7 +443,7 @@ static int completionBestIndex(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** completion virtual table.
 */
 static sqlite3_module completionModule = {
@@ -486,8 +487,8 @@ int sqlite3CompletionVtabInit(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_completion_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

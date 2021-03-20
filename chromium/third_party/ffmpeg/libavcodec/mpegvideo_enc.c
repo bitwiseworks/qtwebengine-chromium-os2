@@ -165,7 +165,7 @@ void ff_convert_matrix(MpegEncContext *s, int (*qmat)[64],
         }
     }
     if (shift) {
-        av_log(NULL, AV_LOG_INFO,
+        av_log(s->avctx, AV_LOG_INFO,
                "Warning, QMAT_SHIFT is larger than %d, overflows possible\n",
                QMAT_SHIFT - shift);
     }
@@ -2005,7 +2005,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
                 av_log(s->avctx, AV_LOG_ERROR,
                        "Internal error, negative bits\n");
 
-            assert(s->repeat_first_field == 0);
+            av_assert1(s->repeat_first_field == 0);
 
             vbv_delay = bits * 90000 / s->avctx->rc_max_rate;
             min_delay = (minbits * 90000LL + s->avctx->rc_max_rate - 1) /
@@ -3056,7 +3056,7 @@ static int encode_thread(AVCodecContext *c, void *arg){
                         if(r % d == 0){
                             current_packet_size=0;
                             s->pb.buf_ptr= s->ptr_lastgob;
-                            assert(put_bits_ptr(&s->pb) == s->ptr_lastgob);
+                            av_assert1(put_bits_ptr(&s->pb) == s->ptr_lastgob);
                         }
                     }
 
@@ -3592,8 +3592,8 @@ static void merge_context_after_encode(MpegEncContext *dst, MpegEncContext *src)
         }
     }
 
-    assert(put_bits_count(&src->pb) % 8 ==0);
-    assert(put_bits_count(&dst->pb) % 8 ==0);
+    av_assert1(put_bits_count(&src->pb) % 8 ==0);
+    av_assert1(put_bits_count(&dst->pb) % 8 ==0);
     avpriv_copy_bits(&dst->pb, src->pb.buf, put_bits_count(&src->pb));
     flush_put_bits(&dst->pb);
 }
@@ -3642,11 +3642,11 @@ static void set_frame_distances(MpegEncContext * s){
 
     if(s->pict_type==AV_PICTURE_TYPE_B){
         s->pb_time= s->pp_time - (s->last_non_b_time - s->time);
-        assert(s->pb_time > 0 && s->pb_time < s->pp_time);
+        av_assert1(s->pb_time > 0 && s->pb_time < s->pp_time);
     }else{
         s->pp_time= s->time - s->last_non_b_time;
         s->last_non_b_time= s->time;
-        assert(s->picture_number==0 || s->pp_time > 0);
+        av_assert1(s->picture_number==0 || s->pp_time > 0);
     }
 }
 
@@ -3761,14 +3761,14 @@ static int encode_picture(MpegEncContext *s, int picture_number)
                 s->f_code= FFMAX3(s->f_code, a, b);
             }
 
-            ff_fix_long_p_mvs(s);
-            ff_fix_long_mvs(s, NULL, 0, s->p_mv_table, s->f_code, CANDIDATE_MB_TYPE_INTER, 0);
+            ff_fix_long_p_mvs(s, s->intra_penalty ? CANDIDATE_MB_TYPE_INTER : CANDIDATE_MB_TYPE_INTRA);
+            ff_fix_long_mvs(s, NULL, 0, s->p_mv_table, s->f_code, CANDIDATE_MB_TYPE_INTER, !!s->intra_penalty);
             if (s->avctx->flags & AV_CODEC_FLAG_INTERLACED_ME) {
                 int j;
                 for(i=0; i<2; i++){
                     for(j=0; j<2; j++)
                         ff_fix_long_mvs(s, s->p_field_select_table[i], j,
-                                        s->p_field_mv_table[i][j], s->f_code, CANDIDATE_MB_TYPE_INTER_I, 0);
+                                        s->p_field_mv_table[i][j], s->f_code, CANDIDATE_MB_TYPE_INTER_I, !!s->intra_penalty);
                 }
             }
         }

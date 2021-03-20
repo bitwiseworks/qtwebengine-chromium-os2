@@ -7,11 +7,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
-#include "base/macros.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_export.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string_piece.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 // All section references below are to
 // http://tools.ietf.org/html/draft-ietf-httpbis-header-compression-08
@@ -20,7 +19,7 @@ namespace spdy {
 
 // A structure for an entry in the static table (3.3.1)
 // and the header table (3.3.2).
-class SPDY_EXPORT_PRIVATE HpackEntry {
+class QUICHE_EXPORT_PRIVATE HpackEntry {
  public:
   // The constant amount added to name().size() and value().size() to
   // get the size of an HpackEntry as defined in 5.1.
@@ -35,15 +34,15 @@ class SPDY_EXPORT_PRIVATE HpackEntry {
   // The combination of |is_static| and |insertion_index| allows an
   // HpackEntryTable to determine the index of an HpackEntry in O(1) time.
   // Copies |name| and |value|.
-  HpackEntry(SpdyStringPiece name,
-             SpdyStringPiece value,
+  HpackEntry(quiche::QuicheStringPiece name,
+             quiche::QuicheStringPiece value,
              bool is_static,
              size_t insertion_index);
 
   // Create a 'lookup' entry (only) suitable for querying a HpackEntrySet. The
   // instance InsertionIndex() always returns 0 and IsLookup() returns true.
   // The memory backing |name| and |value| must outlive this object.
-  HpackEntry(SpdyStringPiece name, SpdyStringPiece value);
+  HpackEntry(quiche::QuicheStringPiece name, quiche::QuicheStringPiece value);
 
   HpackEntry(const HpackEntry& other);
   HpackEntry& operator=(const HpackEntry& other);
@@ -54,8 +53,8 @@ class SPDY_EXPORT_PRIVATE HpackEntry {
 
   ~HpackEntry();
 
-  SpdyStringPiece name() const { return name_ref_; }
-  SpdyStringPiece value() const { return value_ref_; }
+  quiche::QuicheStringPiece name() const { return name_ref_; }
+  quiche::QuicheStringPiece value() const { return value_ref_; }
 
   // Returns whether this entry is a member of the static (as opposed to
   // dynamic) table.
@@ -68,10 +67,11 @@ class SPDY_EXPORT_PRIVATE HpackEntry {
   size_t InsertionIndex() const { return insertion_index_; }
 
   // Returns the size of an entry as defined in 5.1.
-  static size_t Size(SpdyStringPiece name, SpdyStringPiece value);
+  static size_t Size(quiche::QuicheStringPiece name,
+                     quiche::QuicheStringPiece value);
   size_t Size() const;
 
-  SpdyString GetDebugString() const;
+  std::string GetDebugString() const;
 
   int64_t time_added() const { return time_added_; }
   void set_time_added(int64_t now) { time_added_ = now; }
@@ -87,13 +87,13 @@ class SPDY_EXPORT_PRIVATE HpackEntry {
   };
 
   // These members are not used for LOOKUP entries.
-  SpdyString name_;
-  SpdyString value_;
+  std::string name_;
+  std::string value_;
 
   // These members are always valid. For DYNAMIC and STATIC entries, they
   // always point to |name_| and |value_|.
-  SpdyStringPiece name_ref_;
-  SpdyStringPiece value_ref_;
+  quiche::QuicheStringPiece name_ref_;
+  quiche::QuicheStringPiece value_ref_;
 
   // The entry's index in the total set of entries ever inserted into the header
   // table.

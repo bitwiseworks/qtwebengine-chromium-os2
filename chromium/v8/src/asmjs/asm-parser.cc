@@ -13,7 +13,8 @@
 #include "src/asmjs/asm-types.h"
 #include "src/base/optional.h"
 #include "src/base/overflowing-math.h"
-#include "src/flags.h"
+#include "src/flags/flags.h"
+#include "src/numbers/conversions-inl.h"
 #include "src/parsing/scanner.h"
 #include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-opcodes.h"
@@ -239,7 +240,7 @@ void AsmJsParser::AddGlobalImport(Vector<const char> name, AsmType* type,
                                   ValueType vtype, bool mutable_variable,
                                   VarInfo* info) {
   // Allocate a separate variable for the import.
-  // TODO(mstarzinger): Consider using the imported global directly instead of
+  // TODO(asmjs): Consider using the imported global directly instead of
   // allocating a separate global variable for immutable (i.e. const) imports.
   DeclareGlobal(info, mutable_variable, type, vtype);
 
@@ -252,7 +253,7 @@ void AsmJsParser::DeclareGlobal(VarInfo* info, bool mutable_variable,
                                 const WasmInitExpr& init) {
   info->kind = VarKind::kGlobal;
   info->type = type;
-  info->index = module_builder_->AddGlobal(vtype, false, true, init);
+  info->index = module_builder_->AddGlobal(vtype, true, init);
   info->mutable_variable = mutable_variable;
 }
 
@@ -319,6 +320,9 @@ int AsmJsParser::FindContinueLabelDepth(AsmJsScanner::token_t label) {
   int count = 0;
   for (auto it = block_stack_.rbegin(); it != block_stack_.rend();
        ++it, ++count) {
+    // A 'continue' statement targets ...
+    //  - The innermost {kLoop} block if no label is given.
+    //  - The matching {kLoop} block (when a label is provided).
     if (it->kind == BlockKind::kLoop &&
         (label == kTokenNone || it->label == label)) {
       return count;
@@ -331,8 +335,12 @@ int AsmJsParser::FindBreakLabelDepth(AsmJsScanner::token_t label) {
   int count = 0;
   for (auto it = block_stack_.rbegin(); it != block_stack_.rend();
        ++it, ++count) {
-    if (it->kind == BlockKind::kRegular &&
-        (label == kTokenNone || it->label == label)) {
+    // A 'break' statement targets ...
+    //  - The innermost {kRegular} block if no label is given.
+    //  - The matching {kRegular} or {kNamed} block (when a label is provided).
+    if ((it->kind == BlockKind::kRegular &&
+         (label == kTokenNone || it->label == label)) ||
+        (it->kind == BlockKind::kNamed && it->label == label)) {
       return count;
     }
   }
@@ -353,6 +361,8 @@ void AsmJsParser::ValidateModule() {
     RECURSE(ValidateFunctionTable());
   }
   RECURSE(ValidateExport());
+  RECURSE(SkipSemicolon());
+  EXPECT_TOKEN('}');
 
   // Check that all functions were eventually defined.
   for (auto& info : global_var_info_) {
@@ -375,9 +385,10 @@ void AsmJsParser::ValidateModule() {
   module_builder_->MarkStartFunction(start);
   for (auto& global_import : global_imports_) {
     uint32_t import_index = module_builder_->AddGlobalImport(
-        global_import.import_name, global_import.value_type);
-    start->EmitWithI32V(kExprGetGlobal, import_index);
-    start->EmitWithI32V(kExprSetGlobal, VarIndex(global_import.var_info));
+        global_import.import_name, global_import.value_type,
+        false /* mutability */);
+    start->EmitWithI32V(kExprGlobalGet, import_index);
+    start->EmitWithI32V(kExprGlobalSet, VarIndex(global_import.var_info));
   }
   start->Emit(kExprEnd);
   FunctionSig::Builder b(zone(), 0, 0);
@@ -518,7 +529,7 @@ void AsmJsParser::ValidateModuleVarFromGlobal(VarInfo* info,
       dvalue = -dvalue;
     }
     DeclareGlobal(info, mutable_variable, AsmType::Float(), kWasmF32,
-                  WasmInitExpr(static_cast<float>(dvalue)));
+                  WasmInitExpr(DoubleToFloat32(dvalue)));
   } else if (CheckForUnsigned(&uvalue)) {
     dvalue = uvalue;
     if (negate) {
@@ -717,6 +728,9 @@ void AsmJsParser::ValidateFunctionTable() {
 
 // 6.4 ValidateFunction
 void AsmJsParser::ValidateFunction() {
+  // Remember position of the 'function' token as start position.
+  size_t function_start_position = scanner_.Position();
+
   EXPECT_TOKEN(TOK(function));
   if (!scanner_.IsGlobal()) {
     FAIL("Expected function name");
@@ -742,9 +756,10 @@ void AsmJsParser::ValidateFunction() {
   return_type_ = nullptr;
 
   // Record start of the function, used as position for the stack check.
-  current_function_builder_->SetAsmFunctionStartPosition(scanner_.Position());
+  current_function_builder_->SetAsmFunctionStartPosition(
+      function_start_position);
 
-  CachedVector<AsmType*> params(cached_asm_type_p_vectors_);
+  CachedVector<AsmType*> params(&cached_asm_type_p_vectors_);
   ValidateFunctionParams(&params);
 
   // Check against limit on number of parameters.
@@ -752,7 +767,7 @@ void AsmJsParser::ValidateFunction() {
     FAIL("Number of parameters exceeds internal limit");
   }
 
-  CachedVector<ValueType> locals(cached_valuetype_vectors_);
+  CachedVector<ValueType> locals(&cached_valuetype_vectors_);
   ValidateFunctionLocals(params.size(), &locals);
 
   function_temp_locals_offset_ = static_cast<uint32_t>(
@@ -767,6 +782,9 @@ void AsmJsParser::ValidateFunction() {
     // clang-format on
     RECURSE(ValidateStatement());
   }
+
+  size_t function_end_position = scanner_.Position() + 1;
+
   EXPECT_TOKEN('}');
 
   if (!last_statement_is_return) {
@@ -798,6 +816,13 @@ void AsmJsParser::ValidateFunction() {
   // End function
   current_function_builder_->Emit(kExprEnd);
 
+  // Emit function end position as the last position for this function.
+  current_function_builder_->AddAsmWasmOffset(function_end_position,
+                                              function_end_position);
+
+  if (current_function_builder_->GetPosition() > kV8MaxWasmFunctionSize) {
+    FAIL("Size of function body exceeds internal limit");
+  }
   // Record (or validate) function type.
   AsmType* function_type = AsmType::Function(zone(), return_type_);
   for (auto t : params) {
@@ -824,7 +849,7 @@ void AsmJsParser::ValidateFunctionParams(ZoneVector<AsmType*>* params) {
   scanner_.EnterLocalScope();
   EXPECT_TOKEN('(');
   CachedVector<AsmJsScanner::token_t> function_parameters(
-      cached_token_t_vectors_);
+      &cached_token_t_vectors_);
   while (!failed_ && !Peek(')')) {
     if (!scanner_.IsLocal()) {
       FAIL("Expected parameter name");
@@ -938,8 +963,8 @@ void AsmJsParser::ValidateFunctionLocals(size_t param_count,
           } else {
             FAIL("Bad local variable definition");
           }
-          current_function_builder_->EmitWithI32V(kExprGetGlobal,
-                                                    VarIndex(sinfo));
+          current_function_builder_->EmitWithI32V(kExprGlobalGet,
+                                                  VarIndex(sinfo));
           current_function_builder_->EmitSetLocal(info->index);
         } else if (sinfo->type->IsA(stdlib_fround_)) {
           EXPECT_TOKEN('(');
@@ -956,7 +981,8 @@ void AsmJsParser::ValidateFunctionLocals(size_t param_count,
             if (negate) {
               dvalue = -dvalue;
             }
-            current_function_builder_->EmitF32Const(dvalue);
+            float fvalue = DoubleToFloat32(dvalue);
+            current_function_builder_->EmitF32Const(fvalue);
             current_function_builder_->EmitSetLocal(info->index);
           } else if (CheckForUnsigned(&uvalue)) {
             if (uvalue > 0x7FFFFFFF) {
@@ -1039,7 +1065,8 @@ void AsmJsParser::ValidateStatement() {
 void AsmJsParser::Block() {
   bool can_break_to_block = pending_label_ != 0;
   if (can_break_to_block) {
-    Begin(pending_label_);
+    BareBegin(BlockKind::kNamed, pending_label_);
+    current_function_builder_->EmitWithU8(kExprBlock, kLocalVoid);
   }
   pending_label_ = 0;
   EXPECT_TOKEN('{');
@@ -1081,8 +1108,8 @@ void AsmJsParser::IfStatement() {
   EXPECT_TOKEN('(');
   RECURSE(Expression(AsmType::Int()));
   EXPECT_TOKEN(')');
+  BareBegin(BlockKind::kOther);
   current_function_builder_->EmitWithU8(kExprIf, kLocalVoid);
-  BareBegin();
   RECURSE(ValidateStatement());
   if (Check(TOK(else))) {
     current_function_builder_->Emit(kExprElse);
@@ -1300,7 +1327,7 @@ void AsmJsParser::SwitchStatement() {
   Begin(pending_label_);
   pending_label_ = 0;
   // TODO(bradnelson): Make less weird.
-  CachedVector<int32_t> cases(cached_int_vectors_);
+  CachedVector<int32_t> cases(&cached_int_vectors_);
   GatherCases(&cases);
   EXPECT_TOKEN('{');
   size_t count = cases.size() + 1;
@@ -1431,7 +1458,7 @@ AsmType* AsmJsParser::Identifier() {
     if (info->kind != VarKind::kGlobal) {
       FAILn("Undefined global variable");
     }
-    current_function_builder_->EmitWithI32V(kExprGetGlobal, VarIndex(info));
+    current_function_builder_->EmitWithI32V(kExprGlobalGet, VarIndex(info));
     return info->type;
   }
   UNREACHABLE();
@@ -1498,17 +1525,19 @@ AsmType* AsmJsParser::AssignmentExpression() {
       if (!value->IsA(ret)) {
         FAILn("Illegal type stored to heap view");
       }
+      ret = value;
       if (heap_type->IsA(AsmType::Float32Array()) &&
           value->IsA(AsmType::DoubleQ())) {
         // Assignment to a float32 heap can be used to convert doubles.
         current_function_builder_->Emit(kExprF32ConvertF64);
+        ret = AsmType::FloatQ();
       }
       if (heap_type->IsA(AsmType::Float64Array()) &&
           value->IsA(AsmType::FloatQ())) {
         // Assignment to a float64 heap can be used to convert floats.
         current_function_builder_->Emit(kExprF64ConvertF32);
+        ret = AsmType::DoubleQ();
       }
-      ret = value;
 #define V(array_type, wasmload, wasmstore, type)                         \
   if (heap_type->IsA(AsmType::array_type())) {                           \
     current_function_builder_->Emit(kExpr##type##AsmjsStore##wasmstore); \
@@ -1542,8 +1571,8 @@ AsmType* AsmJsParser::AssignmentExpression() {
       if (info->kind == VarKind::kLocal) {
         current_function_builder_->EmitTeeLocal(info->index);
       } else if (info->kind == VarKind::kGlobal) {
-        current_function_builder_->EmitWithU32V(kExprSetGlobal, VarIndex(info));
-        current_function_builder_->EmitWithU32V(kExprGetGlobal, VarIndex(info));
+        current_function_builder_->EmitWithU32V(kExprGlobalSet, VarIndex(info));
+        current_function_builder_->EmitWithU32V(kExprGlobalGet, VarIndex(info));
       } else {
         UNREACHABLE();
       }
@@ -1563,14 +1592,17 @@ AsmType* AsmJsParser::UnaryExpression() {
   if (Check('-')) {
     uint32_t uvalue;
     if (CheckForUnsigned(&uvalue)) {
-      // TODO(bradnelson): was supposed to be 0x7FFFFFFF, check errata.
-      if (uvalue <= 0x80000000) {
+      if (uvalue == 0) {
+        current_function_builder_->EmitF64Const(-0.0);
+        ret = AsmType::Double();
+      } else if (uvalue <= 0x80000000) {
+        // TODO(bradnelson): was supposed to be 0x7FFFFFFF, check errata.
         current_function_builder_->EmitI32Const(
             base::NegateWithWraparound(static_cast<int32_t>(uvalue)));
+        ret = AsmType::Signed();
       } else {
         FAILn("Integer numeric literal out of range.");
       }
-      ret = AsmType::Signed();
     } else {
       RECURSEn(ret = UnaryExpression());
       if (ret->IsA(AsmType::Int())) {
@@ -1662,7 +1694,7 @@ AsmType* AsmJsParser::MultiplicativeExpression() {
       RECURSEn(a = UnaryExpression());
     }
   } else if (Check('-')) {
-    if (CheckForUnsignedBelow(0x100000, &uvalue)) {
+    if (!PeekForZero() && CheckForUnsignedBelow(0x100000, &uvalue)) {
       int32_t value = -static_cast<int32_t>(uvalue);
       current_function_builder_->EmitI32Const(value);
       if (Check('*')) {
@@ -1686,7 +1718,7 @@ AsmType* AsmJsParser::MultiplicativeExpression() {
     if (Check('*')) {
       uint32_t uvalue;
       if (Check('-')) {
-        if (CheckForUnsigned(&uvalue)) {
+        if (!PeekForZero() && CheckForUnsigned(&uvalue)) {
           if (uvalue >= 0x100000) {
             FAILn("Constant multiple out of range");
           }
@@ -2094,7 +2126,11 @@ AsmType* AsmJsParser::ValidateCall() {
   // need to match the information stored at this point.
   base::Optional<TemporaryVariableScope> tmp;
   if (Check('[')) {
-    RECURSEn(EqualityExpression());
+    AsmType* index = nullptr;
+    RECURSEn(index = EqualityExpression());
+    if (!index->IsA(AsmType::Intish())) {
+      FAILn("Expected intish index");
+    }
     EXPECT_TOKENn('&');
     uint32_t mask = 0;
     if (!CheckForUnsigned(&mask)) {
@@ -2147,8 +2183,8 @@ AsmType* AsmJsParser::ValidateCall() {
   }
 
   // Parse argument list and gather types.
-  CachedVector<AsmType*> param_types(cached_asm_type_p_vectors_);
-  CachedVector<AsmType*> param_specific_types(cached_asm_type_p_vectors_);
+  CachedVector<AsmType*> param_types(&cached_asm_type_p_vectors_);
+  CachedVector<AsmType*> param_specific_types(&cached_asm_type_p_vectors_);
   EXPECT_TOKENn('(');
   while (!failed_ && !Peek(')')) {
     AsmType* t;
@@ -2410,7 +2446,7 @@ void AsmJsParser::ValidateHeapAccess() {
   uint32_t offset;
   if (CheckForUnsigned(&offset)) {
     // TODO(bradnelson): Check more things.
-    // TODO(mstarzinger): Clarify and explain where this limit is coming from,
+    // TODO(asmjs): Clarify and explain where this limit is coming from,
     // as it is not mandated by the spec directly.
     if (offset > 0x7FFFFFFF ||
         static_cast<uint64_t>(offset) * static_cast<uint64_t>(size) >
@@ -2469,7 +2505,7 @@ void AsmJsParser::ValidateFloatCoercion() {
   // because imported functions are not allowed to have float return type.
   call_coercion_position_ = scanner_.Position();
   AsmType* ret;
-  RECURSE(ret = ValidateExpression());
+  RECURSE(ret = AssignmentExpression());
   if (ret->IsA(AsmType::Floatish())) {
     // Do nothing, as already a float.
   } else if (ret->IsA(AsmType::DoubleQ())) {

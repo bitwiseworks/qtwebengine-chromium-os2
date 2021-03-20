@@ -19,7 +19,6 @@ class RenderViewHost;
 class RenderWidgetHost;
 class RenderWidgetHostViewBase;
 struct DropData;
-struct ScreenInfo;
 
 // The WebContentsView is an interface that is implemented by the platform-
 // dependent web contents views. The WebContents uses this interface to talk to
@@ -39,9 +38,6 @@ class WebContentsView {
   // Returns the outermost native view. This will be used as the parent for
   // dialog boxes.
   virtual gfx::NativeWindow GetTopLevelNativeWindow() const = 0;
-
-  // The following static method is implemented by each platform.
-  static void GetDefaultScreenInfo(ScreenInfo* results);
 
   // Computes the rectangle for the native widget that contains the contents of
   // the tab in the screen coordinate system.
@@ -82,19 +78,13 @@ class WebContentsView {
   // Get the bounds of the View, relative to the parent.
   virtual gfx::Rect GetViewBounds() const = 0;
 
-  virtual void CreateView(
-      const gfx::Size& initial_size, gfx::NativeView context) = 0;
+  virtual void CreateView(gfx::NativeView context) = 0;
 
   // Sets up the View that holds the rendered web page, receives messages for
   // it and contains page plugins. The host view should be sized to the current
   // size of the WebContents.
-  //
-  // |is_guest_view_hack| is temporary hack and will be removed once
-  // RenderWidgetHostViewGuest is not dependent on platform view.
-  // TODO(lazyboy): Remove |is_guest_view_hack| once http://crbug.com/330264 is
-  // fixed.
   virtual RenderWidgetHostViewBase* CreateViewForWidget(
-      RenderWidgetHost* render_widget_host, bool is_guest_view_hack) = 0;
+      RenderWidgetHost* render_widget_host) = 0;
 
   // Creates a new View that holds a non-top-level widget and receives messages
   // for it.
@@ -106,10 +96,6 @@ class WebContentsView {
   // can aid certain debugging tools such as Spy++ on Windows where you are
   // trying to find a specific window.
   virtual void SetPageTitle(const base::string16& title) = 0;
-
-  // Invoked when the WebContents is notified that the RenderView has been
-  // fully created.
-  virtual void RenderViewCreated(RenderViewHost* host) = 0;
 
   // Invoked when the WebContents is notified that the RenderView is ready.
   virtual void RenderViewReady() = 0;
@@ -123,13 +109,12 @@ class WebContentsView {
   virtual void SetOverscrollControllerEnabled(bool enabled) = 0;
 
 #if defined(OS_MACOSX)
-  // If we close the tab while a UI control is in an event-tracking
-  // loop, the control may message freed objects and crash.
-  // WebContents::Close() calls IsEventTracking(), and if it returns
-  // true CloseTabAfterEventTracking() is called and the close is not
-  // completed.
-  virtual bool IsEventTracking() const = 0;
-  virtual void CloseTabAfterEventTracking() = 0;
+  // If we close the tab while a UI control is in an event-tracking loop, the
+  // the control may message freed objects and crash. WebContents::Close will
+  // call this. If it returns true, then WebContents::Close will early-out, and
+  // it will be the responsibility of |this| to call CloseTab when the nested
+  // loop has ended.
+  virtual bool CloseTabAfterEventTrackingIfNeeded() = 0;
 #endif
 };
 

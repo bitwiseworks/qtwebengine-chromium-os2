@@ -12,58 +12,58 @@
  */
 
 (function() {
-/**
- * URL of the help article for the clickable link.
- * @type {string}
- */
-const HELP_ARTICLE_URL =
-    'https://support.google.com/chromebook/?p=is_chrome_managed';
-
 Polymer({
   is: 'managed-footnote',
 
-  behaviors: [I18nBehavior],
+  behaviors: [I18nBehavior, WebUIListenerBehavior],
 
   properties: {
     /**
-     * Whether the browser is managed by their organization through enterprise
+     * Whether the user is managed by their organization through enterprise
      * policies.
+     * @type {boolean}
      * @private
      */
     isManaged_: {
       reflectToAttribute: true,
       type: Boolean,
-      value: function() {
+      value() {
         return loadTimeData.getBoolean('isManaged');
       },
     },
 
     /**
-     * Localized message to display in the footnote. May contain an <a>
-     * element.
-     * @private
+     * Whether the device should be indicated as managed rather than the
+     * browser.
+     * @type {boolean}
      */
-    message_: String,
+    showDeviceInfo: {
+      type: Boolean,
+      value: false,
+    }
   },
 
   /** @override */
-  ready: function() {
-    this.message_ = this.i18nAdvanced('managedByOrg', {
-      substitutions: [HELP_ARTICLE_URL],
-      tags: ['a'],
-      attrs: {
-        target: (node, v) => v === '_blank',
-        href: (node, v) => v === HELP_ARTICLE_URL,
-      },
-    });
-
-    cr.addWebUIListener('is-managed-changed', managed => {
+  ready() {
+    this.addWebUIListener('is-managed-changed', managed => {
       loadTimeData.overrideValues({isManaged: managed});
       this.isManaged_ = managed;
     });
   },
+
+  /**
+   * @return {string} Message to display to the user.
+   * @private
+   */
+  getManagementString_() {
+    // <if expr="chromeos">
+    if (this.showDeviceInfo) {
+      return this.i18nAdvanced('deviceManagedByOrg');
+    }
+    // </if>
+    return this.i18nAdvanced('browserManagedByOrg');
+  },
 });
 
 chrome.send('observeManagedUI');
-
 })();

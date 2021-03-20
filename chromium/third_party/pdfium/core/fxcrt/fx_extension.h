@@ -48,8 +48,16 @@ inline int32_t FXSYS_towupper(wchar_t c) {
   return u_toupper(c);
 }
 
+inline bool FXSYS_IsLowerASCII(int32_t c) {
+  return c >= 'a' && c <= 'z';
+}
+
+inline bool FXSYS_IsUpperASCII(int32_t c) {
+  return c >= 'A' && c <= 'Z';
+}
+
 inline char FXSYS_ToUpperASCII(char c) {
-  return (c >= 'a' && c <= 'z') ? (c + ('A' - 'a')) : c;
+  return FXSYS_IsLowerASCII(c) ? (c + ('A' - 'a')) : c;
 }
 
 inline bool FXSYS_iswalpha(wchar_t c) {
@@ -106,8 +114,8 @@ inline int FXSYS_DecimalCharToInt(wchar_t c) {
   return FXSYS_IsDecimalDigit(c) ? c - L'0' : 0;
 }
 
-void FXSYS_IntToTwoHexChars(uint8_t c, char* buf);
-void FXSYS_IntToFourHexChars(uint16_t c, char* buf);
+void FXSYS_IntToTwoHexChars(uint8_t n, char* buf);
+void FXSYS_IntToFourHexChars(uint16_t n, char* buf);
 
 size_t FXSYS_ToUTF16BE(uint32_t unicode, char* buf);
 

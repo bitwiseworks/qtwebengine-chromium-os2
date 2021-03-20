@@ -52,9 +52,11 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
     DISABLED = 0,
     ENABLED = 1,
 
+    // DEPRECATED. External uninstallation bits are now stored directly in
+    // the ExtensionPrefs. See https://crbug.com/795026.
     // An external extension that the user uninstalled. We should not reinstall
     // such extensions on startup.
-    EXTERNAL_EXTENSION_UNINSTALLED = 2,
+    DEPRECATED_EXTERNAL_EXTENSION_UNINSTALLED = 2,
 
     // DEPRECATED: Special state for component extensions.
     // ENABLED_COMPONENT_DEPRECATED = 3,
@@ -134,6 +136,16 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
     // before they are fully installed and enabled.
     MAY_BE_UNTRUSTED = 1 << 12,
 
+    // |FOR_LOGIN_SCREEN| means that this extension was force-installed through
+    // policy for the login screen. Extensions created with this flag will have
+    // type |TYPE_LOGIN_SCREEN_EXTENSION| (with limited API capabilities)
+    // instead of the usual |TYPE_EXTENSION|.
+    FOR_LOGIN_SCREEN = 1 << 13,
+
+    // |WITHHOLD_PERMISSIONS| indicates that on installation the user indicated
+    // for permissions to be withheld from the extension by default.
+    WITHHOLD_PERMISSIONS = 1 << 14,
+
     // When adding new flags, make sure to update kInitFromValueFlagBits.
   };
 
@@ -187,7 +199,7 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
 
   // Returns an extension resource object. |relative_path| should be UTF8
   // encoded.
-  ExtensionResource GetResource(const std::string& relative_path) const;
+  ExtensionResource GetResource(base::StringPiece relative_path) const;
 
   // As above, but with |relative_path| following the file system's encoding.
   ExtensionResource GetResource(const base::FilePath& relative_path) const;
@@ -217,15 +229,15 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   // for displaying in a launcher or new tab page.
   bool RequiresSortOrdinal() const;
 
+  // TODO(devlin): The core Extension class shouldn't be responsible for these
+  // ShouldDisplay/ShouldExpose style functions; it doesn't know about the NTP,
+  // Management API, etc.
+
   // Returns true if the extension should be displayed in the app launcher.
   bool ShouldDisplayInAppLauncher() const;
 
   // Returns true if the extension should be displayed in the browser NTP.
   bool ShouldDisplayInNewTabPage() const;
-
-  // Returns true if the extension should be displayed in the extension
-  // settings page (i.e. chrome://extensions).
-  bool ShouldDisplayInExtensionSettings() const;
 
   // Returns true if the extension should be exposed via the chrome.management
   // API.
@@ -250,8 +262,9 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   const HashedExtensionId& hashed_id() const;
   const base::Version& version() const { return version_; }
   const std::string& version_name() const { return version_name_; }
-  const std::string VersionString() const;
-  const std::string GetVersionForDisplay() const;
+  std::string VersionString() const;
+  std::string DifferentialFingerprint() const;
+  std::string GetVersionForDisplay() const;
   const std::string& name() const { return display_name_; }
   const std::string& short_name() const { return short_name_; }
   const std::string& non_localized_name() const { return non_localized_name_; }
@@ -312,6 +325,7 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   bool is_extension() const;            // Regular browser extension, not an app
   bool is_shared_module() const;        // Shared module
   bool is_theme() const;                // Theme
+  bool is_login_screen_extension() const;  // Extension on login screen.
 
   // True if this is a platform app, hosted app, or legacy packaged app.
   bool is_app() const;
@@ -456,8 +470,6 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
 };
 
 typedef std::vector<scoped_refptr<const Extension> > ExtensionList;
-typedef std::set<ExtensionId> ExtensionIdSet;
-typedef std::vector<ExtensionId> ExtensionIdList;
 
 // Handy struct to pass core extension info around.
 struct ExtensionInfo {
@@ -477,20 +489,6 @@ struct ExtensionInfo {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ExtensionInfo);
-};
-
-// TODO(DHNishi): Move this enum to ExtensionRegistryObserver.
-enum class UnloadedExtensionReason {
-  UNDEFINED,              // Undefined state used to initialize variables.
-  DISABLE,                // Extension is being disabled.
-  UPDATE,                 // Extension is being updated to a newer version.
-  UNINSTALL,              // Extension is being uninstalled.
-  TERMINATE,              // Extension has terminated.
-  BLACKLIST,              // Extension has been blacklisted.
-  PROFILE_SHUTDOWN,       // Profile is being shut down.
-  LOCK_ALL,               // All extensions for the profile are blocked.
-  MIGRATED_TO_COMPONENT,  // Extension is being migrated to a component
-                          // action.
 };
 
 // The details sent for EXTENSION_PERMISSIONS_UPDATED notifications.

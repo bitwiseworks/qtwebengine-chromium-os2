@@ -24,7 +24,7 @@
 **
 **    static int aX[] = { 53, 9, 17, 2231, 4, 99 };
 **    int i = sqlite3_bind_parameter_index(pStmt, "$ptr");
-**    sqlite3_bind_value(pStmt, i, aX, "carray", 0);
+**    sqlite3_bind_pointer(pStmt, i, aX, "carray", 0);
 **
 ** There is an optional third parameter to determine the datatype of
 ** the C-language array.  Allowed values of the third parameter are
@@ -46,7 +46,7 @@
 **       ctype TEXT HIDDEN
 **     );
 **
-** If the hidden columns "pointer" and "count" are unconstrained, then
+** If the hidden columns "pointer" and "count" are unconstrained, then 
 ** the virtual table has no rows.  Otherwise, the virtual table interprets
 ** the integer value of "pointer" as a pointer to the array and "count"
 ** as the number of elements in the array.  The virtual table steps through
@@ -234,7 +234,7 @@ static int carrayEof(sqlite3_vtab_cursor *cur){
 ** to the first row of output.
 */
 static int carrayFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -327,7 +327,7 @@ static int carrayBestIndex(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** carray virtual table.
 */
 static sqlite3_module carrayModule = {
@@ -387,8 +387,8 @@ static void inttoptrFunc(
 __declspec(dllexport)
 #endif
 int sqlite3_carray_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

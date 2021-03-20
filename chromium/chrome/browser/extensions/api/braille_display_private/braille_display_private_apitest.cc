@@ -68,10 +68,9 @@ class MockBrlapiConnection : public BrlapiConnection {
     data_->connected = true;
     on_data_ready_ = on_data_ready;
     if (!data_->pending_keys.empty()) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::IO},
-          base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
-                         base::Unretained(this)));
+      base::PostTask(FROM_HERE, {content::BrowserThread::IO},
+                     base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
+                                    base::Unretained(this)));
     }
     return CONNECT_SUCCESS;
   }
@@ -80,7 +79,7 @@ class MockBrlapiConnection : public BrlapiConnection {
     data_->connected = false;
     if (data_->reappear_on_disconnect) {
       data_->display_columns *= 2;
-      base::PostTaskWithTraits(
+      base::PostTask(
           FROM_HERE, {content::BrowserThread::IO},
           base::BindOnce(
               &BrailleControllerImpl::PokeSocketDirForTesting,
@@ -129,10 +128,9 @@ class MockBrlapiConnection : public BrlapiConnection {
   void NotifyDataReady() {
     on_data_ready_.Run();
     if (!data_->pending_keys.empty()) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::IO},
-          base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
-                         base::Unretained(this)));
+      base::PostTask(FROM_HERE, {content::BrowserThread::IO},
+                     base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
+                                    base::Unretained(this)));
     }
   }
 
@@ -317,8 +315,7 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
 };
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateAPIUserTest, KeyEventOnLockScreen) {
-  std::unique_ptr<chromeos::ScreenLockerTester> tester =
-      chromeos::ScreenLockerTester::Create();
+  chromeos::ScreenLockerTester tester;
 
   // Make sure the signin profile and active profile are different.
   Profile* signin_profile = chromeos::ProfileHelper::GetSigninProfile();
@@ -344,15 +341,15 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateAPIUserTest, KeyEventOnLockScreen) {
   EXPECT_EQ(1, user_delegate->GetEventCount());
 
   // Lock screen, and make sure that the key event goes to the signin profile.
-  tester->Lock();
+  tester.Lock();
   signin_api.OnBrailleKeyEvent(key_event);
   user_api.OnBrailleKeyEvent(key_event);
   EXPECT_EQ(0, signin_delegate->GetEventCount());
   EXPECT_EQ(2, user_delegate->GetEventCount());
 
   // Unlock screen, making sure key events go to the user profile again.
-  tester->SetUnlockPassword(AccountId::FromUserEmail(kTestUserEmail), "pass");
-  tester->UnlockWithPassword(AccountId::FromUserEmail(kTestUserEmail), "pass");
+  tester.SetUnlockPassword(AccountId::FromUserEmail(kTestUserEmail), "pass");
+  tester.UnlockWithPassword(AccountId::FromUserEmail(kTestUserEmail), "pass");
   signin_api.OnBrailleKeyEvent(key_event);
   user_api.OnBrailleKeyEvent(key_event);
   EXPECT_EQ(0, signin_delegate->GetEventCount());

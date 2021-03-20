@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/locks/lock_manager.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -38,7 +39,7 @@ class Lock::ThenFunction final : public ScriptFunction {
   ThenFunction(ScriptState* script_state, Lock* lock, ResolveType type)
       : ScriptFunction(script_state), lock_(lock), resolve_type_(type) {}
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(lock_);
     ScriptFunction::Trace(visitor);
   }
@@ -60,31 +61,27 @@ class Lock::ThenFunction final : public ScriptFunction {
   ResolveType resolve_type_;
 };
 
-// static
-Lock* Lock::Create(ScriptState* script_state,
-                   const String& name,
-                   mojom::blink::LockMode mode,
-                   mojom::blink::LockHandleAssociatedPtr handle,
-                   LockManager* manager) {
-  return MakeGarbageCollected<Lock>(script_state, name, mode, std::move(handle),
-                                    manager);
-}
-
 Lock::Lock(ScriptState* script_state,
            const String& name,
            mojom::blink::LockMode mode,
-           mojom::blink::LockHandleAssociatedPtr handle,
+           mojo::PendingAssociatedRemote<mojom::blink::LockHandle> handle,
+           mojo::PendingRemote<mojom::blink::ObservedFeature> lock_lifetime,
            LockManager* manager)
-    : ContextLifecycleObserver(ExecutionContext::From(script_state)),
+    : ExecutionContextLifecycleObserver(ExecutionContext::From(script_state)),
       name_(name),
       mode_(mode),
       handle_(std::move(handle)),
+      lock_lifetime_(std::move(lock_lifetime)),
       manager_(manager) {
-  handle_.set_connection_error_handler(
+  handle_.set_disconnect_handler(
       WTF::Bind(&Lock::OnConnectionError, WrapWeakPersistent(this)));
 }
 
 Lock::~Lock() = default;
+
+void Lock::Dispose() {
+  handle_.reset();
+}
 
 String Lock::mode() const {
   return ModeToString(mode_);
@@ -123,12 +120,12 @@ String Lock::ModeToString(mojom::blink::LockMode mode) {
   return g_empty_string;
 }
 
-void Lock::ContextDestroyed(ExecutionContext* context) {
+void Lock::ContextDestroyed() {
   ReleaseIfHeld();
 }
 
-void Lock::Trace(blink::Visitor* visitor) {
-  ContextLifecycleObserver::Trace(visitor);
+void Lock::Trace(Visitor* visitor) {
+  ExecutionContextLifecycleObserver::Trace(visitor);
   ScriptWrappable::Trace(visitor);
   visitor->Trace(resolver_);
   visitor->Trace(manager_);
@@ -139,13 +136,16 @@ void Lock::ReleaseIfHeld() {
     // Drop the mojo pipe; this releases the lock on the back end.
     handle_.reset();
 
+    lock_lifetime_.reset();
+
     // Let the lock manager know that this instance can be collected.
     manager_->OnLockReleased(this);
   }
 }
 
 void Lock::OnConnectionError() {
-  resolver_->Reject(DOMException::Create(
+  ReleaseIfHeld();
+  resolver_->Reject(MakeGarbageCollected<DOMException>(
       DOMExceptionCode::kAbortError,
       "Lock broken by another request with the 'steal' option."));
 }

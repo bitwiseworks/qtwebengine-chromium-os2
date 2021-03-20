@@ -60,8 +60,6 @@ class WebSecurityOrigin {
       const WebString&);
   BLINK_PLATFORM_EXPORT static WebSecurityOrigin Create(const WebURL&);
   BLINK_PLATFORM_EXPORT static WebSecurityOrigin CreateUniqueOpaque();
-  // TODO(dcheng): Remove this. https://crbug.com/695622
-  static WebSecurityOrigin CreateUnique() { return CreateUniqueOpaque(); }
 
   BLINK_PLATFORM_EXPORT void Reset();
   BLINK_PLATFORM_EXPORT void Assign(const WebSecurityOrigin&);
@@ -70,17 +68,15 @@ class WebSecurityOrigin {
 
   BLINK_PLATFORM_EXPORT WebString Protocol() const;
   BLINK_PLATFORM_EXPORT WebString Host() const;
-  BLINK_PLATFORM_EXPORT unsigned short Port() const;
+  BLINK_PLATFORM_EXPORT uint16_t Port() const;
 
   // |Port()| will return 0 if the port is the default for an origin. This
   // method instead returns the effective port, even if it is the default port
   // (e.g. "http" => 80).
-  BLINK_PLATFORM_EXPORT unsigned short EffectivePort() const;
+  BLINK_PLATFORM_EXPORT uint16_t EffectivePort() const;
 
   // A unique WebSecurityOrigin is the least privileged WebSecurityOrigin.
   BLINK_PLATFORM_EXPORT bool IsOpaque() const;
-  // TODO(dcheng): Remove this. https://crbug.com/695622
-  bool IsUnique() const { return IsOpaque(); }
 
   // Returns true if this WebSecurityOrigin can script objects in the given
   // SecurityOrigin. For example, call this function before allowing
@@ -92,6 +88,11 @@ class WebSecurityOrigin {
   // the given URL. For example, call this function before allowing script
   // from a given security origin to receive contents from a given URL.
   BLINK_PLATFORM_EXPORT bool CanRequest(const WebURL&) const;
+
+  // Returns true if this WebSecurityOrigin can display content from the given
+  // URL (e.g., in an iframe or as an image). For example, web sites generally
+  // cannot display content from the user's files system.
+  BLINK_PLATFORM_EXPORT bool CanDisplay(const WebURL&) const;
 
   // Returns true if the origin loads resources either from the local
   // machine or over the network from a

@@ -48,6 +48,7 @@ from blinkpy.web_tests.port import server_process
 # pylint: disable=invalid-name
 fuchsia_target = None
 qemu_target = None
+symbolizer = None
 # pylint: enable=invalid-name
 
 
@@ -59,10 +60,14 @@ def _import_fuchsia_runner():
     # pylint: disable=import-error
     # pylint: disable=invalid-name
     # pylint: disable=redefined-outer-name
+    global aemu_target
+    import aemu_target
     global fuchsia_target
     import target as fuchsia_target
     global qemu_target
-    import qemu_target as qemu_target
+    import qemu_target
+    global symbolizer
+    import symbolizer
     # pylint: enable=import-error
     # pylint: enable=invalid-name
     # pylint: disable=redefined-outer-name
@@ -120,19 +125,36 @@ class SubprocessOutputLogger(object):
         self._process.kill()
 
 class _TargetHost(object):
-    def __init__(self, build_path, ports_to_forward):
+    def __init__(self, build_path, build_ids_path, ports_to_forward,
+                 target_device, results_directory):
         try:
             self._target = None
-            self._target = qemu_target.QemuTarget(
-                build_path, 'x64', cpu_cores=CPU_CORES, system_log_file=None,
-                require_kvm=True, ram_size_mb=8192)
+            target_args = {
+                'output_dir': build_path,
+                'target_cpu': 'x64',
+                'system_log_file': None,
+                'cpu_cores': CPU_CORES,
+                'require_kvm': True,
+                'emu_type': target_device,
+                'ram_size_mb': 8192
+            }
+            if target_device == 'qemu':
+                self._target = qemu_target.QemuTarget(**target_args)
+            else:
+                target_args.update({
+                    'enable_graphics': False,
+                    'hardware_gpu': False
+                })
+                self._target = aemu_target.AemuTarget(**target_args)
             self._target.Start()
-            self._setup_target(build_path, ports_to_forward)
+            self._setup_target(build_path, build_ids_path, ports_to_forward,
+                               results_directory)
         except:
             self.cleanup()
             raise
 
-    def _setup_target(self, build_path, ports_to_forward):
+    def _setup_target(self, build_path, build_ids_path, ports_to_forward,
+                      results_directory):
         # Tell SSH to forward all server ports from the Fuchsia device to
         # the host.
         forwarding_flags = [
@@ -146,24 +168,18 @@ class _TargetHost(object):
                                                    ssh_args=forwarding_flags,
                                                    stderr=subprocess.PIPE)
 
-        # Copy content_shell package to the device.
-        device_package_path = \
-            os.path.join('/data', os.path.basename(CONTENT_SHELL_PACKAGE_PATH))
-        self._target.PutFile(
-            os.path.join(build_path, CONTENT_SHELL_PACKAGE_PATH),
-            device_package_path)
+        self._listener = self._target.RunCommandPiped(['log_listener'],
+                                                      stdout=subprocess.PIPE,
+                                                      stderr=subprocess.STDOUT)
 
-        pm_install = self._target.RunCommandPiped(
-            ['pm', 'install', device_package_path],
-            stderr=subprocess.PIPE)
-        output = pm_install.stderr.readlines()
-        pm_install.wait()
+        listener_log_path = os.path.join(results_directory, 'system.log')
+        listener_log = open(listener_log_path,'w')
+        self.symbolizer = symbolizer.RunSymbolizer(self._listener.stdout,
+                                                   listener_log,
+                                                   [build_ids_path])
 
-        if pm_install.returncode != 0:
-          # Don't error out if the package already exists on the device.
-          if len(output) != 1 or 'ErrAlreadyExists' not in output[0]:
-            raise Exception('Failed to install content_shell: %s' % \
-                            '\n'.join(output))
+        package_path = os.path.join(build_path, CONTENT_SHELL_PACKAGE_PATH)
+        self._target.InstallPackage([package_path])
 
         # Process will be forked for each worker, which may make QemuTarget
         # unusable (e.g. waitpid() for qemu process returns ECHILD after
@@ -197,6 +213,7 @@ class FuchsiaPort(base.Port):
 
         self._operating_system = 'fuchsia'
         self._version = 'fuchsia'
+        self._target_device = self.get_option('device')
 
         # TODO(sergeyu): Add support for arm64.
         self._architecture = 'x86_64'
@@ -224,7 +241,9 @@ class FuchsiaPort(base.Port):
         super(FuchsiaPort, self).setup_test_run()
         try:
             self._target_host = _TargetHost(
-                self._build_path(), self.SERVER_PORTS)
+                self._build_path(), self.get_build_ids_path(),
+                self.SERVER_PORTS, self._target_device,
+                self.results_directory())
 
             if self.get_option('zircon_logging'):
                 self._zircon_logger = SubprocessOutputLogger(
@@ -281,6 +300,10 @@ class FuchsiaPort(base.Port):
     def get_target_host(self):
         return self._target_host
 
+    def get_build_ids_path(self):
+        package_path = self._path_to_driver()
+        return os.path.join(os.path.dirname(package_path), 'ids.txt')
+
 
 class ChromiumFuchsiaDriver(driver.Driver):
     def __init__(self, port, worker_number, no_timeout=False):
@@ -309,6 +332,7 @@ class FuchsiaServerProcess(server_process.ServerProcess):
                  treat_no_data_as_crash=False, more_logging=False):
         super(FuchsiaServerProcess, self).__init__(
             port_obj, name, cmd, env, treat_no_data_as_crash, more_logging)
+        self._symbolizer_proc = None
 
     def _start(self):
         if self._proc:
@@ -349,5 +373,15 @@ class FuchsiaServerProcess(server_process.ServerProcess):
 
         proc.stdin.close()
         proc.stdin = stdin_pipe
+        # Run symbolizer to filter the stderr stream.
+        self._symbolizer_proc = symbolizer.RunSymbolizer(
+            proc.stderr, subprocess.PIPE, [self._port.get_build_ids_path()]);
+        proc.stderr = self._symbolizer_proc.stdout
 
         self._set_proc(proc)
+
+    def stop(self, timeout_secs=0.0, kill_tree=False):
+        result = super(FuchsiaServerProcess, self).stop(timeout_secs, kill_tree)
+        if self._symbolizer_proc:
+            self._symbolizer_proc.kill()
+        return result

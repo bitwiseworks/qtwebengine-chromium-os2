@@ -6,6 +6,7 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "build/branding_buildflags.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/prefs/pref_service.h"
@@ -17,12 +18,7 @@ namespace {
 bool g_force_official_enabled_test = false;
 
 bool IsMetricsReportingEnabledForOfficialBuild(PrefService* pref_service) {
-  // In official builds, disable metrics when reporting field trials are
-  // forced; otherwise, use the value of the user's preference to determine
-  // whether to enable metrics reporting.
-  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kForceFieldTrials) &&
-         pref_service->GetBoolean(prefs::kMetricsReportingEnabled);
+  return pref_service->GetBoolean(prefs::kMetricsReportingEnabled);
 }
 
 }  // namespace
@@ -30,14 +26,14 @@ bool IsMetricsReportingEnabledForOfficialBuild(PrefService* pref_service) {
 // static
 bool MetricsServiceAccessor::IsMetricsReportingEnabled(
     PrefService* pref_service) {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return IsMetricsReportingEnabledForOfficialBuild(pref_service);
 #else
   // In non-official builds, disable metrics reporting completely.
   return g_force_official_enabled_test
              ? IsMetricsReportingEnabledForOfficialBuild(pref_service)
              : false;
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 
 // static

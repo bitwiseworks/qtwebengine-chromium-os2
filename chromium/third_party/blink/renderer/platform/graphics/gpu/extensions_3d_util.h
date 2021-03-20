@@ -9,7 +9,7 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -38,6 +38,7 @@ class PLATFORM_EXPORT Extensions3DUtil final {
   bool EnsureExtensionEnabled(const String& name);
   bool IsExtensionEnabled(const String& name);
 
+  static bool CopyTextureCHROMIUMNeedsESSL3(GLenum dest_format);
   static bool CanUseCopyTextureCHROMIUM(GLenum dest_target);
 
  private:

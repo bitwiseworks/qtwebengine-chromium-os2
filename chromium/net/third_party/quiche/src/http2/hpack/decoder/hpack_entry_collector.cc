@@ -4,10 +4,10 @@
 
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_entry_collector.h"
 
-#include "base/logging.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_string_collector.h"
 #include "net/third_party/quiche/src/http2/hpack/http2_hpack_constants.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_string_utils.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_test_helpers.h"
 
@@ -35,7 +35,7 @@ HpackEntryCollector::HpackEntryCollector(HpackEntryType type,
 HpackEntryCollector::HpackEntryCollector(HpackEntryType type,
                                          size_t index,
                                          bool value_huffman,
-                                         const Http2String& value)
+                                         const std::string& value)
     : header_type_(type),
       index_(index),
       value_(value, value_huffman),
@@ -43,9 +43,9 @@ HpackEntryCollector::HpackEntryCollector(HpackEntryType type,
       ended_(true) {}
 HpackEntryCollector::HpackEntryCollector(HpackEntryType type,
                                          bool name_huffman,
-                                         const Http2String& name,
+                                         const std::string& name,
                                          bool value_huffman,
-                                         const Http2String& value)
+                                         const std::string& value)
     : header_type_(type),
       index_(0),
       name_(name, name_huffman),
@@ -166,7 +166,7 @@ AssertionResult HpackEntryCollector::ValidateLiteralValueHeader(
     HpackEntryType expected_type,
     size_t expected_index,
     bool expected_value_huffman,
-    Http2StringPiece expected_value) const {
+    quiche::QuicheStringPiece expected_value) const {
   VERIFY_TRUE(started_);
   VERIFY_TRUE(ended_);
   VERIFY_EQ(expected_type, header_type_);
@@ -179,9 +179,9 @@ AssertionResult HpackEntryCollector::ValidateLiteralValueHeader(
 AssertionResult HpackEntryCollector::ValidateLiteralNameValueHeader(
     HpackEntryType expected_type,
     bool expected_name_huffman,
-    Http2StringPiece expected_name,
+    quiche::QuicheStringPiece expected_name,
     bool expected_value_huffman,
-    Http2StringPiece expected_value) const {
+    quiche::QuicheStringPiece expected_value) const {
   VERIFY_TRUE(started_);
   VERIFY_TRUE(ended_);
   VERIFY_EQ(expected_type, header_type_);
@@ -232,8 +232,8 @@ void HpackEntryCollector::AppendToHpackBlockBuilder(
   }
 }
 
-Http2String HpackEntryCollector::ToString() const {
-  Http2String result("Type=");
+std::string HpackEntryCollector::ToString() const {
+  std::string result("Type=");
   switch (header_type_) {
     case HpackEntryType::kIndexedHeader:
       result += "IndexedHeader";

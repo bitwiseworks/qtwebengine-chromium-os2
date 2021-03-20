@@ -8,7 +8,7 @@ are run in error resilient mode. Requires a compiled build directory to run.
 # traffic_annotation_auditor_tests.py
 Runs tests to ensure traffic_annotation_auditor is performing as expected. Tests
 include:
- - Checking if auditor and underlying clang tool run, and an expected minimum
+ - Checking if auditor and underlying extractor run, and an expected minimum
    number of outputs are returned.
  - Checking if enabling or disabling heuristics that make tests faster has any
    effect on the output.
@@ -22,3 +22,10 @@ Provides tools for annotation test scripts.
 # update_annotations_sheet.py
 This script updates the Google sheet that presents all network traffic
 annotations.
+
+# extractor.py
+Scans through a set of specified C++ files to detect existing traffic
+annotations in code. It uses regex expressions on source files.
+
+# extractor_test.py
+Unit tests for extractor.py.

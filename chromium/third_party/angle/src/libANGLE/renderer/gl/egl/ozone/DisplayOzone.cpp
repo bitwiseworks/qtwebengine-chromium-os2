@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2016 The ANGLE Project Authors. All rights reserved.
+// Copyright 2016 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -317,7 +317,7 @@ GLuint DisplayOzone::Buffer::createGLFB(const gl::Context *context)
 FramebufferGL *DisplayOzone::Buffer::framebufferGL(const gl::Context *context,
                                                    const gl::FramebufferState &state)
 {
-    return new FramebufferGL(state, createGLFB(context), true);
+    return new FramebufferGL(state, createGLFB(context), true, false);
 }
 
 void DisplayOzone::Buffer::present(const gl::Context *context)
@@ -351,7 +351,6 @@ bool DisplayOzone::Buffer::createRenderbuffers()
 
 DisplayOzone::DisplayOzone(const egl::DisplayState &state)
     : DisplayEGL(state),
-      mRenderer(nullptr),
       mGBM(nullptr),
       mConnector(nullptr),
       mMode(nullptr),
@@ -487,7 +486,7 @@ egl::Error DisplayOzone::initialize(egl::Display *display)
         "EGL_EXT_image_dma_buf_import",
         "EGL_KHR_surfaceless_context",
     };
-    for (auto &ext : necessaryExtensions)
+    for (const char *ext : necessaryExtensions)
     {
         if (!mEGL->hasExtension(ext))
         {
@@ -904,28 +903,11 @@ SurfaceImpl *DisplayOzone::createPbufferSurface(const egl::SurfaceState &state,
     EGLAttrib height = attribs.get(EGL_HEIGHT, 0);
     Buffer *buffer   = new Buffer(this, GBM_BO_USE_RENDERING, GBM_FORMAT_ARGB8888,
                                 DRM_FORMAT_ARGB8888, DRM_FORMAT_XRGB8888, true, true);
-    if (!buffer || !buffer->initialize(width, height))
+    if (!buffer || !buffer->initialize(static_cast<int>(width), static_cast<int>(height)))
     {
         return nullptr;
     }
     return new SurfaceOzone(state, buffer);
-}
-
-SurfaceImpl *DisplayOzone::createPbufferFromClientBuffer(const egl::SurfaceState &state,
-                                                         EGLenum buftype,
-                                                         EGLClientBuffer clientBuffer,
-                                                         const egl::AttributeMap &attribs)
-{
-    UNIMPLEMENTED();
-    return nullptr;
-}
-
-SurfaceImpl *DisplayOzone::createPixmapSurface(const egl::SurfaceState &state,
-                                               NativePixmapType nativePixmap,
-                                               const egl::AttributeMap &attribs)
-{
-    UNIMPLEMENTED();
-    return nullptr;
 }
 
 ContextImpl *DisplayOzone::createContext(const gl::State &state,
@@ -938,10 +920,11 @@ ContextImpl *DisplayOzone::createContext(const gl::State &state,
     return new ContextEGL(state, errorSet, mRenderer);
 }
 
-DeviceImpl *DisplayOzone::createDevice()
+egl::Error DisplayOzone::makeCurrent(egl::Surface *drawSurface,
+                                     egl::Surface *readSurface,
+                                     gl::Context *context)
 {
-    UNIMPLEMENTED();
-    return nullptr;
+    return DisplayGL::makeCurrent(drawSurface, readSurface, context);
 }
 
 egl::ConfigSet DisplayOzone::generateConfigs()
@@ -965,42 +948,9 @@ egl::ConfigSet DisplayOzone::generateConfigs()
     return configs;
 }
 
-bool DisplayOzone::testDeviceLost()
-{
-    return false;
-}
-
-egl::Error DisplayOzone::restoreLostDevice(const egl::Display *display)
-{
-    UNIMPLEMENTED();
-    return egl::EglBadDisplay();
-}
-
 bool DisplayOzone::isValidNativeWindow(EGLNativeWindowType window) const
 {
     return true;
-}
-
-egl::Error DisplayOzone::waitClient(const gl::Context *context)
-{
-    // TODO(fjhenigman) Implement this.
-    return egl::NoError();
-}
-
-egl::Error DisplayOzone::waitNative(const gl::Context *context, EGLint engine)
-{
-    // TODO(fjhenigman) Implement this.
-    return egl::NoError();
-}
-
-gl::Version DisplayOzone::getMaxSupportedESVersion() const
-{
-    return mRenderer->getMaxSupportedESVersion();
-}
-
-void DisplayOzone::destroyNativeContext(EGLContext context)
-{
-    mEGL->destroyContext(context);
 }
 
 void DisplayOzone::setSwapInterval(EGLSurface drawable, SwapControlData *data)
@@ -1010,16 +960,10 @@ void DisplayOzone::setSwapInterval(EGLSurface drawable, SwapControlData *data)
 
 void DisplayOzone::generateExtensions(egl::DisplayExtensions *outExtensions) const
 {
+    DisplayEGL::generateExtensions(outExtensions);
+
     // Surfaceless contexts are emulated even if there is no native support.
     outExtensions->surfacelessContext = true;
-
-    DisplayEGL::generateExtensions(outExtensions);
-}
-
-egl::Error DisplayOzone::makeCurrentSurfaceless(gl::Context *context)
-{
-    // Nothing to do, handled in the GL layers
-    return egl::NoError();
 }
 
 class WorkerContextOzone final : public WorkerContext

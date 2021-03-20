@@ -15,13 +15,14 @@
 #ifndef DAWNWIRE_CLIENT_FENCE_H_
 #define DAWNWIRE_CLIENT_FENCE_H_
 
-#include <dawn/dawn.h>
+#include <dawn/webgpu.h>
 
 #include "common/SerialMap.h"
 #include "dawn_wire/client/ObjectBase.h"
 
 namespace dawn_wire { namespace client {
 
+    struct Queue;
     struct Fence : ObjectBase {
         using ObjectBase::ObjectBase;
 
@@ -29,9 +30,10 @@ namespace dawn_wire { namespace client {
         void CheckPassedFences();
 
         struct OnCompletionData {
-            dawnFenceOnCompletionCallback completionCallback = nullptr;
-            dawnCallbackUserdata userdata = 0;
+            WGPUFenceOnCompletionCallback completionCallback = nullptr;
+            void* userdata = nullptr;
         };
+        Queue* queue = nullptr;
         uint64_t signaledValue = 0;
         uint64_t completedValue = 0;
         SerialMap<OnCompletionData> requests;

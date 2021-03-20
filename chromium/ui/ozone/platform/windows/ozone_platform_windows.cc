@@ -4,16 +4,18 @@
 
 #include "ui/ozone/platform/windows/ozone_platform_windows.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
-#include "ui/display/manager/fake_display_delegate.h"
+#include "ui/display/fake/fake_display_delegate.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
 #include "ui/events/ozone/layout/stub/stub_keyboard_layout_engine.h"
 #include "ui/events/platform/platform_event_source.h"
-#include "ui/events/system_input_injector.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/common/stub_overlay_manager.h"
 #include "ui/ozone/platform/windows/windows_surface_factory.h"
 #include "ui/ozone/platform/windows/windows_window.h"
@@ -23,6 +25,7 @@
 #include "ui/ozone/public/input_controller.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/ozone_switches.h"
+#include "ui/ozone/public/system_input_injector.h"
 #include "ui/platform_window/platform_window_init_properties.h"
 
 namespace ui {
@@ -74,6 +77,12 @@ class OzonePlatformWindows : public OzonePlatform {
       override {
     return std::make_unique<display::FakeDisplayDelegate>();
   }
+  std::unique_ptr<InputMethod> CreateInputMethod(
+      internal::InputMethodDelegate* delegate,
+      gfx::AcceleratedWidget) override {
+    NOTREACHED();
+    return nullptr;
+  }
 
   void InitializeUI(const InitParams& params) override {
     window_manager_ = std::make_unique<WindowsWindowManager>();
@@ -81,8 +90,9 @@ class OzonePlatformWindows : public OzonePlatform {
     // This unbreaks tests that create their own.
     if (!PlatformEventSource::GetInstance())
       platform_event_source_ = std::make_unique<WindowsPlatformEventSource>();
+    keyboard_layout_engine_ = std::make_unique<StubKeyboardLayoutEngine>();
     KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
-        std::make_unique<StubKeyboardLayoutEngine>());
+        keyboard_layout_engine_.get());
 
     overlay_manager_ = std::make_unique<StubOverlayManager>();
     input_controller_ = CreateStubInputController();
@@ -96,6 +106,7 @@ class OzonePlatformWindows : public OzonePlatform {
   }
 
  private:
+  std::unique_ptr<KeyboardLayoutEngine> keyboard_layout_engine_;
   std::unique_ptr<WindowsWindowManager> window_manager_;
   std::unique_ptr<WindowsSurfaceFactory> surface_factory_;
   std::unique_ptr<PlatformEventSource> platform_event_source_;

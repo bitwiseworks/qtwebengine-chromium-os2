@@ -27,19 +27,60 @@
 #include "third_party/blink/renderer/core/frame/sandbox_flags.h"
 
 #include "third_party/blink/public/common/frame/sandbox_flags.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
+#include "third_party/blink/renderer/core/feature_policy/feature_policy_parser.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
-SandboxFlags ParseSandboxPolicy(const SpaceSplitString& policy,
-                                String& invalid_tokens_error_message) {
+const SandboxFlagFeaturePolicyPairs& SandboxFlagsWithFeaturePolicies() {
+  DEFINE_STATIC_LOCAL(SandboxFlagFeaturePolicyPairs, array,
+                      ({{mojom::blink::WebSandboxFlags::kTopNavigation,
+                         mojom::blink::FeaturePolicyFeature::kTopNavigation},
+                        {mojom::blink::WebSandboxFlags::kForms,
+                         mojom::blink::FeaturePolicyFeature::kFormSubmission},
+                        {mojom::blink::WebSandboxFlags::kScripts,
+                         mojom::blink::FeaturePolicyFeature::kScript},
+                        {mojom::blink::WebSandboxFlags::kPopups,
+                         mojom::blink::FeaturePolicyFeature::kPopups},
+                        {mojom::blink::WebSandboxFlags::kPointerLock,
+                         mojom::blink::FeaturePolicyFeature::kPointerLock},
+                        {mojom::blink::WebSandboxFlags::kModals,
+                         mojom::blink::FeaturePolicyFeature::kModals},
+                        {mojom::blink::WebSandboxFlags::kOrientationLock,
+                         mojom::blink::FeaturePolicyFeature::kOrientationLock},
+                        {mojom::blink::WebSandboxFlags::kPresentationController,
+                         mojom::blink::FeaturePolicyFeature::kPresentation},
+                        {mojom::blink::WebSandboxFlags::kDownloads,
+                         mojom::blink::FeaturePolicyFeature::kDownloads}}));
+  return array;
+}
+
+// This returns a super mask which indicates the set of all flags that have
+// corresponding feature policies. With FeaturePolicyForSandbox, these flags
+// are always removed from the set of sandbox flags set for a sandboxed
+// <iframe> (those sandbox flags are now contained in the |ContainerPolicy|).
+mojom::blink::WebSandboxFlags SandboxFlagsImplementedByFeaturePolicy() {
+  DEFINE_STATIC_LOCAL(mojom::blink::WebSandboxFlags, mask,
+                      (mojom::blink::WebSandboxFlags::kNone));
+  if (mask == mojom::blink::WebSandboxFlags::kNone) {
+    for (const auto& pair : SandboxFlagsWithFeaturePolicies())
+      mask |= pair.first;
+  }
+  return mask;
+}
+
+mojom::blink::WebSandboxFlags ParseSandboxPolicy(
+    const SpaceSplitString& policy,
+    String& invalid_tokens_error_message) {
   // http://www.w3.org/TR/html5/the-iframe-element.html#attr-iframe-sandbox
   // Parse the unordered set of unique space-separated tokens.
-  SandboxFlags flags = kSandboxAll;
+  mojom::blink::WebSandboxFlags flags = mojom::blink::WebSandboxFlags::kAll;
   unsigned length = policy.size();
   unsigned number_of_token_errors = 0;
   StringBuilder token_errors;
@@ -48,36 +89,40 @@ SandboxFlags ParseSandboxPolicy(const SpaceSplitString& policy,
     // Turn off the corresponding sandbox flag if it's set as "allowed".
     String sandbox_token(policy[index]);
     if (EqualIgnoringASCIICase(sandbox_token, "allow-same-origin")) {
-      flags &= ~kSandboxOrigin;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kOrigin;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-forms")) {
-      flags &= ~kSandboxForms;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kForms;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-scripts")) {
-      flags &= ~kSandboxScripts;
-      flags &= ~kSandboxAutomaticFeatures;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kScripts;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kAutomaticFeatures;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-top-navigation")) {
-      flags &= ~kSandboxTopNavigation;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kTopNavigation;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-popups")) {
-      flags &= ~kSandboxPopups;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kPopups;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-pointer-lock")) {
-      flags &= ~kSandboxPointerLock;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kPointerLock;
     } else if (EqualIgnoringASCIICase(sandbox_token,
                                       "allow-orientation-lock")) {
-      flags &= ~kSandboxOrientationLock;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kOrientationLock;
     } else if (EqualIgnoringASCIICase(sandbox_token,
                                       "allow-popups-to-escape-sandbox")) {
-      flags &= ~kSandboxPropagatesToAuxiliaryBrowsingContexts;
+      flags = flags & ~mojom::blink::WebSandboxFlags::
+                          kPropagatesToAuxiliaryBrowsingContexts;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-modals")) {
-      flags &= ~kSandboxModals;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kModals;
     } else if (EqualIgnoringASCIICase(sandbox_token, "allow-presentation")) {
-      flags &= ~kSandboxPresentationController;
+      flags = flags & ~mojom::blink::WebSandboxFlags::kPresentationController;
     } else if (EqualIgnoringASCIICase(
                    sandbox_token, "allow-top-navigation-by-user-activation")) {
-      flags &= ~kSandboxTopNavigationByUserActivation;
-    } else if (EqualIgnoringASCIICase(
-                   sandbox_token, "allow-downloads-without-user-activation") &&
-               RuntimeEnabledFeatures::
-                   BlockingDownloadsInSandboxWithoutUserActivationEnabled()) {
-      flags &= ~kSandboxDownloads;
+      flags = flags &
+              ~mojom::blink::WebSandboxFlags::kTopNavigationByUserActivation;
+    } else if (EqualIgnoringASCIICase(sandbox_token, "allow-downloads")) {
+      flags = flags & ~mojom::blink::WebSandboxFlags::kDownloads;
+    } else if (RuntimeEnabledFeatures::StorageAccessAPIEnabled() &&
+               EqualIgnoringASCIICase(
+                   sandbox_token, "allow-storage-access-by-user-activation")) {
+      flags = flags &
+              ~mojom::blink::WebSandboxFlags::kStorageAccessByUserActivation;
     } else {
       token_errors.Append(token_errors.IsEmpty() ? "'" : ", '");
       token_errors.Append(sandbox_token);
@@ -96,26 +141,21 @@ SandboxFlags ParseSandboxPolicy(const SpaceSplitString& policy,
   return flags;
 }
 
-STATIC_ASSERT_ENUM(WebSandboxFlags::kNone, kSandboxNone);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kNavigation, kSandboxNavigation);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kPlugins, kSandboxPlugins);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kOrigin, kSandboxOrigin);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kForms, kSandboxForms);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kScripts, kSandboxScripts);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kTopNavigation, kSandboxTopNavigation);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kPopups, kSandboxPopups);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kAutomaticFeatures,
-                   kSandboxAutomaticFeatures);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kPointerLock, kSandboxPointerLock);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kDocumentDomain, kSandboxDocumentDomain);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kOrientationLock, kSandboxOrientationLock);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts,
-                   kSandboxPropagatesToAuxiliaryBrowsingContexts);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kModals, kSandboxModals);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kPresentationController,
-                   kSandboxPresentationController);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kTopNavigationByUserActivation,
-                   kSandboxTopNavigationByUserActivation);
-STATIC_ASSERT_ENUM(WebSandboxFlags::kDownloads, kSandboxDownloads);
+// Removes a certain set of flags from |sandbox_flags| for which we have feature
+// policies implemented.
+mojom::blink::WebSandboxFlags GetSandboxFlagsNotImplementedAsFeaturePolicy(
+    mojom::blink::WebSandboxFlags sandbox_flags) {
+  // Punch all the sandbox flags which are converted to feature policy.
+  return sandbox_flags & ~SandboxFlagsImplementedByFeaturePolicy();
+}
+
+void ApplySandboxFlagsToParsedFeaturePolicy(
+    mojom::blink::WebSandboxFlags sandbox_flags,
+    ParsedFeaturePolicy& parsed_feature_policy) {
+  for (const auto& pair : SandboxFlagsWithFeaturePolicies()) {
+    if ((sandbox_flags & pair.first) != mojom::blink::WebSandboxFlags::kNone)
+      DisallowFeatureIfNotPresent(pair.second, parsed_feature_policy);
+  }
+}
 
 }  // namespace blink

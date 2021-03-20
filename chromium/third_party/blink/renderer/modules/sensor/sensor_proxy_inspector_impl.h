@@ -7,18 +7,18 @@
 
 #include "third_party/blink/renderer/modules/sensor/sensor_proxy.h"
 
+#include "base/macros.h"
+
 namespace blink {
 
 class SensorProxyInspectorImpl final : public SensorProxy {
-  WTF_MAKE_NONCOPYABLE(SensorProxyInspectorImpl);
-
  public:
   SensorProxyInspectorImpl(device::mojom::blink::SensorType sensor_type,
                            SensorProviderProxy* provider,
                            Page* page);
   ~SensorProxyInspectorImpl() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   // SensorProxy overrides.
@@ -45,6 +45,8 @@ class SensorProxyInspectorImpl final : public SensorProxy {
   void Resume() override;
 
   bool suspended_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(SensorProxyInspectorImpl);
 };
 
 }  // namespace blink

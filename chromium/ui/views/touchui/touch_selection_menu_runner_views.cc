@@ -20,25 +20,23 @@ TouchSelectionMenuRunnerViews::TestApi::TestApi(
   DCHECK(menu_runner_);
 }
 
-TouchSelectionMenuRunnerViews::TestApi::~TestApi() {}
+TouchSelectionMenuRunnerViews::TestApi::~TestApi() = default;
 
 gfx::Rect TouchSelectionMenuRunnerViews::TestApi::GetAnchorRect() const {
   TouchSelectionMenuViews* menu = menu_runner_->menu_;
   return menu ? menu->GetAnchorRect() : gfx::Rect();
 }
 
-LabelButton* TouchSelectionMenuRunnerViews::TestApi::GetFirstButton() const {
+LabelButton* TouchSelectionMenuRunnerViews::TestApi::GetFirstButton() {
   TouchSelectionMenuViews* menu = menu_runner_->menu_;
-  return menu ? static_cast<LabelButton*>(menu->child_at(0)) : nullptr;
+  return menu ? static_cast<LabelButton*>(menu->children().front()) : nullptr;
 }
 
-Widget* TouchSelectionMenuRunnerViews::TestApi::GetWidget() const {
+Widget* TouchSelectionMenuRunnerViews::TestApi::GetWidget() {
   TouchSelectionMenuViews* menu = menu_runner_->menu_;
   return menu ? menu->GetWidget() : nullptr;
 }
-TouchSelectionMenuRunnerViews::TouchSelectionMenuRunnerViews()
-    : menu_(nullptr) {
-}
+TouchSelectionMenuRunnerViews::TouchSelectionMenuRunnerViews() = default;
 
 TouchSelectionMenuRunnerViews::~TouchSelectionMenuRunnerViews() {
   CloseMenu();

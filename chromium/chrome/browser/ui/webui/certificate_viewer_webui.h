@@ -34,6 +34,8 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
       content::WebContents* web_contents,
       gfx::NativeWindow parent);
 
+  ~CertificateViewerDialog() override;
+
   gfx::NativeWindow GetNativeWebContentsModalDialog();
 
  private:
@@ -43,7 +45,6 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
   // to the certificate pointer is added for the lifetime of the certificate
   // viewer.
   explicit CertificateViewerDialog(net::ScopedCERTCertificateList certs);
-  ~CertificateViewerDialog() override;
 
   // ui::WebDialogDelegate:
   ui::ModalType GetDialogModalType() const override;
@@ -53,8 +54,7 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
       std::vector<content::WebUIMessageHandler*>* handlers) const override;
   void GetDialogSize(gfx::Size* size) const override;
   std::string GetDialogArgs() const override;
-  void OnDialogShown(content::WebUI* webui,
-                     content::RenderViewHost* render_view_host) override;
+  void OnDialogShown(content::WebUI* webui) override;
   void OnDialogClosed(const std::string& json_retval) override;
   void OnCloseContents(content::WebContents* source,
                        bool* out_close_dialog) override;

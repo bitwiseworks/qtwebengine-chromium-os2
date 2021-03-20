@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
@@ -149,7 +150,7 @@ IN_PROC_BROWSER_TEST_F(InterstitialUITest, UnwantedSoftwareInterstitialQuiet) {
 IN_PROC_BROWSER_TEST_F(InterstitialUITest, BillingInterstitialQuiet) {
   TestInterstitial(
       GURL("chrome://interstitials/quietsafebrowsing?type=billing"),
-      "Security error", IDS_BILLING_WEBVIEW_HEADING);
+      "Page may charge money", IDS_BILLING_WEBVIEW_HEADING);
 }
 
 IN_PROC_BROWSER_TEST_F(InterstitialUITest, ClientsideMalwareInterstitial) {
@@ -166,7 +167,7 @@ IN_PROC_BROWSER_TEST_F(InterstitialUITest, ClientsidePhishingInterstitial) {
 
 IN_PROC_BROWSER_TEST_F(InterstitialUITest, BillingInterstitial) {
   TestInterstitial(GURL("chrome://interstitials/safebrowsing?type=billing"),
-                   "Security error", IDS_BILLING_HEADING);
+                   "Page may charge money", IDS_BILLING_HEADING);
 }
 
 IN_PROC_BROWSER_TEST_F(InterstitialUITest, CaptivePortalInterstitial) {
@@ -177,6 +178,23 @@ IN_PROC_BROWSER_TEST_F(InterstitialUITest, CaptivePortalInterstitial) {
 IN_PROC_BROWSER_TEST_F(InterstitialUITest, CaptivePortalInterstitialWifi) {
   TestInterstitial(GURL("chrome://interstitials/captiveportal?is_wifi=1"),
                    "Connect to Wi-Fi");
+}
+
+IN_PROC_BROWSER_TEST_F(InterstitialUITest, OriginPolicyErrorInterstitial) {
+  TestInterstitial(GURL("chrome://interstitials/origin_policy"),
+                   "Origin Policy Error",
+                   base::ASCIIToUTF16("has requested that an origin policy"));
+}
+
+IN_PROC_BROWSER_TEST_F(InterstitialUITest, BlockedInterceptionInterstitial) {
+  TestInterstitial(GURL("chrome://interstitials/blocked-interception"),
+                   "Your activity on example.com is being monitored",
+                   base::ASCIIToUTF16("Anything you type"));
+}
+
+IN_PROC_BROWSER_TEST_F(InterstitialUITest, LegacyTLSInterstitial) {
+  TestInterstitial(GURL("chrome://interstitials/legacy-tls"), "Privacy error",
+                   base::ASCIIToUTF16("outdated security configuration"));
 }
 
 // Tests that back button works after opening an interstitial from
@@ -211,7 +229,17 @@ IN_PROC_BROWSER_TEST_F(InterstitialUITest, InterstitialViewSource) {
 
 // Tests that view-source: works correctly on a subpage of
 // chrome://interstitials (using chrome://interstitials/ssl).
-IN_PROC_BROWSER_TEST_F(InterstitialUITest, InterstitialWithPathViewSource) {
+
+// Test is currently flaky on Windows (crbug.com/926392)
+#if defined(OS_WIN)
+#define MAYBE_InterstitialWithPathViewSource \
+  DISABLED_InterstitialWithPathViewSource
+#else
+#define MAYBE_InterstitialWithPathViewSource InterstitialWithPathViewSource
+#endif
+
+IN_PROC_BROWSER_TEST_F(InterstitialUITest,
+                       MAYBE_InterstitialWithPathViewSource) {
   ui_test_utils::NavigateToURL(browser(),
                                GURL("view-source:chrome://interstitials/ssl"));
   int found;

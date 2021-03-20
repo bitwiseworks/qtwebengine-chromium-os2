@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/bind_helpers.h"
 #include "base/stl_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -380,7 +381,6 @@ TEST(PrefServiceTest, WriteablePrefStoreFlags) {
   for (size_t i = 0; i < base::size(kRegistrationToWriteFlags); ++i) {
     RegistrationToWriteFlags entry = kRegistrationToWriteFlags[i];
     registry->RegisterDictionaryPref(entry.pref_name,
-                                     std::make_unique<base::DictionaryValue>(),
                                      entry.registration_flags);
 
     SCOPED_TRACE("Currently testing pref with name: " +
@@ -399,7 +399,7 @@ TEST(PrefServiceTest, WriteablePrefStoreFlags) {
     EXPECT_EQ(entry.write_flags, flag_checker->GetLastFlagsAndClear());
 
     prefs->SetUserPrefValue(entry.pref_name,
-                            std::make_unique<base::DictionaryValue>());
+                            base::Value(base::Value::Type::DICTIONARY));
     EXPECT_TRUE(flag_checker->last_write_flags_set());
     EXPECT_EQ(entry.write_flags, flag_checker->GetLastFlagsAndClear());
   }

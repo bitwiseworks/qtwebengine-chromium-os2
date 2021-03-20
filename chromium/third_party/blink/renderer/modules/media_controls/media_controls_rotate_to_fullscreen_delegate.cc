@@ -7,13 +7,13 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_screen_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
-#include "third_party/blink/renderer/core/dom/element_visibility_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element_controls_list.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
+#include "third_party/blink/renderer/core/intersection_observer/intersection_observer.h"
+#include "third_party/blink/renderer/core/intersection_observer/intersection_observer_entry.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_orientation_data.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_orientation_event.h"
@@ -28,7 +28,7 @@ namespace {
 constexpr unsigned kMinVideoSize = 200;
 
 // At least this fraction of the video must be visible.
-constexpr float kVisibilityThreshold = 0.75;
+constexpr float kIntersectionThreshold = 0.75;
 
 }  // anonymous namespace
 
@@ -73,10 +73,10 @@ void MediaControlsRotateToFullscreenDelegate::Attach() {
 void MediaControlsRotateToFullscreenDelegate::Detach() {
   DCHECK(!video_element_->isConnected());
 
-  if (visibility_observer_) {
-    // TODO(johnme): Should I also call Stop in a prefinalizer?
-    visibility_observer_->Stop();
-    visibility_observer_ = nullptr;
+  if (intersection_observer_) {
+    // TODO(johnme): Should I also call disconnect in a prefinalizer?
+    intersection_observer_->disconnect();
+    intersection_observer_ = nullptr;
     is_visible_ = false;
   }
 
@@ -111,7 +111,7 @@ void MediaControlsRotateToFullscreenDelegate::Invoke(
     if (event->isTrusted() &&
         event->InterfaceName() ==
             event_interface_names::kDeviceOrientationEvent) {
-      OnDeviceOrientationAvailable(ToDeviceOrientationEvent(event));
+      OnDeviceOrientationAvailable(To<DeviceOrientationEvent>(event));
     }
     return;
   }
@@ -126,27 +126,29 @@ void MediaControlsRotateToFullscreenDelegate::Invoke(
 void MediaControlsRotateToFullscreenDelegate::OnStateChange() {
   // TODO(johnme): Check this aggressive disabling doesn't lead to race
   // conditions where we briefly don't know if the video is visible.
-  bool needs_visibility_observer =
+  bool needs_intersection_observer =
       !video_element_->paused() && !video_element_->IsFullscreen();
-  DVLOG(3) << __func__ << " " << !!visibility_observer_ << " -> "
-           << needs_visibility_observer;
+  DVLOG(3) << __func__ << " " << !!intersection_observer_ << " -> "
+           << needs_intersection_observer;
 
-  if (needs_visibility_observer && !visibility_observer_) {
-    visibility_observer_ = MakeGarbageCollected<ElementVisibilityObserver>(
-        video_element_,
+  if (needs_intersection_observer && !intersection_observer_) {
+    intersection_observer_ = IntersectionObserver::Create(
+        {}, {kIntersectionThreshold}, &video_element_->GetDocument(),
         WTF::BindRepeating(
-            &MediaControlsRotateToFullscreenDelegate::OnVisibilityChange,
+            &MediaControlsRotateToFullscreenDelegate::OnIntersectionChange,
             WrapWeakPersistent(this)));
-    visibility_observer_->Start(kVisibilityThreshold);
-  } else if (!needs_visibility_observer && visibility_observer_) {
-    visibility_observer_->Stop();
-    visibility_observer_ = nullptr;
+    intersection_observer_->observe(video_element_);
+  } else if (!needs_intersection_observer && intersection_observer_) {
+    intersection_observer_->disconnect();
+    intersection_observer_ = nullptr;
     is_visible_ = false;
   }
 }
 
-void MediaControlsRotateToFullscreenDelegate::OnVisibilityChange(
-    bool is_visible) {
+void MediaControlsRotateToFullscreenDelegate::OnIntersectionChange(
+    const HeapVector<Member<IntersectionObserverEntry>>& entries) {
+  bool is_visible =
+      (entries.back()->intersectionRatio() > kIntersectionThreshold);
   DVLOG(3) << __func__ << " " << is_visible_ << " -> " << is_visible;
   is_visible_ = is_visible;
 }
@@ -231,9 +233,7 @@ void MediaControlsRotateToFullscreenDelegate::OnScreenOrientationChange() {
       *static_cast<MediaControlsImpl*>(video_element_->GetMediaControls());
 
   {
-    std::unique_ptr<UserGestureIndicator> gesture =
-        LocalFrame::NotifyUserActivation(
-            video_element_->GetDocument().GetFrame());
+    LocalFrame::NotifyUserActivation(video_element_->GetDocument().GetFrame());
 
     bool should_be_fullscreen =
         current_screen_orientation_ == video_orientation;
@@ -267,11 +267,11 @@ MediaControlsRotateToFullscreenDelegate::ComputeVideoOrientation() const {
 
 MediaControlsRotateToFullscreenDelegate::SimpleOrientation
 MediaControlsRotateToFullscreenDelegate::ComputeScreenOrientation() const {
-  Frame* frame = video_element_->GetDocument().GetFrame();
+  LocalFrame* frame = video_element_->GetDocument().GetFrame();
   if (!frame)
     return SimpleOrientation::kUnknown;
 
-  switch (frame->GetChromeClient().GetScreenInfo().orientation_type) {
+  switch (frame->GetChromeClient().GetScreenInfo(*frame).orientation_type) {
     case kWebScreenOrientationPortraitPrimary:
     case kWebScreenOrientationPortraitSecondary:
       return SimpleOrientation::kPortrait;
@@ -286,10 +286,10 @@ MediaControlsRotateToFullscreenDelegate::ComputeScreenOrientation() const {
   return SimpleOrientation::kUnknown;
 }
 
-void MediaControlsRotateToFullscreenDelegate::Trace(blink::Visitor* visitor) {
+void MediaControlsRotateToFullscreenDelegate::Trace(Visitor* visitor) {
   NativeEventListener::Trace(visitor);
   visitor->Trace(video_element_);
-  visitor->Trace(visibility_observer_);
+  visitor->Trace(intersection_observer_);
 }
 
 }  // namespace blink

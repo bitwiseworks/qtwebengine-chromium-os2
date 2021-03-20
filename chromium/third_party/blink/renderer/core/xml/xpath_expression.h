@@ -46,10 +46,6 @@ class XPathExpression : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static XPathExpression* Create() {
-    return MakeGarbageCollected<XPathExpression>();
-  }
-
   static XPathExpression* CreateExpression(const String& expression,
                                            XPathNSResolver*,
                                            ExceptionState&);
@@ -57,11 +53,11 @@ class XPathExpression : public ScriptWrappable {
   XPathExpression();
 
   XPathResult* evaluate(Node* context_node,
-                        unsigned short type,
+                        uint16_t type,
                         const ScriptValue&,
                         ExceptionState&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<xpath::Expression> top_expression_;

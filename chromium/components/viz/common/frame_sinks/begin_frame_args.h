@@ -14,6 +14,14 @@
 #include "base/values.h"
 #include "components/viz/common/viz_common_export.h"
 
+namespace perfetto {
+namespace protos {
+namespace pbzero {
+class BeginFrameArgs;
+}
+}  // namespace protos
+}  // namespace perfetto
+
 namespace base {
 namespace trace_event {
 class ConvertableToTraceFormat;
@@ -38,6 +46,28 @@ class TracedValue;
 #endif
 
 namespace viz {
+
+struct VIZ_COMMON_EXPORT BeginFrameId {
+  // |source_id| and |sequence_number| identify a BeginFrame. These are set by
+  // the original BeginFrameSource that created the BeginFrameArgs. When
+  // |source_id| of consecutive BeginFrameArgs changes, observers should expect
+  // the continuity of |sequence_number| to break.
+  uint64_t source_id = 0;
+  uint64_t sequence_number = 0;
+
+  // Creates an invalid set of values.
+  BeginFrameId();
+  BeginFrameId(const BeginFrameId& id);
+  BeginFrameId(uint64_t source_id, uint64_t sequence_number);
+
+  bool operator<(const BeginFrameId& other) const;
+  bool operator==(const BeginFrameId& other) const;
+  bool operator!=(const BeginFrameId& other) const;
+  bool IsNextInSequenceTo(const BeginFrameId& previous) const;
+  bool IsSequenceValid() const;
+  BeginFrameId& operator=(const BeginFrameId& id);
+  std::string ToString() const;
+};
 
 struct VIZ_COMMON_EXPORT BeginFrameArgs {
   enum BeginFrameArgsType {
@@ -80,29 +110,51 @@ struct VIZ_COMMON_EXPORT BeginFrameArgs {
                                base::TimeDelta interval,
                                BeginFrameArgsType type);
 
-  // This is the default delta that will be used to adjust the deadline when
-  // proper draw-time estimations are not yet available.
-  static base::TimeDelta DefaultEstimatedParentDrawTime();
+  // This is the default interval assuming 60Hz to use to avoid sprinkling the
+  // code with magic numbers.
+  static constexpr base::TimeDelta DefaultInterval() {
+    return base::TimeDelta::FromMicroseconds(16666);
+  }
 
-  // This is the default interval to use to avoid sprinkling the code with
-  // magic numbers.
-  static base::TimeDelta DefaultInterval();
+  // This is the preferred interval to use when the producer can animate at the
+  // max interval supported by the Display.
+  static constexpr base::TimeDelta MinInterval() {
+    return base::TimeDelta::Min();
+  }
+
+  // This is a hard-coded deadline adjustment used by the display compositor.
+  // Using 1/3 of the vsync as the default adjustment gives the display
+  // compositor the last 1/3 of a frame to produce output, the client impl
+  // thread the middle 1/3 of a frame to produce output, and the client's main
+  // thread the first 1/3 of a frame to produce output.
+  static constexpr float kDefaultEstimatedDisplayDrawTimeRatio = 1.f / 3;
+
+  // Returns how much time the display should reserve for draw and swap if the
+  // BeginFrame interval is |interval|.
+  static base::TimeDelta DefaultEstimatedDisplayDrawTime(
+      base::TimeDelta interval) {
+    return interval * kDefaultEstimatedDisplayDrawTimeRatio;
+  }
 
   bool IsValid() const { return interval >= base::TimeDelta(); }
 
+  // TODO(nuskos): Once we have a protozero -> String utility function remove
+  // these base::trace_event json dictionary functions.
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat> AsValue() const;
   void AsValueInto(base::trace_event::TracedValue* dict) const;
+  void AsProtozeroInto(perfetto::protos::pbzero::BeginFrameArgs* args) const;
 
+  std::string ToString() const;
+
+  // The time at which the frame started. Used, for example, by animations to
+  // decide to slow down or skip ahead.
   base::TimeTicks frame_time;
+  // The time by which the receiving pipeline stage should do its work.
   base::TimeTicks deadline;
+  // The inverse of the desired frame rate.
   base::TimeDelta interval;
 
-  // |source_id| and |sequence_number| identify a BeginFrame within a single
-  // process and are set by the original BeginFrameSource that created the
-  // BeginFrameArgs. When |source_id| of consecutive BeginFrameArgs changes,
-  // observers should expect the continuity of |sequence_number| to break.
-  uint64_t source_id;
-  uint64_t sequence_number;
+  BeginFrameId frame_id;
 
   // |trace_id| is used as the id for the trace-events associated with this
   // begin-frame. The trace-id is set by the service, and can be used by both
@@ -151,15 +203,12 @@ struct VIZ_COMMON_EXPORT BeginFrameAck {
   // a CompositorFrame without prior BeginFrame, e.g. for synchronous drawing.
   static BeginFrameAck CreateManualAckWithDamage();
 
-  // Source identifier of the BeginFrame that is acknowledged. The
-  // BeginFrameSource that receives the acknowledgment uses this to discard
-  // BeginFrameAcks for BeginFrames sent by a different source. Such a situation
-  // may occur when the BeginFrameSource of the observer changes while a
-  // BeginFrame from the old source is still in flight.
-  uint64_t source_id;
-
-  // Sequence number of the BeginFrame that is acknowledged.
-  uint64_t sequence_number;
+  // Source identifier and Sequence number of the BeginFrame that is
+  // acknowledged. The BeginFrameSource that receives the acknowledgment uses
+  // this to discard BeginFrameAcks for BeginFrames sent by a different source.
+  // Such a situation may occur when the BeginFrameSource of the observer
+  // changes while a BeginFrame from the old source is still in flight.
+  BeginFrameId frame_id;
 
   // The |trace_id| of the BeginFrame that is acknowledged.
   int64_t trace_id = -1;

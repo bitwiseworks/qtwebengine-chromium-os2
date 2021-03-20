@@ -7,16 +7,17 @@
 
 #include <memory>
 
+#include "base/callback.h"
+#include "base/component_export.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-#include "ui/ozone/ozone_base_export.h"
 
-class SkSurface;
+class SkCanvas;
 
 namespace gfx {
 class Rect;
 class Size;
 class VSyncProvider;
-}
+}  // namespace gfx
 
 namespace ui {
 
@@ -24,12 +25,15 @@ namespace ui {
 // for use when no EGL/GLES2 acceleration is possible.
 // This class owns any bits that the ozone implementation needs freed when
 // the software output is destroyed.
-class OZONE_BASE_EXPORT SurfaceOzoneCanvas {
+class COMPONENT_EXPORT(OZONE_BASE) SurfaceOzoneCanvas {
  public:
-  virtual ~SurfaceOzoneCanvas() {}
+  virtual ~SurfaceOzoneCanvas();
 
-  // Returns an SkSurface for drawing on the window.
-  virtual sk_sp<SkSurface> GetSurface() = 0;
+  // Returns an SkCanvas for drawing on the window. The SurfaceOzoneCanvas keeps
+  // the SkCanvas alive until the client finishes writing contents and calls
+  // PresentCanvas. Additionally, the SkCanvas becomes invalid after
+  // ResizeCanvas is called. See comment at ResizeCanvas.
+  virtual SkCanvas* GetCanvas() = 0;
 
   // Attempts to resize the canvas to match the viewport size. After
   // resizing, the compositor must call GetSurface() to get the next
@@ -50,6 +54,22 @@ class OZONE_BASE_EXPORT SurfaceOzoneCanvas {
   // outside of the sandbox, they must have been completed in
   // InitializeHardware. Returns an empty scoped_ptr on error.
   virtual std::unique_ptr<gfx::VSyncProvider> CreateVSyncProvider() = 0;
+
+  // If asynchronous buffer swap is supported, the implementation must override
+  // OnSwapBuffers and run the callback that is passed in an OnSwapBuffers
+  // call once the swap is completed.
+  virtual bool SupportsAsyncBufferSwap() const;
+
+  // Corresponds to SoftwareOutputDevice::SwapBuffersCallback.
+  using SwapBuffersCallback = base::OnceCallback<void(const gfx::Size&)>;
+  // The implementations may want to handle the buffer swap callback by
+  // themselves if the buffer swap is asynchronous, for example, or it needs to
+  // do something else before the callback is called. Also check the comment
+  // near the SupportsAsyncBufferSwap.
+  virtual void OnSwapBuffers(SwapBuffersCallback swap_ack_callback);
+
+  // Returns the maximum number of pending frames.
+  virtual int MaxFramesPending() const;
 };
 
 }  // namespace ui

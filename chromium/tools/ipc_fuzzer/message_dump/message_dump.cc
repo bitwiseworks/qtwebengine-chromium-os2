@@ -11,10 +11,10 @@
 #include "tools/ipc_fuzzer/message_lib/message_file.h"
 
 #if defined(OS_WIN)
-#define PidToStringType base::UintToString16
+#define PidToStringType base::NumberToString16
 #define MESSAGE_DUMP_EXPORT __declspec(dllexport)
 #else
-#define PidToStringType base::IntToString
+#define PidToStringType base::NumberToString
 #if defined(__OS2__)
 #define MESSAGE_DUMP_EXPORT __declspec(dllexport)
 #else

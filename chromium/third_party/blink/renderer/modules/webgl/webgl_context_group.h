@@ -26,6 +26,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_CONTEXT_GROUP_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_CONTEXT_GROUP_H_
 
+#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
@@ -36,8 +37,6 @@ namespace blink {
 
 class WebGLContextGroup final : public GarbageCollected<WebGLContextGroup>,
                                 public NameClient {
-  WTF_MAKE_NONCOPYABLE(WebGLContextGroup);
-
  public:
   WebGLContextGroup();
 
@@ -61,7 +60,7 @@ class WebGLContextGroup final : public GarbageCollected<WebGLContextGroup>,
   // created, in order to validate itself.
   uint32_t NumberOfContextLosses() const;
 
-  void Trace(blink::Visitor* visitor) { visitor->Trace(contexts_); }
+  void Trace(Visitor* visitor) { visitor->Trace(contexts_); }
   const char* NameInHeapSnapshot() const override {
     return "WebGLContextGroup";
   }
@@ -71,7 +70,9 @@ class WebGLContextGroup final : public GarbageCollected<WebGLContextGroup>,
 
   uint32_t number_of_context_losses_;
 
-  HeapHashSet<TraceWrapperMember<WebGLRenderingContextBase>> contexts_;
+  HeapHashSet<Member<WebGLRenderingContextBase>> contexts_;
+
+  DISALLOW_COPY_AND_ASSIGN(WebGLContextGroup);
 };
 
 }  // namespace blink

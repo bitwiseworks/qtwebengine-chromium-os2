@@ -4,27 +4,37 @@
 
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 
+#include "base/test/gtest_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/autoplay.mojom-blink.h"
+#include "third_party/blink/public/mojom/autoplay/autoplay.mojom-blink.h"
+#include "third_party/blink/public/platform/web_media_player.h"
 #include "third_party/blink/public/platform/web_media_player_source.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/media/html_audio_element.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/media/media_error.h"
+#include "third_party/blink/renderer/core/html/time_ranges.h"
 #include "third_party/blink/renderer/core/html/track/audio_track_list.h"
 #include "third_party/blink/renderer/core/html/track/video_track_list.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/testing/empty_web_media_player.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
-using ::testing::AnyNumber;
-using ::testing::Return;
 using ::testing::_;
+using ::testing::AnyNumber;
+using ::testing::NanSensitiveDoubleEq;
+using ::testing::Return;
 
 namespace blink {
+
+namespace {
 
 class MockWebMediaPlayer : public EmptyWebMediaPlayer {
  public:
@@ -32,6 +42,10 @@ class MockWebMediaPlayer : public EmptyWebMediaPlayer {
   MOCK_CONST_METHOD0(HasVideo, bool());
   MOCK_CONST_METHOD0(Duration, double());
   MOCK_CONST_METHOD0(CurrentTime, double());
+  MOCK_CONST_METHOD0(IsEnded, bool());
+  MOCK_CONST_METHOD0(GetNetworkState, NetworkState());
+  MOCK_CONST_METHOD0(WouldTaintOrigin, bool());
+  MOCK_METHOD1(SetLatencyHint, void(double));
   MOCK_METHOD1(EnabledAudioTracksChanged, void(const WebVector<TrackId>&));
   MOCK_METHOD1(SelectedVideoTrackChanged, void(TrackId*));
   MOCK_METHOD3(
@@ -40,24 +54,19 @@ class MockWebMediaPlayer : public EmptyWebMediaPlayer {
                                  const blink::WebMediaPlayerSource& source,
                                  CorsMode cors_mode));
   MOCK_CONST_METHOD0(DidLazyLoad, bool());
+
+  MOCK_METHOD0(GetSrcAfterRedirects, GURL());
 };
 
 class WebMediaStubLocalFrameClient : public EmptyLocalFrameClient {
  public:
-  static WebMediaStubLocalFrameClient* Create(
-      std::unique_ptr<WebMediaPlayer> player) {
-    return MakeGarbageCollected<WebMediaStubLocalFrameClient>(
-        std::move(player));
-  }
-
-  WebMediaStubLocalFrameClient(std::unique_ptr<WebMediaPlayer> player)
+  explicit WebMediaStubLocalFrameClient(std::unique_ptr<WebMediaPlayer> player)
       : player_(std::move(player)) {}
 
   std::unique_ptr<WebMediaPlayer> CreateWebMediaPlayer(
       HTMLMediaElement&,
       const WebMediaPlayerSource&,
-      WebMediaPlayerClient* client,
-      WebLayerTreeView*) override {
+      WebMediaPlayerClient* client) override {
     DCHECK(player_) << " Empty injected player - already used?";
     return std::move(player_);
   }
@@ -68,6 +77,8 @@ class WebMediaStubLocalFrameClient : public EmptyLocalFrameClient {
 
 enum class MediaTestParam { kAudio, kVideo };
 
+}  // namespace
+
 class HTMLMediaElementTest : public testing::TestWithParam<MediaTestParam> {
  protected:
   void SetUp() override {
@@ -77,29 +88,32 @@ class HTMLMediaElementTest : public testing::TestWithParam<MediaTestParam> {
 
     // Most tests do not care about this call, nor its return value. Those that
     // do will clear this expectation and set custom expectations/returns.
-    EXPECT_CALL(*mock_media_player, HasAudio())
-        .WillRepeatedly(testing::Return(true));
-    EXPECT_CALL(*mock_media_player, HasVideo())
-        .WillRepeatedly(testing::Return(true));
-    EXPECT_CALL(*mock_media_player, Duration())
-        .WillRepeatedly(testing::Return(1.0));
-    EXPECT_CALL(*mock_media_player, CurrentTime())
-        .WillRepeatedly(testing::Return(0));
+    EXPECT_CALL(*mock_media_player, HasAudio()).WillRepeatedly(Return(true));
+    EXPECT_CALL(*mock_media_player, HasVideo()).WillRepeatedly(Return(true));
+    EXPECT_CALL(*mock_media_player, Duration()).WillRepeatedly(Return(1.0));
+    EXPECT_CALL(*mock_media_player, CurrentTime()).WillRepeatedly(Return(0));
     EXPECT_CALL(*mock_media_player, Load(_, _, _))
         .Times(AnyNumber())
         .WillRepeatedly(Return(WebMediaPlayer::LoadTiming::kImmediate));
-    EXPECT_CALL(*mock_media_player, DidLazyLoad)
-        .WillRepeatedly(testing::Return(false));
+    EXPECT_CALL(*mock_media_player, DidLazyLoad).WillRepeatedly(Return(false));
+    EXPECT_CALL(*mock_media_player, WouldTaintOrigin)
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(*mock_media_player, GetNetworkState)
+        .WillRepeatedly(Return(WebMediaPlayer::kNetworkStateIdle));
+    EXPECT_CALL(*mock_media_player, SetLatencyHint(_)).Times(AnyNumber());
 
-    dummy_page_holder_ = DummyPageHolder::Create(
+    dummy_page_holder_ = std::make_unique<DummyPageHolder>(
         IntSize(), nullptr,
-        WebMediaStubLocalFrameClient::Create(std::move(mock_media_player)),
-        nullptr);
+        MakeGarbageCollected<WebMediaStubLocalFrameClient>(
+            std::move(mock_media_player)));
 
-    if (GetParam() == MediaTestParam::kAudio)
-      media_ = HTMLAudioElement::Create(dummy_page_holder_->GetDocument());
-    else
-      media_ = HTMLVideoElement::Create(dummy_page_holder_->GetDocument());
+    if (GetParam() == MediaTestParam::kAudio) {
+      media_ = MakeGarbageCollected<HTMLAudioElement>(
+          dummy_page_holder_->GetDocument());
+    } else {
+      media_ = MakeGarbageCollected<HTMLVideoElement>(
+          dummy_page_holder_->GetDocument());
+    }
   }
 
   HTMLMediaElement* Media() const { return media_.Get(); }
@@ -120,6 +134,12 @@ class HTMLMediaElementTest : public testing::TestWithParam<MediaTestParam> {
     Media()->SetReadyState(state);
   }
 
+  void SetNetworkState(WebMediaPlayer::NetworkState state) {
+    Media()->SetNetworkState(state);
+  }
+
+  bool MediaShouldBeOpaque() const { return Media()->MediaShouldBeOpaque(); }
+
   void SetError(MediaError* err) { Media()->MediaEngineError(err); }
 
   void SimulateHighMediaEngagement() {
@@ -128,11 +148,11 @@ class HTMLMediaElementTest : public testing::TestWithParam<MediaTestParam> {
   }
 
   bool HasLazyLoadObserver() const {
-    return !!Media()->lazy_load_visibility_observer_;
+    return !!Media()->lazy_load_intersection_observer_;
   }
 
   ExecutionContext* GetExecutionContext() const {
-    return &dummy_page_holder_->GetDocument();
+    return dummy_page_holder_->GetFrame().DomWindow();
   }
 
  private:
@@ -143,12 +163,12 @@ class HTMLMediaElementTest : public testing::TestWithParam<MediaTestParam> {
   MockWebMediaPlayer* media_player_;
 };
 
-INSTANTIATE_TEST_CASE_P(Audio,
-                        HTMLMediaElementTest,
-                        testing::Values(MediaTestParam::kAudio));
-INSTANTIATE_TEST_CASE_P(Video,
-                        HTMLMediaElementTest,
-                        testing::Values(MediaTestParam::kVideo));
+INSTANTIATE_TEST_SUITE_P(Audio,
+                         HTMLMediaElementTest,
+                         testing::Values(MediaTestParam::kAudio));
+INSTANTIATE_TEST_SUITE_P(Video,
+                         HTMLMediaElementTest,
+                         testing::Values(MediaTestParam::kVideo));
 
 TEST_P(HTMLMediaElementTest, effectiveMediaVolume) {
   struct TestData {
@@ -199,7 +219,6 @@ AtomicString SrcSchemeToURL(TestURLScheme scheme) {
 TEST_P(HTMLMediaElementTest, preloadType) {
   struct TestData {
     bool data_saver_enabled;
-    bool force_preload_none_for_media_elements;
     bool is_cellular;
     TestURLScheme src_scheme;
     AtomicString preload_to_set;
@@ -207,29 +226,27 @@ TEST_P(HTMLMediaElementTest, preloadType) {
   } test_data[] = {
       // Tests for conditions in which preload type should be overriden to
       // "none".
-      {false, true, false, TestURLScheme::kHttp, "auto", "none"},
-      {true, true, false, TestURLScheme::kHttps, "auto", "none"},
-      {true, true, false, TestURLScheme::kFtp, "metadata", "none"},
-      {false, false, false, TestURLScheme::kHttps, "auto", "auto"},
-      {false, true, false, TestURLScheme::kFile, "auto", "auto"},
-      {false, true, false, TestURLScheme::kData, "metadata", "metadata"},
-      {false, true, false, TestURLScheme::kBlob, "auto", "auto"},
-      {false, true, false, TestURLScheme::kFile, "none", "none"},
+      {false, false, TestURLScheme::kHttp, "auto", "auto"},
+      {true, false, TestURLScheme::kHttps, "auto", "auto"},
+      {true, false, TestURLScheme::kFtp, "metadata", "metadata"},
+      {false, false, TestURLScheme::kHttps, "auto", "auto"},
+      {false, false, TestURLScheme::kFile, "auto", "auto"},
+      {false, false, TestURLScheme::kData, "metadata", "metadata"},
+      {false, false, TestURLScheme::kBlob, "auto", "auto"},
+      {false, false, TestURLScheme::kFile, "none", "none"},
       // Tests for conditions in which preload type should be overriden to
       // "metadata".
-      {false, false, true, TestURLScheme::kHttp, "auto", "metadata"},
-      {false, false, true, TestURLScheme::kHttp, "scheme", "metadata"},
-      {false, false, true, TestURLScheme::kHttp, "none", "none"},
+      {false, true, TestURLScheme::kHttp, "auto", "metadata"},
+      {false, true, TestURLScheme::kHttp, "scheme", "metadata"},
+      {false, true, TestURLScheme::kHttp, "none", "none"},
       // Tests that the preload is overriden to "metadata".
-      {false, false, false, TestURLScheme::kHttp, "foo", "metadata"},
+      {false, false, TestURLScheme::kHttp, "foo", "metadata"},
   };
 
   int index = 0;
   for (const auto& data : test_data) {
     GetNetworkStateNotifier().SetSaveDataEnabledOverride(
         data.data_saver_enabled);
-    Media()->GetDocument().GetSettings()->SetForcePreloadNoneForMediaElements(
-        data.force_preload_none_for_media_elements);
     if (data.is_cellular) {
       GetNetworkStateNotifier().SetNetworkConnectionInfoOverride(
           true, WebConnectionType::kWebConnectionTypeCellular3G,
@@ -260,7 +277,8 @@ TEST_P(HTMLMediaElementTest, CouldPlayIfEnoughDataRespondsToEnded) {
 
   MockWebMediaPlayer* mock_wmpi =
       reinterpret_cast<MockWebMediaPlayer*>(Media()->GetWebMediaPlayer());
-  EXPECT_NE(mock_wmpi, nullptr);
+  ASSERT_NE(mock_wmpi, nullptr);
+  EXPECT_CALL(*mock_wmpi, IsEnded()).WillRepeatedly(Return(false));
   EXPECT_TRUE(CouldPlayIfEnoughData());
 
   // Playback can only end once the ready state is above kHaveMetadata.
@@ -272,7 +290,8 @@ TEST_P(HTMLMediaElementTest, CouldPlayIfEnoughDataRespondsToEnded) {
   // Now advance current time to duration and verify ended state.
   testing::Mock::VerifyAndClearExpectations(mock_wmpi);
   EXPECT_CALL(*mock_wmpi, CurrentTime())
-      .WillRepeatedly(testing::Return(Media()->duration()));
+      .WillRepeatedly(Return(Media()->duration()));
+  EXPECT_CALL(*mock_wmpi, IsEnded()).WillRepeatedly(Return(true));
   EXPECT_FALSE(CouldPlayIfEnoughData());
   EXPECT_TRUE(Media()->ended());
 }
@@ -293,8 +312,30 @@ TEST_P(HTMLMediaElementTest, CouldPlayIfEnoughDataRespondsToError) {
   EXPECT_FALSE(Media()->ended());
   EXPECT_TRUE(CouldPlayIfEnoughData());
 
-  SetError(MediaError::Create(MediaError::kMediaErrDecode, ""));
+  SetError(MakeGarbageCollected<MediaError>(MediaError::kMediaErrDecode, ""));
   EXPECT_FALSE(CouldPlayIfEnoughData());
+}
+
+TEST_P(HTMLMediaElementTest, SetLatencyHint) {
+  const double kNan = std::numeric_limits<double>::quiet_NaN();
+
+  // Initial value.
+  Media()->SetSrc(SrcSchemeToURL(TestURLScheme::kHttp));
+  EXPECT_CALL(*MockMediaPlayer(), SetLatencyHint(NanSensitiveDoubleEq(kNan)));
+
+  test::RunPendingTasks();
+  testing::Mock::VerifyAndClearExpectations(MockMediaPlayer());
+
+  // Valid value.
+  EXPECT_CALL(*MockMediaPlayer(), SetLatencyHint(NanSensitiveDoubleEq(1.0)));
+  Media()->setLatencyHint(1.0);
+
+  test::RunPendingTasks();
+  testing::Mock::VerifyAndClearExpectations(MockMediaPlayer());
+
+  // Invalid value.
+  EXPECT_CALL(*MockMediaPlayer(), SetLatencyHint(NanSensitiveDoubleEq(kNan)));
+  Media()->setLatencyHint(-1.0);
 }
 
 TEST_P(HTMLMediaElementTest, CouldPlayIfEnoughDataInfiniteStreamNeverEnds) {
@@ -304,9 +345,9 @@ TEST_P(HTMLMediaElementTest, CouldPlayIfEnoughDataInfiniteStreamNeverEnds) {
   test::RunPendingTasks();
 
   EXPECT_CALL(*MockMediaPlayer(), Duration())
-      .WillRepeatedly(testing::Return(std::numeric_limits<double>::infinity()));
+      .WillRepeatedly(Return(std::numeric_limits<double>::infinity()));
   EXPECT_CALL(*MockMediaPlayer(), CurrentTime())
-      .WillRepeatedly(testing::Return(std::numeric_limits<double>::infinity()));
+      .WillRepeatedly(Return(std::numeric_limits<double>::infinity()));
 
   SetReadyState(HTMLMediaElement::kHaveMetadata);
   EXPECT_FALSE(Media()->paused());
@@ -319,7 +360,7 @@ TEST_P(HTMLMediaElementTest, AutoplayInitiated_DocumentActivation_Low_Gesture) {
   // - Policy: DocumentUserActivation (aka. unified autoplay)
   // - MEI: low;
   // - Frame received user gesture.
-  RuntimeEnabledFeatures::SetMediaEngagementBypassAutoplayPoliciesEnabled(true);
+  ScopedMediaEngagementBypassAutoplayPoliciesForTest scoped_feature(true);
   Media()->GetDocument().GetSettings()->SetAutoplayPolicy(
       AutoplayPolicy::Type::kDocumentUserActivationRequired);
   LocalFrame::NotifyUserActivation(Media()->GetDocument().GetFrame());
@@ -335,7 +376,7 @@ TEST_P(HTMLMediaElementTest,
   // - Policy: DocumentUserActivation (aka. unified autoplay)
   // - MEI: high;
   // - Frame received user gesture.
-  RuntimeEnabledFeatures::SetMediaEngagementBypassAutoplayPoliciesEnabled(true);
+  ScopedMediaEngagementBypassAutoplayPoliciesForTest scoped_feature(true);
   Media()->GetDocument().GetSettings()->SetAutoplayPolicy(
       AutoplayPolicy::Type::kDocumentUserActivationRequired);
   SimulateHighMediaEngagement();
@@ -352,7 +393,7 @@ TEST_P(HTMLMediaElementTest,
   // - Policy: DocumentUserActivation (aka. unified autoplay)
   // - MEI: high;
   // - Frame did not receive user gesture.
-  RuntimeEnabledFeatures::SetMediaEngagementBypassAutoplayPoliciesEnabled(true);
+  ScopedMediaEngagementBypassAutoplayPoliciesForTest scoped_feature(true);
   Media()->GetDocument().GetSettings()->SetAutoplayPolicy(
       AutoplayPolicy::Type::kDocumentUserActivationRequired);
   SimulateHighMediaEngagement();
@@ -479,10 +520,90 @@ TEST_P(HTMLMediaElementTest, ContextPaused) {
   SetReadyState(HTMLMediaElement::kHaveFutureData);
 
   EXPECT_FALSE(Media()->paused());
-  GetExecutionContext()->PausePausableObjects(PauseState::kFrozen);
+  GetExecutionContext()->SetLifecycleState(
+      mojom::FrameLifecycleState::kFrozenAutoResumeMedia);
   EXPECT_TRUE(Media()->paused());
-  GetExecutionContext()->UnpausePausableObjects();
+  GetExecutionContext()->SetLifecycleState(
+      mojom::FrameLifecycleState::kRunning);
   EXPECT_FALSE(Media()->paused());
+  GetExecutionContext()->SetLifecycleState(mojom::FrameLifecycleState::kFrozen);
+  EXPECT_TRUE(Media()->paused());
+  GetExecutionContext()->SetLifecycleState(
+      mojom::FrameLifecycleState::kRunning);
+  EXPECT_TRUE(Media()->paused());
+}
+
+TEST_P(HTMLMediaElementTest, GcMarkingNoAllocWebTimeRanges) {
+  auto* thread_state = ThreadState::Current();
+  ThreadState::NoAllocationScope no_allocation_scope(thread_state);
+  EXPECT_FALSE(thread_state->IsAllocationAllowed());
+  // Use of TimeRanges is not allowed during GC marking (crbug.com/970150)
+  EXPECT_DCHECK_DEATH(MakeGarbageCollected<TimeRanges>(0, 0));
+  // Instead of using TimeRanges, WebTimeRanges can be used without GC
+  Vector<WebTimeRanges> ranges;
+  ranges.emplace_back();
+  ranges[0].emplace_back(0, 0);
+}
+
+// Reproduce crbug.com/970150
+TEST_P(HTMLMediaElementTest, GcMarkingNoAllocHasActivity) {
+  Media()->SetSrc(SrcSchemeToURL(TestURLScheme::kHttp));
+  Media()->Play();
+
+  test::RunPendingTasks();
+  SetReadyState(HTMLMediaElement::kHaveFutureData);
+  SetError(MakeGarbageCollected<MediaError>(MediaError::kMediaErrDecode, ""));
+
+  EXPECT_FALSE(Media()->paused());
+
+  auto* thread_state = ThreadState::Current();
+  ThreadState::NoAllocationScope no_allocation_scope(thread_state);
+  EXPECT_FALSE(thread_state->IsAllocationAllowed());
+  Media()->HasPendingActivity();
+}
+
+TEST_P(HTMLMediaElementTest, CapturesRedirectedSrc) {
+  // Verify that the element captures the redirected URL.
+  Media()->SetSrc(SrcSchemeToURL(TestURLScheme::kHttp));
+  Media()->Play();
+  test::RunPendingTasks();
+
+  // Should start at the original.
+  EXPECT_EQ(Media()->downloadURL(), Media()->currentSrc());
+
+  GURL redirected_url("https://redirected.com");
+  EXPECT_CALL(*MockMediaPlayer(), GetSrcAfterRedirects())
+      .WillRepeatedly(Return(redirected_url));
+  SetReadyState(HTMLMediaElement::kHaveFutureData);
+
+  EXPECT_EQ(Media()->downloadURL(), redirected_url);
+}
+
+TEST_P(HTMLMediaElementTest, EmptyRedirectedSrcUsesOriginal) {
+  // If the player returns an empty URL for the redirected src, then the element
+  // should continue using currentSrc().
+  Media()->SetSrc(SrcSchemeToURL(TestURLScheme::kHttp));
+  Media()->Play();
+  test::RunPendingTasks();
+  EXPECT_EQ(Media()->downloadURL(), Media()->currentSrc());
+  SetReadyState(HTMLMediaElement::kHaveFutureData);
+  EXPECT_EQ(Media()->downloadURL(), Media()->currentSrc());
+}
+
+TEST_P(HTMLMediaElementTest, NoPendingActivityEvenIfBeforeMetadata) {
+  Media()->SetSrc(SrcSchemeToURL(TestURLScheme::kHttp));
+  test::RunPendingTasks();
+
+  MockWebMediaPlayer* mock_wmpi =
+      reinterpret_cast<MockWebMediaPlayer*>(Media()->GetWebMediaPlayer());
+  EXPECT_CALL(*mock_wmpi, WouldTaintOrigin()).WillRepeatedly(Return(true));
+  EXPECT_NE(mock_wmpi, nullptr);
+
+  EXPECT_TRUE(MediaShouldBeOpaque());
+  EXPECT_TRUE(Media()->HasPendingActivity());
+  SetNetworkState(WebMediaPlayer::kNetworkStateIdle);
+  EXPECT_FALSE(Media()->HasPendingActivity());
+  EXPECT_TRUE(MediaShouldBeOpaque());
 }
 
 }  // namespace blink

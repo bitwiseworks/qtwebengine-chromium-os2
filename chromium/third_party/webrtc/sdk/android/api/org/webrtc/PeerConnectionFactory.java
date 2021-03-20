@@ -17,7 +17,7 @@ import java.util.List;
 import org.webrtc.Logging.Severity;
 import org.webrtc.PeerConnection;
 import org.webrtc.audio.AudioDeviceModule;
-import org.webrtc.audio.LegacyAudioDeviceModule;
+import org.webrtc.audio.JavaAudioDeviceModule;
 
 /**
  * Java wrapper for a C++ PeerConnectionFactoryInterface.  Main entry point to
@@ -164,7 +164,7 @@ public class PeerConnectionFactory {
 
   public static class Builder {
     @Nullable private Options options;
-    @Nullable private AudioDeviceModule audioDeviceModule = new LegacyAudioDeviceModule();
+    @Nullable private AudioDeviceModule audioDeviceModule;
     private AudioEncoderFactoryFactory audioEncoderFactoryFactory =
         new BuiltinAudioEncoderFactoryFactory();
     private AudioDecoderFactoryFactory audioDecoderFactoryFactory =
@@ -173,7 +173,10 @@ public class PeerConnectionFactory {
     @Nullable private VideoDecoderFactory videoDecoderFactory;
     @Nullable private AudioProcessingFactory audioProcessingFactory;
     @Nullable private FecControllerFactoryFactoryInterface fecControllerFactoryFactory;
+    @Nullable private NetworkControllerFactoryFactory networkControllerFactoryFactory;
+    @Nullable private NetworkStatePredictorFactoryFactory networkStatePredictorFactoryFactory;
     @Nullable private MediaTransportFactoryFactory mediaTransportFactoryFactory;
+    @Nullable private NetEqFactoryFactory neteqFactoryFactory;
 
     private Builder() {}
 
@@ -232,6 +235,18 @@ public class PeerConnectionFactory {
       return this;
     }
 
+    public Builder setNetworkControllerFactoryFactory(
+        NetworkControllerFactoryFactory networkControllerFactoryFactory) {
+      this.networkControllerFactoryFactory = networkControllerFactoryFactory;
+      return this;
+    }
+
+    public Builder setNetworkStatePredictorFactoryFactory(
+        NetworkStatePredictorFactoryFactory networkStatePredictorFactoryFactory) {
+      this.networkStatePredictorFactoryFactory = networkStatePredictorFactoryFactory;
+      return this;
+    }
+
     /** Sets a MediaTransportFactoryFactory for a PeerConnectionFactory. */
     public Builder setMediaTransportFactoryFactory(
         MediaTransportFactoryFactory mediaTransportFactoryFactory) {
@@ -239,18 +254,40 @@ public class PeerConnectionFactory {
       return this;
     }
 
+    /**
+     * Sets a NetEqFactoryFactory for the PeerConnectionFactory. When using a
+     * custom NetEqFactoryFactory, the AudioDecoderFactoryFactory will be set
+     * to null. The AudioDecoderFactoryFactory should be wrapped in the
+     * NetEqFactoryFactory.
+     */
+    public Builder setNetEqFactoryFactory(NetEqFactoryFactory neteqFactoryFactory) {
+      this.neteqFactoryFactory = neteqFactoryFactory;
+      return this;
+    }
+
     public PeerConnectionFactory createPeerConnectionFactory() {
       checkInitializeHasBeenCalled();
+      if (audioDeviceModule == null) {
+        audioDeviceModule = JavaAudioDeviceModule.builder(ContextUtils.getApplicationContext())
+                                .createAudioDeviceModule();
+      }
       return nativeCreatePeerConnectionFactory(ContextUtils.getApplicationContext(), options,
-          audioDeviceModule == null ? 0 : audioDeviceModule.getNativeAudioDeviceModulePointer(),
+          audioDeviceModule.getNativeAudioDeviceModulePointer(),
           audioEncoderFactoryFactory.createNativeAudioEncoderFactory(),
           audioDecoderFactoryFactory.createNativeAudioDecoderFactory(), videoEncoderFactory,
           videoDecoderFactory,
           audioProcessingFactory == null ? 0 : audioProcessingFactory.createNative(),
           fecControllerFactoryFactory == null ? 0 : fecControllerFactoryFactory.createNative(),
+          networkControllerFactoryFactory == null
+              ? 0
+              : networkControllerFactoryFactory.createNativeNetworkControllerFactory(),
+          networkStatePredictorFactoryFactory == null
+              ? 0
+              : networkStatePredictorFactoryFactory.createNativeNetworkStatePredictorFactory(),
           mediaTransportFactoryFactory == null
               ? 0
-              : mediaTransportFactoryFactory.createNativeMediaTransportFactory());
+              : mediaTransportFactoryFactory.createNativeMediaTransportFactory(),
+          neteqFactoryFactory == null ? 0 : neteqFactoryFactory.createNativeNetEqFactory());
     }
   }
 
@@ -464,8 +501,6 @@ public class PeerConnectionFactory {
     networkThread = null;
     workerThread = null;
     signalingThread = null;
-    MediaCodecVideoEncoder.disposeEglContext();
-    MediaCodecVideoDecoder.disposeEglContext();
     nativeFactory = 0;
   }
 
@@ -523,12 +558,15 @@ public class PeerConnectionFactory {
   /**
    * Print the Java stack traces for the critical threads used by PeerConnectionFactory, namely;
    * signaling thread, worker thread, and network thread. If printNativeStackTraces is true, also
-   * attempt to print the C++ stack traces for these threads.
+   * attempt to print the C++ stack traces for these (and some other) threads.
    */
   public void printInternalStackTraces(boolean printNativeStackTraces) {
     printStackTrace(signalingThread, printNativeStackTraces);
     printStackTrace(workerThread, printNativeStackTraces);
     printStackTrace(networkThread, printNativeStackTraces);
+    if (printNativeStackTraces) {
+      nativePrintStackTracesOfRegisteredThreads();
+    }
   }
 
   @CalledByNative
@@ -568,7 +606,8 @@ public class PeerConnectionFactory {
       Options options, long nativeAudioDeviceModule, long audioEncoderFactory,
       long audioDecoderFactory, VideoEncoderFactory encoderFactory,
       VideoDecoderFactory decoderFactory, long nativeAudioProcessor,
-      long nativeFecControllerFactory, long mediaTransportFactory);
+      long nativeFecControllerFactory, long nativeNetworkControllerFactory,
+      long nativeNetworkStatePredictorFactory, long mediaTransportFactory, long neteqFactory);
 
   private static native long nativeCreatePeerConnection(long factory,
       PeerConnection.RTCConfiguration rtcConfig, MediaConstraints constraints, long nativeObserver,
@@ -588,4 +627,5 @@ public class PeerConnectionFactory {
   private static native void nativeInjectLoggable(JNILogging jniLogging, int severity);
   private static native void nativeDeleteLoggable();
   private static native void nativePrintStackTrace(int tid);
+  private static native void nativePrintStackTracesOfRegisteredThreads();
 }

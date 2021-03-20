@@ -25,7 +25,6 @@
 
 namespace net {
 
-class ClientSocketHandle;
 class DrainableIOBuffer;
 class GrowableIOBuffer;
 class HttpChunkedDecoder;
@@ -35,28 +34,28 @@ class HttpResponseInfo;
 class IOBuffer;
 class SSLCertRequestInfo;
 class SSLInfo;
+class StreamSocket;
 class UploadDataStream;
 
 class NET_EXPORT_PRIVATE HttpStreamParser {
  public:
+  // |connection_is_reused| must be |true| if |stream_socket| has previously
+  // been used successfully for an HTTP/1.x request.
+  //
   // Any data in |read_buffer| will be used before reading from the socket
   // and any data left over after parsing the stream will be put into
   // |read_buffer|.  The left over data will start at offset 0 and the
   // buffer's offset will be set to the first free byte. |read_buffer| may
   // have its capacity changed.
-  HttpStreamParser(ClientSocketHandle* connection,
+  //
+  // It is not safe to call into the HttpStreamParser after destroying the
+  // |stream_socket|.
+  HttpStreamParser(StreamSocket* stream_socket,
+                   bool connection_is_reused,
                    const HttpRequestInfo* request,
                    GrowableIOBuffer* read_buffer,
                    const NetLogWithSource& net_log);
   virtual ~HttpStreamParser();
-
-  // Sets whether or not HTTP/0.9 is only allowed on default ports. It's not
-  // allowed, by default.
-  void set_http_09_on_non_default_ports_enabled(
-      bool http_09_on_non_default_ports_enabled) {
-    http_09_on_non_default_ports_enabled_ =
-        http_09_on_non_default_ports_enabled;
-  }
 
   // These functions implement the interface described in HttpStream with
   // some additional functionality
@@ -66,23 +65,19 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
                   HttpResponseInfo* response,
                   CompletionOnceCallback callback);
 
+  int ConfirmHandshake(CompletionOnceCallback callback);
+
   int ReadResponseHeaders(CompletionOnceCallback callback);
 
   int ReadResponseBody(IOBuffer* buf,
                        int buf_len,
                        CompletionOnceCallback callback);
 
-  void Close(bool not_reusable);
-
   bool IsResponseBodyComplete() const;
 
   bool CanFindEndOfResponse() const;
 
   bool IsMoreDataBuffered() const;
-
-  bool IsConnectionReused() const;
-
-  void SetConnectionReused();
 
   // Returns true if the underlying connection can be reused.
   // The connection can be reused if:
@@ -182,6 +177,8 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // This handles most of the logic for DoReadHeadersComplete.
   int HandleReadHeaderResult(int result);
 
+  void RunConfirmHandshakeCallback(int rv);
+
   // Examines |read_buf_| to find the start and end of the headers. If they are
   // found, parse them with DoParseResponseHeaders().  Return the offset for
   // the end of the headers, or -1 if the complete headers were not found, or
@@ -215,9 +212,6 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // |request_headers_| if the body was merged with the headers.
   int request_headers_length_;
 
-  // True if HTTP/0.9 should be permitted on non-default ports.
-  bool http_09_on_non_default_ports_enabled_;
-
   // Temporary buffer for reading.
   scoped_refptr<GrowableIOBuffer> read_buf_;
 
@@ -227,8 +221,8 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   int read_buf_unused_offset_;
 
   // The amount beyond |read_buf_unused_offset_| where the status line starts;
-  // -1 if not found yet.
-  int response_header_start_offset_;
+  // std::string::npos if not found yet.
+  size_t response_header_start_offset_;
 
   // The amount of received data.  If connection is reused then intermediate
   // value may be bigger than final.
@@ -265,12 +259,21 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   scoped_refptr<IOBuffer> user_read_buf_;
   int user_read_buf_len_;
 
+  // The callback to notify a user that the handshake has been confirmed.
+  CompletionOnceCallback confirm_handshake_callback_;
+
   // The callback to notify a user that their request or response is
   // complete or there was an error
   CompletionOnceCallback callback_;
 
-  // The underlying socket.
-  ClientSocketHandle* const connection_;
+  // The underlying socket, owned by the caller. The HttpStreamParser must be
+  // destroyed before the caller destroys the socket, or relinquishes ownership
+  // of it.
+  StreamSocket* const stream_socket_;
+
+  // Whether the socket has already been used. Only used in HTTP/0.9 detection
+  // logic.
+  const bool connection_is_reused_;
 
   NetLogWithSource net_log_;
 
@@ -289,7 +292,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
 
   MutableNetworkTrafficAnnotationTag traffic_annotation_;
 
-  base::WeakPtrFactory<HttpStreamParser> weak_ptr_factory_;
+  base::WeakPtrFactory<HttpStreamParser> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HttpStreamParser);
 };

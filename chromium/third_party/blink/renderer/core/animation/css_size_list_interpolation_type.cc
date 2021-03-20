@@ -21,21 +21,16 @@ namespace blink {
 class UnderlyingSizeListChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  ~UnderlyingSizeListChecker() final = default;
-
-  static std::unique_ptr<UnderlyingSizeListChecker> Create(
-      const NonInterpolableList& underlying_list) {
-    return base::WrapUnique(new UnderlyingSizeListChecker(underlying_list));
-  }
-
- private:
-  UnderlyingSizeListChecker(const NonInterpolableList& underlying_list)
+  explicit UnderlyingSizeListChecker(const NonInterpolableList& underlying_list)
       : underlying_list_(&underlying_list) {}
 
+  ~UnderlyingSizeListChecker() final = default;
+
+ private:
   bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     const auto& underlying_list =
-        ToNonInterpolableList(*underlying.non_interpolable_value);
+        To<NonInterpolableList>(*underlying.non_interpolable_value);
     wtf_size_t underlying_length = underlying_list.length();
     if (underlying_length != underlying_list_->length())
       return false;
@@ -55,20 +50,12 @@ class UnderlyingSizeListChecker
 class InheritedSizeListChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  ~InheritedSizeListChecker() final = default;
-
-  static std::unique_ptr<InheritedSizeListChecker> Create(
-      const CSSProperty& property,
-      const SizeList& inherited_size_list) {
-    return base::WrapUnique(
-        new InheritedSizeListChecker(property, inherited_size_list));
-  }
-
- private:
   InheritedSizeListChecker(const CSSProperty& property,
                            const SizeList& inherited_size_list)
       : property_(property), inherited_size_list_(inherited_size_list) {}
+  ~InheritedSizeListChecker() final = default;
 
+ private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
     return inherited_size_list_ == SizeListPropertyFunctions::GetSizeList(
@@ -100,7 +87,7 @@ InterpolationValue MaybeConvertCSSSizeList(const CSSValue& value) {
     temp_list->Append(value);
     list = temp_list;
   } else {
-    list = ToCSSValueList(&value);
+    list = To<CSSValueList>(&value);
   }
 
   // Flatten pairs of width/height into individual items, even for contain and
@@ -118,9 +105,9 @@ InterpolationValue CSSSizeListInterpolationType::MaybeConvertNeutral(
     const InterpolationValue& underlying,
     ConversionCheckers& conversion_checkers) const {
   const auto& underlying_list =
-      ToNonInterpolableList(*underlying.non_interpolable_value);
+      To<NonInterpolableList>(*underlying.non_interpolable_value);
   conversion_checkers.push_back(
-      UnderlyingSizeListChecker::Create(underlying_list));
+      std::make_unique<UnderlyingSizeListChecker>(underlying_list));
   return ListInterpolationFunctions::CreateList(
       underlying_list.length(), [&underlying_list](wtf_size_t index) {
         return SizeInterpolationFunctions::CreateNeutralValue(
@@ -140,8 +127,8 @@ InterpolationValue CSSSizeListInterpolationType::MaybeConvertInherit(
     ConversionCheckers& conversion_checkers) const {
   SizeList inherited_size_list = SizeListPropertyFunctions::GetSizeList(
       CssProperty(), *state.ParentStyle());
-  conversion_checkers.push_back(
-      InheritedSizeListChecker::Create(CssProperty(), inherited_size_list));
+  conversion_checkers.push_back(std::make_unique<InheritedSizeListChecker>(
+      CssProperty(), inherited_size_list));
   return ConvertSizeList(inherited_size_list, state.Style()->EffectiveZoom());
 }
 
@@ -178,6 +165,8 @@ void CSSSizeListInterpolationType::Composite(
       underlying_value_owner, underlying_fraction, *this, value,
       ListInterpolationFunctions::LengthMatchingStrategy::kLowestCommonMultiple,
       WTF::BindRepeating(
+          ListInterpolationFunctions::InterpolableValuesKnownCompatible),
+      WTF::BindRepeating(
           SizeInterpolationFunctions::NonInterpolableValuesAreCompatible),
       WTF::BindRepeating(SizeInterpolationFunctions::Composite));
 }
@@ -186,9 +175,9 @@ void CSSSizeListInterpolationType::ApplyStandardPropertyValue(
     const InterpolableValue& interpolable_value,
     const NonInterpolableValue* non_interpolable_value,
     StyleResolverState& state) const {
-  const auto& interpolable_list = ToInterpolableList(interpolable_value);
+  const auto& interpolable_list = To<InterpolableList>(interpolable_value);
   const auto& non_interpolable_list =
-      ToNonInterpolableList(*non_interpolable_value);
+      To<NonInterpolableList>(*non_interpolable_value);
   wtf_size_t length = interpolable_list.length();
   DCHECK_EQ(length, non_interpolable_list.length());
   DCHECK_EQ(length % 2, 0ul);

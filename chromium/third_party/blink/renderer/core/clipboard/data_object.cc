@@ -42,18 +42,19 @@
 
 namespace blink {
 
-DataObject* DataObject::CreateFromClipboard(PasteMode paste_mode) {
+// static
+DataObject* DataObject::CreateFromClipboard(SystemClipboard* system_clipboard,
+                                            PasteMode paste_mode) {
   DataObject* data_object = Create();
 #if DCHECK_IS_ON()
   HashSet<String> types_seen;
 #endif
-  uint64_t sequence_number = SystemClipboard::GetInstance().SequenceNumber();
-  for (const String& type :
-       SystemClipboard::GetInstance().ReadAvailableTypes()) {
+  uint64_t sequence_number = system_clipboard->SequenceNumber();
+  for (const String& type : system_clipboard->ReadAvailableTypes()) {
     if (paste_mode == PasteMode::kPlainTextOnly && type != kMimeTypeTextPlain)
       continue;
-    data_object->item_list_.push_back(
-        DataObjectItem::CreateFromClipboard(type, sequence_number));
+    data_object->item_list_.push_back(DataObjectItem::CreateFromClipboard(
+        system_clipboard, type, sequence_number));
 #if DCHECK_IS_ON()
     DCHECK(types_seen.insert(type).is_new_entry);
 #endif
@@ -61,12 +62,14 @@ DataObject* DataObject::CreateFromClipboard(PasteMode paste_mode) {
   return data_object;
 }
 
+// static
 DataObject* DataObject::CreateFromString(const String& data) {
   DataObject* data_object = Create();
   data_object->Add(data, kMimeTypeTextPlain);
   return data_object;
 }
 
+// static
 DataObject* DataObject::Create() {
   return MakeGarbageCollected<DataObject>();
 }
@@ -165,10 +168,9 @@ Vector<String> DataObject::Types() const {
 }
 
 String DataObject::GetData(const String& type) const {
-  for (wtf_size_t i = 0; i < item_list_.size(); ++i) {
-    if (item_list_[i]->Kind() == DataObjectItem::kStringKind &&
-        item_list_[i]->GetType() == type)
-      return item_list_[i]->GetAsString();
+  for (const auto& item : item_list_) {
+    if (item->Kind() == DataObjectItem::kStringKind && item->GetType() == type)
+      return item->GetAsString();
   }
   return String();
 }
@@ -207,8 +209,8 @@ void DataObject::SetHTMLAndBaseURL(const String& html, const KURL& base_url) {
 }
 
 bool DataObject::ContainsFilenames() const {
-  for (wtf_size_t i = 0; i < item_list_.size(); ++i) {
-    if (item_list_[i]->IsFilename())
+  for (const auto& item : item_list_) {
+    if (item->IsFilename())
       return true;
   }
   return false;
@@ -216,9 +218,9 @@ bool DataObject::ContainsFilenames() const {
 
 Vector<String> DataObject::Filenames() const {
   Vector<String> results;
-  for (wtf_size_t i = 0; i < item_list_.size(); ++i) {
-    if (item_list_[i]->IsFilename())
-      results.push_back(item_list_[i]->GetAsFile()->GetPath());
+  for (const auto& item : item_list_) {
+    if (item->IsFilename())
+      results.push_back(item->GetAsFile()->GetPath());
   }
   return results;
 }
@@ -241,30 +243,29 @@ void DataObject::AddSharedBuffer(scoped_refptr<SharedBuffer> buffer,
 DataObject::DataObject() : modifiers_(0) {}
 
 DataObjectItem* DataObject::FindStringItem(const String& type) const {
-  for (wtf_size_t i = 0; i < item_list_.size(); ++i) {
-    if (item_list_[i]->Kind() == DataObjectItem::kStringKind &&
-        item_list_[i]->GetType() == type)
-      return item_list_[i];
+  for (const auto& item : item_list_) {
+    if (item->Kind() == DataObjectItem::kStringKind && item->GetType() == type)
+      return item;
   }
   return nullptr;
 }
 
-bool DataObject::InternalAddStringItem(DataObjectItem* item) {
-  DCHECK_EQ(item->Kind(), DataObjectItem::kStringKind);
-  for (wtf_size_t i = 0; i < item_list_.size(); ++i) {
-    if (item_list_[i]->Kind() == DataObjectItem::kStringKind &&
-        item_list_[i]->GetType() == item->GetType())
+bool DataObject::InternalAddStringItem(DataObjectItem* new_item) {
+  DCHECK_EQ(new_item->Kind(), DataObjectItem::kStringKind);
+  for (const auto& item : item_list_) {
+    if (item->Kind() == DataObjectItem::kStringKind &&
+        item->GetType() == new_item->GetType())
       return false;
   }
 
-  item_list_.push_back(item);
+  item_list_.push_back(new_item);
   NotifyItemListChanged();
   return true;
 }
 
-void DataObject::InternalAddFileItem(DataObjectItem* item) {
-  DCHECK_EQ(item->Kind(), DataObjectItem::kFileKind);
-  item_list_.push_back(item);
+void DataObject::InternalAddFileItem(DataObjectItem* new_item) {
+  DCHECK_EQ(new_item->Kind(), DataObjectItem::kFileKind);
+  item_list_.push_back(new_item);
   NotifyItemListChanged();
 }
 
@@ -274,24 +275,22 @@ void DataObject::AddObserver(Observer* observer) {
 }
 
 void DataObject::NotifyItemListChanged() const {
-  for (const auto& observer : observers_)
+  for (const Member<Observer>& observer : observers_)
     observer->OnItemListChanged();
 }
 
-void DataObject::Trace(blink::Visitor* visitor) {
+void DataObject::Trace(Visitor* visitor) {
   visitor->Trace(item_list_);
   visitor->Trace(observers_);
   Supplementable<DataObject>::Trace(visitor);
 }
 
+// static
 DataObject* DataObject::Create(WebDragData data) {
   DataObject* data_object = Create();
   bool has_file_system = false;
 
-  WebVector<WebDragData::Item> items = data.Items();
-  for (unsigned i = 0; i < items.size(); ++i) {
-    WebDragData::Item item = items[i];
-
+  for (const WebDragData::Item& item : data.Items()) {
     switch (item.storage_type) {
       case WebDragData::Item::kStorageTypeString:
         if (String(item.string_type) == kMimeTypeTextURIList)
@@ -310,8 +309,8 @@ DataObject* DataObject::Create(WebDragData data) {
         // This should never happen when dragging in.
         break;
       case WebDragData::Item::kStorageTypeFileSystemFile: {
-        // FIXME: The file system URL may refer a user visible file, see
-        // http://crbug.com/429077
+        // TODO(http://crbug.com/429077): The file system URL may refer a user
+        // visible file.
         has_file_system = true;
         FileMetadata file_metadata;
         file_metadata.length = item.file_system_file_size;
@@ -357,8 +356,7 @@ WebDragData DataObject::ToWebDragData() {
         item.binary_data_content_disposition = original_item->Title();
       } else if (original_item->IsFilename()) {
         Blob* blob = original_item->GetAsFile();
-        if (blob->IsFile()) {
-          File* file = ToFile(blob);
+        if (auto* file = DynamicTo<File>(blob)) {
           if (file->HasBackingFile()) {
             item.storage_type = WebDragData::Item::kStorageTypeFilename;
             item.filename_data = file->GetPath();
@@ -369,8 +367,8 @@ WebDragData DataObject::ToWebDragData() {
             item.file_system_file_size = file->size();
             item.file_system_id = original_item->FileSystemId();
           } else {
-            // FIXME: support dragging constructed Files across renderers, see
-            // http://crbug.com/394955
+            // TODO(http://crbug.com/394955): support dragging constructed Files
+            // across renderers.
             item.storage_type = WebDragData::Item::kStorageTypeString;
             item.string_type = "text/plain";
             item.string_data = file->name();

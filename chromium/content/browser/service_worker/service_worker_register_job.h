@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REGISTER_JOB_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REGISTER_JOB_H_
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -44,16 +46,20 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
 
   // For registration jobs.
   CONTENT_EXPORT ServiceWorkerRegisterJob(
-      base::WeakPtr<ServiceWorkerContextCore> context,
+      ServiceWorkerContextCore* context,
       const GURL& script_url,
-      const blink::mojom::ServiceWorkerRegistrationOptions& options);
+      const blink::mojom::ServiceWorkerRegistrationOptions& options,
+      blink::mojom::FetchClientSettingsObjectPtr
+          outside_fetch_client_settings_object);
 
   // For update jobs.
   CONTENT_EXPORT ServiceWorkerRegisterJob(
-      base::WeakPtr<ServiceWorkerContextCore> context,
+      ServiceWorkerContextCore* context,
       ServiceWorkerRegistration* registration,
       bool force_bypass_cache,
-      bool skip_script_comparison);
+      bool skip_script_comparison,
+      blink::mojom::FetchClientSettingsObjectPtr
+          outside_fetch_client_settings_object);
   ~ServiceWorkerRegisterJob() override;
 
   // Registers a callback to be called when the promise would resolve (whether
@@ -63,6 +69,7 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
   // ServiceWorkerRegisterJobBase implementation:
   void Start() override;
   void Abort() override;
+  void WillShutDown() override;
   bool Equals(ServiceWorkerRegisterJobBase* job) const override;
   RegistrationJobType GetType() const override;
 
@@ -93,8 +100,8 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
   };
 
   void set_registration(scoped_refptr<ServiceWorkerRegistration> registration);
-  ServiceWorkerRegistration* registration();
-  void set_new_version(ServiceWorkerVersion* version);
+  ServiceWorkerRegistration* registration() const;
+  void set_new_version(scoped_refptr<ServiceWorkerVersion> version);
   ServiceWorkerVersion* new_version();
 
   void SetPhase(Phase phase);
@@ -107,12 +114,20 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
       blink::ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
 
-  // This method is only called when ServiceWorkerImportedScriptUpdateCheck is
-  // enabled. When some script changed, the parameter |script_changed| is set
-  // to true.
-  void OnUpdateCheckFinished(bool script_changed);
+  bool IsUpdateCheckNeeded() const;
+  void TriggerUpdateCheck(
+      scoped_refptr<network::SharedURLLoaderFactory> loader_factory);
+
+  // Refer ServiceWorkerUpdateChecker::UpdateStatusCallback for the meaning of
+  // the parameters.
+  void OnUpdateCheckFinished(
+      ServiceWorkerSingleScriptUpdateChecker::Result result,
+      std::unique_ptr<ServiceWorkerSingleScriptUpdateChecker::FailureInfo>
+          failure_info);
 
   void RegisterAndContinue();
+  void ContinueWithNewRegistration(
+      scoped_refptr<ServiceWorkerRegistration> new_registration);
   void ContinueWithUninstallingRegistration(
       scoped_refptr<ServiceWorkerRegistration> existing_registration,
       blink::ServiceWorkerStatusCode status);
@@ -120,13 +135,18 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
       scoped_refptr<ServiceWorkerRegistration> existing_registration,
       blink::ServiceWorkerStatusCode status);
   void UpdateAndContinue();
+
+  // Creates a new ServiceWorkerVersion for [[Update]].
+  void CreateNewVersionForUpdate();
+  // Starts a service worker for [[Update]]. The script comparison has finished
+  // at this point. It starts install phase.
+  void StartWorkerForUpdate(scoped_refptr<ServiceWorkerVersion> version);
   void OnStartWorkerFinished(blink::ServiceWorkerStatusCode status);
   void OnStoreRegistrationComplete(blink::ServiceWorkerStatusCode status);
   void InstallAndContinue();
   void DispatchInstallEvent(blink::ServiceWorkerStatusCode start_worker_status);
   void OnInstallFinished(int request_id,
-                         blink::mojom::ServiceWorkerEventStatus event_status,
-                         bool has_fetch_handler);
+                         blink::mojom::ServiceWorkerEventStatus event_status);
   void OnInstallFailed(blink::ServiceWorkerStatusCode status);
   void Complete(blink::ServiceWorkerStatusCode status);
   void Complete(blink::ServiceWorkerStatusCode status,
@@ -144,12 +164,10 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
 
   void BumpLastUpdateCheckTimeIfNeeded();
 
-  // The ServiceWorkerContextCore object should always outlive this.
-  base::WeakPtr<ServiceWorkerContextCore> context_;
+  // The ServiceWorkerContextCore object must outlive this.
+  ServiceWorkerContextCore* const context_;
 
   std::unique_ptr<ServiceWorkerUpdateChecker> update_checker_;
-  std::map<GURL, ServiceWorkerUpdateChecker::ComparedScriptInfo>
-      compared_script_info_map_;
 
   RegistrationJobType job_type_;
   const GURL scope_;
@@ -159,10 +177,15 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
   blink::mojom::ScriptType worker_script_type_ =
       blink::mojom::ScriptType::kClassic;
   const blink::mojom::ServiceWorkerUpdateViaCache update_via_cache_;
+  // "A job has a client (a service worker client). It is initially null."
+  // https://w3c.github.io/ServiceWorker/#dfn-job-client
+  // This fetch client settings object roughly corresponds to the job's client.
+  blink::mojom::FetchClientSettingsObjectPtr
+      outside_fetch_client_settings_object_;
   std::vector<RegistrationCallback> callbacks_;
   Phase phase_;
+  bool is_shutting_down_;
   Internal internal_;
-  bool doom_installing_worker_;
   bool is_promise_resolved_;
   bool should_uninstall_on_failure_;
   bool force_bypass_cache_;
@@ -171,7 +194,7 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
   std::string promise_resolved_status_message_;
   scoped_refptr<ServiceWorkerRegistration> promise_resolved_registration_;
 
-  base::WeakPtrFactory<ServiceWorkerRegisterJob> weak_factory_;
+  base::WeakPtrFactory<ServiceWorkerRegisterJob> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerRegisterJob);
 };

@@ -16,19 +16,21 @@
 namespace media {
 
 VaapiPictureNativePixmap::VaapiPictureNativePixmap(
-    const scoped_refptr<VaapiWrapper>& vaapi_wrapper,
+    scoped_refptr<VaapiWrapper> vaapi_wrapper,
     const MakeGLContextCurrentCallback& make_context_current_cb,
     const BindGLImageCallback& bind_image_cb,
     int32_t picture_buffer_id,
     const gfx::Size& size,
+    const gfx::Size& visible_size,
     uint32_t texture_id,
     uint32_t client_texture_id,
     uint32_t texture_target)
-    : VaapiPicture(vaapi_wrapper,
+    : VaapiPicture(std::move(vaapi_wrapper),
                    make_context_current_cb,
                    bind_image_cb,
                    picture_buffer_id,
                    size,
+                   visible_size,
                    texture_id,
                    client_texture_id,
                    texture_target) {}
@@ -36,9 +38,9 @@ VaapiPictureNativePixmap::VaapiPictureNativePixmap(
 VaapiPictureNativePixmap::~VaapiPictureNativePixmap() = default;
 
 bool VaapiPictureNativePixmap::DownloadFromSurface(
-    const scoped_refptr<VASurface>& va_surface) {
+    scoped_refptr<VASurface> va_surface) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return vaapi_wrapper_->BlitSurface(va_surface, va_surface_);
+  return vaapi_wrapper_->BlitSurface(*va_surface, *va_surface_);
 }
 
 bool VaapiPictureNativePixmap::AllowOverlay() const {
@@ -48,32 +50,6 @@ bool VaapiPictureNativePixmap::AllowOverlay() const {
 
 VASurfaceID VaapiPictureNativePixmap::va_surface_id() const {
   return va_surface_->id();
-}
-
-// static
-gfx::GpuMemoryBufferHandle
-VaapiPictureNativePixmap::CreateGpuMemoryBufferHandleFromVideoFrame(
-    const VideoFrame* const video_frame) {
-  DCHECK(video_frame->HasDmaBufs());
-
-  gfx::GpuMemoryBufferHandle handle;
-  handle.type = gfx::NATIVE_PIXMAP;
-  for (const auto& plane : video_frame->layout().planes()) {
-    handle.native_pixmap_handle.planes.emplace_back(plane.stride, plane.offset,
-                                                    0);
-  }
-
-  const auto& fds = video_frame->DmabufFds();
-  for (const auto& fd : fds) {
-    int dup_fd = HANDLE_EINTR(dup(fd.get()));
-    if (dup_fd == -1) {
-      PLOG(ERROR) << "Failed duplicating dmabuf fd";
-      return gfx::GpuMemoryBufferHandle();
-    }
-    handle.native_pixmap_handle.fds.emplace_back(
-        base::FileDescriptor(dup_fd, true));
-  }
-  return handle;
 }
 
 }  // namespace media

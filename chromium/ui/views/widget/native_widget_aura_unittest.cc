@@ -5,22 +5,22 @@
 #include "ui/views/widget/native_widget_aura.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "services/ws/public/mojom/window_tree_constants.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/layout_manager.h"
-#include "ui/aura/test/aura_test_base.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/layout/fill_layout.h"
+#include "ui/views/test/views_test_base.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -34,9 +34,9 @@ namespace {
 
 NativeWidgetAura* Init(aura::Window* parent, Widget* widget) {
   Widget::InitParams params(Widget::InitParams::TYPE_POPUP);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = parent;
-  widget->Init(params);
+  widget->Init(std::move(params));
   return static_cast<NativeWidgetAura*>(widget->native_widget());
 }
 
@@ -44,8 +44,8 @@ NativeWidgetAura* Init(aura::Window* parent, Widget* widget) {
 // activatability so that the focus rules can be tested.
 class TestFocusRules : public wm::BaseFocusRules {
  public:
-  TestFocusRules() {}
-  ~TestFocusRules() override {}
+  TestFocusRules() = default;
+  ~TestFocusRules() override = default;
 
   void set_can_activate(bool can_activate) { can_activate_ = can_activate; }
 
@@ -64,18 +64,19 @@ class TestFocusRules : public wm::BaseFocusRules {
   DISALLOW_COPY_AND_ASSIGN(TestFocusRules);
 };
 
-class NativeWidgetAuraTest : public aura::test::AuraTestBase {
+class NativeWidgetAuraTest : public ViewsTestBase {
  public:
-  NativeWidgetAuraTest() {}
-  ~NativeWidgetAuraTest() override {}
+  NativeWidgetAuraTest() = default;
+  ~NativeWidgetAuraTest() override = default;
 
   TestFocusRules* test_focus_rules() { return test_focus_rules_; }
 
   // testing::Test overrides:
   void SetUp() override {
-    AuraTestBase::SetUp();
+    ViewsTestBase::SetUp();
     test_focus_rules_ = new TestFocusRules;
-    focus_controller_.reset(new wm::FocusController(test_focus_rules_));
+    focus_controller_ =
+        std::make_unique<wm::FocusController>(test_focus_rules_);
     wm::SetActivationClient(root_window(), focus_controller_.get());
     host()->SetBoundsInPixels(gfx::Rect(640, 480));
   }
@@ -97,9 +98,7 @@ TEST_F(NativeWidgetAuraTest, CenterWindowLargeParent) {
   NativeWidgetAura* window = Init(parent.get(), widget.get());
 
   window->CenterWindow(gfx::Size(100, 100));
-  EXPECT_EQ(gfx::Rect( (640 - 100) / 2,
-                       (480 - 100) / 2,
-                       100, 100),
+  EXPECT_EQ(gfx::Rect((640 - 100) / 2, (480 - 100) / 2, 100, 100),
             window->GetNativeWindow()->bounds());
   widget->CloseNow();
 }
@@ -114,9 +113,7 @@ TEST_F(NativeWidgetAuraTest, CenterWindowSmallParent) {
   NativeWidgetAura* window = Init(parent.get(), widget.get());
 
   window->CenterWindow(gfx::Size(100, 100));
-  EXPECT_EQ(gfx::Rect( (480 - 100) / 2,
-                       (320 - 100) / 2,
-                       100, 100),
+  EXPECT_EQ(gfx::Rect((480 - 100) / 2, (320 - 100) / 2, 100, 100),
             window->GetNativeWindow()->bounds());
   widget->CloseNow();
 }
@@ -145,7 +142,7 @@ TEST_F(NativeWidgetAuraTest, CreateMinimized) {
   params.show_state = ui::SHOW_STATE_MINIMIZED;
   params.bounds.SetRect(0, 0, 1024, 800);
   std::unique_ptr<Widget> widget(new Widget());
-  widget->Init(params);
+  widget->Init(std::move(params));
   widget->Show();
 
   EXPECT_TRUE(widget->IsMinimized());
@@ -158,9 +155,7 @@ class TestWindowObserver : public aura::WindowObserver {
   explicit TestWindowObserver(gfx::NativeWindow window) : window_(window) {
     window_->AddObserver(this);
   }
-  ~TestWindowObserver() override {
-    window_->RemoveObserver(this);
-  }
+  ~TestWindowObserver() override { window_->RemoveObserver(this); }
 
   // aura::WindowObserver:
   void OnWindowPropertyChanged(aura::Window* window,
@@ -181,7 +176,7 @@ class TestWindowObserver : public aura::WindowObserver {
   int count_ = 0;
   ui::WindowShowState state_ = ui::WindowShowState::SHOW_STATE_DEFAULT;
 
- DISALLOW_COPY_AND_ASSIGN(TestWindowObserver);
+  DISALLOW_COPY_AND_ASSIGN(TestWindowObserver);
 };
 
 // Tests that window transitions from normal to minimized and back do not
@@ -194,7 +189,7 @@ TEST_F(NativeWidgetAuraTest, ToggleState) {
   params.show_state = ui::SHOW_STATE_NORMAL;
   params.bounds.SetRect(0, 0, 1024, 800);
   Widget widget;
-  widget.Init(params);
+  widget.Init(std::move(params));
   std::unique_ptr<TestWindowObserver> observer(
       new TestWindowObserver(widget.GetNativeWindow()));
   widget.Show();
@@ -220,8 +215,8 @@ TEST_F(NativeWidgetAuraTest, ToggleState) {
 
 class TestLayoutManagerBase : public aura::LayoutManager {
  public:
-  TestLayoutManagerBase() {}
-  ~TestLayoutManagerBase() override {}
+  TestLayoutManagerBase() = default;
+  ~TestLayoutManagerBase() override = default;
 
   // aura::LayoutManager:
   void OnWindowResized() override {}
@@ -240,8 +235,8 @@ class TestLayoutManagerBase : public aura::LayoutManager {
 // Used by ShowMaximizedDoesntBounceAround. See it for details.
 class MaximizeLayoutManager : public TestLayoutManagerBase {
  public:
-  MaximizeLayoutManager() {}
-  ~MaximizeLayoutManager() override {}
+  MaximizeLayoutManager() = default;
+  ~MaximizeLayoutManager() override = default;
 
  private:
   // aura::LayoutManager:
@@ -255,10 +250,9 @@ class MaximizeLayoutManager : public TestLayoutManagerBase {
 
 // This simulates BrowserView, which creates a custom RootView so that
 // OnNativeWidgetSizeChanged that is invoked during Init matters.
-class TestWidget : public views::Widget {
+class TestWidget : public Widget {
  public:
-  TestWidget() : did_size_change_more_than_once_(false) {
-  }
+  TestWidget() = default;
 
   // Returns true if the size changes to a non-empty size, and then to another
   // size.
@@ -275,7 +269,7 @@ class TestWidget : public views::Widget {
   }
 
  private:
-  bool did_size_change_more_than_once_;
+  bool did_size_change_more_than_once_ = false;
   gfx::Size last_size_;
 
   DISALLOW_COPY_AND_ASSIGN(TestWidget);
@@ -290,45 +284,45 @@ TEST_F(NativeWidgetAuraTest, ShowMaximizedDoesntBounceAround) {
   root_window()->SetLayoutManager(new MaximizeLayoutManager);
   std::unique_ptr<TestWidget> widget(new TestWidget());
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = nullptr;
   params.context = root_window();
   params.show_state = ui::SHOW_STATE_MAXIMIZED;
   params.bounds = gfx::Rect(10, 10, 100, 200);
-  widget->Init(params);
+  widget->Init(std::move(params));
   EXPECT_FALSE(widget->did_size_change_more_than_once());
   widget->CloseNow();
 }
 
 class PropertyTestLayoutManager : public TestLayoutManagerBase {
  public:
-  PropertyTestLayoutManager() : added_(false) {}
-  ~PropertyTestLayoutManager() override {}
+  PropertyTestLayoutManager() = default;
+  ~PropertyTestLayoutManager() override = default;
 
   bool added() const { return added_; }
 
  private:
   // aura::LayoutManager:
   void OnWindowAddedToLayout(aura::Window* child) override {
-    EXPECT_EQ(ws::mojom::kResizeBehaviorCanResize |
-                  ws::mojom::kResizeBehaviorCanMaximize |
-                  ws::mojom::kResizeBehaviorCanMinimize,
+    EXPECT_EQ(aura::client::kResizeBehaviorCanResize |
+                  aura::client::kResizeBehaviorCanMaximize |
+                  aura::client::kResizeBehaviorCanMinimize,
               child->GetProperty(aura::client::kResizeBehaviorKey));
     added_ = true;
   }
 
-  bool added_;
+  bool added_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(PropertyTestLayoutManager);
 };
 
-class PropertyTestWidgetDelegate : public views::WidgetDelegate {
+class PropertyTestWidgetDelegate : public WidgetDelegate {
  public:
   explicit PropertyTestWidgetDelegate(Widget* widget) : widget_(widget) {}
-  ~PropertyTestWidgetDelegate() override {}
+  ~PropertyTestWidgetDelegate() override = default;
 
  private:
-  // views::WidgetDelegate:
+  // WidgetDelegate:
   bool CanMaximize() const override { return true; }
   bool CanMinimize() const override { return true; }
   bool CanResize() const override { return true; }
@@ -347,11 +341,11 @@ TEST_F(NativeWidgetAuraTest, TestPropertiesWhenAddedToLayout) {
   root_window()->SetLayoutManager(layout_manager);
   std::unique_ptr<TestWidget> widget(new TestWidget());
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.delegate = new PropertyTestWidgetDelegate(widget.get());
   params.parent = nullptr;
   params.context = root_window();
-  widget->Init(params);
+  widget->Init(std::move(params));
   EXPECT_TRUE(layout_manager->added());
   widget->CloseNow();
 }
@@ -359,11 +353,11 @@ TEST_F(NativeWidgetAuraTest, TestPropertiesWhenAddedToLayout) {
 TEST_F(NativeWidgetAuraTest, GetClientAreaScreenBounds) {
   // Create a widget.
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.context = root_window();
   params.bounds.SetRect(10, 20, 300, 400);
   std::unique_ptr<Widget> widget(new Widget());
-  widget->Init(params);
+  widget->Init(std::move(params));
 
   // For Aura, client area bounds match window bounds.
   gfx::Rect client_bounds = widget->GetClientAreaBoundsInScreen();
@@ -374,22 +368,14 @@ TEST_F(NativeWidgetAuraTest, GetClientAreaScreenBounds) {
 }
 
 // View subclass that tracks whether it has gotten a gesture event.
-class GestureTrackingView : public views::View {
+class GestureTrackingView : public View {
  public:
-  GestureTrackingView()
-      : got_gesture_event_(false),
-        consume_gesture_event_(true) {}
+  GestureTrackingView() = default;
 
-  void set_consume_gesture_event(bool value) {
-    consume_gesture_event_ = value;
-  }
+  void set_consume_gesture_event(bool value) { consume_gesture_event_ = value; }
 
-  void clear_got_gesture_event() {
-    got_gesture_event_ = false;
-  }
-  bool got_gesture_event() const {
-    return got_gesture_event_;
-  }
+  void clear_got_gesture_event() { got_gesture_event_ = false; }
+  bool got_gesture_event() const { return got_gesture_event_; }
 
   // View overrides:
   void OnGestureEvent(ui::GestureEvent* event) override {
@@ -400,10 +386,10 @@ class GestureTrackingView : public views::View {
 
  private:
   // Was OnGestureEvent() invoked?
-  bool got_gesture_event_;
+  bool got_gesture_event_ = false;
 
   // Dictates what OnGestureEvent() returns.
-  bool consume_gesture_event_;
+  bool consume_gesture_event_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(GestureTrackingView);
 };
@@ -420,10 +406,10 @@ TEST_F(NativeWidgetAuraTest, DontCaptureOnGesture) {
   view->AddChildView(child);
   std::unique_ptr<TestWidget> widget(new TestWidget());
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.context = root_window();
   params.bounds = gfx::Rect(0, 0, 100, 200);
-  widget->Init(params);
+  widget->Init(std::move(params));
   widget->SetContentsView(view);
   widget->Show();
 
@@ -450,73 +436,63 @@ TEST_F(NativeWidgetAuraTest, DontCaptureOnGesture) {
   EXPECT_TRUE(view->got_gesture_event());
   EXPECT_FALSE(child->got_gesture_event());
   view->clear_got_gesture_event();
-
-  // Work around for bug in NativeWidgetAura.
-  // TODO: fix bug and remove this.
-  widget->Close();
 }
 
 // Verifies views with layers are targeted for events properly.
 TEST_F(NativeWidgetAuraTest, PreferViewLayersToChildWindows) {
   // Create two widgets: |parent| and |child|. |child| is a child of |parent|.
-  views::View* parent_root = new views::View;
+  View* parent_root = new View;
   std::unique_ptr<Widget> parent(new Widget());
   Widget::InitParams parent_params(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  parent_params.ownership =
-      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  parent_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   parent_params.context = root_window();
-  parent->Init(parent_params);
+  parent->Init(std::move(parent_params));
   parent->SetContentsView(parent_root);
   parent->SetBounds(gfx::Rect(0, 0, 400, 400));
   parent->Show();
 
   std::unique_ptr<Widget> child(new Widget());
   Widget::InitParams child_params(Widget::InitParams::TYPE_CONTROL);
-  child_params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  child_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   child_params.parent = parent->GetNativeWindow();
-  child->Init(child_params);
+  child->Init(std::move(child_params));
   child->SetBounds(gfx::Rect(0, 0, 200, 200));
   child->Show();
 
   // Point is over |child|.
-  EXPECT_EQ(child->GetNativeWindow(),
-            parent->GetNativeWindow()->GetEventHandlerForPoint(
-                gfx::Point(50, 50)));
+  EXPECT_EQ(
+      child->GetNativeWindow(),
+      parent->GetNativeWindow()->GetEventHandlerForPoint(gfx::Point(50, 50)));
 
   // Create a view with a layer and stack it at the bottom (below |child|).
-  views::View* view_with_layer = new views::View;
+  View* view_with_layer = new View;
   parent_root->AddChildView(view_with_layer);
   view_with_layer->SetBounds(0, 0, 50, 50);
   view_with_layer->SetPaintToLayer();
 
   // Make sure that |child| still gets the event.
-  EXPECT_EQ(child->GetNativeWindow(),
-            parent->GetNativeWindow()->GetEventHandlerForPoint(
-                gfx::Point(20, 20)));
+  EXPECT_EQ(
+      child->GetNativeWindow(),
+      parent->GetNativeWindow()->GetEventHandlerForPoint(gfx::Point(20, 20)));
 
   // Move |view_with_layer| to the top and make sure it gets the
   // event when the point is within |view_with_layer|'s bounds.
-  view_with_layer->layer()->parent()->StackAtTop(
-      view_with_layer->layer());
-  EXPECT_EQ(parent->GetNativeWindow(),
-            parent->GetNativeWindow()->GetEventHandlerForPoint(
-                gfx::Point(20, 20)));
+  view_with_layer->layer()->parent()->StackAtTop(view_with_layer->layer());
+  EXPECT_EQ(
+      parent->GetNativeWindow(),
+      parent->GetNativeWindow()->GetEventHandlerForPoint(gfx::Point(20, 20)));
 
   // Point is over |child|, it should get the event.
-  EXPECT_EQ(child->GetNativeWindow(),
-            parent->GetNativeWindow()->GetEventHandlerForPoint(
-                gfx::Point(70, 70)));
+  EXPECT_EQ(
+      child->GetNativeWindow(),
+      parent->GetNativeWindow()->GetEventHandlerForPoint(gfx::Point(70, 70)));
 
   delete view_with_layer;
   view_with_layer = nullptr;
 
-  EXPECT_EQ(child->GetNativeWindow(),
-            parent->GetNativeWindow()->GetEventHandlerForPoint(
-                gfx::Point(20, 20)));
-
-  // Work around for bug in NativeWidgetAura.
-  // TODO: fix bug and remove this.
-  parent->Close();
+  EXPECT_EQ(
+      child->GetNativeWindow(),
+      parent->GetNativeWindow()->GetEventHandlerForPoint(gfx::Point(20, 20)));
 }
 
 // Verifies views with layers are targeted for events properly.
@@ -528,7 +504,7 @@ TEST_F(NativeWidgetAuraTest,
   Widget::InitParams parent_params(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   parent_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   parent_params.context = root_window();
-  parent.Init(parent_params);
+  parent.Init(std::move(parent_params));
   parent.SetContentsView(parent_root_view);
   parent.SetBounds(gfx::Rect(0, 0, 400, 400));
   parent.Show();
@@ -537,7 +513,7 @@ TEST_F(NativeWidgetAuraTest,
   Widget::InitParams child_params(Widget::InitParams::TYPE_CONTROL);
   child_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   child_params.parent = parent.GetNativeWindow();
-  child.Init(child_params);
+  child.Init(std::move(child_params));
   child.SetBounds(gfx::Rect(0, 0, 200, 200));
   child.Show();
 
@@ -573,8 +549,8 @@ TEST_F(NativeWidgetAuraTest, FlashFrame) {
   std::unique_ptr<Widget> widget(new Widget());
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
   params.context = root_window();
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  widget->Init(params);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget->Init(std::move(params));
   aura::Window* window = widget->GetNativeWindow();
   EXPECT_FALSE(window->GetProperty(aura::client::kDrawAttentionKey));
   widget->FlashFrame(true);
@@ -602,8 +578,8 @@ TEST_F(NativeWidgetAuraTest, NoCrashOnThemeAfterClose) {
 // Used to track calls to WidgetDelegate::OnWidgetMove().
 class MoveTestWidgetDelegate : public WidgetDelegateView {
  public:
-  MoveTestWidgetDelegate() : got_move_(false) {}
-  ~MoveTestWidgetDelegate() override {}
+  MoveTestWidgetDelegate() = default;
+  ~MoveTestWidgetDelegate() override = default;
 
   void ClearGotMove() { got_move_ = false; }
   bool got_move() const { return got_move_; }
@@ -612,7 +588,7 @@ class MoveTestWidgetDelegate : public WidgetDelegateView {
   void OnWidgetMove() override { got_move_ = true; }
 
  private:
-  bool got_move_;
+  bool got_move_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(MoveTestWidgetDelegate);
 };
@@ -624,14 +600,12 @@ class MoveTestWidgetDelegate : public WidgetDelegateView {
 TEST_F(NativeWidgetAuraTest, OnWidgetMovedInvokedAfterAcquireLayer) {
   // |delegate| deletes itself when the widget is destroyed.
   MoveTestWidgetDelegate* delegate = new MoveTestWidgetDelegate;
-  Widget* widget =
-      Widget::CreateWindowWithContextAndBounds(delegate,
-                                               root_window(),
-                                               gfx::Rect(10, 10, 100, 200));
+  Widget* widget = Widget::CreateWindowWithContext(delegate, root_window(),
+                                                   gfx::Rect(10, 10, 100, 200));
   widget->Show();
   delegate->ClearGotMove();
   // Simulate a maximize with animation.
-  delete widget->GetNativeView()->RecreateLayer().release();
+  widget->GetNativeView()->RecreateLayer();
   widget->SetBounds(gfx::Rect(0, 0, 500, 500));
   EXPECT_TRUE(delegate->got_move());
   widget->CloseNow();
@@ -642,12 +616,12 @@ TEST_F(NativeWidgetAuraTest, OnWidgetMovedInvokedAfterAcquireLayer) {
 // can not be activated.
 TEST_F(NativeWidgetAuraTest, PreventFocusOnNonActivableWindow) {
   test_focus_rules()->set_can_activate(false);
-  views::test::TestInitialFocusWidgetDelegate delegate(root_window());
+  test::TestInitialFocusWidgetDelegate delegate(root_window());
   delegate.GetWidget()->Show();
   EXPECT_FALSE(delegate.view()->HasFocus());
 
   test_focus_rules()->set_can_activate(true);
-  views::test::TestInitialFocusWidgetDelegate delegate2(root_window());
+  test::TestInitialFocusWidgetDelegate delegate2(root_window());
   delegate2.GetWidget()->Show();
   EXPECT_TRUE(delegate2.view()->HasFocus());
 }
@@ -660,7 +634,7 @@ TEST_F(NativeWidgetAuraTest, VisibilityOfChildBubbleWindow) {
   Widget::InitParams parent_params(Widget::InitParams::TYPE_WINDOW);
   parent_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   parent_params.context = root_window();
-  parent.Init(parent_params);
+  parent.Init(std::move(parent_params));
   parent.SetBounds(gfx::Rect(0, 0, 480, 320));
 
   // Add a child bubble window to the above parent window and show it.
@@ -668,7 +642,7 @@ TEST_F(NativeWidgetAuraTest, VisibilityOfChildBubbleWindow) {
   Widget::InitParams child_params(Widget::InitParams::TYPE_BUBBLE);
   child_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   child_params.parent = parent.GetNativeWindow();
-  child.Init(child_params);
+  child.Init(std::move(child_params));
   child.SetBounds(gfx::Rect(0, 0, 200, 200));
   child.Show();
 
@@ -681,6 +655,66 @@ TEST_F(NativeWidgetAuraTest, VisibilityOfChildBubbleWindow) {
   EXPECT_FALSE(child.IsVisible());
 
   // Show the parent window should make the transient child bubble visible.
+  parent.Show();
+  EXPECT_TRUE(parent.IsVisible());
+  EXPECT_TRUE(child.IsVisible());
+}
+
+class ModalWidgetDelegate : public WidgetDelegate {
+ public:
+  explicit ModalWidgetDelegate(Widget* widget) : widget_(widget) {}
+  ~ModalWidgetDelegate() override = default;
+
+  // WidgetDelegate:
+  void DeleteDelegate() override { delete this; }
+  Widget* GetWidget() override { return widget_; }
+  const Widget* GetWidget() const override { return widget_; }
+  ui::ModalType GetModalType() const override {
+    return ui::ModalType::MODAL_TYPE_WINDOW;
+  }
+
+ private:
+  Widget* widget_;
+
+  DISALLOW_COPY_AND_ASSIGN(ModalWidgetDelegate);
+};
+
+// Tests that for a child transient window, if its modal type is
+// ui::MODAL_TYPE_WINDOW, then its visibility is controlled by its transient
+// parent's visibility.
+TEST_F(NativeWidgetAuraTest, TransientChildModalWindowVisibility) {
+  // Create a parent window.
+  Widget parent;
+  Widget::InitParams parent_params(Widget::InitParams::TYPE_WINDOW);
+  parent_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  parent_params.context = root_window();
+  parent.Init(std::move(parent_params));
+  parent.SetBounds(gfx::Rect(0, 0, 400, 400));
+  parent.Show();
+  EXPECT_TRUE(parent.IsVisible());
+
+  // Create a ui::MODAL_TYPE_WINDOW modal type transient child window.
+  Widget child;
+  Widget::InitParams child_params(Widget::InitParams::TYPE_WINDOW);
+  child_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  child_params.parent = parent.GetNativeWindow();
+  child_params.delegate = new ModalWidgetDelegate(&child);
+  child.Init(std::move(child_params));
+  child.SetBounds(gfx::Rect(0, 0, 200, 200));
+  child.Show();
+  EXPECT_TRUE(parent.IsVisible());
+  EXPECT_TRUE(child.IsVisible());
+
+  // Hide the parent window should also hide the child window.
+  parent.Hide();
+  EXPECT_FALSE(parent.IsVisible());
+  EXPECT_FALSE(child.IsVisible());
+
+  // The child window can't be shown if the parent window is hidden.
+  child.Show();
+  EXPECT_FALSE(parent.IsVisible());
+  EXPECT_FALSE(child.IsVisible());
+
   parent.Show();
   EXPECT_TRUE(parent.IsVisible());
   EXPECT_TRUE(child.IsVisible());

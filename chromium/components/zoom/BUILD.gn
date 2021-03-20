@@ -25,6 +25,7 @@ static_library("zoom") {
     "//content/public/common",
     "//ipc",
     "//net",
+    "//third_party/blink/public/common",
     "//url",
   ]
 }
@@ -44,9 +45,7 @@ static_library("test_support") {
 
 source_set("unit_tests") {
   testonly = true
-  sources = [
-    "page_zoom_unittests.cc",
-  ]
+  sources = [ "page_zoom_unittests.cc" ]
   deps = [
     ":zoom",
     "//components/prefs",

@@ -9,7 +9,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "cc/base/invalidation_region.h"
 #include "cc/cc_export.h"
@@ -27,16 +26,17 @@ class CC_EXPORT RecordingSource {
  public:
   enum RecordingMode {
     RECORD_NORMALLY,
-    RECORD_WITH_PAINTING_DISABLED,
     RECORD_WITH_CACHING_DISABLED,
-    RECORD_WITH_CONSTRUCTION_DISABLED,
     RECORD_WITH_SUBSEQUENCE_CACHING_DISABLED,
     RECORD_WITH_PARTIAL_INVALIDATION,
     RECORDING_MODE_COUNT,  // Must be the last entry.
   };
 
   RecordingSource();
+  RecordingSource(const RecordingSource&) = delete;
   virtual ~RecordingSource();
+
+  RecordingSource& operator=(const RecordingSource&) = delete;
 
   bool UpdateAndExpandInvalidation(Region* invalidation,
                                    const gfx::Size& layer_size,
@@ -54,9 +54,6 @@ class CC_EXPORT RecordingSource {
 
   // These functions are virtual for testing.
   virtual scoped_refptr<RasterSource> CreateRasterSource() const;
-
-  const DisplayItemList* GetDisplayItemList();
-  gfx::Rect recorded_viewport() const { return recorded_viewport_; }
 
   bool is_solid_color() const { return is_solid_color_; }
 
@@ -85,8 +82,6 @@ class CC_EXPORT RecordingSource {
   void DetermineIfSolidColor();
 
   InvalidationRegion invalidation_;
-
-  DISALLOW_COPY_AND_ASSIGN(RecordingSource);
 };
 
 }  // namespace cc

@@ -6,10 +6,9 @@
 // https://w3c.github.io/sensors/#sensorerrorevent
 
 [
-    RuntimeEnabled=Sensor,
     SecureContext,
-    Constructor(DOMString type, SensorErrorEventInit eventInitDict),
     Exposed=Window
 ] interface SensorErrorEvent : Event {
+    constructor(DOMString type, SensorErrorEventInit eventInitDict);
     readonly attribute DOMException error;
 };

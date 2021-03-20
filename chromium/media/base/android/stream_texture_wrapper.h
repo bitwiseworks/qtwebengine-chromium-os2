@@ -15,17 +15,17 @@ namespace media {
 // and registration for later retrieval (in the Browser process).
 class MEDIA_EXPORT StreamTextureWrapper {
  public:
-  using StreamTextureWrapperInitCB = base::Callback<void(bool)>;
+  using StreamTextureWrapperInitCB = base::OnceCallback<void(bool)>;
 
   StreamTextureWrapper() {}
 
   // Initialize the underlying StreamTexture.
   // See StreamTextureWrapperImpl.
   virtual void Initialize(
-      const base::Closure& received_frame_cb,
+      const base::RepeatingClosure& received_frame_cb,
       const gfx::Size& natural_size,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
-      const StreamTextureWrapperInitCB& init_cb) = 0;
+      StreamTextureWrapperInitCB init_cb) = 0;
 
   // Called whenever the video's natural size changes.
   // See StreamTextureWrapperImpl.

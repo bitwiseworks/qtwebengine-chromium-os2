@@ -33,7 +33,7 @@ struct EvalResult {
 */
 static int callback(void *pCtx, int argc, char **argv, char **colnames){
   struct EvalResult *p = (struct EvalResult*)pCtx;
-  int i;
+  int i; 
   if( argv==0 ) return 0;
   for(i=0; i<argc; i++){
     const char *z = argv[i] ? argv[i] : "";
@@ -106,17 +106,19 @@ static void sqlEvalFunc(
 __declspec(dllexport)
 #endif
 int sqlite3_eval_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;
   SQLITE_EXTENSION_INIT2(pApi);
   (void)pzErrMsg;  /* Unused parameter */
-  rc = sqlite3_create_function(db, "eval", 1, SQLITE_UTF8, 0,
+  rc = sqlite3_create_function(db, "eval", 1, 
+                               SQLITE_UTF8|SQLITE_DIRECTONLY, 0,
                                sqlEvalFunc, 0, 0);
   if( rc==SQLITE_OK ){
-    rc = sqlite3_create_function(db, "eval", 2, SQLITE_UTF8, 0,
+    rc = sqlite3_create_function(db, "eval", 2,
+                                 SQLITE_UTF8|SQLITE_DIRECTONLY, 0,
                                  sqlEvalFunc, 0, 0);
   }
   return rc;

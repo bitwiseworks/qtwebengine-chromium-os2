@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import absolute_import
+from __future__ import division
 from __future__ import print_function
 
 import json
@@ -11,6 +13,7 @@ import random
 import tempfile
 import unittest
 
+from six.moves import range  # pylint: disable=redefined-builtin
 from tracing.metrics import compare_samples
 
 
@@ -233,26 +236,26 @@ class CompareSamplesUnittest(unittest.TestCase):
         lower_values, higher_values, '/'.join(metric)).stdout)
     self.assertEqual(result['result']['significance'], FAIL_TO_REJECT)
 
-  def testCompareTIRLabel(self):
-    tir_metric = ('some_chart', 'some_label', 'some_trace')
-    tir_metric_name = ('%s@@%s' % (tir_metric[1], tir_metric[0]), tir_metric[2])
+  def testCompareGroupingLabel(self):
+    parts = ('some_chart', 'some_label', 'some_trace')
+    metric_name = ('%s@@%s' % (parts[1], parts[0]), parts[2])
     lower_values = ','.join(self.MakeCharts(
-        metric=tir_metric_name, seed='lower', mu=10, sigma=1, n=10))
+        metric=metric_name, seed='lower', mu=10, sigma=1, n=10))
     higher_values = ','.join(self.MakeCharts(
-        metric=tir_metric_name, seed='higher', mu=20, sigma=2, n=10))
+        metric=metric_name, seed='higher', mu=20, sigma=2, n=10))
     result = json.loads(compare_samples.CompareSamples(
-        lower_values, higher_values, '/'.join(tir_metric)).stdout)
+        lower_values, higher_values, '/'.join(parts)).stdout)
     self.assertEqual(result['result']['significance'], REJECT)
 
-  def testCompareTIRLabelMissingSummary(self):
-    tir_metric = ('some_chart', 'some_label')
-    tir_metric_name = ('%s@@%s' % (tir_metric[1], tir_metric[0]), 'summary')
+  def testCompareGroupingLabelMissingSummary(self):
+    parts = ('some_chart', 'some_label')
+    metric_name = ('%s@@%s' % (parts[1], parts[0]), 'summary')
     lower_values = ','.join(self.MakeCharts(
-        metric=tir_metric_name, seed='lower', mu=10, sigma=1, n=10))
+        metric=metric_name, seed='lower', mu=10, sigma=1, n=10))
     higher_values = ','.join(self.MakeCharts(
-        metric=tir_metric_name, seed='higher', mu=20, sigma=2, n=10))
+        metric=metric_name, seed='higher', mu=20, sigma=2, n=10))
     result = json.loads(compare_samples.CompareSamples(
-        lower_values, higher_values, '/'.join(tir_metric)).stdout)
+        lower_values, higher_values, '/'.join(parts)).stdout)
     self.assertEqual(result['result']['significance'], REJECT)
 
   def testCompareInsufficientData(self):

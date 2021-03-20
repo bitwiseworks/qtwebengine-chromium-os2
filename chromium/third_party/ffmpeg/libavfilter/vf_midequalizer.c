@@ -74,7 +74,12 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10, AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14,
         AV_PIX_FMT_YUVA420P9, AV_PIX_FMT_YUVA422P9, AV_PIX_FMT_YUVA444P9,
         AV_PIX_FMT_YUVA420P10, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA444P10,
+        AV_PIX_FMT_YUVA422P12, AV_PIX_FMT_YUVA444P12,
         AV_PIX_FMT_GBRAP10, AV_PIX_FMT_GBRAP12,
+        AV_PIX_FMT_YUV420P16,  AV_PIX_FMT_YUV422P16,  AV_PIX_FMT_YUV444P16,
+        AV_PIX_FMT_YUVA420P16, AV_PIX_FMT_YUVA422P16, AV_PIX_FMT_YUVA444P16,
+        AV_PIX_FMT_GBRP16, AV_PIX_FMT_GBRAP16,
+        AV_PIX_FMT_GRAY16,
         AV_PIX_FMT_NONE
     };
 
@@ -122,7 +127,7 @@ static int process_frame(FFFrameSync *fs)
                             s->cchange, s->histogram_size);
         }
     }
-    out->pts = av_rescale_q(in0->pts, s->fs.time_base, outlink->time_base);
+    out->pts = av_rescale_q(s->fs.pts, s->fs.time_base, outlink->time_base);
 
     return ff_filter_frame(outlink, out);
 }
@@ -307,7 +312,6 @@ static int config_output(AVFilterLink *outlink)
 
     outlink->w = in0->w;
     outlink->h = in0->h;
-    outlink->time_base = in0->time_base;
     outlink->sample_aspect_ratio = in0->sample_aspect_ratio;
     outlink->frame_rate = in0->frame_rate;
 
@@ -326,7 +330,10 @@ static int config_output(AVFilterLink *outlink)
     s->fs.opaque   = s;
     s->fs.on_event = process_frame;
 
-    return ff_framesync_configure(&s->fs);
+    ret = ff_framesync_configure(&s->fs);
+    outlink->time_base = s->fs.time_base;
+
+    return ret;
 }
 
 static int activate(AVFilterContext *ctx)

@@ -56,54 +56,54 @@ class AudioAPI : public BrowserContextKeyedAPI, public AudioService::Observer {
   DISALLOW_COPY_AND_ASSIGN(AudioAPI);
 };
 
-class AudioGetInfoFunction : public UIThreadExtensionFunction {
+class AudioGetInfoFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("audio.getInfo", AUDIO_GETINFO);
+  DECLARE_EXTENSION_FUNCTION("audio.getInfo", AUDIO_GETINFO)
 
  protected:
   ~AudioGetInfoFunction() override {}
   ResponseAction Run() override;
 };
 
-class AudioGetDevicesFunction : public UIThreadExtensionFunction {
+class AudioGetDevicesFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("audio.getDevices", AUDIO_GETDEVICES);
+  DECLARE_EXTENSION_FUNCTION("audio.getDevices", AUDIO_GETDEVICES)
 
  protected:
   ~AudioGetDevicesFunction() override {}
   ResponseAction Run() override;
 };
 
-class AudioSetActiveDevicesFunction : public UIThreadExtensionFunction {
+class AudioSetActiveDevicesFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("audio.setActiveDevices", AUDIO_SETACTIVEDEVICES);
+  DECLARE_EXTENSION_FUNCTION("audio.setActiveDevices", AUDIO_SETACTIVEDEVICES)
 
  protected:
   ~AudioSetActiveDevicesFunction() override {}
   ResponseAction Run() override;
 };
 
-class AudioSetPropertiesFunction : public UIThreadExtensionFunction {
+class AudioSetPropertiesFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("audio.setProperties", AUDIO_SETPROPERTIES);
+  DECLARE_EXTENSION_FUNCTION("audio.setProperties", AUDIO_SETPROPERTIES)
 
  protected:
   ~AudioSetPropertiesFunction() override {}
   ResponseAction Run() override;
 };
 
-class AudioSetMuteFunction : public UIThreadExtensionFunction {
+class AudioSetMuteFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("audio.setMute", AUDIO_SETMUTE);
+  DECLARE_EXTENSION_FUNCTION("audio.setMute", AUDIO_SETMUTE)
 
  protected:
   ~AudioSetMuteFunction() override {}
   ResponseAction Run() override;
 };
 
-class AudioGetMuteFunction : public UIThreadExtensionFunction {
+class AudioGetMuteFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("audio.getMute", AUDIO_GETMUTE);
+  DECLARE_EXTENSION_FUNCTION("audio.getMute", AUDIO_GETMUTE)
 
  protected:
   ~AudioGetMuteFunction() override {}

@@ -22,9 +22,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_RULE_IMPORT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_RULE_IMPORT_H_
 
+#include "third_party/blink/renderer/core/css/css_origin_clean.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -35,10 +37,9 @@ class StyleRuleImport : public StyleRuleBase {
   USING_PRE_FINALIZER(StyleRuleImport, Dispose);
 
  public:
-  static StyleRuleImport* Create(const String& href,
-                                 scoped_refptr<MediaQuerySet>);
-
-  StyleRuleImport(const String& href, scoped_refptr<MediaQuerySet>);
+  StyleRuleImport(const String& href,
+                  scoped_refptr<MediaQuerySet>,
+                  OriginClean origin_clean);
   ~StyleRuleImport();
 
   StyleSheetContents* ParentStyleSheet() const { return parent_style_sheet_; }
@@ -56,7 +57,7 @@ class StyleRuleImport : public StyleRuleBase {
 
   void RequestStyleSheet();
 
-  void TraceAfterDispatch(blink::Visitor*);
+  void TraceAfterDispatch(blink::Visitor*) const;
 
  private:
   // FIXME: inherit from ResourceClient directly to eliminate back
@@ -64,7 +65,7 @@ class StyleRuleImport : public StyleRuleBase {
   // NOTE: We put the ResourceClient in a member instead of inheriting
   // from it to avoid adding a vptr to StyleRuleImport.
   class ImportedStyleSheetClient final
-      : public GarbageCollectedFinalized<ImportedStyleSheetClient>,
+      : public GarbageCollected<ImportedStyleSheetClient>,
         public ResourceClient {
     USING_GARBAGE_COLLECTED_MIXIN(ImportedStyleSheetClient);
 
@@ -79,7 +80,7 @@ class StyleRuleImport : public StyleRuleBase {
 
     String DebugName() const override { return "ImportedStyleSheetClient"; }
 
-    void Trace(blink::Visitor* visitor) override {
+    void Trace(Visitor* visitor) override {
       visitor->Trace(owner_rule_);
       ResourceClient::Trace(visitor);
     }
@@ -99,9 +100,17 @@ class StyleRuleImport : public StyleRuleBase {
   scoped_refptr<MediaQuerySet> media_queries_;
   Member<StyleSheetContents> style_sheet_;
   bool loading_;
+  // Whether the style sheet that has this import rule is origin-clean:
+  // https://drafts.csswg.org/cssom-1/#concept-css-style-sheet-origin-clean-flag
+  const OriginClean origin_clean_;
 };
 
-DEFINE_STYLE_RULE_TYPE_CASTS(Import);
+template <>
+struct DowncastTraits<StyleRuleImport> {
+  static bool AllowFrom(const StyleRuleBase& rule) {
+    return rule.IsImportRule();
+  }
+};
 
 }  // namespace blink
 

@@ -33,7 +33,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_decode_error_callback.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_decode_success_callback.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
-#include "third_party/blink/renderer/core/execution_context/pausable_object.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_state_observer.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
@@ -42,7 +42,9 @@
 #include "third_party/blink/renderer/modules/webaudio/audio_destination_node.h"
 #include "third_party/blink/renderer/modules/webaudio/deferred_task_handler.h"
 #include "third_party/blink/renderer/modules/webaudio/iir_filter_node.h"
+#include "third_party/blink/renderer/modules/webaudio/inspector_helper_mixin.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
+#include "third_party/blink/renderer/platform/audio/audio_callback_metric_reporter.h"
 #include "third_party/blink/renderer/platform/audio/audio_io_callback.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
@@ -58,7 +60,6 @@ namespace blink {
 class AnalyserNode;
 class AudioBuffer;
 class AudioBufferSourceNode;
-class AudioContextOptions;
 class AudioListener;
 class AudioWorklet;
 class BiquadFilterNode;
@@ -91,9 +92,11 @@ class WorkerThread;
 class MODULES_EXPORT BaseAudioContext
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<BaseAudioContext>,
-      public PausableObject {
+      public ExecutionContextLifecycleStateObserver,
+      public InspectorHelperMixin {
   USING_GARBAGE_COLLECTED_MIXIN(BaseAudioContext);
   DEFINE_WRAPPERTYPEINFO();
+  USING_PRE_FINALIZER(BaseAudioContext, Dispose);
 
  public:
   // The state of an audio context.  On creation, the state is Suspended. The
@@ -103,14 +106,9 @@ class MODULES_EXPORT BaseAudioContext
   // to Suspended or Closed. Once Closed, there are no valid transitions.
   enum AudioContextState { kSuspended, kRunning, kClosed };
 
-  // Create an AudioContext for rendering to the audio hardware.
-  static BaseAudioContext* Create(Document&,
-                                  const AudioContextOptions*,
-                                  ExceptionState&);
-
   ~BaseAudioContext() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // Is the destination node initialized and ready to handle audio?
   bool IsDestinationInitialized() const {
@@ -118,13 +116,14 @@ class MODULES_EXPORT BaseAudioContext
     return dest ? dest->GetAudioDestinationHandler().IsInitialized() : false;
   }
 
+  void Dispose();
+
   // Document notification
-  void ContextPaused(PauseState) override;
-  void ContextUnpaused() override;
-  void ContextDestroyed(ExecutionContext*) override;
+  void ContextLifecycleStateChanged(mojom::FrameLifecycleState) override;
+  void ContextDestroyed() override;
   bool HasPendingActivity() const override;
 
-  // Cannnot be called from the audio thread.
+  // Cannot be called from the audio thread.
   AudioDestinationNode* destination() const;
 
   size_t CurrentSampleFrame() const {
@@ -137,7 +136,18 @@ class MODULES_EXPORT BaseAudioContext
 
   String state() const;
   AudioContextState ContextState() const { return context_state_; }
-  void ThrowExceptionForClosedState(ExceptionState&);
+
+  // Warn user when creating a node on a closed context.  The node can't do
+  // anything useful because the context is closed.
+  void WarnIfContextClosed(const AudioHandler*) const;
+
+  // Warn user when connecting two nodes on a closed context. The connection
+  // does nothing useful because the context is closed.
+  void WarnForConnectionIfContextClosed() const;
+
+  // Return true if the destination is pulling on the audio graph.  Otherwise
+  // return false.
+  virtual bool IsPullingAudioGraph() const = 0;
 
   AudioBuffer* createBuffer(uint32_t number_of_channels,
                             uint32_t number_of_frames,
@@ -162,11 +172,10 @@ class MODULES_EXPORT BaseAudioContext
 
   // Handles the promise and callbacks when |decodeAudioData| is finished
   // decoding.
-  void HandleDecodeAudioData(
-      AudioBuffer*,
-      ScriptPromiseResolver*,
-      V8PersistentCallbackFunction<V8DecodeSuccessCallback>*,
-      V8PersistentCallbackFunction<V8DecodeErrorCallback>*);
+  void HandleDecodeAudioData(AudioBuffer*,
+                             ScriptPromiseResolver*,
+                             V8DecodeSuccessCallback*,
+                             V8DecodeErrorCallback*);
 
   AudioListener* listener() { return listener_; }
 
@@ -231,11 +240,21 @@ class MODULES_EXPORT BaseAudioContext
   void NotifySourceNodeFinishedProcessing(AudioHandler*);
 
   // Called at the start of each render quantum.
-  void HandlePreRenderTasks(const AudioIOPosition& output_position,
-                            const AudioIOCallbackMetric& metric);
+  //
+  // For an AudioContext:
+  //   - |output_position| must be a valid pointer to an AudioIOPosition
+  //   - The return value is ignored.
+  //
+  // For an OfflineAudioContext, we have the following conditions:
+  //   - |output_position| must be nullptr because there is no defined
+  //   AudioIOPosition.
+  //   - The return value indicates whether the context needs to be suspended or
+  //   not after rendering.
+  virtual bool HandlePreRenderTasks(const AudioIOPosition* output_position,
+                                    const AudioCallbackMetric* metric) = 0;
 
   // Called at the end of each render quantum.
-  void HandlePostRenderTasks(const AudioBus* destination_bus);
+  virtual void HandlePostRenderTasks() = 0;
 
   DeferredTaskHandler& GetDeferredTaskHandler() const {
     return *deferred_task_handler_;
@@ -264,9 +283,9 @@ class MODULES_EXPORT BaseAudioContext
   const AtomicString& InterfaceName() const final;
   ExecutionContext* GetExecutionContext() const final;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange, kStatechange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange, kStatechange)
 
-  void StartRendering();
+  virtual void StartRendering();
 
   void NotifyStateChange();
 
@@ -299,7 +318,23 @@ class MODULES_EXPORT BaseAudioContext
   // Does nothing when the worklet global scope does not exist.
   void UpdateWorkletGlobalScopeOnRenderingThread();
 
-  void set_was_audible_for_testing(bool value) { was_audible_ = value; }
+  // Returns -1 if the destination node is unavailable or any other condition
+  // occurs preventing us from determining the count.
+  int32_t MaxChannelCount();
+
+  // Returns the platform-specific callback buffer size for Devtools.
+  // Returns -1 if the destination node is unavailable or any other condition
+  // occurs preventing us from determining the count.
+  int32_t CallbackBufferSize();
+
+  // InspectorHelperMixin
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
+
+  // TODO(crbug.com/1055983): Remove this when the execution context validity
+  // check is not required in the AudioNode factory methods. Returns false
+  // if the execution context does not exist.
+  bool CheckExecutionContextAndThrowIfNecessary(ExceptionState&);
 
  protected:
   enum ContextType { kRealtimeContext, kOfflineContext };
@@ -327,12 +362,11 @@ class MODULES_EXPORT BaseAudioContext
 
   void RejectPendingDecodeAudioDataResolvers();
 
-  AudioIOPosition OutputPosition() const;
+  // When the context goes away, reject any pending script promise resolvers.
+  virtual void RejectPendingResolvers();
 
   // Returns the Document wich wich the instance is associated.
   Document* GetDocument() const;
-
-  const String& Uuid() const { return uuid_; }
 
   // The audio thread relies on the main thread to perform some operations
   // over the objects that it owns and controls; |ScheduleMainThreadCleanup()|
@@ -344,12 +378,14 @@ class MODULES_EXPORT BaseAudioContext
   // audio thread making rendering progress.
   void PerformCleanupOnMainThread();
 
+  // True if we're in the process of resolving promises for resume().  Resolving
+  // can take some time and the audio context process loop is very fast, so we
+  // don't want to call resolve an excessive number of times.
+  bool is_resolving_resume_promises_;
+
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
  private:
-  friend class AudioContextAutoplayTest;
-
-  // Unique ID for each context.
-  const String uuid_;
-
   bool is_cleared_;
   void Clear();
 
@@ -359,38 +395,6 @@ class MODULES_EXPORT BaseAudioContext
 
   // Listener for the PannerNodes
   Member<AudioListener> listener_;
-
-  // Accessed by audio thread and main thread, coordinated using
-  // the associated mutex.
-  //
-  // These raw pointers are safe because AudioSourceNodes in
-  // active_source_nodes_ own them.
-  Mutex finished_source_handlers_mutex_;
-  Vector<AudioHandler*> finished_source_handlers_;
-
-  // List of source nodes. This is either accessed when the graph lock is
-  // held, or on the main thread when the audio thread has finished.
-  // Oilpan: This Vector holds connection references. We must call
-  // AudioHandler::makeConnection when we add an AudioNode to this, and must
-  // call AudioHandler::breakConnection() when we remove an AudioNode from
-  // this.
-  HeapVector<Member<AudioNode>> active_source_nodes_;
-
-  // Called by the audio thread to handle Promises for resume() and suspend(),
-  // posting a main thread task to perform the actual resolving, if needed.
-  //
-  // TODO(dominicc): Move to AudioContext because only it creates
-  // these Promises.
-  void ResolvePromisesForUnpause();
-
-  // When the context is going away, reject any pending script promise
-  // resolvers.
-  virtual void RejectPendingResolvers();
-
-  // True if we're in the process of resolving promises for resume().  Resolving
-  // can take some time and the audio context process loop is very fast, so we
-  // don't want to call resolve an excessive number of times.
-  bool is_resolving_resume_promises_;
 
   // Set to |true| by the audio thread when it posts a main-thread task to
   // perform delayed state sync'ing updates that needs to be done on the main
@@ -422,9 +426,6 @@ class MODULES_EXPORT BaseAudioContext
   // It is somewhat arbitrary and could be increased if necessary.
   enum { kMaxNumberOfChannels = 32 };
 
-  AudioIOPosition output_position_;
-  AudioIOCallbackMetric callback_metric_;
-
   // The handler associated with the above |destination_node_|.
   scoped_refptr<AudioDestinationHandler> destination_handler_;
 
@@ -436,22 +437,6 @@ class MODULES_EXPORT BaseAudioContext
   // This cannot be nullptr once it is assigned from AudioWorkletThread until
   // the BaseAudioContext goes away.
   WorkerThread* audio_worklet_thread_ = nullptr;
-
-  // Notifies browser when audible audio starts or stops.  This should
-  // only apply for AudioContexts.
-  virtual void NotifyAudibleAudioStarted() { NOTREACHED(); }
-  virtual void NotifyAudibleAudioStopped() { NOTREACHED(); }
-
-  // Keeps track if the output of this destination was audible, before the
-  // current rendering quantum.  Used for recording "playback" time.
-  bool was_audible_ = false;
-
-  // Counts the number of render quanta where audible sound was played.  We
-  // determine audibility on render quantum boundaries, so counting quanta is
-  // all that's needed.
-  size_t total_audible_renders_ = 0;
-
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 };
 
 }  // namespace blink

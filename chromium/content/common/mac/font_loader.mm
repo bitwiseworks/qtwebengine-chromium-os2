@@ -18,7 +18,8 @@
 #include "base/mac/scoped_cftyperef.h"
 #import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 
 namespace content {
@@ -27,7 +28,8 @@ namespace {
 std::unique_ptr<FontLoader::ResultInternal> LoadFontOnFileThread(
     const base::string16& font_name,
     const float font_point_size) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   NSString* font_name_ns = base::SysUTF16ToNSString(font_name);
   NSFont* font_to_encode =
@@ -133,32 +135,30 @@ void FontLoader::LoadFont(const base::string16& font_name,
   constexpr base::TaskTraits kTraits = {
       base::MayBlock(), base::TaskPriority::USER_VISIBLE,
       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN};
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, kTraits,
       base::BindOnce(&LoadFontOnFileThread, font_name, font_point_size),
       base::BindOnce(&ReplyOnUIThread, std::move(callback)));
 }
 
 // static
-bool FontLoader::CGFontRefFromBuffer(mojo::ScopedSharedBufferHandle font_data,
-                                     uint32_t font_data_size,
-                                     CGFontRef* out) {
-  *out = NULL;
+bool FontLoader::CTFontDescriptorFromBuffer(
+    mojo::ScopedSharedBufferHandle font_data,
+    uint32_t font_data_size,
+    base::ScopedCFTypeRef<CTFontDescriptorRef>* out_descriptor) {
+  out_descriptor->reset();
   mojo::ScopedSharedBufferMapping mapping = font_data->Map(font_data_size);
   if (!mapping)
     return false;
 
   NSData* data = [NSData dataWithBytes:mapping.get() length:font_data_size];
-  base::ScopedCFTypeRef<CGDataProviderRef> provider(
-      CGDataProviderCreateWithCFData(base::mac::NSToCFCast(data)));
-  if (!provider)
+  base::ScopedCFTypeRef<CTFontDescriptorRef> data_descriptor(
+      CTFontManagerCreateFontDescriptorFromData(base::mac::NSToCFCast(data)));
+
+  if (!data_descriptor)
     return false;
 
-  *out = CGFontCreateWithDataProvider(provider.get());
-
-  if (*out == NULL)
-    return false;
-
+  *out_descriptor = std::move(data_descriptor);
   return true;
 }
 

@@ -9,12 +9,13 @@
 #include <memory>
 #include <vector>
 
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "content/browser/renderer_host/input/touch_emulator_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_keyboard_event.h"
-#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
+#include "third_party/blink/public/common/input/web_keyboard_event.h"
+#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/blink/web_input_event_traits.h"
 
@@ -32,8 +33,8 @@ class TouchEmulatorTest : public testing::Test,
                           public TouchEmulatorClient {
  public:
   TouchEmulatorTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+      : task_environment_(
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
         last_event_time_(base::TimeTicks::Now()),
         event_time_delta_(base::TimeDelta::FromMilliseconds(100)),
         shift_pressed_(false),
@@ -66,8 +67,8 @@ class TouchEmulatorTest : public testing::Test,
                                  RenderWidgetHostViewBase* target) override {
     forwarded_events_.push_back(event.GetType());
     EXPECT_EQ(1U, event.touches_length);
-    EXPECT_EQ(last_mouse_x_, event.touches[0].PositionInWidget().x);
-    EXPECT_EQ(last_mouse_y_, event.touches[0].PositionInWidget().y);
+    EXPECT_EQ(last_mouse_x_, event.touches[0].PositionInWidget().x());
+    EXPECT_EQ(last_mouse_y_, event.touches[0].PositionInWidget().y());
     const int all_buttons =
         WebInputEvent::kLeftButtonDown | WebInputEvent::kMiddleButtonDown |
         WebInputEvent::kRightButtonDown | WebInputEvent::kBackButtonDown |
@@ -89,7 +90,8 @@ class TouchEmulatorTest : public testing::Test,
   }
 
   void ShowContextMenuAtPoint(const gfx::Point& point,
-                              const ui::MenuSourceType source_type) override {}
+                              const ui::MenuSourceType source_type,
+                              RenderWidgetHostViewBase* target) override {}
 
  protected:
   TouchEmulator* emulator() const {
@@ -250,14 +252,10 @@ class TouchEmulatorTest : public testing::Test,
 
   void DisableSynchronousTouchAck() { ack_touches_synchronously_ = false; }
 
-  float GetCursorScaleFactor() {
-    CursorInfo info;
-    cursor_.GetCursorInfo(&info);
-    return info.image_scale_factor;
-  }
+  float GetCursorScaleFactor() { return cursor_.cursor().image_scale_factor(); }
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<TouchEmulator> emulator_;
   std::vector<WebInputEvent::Type> forwarded_events_;
   base::TimeTicks last_event_time_;

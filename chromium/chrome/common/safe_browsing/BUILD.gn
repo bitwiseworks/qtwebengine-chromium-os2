@@ -3,28 +3,25 @@
 # found in the LICENSE file.
 
 import("//chrome/common/features.gni")
+import("//components/safe_browsing/buildflags.gni")
 import("//third_party/protobuf/proto_library.gni")
 
 proto_library("proto") {
   sources = [
     "client_model.proto",
     "crx_info.proto",
-    "download_file_types.proto",
   ]
 }
 
-source_set("file_type_policies") {
-  sources = [
-    "file_type_policies.cc",
-    "file_type_policies.h",
-  ]
+if (is_win) {
+  source_set("pe_image_reader") {
+    sources = [
+      "pe_image_reader_win.cc",
+      "pe_image_reader_win.h",
+    ]
 
-  deps = [
-    ":proto",
-    "//base",
-    "//chrome/browser:resources",
-    "//ui/base",
-  ]
+    deps = [ "//base" ]
+  }
 }
 
 if (safe_browsing_mode == 1) {
@@ -36,17 +33,15 @@ if (safe_browsing_mode == 1) {
     deps = [
       ":binary_feature_extractor",
       ":download_type_util",
-      ":file_type_policies",
       "//base",
       "//base:i18n",
+      "//components/safe_browsing/core:file_type_policies",
       "//crypto",
     ]
     if (is_mac) {
       deps += [ ":disk_image_type_sniffer_mac" ]
     }
-    public_deps = [
-      "//components/safe_browsing:csd_proto",
-    ]
+    public_deps = [ "//components/safe_browsing/core:csd_proto" ]
   }
 
   source_set("download_type_util") {
@@ -55,13 +50,11 @@ if (safe_browsing_mode == 1) {
       "download_type_util.h",
     ]
     deps = [
-      ":file_type_policies",
       "//base",
-      "//components/safe_browsing:features",
+      "//components/safe_browsing/core:features",
+      "//components/safe_browsing/core:file_type_policies",
     ]
-    public_deps = [
-      "//components/safe_browsing:csd_proto",
-    ]
+    public_deps = [ "//components/safe_browsing/core:csd_proto" ]
   }
 
   source_set("rar_analyzer") {
@@ -73,10 +66,10 @@ if (safe_browsing_mode == 1) {
     deps = [
       ":archive_analyzer_results",
       ":download_type_util",
-      ":file_type_policies",
       "//base",
       "//base:i18n",
-      "//components/safe_browsing:features",
+      "//components/safe_browsing/core:features",
+      "//components/safe_browsing/core:file_type_policies",
       "//third_party/unrar:unrar",
     ]
 
@@ -94,9 +87,7 @@ if (safe_browsing_mode == 1) {
       "UNRAR_NO_EXCEPTIONS",
     ]
 
-    public_deps = [
-      "//components/safe_browsing:csd_proto",
-    ]
+    public_deps = [ "//components/safe_browsing/core:csd_proto" ]
   }
 
   source_set("disk_image_type_sniffer_mac") {
@@ -105,9 +96,7 @@ if (safe_browsing_mode == 1) {
       "disk_image_type_sniffer_mac.h",
     ]
 
-    deps = [
-      "//base:base",
-    ]
+    deps = [ "//base" ]
   }
 
   source_set("binary_feature_extractor") {
@@ -118,8 +107,6 @@ if (safe_browsing_mode == 1) {
       "binary_feature_extractor_win.cc",
       "mach_o_image_reader_mac.cc",
       "mach_o_image_reader_mac.h",
-      "pe_image_reader_win.cc",
-      "pe_image_reader_win.h",
     ]
     if (is_posix) {
       sources += [ "binary_feature_extractor_posix.cc" ]
@@ -127,9 +114,13 @@ if (safe_browsing_mode == 1) {
 
     public_deps = [
       "//base",
-      "//components/safe_browsing:csd_proto",
+      "//components/safe_browsing/core:csd_proto",
       "//crypto",
     ]
+
+    if (is_win) {
+      deps = [ ":pe_image_reader" ]
+    }
   }
 
   source_set("mock_binary_feature_extractor") {
@@ -148,9 +139,7 @@ if (safe_browsing_mode == 1) {
 }
 
 source_set("safe_browsing") {
-  deps = [
-    ":file_type_policies",
-  ]
+  deps = [ "//components/safe_browsing/core:file_type_policies" ]
 
   if (safe_browsing_mode == 1) {
     sources = [
@@ -168,14 +157,14 @@ source_set("safe_browsing") {
       ":binary_feature_extractor",
       ":download_type_util",
       ":rar_analyzer",
-      "//components/safe_browsing:features",
+      "//components/safe_browsing/core:features",
     ]
 
     public_deps = [
       ":proto",
       "//base:i18n",
       "//chrome/common:mojo_bindings",
-      "//components/safe_browsing:csd_proto",
+      "//components/safe_browsing/core:csd_proto",
       "//crypto",
       "//ipc",
       "//third_party/zlib/google:zip",

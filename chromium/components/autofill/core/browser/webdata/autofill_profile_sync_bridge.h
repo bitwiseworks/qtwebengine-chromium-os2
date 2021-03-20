@@ -14,6 +14,7 @@
 #include "base/supports_user_data.h"
 #include "base/threading/thread_checker.h"
 #include "components/autofill/core/browser/webdata/autofill_change.h"
+#include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service_observer.h"
 #include "components/sync/model/model_type_sync_bridge.h"
 
@@ -27,8 +28,8 @@ namespace autofill {
 
 class AutofillProfileSyncDifferenceTracker;
 class AutofillTable;
-class AutofillWebDataBackend;
 class AutofillWebDataService;
+enum class AutofillProfileSyncChangeOrigin;
 
 // Sync bridge implementation for AUTOFILL_PROFILE model type. Takes care of
 // propagating local autofill profiles to other clients as well as incorporating
@@ -106,8 +107,9 @@ class AutofillProfileSyncBridge
   // SupportsUserData, so it's guaranteed to outlive |this|.
   AutofillWebDataBackend* const web_data_backend_;
 
-  ScopedObserver<AutofillWebDataBackend, AutofillProfileSyncBridge>
-      scoped_observer_;
+  ScopedObserver<AutofillWebDataBackend,
+                 AutofillWebDataServiceObserverOnDBSequence>
+      scoped_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AutofillProfileSyncBridge);
 };

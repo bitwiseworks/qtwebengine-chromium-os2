@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_REGEX_CONSTANTS_H_
-#define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_REGEX_CONSTANTS_H_
+#ifndef COMPONENTS_AUTOFILL_CORE_COMMON_AUTOFILL_REGEX_CONSTANTS_H_
+#define COMPONENTS_AUTOFILL_CORE_COMMON_AUTOFILL_REGEX_CONSTANTS_H_
 
 namespace autofill {
 
@@ -56,12 +56,28 @@ extern const char kPhonePrefixRe[];
 extern const char kPhoneSuffixRe[];
 extern const char kPhoneExtensionRe[];
 extern const char kSearchTermRe[];
+extern const char kPassportRe[];
+extern const char kTravelOriginRe[];
+extern const char kTravelDestinationRe[];
+extern const char kFlightRe[];
+extern const char kPriceRe[];
+extern const char kCreditCardCVCPattern[];
+extern const char kCreditCard4DigitExpYearPattern[];
+extern const char kSocialSecurityRe[];
+extern const char kOneTimePwdRe[];
 
 // Used to match field data that might be a UPI Virtual Payment Address.
 // See:
 //   - http://crbug.com/702220
 //   - https://upipayments.co.in/virtual-payment-address-vpa/
 extern const char kUPIVirtualPaymentAddressRe[];
+
+// Used to match field data that might be an International Bank Account Number.
+// TODO(crbug.com/977377): The regex doesn't match IBANs for Saint Lucia (LC),
+// Kazakhstan (KZ) and Romania (RO). Consider replace the regex with something
+// like "(?:IT|SM)\d{2}[A-Z]\d{22}|CY\d{2}[A-Z]\d{23}...". For reference:
+//    - https://www.swift.com/resource/iban-registry-pdf
+extern const char kInternationalBankAccountNumberRe[];
 
 // Match the path values for form actions that look like generic search:
 //  e.g. /search
@@ -73,4 +89,4 @@ extern const char kUrlSearchActionRe[];
 
 }  // namespace autofill
 
-#endif  // COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_REGEX_CONSTANTS_H_
+#endif  // COMPONENTS_AUTOFILL_CORE_COMMON_AUTOFILL_REGEX_CONSTANTS_H_

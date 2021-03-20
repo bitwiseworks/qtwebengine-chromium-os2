@@ -15,16 +15,15 @@
 #include "ui/views/widget/widget.h"
 
 namespace gfx {
-class FontList;
 class ImageSkia;
 class Rect;
-}
+}  // namespace gfx
 
 namespace ui {
 class InputMethod;
 class GestureRecognizer;
 class OSExchangeData;
-}
+}  // namespace ui
 
 namespace views {
 class TooltipManager;
@@ -46,12 +45,11 @@ namespace internal {
 //
 class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
  public:
-  ~NativeWidgetPrivate() override {}
+  ~NativeWidgetPrivate() override = default;
 
   // Creates an appropriate default NativeWidgetPrivate implementation for the
   // current OS/circumstance.
   static NativeWidgetPrivate* CreateNativeWidget(
-      const Widget::InitParams& init_params,
       internal::NativeWidgetDelegate* delegate);
 
   static NativeWidgetPrivate* GetNativeWidgetForNativeView(
@@ -71,8 +69,6 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   static void ReparentNativeView(gfx::NativeView native_view,
                                  gfx::NativeView new_parent);
 
-  static gfx::FontList GetWindowTitleFontList();
-
   // Returns the NativeView with capture, otherwise NULL if there is no current
   // capture set, or if |native_view| has no root.
   static gfx::NativeView GetGlobalCapture(gfx::NativeView native_view);
@@ -82,7 +78,7 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   static gfx::Rect ConstrainBoundsToDisplayWorkArea(const gfx::Rect& bounds);
 
   // Initializes the NativeWidget.
-  virtual void InitNativeWidget(const Widget::InitParams& params) = 0;
+  virtual void InitNativeWidget(Widget::InitParams params) = 0;
 
   // Called at the end of Widget::Init(), after Widget has completed
   // initialization.
@@ -153,9 +149,8 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
 
   // Retrieves the window's current restored bounds and "show" state, for
   // persisting.
-  virtual void GetWindowPlacement(
-      gfx::Rect* bounds,
-      ui::WindowShowState* show_state) const = 0;
+  virtual void GetWindowPlacement(gfx::Rect* bounds,
+                                  ui::WindowShowState* show_state) const = 0;
 
   // Sets the NativeWindow title. Returns true if the title changed.
   virtual bool SetWindowTitle(const base::string16& title) = 0;
@@ -191,8 +186,8 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual void Activate() = 0;
   virtual void Deactivate() = 0;
   virtual bool IsActive() const = 0;
-  virtual void SetAlwaysOnTop(bool always_on_top) = 0;
-  virtual bool IsAlwaysOnTop() const = 0;
+  virtual void SetZOrderLevel(ui::ZOrderLevel order) = 0;
+  virtual ui::ZOrderLevel GetZOrderLevel() const = 0;
   virtual void SetVisibleOnAllWorkspaces(bool always_visible) = 0;
   virtual bool IsVisibleOnAllWorkspaces() const = 0;
   virtual void Maximize() = 0;
@@ -202,15 +197,18 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual void Restore() = 0;
   virtual void SetFullscreen(bool fullscreen) = 0;
   virtual bool IsFullscreen() const = 0;
+  virtual void SetCanAppearInExistingFullscreenSpaces(
+      bool can_appear_in_existing_fullscreen_spaces) = 0;
   virtual void SetOpacity(float opacity) = 0;
   virtual void SetAspectRatio(const gfx::SizeF& aspect_ratio) = 0;
   virtual void FlashFrame(bool flash) = 0;
   virtual void RunShellDrag(View* view,
-                            const ui::OSExchangeData& data,
+                            std::unique_ptr<ui::OSExchangeData> data,
                             const gfx::Point& location,
                             int operation,
                             ui::DragDropTypes::DragEventSource source) = 0;
   virtual void SchedulePaintInRect(const gfx::Rect& rect) = 0;
+  virtual void ScheduleLayout() = 0;
   virtual void SetCursor(gfx::NativeCursor cursor) = 0;
   virtual void ShowEmojiPanel();
   virtual bool IsMouseEventsEnabled() const = 0;
@@ -231,6 +229,9 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual bool IsTranslucentWindowOpacitySupported() const = 0;
   virtual ui::GestureRecognizer* GetGestureRecognizer() = 0;
   virtual void OnSizeConstraintsChanged() = 0;
+  // Called before and after re-parenting of this or an ancestor widget.
+  virtual void OnNativeViewHierarchyWillChange() = 0;
+  virtual void OnNativeViewHierarchyChanged() = 0;
 
   // Returns an internal name that matches the name of the associated Widget.
   virtual std::string GetName() const = 0;

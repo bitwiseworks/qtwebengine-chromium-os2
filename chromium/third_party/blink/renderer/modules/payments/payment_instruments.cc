@@ -10,24 +10,26 @@
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/public/platform/web_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/web_icon_sizes_parser.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_image_object.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_payment_instrument.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/modules/payments/basic_card_helper.h"
-#include "third_party/blink/renderer/modules/payments/payment_instrument.h"
 #include "third_party/blink/renderer/modules/payments/payment_manager.h"
 #include "third_party/blink/renderer/modules/permissions/permission_utils.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -45,11 +47,11 @@ bool rejectError(ScriptPromiseResolver* resolver,
       resolver->Resolve();
       return true;
     case payments::mojom::blink::PaymentHandlerStatus::NO_ACTIVE_WORKER:
-      resolver->Reject(DOMException::Create(
+      resolver->Reject(MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kInvalidStateError, "No active service worker"));
       return true;
     case payments::mojom::blink::PaymentHandlerStatus::STORAGE_OPERATION_FAILED:
-      resolver->Reject(DOMException::Create(
+      resolver->Reject(MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kInvalidStateError, "Storage operation is failed"));
       return true;
     case payments::mojom::blink::PaymentHandlerStatus::
@@ -78,15 +80,16 @@ bool AllowedToUsePaymentFeatures(ScriptState* script_state) {
   return ExecutionContext::From(script_state)
       ->GetSecurityContext()
       .GetFeaturePolicy()
-      ->IsFeatureEnabled(mojom::FeaturePolicyFeature::kPayment);
+      ->IsFeatureEnabled(mojom::blink::FeaturePolicyFeature::kPayment);
 }
 
-ScriptPromise RejectNotAllowedToUsePaymentFeatures(ScriptState* script_state) {
-  return ScriptPromise::RejectWithDOMException(
-      script_state, DOMException::Create(
-                        DOMExceptionCode::kSecurityError,
-                        "Must be in a top-level browsing context or an iframe "
-                        "needs to specify allow=\"payment\" explicitly"));
+ScriptPromise RejectNotAllowedToUsePaymentFeatures(
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
+  exception_state.ThrowSecurityError(
+      "Must be in a top-level browsing context or an iframe needs to specify "
+      "allow=\"payment\" explicitly");
+  return ScriptPromise();
 }
 
 }  // namespace
@@ -96,8 +99,8 @@ ScriptPromise RejectNotAllowedToUsePaymentFeatures(ScriptState* script_state) {
 // referenced by |PaymentInstrument| will not be traced through the callback and
 // can be prematurely destroyed.
 // TODO(keishi): Remove this conversion if IDLDictionaryBase situation changes.
-class PaymentInstrumentParameter
-    : public GarbageCollectedFinalized<PaymentInstrumentParameter> {
+class PaymentInstrumentParameter final
+    : public GarbageCollected<PaymentInstrumentParameter> {
  public:
   explicit PaymentInstrumentParameter(const PaymentInstrument* instrument)
       : has_icons_(instrument->hasIcons()),
@@ -123,7 +126,10 @@ class PaymentInstrumentParameter
   bool has_name() const { return has_name_; }
   const String& name() const { return name_; }
 
-  void Trace(blink::Visitor* visitor) { visitor->Trace(icons_); }
+  void Trace(Visitor* visitor) {
+    visitor->Trace(icons_);
+    visitor->Trace(capabilities_);
+  }
 
  private:
   bool has_icons_;
@@ -138,22 +144,23 @@ class PaymentInstrumentParameter
 };
 
 PaymentInstruments::PaymentInstruments(
-    const payments::mojom::blink::PaymentManagerPtr& manager)
+    const mojo::Remote<payments::mojom::blink::PaymentManager>& manager)
     : manager_(manager) {}
 
 ScriptPromise PaymentInstruments::deleteInstrument(
     ScriptState* script_state,
-    const String& instrument_key) {
+    const String& instrument_key,
+    ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state))
-    return RejectNotAllowedToUsePaymentFeatures(script_state);
+    return RejectNotAllowedToUsePaymentFeatures(script_state, exception_state);
 
   if (!manager_.is_bound()) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                           kPaymentManagerUnavailable));
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kPaymentManagerUnavailable);
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   manager_->DeletePaymentInstrument(
@@ -164,17 +171,18 @@ ScriptPromise PaymentInstruments::deleteInstrument(
 }
 
 ScriptPromise PaymentInstruments::get(ScriptState* script_state,
-                                      const String& instrument_key) {
+                                      const String& instrument_key,
+                                      ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state))
-    return RejectNotAllowedToUsePaymentFeatures(script_state);
+    return RejectNotAllowedToUsePaymentFeatures(script_state, exception_state);
 
   if (!manager_.is_bound()) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                           kPaymentManagerUnavailable));
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kPaymentManagerUnavailable);
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   manager_->GetPaymentInstrument(
@@ -184,17 +192,18 @@ ScriptPromise PaymentInstruments::get(ScriptState* script_state,
   return promise;
 }
 
-ScriptPromise PaymentInstruments::keys(ScriptState* script_state) {
+ScriptPromise PaymentInstruments::keys(ScriptState* script_state,
+                                       ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state))
-    return RejectNotAllowedToUsePaymentFeatures(script_state);
+    return RejectNotAllowedToUsePaymentFeatures(script_state, exception_state);
 
   if (!manager_.is_bound()) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                           kPaymentManagerUnavailable));
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kPaymentManagerUnavailable);
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   manager_->KeysOfPaymentInstruments(
@@ -204,17 +213,18 @@ ScriptPromise PaymentInstruments::keys(ScriptState* script_state) {
 }
 
 ScriptPromise PaymentInstruments::has(ScriptState* script_state,
-                                      const String& instrument_key) {
+                                      const String& instrument_key,
+                                      ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state))
-    return RejectNotAllowedToUsePaymentFeatures(script_state);
+    return RejectNotAllowedToUsePaymentFeatures(script_state, exception_state);
 
   if (!manager_.is_bound()) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                           kPaymentManagerUnavailable));
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kPaymentManagerUnavailable);
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   manager_->HasPaymentInstrument(
@@ -229,17 +239,17 @@ ScriptPromise PaymentInstruments::set(ScriptState* script_state,
                                       const PaymentInstrument* details,
                                       ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state))
-    return RejectNotAllowedToUsePaymentFeatures(script_state);
+    return RejectNotAllowedToUsePaymentFeatures(script_state, exception_state);
 
   if (!manager_.is_bound()) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                           kPaymentManagerUnavailable));
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kPaymentManagerUnavailable);
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ExecutionContext* context = ExecutionContext::From(script_state);
-  Document* doc = DynamicTo<Document>(context);
+  Document* doc = Document::DynamicFrom(context);
 
   // Should move this permission check to browser process.
   // Please see http://crbug.com/795929
@@ -257,17 +267,18 @@ ScriptPromise PaymentInstruments::set(ScriptState* script_state,
   return resolver->Promise();
 }
 
-ScriptPromise PaymentInstruments::clear(ScriptState* script_state) {
+ScriptPromise PaymentInstruments::clear(ScriptState* script_state,
+                                        ExceptionState& exception_state) {
   if (!AllowedToUsePaymentFeatures(script_state))
-    return RejectNotAllowedToUsePaymentFeatures(script_state);
+    return RejectNotAllowedToUsePaymentFeatures(script_state, exception_state);
 
   if (!manager_.is_bound()) {
-    return ScriptPromise::RejectWithDOMException(
-        script_state, DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                                           kPaymentManagerUnavailable));
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kPaymentManagerUnavailable);
+    return ScriptPromise();
   }
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   manager_->ClearPaymentInstruments(
@@ -279,8 +290,9 @@ ScriptPromise PaymentInstruments::clear(ScriptState* script_state) {
 mojom::blink::PermissionService* PaymentInstruments::GetPermissionService(
     ScriptState* script_state) {
   if (!permission_service_) {
-    ConnectToPermissionService(ExecutionContext::From(script_state),
-                               mojo::MakeRequest(&permission_service_));
+    ConnectToPermissionService(
+        ExecutionContext::From(script_state),
+        permission_service_.BindNewPipeAndPassReceiver());
   }
   return permission_service_.get();
 }
@@ -298,9 +310,9 @@ void PaymentInstruments::OnRequestPermission(
   ScriptState::Scope scope(resolver->GetScriptState());
 
   if (status != mojom::blink::PermissionStatus::GRANTED) {
-    resolver->Reject(
-        DOMException::Create(DOMExceptionCode::kNotAllowedError,
-                             "Not allowed to install this payment handler"));
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kNotAllowedError,
+        "Not allowed to install this payment handler"));
     return;
   }
 
@@ -352,9 +364,9 @@ void PaymentInstruments::OnRequestPermission(
       ExceptionState exception_state(resolver->GetScriptState()->GetIsolate(),
                                      ExceptionState::kSetterContext,
                                      "PaymentInstruments", "set");
-      BasicCardHelper::ParseBasiccardData(
-          details->capabilities(), instrument->supported_networks,
-          instrument->supported_types, exception_state);
+      BasicCardHelper::ParseBasiccardData(details->capabilities(),
+                                          instrument->supported_networks,
+                                          exception_state);
       if (exception_state.HadException()) {
         resolver->Reject(exception_state);
         return;
@@ -404,7 +416,7 @@ void PaymentInstruments::onGetPaymentInstrument(
     image_object->setType(icon->type);
     String sizes = WTF::g_empty_string;
     for (const auto& size : icon->sizes) {
-      sizes = sizes + String::Format("%dx%d ", size.width, size.height);
+      sizes = sizes + String::Format("%dx%d ", size.width(), size.height());
     }
     image_object->setSizes(sizes.StripWhiteSpace());
     icons.push_back(image_object);
@@ -416,7 +428,7 @@ void PaymentInstruments::onGetPaymentInstrument(
                                    ExceptionState::kGetterContext,
                                    "PaymentInstruments", "get");
     instrument->setCapabilities(
-        ScriptValue(resolver->GetScriptState(),
+        ScriptValue(resolver->GetScriptState()->GetIsolate(),
                     FromJSONString(resolver->GetScriptState()->GetIsolate(),
                                    resolver->GetScriptState()->GetContext(),
                                    stored_instrument->stringified_capabilities,

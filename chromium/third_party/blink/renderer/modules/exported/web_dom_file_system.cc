@@ -30,8 +30,10 @@
 
 #include "third_party/blink/public/web/web_dom_file_system.h"
 
+#include "third_party/blink/public/mojom/filesystem/file_system.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_directory_entry.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_dom_file_system.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_entry.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_file_entry.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -67,10 +69,13 @@ WebDOMFileSystem WebDOMFileSystem::Create(WebLocalFrame* frame,
                                           const WebURL& root_url,
                                           SerializableType serializable_type) {
   DCHECK(frame);
-  DCHECK(ToWebLocalFrameImpl(frame)->GetFrame());
-  DOMFileSystem* dom_file_system = DOMFileSystem::Create(
-      ToWebLocalFrameImpl(frame)->GetFrame()->GetDocument(), name,
-      static_cast<mojom::blink::FileSystemType>(type), root_url);
+  DCHECK(To<WebLocalFrameImpl>(frame)->GetFrame());
+  auto* dom_file_system = MakeGarbageCollected<DOMFileSystem>(
+      To<WebLocalFrameImpl>(frame)
+          ->GetFrame()
+          ->GetDocument()
+          ->ToExecutionContext(),
+      name, static_cast<mojom::blink::FileSystemType>(type), root_url);
   if (serializable_type == kSerializableTypeSerializable)
     dom_file_system->MakeClonable();
   return WebDOMFileSystem(dom_file_system);
@@ -133,11 +138,11 @@ v8::Local<v8::Value> WebDOMFileSystem::CreateV8Entry(
   if (!private_.Get())
     return v8::Local<v8::Value>();
   if (entry_type == kEntryTypeDirectory) {
-    return ToV8(DirectoryEntry::Create(private_.Get(), path),
+    return ToV8(MakeGarbageCollected<DirectoryEntry>(private_.Get(), path),
                 isolate->GetCurrentContext()->Global(), isolate);
   }
   DCHECK_EQ(entry_type, kEntryTypeFile);
-  return ToV8(FileEntry::Create(private_.Get(), path),
+  return ToV8(MakeGarbageCollected<FileEntry>(private_.Get(), path),
               isolate->GetCurrentContext()->Global(), isolate);
 }
 

@@ -6,9 +6,9 @@
 
 
 #include "base/logging.h"
-#include "third_party/blink/public/platform/web_cursor_info.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/cursor_loader_x11.h"
+#include "ui/base/cursor/cursor_lookup.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/x/x11.h"
 
@@ -18,17 +18,12 @@ ui::PlatformCursor WebCursor::GetPlatformCursor(const ui::Cursor& cursor) {
   if (platform_cursor_)
     return platform_cursor_;
 
-  SkBitmap bitmap = cursor.GetBitmap();
+  SkBitmap bitmap = GetCursorBitmap(cursor);
 
   XcursorImage* image =
-      ui::SkBitmapToXcursorImage(&bitmap, cursor.GetHotspot());
+      ui::SkBitmapToXcursorImage(&bitmap, GetCursorHotspot(cursor));
   platform_cursor_ = ui::CreateReffedCustomXCursor(image);
   return platform_cursor_;
-}
-
-void WebCursor::InitPlatformData() {
-  platform_cursor_ = 0;
-  device_scale_factor_ = 1.f;
 }
 
 bool WebCursor::IsPlatformDataEqual(const WebCursor& other) const {
@@ -40,6 +35,7 @@ void WebCursor::CleanupPlatformData() {
     ui::UnrefCustomXCursor(platform_cursor_);
     platform_cursor_ = 0;
   }
+  custom_cursor_.reset();
 }
 
 void WebCursor::CopyPlatformData(const WebCursor& other) {

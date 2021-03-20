@@ -9,7 +9,7 @@
 
 namespace views {
 
-MenuDelegate::~MenuDelegate() {}
+MenuDelegate::~MenuDelegate() = default;
 
 bool MenuDelegate::IsItemChecked(int id) const {
   return false;
@@ -21,8 +21,9 @@ base::string16 MenuDelegate::GetLabel(int id) const {
 
 void MenuDelegate::GetLabelStyle(int id, LabelStyle* style) const {}
 
-base::string16 MenuDelegate::GetTooltipText(int id,
-                                      const gfx::Point& screen_loc) const {
+base::string16 MenuDelegate::GetTooltipText(
+    int id,
+    const gfx::Point& screen_loc) const {
   return base::string16();
 }
 
@@ -70,8 +71,8 @@ bool MenuDelegate::IsTriggerableEvent(MenuItemView* source,
                                       const ui::Event& e) {
   return e.type() == ui::ET_GESTURE_TAP ||
          e.type() == ui::ET_GESTURE_TAP_DOWN ||
-         (e.IsMouseEvent() && (e.flags() &
-              (ui::EF_LEFT_MOUSE_BUTTON | ui::EF_RIGHT_MOUSE_BUTTON)));
+         (e.IsMouseEvent() &&
+          (e.flags() & (ui::EF_LEFT_MOUSE_BUTTON | ui::EF_RIGHT_MOUSE_BUTTON)));
 }
 
 bool MenuDelegate::CanDrop(MenuItemView* menu, const OSExchangeData& data) {
@@ -125,7 +126,7 @@ MenuItemView* MenuDelegate::GetSiblingMenu(MenuItemView* menu,
                                            MenuAnchorPosition* anchor,
                                            bool* has_mnemonics,
                                            MenuButton** button) {
-  return NULL;
+  return nullptr;
 }
 
 int MenuDelegate::GetMaxWidthForMenu(MenuItemView* menu) {
@@ -134,11 +135,9 @@ int MenuDelegate::GetMaxWidthForMenu(MenuItemView* menu) {
   return 800;
 }
 
-void MenuDelegate::WillShowMenu(MenuItemView* menu) {
-}
+void MenuDelegate::WillShowMenu(MenuItemView* menu) {}
 
-void MenuDelegate::WillHideMenu(MenuItemView* menu) {
-}
+void MenuDelegate::WillHideMenu(MenuItemView* menu) {}
 
 void MenuDelegate::GetHorizontalIconMargins(int command_id,
                                             int icon_size,

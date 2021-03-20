@@ -44,6 +44,8 @@
 
 namespace blink {
 
+class ContentSecurityPolicy;
+
 // Extends blink::DocumentLoader to attach |extra_data_| to store data that can
 // be set/get via the WebDocumentLoader interface.
 class CORE_EXPORT WebDocumentLoaderImpl final : public DocumentLoader,
@@ -51,6 +53,7 @@ class CORE_EXPORT WebDocumentLoaderImpl final : public DocumentLoader,
  public:
   WebDocumentLoaderImpl(LocalFrame*,
                         WebNavigationType navigation_type,
+                        ContentSecurityPolicy*,
                         std::unique_ptr<WebNavigationParams> navigation_params);
 
   static WebDocumentLoaderImpl* FromDocumentLoader(DocumentLoader* loader) {
@@ -62,14 +65,11 @@ class CORE_EXPORT WebDocumentLoaderImpl final : public DocumentLoader,
   WebString OriginalReferrer() const override;
   WebURL GetUrl() const override;
   WebString HttpMethod() const override;
-  mojom::FetchCacheMode GetCacheMode() const override;
   WebString Referrer() const override;
   network::mojom::ReferrerPolicy GetReferrerPolicy() const override;
-  const WebURLRequest& GetRequest() const override;
   const WebURLResponse& GetResponse() const override;
   bool HasUnreachableURL() const override;
   WebURL UnreachableURL() const override;
-  void AppendRedirect(const WebURL&) override;
   void RedirectChain(WebVector<WebURL>&) const override;
   bool IsClientRedirect() const override;
   bool ReplacesCurrentHistoryItem() const override;
@@ -77,26 +77,27 @@ class CORE_EXPORT WebDocumentLoaderImpl final : public DocumentLoader,
   ExtraData* GetExtraData() const override;
   void SetExtraData(std::unique_ptr<ExtraData>) override;
   void SetSubresourceFilter(WebDocumentSubresourceFilter*) override;
+  void SetLoadingHintsProvider(
+      std::unique_ptr<blink::WebLoadingHintsProvider>) override;
   void SetServiceWorkerNetworkProvider(
       std::unique_ptr<WebServiceWorkerNetworkProvider>) override;
   WebServiceWorkerNetworkProvider* GetServiceWorkerNetworkProvider() override;
   void BlockParser() override;
   void ResumeParser() override;
-  bool IsArchive() const override;
+  bool HasBeenLoadedAsWebArchive() const override;
+  WebURLRequest::PreviewsState GetPreviewsState() const override;
   WebArchiveInfo GetArchiveInfo() const override;
   bool HadUserGesture() const override;
   bool IsListingFtpDirectory() const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   ~WebDocumentLoaderImpl() override;
   void DetachFromFrame(bool flush_microtask_queue) override;
-  String DebugName() const override { return "WebDocumentLoaderImpl"; }
 
   // Mutable because the const getters will magically sync these to the
   // latest version from WebKit.
-  mutable WrappedResourceRequest request_wrapper_;
   mutable WrappedResourceResponse response_wrapper_;
 
   std::unique_ptr<ExtraData> extra_data_;

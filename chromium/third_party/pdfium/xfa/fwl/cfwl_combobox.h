@@ -59,7 +59,7 @@ class CFWL_ComboBox final : public CFWL_Widget {
   int32_t GetCurSel() const { return m_iCurSel; }
   void SetCurSel(int32_t iSel);
 
-  void AddString(WideStringView wsText);
+  void AddString(const WideString& wsText);
   void RemoveAt(int32_t iIndex);
   void RemoveAll();
 
@@ -88,8 +88,6 @@ class CFWL_ComboBox final : public CFWL_Widget {
 
   CFX_RectF GetBBox() const;
   void EditModifyStylesEx(uint32_t dwStylesExAdded, uint32_t dwStylesExRemoved);
-
-  void DrawStretchHandler(CXFA_Graphics* pGraphics, const CFX_Matrix* pMatrix);
   void ShowDropList(bool bActivate);
 
   CFWL_ComboEdit* GetComboEdit() const { return m_pEdit.get(); }
@@ -125,8 +123,8 @@ class CFWL_ComboBox final : public CFWL_Widget {
   CFX_RectF m_rtBtn;
   std::unique_ptr<CFWL_ComboEdit> m_pEdit;
   std::unique_ptr<CFWL_ComboList> m_pListBox;
-  int32_t m_iCurSel;
-  int32_t m_iBtnState;
+  int32_t m_iCurSel = -1;
+  int32_t m_iBtnState = CFWL_PartState_Normal;
 };
 
 #endif  // XFA_FWL_CFWL_COMBOBOX_H_

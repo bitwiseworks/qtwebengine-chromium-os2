@@ -29,7 +29,7 @@
 // One MediaCodecLoop instance owns a single MediaCodec(Bridge) instance, and
 // drives it to perform decoding in conjunction with a MediaCodecLoop::Client.
 // The Client provides the input data and consumes the output data.  A typical
-// example is AndroidVideoDecodeAccelerator.
+// example is MediaCodecAudioDecoder.
 
 // Implementation notes.
 //
@@ -107,10 +107,6 @@ namespace media {
 
 class MEDIA_EXPORT MediaCodecLoop {
  public:
-  // TODO(liberato): this exists in video_decoder.h and audio_decoder.h too.
-  using InitCB = base::Callback<void(bool success)>;
-  using DecodeCB = base::Callback<void(DecodeStatus status)>;
-
   // Data that the client wants to put into an input buffer.
   struct InputData {
     InputData();
@@ -127,7 +123,8 @@ class MEDIA_EXPORT MediaCodecLoop {
     base::TimeDelta presentation_time;
 
     bool is_eos = false;
-    EncryptionScheme encryption_scheme;
+    EncryptionScheme encryption_scheme = EncryptionScheme::kUnencrypted;
+    base::Optional<EncryptionPattern> encryption_pattern;
   };
 
   // Handy enum for "no buffer".
@@ -294,9 +291,6 @@ class MEDIA_EXPORT MediaCodecLoop {
   // Helper method to change the state.
   void SetState(State new_state);
 
-  // Helper method to tell us if MediaCodecBridge::Flush() doesn't work.
-  bool CodecNeedsFlushWorkaround() const;
-
   // A helper function for logging.
   static const char* AsString(State state);
 
@@ -337,7 +331,7 @@ class MEDIA_EXPORT MediaCodecLoop {
   const bool disable_timer_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<MediaCodecLoop> weak_factory_;
+  base::WeakPtrFactory<MediaCodecLoop> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaCodecLoop);
 };

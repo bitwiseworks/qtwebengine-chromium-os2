@@ -15,7 +15,7 @@
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_surface_egl.h"
-#include "ui/gl/gl_surface_egl_x11.h"
+#include "ui/gl/gl_surface_egl_x11_gles2.h"
 #include "ui/gl/gl_surface_glx.h"
 #include "ui/gl/gl_surface_glx_x11.h"
 #include "ui/gl/gl_surface_stub.h"
@@ -27,15 +27,18 @@ std::vector<GLImplementation> GetAllowedGLImplementations() {
   std::vector<GLImplementation> impls;
   impls.push_back(kGLImplementationDesktopGL);
   impls.push_back(kGLImplementationEGLGLES2);
+  impls.push_back(kGLImplementationEGLANGLE);
   impls.push_back(kGLImplementationSwiftShaderGL);
   return impls;
 }
 
-bool GetGLWindowSystemBindingInfo(GLWindowSystemBindingInfo* info) {
+bool GetGLWindowSystemBindingInfo(const GLVersionInfo& gl_info,
+                                  GLWindowSystemBindingInfo* info) {
   switch (GetGLImplementation()) {
     case kGLImplementationDesktopGL:
-      return GetGLWindowSystemBindingInfoGLX(info);
+      return GetGLWindowSystemBindingInfoGLX(gl_info, info);
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return GetGLWindowSystemBindingInfoEGL(info);
     default:
       return false;
@@ -52,6 +55,7 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
                                  compatible_surface, attribs);
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return InitializeGLContext(new GLContextEGL(share_group),
                                  compatible_surface, attribs);
     case kGLImplementationMockGL:
@@ -77,7 +81,10 @@ scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
       DCHECK(window != gfx::kNullAcceleratedWidget);
-      return InitializeGLSurface(new NativeViewGLSurfaceEGLX11(window));
+      return InitializeGLSurface(new NativeViewGLSurfaceEGLX11GLES2(window));
+    case kGLImplementationEGLANGLE:
+      DCHECK(window != gfx::kNullAcceleratedWidget);
+      return InitializeGLSurface(new NativeViewGLSurfaceEGL(window, nullptr));
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       return new GLSurfaceStub;
@@ -96,6 +103,7 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
           new UnmappedNativeViewGLSurfaceGLX(size), format);
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       if (GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
           size.width() == 0 && size.height() == 0) {
         return InitializeGLSurfaceWithFormat(new SurfacelessEGL(size), format);
@@ -121,6 +129,7 @@ void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
       SetDisabledExtensionsGLX(disabled_extensions);
       break;
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       SetDisabledExtensionsEGL(disabled_extensions);
       break;
     case kGLImplementationSwiftShaderGL:
@@ -139,6 +148,7 @@ bool InitializeExtensionSettingsOneOffPlatform() {
     case kGLImplementationDesktopGL:
       return InitializeExtensionSettingsOneOffGLX();
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return InitializeExtensionSettingsOneOffEGL();
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationMockGL:

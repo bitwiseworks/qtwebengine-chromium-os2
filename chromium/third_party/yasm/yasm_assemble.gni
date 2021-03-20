@@ -136,9 +136,7 @@ template("yasm_assemble") {
 
     # Deps.
     if (!is_os2) {
-      deps = [
-        yasm_label,
-      ]
+      deps = [ yasm_label ]
     }
     if (defined(invoker.deps)) {
       deps += invoker.deps
@@ -179,9 +177,7 @@ template("yasm_assemble") {
     }
 
     # Output file.
-    outputs = [
-      "$target_out_dir/$source_set_name/{{source_name_part}}.$asm_obj_extension",
-    ]
+    outputs = [ "$target_out_dir/$source_set_name/{{source_name_part}}.$asm_obj_extension" ]
     args += [
       "-o",
       rebase_path(outputs[0], root_build_dir),
@@ -206,8 +202,6 @@ template("yasm_assemble") {
     # Do not publicize any header to remove build dependency.
     public = []
 
-    deps = [
-      ":$action_name",
-    ]
+    deps = [ ":$action_name" ]
   }
 }

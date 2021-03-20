@@ -23,6 +23,7 @@
 #include "xfa/fwl/cfwl_scrollbar.h"
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_themetext.h"
+#include "xfa/fwl/theme/cfwl_widgettp.h"
 #include "xfa/fxfa/cxfa_ffapp.h"
 #include "xfa/fxfa/cxfa_ffwidget.h"
 #include "xfa/fxfa/parser/cxfa_para.h"
@@ -36,14 +37,13 @@ const wchar_t* const g_FWLTheme_CalFonts[] = {
 
 const float kLineHeight = 12.0f;
 
-}  // namespace
-
 CXFA_FFWidget* XFA_ThemeGetOuterWidget(CFWL_Widget* pWidget) {
-  CFWL_Widget* pOuter = pWidget;
-  while (pOuter && pOuter->GetOuter())
-    pOuter = pOuter->GetOuter();
-  return pOuter ? pOuter->GetLayoutItem() : nullptr;
+  CFWL_Widget* pOuter = pWidget ? pWidget->GetOutmost() : nullptr;
+  return pOuter ? static_cast<CXFA_FFWidget*>(pOuter->GetAdapterIface())
+                : nullptr;
 }
+
+}  // namespace
 
 CXFA_FWLTheme::CXFA_FWLTheme(CXFA_FFApp* pApp)
     : m_pCheckBoxTP(pdfium::MakeUnique<CFWL_CheckBoxTP>()),
@@ -81,7 +81,7 @@ bool CXFA_FWLTheme::LoadCalendarFont(CXFA_FFDoc* doc) {
 
 CXFA_FWLTheme::~CXFA_FWLTheme() {
   m_pTextOut.reset();
-  FWLTHEME_Release();
+  CFWL_FontManager::DestroyInstance();
 }
 
 void CXFA_FWLTheme::DrawBackground(const CFWL_ThemeBackground& pParams) {
@@ -150,7 +150,7 @@ CFX_RectF CXFA_FWLTheme::GetUIMargin(const CFWL_ThemePart& pThemePart) const {
   if (!pWidget)
     return CFX_RectF();
 
-  CXFA_ContentLayoutItem* pItem = pWidget;
+  CXFA_ContentLayoutItem* pItem = pWidget->GetLayoutItem();
   CXFA_Node* pNode = pWidget->GetNode();
   CFX_RectF rect = pNode->GetUIMargin();
   CXFA_Para* para = pNode->GetParaIfExists();
@@ -237,7 +237,7 @@ void CXFA_FWLTheme::CalcTextRect(const CFWL_ThemeText& pParams,
     m_pTextOut->SetTextColor(FWLTHEME_CAPACITY_TextColor);
     m_pTextOut->SetAlignment(pParams.m_iTTOAlign);
     m_pTextOut->SetStyles(pParams.m_dwTTOStyles);
-    m_pTextOut->CalcLogicSize(pParams.m_wsText, pRect);
+    m_pTextOut->CalcLogicSize(pParams.m_wsText.AsStringView(), pRect);
     return;
   }
 
@@ -247,7 +247,7 @@ void CXFA_FWLTheme::CalcTextRect(const CFWL_ThemeText& pParams,
   m_pTextOut->SetTextColor(pNode->GetTextColor());
   m_pTextOut->SetAlignment(pParams.m_iTTOAlign);
   m_pTextOut->SetStyles(pParams.m_dwTTOStyles);
-  m_pTextOut->CalcLogicSize(pParams.m_wsText, pRect);
+  m_pTextOut->CalcLogicSize(pParams.m_wsText.AsStringView(), pRect);
 }
 
 CFWL_WidgetTP* CXFA_FWLTheme::GetTheme(CFWL_Widget* pWidget) const {

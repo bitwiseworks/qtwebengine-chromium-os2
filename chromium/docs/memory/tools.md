@@ -147,7 +147,7 @@ looking similar due to the nature of DOM node allocation.
 ### Instructions
 #### <a name="configure-oophp"></a>Configuration and setup
   1. [Android Only] For native stack traces, a custom build with
-     `enable_framepoitners=true` is required.
+     `enable_framepointers=true` is required.
   2. Configure OOPHP settings in about://flags. (See table below)
   3. Restart browser with new settings if necessary.
   4. Verify target processes are being profiled in chrome://memory-internals.
@@ -214,8 +214,7 @@ in step (3) determines how many dumps (which are snapshots) are taken.
 **Warning:** If OOPHP is enabled, the tracing UI may not be able to handle
 deserializing or rendering the memory dump. In this situation, save
 the heap dump directly in chrome://memory-internals and use alternate tools to
-analyze it. Also, consider leaving  `#memlog-keep-small-allocations` Disabled in
-`chrome://flags` to reduce the heap dump size.
+analyze it.
 
 TODO(ajwong): Add screenshot or at least reference the more detailed
 memory-infra docs.

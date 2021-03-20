@@ -5,16 +5,20 @@
 
 '''Unit tests for grit.tool.rc2grd'''
 
+from __future__ import print_function
+
 import os
 import sys
 if __name__ == '__main__':
   sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 import re
-import StringIO
 import unittest
 
+from six import StringIO
+
 from grit import grd_reader
+from grit import util
 from grit.node import base
 from grit.tool import rc2grd
 
@@ -90,7 +94,7 @@ END
                '  IDS_PROGRAMS_SHUTDOWN_TEXT      "Google Desktop Search needs to close the following programs:\\n\\n$1\\nThe installation will not proceed if you choose to cancel."\n'
                'END\n')
     tool = rc2grd.Rc2Grd()
-    tool.role_model = grd_reader.Parse(StringIO.StringIO(
+    tool.role_model = grd_reader.Parse(StringIO(
       '''<?xml version="1.0" encoding="UTF-8"?>
       <grit latest_public_release="2" source_lang_id="en-US" current_release="3" base_dir=".">
         <release seq="3">
@@ -131,6 +135,29 @@ The installation will not proceed if you choose to cancel.
       result.children[2].children[2].children[1].children[1].attrs['name'] == 'ADMINNAME')
     self.failUnless(
       result.children[2].children[2].children[2].children[0].attrs['name'] == 'LIST_OF_PROGRAMS')
+
+  def testRunOutput(self):
+    """Verify basic correct Run behavior."""
+    tool = rc2grd.Rc2Grd()
+    class DummyOpts(object):
+      verbose = False
+      extra_verbose = False
+    with util.TempDir({}) as output_dir:
+      rcfile = os.path.join(output_dir.GetPath(), 'foo.rc')
+      open(rcfile, 'w').close()
+      self.assertIsNone(tool.Run(DummyOpts(), [rcfile]))
+      self.assertTrue(os.path.exists(os.path.join(output_dir.GetPath(), 'foo.grd')))
+
+  def testMissingOutput(self):
+    """Verify failure with no args."""
+    tool = rc2grd.Rc2Grd()
+    class DummyOpts(object):
+      verbose = False
+      extra_verbose = False
+    ret = tool.Run(DummyOpts(), [])
+    self.assertIsNotNone(ret)
+    self.assertGreater(ret, 0)
+
 
 if __name__ == '__main__':
   unittest.main()

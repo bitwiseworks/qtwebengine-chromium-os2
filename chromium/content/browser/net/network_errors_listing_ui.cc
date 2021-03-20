@@ -11,8 +11,9 @@
 #include "base/json/json_writer.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/values.h"
-#include "content/grit/content_resources.h"
+#include "content/grit/dev_ui_content_resources.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_ui.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_util.h"
@@ -57,19 +58,20 @@ std::unique_ptr<base::ListValue> GetNetworkErrorData() {
   return error_list;
 }
 
-bool HandleWebUIRequestCallback(
-    BrowserContext* current_context,
-    const std::string& path,
-    const WebUIDataSource::GotDataCallback& callback) {
-  if (path != kNetworkErrorDataFile)
-    return false;
+bool ShouldHandleWebUIRequestCallback(const std::string& path) {
+  return path == kNetworkErrorDataFile;
+}
+
+void HandleWebUIRequestCallback(BrowserContext* current_context,
+                                const std::string& path,
+                                WebUIDataSource::GotDataCallback callback) {
+  DCHECK(ShouldHandleWebUIRequestCallback(path));
 
   base::DictionaryValue data;
   data.Set(kErrorCodesDataName, GetNetworkErrorData());
   std::string json_string;
   base::JSONWriter::Write(data, &json_string);
-  callback.Run(base::RefCountedString::TakeString(&json_string));
-  return true;
+  std::move(callback).Run(base::RefCountedString::TakeString(&json_string));
 }
 
 } // namespace
@@ -81,15 +83,16 @@ NetworkErrorsListingUI::NetworkErrorsListingUI(WebUI* web_ui)
       WebUIDataSource::Create(kChromeUINetworkErrorsListingHost);
 
   // Add required resources.
-  html_source->SetJsonPath("strings.js");
+  html_source->UseStringsJs();
   html_source->AddResourcePath("network_errors_listing.css",
                                IDR_NETWORK_ERROR_LISTING_CSS);
   html_source->AddResourcePath("network_errors_listing.js",
                                IDR_NETWORK_ERROR_LISTING_JS);
   html_source->SetDefaultResource(IDR_NETWORK_ERROR_LISTING_HTML);
   html_source->SetRequestFilter(
-      base::Bind(&HandleWebUIRequestCallback,
-                 web_ui->GetWebContents()->GetBrowserContext()));
+      base::BindRepeating(&ShouldHandleWebUIRequestCallback),
+      base::BindRepeating(&HandleWebUIRequestCallback,
+                          web_ui->GetWebContents()->GetBrowserContext()));
 
   BrowserContext* browser_context =
       web_ui->GetWebContents()->GetBrowserContext();

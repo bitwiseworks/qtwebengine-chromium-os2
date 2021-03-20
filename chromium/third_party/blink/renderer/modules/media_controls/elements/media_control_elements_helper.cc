@@ -6,13 +6,15 @@
 
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/events/keyboard_event.h"
+#include "third_party/blink/renderer/core/events/touch_event.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
-#include "third_party/blink/renderer/core/layout/layout_slider.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_div_element.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_input_element.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -25,8 +27,8 @@ bool MediaControlElementsHelper::IsUserInteractionEvent(const Event& event) {
          type == event_type_names::kMouseup ||
          type == event_type_names::kClick ||
          type == event_type_names::kDblclick ||
-         type == event_type_names::kGesturetap || event.IsKeyboardEvent() ||
-         event.IsTouchEvent();
+         type == event_type_names::kGesturetap || IsA<KeyboardEvent>(event) ||
+         IsA<TouchEvent>(event);
 }
 
 // static
@@ -40,12 +42,14 @@ bool MediaControlElementsHelper::IsUserInteractionEventForSlider(
     return true;
 
   // Some events are only captured during a slider drag.
-  const LayoutSlider* slider = ToLayoutSlider(layout_object);
-  // TODO(crbug.com/695459#c1): LayoutSliderItem::inDragMode is incorrectly
+  const HTMLInputElement* slider = nullptr;
+  if (layout_object)
+    slider = DynamicTo<HTMLInputElement>(layout_object->GetNode());
+  // TODO(crbug.com/695459#c1): HTMLInputElement::IsDraggedSlider is incorrectly
   // false for drags that start from the track instead of the thumb.
-  // Use SliderThumbElement::m_inDragMode and
-  // SliderContainerElement::m_touchStarted instead.
-  if (slider && !slider->InDragMode())
+  // Use SliderThumbElement::in_drag_mode_ and
+  // SliderContainerElement::touch_started_ instead.
+  if (slider && !slider->IsDraggedSlider())
     return false;
 
   const AtomicString& type = event.type();
@@ -58,16 +62,6 @@ bool MediaControlElementsHelper::IsUserInteractionEventForSlider(
 }
 
 // static
-MediaControlElementType MediaControlElementsHelper::GetMediaControlElementType(
-    const Node* node) {
-  SECURITY_DCHECK(node->IsMediaControlElement());
-  const HTMLElement* element = ToHTMLElement(node);
-  if (IsHTMLInputElement(*element))
-    return static_cast<const MediaControlInputElement*>(element)->DisplayType();
-  return static_cast<const MediaControlDivElement*>(element)->DisplayType();
-}
-
-// static
 const HTMLMediaElement* MediaControlElementsHelper::ToParentMediaElement(
     const Node* node) {
   if (!node)
@@ -76,15 +70,14 @@ const HTMLMediaElement* MediaControlElementsHelper::ToParentMediaElement(
   if (!shadow_host)
     return nullptr;
 
-  return IsHTMLMediaElement(shadow_host) ? ToHTMLMediaElement(shadow_host)
-                                         : nullptr;
+  return DynamicTo<HTMLMediaElement>(shadow_host);
 }
 
 // static
 HTMLDivElement* MediaControlElementsHelper::CreateDiv(const AtomicString& id,
                                                       ContainerNode* parent) {
   DCHECK(parent);
-  HTMLDivElement* element = HTMLDivElement::Create(parent->GetDocument());
+  auto* element = MakeGarbageCollected<HTMLDivElement>(parent->GetDocument());
   element->SetShadowPseudoId(id);
   parent->ParserAppendChild(element);
   return element;
@@ -114,7 +107,7 @@ HTMLDivElement* MediaControlElementsHelper::CreateDivWithId(
     const AtomicString& id,
     ContainerNode* parent) {
   DCHECK(parent);
-  HTMLDivElement* element = HTMLDivElement::Create(parent->GetDocument());
+  auto* element = MakeGarbageCollected<HTMLDivElement>(parent->GetDocument());
   element->setAttribute("id", id);
   parent->ParserAppendChild(element);
   return element;

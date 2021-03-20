@@ -4,8 +4,10 @@
 
 #include "content/browser/scheduler/responsiveness/watcher.h"
 
+#include "base/bind.h"
 #include "base/pending_task.h"
 #include "base/task/post_task.h"
+#include "build/build_config.h"
 #include "content/browser/scheduler/responsiveness/calculator.h"
 #include "content/browser/scheduler/responsiveness/message_loop_observer.h"
 #include "content/browser/scheduler/responsiveness/native_event_observer.h"
@@ -15,117 +17,27 @@
 namespace content {
 namespace responsiveness {
 
-Watcher::Metadata::Metadata(const void* identifier) : identifier(identifier) {}
-
-Watcher::Watcher() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-}
-
-void Watcher::SetUp() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  // Destroy() has the corresponding call to Release().
-  // We need this additional reference to make sure the object stays alive
-  // through hops to the IO thread, which are necessary both during construction
-  // and destruction.
-  AddRef();
-
-  calculator_ = CreateCalculator();
-  native_event_observer_ui_ = CreateNativeEventObserver();
-  currently_running_metadata_ui_.reserve(5);
-
-  RegisterMessageLoopObserverUI();
-
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::IO},
-      base::BindOnce(&Watcher::SetUpOnIOThread, base::Unretained(this),
-                     calculator_.get()));
-}
-
-void Watcher::Destroy() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  DCHECK(!destroy_was_called_);
-  destroy_was_called_ = true;
-
-  message_loop_observer_ui_.reset();
-  native_event_observer_ui_.reset();
-
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::IO},
-      base::BindOnce(&Watcher::TearDownOnIOThread, base::Unretained(this)));
-}
+Watcher::Metadata::Metadata(const void* identifier,
+                            bool was_blocked_or_low_priority,
+                            base::TimeTicks execution_start_time)
+    : identifier(identifier),
+      was_blocked_or_low_priority(was_blocked_or_low_priority),
+      execution_start_time(execution_start_time) {}
 
 std::unique_ptr<Calculator> Watcher::CreateCalculator() {
   return std::make_unique<Calculator>();
 }
 
-std::unique_ptr<NativeEventObserver> Watcher::CreateNativeEventObserver() {
-  NativeEventObserver::WillRunEventCallback will_run_callback =
-      base::BindRepeating(&Watcher::WillRunEventOnUIThread,
-                          base::Unretained(this));
-  NativeEventObserver::DidRunEventCallback did_run_callback =
-      base::BindRepeating(&Watcher::DidRunEventOnUIThread,
-                          base::Unretained(this));
-  return std::make_unique<NativeEventObserver>(std::move(will_run_callback),
-                                               std::move(did_run_callback));
+std::unique_ptr<MetricSource> Watcher::CreateMetricSource() {
+  return std::make_unique<MetricSource>(this);
 }
 
-Watcher::~Watcher() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(destroy_was_called_);
-}
-
-void Watcher::RegisterMessageLoopObserverUI() {
-  // We must use base::Unretained(this) to prevent ownership cycle.
-  MessageLoopObserver::TaskCallback will_run_callback = base::BindRepeating(
-      &Watcher::WillRunTaskOnUIThread, base::Unretained(this));
-  MessageLoopObserver::TaskCallback did_run_callback = base::BindRepeating(
-      &Watcher::DidRunTaskOnUIThread, base::Unretained(this));
-  message_loop_observer_ui_.reset(new MessageLoopObserver(
-      std::move(will_run_callback), std::move(did_run_callback)));
-}
-
-void Watcher::RegisterMessageLoopObserverIO() {
-  // We must use base::Unretained(this) to prevent ownership cycle.
-  MessageLoopObserver::TaskCallback will_run_callback = base::BindRepeating(
-      &Watcher::WillRunTaskOnIOThread, base::Unretained(this));
-  MessageLoopObserver::TaskCallback did_run_callback = base::BindRepeating(
-      &Watcher::DidRunTaskOnIOThread, base::Unretained(this));
-  message_loop_observer_io_.reset(new MessageLoopObserver(
-      std::move(will_run_callback), std::move(did_run_callback)));
-}
-
-void Watcher::SetUpOnIOThread(Calculator* calculator) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-
-  currently_running_metadata_io_.reserve(5);
-  RegisterMessageLoopObserverIO();
-  calculator_io_ = calculator;
-}
-
-void Watcher::TearDownOnIOThread() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-
-  message_loop_observer_io_.reset();
-
-  calculator_io_ = nullptr;
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&Watcher::TearDownOnUIThread, base::Unretained(this)));
-}
-
-void Watcher::TearDownOnUIThread() {
+void Watcher::WillRunTaskOnUIThread(const base::PendingTask* task,
+                                    bool was_blocked_or_low_priority) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // Corresponding call to AddRef() is in the constructor.
-  Release();
-}
-
-void Watcher::WillRunTaskOnUIThread(const base::PendingTask* task) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  WillRunTask(task, &currently_running_metadata_ui_);
+  WillRunTask(task, was_blocked_or_low_priority,
+              &currently_running_metadata_ui_);
 }
 
 void Watcher::DidRunTaskOnUIThread(const base::PendingTask* task) {
@@ -141,10 +53,12 @@ void Watcher::DidRunTaskOnUIThread(const base::PendingTask* task) {
              &mismatched_task_identifiers_ui_, std::move(callback));
 }
 
-void Watcher::WillRunTaskOnIOThread(const base::PendingTask* task) {
+void Watcher::WillRunTaskOnIOThread(const base::PendingTask* task,
+                                    bool was_blocked_or_low_priority) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
-  WillRunTask(task, &currently_running_metadata_io_);
+  WillRunTask(task, was_blocked_or_low_priority,
+              &currently_running_metadata_io_);
 }
 
 void Watcher::DidRunTaskOnIOThread(const base::PendingTask* task) {
@@ -160,19 +74,16 @@ void Watcher::DidRunTaskOnIOThread(const base::PendingTask* task) {
 }
 
 void Watcher::WillRunTask(const base::PendingTask* task,
+                          bool was_blocked_or_low_priority,
                           std::vector<Metadata>* currently_running_metadata) {
   // Reentrancy should be rare.
   if (UNLIKELY(!currently_running_metadata->empty())) {
     currently_running_metadata->back().caused_reentrancy = true;
   }
 
-  currently_running_metadata->emplace_back(task);
-
-  // For delayed tasks, record the time right before the task is run.
-  if (!task->delayed_run_time.is_null()) {
-    currently_running_metadata->back().execution_start_time =
-        base::TimeTicks::Now();
-  }
+  const base::TimeTicks execution_start_time = base::TimeTicks::Now();
+  currently_running_metadata->emplace_back(task, was_blocked_or_low_priority,
+                                           execution_start_time);
 }
 
 void Watcher::DidRunTask(const base::PendingTask* task,
@@ -186,36 +97,51 @@ void Watcher::DidRunTask(const base::PendingTask* task,
   if (UNLIKELY(currently_running_metadata->empty() ||
                (task != currently_running_metadata->back().identifier))) {
     *mismatched_task_identifiers += 1;
+    // Mismatches can happen (e.g: on ozone/wayland when Paste button is pressed
+    // in context menus, among others). Simply ignore the mismatches for now.
+    // See https://crbug.com/929813 for the details of why the mismatch
+    // happens.
+#if !defined(OS_CHROMEOS) && defined(OS_LINUX) && defined(USE_OZONE)
+    return currently_running_metadata_ui_.clear();
+#endif
     DCHECK_LE(*mismatched_task_identifiers, 1);
     return;
   }
 
-  bool caused_reentrancy = currently_running_metadata->back().caused_reentrancy;
-  base::TimeTicks execution_start_time =
-      currently_running_metadata->back().execution_start_time;
+  const Metadata metadata = currently_running_metadata->back();
   currently_running_metadata->pop_back();
 
   // Ignore tasks that caused reentrancy, since their execution latency will
   // be very large, but Chrome was still responsive.
-  if (UNLIKELY(caused_reentrancy))
+  if (UNLIKELY(metadata.caused_reentrancy))
     return;
 
-  // For delayed tasks, measure the duration of the task itself, rather than the
-  // duration from schedule time to finish time.
-  base::TimeTicks schedule_time;
-  if (execution_start_time.is_null()) {
-    // Tasks which were posted before the MessageLoopObserver was created will
-    // not have a queue_time, and should be ignored. This doesn't affect delayed
-    // tasks.
-    if (UNLIKELY(task->queue_time.is_null()))
-      return;
-
-    schedule_time = task->queue_time;
-  } else {
-    schedule_time = execution_start_time;
+  // Immediate tasks which were posted before the MessageLoopObserver was
+  // created will not have a queue_time nor a delayed run time, and should be
+  // ignored.
+  if (UNLIKELY(task->queue_time.is_null()) &&
+      UNLIKELY(task->delayed_run_time.is_null())) {
+    return;
   }
 
-  std::move(callback).Run(schedule_time, base::TimeTicks::Now());
+  // For delayed tasks and tasks that were blocked or low priority, pretend that
+  // the queuing duration is zero. It is normal to have long queueing time for
+  // these tasks, so it shouldn't be used to measure jank.
+  const bool is_delayed_task = !task->delayed_run_time.is_null();
+  const base::TimeTicks queue_time =
+      is_delayed_task || metadata.was_blocked_or_low_priority
+          ? metadata.execution_start_time
+          : task->queue_time;
+  const base::TimeTicks execution_finish_time = base::TimeTicks::Now();
+
+  DCHECK(!queue_time.is_null());
+  DCHECK(!metadata.execution_start_time.is_null());
+  DCHECK(!execution_finish_time.is_null());
+  DCHECK_LE(queue_time, metadata.execution_start_time);
+  DCHECK_LE(metadata.execution_start_time, execution_finish_time);
+
+  std::move(callback).Run(queue_time, metadata.execution_start_time,
+                          execution_finish_time);
 }
 
 void Watcher::WillRunEventOnUIThread(const void* opaque_identifier) {
@@ -225,9 +151,10 @@ void Watcher::WillRunEventOnUIThread(const void* opaque_identifier) {
     currently_running_metadata_ui_.back().caused_reentrancy = true;
   }
 
-  currently_running_metadata_ui_.emplace_back(opaque_identifier);
-  currently_running_metadata_ui_.back().execution_start_time =
-      base::TimeTicks::Now();
+  const base::TimeTicks execution_start_time = base::TimeTicks::Now();
+  currently_running_metadata_ui_.emplace_back(
+      opaque_identifier, /* was_blocked_or_low_priority= */ false,
+      execution_start_time);
 }
 
 void Watcher::DidRunEventOnUIThread(const void* opaque_identifier) {
@@ -241,13 +168,18 @@ void Watcher::DidRunEventOnUIThread(const void* opaque_identifier) {
                (opaque_identifier !=
                 currently_running_metadata_ui_.back().identifier))) {
     mismatched_event_identifiers_ui_ += 1;
+    // See comment in DidRunTask() for why |currently_running_metadata_ui_| may
+    // be reset.
+#if !defined(OS_CHROMEOS) && defined(OS_LINUX) && defined(USE_OZONE)
+    return currently_running_metadata_ui_.clear();
+#endif
     DCHECK_LE(mismatched_event_identifiers_ui_, 1);
     return;
   }
 
-  bool caused_reentrancy =
+  const bool caused_reentrancy =
       currently_running_metadata_ui_.back().caused_reentrancy;
-  base::TimeTicks execution_start_time =
+  const base::TimeTicks execution_start_time =
       currently_running_metadata_ui_.back().execution_start_time;
   currently_running_metadata_ui_.pop_back();
 
@@ -256,8 +188,47 @@ void Watcher::DidRunEventOnUIThread(const void* opaque_identifier) {
   if (UNLIKELY(caused_reentrancy))
     return;
 
-  calculator_->TaskOrEventFinishedOnUIThread(execution_start_time,
-                                             base::TimeTicks::Now());
+  const base::TimeTicks queue_time = execution_start_time;
+  const base::TimeTicks execution_finish_time = base::TimeTicks::Now();
+  calculator_->TaskOrEventFinishedOnUIThread(queue_time, execution_start_time,
+                                             execution_finish_time);
+}
+
+Watcher::Watcher() = default;
+Watcher::~Watcher() = default;
+
+void Watcher::SetUp() {
+  // Set up |calculator_| before |metric_source_| because SetUpOnIOThread()
+  // uses |calculator_|.
+  calculator_ = CreateCalculator();
+  currently_running_metadata_ui_.reserve(5);
+
+  metric_source_ = CreateMetricSource();
+  metric_source_->SetUp();
+}
+
+void Watcher::Destroy() {
+  // This holds a ref to |this| until the destroy flow completes.
+  base::ScopedClosureRunner on_destroy_complete(base::BindOnce(
+      &Watcher::FinishDestroyMetricSource, base::RetainedRef(this)));
+
+  metric_source_->Destroy(std::move(on_destroy_complete));
+}
+
+void Watcher::SetUpOnIOThread() {
+  currently_running_metadata_io_.reserve(5);
+  DCHECK(calculator_.get());
+  calculator_io_ = calculator_.get();
+}
+
+void Watcher::TearDownOnUIThread() {}
+
+void Watcher::FinishDestroyMetricSource() {
+  metric_source_ = nullptr;
+}
+
+void Watcher::TearDownOnIOThread() {
+  calculator_io_ = nullptr;
 }
 
 }  // namespace responsiveness

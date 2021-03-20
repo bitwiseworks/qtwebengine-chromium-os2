@@ -90,6 +90,7 @@ class SimpleFeature : public Feature {
     COMPONENT_LOCATION,
     EXTERNAL_COMPONENT_LOCATION,
     POLICY_LOCATION,
+    UNPACKED_LOCATION,
   };
 
   // Setters used by generated code to create the feature.
@@ -108,6 +109,9 @@ class SimpleFeature : public Feature {
   void set_extension_types(std::initializer_list<Manifest::Type> types);
   void set_session_types(std::initializer_list<FeatureSessionType> types);
   void set_internal(bool is_internal) { is_internal_ = is_internal; }
+  void set_disallow_for_service_workers(bool disallow) {
+    disallow_for_service_workers_ = disallow;
+  }
   void set_location(Location location) { location_ = location; }
   // set_matches() is an exception to pass-by-value since we construct an
   // URLPatternSet from the vector of strings.
@@ -191,7 +195,8 @@ class SimpleFeature : public Feature {
   bool MatchesSessionTypes(FeatureSessionType session_type) const;
 
   Availability CheckDependencies(
-      const base::Callback<Availability(const Feature*)>& checker) const;
+      const base::RepeatingCallback<Availability(const Feature*)>& checker)
+      const;
 
   static bool IsValidExtensionId(const std::string& extension_id);
   static bool IsValidHashedExtensionId(const HashedExtensionId& hashed_id);
@@ -211,7 +216,9 @@ class SimpleFeature : public Feature {
                                        int manifest_version) const;
 
   // Returns the availability of the feature with respect to a given context.
-  Availability GetContextAvailability(Context context, const GURL& url) const;
+  Availability GetContextAvailability(Context context,
+                                      const GURL& url,
+                                      bool is_for_service_worker) const;
 
   // For clarity and consistency, we handle the default value of each of these
   // members the same way: it matches everything. It is up to the higher level
@@ -238,6 +245,7 @@ class SimpleFeature : public Feature {
 
   bool component_extensions_auto_granted_;
   bool is_internal_;
+  bool disallow_for_service_workers_;
 
   DISALLOW_COPY_AND_ASSIGN(SimpleFeature);
 };

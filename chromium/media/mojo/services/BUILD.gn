@@ -2,17 +2,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chromecast_build.gni")
 import("//build/config/jumbo.gni")
 import("//media/media_options.gni")
-import("//services/catalog/public/tools/catalog.gni")
-import("//services/service_manager/public/cpp/service_executable.gni")
-import("//services/service_manager/public/service_manifest.gni")
 import("//testing/test.gni")
 
 jumbo_component("services") {
   output_name = "media_mojo_services"
   sources = [
-    "deferred_destroy_strong_binding_set.h",
+    "deferred_destroy_unique_receiver_set.h",
     "gpu_mojo_media_client.cc",
     "gpu_mojo_media_client.h",
     "interface_factory_impl.cc",
@@ -46,10 +44,6 @@ jumbo_component("services") {
     "mojo_decryptor_service.h",
     "mojo_demuxer_stream_adapter.cc",
     "mojo_demuxer_stream_adapter.h",
-    "mojo_jpeg_decode_accelerator_service.cc",
-    "mojo_jpeg_decode_accelerator_service.h",
-    "mojo_jpeg_encode_accelerator_service.cc",
-    "mojo_jpeg_encode_accelerator_service.h",
     "mojo_media_client.cc",
     "mojo_media_client.h",
     "mojo_media_log.cc",
@@ -85,7 +79,7 @@ jumbo_component("services") {
     "//media/gpu",
     "//media/gpu/ipc/common",
     "//media/mojo:buildflags",
-    "//media/mojo/interfaces",
+    "//media/mojo/mojom",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
     "//services/service_manager/public/cpp",
@@ -96,10 +90,11 @@ jumbo_component("services") {
     "//gpu/ipc/service",
     "//media",
     "//media:shared_memory_support",
-    "//media/cdm:cdm_manager",
     "//media/gpu",
     "//media/gpu:buildflags",
     "//media/gpu/ipc/service",
+    "//media/learning/impl",
+    "//media/learning/mojo:impl",
     "//media/mojo/common",
     "//media/mojo/common:mojo_shared_buffer_video_frame",
     "//services/metrics/public/cpp:metrics_cpp",
@@ -113,6 +108,11 @@ jumbo_component("services") {
       "android_mojo_media_client.h",
       "android_mojo_util.cc",
       "android_mojo_util.h",
+    ]
+  }
+
+  if (enable_media_drm_storage) {
+    sources += [
       "mojo_media_drm_storage.cc",
       "mojo_media_drm_storage.h",
     ]
@@ -128,16 +128,24 @@ jumbo_component("services") {
       "mojo_cdm_file_io.h",
       "mojo_cdm_helper.cc",
       "mojo_cdm_helper.h",
-      "mojo_cdm_proxy.cc",
-      "mojo_cdm_proxy.h",
-      "mojo_cdm_proxy_service.cc",
-      "mojo_cdm_proxy_service.h",
     ]
     deps += [
       "//media/cdm:cdm_api",
       "//media/cdm:cdm_paths",
-      "//media/cdm/library_cdm/clear_key_cdm:clear_key_cdm_proxy",
     ]
+
+    if (enable_cdm_proxy) {
+      sources += [
+        "mojo_cdm_proxy.cc",
+        "mojo_cdm_proxy.h",
+        "mojo_cdm_proxy_service.cc",
+        "mojo_cdm_proxy_service.h",
+      ]
+      deps += [
+        # Needed by test_mojo_media_client.cc to create ClearKeyCdmProxy.
+        "//media/cdm/library_cdm/clear_key_cdm:clear_key_cdm_proxy",
+      ]
+    }
 
     # TODO(xhwang): Ideally media should not worry about sandbox. Find a way to
     # remove this dependency.
@@ -147,159 +155,63 @@ jumbo_component("services") {
   }
 }
 
-service_manifest("cdm_manifest") {
-  name = "cdm"
-  source = "cdm_manifest.json"
-}
-
-service_manifest("media_manifest") {
-  name = "media"
-  source = "media_manifest.json"
-}
-
-# Unit Tests
-
 source_set("unit_tests") {
   testonly = true
 
   sources = [
-    "deferred_destroy_strong_binding_set_unittest.cc",
+    "deferred_destroy_unique_receiver_set_unittest.cc",
     "media_metrics_provider_unittest.cc",
+    "media_service_unittest.cc",
     "mojo_audio_input_stream_unittest.cc",
     "mojo_audio_output_stream_provider_unittest.cc",
     "mojo_audio_output_stream_unittest.cc",
-    "mojo_jpeg_decode_accelerator_service_unittest.cc",
     "mojo_video_encode_accelerator_service_unittest.cc",
+    "test_helpers.cc",
+    "test_helpers.h",
     "video_decode_perf_history_unittest.cc",
+    "video_decode_stats_recorder_unittest.cc",
     "watch_time_recorder_unittest.cc",
   ]
 
   deps = [
+    ":services",
     "//base",
     "//base/test:test_support",
     "//components/ukm:test_support",
     "//media:test_support",
+    "//media/cdm:cdm_paths",
+    "//media/learning/common",
     "//media/mojo:test_support",
+    "//media/mojo/clients",
+    "//media/mojo/common",
+    "//media/mojo/mojom",
     "//mojo/core/embedder",
     "//mojo/public/interfaces/bindings/tests:test_interfaces",
     "//services/metrics/public/cpp:ukm_builders",
+    "//services/service_manager/public/cpp",
+    "//services/service_manager/public/cpp/test:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]
 
   if (enable_library_cdms) {
     sources += [
+      "cdm_service_unittest.cc",
       "mojo_cdm_allocator_unittest.cc",
       "mojo_cdm_file_io_unittest.cc",
       "mojo_cdm_helper_unittest.cc",
-      "mojo_cdm_proxy_unittest.cc",
     ]
+
+    if (enable_cdm_proxy) {
+      sources += [ "mojo_cdm_proxy_unittest.cc" ]
+    }
 
     deps += [ "//media/cdm:cdm_api" ]
   }
-}
 
-# Service Tests
-
-# MediaService is tested by using a standalone "media" service, which runs the
-# service out-of-process. While CdmService is tested as a packaged service,
-# which runs the service in-process.
-
-service_executable("media") {
-  testonly = true
-
-  sources = [
-    "main.cc",
-  ]
-
-  public_deps = [
-    "//base",
-    "//media",
-  ]
-
-  deps = [
-    ":services",
-    "//mojo/public/c/system",
-    "//services/service_manager/public/cpp",
-  ]
-}
-
-test("media_service_unittests") {
-  testonly = true
-
-  sources = [
-    "media_service_unittest.cc",
-  ]
-
-  if (enable_library_cdms) {
-    sources += [ "cdm_service_unittest.cc" ]
+  if (is_chromeos) {
+    deps += [
+      "//components/chromeos_camera:mjpeg_decode_accelerator_service_unittest",
+    ]
   }
-
-  deps = [
-    ":service_tests_catalog_source",
-    ":services",
-    "//base",
-    "//base/test:test_support",
-    "//media:test_support",
-    "//media/cdm:cdm_paths",
-    "//media/mojo/clients",
-    "//media/mojo/common",
-    "//media/mojo/interfaces",
-    "//media/mojo/interfaces:constants",
-    "//mojo/core/test:run_all_unittests",
-    "//services/service_manager/public/cpp/test:test_support",
-    "//testing/gmock",
-    "//testing/gtest",
-  ]
-
-  data_deps = [
-    ":media",
-  ]
-}
-
-service_manifest("media_service_unittest_manifest") {
-  name = "media_service_unittests"
-  source = "test_manifest.json"
-}
-
-catalog("service_tests_catalog") {
-  testonly = true
-  embedded_services = [ ":media_service_unittest_manifest" ]
-  standalone_services = [ ":media_manifest" ]
-}
-
-catalog_cpp_source("service_tests_catalog_source") {
-  testonly = true
-  catalog = ":service_tests_catalog"
-  generated_function_name = "media::test::CreateServiceTestCatalog"
-}
-
-# media_pipeline_integration_unittests is out of date and disabled by default.
-test("media_pipeline_integration_unittests") {
-  testonly = true
-
-  deps = [
-    "//media/test:mojo_pipeline_integration_tests",
-    "//mojo/core/test:run_all_unittests",
-  ]
-
-  data_deps = [
-    ":media",
-  ]
-}
-
-service_manifest("pipeline_test_manifest") {
-  name = "media_pipeline_integration_unittests"
-  source = "pipeline_test_manifest.json"
-}
-
-catalog("media_pipeline_integration_unittests_catalog") {
-  embedded_services = [ ":pipeline_test_manifest" ]
-  standalone_services = [ ":media_manifest" ]
-}
-
-catalog_cpp_source("media_pipeline_integration_unittests_catalog_source") {
-  testonly = true
-  catalog = ":media_pipeline_integration_unittests_catalog"
-  generated_function_name = "media::test::CreatePipelineIntegrationTestCatalog"
 }

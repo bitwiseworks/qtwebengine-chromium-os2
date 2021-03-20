@@ -12,7 +12,8 @@
 
 namespace blink {
 
-void TransitionKeyframe::SetCompositorValue(AnimatableValue* compositor_value) {
+void TransitionKeyframe::SetCompositorValue(
+    CompositorKeyframeValue* compositor_value) {
   DCHECK_EQ(property_.GetCSSProperty().IsCompositableProperty(),
             static_cast<bool>(compositor_value));
   compositor_value_ = compositor_value;
@@ -44,18 +45,18 @@ TransitionKeyframe::CreatePropertySpecificKeyframe(
   DCHECK(offset == offset_);
   EffectModel::CompositeOperation composite =
       composite_.value_or(effect_composite);
-  return PropertySpecificKeyframe::Create(CheckedOffset(), &Easing(), composite,
-                                          value_->Clone(), compositor_value_);
+  return MakeGarbageCollected<PropertySpecificKeyframe>(
+      CheckedOffset(), &Easing(), composite, value_->Clone(),
+      compositor_value_);
 }
 
 Interpolation*
 TransitionKeyframe::PropertySpecificKeyframe::CreateInterpolation(
     const PropertyHandle& property,
     const Keyframe::PropertySpecificKeyframe& other_super_class) const {
-  const PropertySpecificKeyframe& other =
-      ToTransitionPropertySpecificKeyframe(other_super_class);
+  const auto& other = To<TransitionPropertySpecificKeyframe>(other_super_class);
   DCHECK(value_->GetType() == other.value_->GetType());
-  return TransitionInterpolation::Create(
+  return MakeGarbageCollected<TransitionInterpolation>(
       property, value_->GetType(), value_->Value().Clone(),
       other.value_->Value().Clone(), compositor_value_,
       other.compositor_value_);

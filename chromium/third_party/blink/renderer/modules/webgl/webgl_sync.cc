@@ -17,20 +17,12 @@ WebGLSync::WebGLSync(WebGL2RenderingContextBase* ctx,
     : WebGLSharedObject(ctx),
       sync_status_(GL_UNSIGNALED),
       object_(object),
-      object_type_(object_type) {
-  if (ctx->canvas()) {
-    task_runner_ =
-        ctx->canvas()->GetDocument().GetTaskRunner(TaskType::kInternalDefault);
-  } else {
-    // Fallback for OffscreenCanvas (no frame scheduler)
-    task_runner_ = Thread::Current()->GetTaskRunner();
-  }
+      object_type_(object_type),
+      task_runner_(ctx->GetContextTaskRunner()) {
   ScheduleAllowCacheUpdate();
 }
 
-WebGLSync::~WebGLSync() {
-  RunDestructor();
-}
+WebGLSync::~WebGLSync() = default;
 
 void WebGLSync::UpdateCache(gpu::gles2::GLES2Interface* gl) {
   if (sync_status_ == GL_SIGNALED) {

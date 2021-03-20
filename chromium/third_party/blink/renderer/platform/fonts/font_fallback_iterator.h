@@ -8,6 +8,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/platform/fonts/font_data_for_range_set.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_priority.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
@@ -19,15 +20,18 @@ class FontDescription;
 class FontFallbackList;
 class SimpleFontData;
 
-class FontFallbackIterator : public RefCounted<FontFallbackIterator> {
-  WTF_MAKE_NONCOPYABLE(FontFallbackIterator);
+class FontFallbackIterator {
+  STACK_ALLOCATED();
 
  public:
-  static scoped_refptr<FontFallbackIterator> Create(const FontDescription&,
-                                             scoped_refptr<FontFallbackList>,
-                                             FontFallbackPriority);
+  FontFallbackIterator(const FontDescription&,
+                       scoped_refptr<FontFallbackList>,
+                       FontFallbackPriority);
+  FontFallbackIterator(FontFallbackIterator&&) = default;
+  FontFallbackIterator(const FontFallbackIterator&) = delete;
+  FontFallbackIterator& operator=(const FontFallbackIterator&) = delete;
 
-  bool HasNext() const { return fallback_stage_ != kOutOfLuck; };
+  bool HasNext() const { return fallback_stage_ != kOutOfLuck; }
   // Returns whether the next call to Next() needs a full hint list, or whether
   // a single character is sufficient. Intended to serve as an optimization in
   // HarfBuzzShaper to avoid spending too much time and resources collecting a
@@ -42,9 +46,6 @@ class FontFallbackIterator : public RefCounted<FontFallbackIterator> {
   scoped_refptr<FontDataForRangeSet> Next(const Vector<UChar32>& hint_list);
 
  private:
-  FontFallbackIterator(const FontDescription&,
-                       scoped_refptr<FontFallbackList>,
-                       FontFallbackPriority);
   bool RangeSetContributesForHint(const Vector<UChar32> hint_list,
                                   const FontDataForRangeSet*);
   bool AlreadyLoadingRangeForHintChar(UChar32 hint_char);

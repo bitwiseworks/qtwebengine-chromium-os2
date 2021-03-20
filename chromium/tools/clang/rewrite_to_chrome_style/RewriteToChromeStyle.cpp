@@ -1286,7 +1286,7 @@ class GMockMemberRewriter
       : Base(replacements) {}
 
   std::unique_ptr<clang::PPCallbacks> CreatePreprocessorCallbacks() {
-    return llvm::make_unique<GMockMemberRewriter::PPCallbacks>(this);
+    return std::make_unique<GMockMemberRewriter::PPCallbacks>(this);
   }
 
   clang::SourceLocation GetTargetLoc(
@@ -1945,6 +1945,9 @@ int main(int argc, const char* argv[]) {
   for (const EditTracker* edit_tracker : all_edit_trackers)
     edit_tracker->SerializeTo(llvm::outs());
   llvm::outs() << "==== END TRACKED EDITS ====\n";
+
+  if (replacements.empty())
+    return 0;
 
   // Serialization format is documented in tools/clang/scripts/run_tool.py
   llvm::outs() << "==== BEGIN EDITS ====\n";

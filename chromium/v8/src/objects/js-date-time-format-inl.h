@@ -9,8 +9,8 @@
 #ifndef V8_OBJECTS_JS_DATE_TIME_FORMAT_INL_H_
 #define V8_OBJECTS_JS_DATE_TIME_FORMAT_INL_H_
 
-#include "src/objects-inl.h"
 #include "src/objects/js-date-time-format.h"
+#include "src/objects/objects-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -20,23 +20,48 @@ namespace internal {
 
 OBJECT_CONSTRUCTORS_IMPL(JSDateTimeFormat, JSObject)
 
-ACCESSORS(JSDateTimeFormat, icu_locale, Managed<icu::Locale>, kICULocaleOffset);
+ACCESSORS(JSDateTimeFormat, locale, String, kLocaleOffset)
+ACCESSORS(JSDateTimeFormat, icu_locale, Managed<icu::Locale>, kIcuLocaleOffset)
 ACCESSORS(JSDateTimeFormat, icu_simple_date_format,
-          Managed<icu::SimpleDateFormat>, kICUSimpleDateFormatOffset)
-ACCESSORS(JSDateTimeFormat, bound_format, Object, kBoundFormatOffset);
+          Managed<icu::SimpleDateFormat>, kIcuSimpleDateFormatOffset)
+ACCESSORS(JSDateTimeFormat, icu_date_interval_format,
+          Managed<icu::DateIntervalFormat>, kIcuDateIntervalFormatOffset)
+ACCESSORS(JSDateTimeFormat, bound_format, Object, kBoundFormatOffset)
 SMI_ACCESSORS(JSDateTimeFormat, flags, kFlagsOffset)
 
-inline void JSDateTimeFormat::set_hour_cycle(Intl::HourCycle hour_cycle) {
+inline void JSDateTimeFormat::set_hour_cycle(HourCycle hour_cycle) {
   int hints = flags();
   hints = HourCycleBits::update(hints, hour_cycle);
   set_flags(hints);
 }
 
-inline Intl::HourCycle JSDateTimeFormat::hour_cycle() const {
+inline JSDateTimeFormat::HourCycle JSDateTimeFormat::hour_cycle() const {
   return HourCycleBits::decode(flags());
 }
 
-CAST_ACCESSOR(JSDateTimeFormat);
+inline void JSDateTimeFormat::set_date_style(
+    JSDateTimeFormat::DateTimeStyle date_style) {
+  int hints = flags();
+  hints = DateStyleBits::update(hints, date_style);
+  set_flags(hints);
+}
+
+inline JSDateTimeFormat::DateTimeStyle JSDateTimeFormat::date_style() const {
+  return DateStyleBits::decode(flags());
+}
+
+inline void JSDateTimeFormat::set_time_style(
+    JSDateTimeFormat::DateTimeStyle time_style) {
+  int hints = flags();
+  hints = TimeStyleBits::update(hints, time_style);
+  set_flags(hints);
+}
+
+inline JSDateTimeFormat::DateTimeStyle JSDateTimeFormat::time_style() const {
+  return TimeStyleBits::decode(flags());
+}
+
+CAST_ACCESSOR(JSDateTimeFormat)
 
 }  // namespace internal
 }  // namespace v8

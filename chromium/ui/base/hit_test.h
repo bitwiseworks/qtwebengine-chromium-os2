@@ -5,8 +5,6 @@
 #ifndef UI_BASE_HIT_TEST_H_
 #define UI_BASE_HIT_TEST_H_
 
-#include "build/build_config.h"
-
 #if !defined(OS_WIN)
 
 // Defines the same symbolic names used by the WM_NCHITTEST Notification under
@@ -43,5 +41,16 @@ enum HitTestCompat {
 };
 
 #endif  // !defined(OS_WIN)
+
+namespace ui {
+
+// Returns true if the |component| is for resizing, like HTTOP or HTBOTTOM.
+bool IsResizingComponent(int component);
+
+// Returns true if the |component| is HTCAPTION or one of the resizing
+// components.
+bool CanPerformDragOrResize(int component);
+
+}  // namespace ui
 
 #endif  // UI_BASE_HIT_TEST_H_

@@ -8,7 +8,7 @@
 #include "chrome/browser/devtools/devtools_window.h"
 
 DevToolsAutoOpener::DevToolsAutoOpener()
-    : browser_tab_strip_tracker_(this, nullptr, nullptr) {
+    : browser_tab_strip_tracker_(this, nullptr) {
   browser_tab_strip_tracker_.Init();
 }
 
@@ -22,8 +22,7 @@ void DevToolsAutoOpener::OnTabStripModelChanged(
   if (change.type() != TabStripModelChange::kInserted)
     return;
 
-  for (const auto& delta : change.deltas()) {
-    if (!DevToolsWindow::IsDevToolsWindow(delta.insert.contents))
-      DevToolsWindow::OpenDevToolsWindow(delta.insert.contents);
-  }
+  for (const auto& contents : change.GetInsert()->contents)
+    if (!DevToolsWindow::IsDevToolsWindow(contents.contents))
+      DevToolsWindow::OpenDevToolsWindow(contents.contents);
 }

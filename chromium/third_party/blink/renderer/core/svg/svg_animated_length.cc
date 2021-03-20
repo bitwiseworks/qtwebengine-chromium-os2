@@ -39,14 +39,18 @@ SVGParsingError SVGAnimatedLength::AttributeChanged(const String& value) {
       SVGAnimatedProperty<SVGLength>::AttributeChanged(value);
 
   if (SVGLength::NegativeValuesForbiddenForAnimatedLengthAttribute(
-          AttributeName()) &&
-      BaseValue()->ValueInSpecifiedUnits() < 0)
-    parse_status = SVGParseStatus::kNegativeValue;
+          AttributeName())) {
+    // TODO(crbug.com/982425): Pass |kValueRangeNonNegative| to property parser
+    // to handle range checking on math functions correctly, and also to avoid
+    // this ad hoc range checking.
+    if (BaseValue()->IsNegativeNumericLiteral())
+      parse_status = SVGParseStatus::kNegativeValue;
+  }
 
   return parse_status;
 }
 
-void SVGAnimatedLength::Trace(blink::Visitor* visitor) {
+void SVGAnimatedLength::Trace(Visitor* visitor) {
   SVGAnimatedProperty<SVGLength>::Trace(visitor);
   ScriptWrappable::Trace(visitor);
 }

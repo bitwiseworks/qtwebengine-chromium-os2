@@ -29,10 +29,11 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_database_callback.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/modules/webdatabase/database.h"
 #include "third_party/blink/renderer/modules/webdatabase/database_manager.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
@@ -42,7 +43,7 @@ Database* DOMWindowWebDatabase::openDatabase(LocalDOMWindow& window,
                                              const String& name,
                                              const String& version,
                                              const String& display_name,
-                                             unsigned estimated_size,
+                                             uint32_t estimated_size,
                                              ExceptionState& exception_state) {
   return openDatabase(window, name, version, display_name, estimated_size,
                       nullptr, exception_state);
@@ -53,7 +54,7 @@ Database* DOMWindowWebDatabase::openDatabase(
     const String& name,
     const String& version,
     const String& display_name,
-    unsigned estimated_size,
+    uint32_t estimated_size,
     V8DatabaseCallback* creation_callback,
     ExceptionState& exception_state) {
   if (!window.IsCurrentlyDisplayedInFrame())
@@ -68,9 +69,9 @@ Database* DOMWindowWebDatabase::openDatabase(
       UseCounter::Count(window.document(), WebFeature::kFileAccessedDatabase);
 
     String error_message;
-    database = db_manager.OpenDatabase(window.document(), name, version,
-                                       display_name, estimated_size,
-                                       creation_callback, error, error_message);
+    database = db_manager.OpenDatabase(
+        window.document()->ToExecutionContext(), name, version, display_name,
+        estimated_size, creation_callback, error, error_message);
     DCHECK(database || error != DatabaseError::kNone);
     if (error != DatabaseError::kNone)
       DatabaseManager::ThrowExceptionForDatabaseError(error, error_message,

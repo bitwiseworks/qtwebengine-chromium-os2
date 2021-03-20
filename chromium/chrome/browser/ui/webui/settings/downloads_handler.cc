@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/settings/downloads_handler.h"
 
+#include "base/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "base/values.h"
 #include "chrome/browser/download/download_prefs.h"
@@ -97,7 +98,7 @@ void DownloadsHandler::HandleSelectDownloadLocation(
       this,
       std::make_unique<ChromeSelectFilePolicy>(web_ui()->GetWebContents()));
   ui::SelectFileDialog::FileTypeInfo info;
-  info.allowed_paths = ui::SelectFileDialog::FileTypeInfo::NATIVE_OR_DRIVE_PATH;
+  info.allowed_paths = ui::SelectFileDialog::FileTypeInfo::NATIVE_PATH;
   select_folder_dialog_->SelectFile(
       ui::SelectFileDialog::SELECT_FOLDER,
       l10n_util::GetStringUTF16(IDS_SETTINGS_DOWNLOAD_LOCATION),

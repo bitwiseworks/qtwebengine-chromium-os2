@@ -12,7 +12,7 @@ if (is_android) {
 
 buildflag_header("buildflags") {
   header = "buildflags.h"
-  flags = [ "ENABLE_DESKTOP_IN_PRODUCT_HELP=$enable_desktop_in_product_help" ]
+  flags = [ "ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP=$enable_legacy_desktop_in_product_help" ]
 }
 
 group("feature_engagement") {
@@ -21,9 +21,7 @@ group("feature_engagement") {
     "//components/feature_engagement/public",
   ]
 
-  deps = [
-    "//components/feature_engagement/internal",
-  ]
+  deps = [ "//components/feature_engagement/internal" ]
 }
 
 group("unit_tests") {
@@ -31,19 +29,16 @@ group("unit_tests") {
 
   deps = [
     "//components/feature_engagement/internal:unit_tests",
+    "//components/feature_engagement/public:unit_tests",
   ]
 
-  data_deps = [
-    ":components_unittests_gtest_filter",
-  ]
+  data_deps = [ ":components_unittests_gtest_filter" ]
 }
 
 source_set("components_unittests_gtest_filter") {
   testonly = true
 
-  data = [
-    "components_unittests.filter",
-  ]
+  data = [ "components_unittests.filter" ]
 }
 
 if (is_android) {

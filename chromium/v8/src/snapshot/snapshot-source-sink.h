@@ -5,8 +5,11 @@
 #ifndef V8_SNAPSHOT_SNAPSHOT_SOURCE_SINK_H_
 #define V8_SNAPSHOT_SNAPSHOT_SOURCE_SINK_H_
 
+#include <utility>
+
 #include "src/base/logging.h"
-#include "src/utils.h"
+#include "src/snapshot/serializer-common.h"
+#include "src/utils/utils.h"
 
 namespace v8 {
 namespace internal {
@@ -25,7 +28,7 @@ class SnapshotByteSource final {
         position_(0) {}
 
   explicit SnapshotByteSource(Vector<const byte> payload)
-      : data_(payload.start()), length_(payload.length()), position_(0) {}
+      : data_(payload.begin()), length_(payload.length()), position_(0) {}
 
   ~SnapshotByteSource() = default;
 
@@ -38,7 +41,7 @@ class SnapshotByteSource final {
 
   void Advance(int by) { position_ += by; }
 
-  void CopyRaw(byte* to, int number_of_bytes) {
+  void CopyRaw(void* to, int number_of_bytes) {
     memcpy(to, data_ + position_, number_of_bytes);
     position_ += number_of_bytes;
   }
@@ -60,11 +63,33 @@ class SnapshotByteSource final {
     return answer;
   }
 
+  int GetIntSlow() {
+    // Unlike GetInt, this reads only up to the end of the blob, even if less
+    // than 4 bytes are remaining.
+    // TODO(jgruber): Remove once the use in MakeFromScriptsSource is gone.
+    DCHECK(position_ < length_);
+    uint32_t answer = data_[position_];
+    if (position_ + 1 < length_) answer |= data_[position_ + 1] << 8;
+    if (position_ + 2 < length_) answer |= data_[position_ + 2] << 16;
+    if (position_ + 3 < length_) answer |= data_[position_ + 3] << 24;
+    int bytes = (answer & 3) + 1;
+    Advance(bytes);
+    uint32_t mask = 0xffffffffu;
+    mask >>= 32 - (bytes << 3);
+    answer &= mask;
+    answer >>= 2;
+    return answer;
+  }
+
   // Returns length.
   int GetBlob(const byte** data);
 
   int position() { return position_; }
   void set_position(int position) { position_ = position; }
+
+  uint32_t GetChecksum() const {
+    return Checksum(Vector<const byte>(data_, length_));
+  }
 
  private:
   const byte* data_;

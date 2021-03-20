@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fuzzer/FuzzedDataProvider.h>
+
 #include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/test/fuzzed_data_provider.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_source.h"
 #include "net/log/test_net_log.h"
-#include "net/socket/client_socket_handle.h"
 #include "net/socket/fuzzed_socket_factory.h"
 #include "net/socket/socket_tag.h"
 #include "net/socket/socket_test_util.h"
@@ -29,8 +29,8 @@ const char kCertData[] = {
 
 class FuzzerDelegate : public net::SpdyStream::Delegate {
  public:
-  explicit FuzzerDelegate(const base::Closure& done_closure)
-      : done_closure_(done_closure) {}
+  explicit FuzzerDelegate(base::OnceClosure done_closure)
+      : done_closure_(std::move(done_closure)) {}
 
   void OnHeadersSent() override {}
   void OnHeadersReceived(
@@ -39,15 +39,15 @@ class FuzzerDelegate : public net::SpdyStream::Delegate {
   void OnDataReceived(std::unique_ptr<net::SpdyBuffer> buffer) override {}
   void OnDataSent() override {}
   void OnTrailers(const spdy::SpdyHeaderBlock& trailers) override {}
-
-  void OnClose(int status) override { done_closure_.Run(); }
+  void OnClose(int status) override { std::move(done_closure_).Run(); }
+  bool CanGreaseFrameType() const override { return false; }
 
   net::NetLogSource source_dependency() const override {
     return net::NetLogSource();
   }
 
  private:
-  base::Closure done_closure_;
+  base::OnceClosure done_closure_;
   DISALLOW_COPY_AND_ASSIGN(FuzzerDelegate);
 };
 
@@ -60,22 +60,22 @@ namespace {
 class FuzzedSocketFactoryWithMockSSLData : public FuzzedSocketFactory {
  public:
   explicit FuzzedSocketFactoryWithMockSSLData(
-      base::FuzzedDataProvider* data_provider);
+      FuzzedDataProvider* data_provider);
 
   void AddSSLSocketDataProvider(SSLSocketDataProvider* socket);
 
   std::unique_ptr<SSLClientSocket> CreateSSLClientSocket(
-      std::unique_ptr<ClientSocketHandle> transport_socket,
+      SSLClientContext* context,
+      std::unique_ptr<StreamSocket> nested_socket,
       const HostPortPair& host_and_port,
-      const SSLConfig& ssl_config,
-      const SSLClientSocketContext& context) override;
+      const SSLConfig& ssl_config) override;
 
  private:
   SocketDataProviderArray<SSLSocketDataProvider> mock_ssl_data_;
 };
 
 FuzzedSocketFactoryWithMockSSLData::FuzzedSocketFactoryWithMockSSLData(
-    base::FuzzedDataProvider* data_provider)
+    FuzzedDataProvider* data_provider)
     : FuzzedSocketFactory(data_provider) {}
 
 void FuzzedSocketFactoryWithMockSSLData::AddSSLSocketDataProvider(
@@ -85,11 +85,11 @@ void FuzzedSocketFactoryWithMockSSLData::AddSSLSocketDataProvider(
 
 std::unique_ptr<SSLClientSocket>
 FuzzedSocketFactoryWithMockSSLData::CreateSSLClientSocket(
-    std::unique_ptr<ClientSocketHandle> transport_socket,
+    SSLClientContext* context,
+    std::unique_ptr<StreamSocket> nested_socket,
     const HostPortPair& host_and_port,
-    const SSLConfig& ssl_config,
-    const SSLClientSocketContext& context) {
-  return std::make_unique<MockSSLClientSocket>(std::move(transport_socket),
+    const SSLConfig& ssl_config) {
+  return std::make_unique<MockSSLClientSocket>(std::move(nested_socket),
                                                host_and_port, ssl_config,
                                                mock_ssl_data_.GetNext());
 }
@@ -102,8 +102,8 @@ FuzzedSocketFactoryWithMockSSLData::CreateSSLClientSocket(
 //
 // |data| is used to create a FuzzedServerSocket.
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-  net::BoundTestNetLog bound_test_net_log;
-  base::FuzzedDataProvider data_provider(data, size);
+  net::RecordingBoundTestNetLog bound_test_net_log;
+  FuzzedDataProvider data_provider(data, size);
   net::FuzzedSocketFactoryWithMockSSLData socket_factory(&data_provider);
   socket_factory.set_fuzz_connect_result(false);
 
@@ -122,7 +122,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   net::SpdySessionKey session_key(net::HostPortPair("127.0.0.1", 80),
                                   direct_connect, net::PRIVACY_MODE_DISABLED,
                                   net::SpdySessionKey::IsProxySession::kFalse,
-                                  net::SocketTag());
+                                  net::SocketTag(), net::NetworkIsolationKey(),
+                                  false /* disable_secure_dns */);
   base::WeakPtr<net::SpdySession> spdy_session(net::CreateSpdySession(
       http_session.get(), session_key, bound_test_net_log.bound()));
 
@@ -132,9 +133,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   net::TestCompletionCallback wait_for_start;
   int rv = stream_request.StartRequest(
       net::SPDY_REQUEST_RESPONSE_STREAM, spdy_session,
-      GURL("http://www.example.invalid/"), net::DEFAULT_PRIORITY,
-      net::SocketTag(), bound_test_net_log.bound(), wait_for_start.callback(),
-      TRAFFIC_ANNOTATION_FOR_TESTS);
+      GURL("http://www.example.invalid/"), false /* no early data */,
+      net::DEFAULT_PRIORITY, net::SocketTag(), bound_test_net_log.bound(),
+      wait_for_start.callback(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
   if (rv == net::ERR_IO_PENDING) {
     rv = wait_for_start.WaitForResult();

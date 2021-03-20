@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "content/browser/frame_host/form_submission_throttle.h"
-#include "content/browser/frame_host/navigation_handle_impl.h"
+#include "content/browser/frame_host/navigation_request.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
@@ -62,27 +62,30 @@ FormSubmissionThrottle::CheckContentSecurityPolicyFormAction(
   if (!was_server_redirect)
     return NavigationThrottle::PROCEED;
 
-  NavigationHandleImpl* handle =
-      static_cast<NavigationHandleImpl*>(navigation_handle());
+  NavigationRequest* request = NavigationRequest::From(navigation_handle());
 
-  if (handle->should_check_main_world_csp() == CSPDisposition::DO_NOT_CHECK)
+  if (request->common_params()
+          .initiator_csp_info->should_check_main_world_csp ==
+      network::mojom::CSPDisposition::DO_NOT_CHECK) {
     return NavigationThrottle::PROCEED;
+  }
 
-  const GURL& url = handle->GetURL();
+  const GURL& url = request->GetURL();
 
   // TODO(arthursonzogni): This is not the right RenderFrameHostImpl. The one
   // that has initiated the navigation must be used instead.
   // See https://crbug.com/700964
   RenderFrameHostImpl* render_frame =
-      handle->frame_tree_node()->current_frame_host();
+      request->frame_tree_node()->current_frame_host();
 
   // TODO(estark): Move this check into NavigationRequest and split it into (1)
   // check report-only CSP, (2) upgrade request if needed, (3) check enforced
   // CSP to match how frame-src works. https://crbug.com/713388
   if (render_frame->IsAllowedByCsp(
-          CSPDirective::FormAction, url, was_server_redirect,
-          false /* is_response_check */, handle->source_location(),
-          CSPContext::CHECK_ALL_CSP, true /* is_form_submission */)) {
+          network::mojom::CSPDirectiveName::FormAction, url,
+          was_server_redirect, false /* is_response_check */,
+          request->common_params().source_location,
+          network::CSPContext::CHECK_ALL_CSP, true /* is_form_submission */)) {
     return NavigationThrottle::PROCEED;
   }
 

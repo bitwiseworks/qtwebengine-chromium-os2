@@ -26,14 +26,16 @@ const unsigned kParagraphLengthThreshold = 140;
 
 class DocumentStatisticsCollectorTest : public PageTestBase {
  protected:
-  void TearDown() override { ThreadState::Current()->CollectAllGarbage(); }
+  void TearDown() override {
+    ThreadState::Current()->CollectAllGarbageForTesting();
+  }
 
   void SetHtmlInnerHTML(const String&);
 };
 
 void DocumentStatisticsCollectorTest::SetHtmlInnerHTML(
     const String& html_content) {
-  GetDocument().documentElement()->SetInnerHTMLFromString((html_content));
+  GetDocument().documentElement()->setInnerHTML((html_content));
 }
 
 // This test checks open graph articles can be recognized.

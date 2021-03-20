@@ -19,11 +19,12 @@
 
 #include "third_party/blink/renderer/modules/vibration/vibration_controller.h"
 
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/modules/v8/unsigned_long_or_unsigned_long_sequence.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -76,8 +77,9 @@ VibrationController::SanitizeVibrationPattern(
 }
 
 VibrationController::VibrationController(LocalFrame& frame)
-    : ContextLifecycleObserver(frame.GetDocument()),
+    : ExecutionContextLifecycleObserver(frame.GetDocument()),
       PageVisibilityObserver(frame.GetDocument()->GetPage()),
+      vibration_manager_(frame.DomWindow()),
       timer_do_vibrate_(
           frame.GetDocument()->GetTaskRunner(TaskType::kMiscPlatformAPI),
           this,
@@ -85,8 +87,9 @@ VibrationController::VibrationController(LocalFrame& frame)
       is_running_(false),
       is_calling_cancel_(false),
       is_calling_vibrate_(false) {
-  frame.GetInterfaceProvider().GetInterface(
-      mojo::MakeRequest(&vibration_manager_));
+  frame.GetBrowserInterfaceBroker().GetInterface(
+      vibration_manager_.BindNewPipeAndPassReceiver(
+          frame.GetDocument()->GetTaskRunner(TaskType::kMiscPlatformAPI)));
 }
 
 VibrationController::~VibrationController() = default;
@@ -111,7 +114,7 @@ bool VibrationController::Vibrate(const VibrationPattern& pattern) {
   // it also starts the timer. This is not a problem as calling |startOneShot|
   // repeatedly will just update the time at which to run |doVibrate|, it will
   // not be called more than once.
-  timer_do_vibrate_.StartOneShot(TimeDelta(), FROM_HERE);
+  timer_do_vibrate_.StartOneShot(base::TimeDelta(), FROM_HERE);
 
   return true;
 }
@@ -126,7 +129,7 @@ void VibrationController::DoVibrate(TimerBase* timer) {
       !GetExecutionContext() || !GetPage()->IsPageVisible())
     return;
 
-  if (vibration_manager_) {
+  if (vibration_manager_.is_bound()) {
     is_calling_vibrate_ = true;
     vibration_manager_->Vibrate(
         pattern_[0],
@@ -152,7 +155,7 @@ void VibrationController::DidVibrate() {
     pattern_.EraseAt(0);
   }
 
-  timer_do_vibrate_.StartOneShot(TimeDelta::FromMilliseconds(interval),
+  timer_do_vibrate_.StartOneShot(base::TimeDelta::FromMilliseconds(interval),
                                  FROM_HERE);
 }
 
@@ -160,7 +163,7 @@ void VibrationController::Cancel() {
   pattern_.clear();
   timer_do_vibrate_.Stop();
 
-  if (is_running_ && !is_calling_cancel_ && vibration_manager_) {
+  if (is_running_ && !is_calling_cancel_ && vibration_manager_.is_bound()) {
     is_calling_cancel_ = true;
     vibration_manager_->Cancel(
         WTF::Bind(&VibrationController::DidCancel, WrapPersistent(this)));
@@ -175,14 +178,11 @@ void VibrationController::DidCancel() {
   // A new vibration pattern may have been set while the mojo call for
   // |cancel| was in flight, so kick the timer to let |doVibrate| process the
   // pattern.
-  timer_do_vibrate_.StartOneShot(TimeDelta(), FROM_HERE);
+  timer_do_vibrate_.StartOneShot(base::TimeDelta(), FROM_HERE);
 }
 
-void VibrationController::ContextDestroyed(ExecutionContext*) {
+void VibrationController::ContextDestroyed() {
   Cancel();
-
-  // If the document context was destroyed, never call the mojo service again.
-  vibration_manager_.reset();
 }
 
 void VibrationController::PageVisibilityChanged() {
@@ -190,9 +190,10 @@ void VibrationController::PageVisibilityChanged() {
     Cancel();
 }
 
-void VibrationController::Trace(blink::Visitor* visitor) {
-  ContextLifecycleObserver::Trace(visitor);
+void VibrationController::Trace(Visitor* visitor) {
+  ExecutionContextLifecycleObserver::Trace(visitor);
   PageVisibilityObserver::Trace(visitor);
+  visitor->Trace(vibration_manager_);
 }
 
 }  // namespace blink

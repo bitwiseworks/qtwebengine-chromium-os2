@@ -48,6 +48,20 @@ bool CompareMatrices(const SkMatrix& a,
   return PaintOp::AreSkMatricesEqual(a_without_scale, b_without_scale);
 }
 
+SkRect AdjustForMaxTextureSize(SkRect tile, int max_texture_size) {
+  if (max_texture_size == 0)
+    return tile;
+
+  if (tile.width() < max_texture_size && tile.height() < max_texture_size)
+    return tile;
+
+  float down_scale = max_texture_size / std::max(tile.width(), tile.height());
+  tile = SkRect::MakeXYWH(tile.x(), tile.y(),
+                          SkScalarFloorToScalar(tile.width() * down_scale),
+                          SkScalarFloorToScalar(tile.height() * down_scale));
+  return tile;
+}
+
 }  // namespace
 
 const PaintShader::RecordShaderId PaintShader::kInvalidRecordShaderId = -1;
@@ -73,7 +87,7 @@ sk_sp<PaintShader> PaintShader::MakeLinearGradient(const SkPoint points[],
                                                    const SkColor colors[],
                                                    const SkScalar pos[],
                                                    int count,
-                                                   SkShader::TileMode mode,
+                                                   SkTileMode mode,
                                                    uint32_t flags,
                                                    const SkMatrix* local_matrix,
                                                    SkColor fallback_color) {
@@ -95,7 +109,7 @@ sk_sp<PaintShader> PaintShader::MakeRadialGradient(const SkPoint& center,
                                                    const SkColor colors[],
                                                    const SkScalar pos[],
                                                    int count,
-                                                   SkShader::TileMode mode,
+                                                   SkTileMode mode,
                                                    uint32_t flags,
                                                    const SkMatrix* local_matrix,
                                                    SkColor fallback_color) {
@@ -119,7 +133,7 @@ sk_sp<PaintShader> PaintShader::MakeTwoPointConicalGradient(
     const SkColor colors[],
     const SkScalar pos[],
     int count,
-    SkShader::TileMode mode,
+    SkTileMode mode,
     uint32_t flags,
     const SkMatrix* local_matrix,
     SkColor fallback_color) {
@@ -142,7 +156,7 @@ sk_sp<PaintShader> PaintShader::MakeSweepGradient(SkScalar cx,
                                                   const SkColor colors[],
                                                   const SkScalar pos[],
                                                   int color_count,
-                                                  SkShader::TileMode mode,
+                                                  SkTileMode mode,
                                                   SkScalar start_degrees,
                                                   SkScalar end_degrees,
                                                   uint32_t flags,
@@ -162,13 +176,18 @@ sk_sp<PaintShader> PaintShader::MakeSweepGradient(SkScalar cx,
 }
 
 sk_sp<PaintShader> PaintShader::MakeImage(const PaintImage& image,
-                                          SkShader::TileMode tx,
-                                          SkShader::TileMode ty,
-                                          const SkMatrix* local_matrix) {
+                                          SkTileMode tx,
+                                          SkTileMode ty,
+                                          const SkMatrix* local_matrix,
+                                          const SkRect* tile_rect) {
   sk_sp<PaintShader> shader(new PaintShader(Type::kImage));
 
   shader->image_ = image;
   shader->SetMatrixAndTiling(local_matrix, tx, ty);
+  if (tile_rect) {
+    DCHECK(image.IsPaintWorklet());
+    shader->tile_ = *tile_rect;
+  }
 
   shader->CreateSkShader();
   return shader;
@@ -177,8 +196,8 @@ sk_sp<PaintShader> PaintShader::MakeImage(const PaintImage& image,
 sk_sp<PaintShader> PaintShader::MakePaintRecord(
     sk_sp<PaintRecord> record,
     const SkRect& tile,
-    SkShader::TileMode tx,
-    SkShader::TileMode ty,
+    SkTileMode tx,
+    SkTileMode ty,
     const SkMatrix* local_matrix,
     ScalingBehavior scaling_behavior) {
   sk_sp<PaintShader> shader(new PaintShader(Type::kPaintRecord));
@@ -273,6 +292,7 @@ bool PaintShader::GetRasterizationTileRect(const SkMatrix& ctm,
 
 sk_sp<PaintShader> PaintShader::CreateScaledPaintRecord(
     const SkMatrix& ctm,
+    int max_texture_size,
     gfx::SizeF* raster_scale) const {
   DCHECK_EQ(shader_type_, Type::kPaintRecord);
 
@@ -297,6 +317,7 @@ sk_sp<PaintShader> PaintShader::CreateScaledPaintRecord(
   SkRect tile_rect;
   if (!GetRasterizationTileRect(ctm, &tile_rect))
     return nullptr;
+  tile_rect = AdjustForMaxTextureSize(tile_rect, max_texture_size);
 
   sk_sp<PaintShader> shader(new PaintShader(Type::kPaintRecord));
   shader->record_ = record_;
@@ -318,6 +339,21 @@ sk_sp<PaintShader> PaintShader::CreateScaledPaintRecord(
   return shader;
 }
 
+sk_sp<PaintShader> PaintShader::CreatePaintWorkletRecord(
+    ImageProvider* image_provider) const {
+  DCHECK_EQ(shader_type_, Type::kImage);
+  DCHECK(image_ && image_.IsPaintWorklet());
+
+  ImageProvider::ScopedResult result =
+      image_provider->GetRasterContent(DrawImage(image_));
+  if (!result || !result.paint_record())
+    return nullptr;
+  SkMatrix local_matrix = GetLocalMatrix();
+  return PaintShader::MakePaintRecord(
+      sk_ref_sp<PaintRecord>(result.paint_record()), tile_, tx_, ty_,
+      &local_matrix);
+}
+
 sk_sp<PaintShader> PaintShader::CreateDecodedImage(
     const SkMatrix& ctm,
     SkFilterQuality quality,
@@ -335,7 +371,7 @@ sk_sp<PaintShader> PaintShader::CreateDecodedImage(
   SkIRect int_src_rect;
   src_rect.roundOut(&int_src_rect);
   DrawImage draw_image(image_, int_src_rect, quality, total_image_matrix);
-  auto decoded_draw_image = image_provider->GetDecodedDrawImage(draw_image);
+  auto decoded_draw_image = image_provider->GetRasterContent(draw_image);
   if (!decoded_draw_image)
     return nullptr;
 
@@ -359,7 +395,7 @@ sk_sp<PaintShader> PaintShader::CreateDecodedImage(
     decoded_paint_image =
         PaintImageBuilder::WithDefault()
             .set_id(image_.stable_id())
-            .set_image(std::move(sk_image), image_.content_id())
+            .set_image(std::move(sk_image), image_.GetContentIdForFrame(0u))
             .TakePaintImage();
   }
 
@@ -381,7 +417,7 @@ void PaintShader::CreateSkShader(const gfx::SizeF* raster_scale,
 
   switch (shader_type_) {
     case Type::kEmpty:
-      cached_shader_ = SkShader::MakeEmptyShader();
+      cached_shader_ = SkShaders::Empty();
       break;
     case Type::kColor:
       // This will be handled by the fallback check below.
@@ -417,7 +453,7 @@ void PaintShader::CreateSkShader(const gfx::SizeF* raster_scale,
           flags_, base::OptionalOrNullptr(local_matrix_));
       break;
     case Type::kImage:
-      if (image_) {
+      if (image_ && !image_.IsPaintWorklet()) {
         cached_shader_ = image_.GetSkImage()->makeShader(
             tx_, ty_, base::OptionalOrNullptr(local_matrix_));
       }
@@ -430,9 +466,8 @@ void PaintShader::CreateSkShader(const gfx::SizeF* raster_scale,
       switch (scaling_behavior_) {
         // For raster scale, we create a picture shader directly.
         case ScalingBehavior::kRasterAtScale:
-          cached_shader_ = SkShader::MakePictureShader(
-              std::move(picture), tx_, ty_,
-              base::OptionalOrNullptr(local_matrix_), nullptr);
+          cached_shader_ = picture->makeShader(
+              tx_, ty_, base::OptionalOrNullptr(local_matrix_), nullptr);
           break;
         // For fixed scale, we create an image shader with an image backed by
         // the picture.
@@ -456,7 +491,7 @@ void PaintShader::CreateSkShader(const gfx::SizeF* raster_scale,
   // If we didn't create a shader for whatever reason, create a fallback color
   // one.
   if (!cached_shader_)
-    cached_shader_ = SkShader::MakeColorShader(fallback_color_);
+    cached_shader_ = SkShaders::Color(fallback_color_);
 }
 
 void PaintShader::SetColorsAndPositions(const SkColor* colors,
@@ -473,8 +508,8 @@ void PaintShader::SetColorsAndPositions(const SkColor* colors,
 }
 
 void PaintShader::SetMatrixAndTiling(const SkMatrix* matrix,
-                                     SkShader::TileMode tx,
-                                     SkShader::TileMode ty) {
+                                     SkTileMode tx,
+                                     SkTileMode ty) {
   if (matrix)
     local_matrix_ = *matrix;
   tx_ = tx;

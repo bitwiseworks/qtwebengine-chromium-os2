@@ -15,106 +15,93 @@ Polymer({
      * If true, the button is in the expanded state and will show the
      * 'expand-less' icon. If false, the button shows the 'expand-more' icon.
      */
-    expanded: {type: Boolean, value: false, notify: true},
+    expanded: {
+      type: Boolean,
+      value: false,
+      notify: true,
+      observer: 'onExpandedChange_',
+    },
 
     /**
      * If true, the button will be disabled and grayed out.
      */
-    disabled: {type: Boolean, value: false, reflectToAttribute: true},
+    disabled: {
+      type: Boolean,
+      value: false,
+      reflectToAttribute: true,
+    },
 
     /** A11y text descriptor for this control. */
-    alt: String,
+    alt: {
+      type: String,
+      observer: 'onAltChange_',
+    },
 
     tabIndex: {
       type: Number,
       value: 0,
     },
-
   },
+
+  observers: [
+    'updateAriaExpanded_(disabled, expanded)',
+  ],
 
   listeners: {
-    'blur': 'onBlur_',
-    'click': 'toggleExpand_',
-    'focus': 'onFocus_',
-    'keypress': 'onKeyPress_',
-    'pointerdown': 'onPointerDown_',
+    click: 'toggleExpand_',
   },
 
-  /**
-   * Used to differentiate pointer and keyboard click events.
-   * @private {boolean}
-   */
-  fromPointer_: false,
-
-  /**
-   * @param {boolean} expanded
-   * @private
-   */
-  getAriaPressed_: function(expanded) {
-    return expanded ? 'true' : 'false';
+  /** @type {boolean} */
+  get noink() {
+    return this.$.icon.noink;
   },
 
-  /**
-   * @param {boolean} expanded
-   * @private
-   */
-  iconName_: function(expanded) {
-    return expanded ? 'icon-expand-less' : 'icon-expand-more';
+  /** @type {boolean} */
+  set noink(value) {
+    this.$.icon.noink = value;
+  },
+
+  focus() {
+    this.$.icon.focus();
   },
 
   /** @private */
-  onBlur_: function() {
-    this.updateRippleHoldDown_(false);
-  },
-
-  /** @private */
-  onFocus_: function() {
-    this.updateRippleHoldDown_(true);
-  },
-
-  /**
-   * @param {!Event} event
-   * @private
-   */
-  onKeyPress_: function(event) {
-    if (event.key == ' ' || event.key == 'Enter') {
-      this.updateRippleHoldDown_(true);
+  onAltChange_() {
+    if (this.alt) {
+      this.$.icon.removeAttribute('aria-labelledby');
+      this.$.icon.setAttribute('aria-label', this.alt);
+    } else {
+      this.$.icon.removeAttribute('aria-label');
+      this.$.icon.setAttribute('aria-labelledby', 'label');
     }
   },
 
   /** @private */
-  onPointerDown_: function() {
-    this.fromPointer_ = true;
+  onExpandedChange_() {
+    this.$.icon.ironIcon = this.expanded ? 'cr:expand-less' : 'cr:expand-more';
   },
 
   /**
    * @param {!Event} event
    * @private
    */
-  toggleExpand_: function(event) {
+  toggleExpand_(event) {
     // Prevent |click| event from bubbling. It can cause parents of this
     // elements to erroneously re-toggle this control.
     event.stopPropagation();
     event.preventDefault();
 
+    this.scrollIntoViewIfNeeded();
     this.expanded = !this.expanded;
-
-    // If this event originated from a pointer, then |ripple.holdDown| should
-    // preemptively be set to false to allow ripple to animate.
-    if (this.fromPointer_) {
-      this.updateRippleHoldDown_(false);
-    }
-    this.fromPointer_ = false;
+    cr.ui.focusWithoutInk(this.$.icon);
   },
 
-  /**
-   * @param {boolean} holdDown
-   * @private
-   */
-  updateRippleHoldDown_: function(holdDown) {
-    const button = /** @type {{ensureRipple: Function, getRipple: Function}} */
-        (this.$$('paper-icon-button-light'));
-    button.ensureRipple();
-    button.getRipple().holdDown = holdDown;
+  /** @private */
+  updateAriaExpanded_() {
+    if (this.disabled) {
+      this.$.icon.removeAttribute('aria-expanded');
+    } else {
+      this.$.icon.setAttribute('aria-expanded', this.expanded);
+    }
   },
 });

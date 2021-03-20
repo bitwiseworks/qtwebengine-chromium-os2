@@ -23,12 +23,9 @@
 
 namespace dawn_native {
 
-    constexpr uint32_t EndOfBlock = UINT_MAX;          // std::numeric_limits<uint32_t>::max();
-    constexpr uint32_t AdditionalData = UINT_MAX - 1;  // std::numeric_limits<uint32_t>::max() - 1;
-
     // TODO(cwallez@chromium.org): figure out a way to have more type safety for the iterator
 
-    CommandIterator::CommandIterator() : mEndOfBlock(EndOfBlock) {
+    CommandIterator::CommandIterator() {
         Reset();
     }
 
@@ -42,7 +39,7 @@ namespace dawn_native {
         }
     }
 
-    CommandIterator::CommandIterator(CommandIterator&& other) : mEndOfBlock(EndOfBlock) {
+    CommandIterator::CommandIterator(CommandIterator&& other) {
         if (!other.IsEmpty()) {
             mBlocks = std::move(other.mBlocks);
             other.Reset();
@@ -64,7 +61,7 @@ namespace dawn_native {
     }
 
     CommandIterator::CommandIterator(CommandAllocator&& allocator)
-        : mBlocks(allocator.AcquireBlocks()), mEndOfBlock(EndOfBlock) {
+        : mBlocks(allocator.AcquireBlocks()) {
         Reset();
     }
 
@@ -72,6 +69,17 @@ namespace dawn_native {
         mBlocks = allocator.AcquireBlocks();
         Reset();
         return *this;
+    }
+
+    bool CommandIterator::NextCommandIdInNewBlock(uint32_t* commandId) {
+        mCurrentBlock++;
+        if (mCurrentBlock >= mBlocks.size()) {
+            Reset();
+            *commandId = detail::kEndOfBlock;
+            return false;
+        }
+        mCurrentPtr = AlignPtr(mBlocks[mCurrentBlock].block, alignof(uint32_t));
+        return NextCommandId(commandId);
     }
 
     void CommandIterator::Reset() {
@@ -97,47 +105,6 @@ namespace dawn_native {
         return mBlocks[0].block == reinterpret_cast<const uint8_t*>(&mEndOfBlock);
     }
 
-    bool CommandIterator::NextCommandId(uint32_t* commandId) {
-        uint8_t* idPtr = AlignPtr(mCurrentPtr, alignof(uint32_t));
-        ASSERT(idPtr + sizeof(uint32_t) <=
-               mBlocks[mCurrentBlock].block + mBlocks[mCurrentBlock].size);
-
-        uint32_t id = *reinterpret_cast<uint32_t*>(idPtr);
-
-        if (id == EndOfBlock) {
-            mCurrentBlock++;
-            if (mCurrentBlock >= mBlocks.size()) {
-                Reset();
-                *commandId = EndOfBlock;
-                return false;
-            }
-            mCurrentPtr = AlignPtr(mBlocks[mCurrentBlock].block, alignof(uint32_t));
-            return NextCommandId(commandId);
-        }
-
-        mCurrentPtr = idPtr + sizeof(uint32_t);
-        *commandId = id;
-        return true;
-    }
-
-    void* CommandIterator::NextCommand(size_t commandSize, size_t commandAlignment) {
-        uint8_t* commandPtr = AlignPtr(mCurrentPtr, commandAlignment);
-        ASSERT(commandPtr + sizeof(commandSize) <=
-               mBlocks[mCurrentBlock].block + mBlocks[mCurrentBlock].size);
-
-        mCurrentPtr = commandPtr + commandSize;
-        return commandPtr;
-    }
-
-    void* CommandIterator::NextData(size_t dataSize, size_t dataAlignment) {
-        uint32_t id;
-        bool hasId = NextCommandId(&id);
-        ASSERT(hasId);
-        ASSERT(id == AdditionalData);
-
-        return NextCommand(dataSize, dataAlignment);
-    }
-
     // Potential TODO(cwallez@chromium.org):
     //  - Host the size and pointer to next block in the block itself to avoid having an allocation
     //    in the vector
@@ -161,52 +128,34 @@ namespace dawn_native {
         ASSERT(mCurrentPtr != nullptr && mEndPtr != nullptr);
         ASSERT(IsPtrAligned(mCurrentPtr, alignof(uint32_t)));
         ASSERT(mCurrentPtr + sizeof(uint32_t) <= mEndPtr);
-        *reinterpret_cast<uint32_t*>(mCurrentPtr) = EndOfBlock;
+        *reinterpret_cast<uint32_t*>(mCurrentPtr) = detail::kEndOfBlock;
 
         mCurrentPtr = nullptr;
         mEndPtr = nullptr;
         return std::move(mBlocks);
     }
 
-    uint8_t* CommandAllocator::Allocate(uint32_t commandId,
-                                        size_t commandSize,
-                                        size_t commandAlignment) {
-        ASSERT(mCurrentPtr != nullptr);
-        ASSERT(mEndPtr != nullptr);
-        ASSERT(commandId != EndOfBlock);
-
-        // It should always be possible to allocate one id, for EndOfBlock tagging,
-        ASSERT(IsPtrAligned(mCurrentPtr, alignof(uint32_t)));
-        ASSERT(mCurrentPtr + sizeof(uint32_t) <= mEndPtr);
+    uint8_t* CommandAllocator::AllocateInNewBlock(uint32_t commandId,
+                                                  size_t commandSize,
+                                                  size_t commandAlignment) {
+        // When there is not enough space, we signal the kEndOfBlock, so that the iterator knows
+        // to move to the next one. kEndOfBlock on the last block means the end of the commands.
         uint32_t* idAlloc = reinterpret_cast<uint32_t*>(mCurrentPtr);
+        *idAlloc = detail::kEndOfBlock;
 
-        uint8_t* commandAlloc = AlignPtr(mCurrentPtr + sizeof(uint32_t), commandAlignment);
-        uint8_t* nextPtr = AlignPtr(commandAlloc + commandSize, alignof(uint32_t));
+        // We'll request a block that can contain at least the command ID, the command and an
+        // additional ID to contain the kEndOfBlock tag.
+        size_t requestedBlockSize = commandSize + kWorstCaseAdditionalSize;
 
-        // When there is not enough space, we signal the EndOfBlock, so that the iterator nows to
-        // move to the next one. EndOfBlock on the last block means the end of the commands.
-        if (nextPtr + sizeof(uint32_t) > mEndPtr) {
-            // Even if we are not able to get another block, the list of commands will be
-            // well-formed and iterable as this block will be that last one.
-            *idAlloc = EndOfBlock;
-
-            // Make sure we have space for current allocation, plus end of block and alignment
-            // padding for the first id.
-            ASSERT(nextPtr > mCurrentPtr);
-            if (!GetNewBlock(static_cast<size_t>(nextPtr - mCurrentPtr) + sizeof(uint32_t) +
-                             alignof(uint32_t))) {
-                return nullptr;
-            }
-            return Allocate(commandId, commandSize, commandAlignment);
+        // The computation of the request could overflow.
+        if (DAWN_UNLIKELY(requestedBlockSize <= commandSize)) {
+            return nullptr;
         }
 
-        *idAlloc = commandId;
-        mCurrentPtr = nextPtr;
-        return commandAlloc;
-    }
-
-    uint8_t* CommandAllocator::AllocateData(size_t commandSize, size_t commandAlignment) {
-        return Allocate(AdditionalData, commandSize, commandAlignment);
+        if (DAWN_UNLIKELY(!GetNewBlock(requestedBlockSize))) {
+            return nullptr;
+        }
+        return Allocate(commandId, commandSize, commandAlignment);
     }
 
     bool CommandAllocator::GetNewBlock(size_t minimumSize) {
@@ -214,8 +163,8 @@ namespace dawn_native {
         mLastAllocationSize =
             std::max(minimumSize, std::min(mLastAllocationSize * 2, size_t(16384)));
 
-        uint8_t* block = reinterpret_cast<uint8_t*>(malloc(mLastAllocationSize));
-        if (block == nullptr) {
+        uint8_t* block = static_cast<uint8_t*>(malloc(mLastAllocationSize));
+        if (DAWN_UNLIKELY(block == nullptr)) {
             return false;
         }
 

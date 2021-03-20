@@ -9,6 +9,7 @@
 #include "base/compiler_specific.h"
 #include "base/debug/activity_tracker.h"
 #include "base/macros.h"
+#include "base/test/gtest_util.h"
 #include "base/threading/platform_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -96,8 +97,11 @@ class TryLockTestThread : public PlatformThread::Delegate {
   explicit TryLockTestThread(Lock* lock) : lock_(lock), got_lock_(false) {}
 
   void ThreadMain() override {
-    got_lock_ = lock_->Try();
-    if (got_lock_)
+    // The local variable is required for the static analyzer to see that the
+    // lock is properly released.
+    bool got_lock = lock_->Try();
+    got_lock_ = got_lock;
+    if (got_lock)
       lock_->Release();
   }
 
@@ -114,7 +118,7 @@ TEST(LockTest, TryLock) {
   Lock lock;
 
   ASSERT_TRUE(lock.Try());
-  // We now have the lock....
+  lock.AssertAcquired();
 
   // This thread will not be able to get the lock.
   {
@@ -142,6 +146,7 @@ TEST(LockTest, TryLock) {
     ASSERT_TRUE(thread.got_lock());
     // But it released it....
     ASSERT_TRUE(lock.Try());
+    lock.AssertAcquired();
   }
 
   lock.Release();
@@ -154,7 +159,7 @@ TEST(LockTest, TryTrackedLock) {
   Lock lock;
 
   ASSERT_TRUE(lock.Try());
-  // We now have the lock....
+  lock.AssertAcquired();
 
   // This thread will not be able to get the lock.
   {
@@ -182,6 +187,7 @@ TEST(LockTest, TryTrackedLock) {
     ASSERT_TRUE(thread.got_lock());
     // But it released it....
     ASSERT_TRUE(lock.Try());
+    lock.AssertAcquired();
   }
 
   lock.Release();
@@ -252,6 +258,36 @@ TEST(LockTest, MutexFourThreads) {
   PlatformThread::Join(handle3);
 
   EXPECT_EQ(4 * 40, value);
+}
+
+TEST(LockTest, AutoLockMaybe) {
+  Lock lock;
+  {
+    AutoLockMaybe auto_lock(&lock);
+    lock.AssertAcquired();
+  }
+  EXPECT_DCHECK_DEATH(lock.AssertAcquired());
+}
+
+TEST(LockTest, AutoLockMaybeNull) {
+  AutoLockMaybe auto_lock(nullptr);
+}
+
+TEST(LockTest, ReleasableAutoLockExplicitRelease) {
+  Lock lock;
+  ReleasableAutoLock auto_lock(&lock);
+  lock.AssertAcquired();
+  auto_lock.Release();
+  EXPECT_DCHECK_DEATH(lock.AssertAcquired());
+}
+
+TEST(LockTest, ReleasableAutoLockImplicitRelease) {
+  Lock lock;
+  {
+    ReleasableAutoLock auto_lock(&lock);
+    lock.AssertAcquired();
+  }
+  EXPECT_DCHECK_DEATH(lock.AssertAcquired());
 }
 
 }  // namespace base

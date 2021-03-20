@@ -46,25 +46,26 @@
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/web_thread_supporting_gc.h"
 
 namespace blink {
 
 // static
 WorkerInspectorController* WorkerInspectorController::Create(
     WorkerThread* thread,
+    const KURL& url,
     scoped_refptr<InspectorTaskRunner> inspector_task_runner,
     std::unique_ptr<WorkerDevToolsParams> devtools_params) {
   WorkerThreadDebugger* debugger =
       WorkerThreadDebugger::From(thread->GetIsolate());
   return debugger ? MakeGarbageCollected<WorkerInspectorController>(
-                        thread, debugger, std::move(inspector_task_runner),
+                        thread, url, debugger, std::move(inspector_task_runner),
                         std::move(devtools_params))
                   : nullptr;
 }
 
 WorkerInspectorController::WorkerInspectorController(
     WorkerThread* thread,
+    const KURL& url,
     WorkerThreadDebugger* debugger,
     scoped_refptr<InspectorTaskRunner> inspector_task_runner,
     std::unique_ptr<WorkerDevToolsParams> devtools_params)
@@ -72,14 +73,12 @@ WorkerInspectorController::WorkerInspectorController(
       thread_(thread),
       inspected_frames_(nullptr),
       probe_sink_(MakeGarbageCollected<CoreProbeSink>()) {
-  probe_sink_->addInspectorTraceEvents(
+  probe_sink_->AddInspectorTraceEvents(
       MakeGarbageCollected<InspectorTraceEvents>());
-  if (auto* scope = DynamicTo<WorkerGlobalScope>(thread->GlobalScope())) {
-    worker_devtools_token_ = devtools_params->devtools_worker_token;
-    parent_devtools_token_ = scope->GetParentDevToolsToken();
-    url_ = scope->Url();
-    worker_thread_id_ = thread->GetPlatformThreadId();
-  }
+  worker_devtools_token_ = devtools_params->devtools_worker_token;
+  parent_devtools_token_ = thread->GlobalScope()->GetParentDevToolsToken();
+  url_ = url;
+  worker_thread_id_ = thread->GetPlatformThreadId();
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
       Platform::Current()->GetIOTaskRunner();
   if (!parent_devtools_token_.is_empty() && io_task_runner) {
@@ -88,9 +87,10 @@ WorkerInspectorController::WorkerInspectorController(
     agent_ = MakeGarbageCollected<DevToolsAgent>(
         this, inspected_frames_.Get(), probe_sink_.Get(),
         std::move(inspector_task_runner), std::move(io_task_runner));
-    agent_->BindRequest(std::move(devtools_params->agent_host_ptr_info),
-                        std::move(devtools_params->agent_request),
-                        thread->GetTaskRunner(TaskType::kInternalInspector));
+    agent_->BindReceiverForWorker(
+        std::move(devtools_params->agent_host_remote),
+        std::move(devtools_params->agent_receiver),
+        thread->GetTaskRunner(TaskType::kInternalInspector));
   }
   trace_event::AddEnabledStateObserver(this);
   EmitTraceEvent();
@@ -110,7 +110,6 @@ void WorkerInspectorController::AttachSession(DevToolsSession* session,
   session->Append(MakeGarbageCollected<InspectorLogAgent>(
       thread_->GetConsoleMessageStorage(), nullptr, session->V8Session()));
   if (auto* scope = DynamicTo<WorkerGlobalScope>(thread_->GlobalScope())) {
-    scope->EnsureFetcher();
     session->Append(MakeGarbageCollected<InspectorNetworkAgent>(
         inspected_frames_.Get(), scope, session->V8Session()));
     session->Append(MakeGarbageCollected<InspectorEmulationAgent>(nullptr));
@@ -124,7 +123,7 @@ void WorkerInspectorController::DetachSession(DevToolsSession*) {
     thread_->GetWorkerBackingThread().BackingThread().RemoveTaskObserver(this);
 }
 
-void WorkerInspectorController::InspectElement(const WebPoint&) {
+void WorkerInspectorController::InspectElement(const gfx::Point&) {
   NOTREACHED();
 }
 
@@ -155,7 +154,8 @@ void WorkerInspectorController::WaitForDebuggerIfNeeded() {
 }
 
 void WorkerInspectorController::WillProcessTask(
-    const base::PendingTask& pending_task) {}
+    const base::PendingTask& pending_task,
+    bool was_blocked_or_low_priority) {}
 
 void WorkerInspectorController::DidProcessTask(
     const base::PendingTask& pending_task) {
@@ -179,7 +179,7 @@ void WorkerInspectorController::EmitTraceEvent() {
                            worker_thread_id_));
 }
 
-void WorkerInspectorController::Trace(blink::Visitor* visitor) {
+void WorkerInspectorController::Trace(Visitor* visitor) {
   visitor->Trace(agent_);
   visitor->Trace(inspected_frames_);
   visitor->Trace(probe_sink_);

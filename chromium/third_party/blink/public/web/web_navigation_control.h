@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/callback.h"
 #include "base/unguessable_token.h"
 #include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
@@ -35,7 +36,9 @@ class WebNavigationControl : public WebLocalFrame {
   virtual bool DispatchBeforeUnloadEvent(bool is_reload) = 0;
 
   // Commits a cross-document navigation in the frame. See WebNavigationParams
-  // for details.
+  // for details. Calls WebLocalFrameClient::DidCommitNavigation synchronously
+  // after new document commit, but before loading any content, unless commit
+  // fails.
   // TODO(dgozman): return mojom::CommitResult.
   virtual void CommitNavigation(
       std::unique_ptr<WebNavigationParams> navigation_params,
@@ -68,33 +71,33 @@ class WebNavigationControl : public WebLocalFrame {
   virtual FallbackContentResult MaybeRenderFallbackContent(
       const WebURLError&) const = 0;
 
-  // When load failure is in a cross-process frame this notifies the frame here
-  // that its owner should render fallback content if any. Only called on owners
-  // that render their own content (i.e., <object>).
-  virtual void RenderFallbackContent() const = 0;
-
   // Override the normal rules for whether a load has successfully committed
   // in this frame. Used to propagate state when this frame has navigated
   // cross process.
   virtual void SetCommittedFirstRealLoad() = 0;
   virtual bool HasCommittedFirstRealLoad() = 0;
 
+  // Marks the frame as loading, before WebLocalFrameClient issues a navigation
+  // request through the browser process on behalf of the frame.
+  // This runs some JavaScript event listeners, which may cancel the navigation
+  // or detach the frame. In this case the method returns false and client
+  // should not proceed with the navigation.
+  virtual bool WillStartNavigation(
+      const WebNavigationInfo&,
+      bool is_history_navigation_in_new_child_frame) = 0;
+
   // Informs the frame that the navigation it asked the client to do was
   // dropped.
-  virtual void ClientDroppedNavigation() = 0;
+  virtual void DidDropNavigation() = 0;
 
   // Marks the frame as loading, without performing any loading. Used for
   // initial history navigations in child frames, which may actually happen
   // in another process.
   virtual void MarkAsLoading() = 0;
 
-  // Marks the frame as loading and creates a placeholder document loader.
-  // This placeholder informs Blink that the navigation is ongoing, while it
-  // is actually being handled by the client.
-  // TODO(dgozman): remove this together with placeholder document loader.
-  virtual bool CreatePlaceholderDocumentLoader(
-      const WebNavigationInfo&,
-      std::unique_ptr<WebDocumentLoader::ExtraData>) = 0;
+  // TODO(ahemery): Remove all IsClientNavigationInitialHistoryLoad functions
+  // when IsPerNavigationMojoInterface is enabled.
+  virtual bool IsClientNavigationInitialHistoryLoad() = 0;
 
  protected:
   explicit WebNavigationControl(WebTreeScopeType scope)

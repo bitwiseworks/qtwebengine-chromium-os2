@@ -10,7 +10,7 @@
 namespace extensions {
 
 class EnterpriseDeviceAttributesGetDirectoryDeviceIdFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   EnterpriseDeviceAttributesGetDirectoryDeviceIdFunction();
 
@@ -21,11 +21,11 @@ class EnterpriseDeviceAttributesGetDirectoryDeviceIdFunction
 
  private:
   DECLARE_EXTENSION_FUNCTION("enterprise.deviceAttributes.getDirectoryDeviceId",
-                             ENTERPRISE_DEVICEATTRIBUTES_GETDIRECTORYDEVICEID);
+                             ENTERPRISE_DEVICEATTRIBUTES_GETDIRECTORYDEVICEID)
 };
 
 class EnterpriseDeviceAttributesGetDeviceSerialNumberFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   EnterpriseDeviceAttributesGetDeviceSerialNumberFunction();
 
@@ -37,11 +37,11 @@ class EnterpriseDeviceAttributesGetDeviceSerialNumberFunction
  private:
   DECLARE_EXTENSION_FUNCTION(
       "enterprise.deviceAttributes.getDeviceSerialNumber",
-      ENTERPRISE_DEVICEATTRIBUTES_GETDEVICESERIALNUMBER);
+      ENTERPRISE_DEVICEATTRIBUTES_GETDEVICESERIALNUMBER)
 };
 
 class EnterpriseDeviceAttributesGetDeviceAssetIdFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   EnterpriseDeviceAttributesGetDeviceAssetIdFunction();
 
@@ -52,11 +52,11 @@ class EnterpriseDeviceAttributesGetDeviceAssetIdFunction
 
  private:
   DECLARE_EXTENSION_FUNCTION("enterprise.deviceAttributes.getDeviceAssetId",
-                             ENTERPRISE_DEVICEATTRIBUTES_GETDEVICEASSETID);
+                             ENTERPRISE_DEVICEATTRIBUTES_GETDEVICEASSETID)
 };
 
 class EnterpriseDeviceAttributesGetDeviceAnnotatedLocationFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   EnterpriseDeviceAttributesGetDeviceAnnotatedLocationFunction();
 
@@ -68,7 +68,22 @@ class EnterpriseDeviceAttributesGetDeviceAnnotatedLocationFunction
  private:
   DECLARE_EXTENSION_FUNCTION(
       "enterprise.deviceAttributes.getDeviceAnnotatedLocation",
-      ENTERPRISE_DEVICEATTRIBUTES_GETDEVICEANNOTATEDLOCATION);
+      ENTERPRISE_DEVICEATTRIBUTES_GETDEVICEANNOTATEDLOCATION)
+};
+
+class EnterpriseDeviceAttributesGetDeviceHostnameFunction
+    : public ExtensionFunction {
+ public:
+  EnterpriseDeviceAttributesGetDeviceHostnameFunction();
+
+ protected:
+  ~EnterpriseDeviceAttributesGetDeviceHostnameFunction() override;
+
+  ResponseAction Run() override;
+
+ private:
+  DECLARE_EXTENSION_FUNCTION("enterprise.deviceAttributes.getDeviceHostname",
+                             ENTERPRISE_DEVICEATTRIBUTES_GETDEVICEHOSTNAME)
 };
 
 }  //  namespace extensions

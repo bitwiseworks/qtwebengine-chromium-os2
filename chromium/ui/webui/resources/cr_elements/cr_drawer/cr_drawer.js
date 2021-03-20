@@ -20,6 +20,18 @@ Polymer({
       value: 'ltr',
       reflectToAttribute: true,
     },
+
+    /**
+     * An iron-icon resource name, e.g. "cr20:menu". If null, no icon will
+     * be shown.
+     */
+    iconName: {
+      type: String,
+      value: null,
+    },
+
+    /** Title attribute for the icon, if shown. */
+    iconTitle: String,
   },
 
   /** @type {boolean} */
@@ -32,7 +44,7 @@ Polymer({
   },
 
   /** Toggles the drawer open and close. */
-  toggle: function() {
+  toggle() {
     if (this.open) {
       this.cancel();
     } else {
@@ -41,7 +53,7 @@ Polymer({
   },
 
   /** Shows drawer and slides it into view. */
-  openDrawer: function() {
+  openDrawer() {
     if (this.open) {
       return;
     }
@@ -59,7 +71,7 @@ Polymer({
    * cancel.
    * @param {boolean} cancel
    */
-  dismiss_: function(cancel) {
+  dismiss_(cancel) {
     if (!this.open) {
       return;
     }
@@ -69,17 +81,26 @@ Polymer({
     });
   },
 
-  cancel: function() {
+  cancel() {
     this.dismiss_(true);
   },
 
-  close: function() {
+  close() {
     this.dismiss_(false);
   },
 
   /** @return {boolean} */
-  wasCanceled: function() {
-    return !this.open && this.$.dialog.returnValue == 'canceled';
+  wasCanceled() {
+    return !this.open && this.$.dialog.returnValue === 'canceled';
+  },
+
+  /**
+   * Handles a tap on the (optional) icon.
+   * @param {!Event} event
+   * @private
+   */
+  onIconTap_(event) {
+    this.cancel();
   },
 
   /**
@@ -88,7 +109,7 @@ Polymer({
    * @param {!Event} event
    * @private
    */
-  onContainerTap_: function(event) {
+  onContainerTap_(event) {
     event.stopPropagation();
   },
 
@@ -96,7 +117,7 @@ Polymer({
    * Close the dialog when tapped outside the container.
    * @private
    */
-  onDialogTap_: function() {
+  onDialogTap_() {
     this.cancel();
   },
 
@@ -105,7 +126,7 @@ Polymer({
    * @param {!Event} event
    * @private
    */
-  onDialogCancel_: function(event) {
+  onDialogCancel_(event) {
     event.preventDefault();
     this.cancel();
   },
@@ -114,7 +135,7 @@ Polymer({
    * @param {!Event} event
    * @private
    */
-  onDialogClose_: function(event) {
+  onDialogClose_(event) {
     // TODO(dpapad): This is necessary to make the code work both for Polymer 1
     // and Polymer 2. Remove once migration to Polymer 2 is completed.
     event.stopPropagation();

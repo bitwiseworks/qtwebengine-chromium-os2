@@ -28,42 +28,43 @@ namespace chromeos {
 SlowTraceSource::SlowTraceSource() {
 }
 
-std::string SlowTraceSource::GetSource() const {
+std::string SlowTraceSource::GetSource() {
   return chrome::kChromeUISlowTraceHost;
 }
 
 void SlowTraceSource::StartDataRequest(
-    const std::string& path,
-    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-    const content::URLDataSource::GotDataCallback& callback) {
+    const GURL& url,
+    const content::WebContents::Getter& wc_getter,
+    content::URLDataSource::GotDataCallback callback) {
   int trace_id = 0;
+  // TODO(crbug/1009127): Simplify usages of |path| since |url| is available.
+  const std::string path = content::URLDataSource::URLToRequestPath(url);
   size_t pos = path.find('#');
   TracingManager* manager = TracingManager::Get();
   if (!manager ||
       pos == std::string::npos ||
       !base::StringToInt(path.substr(pos + 1), &trace_id)) {
-    callback.Run(NULL);
+    std::move(callback).Run(nullptr);
     return;
   }
-  manager->GetTraceData(trace_id,
-                        base::Bind(&SlowTraceSource::OnGetTraceData,
-                                   base::Unretained(this),
-                                   callback));
+  manager->GetTraceData(
+      trace_id, base::BindOnce(&SlowTraceSource::OnGetTraceData,
+                               base::Unretained(this), std::move(callback)));
 }
 
-std::string SlowTraceSource::GetMimeType(const std::string& path) const {
+std::string SlowTraceSource::GetMimeType(const std::string& path) {
   return "application/zip";
 }
 
 SlowTraceSource::~SlowTraceSource() {}
 
 void SlowTraceSource::OnGetTraceData(
-    const content::URLDataSource::GotDataCallback& callback,
+    content::URLDataSource::GotDataCallback callback,
     scoped_refptr<base::RefCountedString> trace_data) {
-  callback.Run(trace_data.get());
+  std::move(callback).Run(trace_data.get());
 }
 
-bool SlowTraceSource::AllowCaching() const {
+bool SlowTraceSource::AllowCaching() {
   // Should not be cached to reflect dynamically-generated contents that may
   // depend on current settings.
   return false;

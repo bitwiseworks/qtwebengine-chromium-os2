@@ -48,9 +48,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
       : origin_thread_id_(base::PlatformThread::CurrentId()),
         bus_(bus),
         delegate_(delegate),
-        object_path_(object_path),
-        weak_ptr_factory_(this) {
-    VLOG(1) << "Creating Bluetooth Media Endpoint: " << object_path_.value();
+        object_path_(object_path) {
+    DVLOG(1) << "Creating Bluetooth Media Endpoint: " << object_path_.value();
     DCHECK(bus_);
     DCHECK(delegate_);
     DCHECK(object_path_.IsValid());
@@ -89,7 +88,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
   }
 
   ~BluetoothMediaEndpointServiceProviderImpl() override {
-    VLOG(1) << "Cleaning up Bluetooth Media Endpoint: " << object_path_.value();
+    DVLOG(1) << "Cleaning up Bluetooth Media Endpoint: "
+             << object_path_.value();
 
     bus_->UnregisterExportedObject(object_path_);
   }
@@ -105,14 +105,14 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
   void OnExported(const std::string& interface_name,
                   const std::string& method_name,
                   bool success) {
-    LOG_IF(ERROR, !success) << "Failed to export " << interface_name << "."
-                            << method_name;
+    DVLOG_IF(1, !success) << "Failed to export " << interface_name << "."
+                          << method_name;
   }
 
   // Called by dbus:: when the remote device connects to the Media Endpoint.
   void SetConfiguration(dbus::MethodCall* method_call,
                         dbus::ExportedObject::ResponseSender response_sender) {
-    VLOG(1) << "SetConfiguration";
+    DVLOG(1) << "SetConfiguration";
 
     DCHECK(OnOriginThread());
     DCHECK(delegate_);
@@ -169,7 +169,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
                  << method_call->ToString();
     }
 
-    response_sender.Run(dbus::Response::FromMethodCall(method_call));
+    std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
   }
 
   // Called by dbus:: when the remote device receives the configuration for
@@ -177,7 +177,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
   void SelectConfiguration(
       dbus::MethodCall* method_call,
       dbus::ExportedObject::ResponseSender response_sender) {
-    VLOG(1) << "SelectConfiguration";
+    DVLOG(1) << "SelectConfiguration";
 
     DCHECK(OnOriginThread());
     DCHECK(delegate_);
@@ -195,9 +195,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
 
     // |delegate_| generates the response to |SelectConfiguration| and sends it
     // back via |callback|.
-    Delegate::SelectConfigurationCallback callback = base::Bind(
-        &BluetoothMediaEndpointServiceProviderImpl::OnConfiguration,
-        weak_ptr_factory_.GetWeakPtr(), method_call, response_sender);
+    Delegate::SelectConfigurationCallback callback =
+        base::Bind(&BluetoothMediaEndpointServiceProviderImpl::OnConfiguration,
+                   weak_ptr_factory_.GetWeakPtr(), method_call,
+                   base::Passed(&response_sender));
 
     delegate_->SelectConfiguration(configuration, callback);
   }
@@ -206,7 +207,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
   void ClearConfiguration(
       dbus::MethodCall* method_call,
       dbus::ExportedObject::ResponseSender response_sender) {
-    VLOG(1) << "ClearConfiguration";
+    DVLOG(1) << "ClearConfiguration";
 
     DCHECK(OnOriginThread());
     DCHECK(delegate_);
@@ -221,21 +222,21 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
 
     delegate_->ClearConfiguration(transport_path);
 
-    response_sender.Run(dbus::Response::FromMethodCall(method_call));
+    std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
   }
 
   // Called by Bluetooth daemon to do the clean up after unregistering the Media
   // Endpoint.
   void Release(dbus::MethodCall* method_call,
                dbus::ExportedObject::ResponseSender response_sender) {
-    VLOG(1) << "Release";
+    DVLOG(1) << "Release";
 
     DCHECK(OnOriginThread());
     DCHECK(delegate_);
 
     delegate_->Released();
 
-    response_sender.Run(dbus::Response::FromMethodCall(method_call));
+    std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
   }
 
   // Called by Delegate to response to a method requiring transport
@@ -243,7 +244,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
   void OnConfiguration(dbus::MethodCall* method_call,
                        dbus::ExportedObject::ResponseSender response_sender,
                        const std::vector<uint8_t>& configuration) {
-    VLOG(1) << "OnConfiguration";
+    DVLOG(1) << "OnConfiguration";
 
     DCHECK(OnOriginThread());
 
@@ -257,7 +258,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
     } else {
       writer.AppendArrayOfBytes(&configuration[0], configuration.size());
     }
-    response_sender.Run(std::move(response));
+    std::move(response_sender).Run(std::move(response));
   }
 
   // Origin thread (i.e. the UI thread in production).
@@ -283,7 +284,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothMediaEndpointServiceProviderImpl
   // Note This should remain the last member so it'll be destroyed and
   // invalidate it's weak pointers before any other members are destroyed.
   base::WeakPtrFactory<BluetoothMediaEndpointServiceProviderImpl>
-      weak_ptr_factory_;
+      weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothMediaEndpointServiceProviderImpl);
 };

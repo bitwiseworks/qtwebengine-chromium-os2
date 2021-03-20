@@ -10,10 +10,11 @@
 #include "absl/strings/string_view.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace {
 using str_format_internal::FormatArgImpl;
 
-class FormatEntryPointTest : public ::testing::Test { };
+using FormatEntryPointTest = ::testing::Test;
 
 TEST_F(FormatEntryPointTest, Format) {
   std::string sink;
@@ -30,8 +31,8 @@ TEST_F(FormatEntryPointTest, UntypedFormat) {
     "",
     "a",
     "%80d",
-#if !defined(_MSC_VER) && !defined(__ANDROID__)
-    // MSVC and Android don't support positional syntax.
+#if !defined(_MSC_VER) && !defined(__ANDROID__) && !defined(__native_client__)
+    // MSVC, NaCL and Android don't support positional syntax.
     "complicated multipart %% %1$d format %1$0999d",
 #endif  // _MSC_VER
   };
@@ -153,17 +154,20 @@ TEST_F(FormatEntryPointTest, Stream) {
     "",
     "a",
     "%80d",
-#if !defined(_MSC_VER) && !defined(__ANDROID__)
-    // MSVC doesn't support positional syntax.
+    "%d %u %c %s %f %g",
+#if !defined(_MSC_VER) && !defined(__ANDROID__) && !defined(__native_client__)
+    // MSVC, NaCL and Android don't support positional syntax.
     "complicated multipart %% %1$d format %1$080d",
 #endif  // _MSC_VER
   };
   std::string buf(4096, '\0');
   for (const auto& fmt : formats) {
-    const auto parsed = ParsedFormat<'d'>::NewAllowIgnored(fmt);
+    const auto parsed =
+        ParsedFormat<'d', 'u', 'c', 's', 'f', 'g'>::NewAllowIgnored(fmt);
     std::ostringstream oss;
-    oss << StreamFormat(*parsed, 123);
-    int fmt_result = snprintf(&*buf.begin(), buf.size(), fmt.c_str(), 123);
+    oss << StreamFormat(*parsed, 123, 3, 49, "multistreaming!!!", 1.01, 1.01);
+    int fmt_result = snprintf(&*buf.begin(), buf.size(), fmt.c_str(),  //
+                                 123, 3, 49, "multistreaming!!!", 1.01, 1.01);
     ASSERT_TRUE(oss) << fmt;
     ASSERT_TRUE(fmt_result >= 0 && static_cast<size_t>(fmt_result) < buf.size())
         << fmt_result;
@@ -238,7 +242,7 @@ class TempFile {
 
   std::FILE* file() const { return file_; }
 
-  // Read the file into a std::string.
+  // Read the file into a string.
   std::string ReadFile() {
     std::fseek(file_, 0, SEEK_END);
     int size = std::ftell(file_);
@@ -271,7 +275,7 @@ TEST_F(FormatEntryPointTest, FPrintFError) {
   EXPECT_EQ(errno, EBADF);
 }
 
-#if __GLIBC__
+#ifdef __GLIBC__
 TEST_F(FormatEntryPointTest, FprintfTooLarge) {
   std::FILE* f = std::fopen("/dev/null", "w");
   int width = 2000000000;
@@ -341,7 +345,7 @@ TEST(StrFormat, BehavesAsDocumented) {
   EXPECT_EQ(StrFormat("%c", int{'a'}), "a");
   EXPECT_EQ(StrFormat("%c", long{'a'}), "a");  // NOLINT
   EXPECT_EQ(StrFormat("%c", uint64_t{'a'}), "a");
-  //     "s" - std::string                  Eg: "C" -> "C", std::string("C++") -> "C++"
+  //     "s" - string       Eg: "C" -> "C", std::string("C++") -> "C++"
   //           Formats std::string, char*, string_view, and Cord.
   EXPECT_EQ(StrFormat("%s", "C"), "C");
   EXPECT_EQ(StrFormat("%s", std::string("C++")), "C++");
@@ -446,7 +450,7 @@ struct SummarizeConsumer {
     if (conv.precision.is_from_arg()) {
       *out += "." + std::to_string(conv.precision.get_from_arg()) + "$*";
     }
-    *out += conv.conv.Char();
+    *out += FormatConversionCharToChar(conv.conv);
     *out += "}";
     return true;
   }
@@ -458,7 +462,7 @@ std::string SummarizeParsedFormat(const ParsedFormatBase& pc) {
   return out;
 }
 
-class ParsedFormatTest : public testing::Test {};
+using ParsedFormatTest = ::testing::Test;
 
 TEST_F(ParsedFormatTest, SimpleChecked) {
   EXPECT_EQ("[ABC]{d:1$d}[DEF]",
@@ -536,19 +540,19 @@ TEST_F(ParsedFormatTest, UncheckedCorrect) {
   EXPECT_EQ("[ABC]{d:1$d}[DEF]", SummarizeParsedFormat(*f));
 
   std::string format = "%sFFF%dZZZ%f";
-  auto f2 =
-      ExtendedParsedFormat<Conv::string, Conv::d, Conv::floating>::New(format);
+  auto f2 = ExtendedParsedFormat<Conv::kString, Conv::d, Conv::kFloating>::New(
+      format);
 
   ASSERT_TRUE(f2);
   EXPECT_EQ("{s:1$s}[FFF]{d:2$d}[ZZZ]{f:3$f}", SummarizeParsedFormat(*f2));
 
-  f2 = ExtendedParsedFormat<Conv::string, Conv::d, Conv::floating>::New(
+  f2 = ExtendedParsedFormat<Conv::kString, Conv::d, Conv::kFloating>::New(
       "%s %d %f");
 
   ASSERT_TRUE(f2);
   EXPECT_EQ("{s:1$s}[ ]{d:2$d}[ ]{f:3$f}", SummarizeParsedFormat(*f2));
 
-  auto star = ExtendedParsedFormat<Conv::star, Conv::d>::New("%*d");
+  auto star = ExtendedParsedFormat<Conv::kStar, Conv::d>::New("%*d");
   ASSERT_TRUE(star);
   EXPECT_EQ("{*d:2$1$*d}", SummarizeParsedFormat(*star));
 
@@ -600,27 +604,46 @@ TEST_F(ParsedFormatTest, RegressionMixPositional) {
   EXPECT_FALSE((ExtendedParsedFormat<Conv::d, Conv::o>::New("%1$d %o")));
 }
 
+using FormatWrapperTest = ::testing::Test;
+
+// Plain wrapper for StrFormat.
+template <typename... Args>
+std::string WrappedFormat(const absl::FormatSpec<Args...>& format,
+                          const Args&... args) {
+  return StrFormat(format, args...);
+}
+
+TEST_F(FormatWrapperTest, ConstexprStringFormat) {
+  EXPECT_EQ(WrappedFormat("%s there", "hello"), "hello there");
+}
+
+TEST_F(FormatWrapperTest, ParsedFormat) {
+  ParsedFormat<'s'> format("%s there");
+  EXPECT_EQ(WrappedFormat(format, "hello"), "hello there");
+}
+
 }  // namespace
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // Some codegen thunks that we can use to easily dump the generated assembly for
 // different StrFormat calls.
 
-std::string CodegenAbslStrFormatInt(int i) { // NOLINT
+std::string CodegenAbslStrFormatInt(int i) {  // NOLINT
   return absl::StrFormat("%d", i);
 }
 
 std::string CodegenAbslStrFormatIntStringInt64(int i, const std::string& s,
-                                                 int64_t i64) { // NOLINT
+                                               int64_t i64) {  // NOLINT
   return absl::StrFormat("%d %s %d", i, s, i64);
 }
 
-void CodegenAbslStrAppendFormatInt(std::string* out, int i) { // NOLINT
+void CodegenAbslStrAppendFormatInt(std::string* out, int i) {  // NOLINT
   absl::StrAppendFormat(out, "%d", i);
 }
 
 void CodegenAbslStrAppendFormatIntStringInt64(std::string* out, int i,
-                                                     const std::string& s,
-                                                     int64_t i64) { // NOLINT
+                                              const std::string& s,
+                                              int64_t i64) {  // NOLINT
   absl::StrAppendFormat(out, "%d %s %d", i, s, i64);
 }

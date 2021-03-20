@@ -33,11 +33,11 @@ CredentialsContainer* NavigatorCredentials::credentials(Navigator& navigator) {
 
 CredentialsContainer* NavigatorCredentials::credentials() {
   if (!credentials_container_)
-    credentials_container_ = CredentialsContainer::Create();
+    credentials_container_ = MakeGarbageCollected<CredentialsContainer>();
   return credentials_container_.Get();
 }
 
-void NavigatorCredentials::Trace(blink::Visitor* visitor) {
+void NavigatorCredentials::Trace(Visitor* visitor) {
   visitor->Trace(credentials_container_);
   Supplement<Navigator>::Trace(visitor);
 }

@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/update_client/updater_state.h"
+
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "base/version.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "components/update_client/updater_state.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace update_client {
 
 class UpdaterStateTest : public testing::Test {
  public:
-  UpdaterStateTest() {}
-  ~UpdaterStateTest() override {}
+  UpdaterStateTest() = default;
+  ~UpdaterStateTest() override = default;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(UpdaterStateTest);
@@ -42,7 +44,7 @@ TEST_F(UpdaterStateTest, Serialize) {
   EXPECT_STREQ("1", attributes.at("autoupdatecheckenabled").c_str());
   EXPECT_STREQ("1", attributes.at("updatepolicy").c_str());
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #if defined(OS_WIN)
   // The value of "ismachine".
   EXPECT_STREQ("0", UpdaterState::GetState(false)->at("ismachine").c_str());
@@ -56,7 +58,7 @@ TEST_F(UpdaterStateTest, Serialize) {
   EXPECT_EQ(0UL, UpdaterState::GetState(true)->count("ismachine"));
   EXPECT_STREQ("Keystone", UpdaterState::GetState(false)->at("name").c_str());
 #endif  // OS_WIN
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
   // Tests some of the remaining values.
   updater_state = UpdaterState(false);
@@ -73,7 +75,12 @@ TEST_F(UpdaterStateTest, Serialize) {
   updater_state.last_autoupdate_started_ =
       base::Time::NowFromSystemTime() - base::TimeDelta::FromDays(15);
   attributes = updater_state.BuildAttributes();
-  EXPECT_STREQ("408", attributes.at("laststarted").c_str());
+  EXPECT_STREQ("336", attributes.at("laststarted").c_str());
+
+  updater_state.last_autoupdate_started_ =
+      base::Time::NowFromSystemTime() - base::TimeDelta::FromDays(58);
+  attributes = updater_state.BuildAttributes();
+  EXPECT_STREQ("1344", attributes.at("laststarted").c_str());
 
   updater_state.last_autoupdate_started_ =
       base::Time::NowFromSystemTime() - base::TimeDelta::FromDays(90);
@@ -88,7 +95,7 @@ TEST_F(UpdaterStateTest, Serialize) {
   updater_state.last_checked_ =
       base::Time::NowFromSystemTime() - base::TimeDelta::FromDays(15);
   attributes = updater_state.BuildAttributes();
-  EXPECT_STREQ("408", attributes.at("lastchecked").c_str());
+  EXPECT_STREQ("336", attributes.at("lastchecked").c_str());
 
   updater_state.last_checked_ =
       base::Time::NowFromSystemTime() - base::TimeDelta::FromDays(90);

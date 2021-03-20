@@ -113,9 +113,13 @@ NSArray* Runtimes(NSDictionary* simctl_list) {
   NSMutableArray* runtimes =
       [[simctl_list[@"runtimes"] mutableCopy] autorelease];
   for (NSDictionary* runtime in simctl_list[@"runtimes"]) {
+    BOOL available =
+        [runtime[@"availability"] isEqualToString:@"(available)"] ||
+        runtime[@"isAvailable"];
+
     if (![runtime[@"identifier"]
             hasPrefix:@"com.apple.CoreSimulator.SimRuntime.iOS"] ||
-        ![runtime[@"availability"] isEqualToString:@"(available)"]) {
+        !available) {
       [runtimes removeObject:runtime];
     }
   }
@@ -188,14 +192,53 @@ NSString* ResolvePath(NSString* path) {
 NSString* GetDeviceBySDKAndName(NSDictionary* simctl_list,
                                 NSString* device_name,
                                 NSString* sdk_version) {
-  NSString* sdk = [@"iOS " stringByAppendingString:sdk_version];
+  NSString* sdk = nil;
+  NSString* name = nil;
+  // Get runtime identifier based on version property to handle
+  // cases when version and identifier are not the same,
+  // e.g. below identifer is *13-2 but version is 13.2.2
+  // {
+  //   "version" : "13.2.2",
+  //   "bundlePath" : "path"
+  //   "identifier" : "com.apple.CoreSimulator.SimRuntime.iOS-13-2",
+  //   "buildversion" : "17K90"
+  // }
+  for (NSDictionary* runtime in Runtimes(simctl_list)) {
+    if ([runtime[@"version"] isEqualToString:sdk_version]) {
+      sdk = runtime[@"identifier"];
+      name = runtime[@"name"];
+      break;
+    }
+  }
+  if (sdk == nil) {
+    printf("\nDid not find Runtime with specified version.\n");
+    PrintSupportedDevices(simctl_list);
+    exit(kExitInvalidArguments);
+  }
   NSArray* devices = [simctl_list[@"devices"] objectForKey:sdk];
+  if (devices == nil || [devices count] == 0) {
+    // Specific for XCode 10.1 and lower,
+    // where name from 'runtimes' uses as a key in 'devices'.
+    devices = [simctl_list[@"devices"] objectForKey:name];
+  }
   for (NSDictionary* device in devices) {
     if ([device[@"name"] isEqualToString:device_name]) {
       return device[@"udid"];
     }
   }
   return nil;
+}
+
+// Create and return a device udid of |device| and |sdk_version|.
+NSString* CreateDeviceBySDKAndName(NSString* device, NSString* sdk_version) {
+  NSString* sdk = [@"iOS" stringByAppendingString:sdk_version];
+  XCRunTask* create = [[[XCRunTask alloc]
+      initWithArguments:@[ @"simctl", @"create", device, device, sdk ]]
+      autorelease];
+  [create run];
+
+  NSDictionary* simctl_list = GetSimulatorList();
+  return GetDeviceBySDKAndName(simctl_list, device, sdk_version);
 }
 
 bool FindDeviceByUDID(NSDictionary* simctl_list, NSString* udid) {
@@ -273,11 +316,8 @@ int RunApplication(NSString* app_path,
 
   if (xctest_path) {
     [testTargetName setValue:xctest_path forKey:@"TestBundlePath"];
-    NSString* inject =
-        @"__PLATFORMS__/iPhoneSimulator.platform/Developer/Library/"
-        @"PrivateFrameworks/IDEBundleInjection.framework/"
-        @"IDEBundleInjection:__PLATFORMS__/iPhoneSimulator.platform/Developer/"
-        @"usr/lib/libXCTestBundleInject.dylib";
+    NSString* inject = @"__PLATFORMS__/iPhoneSimulator.platform/Developer/"
+                       @"usr/lib/libXCTestBundleInject.dylib";
     [testingEnvironmentVariables setValue:inject
                                    forKey:@"DYLD_INSERT_LIBRARIES"];
     [testingEnvironmentVariables
@@ -425,10 +465,13 @@ int main(int argc, char* const argv[]) {
   if (udid == nil) {
     udid = GetDeviceBySDKAndName(simctl_list, device_name, sdk_version);
     if (udid == nil) {
-      LogError(@"Unable to find a device %@ with SDK %@.", device_name,
-               sdk_version);
-      PrintSupportedDevices(simctl_list);
-      exit(kExitInvalidArguments);
+      udid = CreateDeviceBySDKAndName(device_name, sdk_version);
+      if (udid == nil) {
+        LogError(@"Unable to find a device %@ with SDK %@.", device_name,
+                 sdk_version);
+        PrintSupportedDevices(simctl_list);
+        exit(kExitInvalidArguments);
+      }
     }
   } else {
     if (!FindDeviceByUDID(simctl_list, udid)) {

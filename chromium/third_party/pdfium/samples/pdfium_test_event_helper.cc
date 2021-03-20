@@ -11,7 +11,7 @@
 
 #include "public/fpdf_fwlevent.h"
 #include "public/fpdfview.h"
-#include "testing/test_support.h"
+#include "testing/fx_string_testhelpers.h"
 
 namespace {
 void SendCharCodeEvent(FPDF_FORMHANDLE form,
@@ -65,10 +65,8 @@ void SendMouseDownEvent(FPDF_FORMHANDLE form,
 
   if (tokens[1] == "left")
     FORM_OnLButtonDown(form, page, modifiers, x, y);
-#ifdef PDF_ENABLE_XFA
   else if (tokens[1] == "right")
     FORM_OnRButtonDown(form, page, modifiers, x, y);
-#endif
   else
     fprintf(stderr, "mousedown: bad button name\n");
 }
@@ -86,12 +84,28 @@ void SendMouseUpEvent(FPDF_FORMHANDLE form,
   int modifiers = tokens.size() >= 5 ? GetModifiers(tokens[4]) : 0;
   if (tokens[1] == "left")
     FORM_OnLButtonUp(form, page, modifiers, x, y);
-#ifdef PDF_ENABLE_XFA
   else if (tokens[1] == "right")
     FORM_OnRButtonUp(form, page, modifiers, x, y);
-#endif
   else
     fprintf(stderr, "mouseup: bad button name\n");
+}
+
+void SendMouseDoubleClickEvent(FPDF_FORMHANDLE form,
+                               FPDF_PAGE page,
+                               const std::vector<std::string>& tokens) {
+  if (tokens.size() != 4 && tokens.size() != 5) {
+    fprintf(stderr, "mousedoubleclick: bad args\n");
+    return;
+  }
+
+  int x = atoi(tokens[2].c_str());
+  int y = atoi(tokens[3].c_str());
+  int modifiers = tokens.size() >= 5 ? GetModifiers(tokens[4]) : 0;
+  if (tokens[1] != "left") {
+    fprintf(stderr, "mousedoubleclick: bad button name\n");
+    return;
+  }
+  FORM_OnLButtonDoubleClick(form, page, modifiers, x, y);
 }
 
 void SendMouseMoveEvent(FPDF_FORMHANDLE form,
@@ -125,7 +139,7 @@ void SendPageEvents(FPDF_FORMHANDLE form,
                     FPDF_PAGE page,
                     const std::string& events) {
   auto lines = StringSplit(events, '\n');
-  for (auto line : lines) {
+  for (const auto& line : lines) {
     auto command = StringSplit(line, '#');
     if (command[0].empty())
       continue;
@@ -138,6 +152,8 @@ void SendPageEvents(FPDF_FORMHANDLE form,
       SendMouseDownEvent(form, page, tokens);
     } else if (tokens[0] == "mouseup") {
       SendMouseUpEvent(form, page, tokens);
+    } else if (tokens[0] == "mousedoubleclick") {
+      SendMouseDoubleClickEvent(form, page, tokens);
     } else if (tokens[0] == "mousemove") {
       SendMouseMoveEvent(form, page, tokens);
     } else if (tokens[0] == "focus") {

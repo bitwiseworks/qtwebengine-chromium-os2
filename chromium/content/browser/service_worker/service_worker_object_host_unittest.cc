@@ -5,22 +5,24 @@
 #include <tuple>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/simple_test_tick_clock.h"
-#include "content/browser/service_worker/embedded_worker_registry.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
+#include "content/browser/service_worker/fake_embedded_worker_instance_client.h"
+#include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
-#include "content/browser/service_worker/service_worker_dispatcher_host.h"
 #include "content/browser/service_worker/service_worker_object_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/browser/service_worker/service_worker_version.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,14 +45,14 @@ void SetUpDummyMessagePort(std::vector<blink::MessagePortChannel>* ports) {
   ports->push_back(blink::MessagePortChannel(std::move(pipe.handle0)));
 }
 
-// A helper that holds on to ExtendableMessageEventPtr so it doesn't get
+// A worker that holds on to ExtendableMessageEventPtr so it doesn't get
 // destroyed after the message event handler runs.
-class ExtendableMessageEventTestHelper : public EmbeddedWorkerTestHelper {
+class MessageEventWorker : public FakeServiceWorker {
  public:
-  ExtendableMessageEventTestHelper()
-      : EmbeddedWorkerTestHelper(base::FilePath()) {}
+  MessageEventWorker(EmbeddedWorkerTestHelper* helper)
+      : FakeServiceWorker(helper) {}
 
-  void OnExtendableMessageEvent(
+  void DispatchExtendableMessageEvent(
       blink::mojom::ExtendableMessageEventPtr event,
       blink::mojom::ServiceWorker::DispatchExtendableMessageEventCallback
           callback) override {
@@ -66,26 +68,15 @@ class ExtendableMessageEventTestHelper : public EmbeddedWorkerTestHelper {
   std::vector<blink::mojom::ExtendableMessageEventPtr> events_;
 };
 
-class FailToStartWorkerTestHelper : public ExtendableMessageEventTestHelper {
+// An instance client that breaks the Mojo connection upon receiving the
+// Start() message.
+class FailStartInstanceClient : public FakeEmbeddedWorkerInstanceClient {
  public:
-  FailToStartWorkerTestHelper() : ExtendableMessageEventTestHelper() {}
+  FailStartInstanceClient(EmbeddedWorkerTestHelper* helper)
+      : FakeEmbeddedWorkerInstanceClient(helper) {}
 
-  void OnStartWorker(
-      int embedded_worker_id,
-      int64_t service_worker_version_id,
-      const GURL& scope,
-      const GURL& script_url,
-      bool pause_after_download,
-      blink::mojom::ServiceWorkerRequest service_worker_request,
-      blink::mojom::ControllerServiceWorkerRequest controller_request,
-      mojom::EmbeddedWorkerInstanceHostAssociatedPtrInfo instance_host,
-      blink::mojom::ServiceWorkerProviderInfoForStartWorkerPtr provider_info,
-      blink::mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info)
-      override {
-    mojom::EmbeddedWorkerInstanceHostAssociatedPtr instance_host_ptr;
-    instance_host_ptr.Bind(std::move(instance_host));
-    instance_host_ptr->OnStopped();
-    base::RunLoop().RunUntilIdle();
+  void StartWorker(blink::mojom::EmbeddedWorkerStartParamsPtr params) override {
+    // Don't save the Mojo ptrs. The connection breaks.
   }
 };
 
@@ -95,7 +86,7 @@ class MockServiceWorkerObject : public blink::mojom::ServiceWorkerObject {
       blink::mojom::ServiceWorkerObjectInfoPtr info)
       : info_(std::move(info)),
         state_(info_->state),
-        binding_(this, std::move(info_->request)) {}
+        receiver_(this, std::move(info_->receiver)) {}
   ~MockServiceWorkerObject() override = default;
 
   blink::mojom::ServiceWorkerState state() const { return state_; }
@@ -108,46 +99,46 @@ class MockServiceWorkerObject : public blink::mojom::ServiceWorkerObject {
 
   blink::mojom::ServiceWorkerObjectInfoPtr info_;
   blink::mojom::ServiceWorkerState state_;
-  mojo::AssociatedBinding<blink::mojom::ServiceWorkerObject> binding_;
+  mojo::AssociatedReceiver<blink::mojom::ServiceWorkerObject> receiver_;
 };
 
 class ServiceWorkerObjectHostTest : public testing::Test {
  public:
   ServiceWorkerObjectHostTest()
-      : browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP) {}
+      : task_environment_(BrowserTaskEnvironment::IO_MAINLOOP) {}
 
   void Initialize(std::unique_ptr<EmbeddedWorkerTestHelper> helper) {
     helper_ = std::move(helper);
   }
 
   void SetUpRegistration(const GURL& scope, const GURL& script_url) {
-    helper_->context()->storage()->LazyInitializeForTest(base::DoNothing());
-    base::RunLoop().RunUntilIdle();
+    helper_->context()->storage()->LazyInitializeForTest();
 
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = scope;
-    registration_ = new ServiceWorkerRegistration(
-        options, helper_->context()->storage()->NewRegistrationId(),
-        helper_->context()->AsWeakPtr());
-    version_ = new ServiceWorkerVersion(
-        registration_.get(), script_url, blink::mojom::ScriptType::kClassic,
-        helper_->context()->storage()->NewVersionId(),
-        helper_->context()->AsWeakPtr());
-    std::vector<ServiceWorkerDatabase::ResourceRecord> records;
-    records.push_back(
-        ServiceWorkerDatabase::ResourceRecord(10, version_->script_url(), 100));
+    registration_ = CreateNewServiceWorkerRegistration(
+        helper_->context()->registry(), options);
+    version_ = CreateNewServiceWorkerVersion(
+        helper_->context()->registry(), registration_.get(), script_url,
+        blink::mojom::ScriptType::kClassic);
+    std::vector<storage::mojom::ServiceWorkerResourceRecordPtr> records;
+    records.push_back(storage::mojom::ServiceWorkerResourceRecord::New(
+        10, version_->script_url(), 100));
     version_->script_cache_map()->SetResources(records);
-    version_->SetMainScriptHttpResponseInfo(net::HttpResponseInfo());
+    version_->SetMainScriptResponse(
+        std::make_unique<ServiceWorkerVersion::MainScriptResponse>(
+            network::mojom::URLResponseHead()));
     version_->set_fetch_handler_existence(
         ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
     version_->SetStatus(ServiceWorkerVersion::INSTALLING);
 
     // Make the registration findable via storage functions.
     base::Optional<blink::ServiceWorkerStatusCode> status;
-    helper_->context()->storage()->StoreRegistration(
+    base::RunLoop run_loop;
+    helper_->context()->registry()->StoreRegistration(
         registration_.get(), version_.get(),
-        CreateReceiverOnCurrentThread(&status));
-    base::RunLoop().RunUntilIdle();
+        ReceiveServiceWorkerStatus(&status, run_loop.QuitClosure()));
+    run_loop.Run();
     ASSERT_EQ(blink::ServiceWorkerStatusCode::kOk, status.value());
   }
 
@@ -165,17 +156,22 @@ class ServiceWorkerObjectHostTest : public testing::Test {
                                                 std::move(callback));
   }
 
-  size_t GetBindingsCount(ServiceWorkerObjectHost* object_host) {
-    return object_host->bindings_.size();
+  size_t GetReceiverCount(ServiceWorkerObjectHost* object_host) {
+    return object_host->receivers_.size();
   }
 
   ServiceWorkerObjectHost* GetServiceWorkerObjectHost(
-      ServiceWorkerProviderHost* provider_host,
+      ServiceWorkerContainerHost* container_host,
       int64_t version_id) {
-    auto iter = provider_host->service_worker_object_hosts_.find(version_id);
-    if (iter != provider_host->service_worker_object_hosts_.end())
+    auto iter = container_host->service_worker_object_hosts_.find(version_id);
+    if (iter != container_host->service_worker_object_hosts_.end())
       return iter->second.get();
     return nullptr;
+  }
+
+  void SetContainerHostRenderFrameId(ServiceWorkerContainerHost* container_host,
+                                     int render_frame_id) {
+    container_host->frame_id_ = render_frame_id;
   }
 
   blink::mojom::ServiceWorkerRegistrationObjectInfoPtr
@@ -204,7 +200,7 @@ class ServiceWorkerObjectHostTest : public testing::Test {
     return registration_info;
   }
 
-  TestBrowserThreadBundle browser_thread_bundle_;
+  BrowserTaskEnvironment task_environment_;
   std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
@@ -214,7 +210,6 @@ class ServiceWorkerObjectHostTest : public testing::Test {
 };
 
 TEST_F(ServiceWorkerObjectHostTest, OnVersionStateChanged) {
-  const int64_t kProviderId = 99;
   const GURL scope("https://www.example.com/");
   const GURL script_url("https://www.example.com/service_worker.js");
   Initialize(std::make_unique<EmbeddedWorkerTestHelper>(base::FilePath()));
@@ -222,14 +217,14 @@ TEST_F(ServiceWorkerObjectHostTest, OnVersionStateChanged) {
   registration_->SetInstallingVersion(version_);
 
   ServiceWorkerRemoteProviderEndpoint remote_endpoint;
-  std::unique_ptr<ServiceWorkerProviderHost> provider_host =
-      CreateProviderHostForWindow(
-          helper_->mock_render_process_id(), kProviderId,
-          true /* is_parent_frame_secure */, helper_->context()->AsWeakPtr(),
-          &remote_endpoint);
-  provider_host->UpdateUrls(scope, scope);
+  base::WeakPtr<ServiceWorkerContainerHost> container_host =
+      CreateContainerHostForWindow(
+          helper_->mock_render_process_id(), true /* is_parent_frame_secure */,
+          helper_->context()->AsWeakPtr(), &remote_endpoint);
+  container_host->UpdateUrls(scope, net::SiteForCookies::FromUrl(scope),
+                             url::Origin::Create(scope));
   blink::mojom::ServiceWorkerRegistrationObjectInfoPtr registration_info =
-      GetRegistrationFromRemote(remote_endpoint.host_ptr()->get(), scope);
+      GetRegistrationFromRemote(remote_endpoint.host_remote()->get(), scope);
   // |version_| is the installing version of |registration_| now.
   EXPECT_TRUE(registration_info->installing);
   EXPECT_EQ(version_->version_id(), registration_info->installing->version_id);
@@ -244,89 +239,126 @@ TEST_F(ServiceWorkerObjectHostTest, OnVersionStateChanged) {
   EXPECT_EQ(blink::mojom::ServiceWorkerState::kInstalled, mock_object->state());
 }
 
+// Tests postMessage() from a service worker to itself.
 TEST_F(ServiceWorkerObjectHostTest,
        DispatchExtendableMessageEvent_FromServiceWorker) {
   const GURL scope("https://www.example.com/");
   const GURL script_url("https://www.example.com/service_worker.js");
-  Initialize(std::make_unique<ExtendableMessageEventTestHelper>());
+  Initialize(std::make_unique<EmbeddedWorkerTestHelper>(base::FilePath()));
   SetUpRegistration(scope, script_url);
+  auto* worker =
+      helper_->AddNewPendingServiceWorker<MessageEventWorker>(helper_.get());
 
   base::SimpleTestTickClock tick_clock;
   // Set mock clock on version_ to check timeout behavior.
   tick_clock.SetNowTicks(base::TimeTicks::Now());
   version_->SetTickClockForTesting(&tick_clock);
 
-  // Make sure worker has a non-zero timeout.
-  bool called = false;
-  blink::ServiceWorkerStatusCode status =
-      blink::ServiceWorkerStatusCode::kErrorFailed;
-  version_->StartWorker(ServiceWorkerMetrics::EventType::UNKNOWN,
-                        base::BindOnce(&SaveStatusCallback, &called, &status));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(called);
-  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status);
-  version_->StartRequestWithCustomTimeout(
-      ServiceWorkerMetrics::EventType::ACTIVATE, base::DoNothing(),
-      base::TimeDelta::FromSeconds(10), ServiceWorkerVersion::KILL_ON_TIMEOUT);
+  ASSERT_EQ(blink::ServiceWorkerStatusCode::kOk,
+            StartServiceWorker(version_.get()));
 
-  // Advance clock by a couple seconds.
-  tick_clock.Advance(base::TimeDelta::FromSeconds(4));
-  base::TimeDelta remaining_time = version_->remaining_timeout();
-  EXPECT_EQ(base::TimeDelta::FromSeconds(6), remaining_time);
+  const base::TimeDelta kRequestTimeout = base::TimeDelta::FromMinutes(5);
+  const base::TimeDelta kFourSeconds = base::TimeDelta::FromSeconds(4);
 
-  // Prepare a ServiceWorkerObjectHost corresponding to a JavaScript
-  // ServiceWorker object in the service worker execution context for
-  // |version_|.
-  ServiceWorkerProviderHost* provider_host = version_->provider_host();
+  // After startup, the remaining timeout is expected to be kRequestTimeout.
+  EXPECT_EQ(kRequestTimeout, version_->remaining_timeout());
+
+  // This test will simulate the worker calling postMessage() on itself.
+  // Prepare |object_host|. This corresponds to the JavaScript ServiceWorker
+  // object for the service worker, inside the service worker's own
+  // execution context (e.g., self.registration.active inside the active
+  // worker and self.serviceWorker).
+  ServiceWorkerContainerHost* container_host =
+      version_->provider_host()->container_host();
   blink::mojom::ServiceWorkerObjectInfoPtr info =
-      provider_host->GetOrCreateServiceWorkerObjectHost(version_)
+      container_host->GetOrCreateServiceWorkerObjectHost(version_)
           ->CreateCompleteObjectInfoToSend();
-  ServiceWorkerObjectHost* sender_worker_object_host =
-      GetServiceWorkerObjectHost(provider_host, version_->version_id());
-  EXPECT_EQ(1u, GetBindingsCount(sender_worker_object_host));
+  ServiceWorkerObjectHost* object_host =
+      GetServiceWorkerObjectHost(container_host, version_->version_id());
+  EXPECT_EQ(2u, GetReceiverCount(object_host));
 
-  // Dispatch an ExtendableMessageEvent simulating calling
-  // ServiceWorker#postMessage() on the ServiceWorker object corresponding to
-  // |service_worker_object_host|.
-  blink::TransferableMessage message;
-  SetUpDummyMessagePort(&message.ports);
-  called = false;
-  status = blink::ServiceWorkerStatusCode::kErrorFailed;
-  CallDispatchExtendableMessageEvent(
-      sender_worker_object_host, std::move(message),
-      base::BindOnce(&SaveStatusCallback, &called, &status));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(called);
-  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status);
-  // The dispatched ExtendableMessageEvent should be kept in
-  // ExtendableMessageEventTestHelper, and the source service worker object info
-  // should correspond to the pair (|version_->provider_host()|, |version_|),
-  // means it should correspond to |sender_worker_object_host|.
-  EXPECT_EQ(2u, GetBindingsCount(sender_worker_object_host));
+  {
+    // Advance clock by four seconds.
+    tick_clock.Advance(kFourSeconds);
+    base::TimeDelta remaining_time = version_->remaining_timeout();
+    EXPECT_EQ(kRequestTimeout - kFourSeconds, remaining_time);
+
+    // Now simulate the service worker calling postMessage() to itself,
+    // by calling DispatchExtendableMessageEvent on |object_host|.
+    // Expected status is kOk.
+    blink::TransferableMessage message;
+    SetUpDummyMessagePort(&message.ports);
+    base::RunLoop loop;
+    CallDispatchExtendableMessageEvent(
+        object_host, std::move(message),
+        base::BindLambdaForTesting([&](blink::ServiceWorkerStatusCode status) {
+          EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status);
+          loop.Quit();
+        }));
+    loop.Run();
+
+    // The dispatched ExtendableMessageEvent should be received
+    // by the worker, and the source service worker object info
+    // should be for its own version id.
+    EXPECT_EQ(3u, GetReceiverCount(object_host));
+
+    // Message event triggered by the service worker itself should not extend
+    // the timeout.
+    EXPECT_EQ(remaining_time, version_->remaining_timeout());
+  }
+
+  {
+    // Advance clock by request timeout.
+    tick_clock.Advance(kRequestTimeout);
+    base::TimeDelta remaining_time = version_->remaining_timeout();
+    EXPECT_EQ(kRequestTimeout - kFourSeconds - kRequestTimeout, remaining_time);
+
+    // Now simulate the service worker calling postMessage() to itself,
+    // by calling DispatchExtendableMessageEvent on |object_host|.
+    // Expected status is kErrorTimeout.
+    blink::TransferableMessage message;
+    SetUpDummyMessagePort(&message.ports);
+    base::RunLoop loop;
+    CallDispatchExtendableMessageEvent(
+        object_host, std::move(message),
+        base::BindLambdaForTesting([&](blink::ServiceWorkerStatusCode status) {
+          EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorTimeout, status);
+          loop.Quit();
+        }));
+    loop.Run();
+
+    // The dispatched ExtendableMessageEvent should not be received
+    // by the worker, and the source service worker object info
+    // should be for its own version id.
+    EXPECT_EQ(3u, GetReceiverCount(object_host));
+
+    // Message event triggered by the service worker itself should not extend
+    // the timeout.
+    EXPECT_EQ(remaining_time, version_->remaining_timeout());
+  }
+
   const std::vector<blink::mojom::ExtendableMessageEventPtr>& events =
-      static_cast<ExtendableMessageEventTestHelper*>(helper_.get())->events();
+      worker->events();
   EXPECT_EQ(1u, events.size());
   EXPECT_FALSE(events[0]->source_info_for_client);
   EXPECT_TRUE(events[0]->source_info_for_service_worker);
   EXPECT_EQ(version_->version_id(),
             events[0]->source_info_for_service_worker->version_id);
 
-  // Timeout of message event should not have extended life of service worker.
-  EXPECT_EQ(remaining_time, version_->remaining_timeout());
   // Clean up.
-  base::RunLoop stop_loop;
-  version_->StopWorker(stop_loop.QuitClosure());
-  stop_loop.Run();
+  StopServiceWorker(version_.get());
 }
 
+// Tests postMessage() from a page to a service worker.
 TEST_F(ServiceWorkerObjectHostTest, DispatchExtendableMessageEvent_FromClient) {
-  const int64_t kProviderId = 99;
   const GURL scope("https://www.example.com/");
   const GURL script_url("https://www.example.com/service_worker.js");
-  Initialize(std::make_unique<ExtendableMessageEventTestHelper>());
+  Initialize(std::make_unique<EmbeddedWorkerTestHelper>(base::FilePath()));
   SetUpRegistration(scope, script_url);
+  auto* worker =
+      helper_->AddNewPendingServiceWorker<MessageEventWorker>(helper_.get());
 
-  // Prepare a ServiceWorkerProviderHost for a window client. A
+  // Prepare a ServiceWorkerContainerHost for a window client. A
   // WebContents/RenderFrameHost must be created too because it's needed for
   // DispatchExtendableMessageEvent to populate ExtendableMessageEvent#source.
   RenderViewHostTestEnabler rvh_test_enabler;
@@ -334,21 +366,24 @@ TEST_F(ServiceWorkerObjectHostTest, DispatchExtendableMessageEvent_FromClient) {
       WebContentsTester::CreateTestWebContents(helper_->browser_context(),
                                                nullptr));
   RenderFrameHost* frame_host = web_contents->GetMainFrame();
-  blink::mojom::ServiceWorkerProviderHostInfoPtr provider_host_info =
-      CreateProviderHostInfoForWindow(kProviderId, frame_host->GetRoutingID());
-  std::unique_ptr<ServiceWorkerProviderHost> provider_host =
-      ServiceWorkerProviderHost::Create(frame_host->GetProcess()->GetID(),
-                                        std::move(provider_host_info),
-                                        helper_->context()->AsWeakPtr());
-  provider_host->UpdateUrls(scope, scope);
-  // Prepare a ServiceWorkerObjectHost for the above |provider_host|.
+  ServiceWorkerRemoteProviderEndpoint remote_endpoint;
+  base::WeakPtr<ServiceWorkerContainerHost> container_host =
+      CreateContainerHostForWindow(
+          frame_host->GetProcess()->GetID(), true /* is_parent_frame_secure */,
+          helper_->context()->AsWeakPtr(), &remote_endpoint);
+  SetContainerHostRenderFrameId(container_host.get(),
+                                frame_host->GetRoutingID());
+  container_host->UpdateUrls(scope, net::SiteForCookies::FromUrl(scope),
+                             url::Origin::Create(scope));
+
+  // Prepare a ServiceWorkerObjectHost for the worker.
   blink::mojom::ServiceWorkerObjectInfoPtr info =
-      provider_host->GetOrCreateServiceWorkerObjectHost(version_)
+      container_host->GetOrCreateServiceWorkerObjectHost(version_)
           ->CreateCompleteObjectInfoToSend();
   ServiceWorkerObjectHost* object_host =
-      GetServiceWorkerObjectHost(provider_host.get(), version_->version_id());
+      GetServiceWorkerObjectHost(container_host.get(), version_->version_id());
 
-  // Simulate dispatching an ExtendableMessageEvent.
+  // Simulate postMessage() from the window client to the worker.
   blink::TransferableMessage message;
   SetUpDummyMessagePort(&message.ports);
   bool called = false;
@@ -360,65 +395,18 @@ TEST_F(ServiceWorkerObjectHostTest, DispatchExtendableMessageEvent_FromClient) {
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(called);
   EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status);
-  // The dispatched ExtendableMessageEvent should be kept in
-  // ExtendableMessageEventTestHelper, and its source client info should
-  // correspond to |provider_host|.
+
+  // The worker should have received an ExtendableMessageEvent whose
+  // source is |container_host|.
   const std::vector<blink::mojom::ExtendableMessageEventPtr>& events =
-      static_cast<ExtendableMessageEventTestHelper*>(helper_.get())->events();
+      worker->events();
   EXPECT_EQ(1u, events.size());
   EXPECT_FALSE(events[0]->source_info_for_service_worker);
   EXPECT_TRUE(events[0]->source_info_for_client);
-  EXPECT_EQ(provider_host->client_uuid(),
+  EXPECT_EQ(container_host->client_uuid(),
             events[0]->source_info_for_client->client_uuid);
-  EXPECT_EQ(provider_host->client_type(),
+  EXPECT_EQ(container_host->client_type(),
             events[0]->source_info_for_client->client_type);
-}
-
-TEST_F(ServiceWorkerObjectHostTest, DispatchExtendableMessageEvent_Fail) {
-  const int64_t kProviderId = 99;
-  const GURL scope("https://www.example.com/");
-  const GURL script_url("https://www.example.com/service_worker.js");
-  Initialize(std::make_unique<FailToStartWorkerTestHelper>());
-  SetUpRegistration(scope, script_url);
-
-  // Prepare a ServiceWorkerProviderHost for a window client. A
-  // WebContents/RenderFrameHost must be created too because it's needed for
-  // DispatchExtendableMessageEvent to populate ExtendableMessageEvent#source.
-  RenderViewHostTestEnabler rvh_test_enabler;
-  std::unique_ptr<WebContents> web_contents(
-      WebContentsTester::CreateTestWebContents(helper_->browser_context(),
-                                               nullptr));
-  RenderFrameHost* frame_host = web_contents->GetMainFrame();
-  blink::mojom::ServiceWorkerProviderHostInfoPtr provider_host_info =
-      CreateProviderHostInfoForWindow(kProviderId, frame_host->GetRoutingID());
-  std::unique_ptr<ServiceWorkerProviderHost> provider_host =
-      ServiceWorkerProviderHost::Create(frame_host->GetProcess()->GetID(),
-                                        std::move(provider_host_info),
-                                        helper_->context()->AsWeakPtr());
-  provider_host->UpdateUrls(scope, scope);
-  // Prepare a ServiceWorkerObjectHost for the above |provider_host|.
-  blink::mojom::ServiceWorkerObjectInfoPtr info =
-      provider_host->GetOrCreateServiceWorkerObjectHost(version_)
-          ->CreateCompleteObjectInfoToSend();
-  ServiceWorkerObjectHost* object_host =
-      GetServiceWorkerObjectHost(provider_host.get(), version_->version_id());
-
-  // Try to dispatch ExtendableMessageEvent. This should fail to start the
-  // worker and to dispatch the event.
-  blink::TransferableMessage message;
-  SetUpDummyMessagePort(&message.ports);
-  bool called = false;
-  blink::ServiceWorkerStatusCode status = blink::ServiceWorkerStatusCode::kOk;
-  CallDispatchExtendableMessageEvent(
-      object_host, std::move(message),
-      base::BindOnce(&SaveStatusCallback, &called, &status));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(called);
-  EXPECT_EQ(blink::ServiceWorkerStatusCode::kErrorStartWorkerFailed, status);
-  // No ExtendableMessageEvent has been dispatched.
-  const std::vector<blink::mojom::ExtendableMessageEventPtr>& events =
-      static_cast<ExtendableMessageEventTestHelper*>(helper_.get())->events();
-  EXPECT_EQ(0u, events.size());
 }
 
 }  // namespace service_worker_object_host_unittest

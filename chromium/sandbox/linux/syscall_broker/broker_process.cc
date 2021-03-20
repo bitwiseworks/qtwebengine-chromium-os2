@@ -59,7 +59,7 @@ BrokerProcess::~BrokerProcess() {
 }
 
 bool BrokerProcess::Init(
-    const base::Callback<bool(void)>& broker_process_init_callback) {
+    base::OnceCallback<bool(void)> broker_process_init_callback) {
   CHECK(!initialized_);
   BrokerChannel::EndPoint ipc_reader;
   BrokerChannel::EndPoint ipc_writer;
@@ -73,6 +73,10 @@ bool BrokerProcess::Init(
     return false;
 
   if (child_pid) {
+    // This string is referenced in a ChromeOS integration test; do not change.
+    // TODO(crbug.com/1044502): If we can fix setproctitle, the integration
+    // test not longer needs to look for this message.
+    VLOG(3) << "BrokerProcess::Init(), in parent, child is " << child_pid;
     // We are the parent and we have just forked our broker process.
     ipc_reader.reset();
     broker_pid_ = child_pid;
@@ -83,10 +87,15 @@ bool BrokerProcess::Init(
     return true;
   }
 
+  // This string is referenced in a ChromeOS integration test; do not change.
+  // TODO(crbug.com/1044502): If we can fix setproctitle, the integration test
+  // not longer needs to look for this message.
+  VLOG(3) << "BrokerProcess::Init(), in child";
+
   // We are the broker process. Make sure to close the writer's end so that
   // we get notified if the client disappears.
   ipc_writer.reset();
-  CHECK(broker_process_init_callback.Run());
+  CHECK(std::move(broker_process_init_callback).Run());
   BrokerHost broker_host(broker_permission_list_, allowed_command_set_,
                          std::move(ipc_reader));
   for (;;) {
@@ -98,9 +107,6 @@ bool BrokerProcess::Init(
         continue;
     }
   }
-  _exit(1);
-  NOTREACHED();
-  return false;
 }
 
 bool BrokerProcess::IsSyscallAllowed(int sysno) const {

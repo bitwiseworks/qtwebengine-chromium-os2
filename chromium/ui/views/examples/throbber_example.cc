@@ -4,6 +4,8 @@
 
 #include "ui/views/examples/throbber_example.h"
 
+#include <memory>
+
 #include "base/macros.h"
 #include "ui/views/controls/throbber.h"
 #include "ui/views/layout/fill_layout.h"
@@ -16,7 +18,7 @@ namespace {
 
 class ThrobberView : public View {
  public:
-  ThrobberView() : throbber_(new Throbber()), is_checked_(false) {
+  ThrobberView() : throbber_(new Throbber()) {
     AddChildView(throbber_);
     throbber_->Start();
   }
@@ -28,8 +30,7 @@ class ThrobberView : public View {
 
   void Layout() override {
     int diameter = 16;
-    throbber_->SetBounds((width() - diameter) / 2,
-                         (height() - diameter) / 2,
+    throbber_->SetBounds((width() - diameter) / 2, (height() - diameter) / 2,
                          diameter, diameter);
     SizeToPreferredSize();
   }
@@ -49,18 +50,16 @@ class ThrobberView : public View {
 
  private:
   Throbber* throbber_;
-  bool is_checked_;
+  bool is_checked_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ThrobberView);
 };
 
 }  // namespace
 
-ThrobberExample::ThrobberExample() : ExampleBase("Throbber") {
-}
+ThrobberExample::ThrobberExample() : ExampleBase("Throbber") {}
 
-ThrobberExample::~ThrobberExample() {
-}
+ThrobberExample::~ThrobberExample() = default;
 
 void ThrobberExample::CreateExampleView(View* container) {
   container->SetLayoutManager(std::make_unique<FillLayout>());

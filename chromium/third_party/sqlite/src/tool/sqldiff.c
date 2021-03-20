@@ -62,7 +62,7 @@ static void strInit(Str *p){
   p->nAlloc = 0;
   p->nUsed = 0;
 }
-
+  
 /*
 ** Print an error resulting from faulting command-line arguments and
 ** abort the program.
@@ -317,7 +317,7 @@ static char **columnNames(
   sqlite3_finalize(pStmt);
   if( az ) az[naz] = 0;
 
-  /* If it is non-NULL, set *pbRowid to indicate whether or not the PK of
+  /* If it is non-NULL, set *pbRowid to indicate whether or not the PK of 
   ** this table is an implicit rowid (*pbRowid==1) or not (*pbRowid==0).  */
   if( pbRowid ) *pbRowid = (az[0]==0);
 
@@ -512,7 +512,7 @@ static void diff_one_table(const char *zTab, FILE *out){
     }
     goto end_diff_one_table;
   }
-
+    
 
   if( sqlite3_table_column_metadata(g.db,"aux",zTab,0,0,0,0,0,0) ){
     if( !sqlite3_table_column_metadata(g.db,"main",zTab,0,0,0,0,0,0) ){
@@ -632,7 +632,7 @@ static void diff_one_table(const char *zTab, FILE *out){
   }
   strPrintf(&sql, ";\n");
 
-  if( g.fDebug & DEBUG_DIFF_SQL ){
+  if( g.fDebug & DEBUG_DIFF_SQL ){ 
     printf("SQL for %s:\n%s\n", zId, sql.z);
     goto end_diff_one_table;
   }
@@ -1142,7 +1142,7 @@ static void getRbudiffQuery(
 ){
   int i;
 
-  /* First the newly inserted rows: **/
+  /* First the newly inserted rows: **/ 
   strPrintf(pSql, "SELECT ");
   strPrintfArray(pSql, ", ", "%s", azCol, -1);
   strPrintf(pSql, ", 0, ");       /* Set ota_control to 0 for an insert */
@@ -1170,14 +1170,14 @@ static void getRbudiffQuery(
   strPrintf(pSql, "\n) AND ");
   strPrintfArray(pSql, " AND ", "(n.%Q IS NOT NULL)", azCol, nPK);
 
-  /* Updated rows. If all table columns are part of the primary key, there
+  /* Updated rows. If all table columns are part of the primary key, there 
   ** can be no updates. In this case this part of the compound SELECT can
   ** be omitted altogether. */
   if( azCol[nPK] ){
     strPrintf(pSql, "\nUNION ALL\nSELECT ");
     strPrintfArray(pSql, ", ", "n.%s", azCol, nPK);
     strPrintf(pSql, ",\n");
-    strPrintfArray(pSql, " ,\n",
+    strPrintfArray(pSql, " ,\n", 
         "    CASE WHEN n.%s IS o.%s THEN NULL ELSE n.%s END", &azCol[nPK], -1
     );
 
@@ -1188,13 +1188,13 @@ static void getRbudiffQuery(
     }else{
       strPrintf(pSql, ",\n");
     }
-    strPrintfArray(pSql, " ||\n",
+    strPrintfArray(pSql, " ||\n", 
         "    CASE WHEN n.%s IS o.%s THEN '.' ELSE 'x' END", &azCol[nPK], -1
     );
     strPrintf(pSql, "\nAS ota_control, ");
     strPrintfArray(pSql, ", ", "NULL", azCol, nPK);
     strPrintf(pSql, ",\n");
-    strPrintfArray(pSql, " ,\n",
+    strPrintfArray(pSql, " ,\n", 
         "    CASE WHEN n.%s IS o.%s THEN NULL ELSE o.%s END", &azCol[nPK], -1
     );
 
@@ -1253,9 +1253,9 @@ static void rbudiff_one_table(const char *zTab, FILE *out){
   pStmt = db_prepare("%s", sql.z);
 
   while( sqlite3_step(pStmt)==SQLITE_ROW ){
-
-    /* If this is the first row output, print out the CREATE TABLE
-    ** statement first. And then set ct.z to NULL so that it is not
+    
+    /* If this is the first row output, print out the CREATE TABLE 
+    ** statement first. And then set ct.z to NULL so that it is not 
     ** printed again.  */
     if( ct.z ){
       fprintf(out, "%s\n", ct.z);
@@ -1280,7 +1280,7 @@ static void rbudiff_one_table(const char *zTab, FILE *out){
 
       for(i=0; i<nCol; i++){
         int bDone = 0;
-        if( i>=nPK
+        if( i>=nPK 
             && sqlite3_column_type(pStmt, i)==SQLITE_BLOB
             && sqlite3_column_type(pStmt, nCol+1+i)==SQLITE_BLOB
         ){
@@ -1428,7 +1428,7 @@ static void summarize_one_table(const char *zTab, FILE *out){
   }
   strPrintf(&sql, ")\n ORDER BY 1;\n");
 
-  if( (g.fDebug & DEBUG_DIFF_SQL)!=0 ){
+  if( (g.fDebug & DEBUG_DIFF_SQL)!=0 ){ 
     printf("SQL for %s:\n%s\n", zId, sql.z);
     goto end_summarize_one_table;
   }
@@ -1564,7 +1564,7 @@ static void changeset_one_table(const char *zTab, FILE *out){
     }
   }
   sqlite3_finalize(pStmt);
-  if( nPk==0 ) goto end_changeset_one_table;
+  if( nPk==0 ) goto end_changeset_one_table; 
   strInit(&sql);
   if( nCol>nPk ){
     strPrintf(&sql, "SELECT %d", SQLITE_UPDATE);
@@ -1630,7 +1630,7 @@ static void changeset_one_table(const char *zTab, FILE *out){
   }
   strPrintf(&sql, ";\n");
 
-  if( g.fDebug & DEBUG_DIFF_SQL ){
+  if( g.fDebug & DEBUG_DIFF_SQL ){ 
     printf("SQL for %s:\n%s\n", zId, sql.z);
     goto end_changeset_one_table;
   }
@@ -1701,7 +1701,7 @@ static void changeset_one_table(const char *zTab, FILE *out){
     }
   }
   sqlite3_finalize(pStmt);
-
+  
 end_changeset_one_table:
   while( nCol>0 ) sqlite3_free(azCol[--nCol]);
   sqlite3_free(azCol);
@@ -1712,7 +1712,7 @@ end_changeset_one_table:
 /*
 ** Extract the next SQL keyword or quoted string from buffer zIn and copy it
 ** (or a prefix of it if it will not fit) into buffer zBuf, size nBuf bytes.
-** Return a pointer to the character within zIn immediately following
+** Return a pointer to the character within zIn immediately following 
 ** the token or quoted string just extracted.
 */
 const char *gobble_token(const char *zIn, char *zBuf, int nBuf){
@@ -1762,7 +1762,7 @@ const char *gobble_token(const char *zIn, char *zBuf, int nBuf){
 ** uses. Otherwise, if the statement is not a CVT, NULL is returned.
 */
 static void module_name_func(
-  sqlite3_context *pCtx,
+  sqlite3_context *pCtx, 
   int nVal, sqlite3_value **apVal
 ){
   const char *zSql;
@@ -1782,7 +1782,7 @@ static void module_name_func(
   zSql = gobble_token(zSql, zToken, sizeof(zToken));
   if( zSql==0 || sqlite3_stricmp(zToken, "using") ) return;
   zSql = gobble_token(zSql, zToken, sizeof(zToken));
-
+  
   sqlite3_result_text(pCtx, zToken, -1, SQLITE_TRANSIENT);
 }
 
@@ -1793,29 +1793,29 @@ static void module_name_func(
 const char *all_tables_sql(){
   if( g.bHandleVtab ){
     int rc;
-
-    rc = sqlite3_exec(g.db,
+  
+    rc = sqlite3_exec(g.db, 
         "CREATE TEMP TABLE tblmap(module COLLATE nocase, postfix);"
         "INSERT INTO temp.tblmap VALUES"
         "('fts3', '_content'), ('fts3', '_segments'), ('fts3', '_segdir'),"
-
+  
         "('fts4', '_content'), ('fts4', '_segments'), ('fts4', '_segdir'),"
         "('fts4', '_docsize'), ('fts4', '_stat'),"
-
+  
         "('fts5', '_data'), ('fts5', '_idx'), ('fts5', '_content'),"
         "('fts5', '_docsize'), ('fts5', '_config'),"
-
+  
         "('rtree', '_node'), ('rtree', '_rowid'), ('rtree', '_parent');"
         , 0, 0, 0
     );
     assert( rc==SQLITE_OK );
-
+  
     rc = sqlite3_create_function(
         g.db, "module_name", 1, SQLITE_UTF8, 0, module_name_func, 0, 0
     );
     assert( rc==SQLITE_OK );
-
-    return
+  
+    return 
       "SELECT name FROM main.sqlite_master\n"
       " WHERE type='table' AND (\n"
       "    module_name(sql) IS NULL OR \n"
@@ -1823,7 +1823,7 @@ const char *all_tables_sql(){
       " ) AND name NOT IN (\n"
       "  SELECT a.name || b.postfix \n"
         "FROM main.sqlite_master AS a, temp.tblmap AS b \n"
-        "WHERE module_name(a.sql) = b.module\n"
+        "WHERE module_name(a.sql) = b.module\n" 
       " )\n"
       "UNION \n"
       "SELECT name FROM aux.sqlite_master\n"
@@ -1833,7 +1833,7 @@ const char *all_tables_sql(){
       " ) AND name NOT IN (\n"
       "  SELECT a.name || b.postfix \n"
         "FROM aux.sqlite_master AS a, temp.tblmap AS b \n"
-        "WHERE module_name(a.sql) = b.module\n"
+        "WHERE module_name(a.sql) = b.module\n" 
       " )\n"
       " ORDER BY name";
   }else{

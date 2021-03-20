@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_REPORTING_H_
 #define CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_REPORTING_H_
 
+#include <string>
+
 #include "base/logging.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 
@@ -14,6 +16,8 @@ class Origin;
 
 namespace content {
 namespace indexed_db {
+constexpr static const char* kBackingStoreActionUmaName =
+    "WebCore.IndexedDB.BackingStore.Action";
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -70,7 +74,20 @@ enum IndexedDBBackingStoreOpenResult {
   INDEXED_DB_BACKING_STORE_OPEN_NO_RECOVERY,
   INDEXED_DB_BACKING_STORE_OPEN_FAILED_PRIOR_CORRUPTION,
   INDEXED_DB_BACKING_STORE_OPEN_FAILED_CLEANUP_JOURNAL_ERROR,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_METADATA_SETUP,
   INDEXED_DB_BACKING_STORE_OPEN_MAX,
+};
+
+// These values are used for UMA metrics and should never be changed.
+enum class IndexedDBAction {
+  // This is recorded every time there is an attempt to open an unopened backing
+  // store. This can happen during the API calls IDBFactory::Open,
+  // GetDatabaseNames, GetDatabaseInfo, and DeleteDatabase.
+  kBackingStoreOpenAttempt = 0,
+  // This is recorded every time there is an attempt to delete the database
+  // using the IDBFactory::DeleteDatabase API.
+  kDatabaseDeleteAttempt = 1,
+  kMaxValue = kDatabaseDeleteAttempt,
 };
 
 void ReportOpenStatus(IndexedDBBackingStoreOpenResult result,

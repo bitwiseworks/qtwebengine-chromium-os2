@@ -29,16 +29,16 @@ class SlowTraceSource : public content::URLDataSource {
   ~SlowTraceSource() override;
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
+  std::string GetSource() override;
   void StartDataRequest(
-      const std::string& path,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-      const content::URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string& path) const override;
-  bool AllowCaching() const override;
+      const GURL& url,
+      const content::WebContents::Getter& wc_getter,
+      content::URLDataSource::GotDataCallback callback) override;
+  std::string GetMimeType(const std::string& path) override;
+  bool AllowCaching() override;
 
  private:
-  void OnGetTraceData(const content::URLDataSource::GotDataCallback& callback,
+  void OnGetTraceData(content::URLDataSource::GotDataCallback callback,
                       scoped_refptr<base::RefCountedString> trace_data);
 
   DISALLOW_COPY_AND_ASSIGN(SlowTraceSource);

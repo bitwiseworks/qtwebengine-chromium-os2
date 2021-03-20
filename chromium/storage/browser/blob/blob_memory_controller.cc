@@ -71,10 +71,14 @@ File::Error CreateBlobDirectory(const FilePath& blob_storage_dir) {
 // Desktop:
 // * Ram -  20%, or 2 GB if x64.
 // * Disk - 10%
-BlobStorageLimits CalculateBlobStorageLimitsImpl(const FilePath& storage_dir,
-                                                 bool disk_enabled) {
+BlobStorageLimits CalculateBlobStorageLimitsImpl(
+    const FilePath& storage_dir,
+    bool disk_enabled,
+    base::Optional<int64_t> optional_memory_size_for_testing) {
   int64_t disk_size = 0ull;
-  int64_t memory_size = base::SysInfo::AmountOfPhysicalMemory();
+  int64_t memory_size = optional_memory_size_for_testing
+                            ? optional_memory_size_for_testing.value()
+                            : base::SysInfo::AmountOfPhysicalMemory();
   if (disk_enabled && CreateBlobDirectory(storage_dir) == base::File::FILE_OK)
     disk_size = base::SysInfo::AmountOfTotalDiskSpace(storage_dir);
 
@@ -91,6 +95,11 @@ BlobStorageLimits CalculateBlobStorageLimitsImpl(const FilePath& storage_dir,
     limits.max_blob_in_memory_space = static_cast<size_t>(memory_size / 5ll);
 #endif
   }
+  // Devices just on the edge (RAM == 256MB) should not fail because
+  // max_blob_in_memory_space turns out smaller than min_page_file_size
+  // causing the CHECK below to fail.
+  if (limits.max_blob_in_memory_space < limits.min_page_file_size)
+    limits.max_blob_in_memory_space = limits.min_page_file_size;
 
   // Don't do specialty configuration for error size (-1). Allow no disk.
   if (disk_size >= 0) {
@@ -147,7 +156,8 @@ EmptyFilesResult CreateEmptyFiles(
     DiskSpaceFuncPtr disk_space_function,
     scoped_refptr<base::TaskRunner> file_task_runner,
     std::vector<base::FilePath> file_paths) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   File::Error dir_create_status = CreateBlobDirectory(blob_storage_dir);
   if (dir_create_status != File::FILE_OK) {
@@ -184,11 +194,12 @@ std::pair<FileCreationInfo, int64_t> CreateFileAndWriteItems(
     DiskSpaceFuncPtr disk_space_function,
     const FilePath& file_path,
     scoped_refptr<base::TaskRunner> file_task_runner,
-    std::vector<base::span<const char>> data,
+    std::vector<base::span<const uint8_t>> data,
     size_t total_size_bytes) {
   DCHECK_NE(0u, total_size_bytes);
   UMA_HISTOGRAM_MEMORY_KB("Storage.Blob.PageFileSize", total_size_bytes / 1024);
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   FileCreationInfo creation_info;
   creation_info.file_deletion_runner = std::move(file_task_runner);
@@ -223,9 +234,9 @@ std::pair<FileCreationInfo, int64_t> CreateFileAndWriteItems(
     size_t length = item.size();
     size_t bytes_left = length;
     while (bytes_left > 0) {
-      bytes_written =
-          file.WriteAtCurrentPos(item.data() + (length - bytes_left),
-                                 base::saturated_cast<int>(bytes_left));
+      bytes_written = file.WriteAtCurrentPos(
+          reinterpret_cast<const char*>(item.data() + (length - bytes_left)),
+          base::saturated_cast<int>(bytes_left));
       if (bytes_written < 0)
         break;
       DCHECK_LE(static_cast<size_t>(bytes_written), bytes_left);
@@ -313,8 +324,7 @@ class BlobMemoryController::MemoryQuotaAllocationTask
       : controller_(controller),
         pending_items_(std::move(pending_items)),
         done_callback_(std::move(done_callback)),
-        allocation_size_(quota_request_size),
-        weak_factory_(this) {}
+        allocation_size_(quota_request_size) {}
 
   ~MemoryQuotaAllocationTask() override = default;
 
@@ -354,7 +364,7 @@ class BlobMemoryController::MemoryQuotaAllocationTask
   size_t allocation_size_;
   PendingMemoryQuotaTaskList::iterator my_list_position_;
 
-  base::WeakPtrFactory<MemoryQuotaAllocationTask> weak_factory_;
+  base::WeakPtrFactory<MemoryQuotaAllocationTask> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(MemoryQuotaAllocationTask);
 };
 
@@ -368,8 +378,7 @@ class BlobMemoryController::FileQuotaAllocationTask
       std::vector<scoped_refptr<ShareableBlobDataItem>> unreserved_file_items,
       FileQuotaRequestCallback done_callback)
       : controller_(memory_controller),
-        done_callback_(std::move(done_callback)),
-        weak_factory_(this) {
+        done_callback_(std::move(done_callback)) {
     // Get the file sizes and total size.
     uint64_t total_size =
         GetTotalSizeAndFileSizes(unreserved_file_items, &file_sizes_);
@@ -512,7 +521,7 @@ class BlobMemoryController::FileQuotaAllocationTask
   uint64_t allocation_size_;
   PendingFileQuotaTaskList::iterator my_list_position_;
 
-  base::WeakPtrFactory<FileQuotaAllocationTask> weak_factory_;
+  base::WeakPtrFactory<FileQuotaAllocationTask> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(FileQuotaAllocationTask);
 };
 
@@ -527,8 +536,7 @@ BlobMemoryController::BlobMemoryController(
           base::MRUCache<uint64_t, ShareableBlobDataItem*>::NO_AUTO_EVICT),
       memory_pressure_listener_(
           base::BindRepeating(&BlobMemoryController::OnMemoryPressure,
-                              base::Unretained(this))),
-      weak_factory_(this) {}
+                              base::Unretained(this))) {}
 
 BlobMemoryController::~BlobMemoryController() = default;
 
@@ -744,12 +752,12 @@ void BlobMemoryController::CalculateBlobStorageLimits() {
     PostTaskAndReplyWithResult(
         file_runner_.get(), FROM_HERE,
         base::BindOnce(&CalculateBlobStorageLimitsImpl, blob_storage_dir_,
-                       true),
+                       true, amount_of_memory_for_testing_),
         base::BindOnce(&BlobMemoryController::OnStorageLimitsCalculated,
                        weak_factory_.GetWeakPtr()));
   } else {
-    OnStorageLimitsCalculated(
-        CalculateBlobStorageLimitsImpl(blob_storage_dir_, false));
+    OnStorageLimitsCalculated(CalculateBlobStorageLimitsImpl(
+        blob_storage_dir_, false, amount_of_memory_for_testing_));
   }
 }
 
@@ -931,7 +939,7 @@ void BlobMemoryController::MaybeScheduleEvictionUntilSystemHealthy(
     if (total_items_size == 0)
       break;
 
-    std::vector<base::span<const char>> data_for_paging;
+    std::vector<base::span<const uint8_t>> data_for_paging;
     for (auto& shared_blob_item : items_to_swap) {
       items_paging_to_file_.insert(shared_blob_item->item_id());
       data_for_paging.push_back(shared_blob_item->item()->bytes());
@@ -1031,6 +1039,13 @@ void BlobMemoryController::OnEvictionComplete(
 
 void BlobMemoryController::OnMemoryPressure(
     base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
+  // TODO(sebmarchand): Check if MEMORY_PRESSURE_LEVEL_MODERATE should also be
+  // ignored.
+  if (memory_pressure_level ==
+      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE) {
+    return;
+  }
+
   auto time_from_last_evicion = base::TimeTicks::Now() - last_eviction_time_;
   if (last_eviction_time_ != base::TimeTicks() &&
       time_from_last_evicion.InSeconds() < kMinSecondsForPressureEvictions) {

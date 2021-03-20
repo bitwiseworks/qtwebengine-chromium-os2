@@ -22,6 +22,7 @@ bool ShouldUpdateTextInputState(const content::TextInputState& old_state,
          old_state.can_compose_inline != new_state.can_compose_inline;
 #elif defined(OS_MACOSX)
   return old_state.type != new_state.type ||
+         old_state.flags != new_state.flags ||
          old_state.can_compose_inline != new_state.can_compose_inline;
 #elif defined(OS_ANDROID)
   // On Android, TextInputState update is sent only if there is some change in
@@ -79,7 +80,9 @@ TextInputManager::GetCompositionRangeInfo() const {
 
 const TextInputManager::TextSelection* TextInputManager::GetTextSelection(
     RenderWidgetHostViewBase* view) const {
+#ifndef TOOLKIT_QT
   DCHECK(!view || IsRegistered(view));
+#endif
   if (!view)
     view = active_view_;
   // A crash occurs when we end up here with an unregistered view.
@@ -174,9 +177,9 @@ void TextInputManager::SelectionBoundsChanged(
     focus_bound.set_type(gfx::SelectionBound::CENTER);
   } else {
     // Whether text is LTR at the anchor handle.
-    bool anchor_LTR = params.anchor_dir == blink::kWebTextDirectionLeftToRight;
+    bool anchor_LTR = params.anchor_dir == base::i18n::LEFT_TO_RIGHT;
     // Whether text is LTR at the focus handle.
-    bool focus_LTR = params.focus_dir == blink::kWebTextDirectionLeftToRight;
+    bool focus_LTR = params.focus_dir == base::i18n::LEFT_TO_RIGHT;
 
     if ((params.is_anchor_first && anchor_LTR) ||
         (!params.is_anchor_first && !anchor_LTR)) {

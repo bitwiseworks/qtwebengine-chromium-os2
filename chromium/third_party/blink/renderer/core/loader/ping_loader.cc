@@ -31,6 +31,8 @@
 
 #include "third_party/blink/renderer/core/loader/ping_loader.h"
 
+#include "base/feature_list.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
@@ -39,6 +41,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/html/forms/form_data.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_view.h"
+#include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_utils.h"
@@ -51,7 +54,6 @@
 #include "third_party/blink/renderer/platform/network/parsed_content_type.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -63,7 +65,7 @@ class Beacon {
 
  public:
   virtual void Serialize(ResourceRequest&) const = 0;
-  virtual unsigned long long size() const = 0;
+  virtual uint64_t size() const = 0;
   virtual const AtomicString GetContentType() const = 0;
 };
 
@@ -71,14 +73,12 @@ class BeaconString final : public Beacon {
  public:
   explicit BeaconString(const String& data) : data_(data) {}
 
-  unsigned long long size() const override {
-    return data_.CharactersSizeInBytes();
-  }
+  uint64_t size() const override { return data_.CharactersSizeInBytes(); }
 
   void Serialize(ResourceRequest& request) const override {
     scoped_refptr<EncodedFormData> entity_body =
         EncodedFormData::Create(data_.Utf8());
-    request.SetHTTPBody(entity_body);
+    request.SetHttpBody(entity_body);
     request.SetHTTPContentType(GetContentType());
   }
 
@@ -98,52 +98,65 @@ class BeaconBlob final : public Beacon {
       content_type_ = AtomicString(blob_type);
   }
 
-  unsigned long long size() const override { return data_->size(); }
+  uint64_t size() const override { return data_->size(); }
 
   void Serialize(ResourceRequest& request) const override {
     DCHECK(data_);
 
     scoped_refptr<EncodedFormData> entity_body = EncodedFormData::Create();
-    if (data_->HasBackingFile())
-      entity_body->AppendFile(ToFile(data_)->GetPath());
-    else
+    if (data_->HasBackingFile()) {
+      entity_body->AppendFile(To<File>(data_)->GetPath(),
+                              To<File>(data_)->LastModifiedTime());
+    } else {
       entity_body->AppendBlob(data_->Uuid(), data_->GetBlobDataHandle());
+    }
 
-    request.SetHTTPBody(std::move(entity_body));
+    request.SetHttpBody(std::move(entity_body));
 
-    if (!content_type_.IsEmpty())
+    if (!content_type_.IsEmpty()) {
+      if (!cors::IsCorsSafelistedContentType(content_type_)) {
+        request.SetMode(network::mojom::blink::RequestMode::kCors);
+      }
       request.SetHTTPContentType(content_type_);
+    }
   }
 
   const AtomicString GetContentType() const override { return content_type_; }
 
  private:
-  const Member<Blob> data_;
+  Blob* const data_;
   AtomicString content_type_;
 };
 
 class BeaconDOMArrayBufferView final : public Beacon {
  public:
-  explicit BeaconDOMArrayBufferView(DOMArrayBufferView* data) : data_(data) {}
+  explicit BeaconDOMArrayBufferView(DOMArrayBufferView* data) : data_(data) {
+    CHECK(base::CheckedNumeric<wtf_size_t>(data->byteLengthAsSizeT()).IsValid())
+        << "EncodedFormData::Create cannot deal with huge ArrayBuffers.";
+  }
 
-  unsigned long long size() const override { return data_->byteLength(); }
+  uint64_t size() const override { return data_->byteLengthAsSizeT(); }
 
   void Serialize(ResourceRequest& request) const override {
     DCHECK(data_);
 
-    scoped_refptr<EncodedFormData> entity_body =
-        EncodedFormData::Create(data_->BaseAddress(), data_->byteLength());
-    request.SetHTTPBody(std::move(entity_body));
+    scoped_refptr<EncodedFormData> entity_body = EncodedFormData::Create(
+        data_->BaseAddress(),
+        base::checked_cast<wtf_size_t>(data_->byteLengthAsSizeT()));
+    request.SetHttpBody(std::move(entity_body));
 
-    // FIXME: a reasonable choice, but not in the spec; should it give a
-    // default?
-    request.SetHTTPContentType(AtomicString("application/octet-stream"));
+    if (!base::FeatureList::IsEnabled(
+            features::kSuppressContentTypeForBeaconMadeWithArrayBufferView)) {
+      // FIXME: a reasonable choice, but not in the spec; should it give a
+      // default?
+      request.SetHTTPContentType(AtomicString("application/octet-stream"));
+    }
   }
 
   const AtomicString GetContentType() const override { return g_null_atom; }
 
  private:
-  const Member<DOMArrayBufferView> data_;
+  DOMArrayBufferView* const data_;
 };
 
 class BeaconFormData final : public Beacon {
@@ -154,19 +167,17 @@ class BeaconFormData final : public Beacon {
                     entity_body_->Boundary().data();
   }
 
-  unsigned long long size() const override {
-    return entity_body_->SizeInBytes();
-  }
+  uint64_t size() const override { return entity_body_->SizeInBytes(); }
 
   void Serialize(ResourceRequest& request) const override {
-    request.SetHTTPBody(entity_body_.get());
+    request.SetHttpBody(entity_body_.get());
     request.SetHTTPContentType(content_type_);
   }
 
   const AtomicString GetContentType() const override { return content_type_; }
 
  private:
-  const Member<FormData> data_;
+  FormData* const data_;
   scoped_refptr<EncodedFormData> entity_body_;
   AtomicString content_type_;
 };
@@ -177,19 +188,19 @@ bool SendBeaconCommon(LocalFrame* frame,
   if (!frame->GetDocument())
     return false;
 
-  if (!ContentSecurityPolicy::ShouldBypassMainWorld(frame->GetDocument()) &&
-      !frame->GetDocument()->GetContentSecurityPolicy()->AllowConnectToSource(
-          url)) {
+  if (!frame->GetDocument()
+           ->GetContentSecurityPolicyForWorld()
+           ->AllowConnectToSource(url, url, RedirectStatus::kNoRedirect)) {
     // We're simulating a network failure here, so we return 'true'.
     return true;
   }
 
   ResourceRequest request(url);
-  request.SetHTTPMethod(http_names::kPOST);
+  request.SetHttpMethod(http_names::kPOST);
   request.SetKeepalive(true);
   request.SetRequestContext(mojom::RequestContextType::BEACON);
   beacon.Serialize(request);
-  FetchParameters params(request);
+  FetchParameters params(std::move(request));
   // The spec says:
   //  - If mimeType is not null:
   //   - If mimeType value is a CORS-safelisted request-header value for the
@@ -215,61 +226,51 @@ void PingLoader::SendLinkAuditPing(LocalFrame* frame,
     return;
 
   ResourceRequest request(ping_url);
-  request.SetHTTPMethod(http_names::kPOST);
+  request.SetHttpMethod(http_names::kPOST);
   request.SetHTTPContentType("text/ping");
-  request.SetHTTPBody(EncodedFormData::Create("PING"));
-  request.SetHTTPHeaderField(http_names::kCacheControl, "max-age=0");
-  request.SetHTTPHeaderField(http_names::kPingTo,
+  request.SetHttpBody(EncodedFormData::Create("PING"));
+  request.SetHttpHeaderField(http_names::kCacheControl, "max-age=0");
+  request.SetHttpHeaderField(http_names::kPingTo,
                              AtomicString(destination_url.GetString()));
   scoped_refptr<const SecurityOrigin> ping_origin =
       SecurityOrigin::Create(ping_url);
   if (ProtocolIs(frame->GetDocument()->Url().GetString(), "http") ||
       frame->GetDocument()->GetSecurityOrigin()->CanAccess(ping_origin.get())) {
-    request.SetHTTPHeaderField(
+    request.SetHttpHeaderField(
         http_names::kPingFrom,
         AtomicString(frame->GetDocument()->Url().GetString()));
   }
 
   request.SetKeepalive(true);
-  // TODO(domfarolino): Add WPTs ensuring that pings do not have a referrer
-  // header.
   request.SetReferrerString(Referrer::NoReferrer());
   request.SetReferrerPolicy(network::mojom::ReferrerPolicy::kNever);
   request.SetRequestContext(mojom::RequestContextType::PING);
-  FetchParameters params(request);
+  FetchParameters params(std::move(request));
   params.MutableOptions().initiator_info.name =
       fetch_initiator_type_names::kPing;
 
-  frame->Client()->DidDispatchPingLoader(request.Url());
+  frame->Client()->DidDispatchPingLoader(ping_url);
   RawResource::Fetch(params, frame->GetDocument()->Fetcher(), nullptr);
 }
 
 void PingLoader::SendViolationReport(LocalFrame* frame,
                                      const KURL& report_url,
-                                     scoped_refptr<EncodedFormData> report,
-                                     ViolationReportType type) {
+                                     scoped_refptr<EncodedFormData> report) {
   ResourceRequest request(report_url);
-  request.SetHTTPMethod(http_names::kPOST);
-  switch (type) {
-    case kContentSecurityPolicyViolationReport:
-      request.SetHTTPContentType("application/csp-report");
-      break;
-    case kXSSAuditorViolationReport:
-      request.SetHTTPContentType("application/xss-auditor-report");
-      break;
-  }
+  request.SetHttpMethod(http_names::kPOST);
+  request.SetHTTPContentType("application/csp-report");
   request.SetKeepalive(true);
-  request.SetHTTPBody(std::move(report));
-  request.SetFetchCredentialsMode(
-      network::mojom::FetchCredentialsMode::kSameOrigin);
+  request.SetHttpBody(std::move(report));
+  request.SetCredentialsMode(network::mojom::CredentialsMode::kSameOrigin);
   request.SetRequestContext(mojom::RequestContextType::CSP_REPORT);
+  request.SetRequestDestination(network::mojom::RequestDestination::kReport);
   request.SetRequestorOrigin(frame->GetDocument()->GetSecurityOrigin());
-  request.SetFetchRedirectMode(network::mojom::FetchRedirectMode::kError);
-  FetchParameters params(request);
+  request.SetRedirectMode(network::mojom::RedirectMode::kError);
+  FetchParameters params(std::move(request));
   params.MutableOptions().initiator_info.name =
       fetch_initiator_type_names::kViolationreport;
 
-  frame->Client()->DidDispatchPingLoader(request.Url());
+  frame->Client()->DidDispatchPingLoader(report_url);
   RawResource::Fetch(params, frame->GetDocument()->Fetcher(), nullptr);
 }
 

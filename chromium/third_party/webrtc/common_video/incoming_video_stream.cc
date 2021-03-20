@@ -19,38 +19,33 @@
 #include "rtc_base/trace_event.h"
 
 namespace webrtc {
-namespace {
-const char kIncomingQueueName[] = "IncomingVideoStream";
-}
 
 IncomingVideoStream::IncomingVideoStream(
+    TaskQueueFactory* task_queue_factory,
     int32_t delay_ms,
     rtc::VideoSinkInterface<VideoFrame>* callback)
     : render_buffers_(delay_ms),
       callback_(callback),
-      incoming_render_queue_(kIncomingQueueName,
-                             rtc::TaskQueue::Priority::HIGH) {}
+      incoming_render_queue_(task_queue_factory->CreateTaskQueue(
+          "IncomingVideoStream",
+          TaskQueueFactory::Priority::HIGH)) {}
 
 IncomingVideoStream::~IncomingVideoStream() {
-  RTC_DCHECK(main_thread_checker_.CalledOnValidThread());
+  RTC_DCHECK(main_thread_checker_.IsCurrent());
 }
 
 void IncomingVideoStream::OnFrame(const VideoFrame& video_frame) {
   TRACE_EVENT0("webrtc", "IncomingVideoStream::OnFrame");
   RTC_CHECK_RUNS_SERIALIZED(&decoder_race_checker_);
   RTC_DCHECK(!incoming_render_queue_.IsCurrent());
-  // TODO(srte): This struct should be replaced by a lambda with move capture
-  // when C++14 lambdas are allowed.
-  struct NewFrameTask {
-    void operator()() {
-      RTC_DCHECK(stream->incoming_render_queue_.IsCurrent());
-      if (stream->render_buffers_.AddFrame(std::move(frame)) == 1)
-        stream->Dequeue();
-    }
-    IncomingVideoStream* stream;
-    VideoFrame frame;
-  };
-  incoming_render_queue_.PostTask(NewFrameTask{this, std::move(video_frame)});
+  // TODO(srte): Using video_frame = std::move(video_frame) would move the frame
+  // into the lambda instead of copying it, but it doesn't work unless we change
+  // OnFrame to take its frame argument by value instead of const reference.
+  incoming_render_queue_.PostTask([this, video_frame = video_frame]() mutable {
+    RTC_DCHECK(incoming_render_queue_.IsCurrent());
+    if (render_buffers_.AddFrame(std::move(video_frame)) == 1)
+      Dequeue();
+  });
 }
 
 void IncomingVideoStream::Dequeue() {

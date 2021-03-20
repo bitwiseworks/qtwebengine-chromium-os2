@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/shared_memory_mapping.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/scoped_co_mem.h"
@@ -25,7 +27,7 @@
 #include "media/base/win/mf_initializer.h"
 #include "third_party/libyuv/include/libyuv.h"
 
-using media::mf::MediaBufferScopedPointer;
+using media::MediaBufferScopedPointer;
 
 namespace media {
 
@@ -57,7 +59,7 @@ eAVEncH264VProfile GetH264VProfile(VideoCodecProfile profile) {
       return eAVEncH264VProfile_Main;
     case H264PROFILE_HIGH: {
       // eAVEncH264VProfile_High requires Windows 8.
-      if (base::win::GetVersion() < base::win::VERSION_WIN8) {
+      if (base::win::GetVersion() < base::win::Version::WIN8) {
         return eAVEncH264VProfile_unknown;
       }
       return eAVEncH264VProfile_High;
@@ -89,11 +91,11 @@ class MediaFoundationVideoEncodeAccelerator::EncodeOutput {
 
 struct MediaFoundationVideoEncodeAccelerator::BitstreamBufferRef {
   BitstreamBufferRef(int32_t id,
-                     std::unique_ptr<base::SharedMemory> shm,
+                     base::WritableSharedMemoryMapping mapping,
                      size_t size)
-      : id(id), shm(std::move(shm)), size(size) {}
+      : id(id), mapping(std::move(mapping)), size(size) {}
   const int32_t id;
-  const std::unique_ptr<base::SharedMemory> shm;
+  const base::WritableSharedMemoryMapping mapping;
   const size_t size;
 
  private:
@@ -107,8 +109,7 @@ MediaFoundationVideoEncodeAccelerator::MediaFoundationVideoEncodeAccelerator(
     bool compatible_with_win7)
     : compatible_with_win7_(compatible_with_win7),
       main_client_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      encoder_thread_("MFEncoderThread"),
-      encoder_task_weak_factory_(this) {}
+      encoder_thread_("MFEncoderThread") {}
 
 MediaFoundationVideoEncodeAccelerator::
     ~MediaFoundationVideoEncodeAccelerator() {
@@ -228,7 +229,7 @@ bool MediaFoundationVideoEncodeAccelerator::Initialize(const Config& config,
   HRESULT hr =
       encoder_->GetInputStreamInfo(input_stream_id_, &input_stream_info);
   RETURN_ON_HR_FAILURE(hr, "Couldn't get input stream info", false);
-  input_sample_ = mf::CreateEmptySampleWithBuffer(
+  input_sample_ = CreateEmptySampleWithBuffer(
       input_stream_info.cbSize
           ? input_stream_info.cbSize
           : VideoFrame::AllocationSize(PIXEL_FORMAT_I420, input_visible_size_),
@@ -237,7 +238,7 @@ bool MediaFoundationVideoEncodeAccelerator::Initialize(const Config& config,
   MFT_OUTPUT_STREAM_INFO output_stream_info;
   hr = encoder_->GetOutputStreamInfo(output_stream_id_, &output_stream_info);
   RETURN_ON_HR_FAILURE(hr, "Couldn't get output stream info", false);
-  output_sample_ = mf::CreateEmptySampleWithBuffer(
+  output_sample_ = CreateEmptySampleWithBuffer(
       output_stream_info.cbSize
           ? output_stream_info.cbSize
           : bitstream_buffer_size_ * kOutputSampleBufferSizeRatio,
@@ -254,7 +255,7 @@ bool MediaFoundationVideoEncodeAccelerator::Initialize(const Config& config,
 }
 
 void MediaFoundationVideoEncodeAccelerator::Encode(
-    const scoped_refptr<VideoFrame>& frame,
+    scoped_refptr<VideoFrame> frame,
     bool force_keyframe) {
   DVLOG(3) << __func__;
   DCHECK(main_client_task_runner_->BelongsToCurrentThread());
@@ -262,12 +263,12 @@ void MediaFoundationVideoEncodeAccelerator::Encode(
   encoder_thread_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&MediaFoundationVideoEncodeAccelerator::EncodeTask,
-                     encoder_task_weak_factory_.GetWeakPtr(), frame,
+                     encoder_task_weak_factory_.GetWeakPtr(), std::move(frame),
                      force_keyframe));
 }
 
 void MediaFoundationVideoEncodeAccelerator::UseOutputBitstreamBuffer(
-    const BitstreamBuffer& buffer) {
+    BitstreamBuffer buffer) {
   DVLOG(3) << __func__ << ": buffer size=" << buffer.size();
   DCHECK(main_client_task_runner_->BelongsToCurrentThread());
 
@@ -278,21 +279,24 @@ void MediaFoundationVideoEncodeAccelerator::UseOutputBitstreamBuffer(
     return;
   }
 
-  std::unique_ptr<base::SharedMemory> shm(
-      new base::SharedMemory(buffer.handle(), false));
-  if (!shm->Map(buffer.size())) {
+  auto region =
+      base::UnsafeSharedMemoryRegion::Deserialize(buffer.TakeRegion());
+  auto mapping = region.Map();
+  if (!region.IsValid() || !mapping.IsValid()) {
     DLOG(ERROR) << "Failed mapping shared memory.";
     NotifyError(kPlatformFailureError);
     return;
   }
+  // After mapping, |region| is no longer necessary and it can be
+  // destroyed. |mapping| will keep the shared memory region open.
 
   std::unique_ptr<BitstreamBufferRef> buffer_ref(
-      new BitstreamBufferRef(buffer.id(), std::move(shm), buffer.size()));
+      new BitstreamBufferRef(buffer.id(), std::move(mapping), buffer.size()));
   encoder_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &MediaFoundationVideoEncodeAccelerator::UseOutputBitstreamBufferTask,
-          encoder_task_weak_factory_.GetWeakPtr(), base::Passed(&buffer_ref)));
+          encoder_task_weak_factory_.GetWeakPtr(), std::move(buffer_ref)));
 }
 
 void MediaFoundationVideoEncodeAccelerator::RequestEncodingParametersChange(
@@ -303,10 +307,10 @@ void MediaFoundationVideoEncodeAccelerator::RequestEncodingParametersChange(
   DCHECK(main_client_task_runner_->BelongsToCurrentThread());
 
   encoder_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&MediaFoundationVideoEncodeAccelerator::
-                     RequestEncodingParametersChangeTask,
-                 encoder_task_weak_factory_.GetWeakPtr(), bitrate, framerate));
+      FROM_HERE, base::BindOnce(&MediaFoundationVideoEncodeAccelerator::
+                                    RequestEncodingParametersChangeTask,
+                                encoder_task_weak_factory_.GetWeakPtr(),
+                                bitrate, framerate));
 }
 
 void MediaFoundationVideoEncodeAccelerator::Destroy() {
@@ -319,8 +323,8 @@ void MediaFoundationVideoEncodeAccelerator::Destroy() {
   if (encoder_thread_.IsRunning()) {
     encoder_thread_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&MediaFoundationVideoEncodeAccelerator::DestroyTask,
-                   encoder_task_weak_factory_.GetWeakPtr()));
+        base::BindOnce(&MediaFoundationVideoEncodeAccelerator::DestroyTask,
+                       encoder_task_weak_factory_.GetWeakPtr()));
     encoder_thread_.Stop();
   }
 
@@ -343,7 +347,7 @@ bool MediaFoundationVideoEncodeAccelerator::CreateHardwareEncoderMFT() {
   DCHECK(main_client_task_runner_->BelongsToCurrentThread());
 
   if (!compatible_with_win7_ &&
-      base::win::GetVersion() < base::win::VERSION_WIN8) {
+      base::win::GetVersion() < base::win::Version::WIN8) {
     DVLOG(ERROR) << "Windows versions earlier than 8 are not supported.";
     return false;
   }
@@ -357,7 +361,7 @@ bool MediaFoundationVideoEncodeAccelerator::CreateHardwareEncoderMFT() {
     }
   }
 
-  if (!InitializeMediaFoundation())
+  if (!(session_ = InitializeMediaFoundation()))
     return false;
 
   uint32_t flags = MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER;
@@ -413,7 +417,7 @@ bool MediaFoundationVideoEncodeAccelerator::InitializeInputOutputSamples(
   }
 
   // Initialize output parameters.
-  hr = MFCreateMediaType(imf_output_media_type_.GetAddressOf());
+  hr = MFCreateMediaType(&imf_output_media_type_);
   RETURN_ON_HR_FAILURE(hr, "Couldn't create media type", false);
   hr = imf_output_media_type_->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   RETURN_ON_HR_FAILURE(hr, "Couldn't set media type", false);
@@ -439,7 +443,7 @@ bool MediaFoundationVideoEncodeAccelerator::InitializeInputOutputSamples(
   RETURN_ON_HR_FAILURE(hr, "Couldn't set output media type", false);
 
   // Initialize input parameters.
-  hr = MFCreateMediaType(imf_input_media_type_.GetAddressOf());
+  hr = MFCreateMediaType(&imf_input_media_type_);
   RETURN_ON_HR_FAILURE(hr, "Couldn't create media type", false);
   hr = imf_input_media_type_->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   RETURN_ON_HR_FAILURE(hr, "Couldn't set media type", false);
@@ -466,7 +470,7 @@ bool MediaFoundationVideoEncodeAccelerator::SetEncoderModes() {
   RETURN_ON_FAILURE((encoder_.Get() != nullptr),
                     "No HW encoder instance created", false);
 
-  HRESULT hr = encoder_.CopyTo(codec_api_.GetAddressOf());
+  HRESULT hr = encoder_.As(&codec_api_);
   RETURN_ON_HR_FAILURE(hr, "Couldn't get ICodecAPI", false);
   VARIANT var;
   var.vt = VT_UI4;
@@ -537,7 +541,7 @@ void MediaFoundationVideoEncodeAccelerator::EncodeTask(
   DCHECK(encoder_thread_task_runner_->BelongsToCurrentThread());
 
   Microsoft::WRL::ComPtr<IMFMediaBuffer> input_buffer;
-  input_sample_->GetBufferByIndex(0, input_buffer.GetAddressOf());
+  input_sample_->GetBufferByIndex(0, &input_buffer);
 
   {
     MediaBufferScopedPointer scoped_buffer(input_buffer.Get());
@@ -625,7 +629,7 @@ void MediaFoundationVideoEncodeAccelerator::ProcessOutput() {
   DVLOG(3) << "Got encoded data " << hr;
 
   Microsoft::WRL::ComPtr<IMFMediaBuffer> output_buffer;
-  hr = output_sample_->GetBufferByIndex(0, output_buffer.GetAddressOf());
+  hr = output_sample_->GetBufferByIndex(0, &output_buffer);
   RETURN_ON_HR_FAILURE(hr, "Couldn't get buffer by index", );
   DWORD size = 0;
   hr = output_buffer->GetCurrentLength(&size);
@@ -663,13 +667,14 @@ void MediaFoundationVideoEncodeAccelerator::ProcessOutput() {
 
   {
     MediaBufferScopedPointer scoped_buffer(output_buffer.Get());
-    memcpy(buffer_ref->shm->memory(), scoped_buffer.get(), size);
+    memcpy(buffer_ref->mapping.memory(), scoped_buffer.get(), size);
   }
 
   main_client_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Client::BitstreamBufferReady, main_client_, buffer_ref->id,
-                 BitstreamBufferMetadata(size, keyframe, timestamp)));
+      base::BindOnce(&Client::BitstreamBufferReady, main_client_,
+                     buffer_ref->id,
+                     BitstreamBufferMetadata(size, keyframe, timestamp)));
 
   // Keep calling ProcessOutput recursively until MF_E_TRANSFORM_NEED_MORE_INPUT
   // is returned to flush out all the output.
@@ -700,14 +705,15 @@ void MediaFoundationVideoEncodeAccelerator::ReturnBitstreamBuffer(
   DVLOG(3) << __func__;
   DCHECK(encoder_thread_task_runner_->BelongsToCurrentThread());
 
-  memcpy(buffer_ref->shm->memory(), encode_output->memory(),
+  memcpy(buffer_ref->mapping.memory(), encode_output->memory(),
          encode_output->size());
   main_client_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Client::BitstreamBufferReady, main_client_, buffer_ref->id,
-                 BitstreamBufferMetadata(encode_output->size(),
-                                         encode_output->keyframe,
-                                         encode_output->capture_timestamp)));
+      base::BindOnce(&Client::BitstreamBufferReady, main_client_,
+                     buffer_ref->id,
+                     BitstreamBufferMetadata(
+                         encode_output->size(), encode_output->keyframe,
+                         encode_output->capture_timestamp)));
 }
 
 void MediaFoundationVideoEncodeAccelerator::RequestEncodingParametersChangeTask(

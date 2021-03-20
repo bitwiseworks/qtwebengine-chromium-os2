@@ -12,7 +12,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_byteorder.h"
-#include "components/cast_channel/proto/cast_channel.pb.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
 MessageFramer::MessageFramer(scoped_refptr<net::GrowableIOBuffer> input_buffer)
@@ -68,8 +68,7 @@ size_t MessageFramer::MessageHeader::max_message_size() {
 }
 
 std::string MessageFramer::MessageHeader::ToString() {
-  return "{message_size: " +
-         base::UintToString(static_cast<uint32_t>(message_size)) + "}";
+  return "{message_size: " + base::NumberToString(message_size) + "}";
 }
 
 // static

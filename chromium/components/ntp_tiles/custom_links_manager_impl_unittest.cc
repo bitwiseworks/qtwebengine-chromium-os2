@@ -11,7 +11,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/mock_callback.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/history/core/test/history_service_test_util.h"
 #include "components/ntp_tiles/pref_names.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -51,11 +51,13 @@ const char kTestTitle[] = "Test";
 const char kTestUrl[] = "http://test.com/";
 
 base::Value::ListStorage FillTestListStorage(const char* url,
-                                             const char* title) {
+                                             const char* title,
+                                             const bool is_most_visited) {
   base::Value::ListStorage new_link_list;
   base::DictionaryValue new_link;
   new_link.SetKey("url", base::Value(url));
   new_link.SetKey("title", base::Value(title));
+  new_link.SetKey("isMostVisited", base::Value(is_most_visited));
   new_link_list.push_back(std::move(new_link));
   return new_link_list;
 }
@@ -101,9 +103,9 @@ class CustomLinksManagerImplTest : public testing::Test {
   }
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-  sync_preferences::TestingPrefServiceSyncable prefs_;
   base::ScopedTempDir scoped_temp_dir_;
+  base::test::TaskEnvironment task_environment_;
+  sync_preferences::TestingPrefServiceSyncable prefs_;
   std::unique_ptr<history::HistoryService> history_service_;
   std::unique_ptr<CustomLinksManagerImpl> custom_links_;
 
@@ -467,7 +469,7 @@ TEST_F(CustomLinksManagerImplTest, ShouldDeleteMostVisitedOnHistoryDeletion) {
                               base::UTF8ToUTF16(kTestCase2[0].title), true}}),
       custom_links_->GetLinks());
 
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(CustomLinksManagerImplTest,
@@ -492,7 +494,36 @@ TEST_F(CustomLinksManagerImplTest,
                                 /*restrict_urls=*/base::nullopt));
   EXPECT_TRUE(custom_links_->GetLinks().empty());
 
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
+}
+
+TEST_F(CustomLinksManagerImplTest, ShouldDeleteOnHistoryDeletionAfterShutdown) {
+  // Initialize.
+  ASSERT_TRUE(custom_links_->Initialize(FillTestTiles(kTestCase2)));
+  ASSERT_EQ(FillTestLinks(kTestCase2), custom_links_->GetLinks());
+
+  // Simulate shutdown by recreating CustomLinksManagerImpl.
+  custom_links_.reset();
+  custom_links_ =
+      std::make_unique<CustomLinksManagerImpl>(&prefs_, history_service_.get());
+
+  // Set up Most Visited callback.
+  base::MockCallback<base::RepeatingClosure> callback;
+  std::unique_ptr<base::CallbackList<void()>::Subscription> subscription =
+      custom_links_->RegisterCallbackForOnChanged(callback.Get());
+
+  // Delete all Most Visited links.
+  EXPECT_CALL(callback, Run());
+  static_cast<history::HistoryServiceObserver*>(custom_links_.get())
+      ->OnURLsDeleted(
+          history_service_.get(),
+          history::DeletionInfo(history::DeletionTimeRange::AllTime(),
+                                /*expired=*/false, history::URLRows(),
+                                /*favicon_urls=*/std::set<GURL>(),
+                                /*restrict_urls=*/base::nullopt));
+  EXPECT_TRUE(custom_links_->GetLinks().empty());
+
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(CustomLinksManagerImplTest, ShouldNotDeleteCustomLinkOnHistoryDeletion) {
@@ -536,7 +567,7 @@ TEST_F(CustomLinksManagerImplTest, ShouldNotDeleteCustomLinkOnHistoryDeletion) {
                 {Link{GURL(kTestUrl), base::UTF8ToUTF16(kTestTitle), false}}),
             custom_links_->GetLinks());
 
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(CustomLinksManagerImplTest, ShouldIgnoreHistoryExpiredDeletions) {
@@ -570,7 +601,7 @@ TEST_F(CustomLinksManagerImplTest, ShouldIgnoreHistoryExpiredDeletions) {
 
   EXPECT_EQ(initial_links, custom_links_->GetLinks());
 
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(CustomLinksManagerImplTest, ShouldIgnoreEmptyHistoryDeletions) {
@@ -591,7 +622,7 @@ TEST_F(CustomLinksManagerImplTest, ShouldIgnoreEmptyHistoryDeletions) {
 
   EXPECT_EQ(initial_links, custom_links_->GetLinks());
 
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(CustomLinksManagerImplTest, ShouldNotUndoAfterHistoryDeletion) {
@@ -623,7 +654,7 @@ TEST_F(CustomLinksManagerImplTest, ShouldNotUndoAfterHistoryDeletion) {
   EXPECT_FALSE(custom_links_->UndoAction());
   EXPECT_EQ(links_after_add, custom_links_->GetLinks());
 
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(CustomLinksManagerImplTest, UpdateListAfterRemoteChange) {
@@ -648,11 +679,11 @@ TEST_F(CustomLinksManagerImplTest, UpdateListAfterRemoteChange) {
   // Modify the preference. This should notify and update the current list of
   // links.
   EXPECT_CALL(callback, Run());
-  prefs_.SetUserPref(
-      prefs::kCustomLinksList,
-      std::make_unique<base::Value>(FillTestListStorage(kTestUrl, kTestTitle)));
+  prefs_.SetUserPref(prefs::kCustomLinksList,
+                     std::make_unique<base::Value>(
+                         FillTestListStorage(kTestUrl, kTestTitle, true)));
   EXPECT_EQ(std::vector<Link>(
-                {Link{GURL(kTestUrl), base::UTF8ToUTF16(kTestTitle), false}}),
+                {Link{GURL(kTestUrl), base::UTF8ToUTF16(kTestTitle), true}}),
             custom_links_->GetLinks());
 }
 
@@ -668,9 +699,9 @@ TEST_F(CustomLinksManagerImplTest, InitializeListAfterRemoteChange) {
   EXPECT_CALL(callback, Run()).Times(2);
   prefs_.SetUserPref(prefs::kCustomLinksInitialized,
                      std::make_unique<base::Value>(true));
-  prefs_.SetUserPref(
-      prefs::kCustomLinksList,
-      std::make_unique<base::Value>(FillTestListStorage(kTestUrl, kTestTitle)));
+  prefs_.SetUserPref(prefs::kCustomLinksList,
+                     std::make_unique<base::Value>(
+                         FillTestListStorage(kTestUrl, kTestTitle, false)));
   EXPECT_TRUE(custom_links_->IsInitialized());
   EXPECT_EQ(std::vector<Link>(
                 {Link{GURL(kTestUrl), base::UTF8ToUTF16(kTestTitle), false}}),

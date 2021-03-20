@@ -72,8 +72,8 @@ static SVGPaintDescription RequestPaint(const LayoutObject& object,
   const SVGPaint& paint =
       apply_to_fill ? svg_style.FillPaint() : svg_style.StrokePaint();
   const SVGPaint& visited_paint = apply_to_fill
-                                      ? svg_style.VisitedLinkFillPaint()
-                                      : svg_style.VisitedLinkStrokePaint();
+                                      ? svg_style.InternalVisitedFillPaint()
+                                      : svg_style.InternalVisitedStrokePaint();
 
   // If we have no, ignore it.
   if (paint.IsNone())
@@ -147,7 +147,7 @@ SVGPaintServer SVGPaintServer::RequestForLayoutObject(
     return SVGPaintServer(paint_description.color);
   SVGPaintServer paint_server = paint_description.resource->PreparePaintServer(
       *SVGResources::GetClient(layout_object),
-      layout_object.ObjectBoundingBox());
+      SVGResources::ReferenceBoxForEffects(layout_object));
   if (paint_server.IsValid())
     return paint_server;
   if (paint_description.has_fallback)

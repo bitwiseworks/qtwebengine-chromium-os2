@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "ppapi/c/dev/pp_print_settings_dev.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
@@ -21,8 +22,7 @@ PepperPrintingHost::PepperPrintingHost(
     PP_Resource resource,
     std::unique_ptr<PepperPrintSettingsManager> print_settings_manager)
     : ResourceHost(host, instance, resource),
-      print_settings_manager_(std::move(print_settings_manager)),
-      weak_factory_(this) {}
+      print_settings_manager_(std::move(print_settings_manager)) {}
 
 PepperPrintingHost::~PepperPrintingHost() {}
 
@@ -39,10 +39,9 @@ int32_t PepperPrintingHost::OnResourceMessageReceived(
 
 int32_t PepperPrintingHost::OnGetDefaultPrintSettings(
     ppapi::host::HostMessageContext* context) {
-  print_settings_manager_->GetDefaultPrintSettings(
-      base::Bind(&PepperPrintingHost::PrintSettingsCallback,
-                 weak_factory_.GetWeakPtr(),
-                 context->MakeReplyMessageContext()));
+  print_settings_manager_->GetDefaultPrintSettings(base::BindOnce(
+      &PepperPrintingHost::PrintSettingsCallback, weak_factory_.GetWeakPtr(),
+      context->MakeReplyMessageContext()));
   return PP_OK_COMPLETIONPENDING;
 }
 

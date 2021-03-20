@@ -19,18 +19,15 @@
 #include "ui/compositor/compositor_export.h"
 #include "ui/gfx/animation/tween.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/transform.h"
 
 namespace ui {
 
+class AnimationMetricsReporter;
+class AnimationMetricsRecorder;
 class InterpolatedTransform;
 class LayerAnimationDelegate;
-
-class AnimationMetricsReporter {
- public:
-  virtual ~AnimationMetricsReporter() {}
-  virtual void Report(int value) = 0;
-};
 
 // LayerAnimationElements represent one segment of an animation between two
 // keyframes. They know how to update a LayerAnimationDelegate given a value
@@ -46,10 +43,12 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
     BRIGHTNESS = (1 << 4),
     GRAYSCALE = (1 << 5),
     COLOR = (1 << 6),
+    CLIP = (1 << 7),
+    ROUNDED_CORNERS = (1 << 8),
 
     // Used when iterating over properties.
     FIRST_PROPERTY = TRANSFORM,
-    SENTINEL = (1 << 7)
+    SENTINEL = (1 << 9)
   };
 
   static AnimatableProperty ToAnimatableProperty(
@@ -67,6 +66,8 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
     float brightness;
     float grayscale;
     SkColor color;
+    gfx::Rect clip_rect;
+    gfx::RoundedCornersF rounded_corners;
   };
 
   typedef uint32_t AnimatableProperties;
@@ -139,6 +140,18 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
       SkColor color,
       base::TimeDelta duration);
 
+  // Creates an element that transitions the clip rect of the layer to the given
+  // bounds. The caller owns the return value.
+  static std::unique_ptr<LayerAnimationElement> CreateClipRectElement(
+      const gfx::Rect& clip_rect,
+      base::TimeDelta duration);
+
+  // Creates an element that transitions the rounded corners of the layer to the
+  // given ones. The caller owns the return value.
+  static std::unique_ptr<LayerAnimationElement> CreateRoundedCornersElement(
+      const gfx::RoundedCornersF& rounded_corners,
+      base::TimeDelta duration);
+
   // Sets the start time for the animation. This must be called before the first
   // call to {Start, IsFinished}. Once the animation is finished, this must
   // be called again in order to restart the animation.
@@ -183,6 +196,14 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
   // Assigns the target value to |target|.
   void GetTargetValue(TargetValue* target) const;
 
+  // Sets the reporter to report animation metrics if |reporter| is not null.
+  // Otherwise, cancels the metric reporting.
+  void SetAnimationMetricsReporter(AnimationMetricsReporter* reporter);
+
+  // Called when the animator is attached to/detached from a Compositor.
+  void OnAnimatorAttached(LayerAnimationDelegate* delegate);
+  void OnAnimatorDetached();
+
   // The properties that the element modifies.
   AnimatableProperties properties() const { return properties_; }
 
@@ -191,10 +212,6 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
 
   gfx::Tween::Type tween_type() const { return tween_type_; }
   void set_tween_type(gfx::Tween::Type tween_type) { tween_type_ = tween_type; }
-
-  void set_animation_metrics_reporter(AnimationMetricsReporter* reporter) {
-    animation_metrics_reporter_ = reporter;
-  }
 
   // Each LayerAnimationElement has a unique keyframe_model_id. Elements
   // belonging to sequences that are supposed to start together have the same
@@ -246,12 +263,9 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
 
   double last_progressed_fraction_;
 
-  // To obtain metrics of animation performance tag animation elements and
-  // keep track of sequential compositor frame number.
-  AnimationMetricsReporter* animation_metrics_reporter_;
-  int start_frame_number_;
+  std::unique_ptr<AnimationMetricsRecorder> animation_metrics_recorder_;
 
-  base::WeakPtrFactory<LayerAnimationElement> weak_ptr_factory_;
+  base::WeakPtrFactory<LayerAnimationElement> weak_ptr_factory_{this};
 
   DISALLOW_ASSIGN(LayerAnimationElement);
 };

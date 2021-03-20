@@ -22,15 +22,7 @@ bool PositionWindowInScreenCoordinates(aura::Window* window) {
 
 }  // namespace
 
-DesktopScreenPositionClient::DesktopScreenPositionClient(
-    aura::Window* root_window)
-    : wm::DefaultScreenPositionClient(), root_window_(root_window) {
-  aura::client::SetScreenPositionClient(root_window_, this);
-}
-
-DesktopScreenPositionClient::~DesktopScreenPositionClient() {
-  aura::client::SetScreenPositionClient(root_window_, NULL);
-}
+DesktopScreenPositionClient::~DesktopScreenPositionClient() = default;
 
 void DesktopScreenPositionClient::SetBounds(aura::Window* window,
                                             const gfx::Rect& bounds,

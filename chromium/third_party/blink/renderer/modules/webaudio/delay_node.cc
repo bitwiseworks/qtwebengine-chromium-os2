@@ -27,8 +27,8 @@
 
 #include <memory>
 
+#include "third_party/blink/renderer/bindings/modules/v8/v8_delay_options.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_basic_processor_handler.h"
-#include "third_party/blink/renderer/modules/webaudio/delay_options.h"
 #include "third_party/blink/renderer/modules/webaudio/delay_processor.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -66,7 +66,8 @@ DelayNode::DelayNode(BaseAudioContext& context, double max_delay_time)
     : AudioNode(context),
       delay_time_(
           AudioParam::Create(context,
-                             kParamTypeDelayDelayTime,
+                             Uuid(),
+                             AudioParamHandler::kParamTypeDelayDelayTime,
                              0.0,
                              AudioParamHandler::AutomationRate::kAudio,
                              AudioParamHandler::AutomationRateMode::kVariable,
@@ -88,11 +89,6 @@ DelayNode* DelayNode::Create(BaseAudioContext& context,
                              double max_delay_time,
                              ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   if (max_delay_time <= 0 || max_delay_time >= kMaximumAllowedDelayTime) {
     exception_state.ThrowDOMException(
@@ -127,9 +123,19 @@ AudioParam* DelayNode::delayTime() {
   return delay_time_;
 }
 
-void DelayNode::Trace(blink::Visitor* visitor) {
+void DelayNode::Trace(Visitor* visitor) {
   visitor->Trace(delay_time_);
   AudioNode::Trace(visitor);
+}
+
+void DelayNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+  GraphTracer().DidCreateAudioParam(delay_time_);
+}
+
+void DelayNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioParam(delay_time_);
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

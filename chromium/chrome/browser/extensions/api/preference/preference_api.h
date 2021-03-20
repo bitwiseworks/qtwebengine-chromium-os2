@@ -10,13 +10,14 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/content_settings/content_settings_store.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_observer.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_prefs_scope.h"
 
 class ExtensionPrefValueMap;
@@ -29,7 +30,7 @@ class Value;
 namespace extensions {
 class ExtensionPrefs;
 
-class PreferenceEventRouter : public content::NotificationObserver {
+class PreferenceEventRouter : public ProfileObserver {
  public:
   explicit PreferenceEventRouter(Profile* profile);
   ~PreferenceEventRouter() override;
@@ -38,19 +39,19 @@ class PreferenceEventRouter : public content::NotificationObserver {
   void OnPrefChanged(PrefService* pref_service,
                      const std::string& pref_key);
 
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // ProfileObserver:
+  void OnOffTheRecordProfileCreated(Profile* off_the_record) override;
+  void OnProfileWillBeDestroyed(Profile* profile) override;
 
-  void OnIncognitoProfileCreated(PrefService* prefs);
+  void ObserveOffTheRecordPrefs(PrefService* prefs);
 
-  content::NotificationRegistrar notification_registrar_;
   PrefChangeRegistrar registrar_;
   std::unique_ptr<PrefChangeRegistrar> incognito_registrar_;
 
   // Weak, owns us (transitively via ExtensionService).
   Profile* profile_;
+
+  ScopedObserver<Profile, ProfileObserver> observed_profiles_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PreferenceEventRouter);
 };
@@ -68,11 +69,10 @@ class PreferenceAPIBase {
   // but rather about something global the extension wants to override.
 
   // Set a new extension-controlled preference value.
-  // Takes ownership of |value|.
   void SetExtensionControlledPref(const std::string& extension_id,
                                   const std::string& pref_key,
                                   ExtensionPrefsScope scope,
-                                  base::Value* value);
+                                  base::Value value);
 
   // Remove an extension-controlled preference value.
   void RemoveExtensionControlledPref(const std::string& extension_id,
@@ -176,7 +176,7 @@ class PrefTransformerInterface {
 
 // A base class to provide functionality common to the other *PreferenceFunction
 // classes.
-class PreferenceFunction : public UIThreadExtensionFunction {
+class PreferenceFunction : public ExtensionFunction {
  protected:
   enum PermissionType { PERMISSION_TYPE_READ, PERMISSION_TYPE_WRITE };
 

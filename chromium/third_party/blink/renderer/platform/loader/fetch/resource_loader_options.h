@@ -32,20 +32,19 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_FETCH_RESOURCE_LOADER_OPTIONS_H_
 
 #include "base/memory/scoped_refptr.h"
-#include "services/network/public/mojom/url_loader_factory.mojom-blink.h"
+#include "base/util/type_safety/strong_alias.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/network/public/mojom/content_security_policy.mojom-blink-forward.h"
+#include "services/network/public/mojom/url_loader_factory.mojom-blink-forward.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_info.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
 enum DataBufferingPolicy : uint8_t { kBufferData, kDoNotBufferData };
-
-enum ContentSecurityPolicyDisposition : uint8_t {
-  kCheckContentSecurityPolicy,
-  kDoNotCheckContentSecurityPolicy
-};
 
 enum RequestInitiatorContext : uint8_t {
   kDocumentContext,
@@ -65,7 +64,7 @@ enum CorsHandlingByResourceFetcher {
 };
 
 // Was the request generated from a "parser-inserted" element?
-// https://html.spec.whatwg.org/multipage/scripting.html#parser-inserted
+// https://html.spec.whatwg.org/C/#parser-inserted
 enum ParserDisposition : uint8_t { kParserInserted, kNotParserInserted };
 
 enum CacheAwareLoadingEnabled : uint8_t {
@@ -73,26 +72,31 @@ enum CacheAwareLoadingEnabled : uint8_t {
   kIsCacheAwareLoadingEnabled
 };
 
+// https://github.com/WICG/cross-origin-embedder-policy/pull/13
+// When true, a response is blocked unless it has
+// cross-origin-embedder-policy: require-corp.
+using RejectCoepUnsafeNone =
+    util::StrongAlias<class RejectCoepUnsafeNoneTag, bool>;
+
 // This class is thread-bound. Do not copy/pass an instance across threads.
-struct ResourceLoaderOptions {
+struct PLATFORM_EXPORT ResourceLoaderOptions {
   USING_FAST_MALLOC(ResourceLoaderOptions);
 
  public:
-  ResourceLoaderOptions()
-      : data_buffering_policy(kBufferData),
-        content_security_policy_option(kCheckContentSecurityPolicy),
-        request_initiator_context(kDocumentContext),
-        synchronous_policy(kRequestAsynchronously),
-        cors_handling_by_resource_fetcher(kEnableCorsHandlingByResourceFetcher),
-        cors_flag(false),
-        parser_disposition(kParserInserted),
-        cache_aware_loading_enabled(kNotCacheAwareLoadingEnabled) {}
+  // We define constructors, destructor, and assignment operator in
+  // resource_loader_options.cc because they require the full definition of
+  // URLLoaderFactory for |url_loader_factory| data member, and we'd like
+  // to avoid to include huge url_loader_factory.mojom-blink.h.
+  ResourceLoaderOptions();
+  ResourceLoaderOptions(const ResourceLoaderOptions& other);
+  ResourceLoaderOptions& operator=(const ResourceLoaderOptions& other);
+  ~ResourceLoaderOptions();
 
   FetchInitiatorInfo initiator_info;
 
   DataBufferingPolicy data_buffering_policy;
 
-  ContentSecurityPolicyDisposition content_security_policy_option;
+  network::mojom::CSPDisposition content_security_policy_option;
   RequestInitiatorContext request_initiator_context;
   SynchronousPolicy synchronous_policy;
 
@@ -104,6 +108,9 @@ struct ResourceLoaderOptions {
   // Corresponds to the CORS flag in the Fetch spec.
   bool cors_flag;
 
+  // TODO(crbug.com/1064920): Remove this once PlzDedicatedWorker ships.
+  RejectCoepUnsafeNone reject_coep_unsafe_none = RejectCoepUnsafeNone(false);
+
   String content_security_policy_nonce;
   IntegrityMetadataSet integrity_metadata;
   ParserDisposition parser_disposition;
@@ -112,8 +119,8 @@ struct ResourceLoaderOptions {
   // If not null, this URLLoaderFactory should be used to load this resource
   // rather than whatever factory the system might otherwise use.
   // Used for example for loading blob: URLs and for prefetch loading.
-  scoped_refptr<
-      base::RefCountedData<network::mojom::blink::URLLoaderFactoryPtr>>
+  scoped_refptr<base::RefCountedData<
+      mojo::PendingRemote<network::mojom::blink::URLLoaderFactory>>>
       url_loader_factory;
 };
 

@@ -87,6 +87,9 @@ the timing info in the sequence header.
 Set the number of ticks in each picture, to indicate that the stream
 has a fixed framerate.  Ignored if @option{tick_rate} is not also set.
 
+@item delete_padding
+Deletes Padding OBUs.
+
 @end table
 
 @section chomp
@@ -100,7 +103,9 @@ DTS-HD.
 
 @section dump_extra
 
-Add extradata to the beginning of the filtered packets.
+Add extradata to the beginning of the filtered packets except when
+said packets already exactly begin with the extradata that is intended
+to be added.
 
 @table @option
 @item freq
@@ -117,7 +122,7 @@ add extradata to all packets
 @end table
 @end table
 
-If not specified it is assumed @samp{e}.
+If not specified it is assumed @samp{k}.
 
 For example the following @command{ffmpeg} command forces a global
 header (thus disabling individual packet headers) in the H.264 packets
@@ -218,6 +223,10 @@ Insert or remove AUD NAL units in all access units of the stream.
 
 @item sample_aspect_ratio
 Set the sample aspect ratio of the stream in the VUI parameters.
+
+@item overscan_appropriate_flag
+Set whether the stream is suitable for display using overscan
+or not (see H.264 section E.2.1).
 
 @item video_format
 @item video_full_range_flag
@@ -357,6 +366,15 @@ will replace the current ones if the stream is already cropped.
 
 These fields are set in pixels.  Note that some sizes may not be
 representable if the chroma is subsampled (H.265 section 7.4.3.2.1).
+
+@item level
+Set the level in the VPS and SPS.  See H.265 section A.4 and tables
+A.6 and A.7.
+
+The argument must be the name of a level (for example, @samp{5.1}), a
+@emph{general_level_idc} value (for example, @samp{153} for level 5.1),
+or the special name @samp{auto} indicating that the filter should
+attempt to guess the level from the input stream properties.
 
 @end table
 
@@ -561,7 +579,7 @@ P3 D65
 @end table
 
 @item transfer_characteristics
-Set the color transfert.
+Set the color transfer.
 Available values are:
 
 @table @samp
@@ -580,7 +598,7 @@ Available values are:
 
 @table @samp
 @item auto
-Keep the same transfer characteristics property (default).
+Keep the same colorspace property (default).
 
 @item unknown
 @item bt709
@@ -632,7 +650,8 @@ Log trace output containing all syntax elements in the coded stream
 headers (everything above the level of individual coded blocks).
 This can be useful for debugging low-level stream issues.
 
-Supports H.264, H.265, MPEG-2 and VP9.
+Supports AV1, H.264, H.265, (M)JPEG, MPEG-2 and VP9, but depending
+on the build only a subset of these may be available.
 
 @section truehd_core
 
@@ -644,7 +663,9 @@ Modify metadata embedded in a VP9 stream.
 
 @table @option
 @item color_space
-Set the color space value in the frame header.
+Set the color space value in the frame header.  Note that any frame
+set to RGB will be implicitly set to PC range and that RGB is
+incompatible with profiles 0 and 2.
 @table @samp
 @item unknown
 @item bt601
@@ -656,8 +677,8 @@ Set the color space value in the frame header.
 @end table
 
 @item color_range
-Set the color range value in the frame header.  Note that this cannot
-be set in RGB streams.
+Set the color range value in the frame header.  Note that any value
+imposed by the color space will take precedence over this value.
 @table @samp
 @item tv
 @item pc

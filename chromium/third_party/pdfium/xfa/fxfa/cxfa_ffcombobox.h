@@ -17,21 +17,23 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
   explicit CXFA_FFComboBox(CXFA_Node* pNode);
   ~CXFA_FFComboBox() override;
 
+  // CXFA_FFDropDown:
+  CXFA_FFComboBox* AsComboBox() override;
+
   // CXFA_FFField
-  CFX_RectF GetBBox(uint32_t dwStatus, FocusOption focus) override;
+  CFX_RectF GetBBox(FocusOption focus) override;
   bool LoadWidget() override;
   void UpdateWidgetProperty() override;
   bool OnRButtonUp(uint32_t dwFlags, const CFX_PointF& point) override;
-  bool OnKillFocus(CXFA_FFWidget* pNewWidget) override;
+  bool OnKillFocus(CXFA_FFWidget* pNewWidget) override WARN_UNUSED_RESULT;
   bool CanUndo() override;
   bool CanRedo() override;
-  bool Undo() override;
-  bool Redo() override;
-
   bool CanCopy() override;
   bool CanCut() override;
   bool CanPaste() override;
   bool CanSelectAll() override;
+  bool Undo() override;
+  bool Redo() override;
   Optional<WideString> Copy() override;
   Optional<WideString> Cut() override;
   bool Paste(const WideString& wsPaste) override;
@@ -48,7 +50,7 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
                     const CFX_Matrix& matrix) override;
 
   // CXFA_FFDropDown
-  void InsertItem(WideStringView wsLabel, int32_t nIndex) override;
+  void InsertItem(const WideString& wsLabel, int32_t nIndex) override;
   void DeleteItem(int32_t nIndex) override;
 
   void OpenDropDownList();

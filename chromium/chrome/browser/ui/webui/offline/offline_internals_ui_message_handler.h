@@ -57,6 +57,20 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
   // Set whether to record prefetch service events.
   void HandleSetRecordPrefetchService(const base::ListValue* args);
 
+  // Set whether to enable limitless prefetching.
+  void HandleSetLimitlessPrefetchingEnabled(const base::ListValue* args);
+
+  // Get whether limitless prefetching is enabled.
+  void HandleGetLimitlessPrefetchingEnabled(const base::ListValue* args);
+
+  // Set whether to enable sending the testing header when making
+  // GeneratePageBundle requests.
+  void HandleSetPrefetchTestingHeader(const base::ListValue* args);
+
+  // Get whether we are sending the testing header for GeneratePageBundle
+  // requests.
+  void HandleGetPrefetchTestingHeader(const base::ListValue* args);
+
   // Load all offline services' event logs.
   void HandleGetEventLogs(const base::ListValue* args);
 
@@ -120,7 +134,8 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
   offline_pages::PrefetchService* prefetch_service_;
 
   // Factory for creating references in callbacks.
-  base::WeakPtrFactory<OfflineInternalsUIMessageHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<OfflineInternalsUIMessageHandler> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(OfflineInternalsUIMessageHandler);
 };

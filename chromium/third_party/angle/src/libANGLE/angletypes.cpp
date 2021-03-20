@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -27,6 +27,12 @@ RasterizerState::RasterizerState()
     polygonOffsetUnits  = 0.0f;
     pointDrawMode       = false;
     multiSample         = false;
+    dither              = true;
+}
+
+RasterizerState::RasterizerState(const RasterizerState &other)
+{
+    memcpy(this, &other, sizeof(RasterizerState));
 }
 
 bool operator==(const RasterizerState &a, const RasterizerState &b)
@@ -43,15 +49,17 @@ BlendState::BlendState()
 {
     memset(this, 0, sizeof(BlendState));
 
-    blend                 = false;
-    sourceBlendRGB        = GL_ONE;
-    sourceBlendAlpha      = GL_ONE;
-    destBlendRGB          = GL_ZERO;
-    destBlendAlpha        = GL_ZERO;
-    blendEquationRGB      = GL_FUNC_ADD;
-    blendEquationAlpha    = GL_FUNC_ADD;
-    sampleAlphaToCoverage = false;
-    dither                = true;
+    blend              = false;
+    sourceBlendRGB     = GL_ONE;
+    sourceBlendAlpha   = GL_ONE;
+    destBlendRGB       = GL_ZERO;
+    destBlendAlpha     = GL_ZERO;
+    blendEquationRGB   = GL_FUNC_ADD;
+    blendEquationAlpha = GL_FUNC_ADD;
+    colorMaskRed       = true;
+    colorMaskGreen     = true;
+    colorMaskBlue      = true;
+    colorMaskAlpha     = true;
 }
 
 BlendState::BlendState(const BlendState &other)
@@ -236,20 +244,30 @@ static void MinMax(int a, int b, int *minimum, int *maximum)
     }
 }
 
+Rectangle Rectangle::flip(bool flipX, bool flipY) const
+{
+    Rectangle flipped = *this;
+    if (flipX)
+    {
+        flipped.x     = flipped.x + flipped.width;
+        flipped.width = -flipped.width;
+    }
+    if (flipY)
+    {
+        flipped.y      = flipped.y + flipped.height;
+        flipped.height = -flipped.height;
+    }
+    return flipped;
+}
+
 Rectangle Rectangle::removeReversal() const
 {
-    Rectangle unreversed = *this;
-    if (isReversedX())
-    {
-        unreversed.x     = unreversed.x + unreversed.width;
-        unreversed.width = -unreversed.width;
-    }
-    if (isReversedY())
-    {
-        unreversed.y      = unreversed.y + unreversed.height;
-        unreversed.height = -unreversed.height;
-    }
-    return unreversed;
+    return flip(isReversedX(), isReversedY());
+}
+
+bool Rectangle::encloses(const gl::Rectangle &inside) const
+{
+    return x0() <= inside.x0() && y0() <= inside.y0() && x1() >= inside.x1() && y1() >= inside.y1();
 }
 
 bool ClipRectangle(const Rectangle &source, const Rectangle &clip, Rectangle *intersection)

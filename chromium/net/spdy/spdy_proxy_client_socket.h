@@ -15,11 +15,10 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "net/base/completion_callback.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/load_timing_info.h"
 #include "net/base/net_export.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_auth_controller.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_request_info.h"
@@ -36,8 +35,8 @@
 
 namespace net {
 
-class HttpStream;
 class IOBuffer;
+class ProxyDelegate;
 class SpdyStream;
 
 class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
@@ -48,17 +47,18 @@ class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
   // data read/written to the socket will be transferred in data frames. This
   // object will set itself as |spdy_stream|'s delegate.
   SpdyProxyClientSocket(const base::WeakPtr<SpdyStream>& spdy_stream,
+                        const ProxyServer& proxy_server,
                         const std::string& user_agent,
                         const HostPortPair& endpoint,
                         const NetLogWithSource& source_net_log,
-                        HttpAuthController* auth_controller);
+                        HttpAuthController* auth_controller,
+                        ProxyDelegate* proxy_delegate);
 
   // On destruction Disconnect() is called.
   ~SpdyProxyClientSocket() override;
 
   // ProxyClientSocket methods:
   const HttpResponseInfo* GetConnectResponseInfo() const override;
-  std::unique_ptr<HttpStream> CreateConnectResponseStream() override;
   const scoped_refptr<HttpAuthController>& GetAuthController() const override;
   int RestartWithAuth(CompletionOnceCallback callback) override;
   bool IsUsingSpdy() const override;
@@ -107,6 +107,7 @@ class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
   void OnDataSent() override;
   void OnTrailers(const spdy::SpdyHeaderBlock& trailers) override;
   void OnClose(int status) override;
+  bool CanGreaseFrameType() const override;
   NetLogSource source_dependency() const override;
 
  private:
@@ -158,6 +159,11 @@ class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
   const HostPortPair endpoint_;
   scoped_refptr<HttpAuthController> auth_;
 
+  const ProxyServer proxy_server_;
+
+  // This delegate must outlive this proxy client socket.
+  ProxyDelegate* const proxy_delegate_;
+
   std::string user_agent_;
 
   // We buffer the response body as it arrives asynchronously from the stream.
@@ -173,19 +179,16 @@ class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
   // True if the transport socket has ever sent data.
   bool was_ever_used_;
 
-  // Used only for redirects.
-  bool redirect_has_load_timing_info_;
-  LoadTimingInfo redirect_load_timing_info_;
-
   const NetLogWithSource net_log_;
   const NetLogSource source_dependency_;
 
   // The default weak pointer factory.
-  base::WeakPtrFactory<SpdyProxyClientSocket> weak_factory_;
+  base::WeakPtrFactory<SpdyProxyClientSocket> weak_factory_{this};
 
   // Only used for posting write callbacks. Weak pointers created by this
   // factory are invalidated in Disconnect().
-  base::WeakPtrFactory<SpdyProxyClientSocket> write_callback_weak_factory_;
+  base::WeakPtrFactory<SpdyProxyClientSocket> write_callback_weak_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(SpdyProxyClientSocket);
 };

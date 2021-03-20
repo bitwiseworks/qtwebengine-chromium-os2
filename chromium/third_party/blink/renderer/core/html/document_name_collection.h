@@ -7,32 +7,30 @@
 
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_name_collection.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
 class DocumentNameCollection final : public HTMLNameCollection {
  public:
-  static DocumentNameCollection* Create(ContainerNode& document,
-                                        CollectionType type,
-                                        const AtomicString& name) {
-    DCHECK_EQ(type, kDocumentNamedItems);
-    return MakeGarbageCollected<DocumentNameCollection>(document, name);
-  }
-
   DocumentNameCollection(ContainerNode& document, const AtomicString& name);
+  DocumentNameCollection(ContainerNode& document,
+                         CollectionType type,
+                         const AtomicString& name);
 
   HTMLElement* Item(unsigned offset) const {
-    return ToHTMLElement(HTMLNameCollection::item(offset));
+    return To<HTMLElement>(HTMLNameCollection::item(offset));
   }
 
   bool ElementMatches(const HTMLElement&) const;
 };
 
-DEFINE_TYPE_CASTS(DocumentNameCollection,
-                  LiveNodeListBase,
-                  collection,
-                  collection->GetType() == kDocumentNamedItems,
-                  collection.GetType() == kDocumentNamedItems);
+template <>
+struct DowncastTraits<DocumentNameCollection> {
+  static bool AllowFrom(const LiveNodeListBase& collection) {
+    return collection.GetType() == kDocumentNamedItems;
+  }
+};
 
 }  // namespace blink
 

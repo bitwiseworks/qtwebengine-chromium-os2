@@ -25,7 +25,6 @@ namespace cc {
 class Animation;
 class AnimationTimeline;
 class Layer;
-class SingleKeyframeEffectAnimation;
 }
 
 namespace gfx {
@@ -100,6 +99,14 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   virtual void SetColor(SkColor color);
   SkColor GetTargetColor() const;
 
+  // Sets the clip rect on the delegate. May cause an implicit animation.
+  virtual void SetClipRect(const gfx::Rect& clip_rect);
+  gfx::Rect GetTargetClipRect() const;
+
+  // Sets the rounded corners on the delegate. May cause an implicit animation.
+  virtual void SetRoundedCorners(const gfx::RoundedCornersF& rounded_corners);
+  gfx::RoundedCornersF GetTargetRoundedCorners() const;
+
   // Returns the default length of animations, including adjustment for slow
   // animation mode if set.
   base::TimeDelta GetTransitionDuration() const;
@@ -118,7 +125,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   // Detach Animation from Layer and AnimationTimeline
   void DetachLayerAndTimeline(Compositor* compositor);
 
-  cc::SingleKeyframeEffectAnimation* GetAnimationForTesting() const;
+  cc::Animation* GetAnimationForTesting() const;
 
   // Sets the animation preemption strategy. This determines the behaviour if
   // a property is set during an animation. The default is
@@ -368,6 +375,8 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
       int target_property,
       base::TimeTicks animation_start_time,
       std::unique_ptr<cc::AnimationCurve> curve) override {}
+  void NotifyLocalTimeUpdated(
+      base::Optional<base::TimeDelta> local_time) override {}
 
   // Implementation of LayerThreadedAnimationDelegate.
   void AddThreadedAnimation(
@@ -388,7 +397,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   LayerAnimationDelegate* delegate_;
 
   // Plays CC animations.
-  scoped_refptr<cc::SingleKeyframeEffectAnimation> animation_;
+  scoped_refptr<cc::Animation> animation_;
 
   // The currently running animations.
   RunningAnimations running_animations_;

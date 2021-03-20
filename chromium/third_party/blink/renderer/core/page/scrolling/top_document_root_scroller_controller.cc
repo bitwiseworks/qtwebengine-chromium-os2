@@ -15,7 +15,6 @@
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/scrolling/overscroll_controller.h"
-#include "third_party/blink/renderer/core/page/scrolling/root_scroller_util.h"
 #include "third_party/blink/renderer/core/page/scrolling/viewport_scroll_callback.h"
 #include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
@@ -36,16 +35,10 @@ ScrollableArea* GetScrollableArea(Node* node) {
 
 }  // namespace
 
-// static
-TopDocumentRootScrollerController* TopDocumentRootScrollerController::Create(
-    Page& page) {
-  return MakeGarbageCollected<TopDocumentRootScrollerController>(page);
-}
-
 TopDocumentRootScrollerController::TopDocumentRootScrollerController(Page& page)
     : page_(&page) {}
 
-void TopDocumentRootScrollerController::Trace(blink::Visitor* visitor) {
+void TopDocumentRootScrollerController::Trace(Visitor* visitor) {
   visitor->Trace(viewport_apply_scroll_);
   visitor->Trace(global_root_scroller_);
   visitor->Trace(page_);
@@ -107,10 +100,7 @@ Node* TopDocumentRootScrollerController::FindGlobalRootScroller() {
   Node* root_scroller =
       &TopDocument()->GetRootScrollerController().EffectiveRootScroller();
 
-  while (root_scroller && root_scroller->IsFrameOwnerElement()) {
-    HTMLFrameOwnerElement* frame_owner = ToHTMLFrameOwnerElement(root_scroller);
-    DCHECK(frame_owner);
-
+  while (auto* frame_owner = DynamicTo<HTMLFrameOwnerElement>(root_scroller)) {
     Document* iframe_document = frame_owner->contentDocument();
     if (!iframe_document)
       return root_scroller;
@@ -133,10 +123,11 @@ void SetNeedsCompositingUpdateOnAncestors(Node* node) {
 
   Frame* frame = area->Layer()->GetLayoutObject().GetFrame();
   for (; frame; frame = frame->Tree().Parent()) {
-    if (!frame->IsLocalFrame())
+    auto* local_frame = DynamicTo<LocalFrame>(frame);
+    if (!local_frame)
       continue;
 
-    LayoutView* layout_view = ToLocalFrame(frame)->View()->GetLayoutView();
+    LayoutView* layout_view = local_frame->View()->GetLayoutView();
     PaintLayer* frame_root_layer = layout_view->Layer();
     DCHECK(frame_root_layer);
     frame_root_layer->SetNeedsCompositingInputsUpdate();
@@ -148,7 +139,10 @@ void TopDocumentRootScrollerController::UpdateGlobalRootScroller(
   if (!viewport_apply_scroll_)
     return;
 
-  if (new_global_root_scroller == global_root_scroller_)
+  // Note, the layout object can be replaced during a rebuild. In that case,
+  // re-run process even if the element itself is the same.
+  if (new_global_root_scroller == global_root_scroller_ &&
+      global_root_scroller_->GetLayoutObject()->IsGlobalRootScroller())
     return;
 
   ScrollableArea* target_scroller = GetScrollableArea(new_global_root_scroller);
@@ -201,24 +195,10 @@ void TopDocumentRootScrollerController::UpdateCachedBits(Node* old_global,
 }
 
 Document* TopDocumentRootScrollerController::TopDocument() const {
-  if (!page_ || !page_->MainFrame() || !page_->MainFrame()->IsLocalFrame())
-    return nullptr;
-
-  return ToLocalFrame(page_->MainFrame())->GetDocument();
-}
-
-void TopDocumentRootScrollerController::DidUpdateCompositing(
-    const LocalFrameView& frame_view) {
   if (!page_)
-    return;
-
-  // The only other way to get here is from a local root OOPIF but we ignore
-  // that case since the global root can't cross remote frames today.
-  if (!frame_view.GetFrame().IsMainFrame())
-    return;
-
-  // Let the compositor-side counterpart know about this change.
-  page_->GetChromeClient().RegisterViewportLayers();
+    return nullptr;
+  auto* main_local_frame = DynamicTo<LocalFrame>(page_->MainFrame());
+  return main_local_frame ? main_local_frame->GetDocument() : nullptr;
 }
 
 void TopDocumentRootScrollerController::DidDisposeScrollableArea(
@@ -245,7 +225,7 @@ void TopDocumentRootScrollerController::InitializeViewportScrollCallback(
     RootFrameViewport& root_frame_viewport,
     Document& main_document) {
   DCHECK(page_);
-  viewport_apply_scroll_ = ViewportScrollCallback::Create(
+  viewport_apply_scroll_ = MakeGarbageCollected<ViewportScrollCallback>(
       &page_->GetBrowserControls(), &page_->GetOverscrollController(),
       root_frame_viewport);
 
@@ -261,30 +241,6 @@ bool TopDocumentRootScrollerController::IsViewportScrollCallback(
     return false;
 
   return callback == viewport_apply_scroll_.Get();
-}
-
-GraphicsLayer* TopDocumentRootScrollerController::RootScrollerLayer() const {
-  ScrollableArea* area = GetScrollableArea(global_root_scroller_);
-
-  if (!area)
-    return nullptr;
-
-  GraphicsLayer* graphics_layer = area->LayerForScrolling();
-
-  // TODO(bokan): We should assert graphicsLayer here and
-  // RootScrollerController should do whatever needs to happen to ensure
-  // the root scroller gets composited.
-
-  return graphics_layer;
-}
-
-GraphicsLayer* TopDocumentRootScrollerController::RootContainerLayer() const {
-  ScrollableArea* area = GetScrollableArea(global_root_scroller_);
-  return area ? area->LayerForContainer() : nullptr;
-}
-
-PaintLayer* TopDocumentRootScrollerController::RootScrollerPaintLayer() const {
-  return root_scroller_util::PaintLayerForRootScroller(global_root_scroller_);
 }
 
 Node* TopDocumentRootScrollerController::GlobalRootScroller() const {

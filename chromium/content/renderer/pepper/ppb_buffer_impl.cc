@@ -51,9 +51,8 @@ bool PPB_Buffer_Impl::Init(uint32_t size) {
   if (size == 0)
     return false;
   size_ = size;
-  shared_memory_.reset(
-      RenderThread::Get()->HostAllocateSharedMemoryBuffer(size).release());
-  return shared_memory_.get() != nullptr;
+  shared_memory_ = base::UnsafeSharedMemoryRegion::Create(size);
+  return shared_memory_.IsValid();
 }
 
 PP_Bool PPB_Buffer_Impl::Describe(uint32_t* size_in_bytes) {
@@ -62,30 +61,32 @@ PP_Bool PPB_Buffer_Impl::Describe(uint32_t* size_in_bytes) {
 }
 
 PP_Bool PPB_Buffer_Impl::IsMapped() {
-  return PP_FromBool(!!shared_memory_->memory());
+  return PP_FromBool(shared_mapping_.IsValid());
 }
 
 void* PPB_Buffer_Impl::Map() {
   DCHECK(size_);
-  DCHECK(shared_memory_.get());
-  if (map_count_++ == 0)
-    shared_memory_->Map(size_);
-  return shared_memory_->memory();
+  DCHECK(shared_memory_.IsValid());
+  if (map_count_++ == 0) {
+    DCHECK(!shared_mapping_.IsValid());
+    shared_mapping_ = shared_memory_.Map();
+  }
+  return shared_mapping_.memory();
 }
 
 void PPB_Buffer_Impl::Unmap() {
   if (--map_count_ == 0)
-    shared_memory_->Unmap();
+    shared_mapping_ = {};
 }
 
-int32_t PPB_Buffer_Impl::GetSharedMemory(base::SharedMemory** shm) {
-  *shm = shared_memory_.get();
+int32_t PPB_Buffer_Impl::GetSharedMemory(base::UnsafeSharedMemoryRegion** shm) {
+  *shm = &shared_memory_;
   return PP_OK;
 }
 
 BufferAutoMapper::BufferAutoMapper(PPB_Buffer_API* api) : api_(api) {
   needs_unmap_ = !PP_ToBool(api->IsMapped());
-  data_ = api->Map();
+  data_ = reinterpret_cast<const uint8_t*>(api->Map());
   api->Describe(&size_);
 }
 

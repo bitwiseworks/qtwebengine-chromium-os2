@@ -5,8 +5,7 @@ BYTESTRING ByteString
 BYTE byte
 CALLBACK callback
 CONST const
-CREATOR creator
-DATE Date
+CONSTRUCTOR constructor
 DELETER deleter
 DICTIONARY dictionary
 DOMSTRING DOMString
@@ -15,16 +14,14 @@ ENUM enum
 FALSE false
 FLOAT float
 GETTER getter
-IMPLEMENTS implements
 INFINITY Infinity
 INHERIT inherit
 INTERFACE interface
 ITERABLE iterable
-LEGACYCALLER legacycaller
 LONG long
 MAPLIKE maplike
 MIXIN mixin
-NAN Nan
+NAN NaN
 NULL null
 OBJECT object
 OCTET octet
@@ -34,7 +31,6 @@ PARTIAL partial
 PROMISE Promise
 READONLY readonly
 RECORD record
-REGEXP RegExp
 REQUIRED required
 SEQUENCE sequence
 SETLIKE setlike

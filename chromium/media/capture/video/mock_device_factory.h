@@ -8,7 +8,6 @@
 #include <map>
 
 #include "media/capture/video/video_capture_device_factory.h"
-#include "mojo/public/cpp/bindings/binding.h"
 
 namespace media {
 
@@ -21,6 +20,7 @@ class MockDeviceFactory : public media::VideoCaptureDeviceFactory {
 
   void AddMockDevice(media::VideoCaptureDevice* device,
                      const media::VideoCaptureDeviceDescriptor& descriptor);
+  void RemoveAllDevices();
 
   // media::VideoCaptureDeviceFactory implementation.
   std::unique_ptr<media::VideoCaptureDevice> CreateDevice(

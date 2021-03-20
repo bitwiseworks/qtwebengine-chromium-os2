@@ -29,14 +29,14 @@
 #include "third_party/blink/renderer/core/frame/location.h"
 
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
-#include "third_party/blink/renderer/bindings/core/v8/usv_string_or_trusted_url.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/dom_window.h"
+#include "third_party/blink/renderer/core/frame/fragment_directive.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
-#include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/loader/frame_load_request.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
-#include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/core/url/dom_url_utils_read_only.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_dom_activity_logger.h"
@@ -45,14 +45,21 @@
 
 namespace blink {
 
-Location::Location(DOMWindow* dom_window) : dom_window_(dom_window) {}
+Location::Location(DOMWindow* dom_window)
+    : dom_window_(dom_window),
+      fragment_directive_(MakeGarbageCollected<FragmentDirective>()) {}
 
-void Location::Trace(blink::Visitor* visitor) {
+void Location::Trace(Visitor* visitor) {
   visitor->Trace(dom_window_);
+  visitor->Trace(fragment_directive_);
   ScriptWrappable::Trace(visitor);
 }
 
 inline const KURL& Location::Url() const {
+  const KURL& web_bundle_claimed_url = GetDocument()->WebBundleClaimedUrl();
+  if (web_bundle_claimed_url.IsValid()) {
+    return web_bundle_claimed_url;
+  }
   const KURL& url = GetDocument()->Url();
   if (!url.IsValid()) {
     // Use "about:blank" while the page is still loading (before we have a
@@ -63,8 +70,8 @@ inline const KURL& Location::Url() const {
   return url;
 }
 
-void Location::href(USVStringOrTrustedURL& result) const {
-  result.SetUSVString(Url().StrippedForUseAsHref());
+String Location::href() const {
+  return Url().StrippedForUseAsHref();
 }
 
 String Location::protocol() const {
@@ -95,8 +102,12 @@ String Location::origin() const {
   return DOMURLUtilsReadOnly::origin(Url());
 }
 
+FragmentDirective* Location::fragmentDirective() const {
+  return fragment_directive_;
+}
+
 DOMStringList* Location::ancestorOrigins() const {
-  DOMStringList* origins = DOMStringList::Create();
+  auto* origins = MakeGarbageCollected<DOMStringList>();
   if (!IsAttached())
     return origins;
   for (Frame* frame = dom_window_->GetFrame()->Tree().Parent(); frame;
@@ -108,10 +119,7 @@ DOMStringList* Location::ancestorOrigins() const {
 }
 
 String Location::toString() const {
-  USVStringOrTrustedURL result;
-  href(result);
-  DCHECK(result.IsUSVString());
-  return result.GetAsUSVString();
+  return href();
 }
 
 String Location::hash() const {
@@ -119,17 +127,11 @@ String Location::hash() const {
 }
 
 void Location::setHref(v8::Isolate* isolate,
-                       const USVStringOrTrustedURL& string_or_url,
+                       const String& url_string,
                        ExceptionState& exception_state) {
   LocalDOMWindow* incumbent_window = IncumbentDOMWindow(isolate);
   LocalDOMWindow* entered_window = EnteredDOMWindow(isolate);
-
-  const String& url = GetStringFromTrustedURL(
-      string_or_url, incumbent_window->document(), exception_state);
-  if (exception_state.HadException())
-    return;
-
-  SetLocation(url, incumbent_window, entered_window, &exception_state);
+  SetLocation(url_string, incumbent_window, entered_window, &exception_state);
 }
 
 void Location::setProtocol(v8::Isolate* isolate,
@@ -211,31 +213,19 @@ void Location::setHash(v8::Isolate* isolate,
 }
 
 void Location::assign(v8::Isolate* isolate,
-                      const USVStringOrTrustedURL& string_or_url,
+                      const String& url_string,
                       ExceptionState& exception_state) {
   LocalDOMWindow* incumbent_window = IncumbentDOMWindow(isolate);
   LocalDOMWindow* entered_window = EnteredDOMWindow(isolate);
-
-  const String& url = GetStringFromTrustedURL(
-      string_or_url, incumbent_window->document(), exception_state);
-  if (exception_state.HadException())
-    return;
-
-  SetLocation(url, incumbent_window, entered_window, &exception_state);
+  SetLocation(url_string, incumbent_window, entered_window, &exception_state);
 }
 
 void Location::replace(v8::Isolate* isolate,
-                       const USVStringOrTrustedURL& string_or_url,
+                       const String& url_string,
                        ExceptionState& exception_state) {
   LocalDOMWindow* incumbent_window = IncumbentDOMWindow(isolate);
   LocalDOMWindow* entered_window = EnteredDOMWindow(isolate);
-
-  const String& url = GetStringFromTrustedURL(
-      string_or_url, incumbent_window->document(), exception_state);
-  if (exception_state.HadException())
-    return;
-
-  SetLocation(url, incumbent_window, entered_window, &exception_state,
+  SetLocation(url_string, incumbent_window, entered_window, &exception_state,
               SetLocationPolicy::kReplaceThisFrame);
 }
 
@@ -246,10 +236,9 @@ void Location::reload() {
     return;
   // reload() is not cross-origin accessible, so |dom_window_| will always be
   // local.
-  ToLocalDOMWindow(dom_window_)
+  To<LocalDOMWindow>(dom_window_.Get())
       ->GetFrame()
-      ->Reload(WebFrameLoadType::kReload,
-               ClientRedirectPolicy::kClientRedirect);
+      ->Reload(WebFrameLoadType::kReload);
 }
 
 void Location::SetLocation(const String& url,
@@ -287,21 +276,19 @@ void Location::SetLocation(const String& url,
     return;
   }
 
-  if (dom_window_->IsInsecureScriptAccess(*current_window, completed_url))
-    return;
-
   // Check the source browsing context's CSP to fulfill the CSP check
-  // requirement of https://html.spec.whatwg.org/#navigate for javascript URLs.
-  // Although the spec states we should perform this check on task execution,
-  // we do this prior to dispatch since the parent frame's CSP may be
-  // inaccessible if the target frame is out of process.
+  // requirement of https://html.spec.whatwg.org/C/#navigate for javascript
+  // URLs. Although the spec states we should perform this check on task
+  // execution, there are concerns about the correctness of that statement,
+  // see http://github.com/whatwg/html/issues/2591.
   Document* current_document = current_window->document();
-  if (current_document && completed_url.ProtocolIsJavaScript() &&
-      !ContentSecurityPolicy::ShouldBypassMainWorld(current_document)) {
+  if (current_document && completed_url.ProtocolIsJavaScript()) {
     String script_source = DecodeURLEscapeSequences(
         completed_url.GetString(), DecodeURLMode::kUTF8OrIsomorphic);
-    if (!current_document->GetContentSecurityPolicy()->AllowJavaScriptURLs(
-            nullptr, script_source, current_document->Url(), OrdinalNumber())) {
+    if (!current_document->GetContentSecurityPolicyForWorld()->AllowInline(
+            ContentSecurityPolicy::InlineType::kNavigation,
+            nullptr /* element */, script_source, String() /* nonce */,
+            current_document->Url(), OrdinalNumber())) {
       return;
     }
   }
@@ -316,16 +303,20 @@ void Location::SetLocation(const String& url,
     argv.push_back(completed_url);
     activity_logger->LogEvent("blinkSetAttribute", argv.size(), argv.data());
   }
+
+  FrameLoadRequest request(current_window->document(),
+                           ResourceRequest(completed_url));
+  request.SetClientRedirectReason(ClientNavigationReason::kFrameNavigation);
   WebFrameLoadType frame_load_type = WebFrameLoadType::kStandard;
   if (set_location_policy == SetLocationPolicy::kReplaceThisFrame)
     frame_load_type = WebFrameLoadType::kReplaceCurrentItem;
-  dom_window_->GetFrame()->ScheduleNavigation(*current_window->document(),
-                                              completed_url, frame_load_type,
-                                              UserGestureStatus::kNone);
+
+  current_window->GetFrame()->MaybeLogAdClickNavigation();
+  dom_window_->GetFrame()->Navigate(request, frame_load_type);
 }
 
 Document* Location::GetDocument() const {
-  return ToLocalDOMWindow(dom_window_)->document();
+  return To<LocalDOMWindow>(dom_window_.Get())->document();
 }
 
 bool Location::IsAttached() const {

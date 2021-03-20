@@ -37,25 +37,56 @@
 #include "third_party/blink/renderer/core/style/data_equivalency.h"
 #include "third_party/blink/renderer/platform/animation/compositor_keyframe_model.h"
 #include "third_party/blink/renderer/platform/animation/timing_function.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
 
-struct Timing {
+class EffectTiming;
+class ComputedEffectTiming;
+
+struct CORE_EXPORT Timing {
   USING_FAST_MALLOC(Timing);
 
  public:
+  // Note that logic in CSSAnimations depends on the order of these values.
+  enum Phase {
+    kPhaseBefore,
+    kPhaseActive,
+    kPhaseAfter,
+    kPhaseNone,
+  };
+  // Represents the animation direction from the Web Animations spec, see
+  // https://drafts.csswg.org/web-animations-1/#animation-direction.
+  enum AnimationDirection {
+    kForwards,
+    kBackwards,
+  };
+
+  // Timing properties set via AnimationEffect.updateTiming override their
+  // corresponding CSS properties.
+  enum AnimationTimingOverride {
+    kOverrideNode = 0,
+    kOverrideDirection = 1,
+    kOverrideDuration = 1 << 1,
+    kOverrideEndDelay = 1 << 2,
+    kOverideFillMode = 1 << 3,
+    kOverrideIterationCount = 1 << 4,
+    kOverrideIterationStart = 1 << 5,
+    kOverrideStartDelay = 1 << 6,
+    kOverrideTimingFunction = 1 << 7,
+    kOverrideAll = (1 << 8) - 1
+  };
+
   using FillMode = CompositorKeyframeModel::FillMode;
   using PlaybackDirection = CompositorKeyframeModel::Direction;
 
-  static String FillModeString(FillMode);
-  static String PlaybackDirectionString(PlaybackDirection);
+  static bool IsNull(double value) { return std::isnan(value); }
+  static double NullValue() { return std::numeric_limits<double>::quiet_NaN(); }
 
-  static const Timing& Defaults() {
-    DEFINE_STATIC_LOCAL(Timing, timing, ());
-    return timing;
-  }
+  static String FillModeString(FillMode);
+  static FillMode StringToFillMode(const String&);
+  static String PlaybackDirectionString(PlaybackDirection);
 
   Timing()
       : start_delay(0),
@@ -65,7 +96,8 @@ struct Timing {
         iteration_count(1),
         iteration_duration(base::nullopt),
         direction(PlaybackDirection::NORMAL),
-        timing_function(LinearTimingFunction::Shared()) {}
+        timing_function(LinearTimingFunction::Shared()),
+        timing_overrides(kOverrideNode) {}
 
   void AssertValid() const {
     DCHECK(std::isfinite(start_delay));
@@ -77,6 +109,16 @@ struct Timing {
            iteration_duration.value() >= AnimationTimeDelta());
     DCHECK(timing_function);
   }
+
+  // https://drafts.csswg.org/web-animations-1/#iteration-duration
+  AnimationTimeDelta IterationDuration() const;
+
+  // https://drafts.csswg.org/web-animations-1/#active-duration
+  double ActiveDuration() const;
+  double EndTimeInternal() const;
+
+  Timing::FillMode ResolvedFillMode(bool is_animation) const;
+  EffectTiming* ConvertToEffectTiming() const;
 
   bool operator==(const Timing& other) const {
     return start_delay == other.start_delay && end_delay == other.end_delay &&
@@ -90,6 +132,16 @@ struct Timing {
 
   bool operator!=(const Timing& other) const { return !(*this == other); }
 
+  // Explicit changes to animation timing through the web animations API,
+  // override timing changes due to CSS style.
+  void SetTimingOverride(AnimationTimingOverride override) {
+    timing_overrides |= override;
+  }
+  bool HasTimingOverride(AnimationTimingOverride override) {
+    return timing_overrides & override;
+  }
+  bool HasTimingOverrides() { return timing_overrides != kOverrideNode; }
+
   double start_delay;
   double end_delay;
   FillMode fill_mode;
@@ -100,6 +152,33 @@ struct Timing {
 
   PlaybackDirection direction;
   scoped_refptr<TimingFunction> timing_function;
+  // Mask of timing attributes that are set by calls to
+  // AnimationEffect.updateTiming. Once set, these attributes ignore changes
+  // based on the CSS style.
+  uint16_t timing_overrides;
+
+  struct CalculatedTiming {
+    DISALLOW_NEW();
+    Phase phase = Phase::kPhaseNone;
+    base::Optional<double> current_iteration = 0;
+    base::Optional<double> progress = 0;
+    bool is_current = false;
+    bool is_in_effect = false;
+    bool is_in_play = false;
+    base::Optional<double> local_time;
+    AnimationTimeDelta time_to_forwards_effect_change =
+        AnimationTimeDelta::Max();
+    AnimationTimeDelta time_to_reverse_effect_change =
+        AnimationTimeDelta::Max();
+    AnimationTimeDelta time_to_next_iteration = AnimationTimeDelta::Max();
+  };
+
+  CalculatedTiming CalculateTimings(base::Optional<double> local_time,
+                                    AnimationDirection animation_direction,
+                                    bool is_keyframe_effect,
+                                    base::Optional<double> playback_rate) const;
+  ComputedEffectTiming* getComputedTiming(const CalculatedTiming& calculated,
+                                          bool is_keyframe_effect) const;
 };
 
 }  // namespace blink

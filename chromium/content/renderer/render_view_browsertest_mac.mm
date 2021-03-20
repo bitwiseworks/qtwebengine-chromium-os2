@@ -10,6 +10,7 @@
 #include "content/common/frame_replication_state.h"
 #include "content/common/input_messages.h"
 #include "content/common/text_input_client_messages.h"
+#include "content/common/unfreezable_frame_messages.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/common/web_preferences.h"
 #include "content/public/test/render_view_test.h"
@@ -83,6 +84,8 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   prefs.enable_scroll_animator = false;
 
   RenderViewImpl* view = static_cast<RenderViewImpl*>(view_);
+  RenderWidget* widget = view->GetMainRenderFrame()->GetLocalRootRenderWidget();
+
   view->OnUpdateWebPreferences(prefs);
 
   const int kMaxOutputCharacters = 1024;
@@ -97,7 +100,7 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   render_thread_->sink().ClearMessages();
 
   const char* kArrowDownScrollDown = "40,false,false,true,false\n9844";
-  view->GetWidget()->OnSetEditCommandsForNextKeyEvent(
+  widget->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToEndOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowDownKeyDown));
   base::RunLoop().RunUntilIdle();
@@ -108,7 +111,7 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   EXPECT_EQ(kArrowDownScrollDown, output);
 
   const char* kArrowUpScrollUp = "38,false,false,true,false\n0";
-  view->GetWidget()->OnSetEditCommandsForNextKeyEvent(
+  widget->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToBeginningOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowUpKeyDown));
   base::RunLoop().RunUntilIdle();
@@ -124,7 +127,7 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   ExecuteJavaScriptForTests("allowKeyEvents = false; window.scrollTo(0, 100)");
 
   const char* kArrowDownNoScroll = "40,false,false,true,false\n100";
-  view->GetWidget()->OnSetEditCommandsForNextKeyEvent(
+  widget->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToEndOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowDownKeyDown));
   base::RunLoop().RunUntilIdle();
@@ -135,7 +138,7 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   EXPECT_EQ(kArrowDownNoScroll, output);
 
   const char* kArrowUpNoScroll = "38,false,false,true,false\n100";
-  view->GetWidget()->OnSetEditCommandsForNextKeyEvent(
+  widget->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToBeginningOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowUpKeyDown));
   base::RunLoop().RunUntilIdle();
@@ -144,41 +147,6 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
                                                     kMaxOutputCharacters)
                .Ascii();
   EXPECT_EQ(kArrowUpNoScroll, output);
-}
-
-// TODO(ekaramad): This test could be removed once we do not send irrelevant
-// IPCs from browser during the time RenderViewImpl is swapped out
-// (https://crbug.com/669219).
-// This test verfies that when RenderViewImpl is swapped out, handling IPCs
-// which need a WebFrameWidget will not lead to a crash.
-TEST_F(RenderViewTest, HandleIPCsInSwappedOutState) {
-  LoadHTML("<input/>");
-
-  // Normally, we have a WebFrameWidget.
-  EXPECT_TRUE(GetWebWidget()->IsWebFrameWidget());
-
-  // Swap out the main frame so that the frame widget is destroyed.
-  auto* view = static_cast<RenderViewImpl*>(view_);
-  auto* main_frame = view->GetMainRenderFrame();
-  main_frame->OnMessageReceived(FrameMsg_SwapOut(
-      main_frame->GetRoutingID(), 123, true, FrameReplicationState()));
-
-  // We no longer have a frame widget.
-  EXPECT_FALSE(GetWebWidget()->IsWebFrameWidget());
-
-  int routing_id = view->GetRoutingID();
-  // Now simulate some TextInputClientMac IPCs. These will be handled by
-  // RenderWidget which forwards them to the TextInputClientObserver
-  using Range = gfx::Range;
-  using Point = gfx::Point;
-  view->OnMessageReceived(
-      TextInputClientMsg_CharacterIndexForPoint(routing_id, Point()));
-  view->OnMessageReceived(
-      TextInputClientMsg_FirstRectForCharacterRange(routing_id, Range()));
-  view->OnMessageReceived(
-      TextInputClientMsg_StringForRange(routing_id, Range()));
-  view->OnMessageReceived(
-      TextInputClientMsg_CharacterIndexForPoint(routing_id, Point()));
 }
 
 }  // namespace content

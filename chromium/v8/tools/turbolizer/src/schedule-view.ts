@@ -12,6 +12,8 @@ export class ScheduleView extends TextView {
   createViewElement() {
     const pane = document.createElement('div');
     pane.setAttribute('id', "schedule");
+    pane.classList.add("scrollable");
+    pane.setAttribute("tabindex", "0");
     return pane;
   }
 
@@ -123,6 +125,7 @@ export class ScheduleView extends TextView {
     }
 
     const scheduleBlock = createElement("div", "schedule-block");
+    scheduleBlock.classList.toggle("deferred", block.isDeferred);
 
     const [start, end] = view.sourceResolver.getInstructionRangeForBlock(block.id);
     const instrMarker = createElement("div", "instr-marker com", "&#8857;");

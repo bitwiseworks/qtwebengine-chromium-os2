@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_CONTROLS_NATIVE_NATIVE_VIEW_HOST_WRAPPER_H_
 #define UI_VIEWS_CONTROLS_NATIVE_NATIVE_VIEW_HOST_WRAPPER_H_
 
+#include <memory>
+
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
 
@@ -21,7 +23,7 @@ class NativeViewHost;
 // native view when attached, detached, moved and sized.
 class NativeViewHostWrapper {
  public:
-  virtual ~NativeViewHostWrapper() {}
+  virtual ~NativeViewHostWrapper() = default;
 
   // Called at the end of NativeViewHost::Attach, allowing the wrapper to
   // perform platform-specific operations that need to occur to complete
@@ -49,6 +51,7 @@ class NativeViewHostWrapper {
   // Sets the height of the top region where gfx::NativeView shouldn't be
   // targeted.
   virtual void SetHitTestTopInset(int top_inset) = 0;
+  virtual int GetHitTestTopInset() const = 0;
 
   // Installs a clip on the gfx::NativeView. These values are in the coordinate
   // space of the Widget, so if this method is called from ShowWidget

@@ -21,13 +21,13 @@
 
 namespace webrtc {
 
-class WindowCapturerTest : public testing::Test,
+class WindowCapturerTest : public ::testing::Test,
                            public DesktopCapturer::Callback {
  public:
   void SetUp() override {
     capturer_ = DesktopCapturer::CreateWindowCapturer(
         DesktopCaptureOptions::CreateDefault());
-    RTC_DCHECK(capturer_);
+    ASSERT_TRUE(capturer_);
   }
 
   void TearDown() override {}

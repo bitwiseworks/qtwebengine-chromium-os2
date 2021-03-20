@@ -40,7 +40,6 @@ class ANGLEInstancedArrays final : public WebGLExtension {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static ANGLEInstancedArrays* Create(WebGLRenderingContextBase*);
   static bool Supported(WebGLRenderingContextBase*);
   static const char* ExtensionName();
 
@@ -55,7 +54,7 @@ class ANGLEInstancedArrays final : public WebGLExtension {
   void drawElementsInstancedANGLE(GLenum mode,
                                   GLsizei count,
                                   GLenum type,
-                                  long long offset,
+                                  int64_t offset,
                                   GLsizei primcount);
   void vertexAttribDivisorANGLE(GLuint index, GLuint divisor);
 };

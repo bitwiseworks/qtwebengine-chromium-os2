@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
@@ -635,7 +636,7 @@ void PPB_Instance_Proxy::SelectionChanged(PP_Instance instance) {
   if (!data->is_request_surrounding_text_pending) {
     PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
         FROM_HERE,
-        RunWhileLocked(base::Bind(&RequestSurroundingText, instance)));
+        RunWhileLocked(base::BindOnce(&RequestSurroundingText, instance)));
     data->is_request_surrounding_text_pending = true;
   }
 }

@@ -18,18 +18,23 @@
 #include "core/fxge/dib/cfx_imagerenderer.h"
 #include "core/fxge/dib/cstretchengine.h"
 #include "core/fxge/fx_freetype.h"
+#include "core/fxge/text_char_pos.h"
 #include "core/fxge/win32/cpsoutput.h"
 #include "core/fxge/win32/win32_int.h"
+#include "third_party/base/span.h"
 
 #if defined(PDFIUM_PRINT_TEXT_WITH_GDI)
 namespace {
 
 class ScopedState {
  public:
-  ScopedState(HDC hDC, HFONT hFont) : m_hDC(hDC) {
-    m_iState = SaveDC(m_hDC);
-    m_hFont = SelectObject(m_hDC, hFont);
-  }
+  ScopedState(HDC hDC, HFONT hFont)
+      : m_hDC(hDC),
+        m_iState(SaveDC(m_hDC)),
+        m_hFont(SelectObject(m_hDC, hFont)) {}
+
+  ScopedState(const ScopedState&) = delete;
+  ScopedState& operator=(const ScopedState&) = delete;
 
   ~ScopedState() {
     HGDIOBJ hFont = SelectObject(m_hDC, m_hFont);
@@ -38,12 +43,9 @@ class ScopedState {
   }
 
  private:
-  HDC m_hDC;
-  HGDIOBJ m_hFont;
-  int m_iState;
-
-  ScopedState(const ScopedState&) = delete;
-  void operator=(const ScopedState&) = delete;
+  const HDC m_hDC;
+  const int m_iState;
+  const HGDIOBJ m_hFont;
 };
 
 }  // namespace
@@ -55,11 +57,11 @@ PDFiumEnsureTypefaceCharactersAccessible g_pdfium_typeface_accessible_func =
 #endif
 
 CGdiPrinterDriver::CGdiPrinterDriver(HDC hDC)
-    : CGdiDeviceDriver(hDC, FXDC_PRINTER),
+    : CGdiDeviceDriver(hDC, DeviceType::kPrinter),
       m_HorzSize(::GetDeviceCaps(m_hDC, HORZSIZE)),
       m_VertSize(::GetDeviceCaps(m_hDC, VERTSIZE)) {}
 
-CGdiPrinterDriver::~CGdiPrinterDriver() {}
+CGdiPrinterDriver::~CGdiPrinterDriver() = default;
 
 int CGdiPrinterDriver::GetDeviceCaps(int caps_id) const {
   if (caps_id == FXDC_HORZ_SIZE)
@@ -198,9 +200,9 @@ bool CGdiPrinterDriver::StartDIBits(const RetainPtr<CFX_DIBBase>& pSource,
 }
 
 bool CGdiPrinterDriver::DrawDeviceText(int nChars,
-                                       const FXTEXT_CHARPOS* pCharPos,
+                                       const TextCharPos* pCharPos,
                                        CFX_Font* pFont,
-                                       const CFX_Matrix* pObject2Device,
+                                       const CFX_Matrix& mtObject2Device,
                                        float font_size,
                                        uint32_t color) {
 #if defined(PDFIUM_PRINT_TEXT_WITH_GDI)
@@ -273,12 +275,12 @@ bool CGdiPrinterDriver::DrawDeviceText(int nChars,
   // Transforms
   SetGraphicsMode(m_hDC, GM_ADVANCED);
   XFORM xform;
-  xform.eM11 = pObject2Device->a / kScaleFactor;
-  xform.eM12 = pObject2Device->b / kScaleFactor;
-  xform.eM21 = -pObject2Device->c / kScaleFactor;
-  xform.eM22 = -pObject2Device->d / kScaleFactor;
-  xform.eDx = pObject2Device->e;
-  xform.eDy = pObject2Device->f;
+  xform.eM11 = mtObject2Device.a / kScaleFactor;
+  xform.eM12 = mtObject2Device.b / kScaleFactor;
+  xform.eM21 = -mtObject2Device.c / kScaleFactor;
+  xform.eM22 = -mtObject2Device.d / kScaleFactor;
+  xform.eDx = mtObject2Device.e;
+  xform.eDy = mtObject2Device.f;
   ModifyWorldTransform(m_hDC, &xform, MWT_LEFTMULTIPLY);
 
   // Color
@@ -293,7 +295,7 @@ bool CGdiPrinterDriver::DrawDeviceText(int nChars,
   for (int i = 0; i < nChars; ++i) {
     // Only works with PDFs from Skia's PDF generator. Cannot handle arbitrary
     // values from PDFs.
-    const FXTEXT_CHARPOS& charpos = pCharPos[i];
+    const TextCharPos& charpos = pCharPos[i];
     ASSERT(charpos.m_AdjustMatrix[0] == 0);
     ASSERT(charpos.m_AdjustMatrix[1] == 0);
     ASSERT(charpos.m_AdjustMatrix[2] == 0);
@@ -304,7 +306,7 @@ bool CGdiPrinterDriver::DrawDeviceText(int nChars,
     // error for calculating the next spacing value.
     float fOriginX = charpos.m_Origin.x * kScaleFactor;
     float fPixelSpacing = fOriginX - fPreviousOriginX;
-    spacing[i] = FXSYS_round(fPixelSpacing);
+    spacing[i] = FXSYS_roundf(fPixelSpacing);
     fPreviousOriginX = fOriginX - (fPixelSpacing - spacing[i]);
 
     wsText += charpos.m_GlyphIndex;
@@ -332,8 +334,9 @@ bool CGdiPrinterDriver::DrawDeviceText(int nChars,
 
 CPSPrinterDriver::CPSPrinterDriver(HDC hDC,
                                    WindowsPrintMode mode,
-                                   bool bCmykOutput)
-    : m_hDC(hDC), m_bCmykOutput(bCmykOutput) {
+                                   bool bCmykOutput,
+                                   const EncoderIface* pEncoderIface)
+    : m_hDC(hDC), m_bCmykOutput(bCmykOutput), m_PSRenderer(pEncoderIface) {
   // |mode| should be PostScript.
   ASSERT(mode == WindowsPrintMode::kModePostScript2 ||
          mode == WindowsPrintMode::kModePostScript3 ||
@@ -358,13 +361,12 @@ CPSPrinterDriver::CPSPrinterDriver(HDC hDC,
   m_PSRenderer.Init(pdfium::MakeRetain<CPSOutput>(m_hDC, output_mode), pslevel,
                     m_Width, m_Height, bCmykOutput);
   HRGN hRgn = ::CreateRectRgn(0, 0, 1, 1);
-  int ret = ::GetClipRgn(hDC, hRgn);
-  if (ret == 1) {
-    ret = ::GetRegionData(hRgn, 0, NULL);
-    if (ret) {
-      RGNDATA* pData = reinterpret_cast<RGNDATA*>(FX_Alloc(uint8_t, ret));
-      ret = ::GetRegionData(hRgn, ret, pData);
-      if (ret) {
+  if (::GetClipRgn(m_hDC, hRgn) == 1) {
+    DWORD dwCount = ::GetRegionData(hRgn, 0, nullptr);
+    if (dwCount) {
+      std::vector<uint8_t> buffer(dwCount);
+      RGNDATA* pData = reinterpret_cast<RGNDATA*>(buffer.data());
+      if (::GetRegionData(hRgn, dwCount, pData)) {
         CFX_PathData path;
         for (uint32_t i = 0; i < pData->rdh.nCount; i++) {
           RECT* pRect =
@@ -376,7 +378,6 @@ CPSPrinterDriver::CPSPrinterDriver(HDC hDC,
         }
         m_PSRenderer.SetClip_PathFill(&path, nullptr, FXFILL_WINDING);
       }
-      FX_Free(pData);
     }
   }
   ::DeleteObject(hRgn);
@@ -386,10 +387,12 @@ CPSPrinterDriver::~CPSPrinterDriver() {
   EndRendering();
 }
 
+DeviceType CPSPrinterDriver::GetDeviceType() const {
+  return DeviceType::kPrinter;
+}
+
 int CPSPrinterDriver::GetDeviceCaps(int caps_id) const {
   switch (caps_id) {
-    case FXDC_DEVICE_CLASS:
-      return FXDC_PRINTER;
     case FXDC_PIXEL_WIDTH:
       return m_Width;
     case FXDC_PIXEL_HEIGHT:
@@ -402,8 +405,10 @@ int CPSPrinterDriver::GetDeviceCaps(int caps_id) const {
       return m_HorzSize;
     case FXDC_VERT_SIZE:
       return m_VertSize;
+    default:
+      NOTREACHED();
+      return 0;
   }
-  return 0;
 }
 
 bool CPSPrinterDriver::StartRendering() {
@@ -444,9 +449,8 @@ bool CPSPrinterDriver::DrawPath(const CFX_PathData* pPathData,
                                 FX_ARGB stroke_color,
                                 int fill_mode,
                                 BlendMode blend_type) {
-  if (blend_type != BlendMode::kNormal) {
+  if (blend_type != BlendMode::kNormal)
     return false;
-  }
   return m_PSRenderer.DrawPath(pPathData, pObject2Device, pGraphState,
                                fill_color, stroke_color, fill_mode & 3);
 }
@@ -500,12 +504,12 @@ bool CPSPrinterDriver::StartDIBits(const RetainPtr<CFX_DIBBase>& pBitmap,
 }
 
 bool CPSPrinterDriver::DrawDeviceText(int nChars,
-                                      const FXTEXT_CHARPOS* pCharPos,
+                                      const TextCharPos* pCharPos,
                                       CFX_Font* pFont,
-                                      const CFX_Matrix* pObject2Device,
+                                      const CFX_Matrix& mtObject2Device,
                                       float font_size,
                                       uint32_t color) {
-  return m_PSRenderer.DrawText(nChars, pCharPos, pFont, pObject2Device,
+  return m_PSRenderer.DrawText(nChars, pCharPos, pFont, mtObject2Device,
                                font_size, color);
 }
 
@@ -524,10 +528,12 @@ CTextOnlyPrinterDriver::~CTextOnlyPrinterDriver() {
   EndRendering();
 }
 
+DeviceType CTextOnlyPrinterDriver::GetDeviceType() const {
+  return DeviceType::kPrinter;
+}
+
 int CTextOnlyPrinterDriver::GetDeviceCaps(int caps_id) const {
   switch (caps_id) {
-    case FXDC_DEVICE_CLASS:
-      return FXDC_PRINTER;
     case FXDC_PIXEL_WIDTH:
       return m_Width;
     case FXDC_PIXEL_HEIGHT:
@@ -540,8 +546,10 @@ int CTextOnlyPrinterDriver::GetDeviceCaps(int caps_id) const {
       return m_HorzSize;
     case FXDC_VERT_SIZE:
       return m_VertSize;
+    default:
+      NOTREACHED();
+      return 0;
   }
-  return 0;
 }
 
 bool CTextOnlyPrinterDriver::SetClip_PathFill(const CFX_PathData* pPathData,
@@ -609,9 +617,9 @@ bool CTextOnlyPrinterDriver::StartDIBits(
 }
 
 bool CTextOnlyPrinterDriver::DrawDeviceText(int nChars,
-                                            const FXTEXT_CHARPOS* pCharPos,
+                                            const TextCharPos* pCharPos,
                                             CFX_Font* pFont,
-                                            const CFX_Matrix* pObject2Device,
+                                            const CFX_Matrix& mtObject2Device,
                                             float font_size,
                                             uint32_t color) {
   if (g_pdfium_print_mode != 1)
@@ -623,26 +631,26 @@ bool CTextOnlyPrinterDriver::DrawDeviceText(int nChars,
   // errors below. Value chosen based on the title of https://crbug.com/18383
   const double kScaleFactor = 10;
 
-  WideString wsText;
-  int totalLength = nChars;
-
   // Detect new lines and add clrf characters (since this is Windows only).
   // These characters are removed by SkPDF, but the new line information is
   // preserved in the text location. clrf characters seem to be ignored by
   // label printers that use this driver.
-  if (m_SetOrigin &&
-      FXSYS_round(m_OriginY) != FXSYS_round(pObject2Device->f * kScaleFactor)) {
+  WideString wsText;
+  size_t len = nChars;
+  float fOffsetY = mtObject2Device.f * kScaleFactor;
+  if (m_SetOrigin && FXSYS_roundf(m_OriginY) != FXSYS_roundf(fOffsetY)) {
     wsText += L"\r\n";
-    totalLength += 2;
+    len += 2;
   }
-  m_OriginY = pObject2Device->f * kScaleFactor;
+  wsText.Reserve(len);
+  m_OriginY = fOffsetY;
   m_SetOrigin = true;
 
   // Text
   for (int i = 0; i < nChars; ++i) {
     // Only works with PDFs from Skia's PDF generator. Cannot handle arbitrary
     // values from PDFs.
-    const FXTEXT_CHARPOS& charpos = pCharPos[i];
+    const TextCharPos& charpos = pCharPos[i];
     ASSERT(charpos.m_AdjustMatrix[0] == 0);
     ASSERT(charpos.m_AdjustMatrix[1] == 0);
     ASSERT(charpos.m_AdjustMatrix[2] == 0);
@@ -651,16 +659,15 @@ bool CTextOnlyPrinterDriver::DrawDeviceText(int nChars,
 
     wsText += charpos.m_Unicode;
   }
-  size_t len = totalLength;
   ByteString text = wsText.ToDefANSI();
-  while (len > 0) {
-    char buffer[1026];
-    size_t send_len = std::min(len, static_cast<size_t>(1024));
-    *(reinterpret_cast<uint16_t*>(buffer)) = send_len;
-    memcpy(buffer + 2, text.c_str(), send_len);
-    ::GdiComment(m_hDC, send_len + 2, reinterpret_cast<const BYTE*>(buffer));
-    len -= send_len;
-    text.Right(len);
+  auto text_span = text.span();
+  while (!text_span.empty()) {
+    uint8_t buffer[1026];
+    size_t send_len = std::min<size_t>(text_span.size(), 1024);
+    *(reinterpret_cast<uint16_t*>(buffer)) = static_cast<uint16_t>(send_len);
+    memcpy(buffer + 2, text_span.data(), send_len);
+    ::GdiComment(m_hDC, send_len + 2, buffer);
+    text_span = text_span.subspan(send_len);
   }
   return true;
 }

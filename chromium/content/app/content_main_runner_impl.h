@@ -9,15 +9,14 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
+#include "base/threading/hang_watcher.h"
 #include "build/build_config.h"
-#include "content/browser/service_manager/service_manager_context.h"
 #include "content/browser/startup_data_impl.h"
 #include "content/public/app/content_main.h"
 #include "content/public/app/content_main_runner.h"
-#include "content/public/common/content_client.h"
 #include "content/public/common/main_function_params.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
 
 #if defined(OS_WIN)
 #include "sandbox/win/src/sandbox_types.h"
@@ -29,9 +28,14 @@ namespace base {
 class AtExitManager;
 }  // namespace base
 
+namespace discardable_memory {
+class DiscardableSharedMemoryManager;
+}
+
 namespace content {
 class ContentMainDelegate;
 struct ContentMainParams;
+class ServiceManagerEnvironment;
 
 class ContentMainRunnerImpl : public ContentMainRunner {
  public:
@@ -54,12 +58,13 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
   bool is_browser_main_loop_started_ = false;
 
-  std::unique_ptr<base::MessageLoop> main_message_loop_;
+  // The hang watcher is leaked to make sure it survives all watched threads.
+  base::HangWatcher* hang_watcher_;
 
+  std::unique_ptr<discardable_memory::DiscardableSharedMemoryManager>
+      discardable_shared_memory_manager_;
   std::unique_ptr<StartupDataImpl> startup_data_;
-  std::unique_ptr<base::FieldTrialList> field_trial_list_;
-  std::unique_ptr<BrowserProcessSubThread> service_manager_thread_;
-  std::unique_ptr<ServiceManagerContext> service_manager_context_;
+  std::unique_ptr<ServiceManagerEnvironment> service_manager_environment_;
 #endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
   // True if the runner has been initialized.
@@ -70,9 +75,6 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
   // True if basic startup was completed.
   bool completed_basic_startup_ = false;
-
-  // Used if the embedder doesn't set one.
-  ContentClient empty_content_client_;
 
   // The delegate will outlive this object.
   ContentMainDelegate* delegate_ = nullptr;
@@ -85,7 +87,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
   base::mac::ScopedNSAutoreleasePool* autorelease_pool_ = nullptr;
 #endif
 
-  base::Closure* ui_task_ = nullptr;
+  base::OnceClosure* ui_task_ = nullptr;
 
   CreatedMainPartsClosure* created_main_parts_closure_ = nullptr;
 

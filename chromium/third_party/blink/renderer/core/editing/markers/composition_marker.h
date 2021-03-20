@@ -19,7 +19,9 @@ class CORE_EXPORT CompositionMarker final : public StyleableMarker {
   CompositionMarker(unsigned start_offset,
                     unsigned end_offset,
                     Color underline_color,
-                    ws::mojom::ImeTextSpanThickness,
+                    ui::mojom::ImeTextSpanThickness,
+                    ui::mojom::ImeTextSpanUnderlineStyle,
+                    Color text_color,
                     Color background_color);
 
   // DocumentMarker implementations
@@ -28,12 +30,6 @@ class CORE_EXPORT CompositionMarker final : public StyleableMarker {
  private:
   DISALLOW_COPY_AND_ASSIGN(CompositionMarker);
 };
-
-DEFINE_TYPE_CASTS(CompositionMarker,
-                  DocumentMarker,
-                  marker,
-                  marker->GetType() == DocumentMarker::kComposition,
-                  marker.GetType() == DocumentMarker::kComposition);
 
 }  // namespace blink
 

@@ -28,9 +28,9 @@ bool NativeMessagingHostListPolicyHandler::CheckListEntry(
   return NativeMessagingHostManifest::IsValidName(str);
 }
 
-void NativeMessagingHostListPolicyHandler::ApplyList(
-    std::unique_ptr<base::ListValue> filtered_list,
-    PrefValueMap* prefs) {
+void NativeMessagingHostListPolicyHandler::ApplyList(base::Value filtered_list,
+                                                     PrefValueMap* prefs) {
+  DCHECK(filtered_list.is_list());
   prefs->SetValue(pref_path_, std::move(filtered_list));
 }
 

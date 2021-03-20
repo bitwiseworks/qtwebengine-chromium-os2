@@ -16,7 +16,7 @@
 
 std::string WritePpm(const char* pdf_name,
                      int num,
-                     const void* buffer_void,
+                     void* buffer_void,
                      int stride,
                      int width,
                      int height);
@@ -24,7 +24,7 @@ void WriteText(FPDF_PAGE page, const char* pdf_name, int num);
 void WriteAnnot(FPDF_PAGE page, const char* pdf_name, int num);
 std::string WritePng(const char* pdf_name,
                      int num,
-                     const void* buffer_void,
+                     void* buffer,
                      int stride,
                      int width,
                      int height);
@@ -32,7 +32,7 @@ std::string WritePng(const char* pdf_name,
 #ifdef _WIN32
 std::string WriteBmp(const char* pdf_name,
                      int num,
-                     const void* buffer,
+                     void* buffer,
                      int stride,
                      int width,
                      int height);
@@ -48,5 +48,12 @@ std::string WriteSkp(const char* pdf_name,
 
 void WriteAttachments(FPDF_DOCUMENT doc, const std::string& name);
 void WriteImages(FPDF_PAGE page, const char* pdf_name, int page_num);
+void WriteDecodedThumbnailStream(FPDF_PAGE page,
+                                 const char* pdf_name,
+                                 int page_num);
+void WriteRawThumbnailStream(FPDF_PAGE page,
+                             const char* pdf_name,
+                             int page_num);
+void WriteThumbnail(FPDF_PAGE page, const char* pdf_name, int page_num);
 
 #endif  // SAMPLES_PDFIUM_TEST_WRITE_HELPER_H_

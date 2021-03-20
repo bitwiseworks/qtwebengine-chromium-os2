@@ -10,9 +10,10 @@ namespace gfx {
 // TODO(msw): Distinguish between logical character stops and glyph stops?
 // TODO(msw): Merge with base::i18n::BreakIterator::BreakType.
 enum BreakType {
-  CHARACTER_BREAK = 0, // Stop cursor movement on neighboring characters.
-  WORD_BREAK,          // Stop cursor movement on nearest word boundaries.
-  LINE_BREAK,          // Stop cursor movement on line ends as shown on screen.
+  CHARACTER_BREAK = 0,  // Stop cursor movement on neighboring characters.
+  WORD_BREAK,           // Stop cursor movement on nearest word boundaries.
+  LINE_BREAK,           // Stop cursor movement on line ends as shown on screen.
+  FIELD_BREAK,          // Stop cursor movement on text ends.
 };
 
 // Specifies the selection behavior for a move/move-and-select command. For
@@ -62,6 +63,13 @@ enum HorizontalAlignment {
   ALIGN_CENTER,   // Align the text's center with that of its display area.
   ALIGN_RIGHT,    // Align the text's right edge with that of its display area.
   ALIGN_TO_HEAD,  // Align the text to its first strong character's direction.
+};
+
+// Vertical text alignment modes for multiline text.
+enum VerticalAlignment {
+  ALIGN_TOP = 0,  // Align the text's top edge with that of its display area.
+  ALIGN_MIDDLE,   // Align the text's center with that of its display area.
+  ALIGN_BOTTOM,   // Align the text's bottom edge with that of its display area.
 };
 
 // The directionality modes used to determine the base text direction.
@@ -114,27 +122,6 @@ enum ElideBehavior {
   ELIDE_TAIL,   // Add an ellipsis at the end of the string.
   ELIDE_EMAIL,  // Add ellipses to username and domain substrings.
   FADE_TAIL,    // Fade the string's end opposite of its horizontal alignment.
-};
-
-// The typesetter that will be used for text when displayed in UI. This can
-// influence things like string width in subtle ways and is necessary to help
-// transition Mac to the Harfbuzz typesetter (http://crbug.com/454835).
-enum class Typesetter {
-  // The typesetter that is used by UI parts of the browser window on this
-  // platform.
-  BROWSER,
-
-  // The Harfbuzz typesetter, which is typically used for secondary UI.
-  HARFBUZZ,
-
-  // The typesetter used for native UI such as tooltips, native menus and system
-  // notifications.
-  NATIVE,
-
-  // The typesetter used for function default arguments. The default can be used
-  // from locations that are unaffected by the Mac Harfbuzz transition. Cocoa UI
-  // on Mac must specify something else.
-  DEFAULT = HARFBUZZ
 };
 
 }  // namespace gfx

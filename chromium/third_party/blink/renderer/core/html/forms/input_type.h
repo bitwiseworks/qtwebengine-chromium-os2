@@ -52,10 +52,9 @@ class InputTypeView;
 // An InputType object represents the type-specific part of an HTMLInputElement.
 // Do not expose instances of InputType and classes derived from it to classes
 // other than HTMLInputElement.
-class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
+class CORE_EXPORT InputType : public GarbageCollected<InputType> {
  public:
   static InputType* Create(HTMLInputElement&, const AtomicString&);
-  static InputType* CreateText(HTMLInputElement&);
   static const AtomicString& NormalizeTypeName(const AtomicString&);
   virtual ~InputType();
   virtual void Trace(Visitor*);
@@ -91,12 +90,13 @@ class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
   // is missing.
   virtual String DefaultLabel() const;
 
-  // https://html.spec.whatwg.org/multipage/forms.html#dom-input-value
+  // https://html.spec.whatwg.org/C/#dom-input-value
   enum class ValueMode { kValue, kDefault, kDefaultOn, kFilename };
   virtual ValueMode GetValueMode() const = 0;
 
   virtual double ValueAsDate() const;
-  virtual void SetValueAsDate(double, ExceptionState&) const;
+  virtual void SetValueAsDate(const base::Optional<base::Time>&,
+                              ExceptionState&) const;
   virtual double ValueAsDouble() const;
   virtual void SetValueAsDouble(double,
                                 TextFieldEventBehavior,
@@ -104,7 +104,12 @@ class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
   virtual void SetValueAsDecimal(const Decimal&,
                                  TextFieldEventBehavior,
                                  ExceptionState&) const;
+
+  // Functions related to 'checked'
+
   virtual void ReadingChecked() const;
+  // The function is called just before updating checkedness.
+  virtual void WillUpdateCheckedness(bool new_checked);
 
   // Validation functions
 
@@ -133,13 +138,17 @@ class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
   double Minimum() const;
   double Maximum() const;
   bool StepMismatch(const String&) const;
-  virtual bool GetAllowedValueStep(Decimal*) const;
+  bool GetAllowedValueStep(Decimal*) const;
   virtual StepRange CreateStepRange(AnyStepHandling) const;
-  virtual void StepUp(double, ExceptionState&);
-  virtual void StepUpFromLayoutObject(int);
+  void StepUp(double, ExceptionState&);
+  void StepUpFromLayoutObject(int);
   virtual String BadInputText() const;
   virtual String RangeOverflowText(const Decimal& maximum) const;
   virtual String RangeUnderflowText(const Decimal& minimum) const;
+  virtual String ReversedRangeOutOfRangeText(const Decimal& minimum,
+                                             const Decimal& maximum) const;
+  virtual String RangeInvalidText(const Decimal& minimum,
+                                  const Decimal& maximum) const;
   virtual String TypeMismatchText() const;
   virtual String ValueMissingText() const;
   virtual bool CanSetStringValue() const;
@@ -240,6 +249,11 @@ class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
                             const Decimal& minimum_default,
                             const Decimal& maximum_default,
                             const StepRange::StepDescription&) const;
+  StepRange CreateReversibleStepRange(AnyStepHandling,
+                                      const Decimal& step_base_default,
+                                      const Decimal& minimum_default,
+                                      const Decimal& maximum_default,
+                                      const StepRange::StepDescription&) const;
   void AddWarningToConsole(const char* message_format,
                            const String& value) const;
 
@@ -251,6 +265,13 @@ class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
                  AnyStepHandling,
                  TextFieldEventBehavior,
                  ExceptionState&);
+
+  StepRange CreateStepRange(AnyStepHandling,
+                            const Decimal& step_base_default,
+                            const Decimal& minimum_default,
+                            const Decimal& maximum_default,
+                            const StepRange::StepDescription&,
+                            bool supports_reversed_range) const;
 
   Member<HTMLInputElement> element_;
 

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2012-2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2012 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -45,8 +45,13 @@ struct Rectangle
     bool isReversedX() const { return width < 0; }
     bool isReversedY() const { return height < 0; }
 
+    // Returns a rectangle with the same area but flipped in X, Y, neither or both.
+    Rectangle flip(bool flipX, bool flipY) const;
+
     // Returns a rectangle with the same area but with height and width guaranteed to be positive.
     Rectangle removeReversal() const;
+
+    bool encloses(const gl::Rectangle &inside) const;
 
     int x;
     int y;
@@ -122,6 +127,7 @@ struct RasterizerState final
 {
     // This will zero-initialize the struct, including padding.
     RasterizerState();
+    RasterizerState(const RasterizerState &other);
 
     bool cullFace;
     CullFaceMode cullMode;
@@ -135,6 +141,8 @@ struct RasterizerState final
     bool multiSample;
 
     bool rasterizerDiscard;
+
+    bool dither;
 };
 
 bool operator==(const RasterizerState &a, const RasterizerState &b);
@@ -158,14 +166,12 @@ struct BlendState final
     bool colorMaskGreen;
     bool colorMaskBlue;
     bool colorMaskAlpha;
-
-    bool sampleAlphaToCoverage;
-
-    bool dither;
 };
 
 bool operator==(const BlendState &a, const BlendState &b);
 bool operator!=(const BlendState &a, const BlendState &b);
+
+using BlendStateArray = std::array<BlendState, IMPLEMENTATION_MAX_DRAW_BUFFERS>;
 
 struct DepthStencilState final
 {
@@ -380,6 +386,9 @@ using UniformBlockBindingMask = angle::BitSet<IMPLEMENTATION_MAX_COMBINED_SHADER
 // Used in Framebuffer / Program
 using DrawBufferMask = angle::BitSet<IMPLEMENTATION_MAX_DRAW_BUFFERS>;
 
+// Used in StateCache
+using StorageBuffersMask = angle::BitSet<IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>;
+
 template <typename T>
 using TexLevelArray = std::array<T, IMPLEMENTATION_MAX_TEXTURE_LEVELS>;
 
@@ -426,6 +435,23 @@ ANGLE_INLINE void SetComponentTypeMask(ComponentType type, size_t index, Compone
     *mask |= kComponentMasks[type] << index;
 }
 
+ANGLE_INLINE ComponentType GetComponentTypeMask(const ComponentTypeMask &mask, size_t index)
+{
+    ASSERT(index <= kMaxComponentTypeMaskIndex);
+    uint32_t mask_bits = static_cast<uint32_t>((mask.to_ulong() >> index) & 0x10001);
+    switch (mask_bits)
+    {
+        case 0x10001:
+            return ComponentType::Float;
+        case 0x00001:
+            return ComponentType::Int;
+        case 0x10000:
+            return ComponentType::UnsignedInt;
+        default:
+            return ComponentType::InvalidEnum;
+    }
+}
+
 bool ValidateComponentTypeMasks(unsigned long outputTypes,
                                 unsigned long inputTypes,
                                 unsigned long outputMask,
@@ -435,7 +461,14 @@ using ContextID = uintptr_t;
 
 constexpr size_t kCubeFaceCount = 6;
 
-using TextureMap = angle::PackedEnumMap<TextureType, BindingPointer<Texture>>;
+template <typename T>
+using TextureTypeMap = angle::PackedEnumMap<TextureType, T>;
+using TextureMap     = TextureTypeMap<BindingPointer<Texture>>;
+
+// ShaderVector can contain one item per shader.  It differs from ShaderMap in that the values are
+// not indexed by ShaderType.
+template <typename T>
+using ShaderVector = angle::FixedVector<T, static_cast<size_t>(ShaderType::EnumCount)>;
 
 template <typename T>
 using AttachmentArray = std::array<T, IMPLEMENTATION_MAX_FRAMEBUFFER_ATTACHMENTS>;
@@ -454,10 +487,39 @@ using ActiveTextureMask = angle::BitSet<IMPLEMENTATION_MAX_ACTIVE_TEXTURES>;
 template <typename T>
 using ActiveTextureArray = std::array<T, IMPLEMENTATION_MAX_ACTIVE_TEXTURES>;
 
-using ActiveTexturePointerArray = ActiveTextureArray<Texture *>;
-using ActiveTextureTypeArray    = ActiveTextureArray<TextureType>;
+using ActiveTextureTypeArray = ActiveTextureArray<TextureType>;
+
+template <typename T>
+using UniformBuffersArray = std::array<T, IMPLEMENTATION_MAX_UNIFORM_BUFFER_BINDINGS>;
+template <typename T>
+using StorageBuffersArray = std::array<T, IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>;
+template <typename T>
+using AtomicCounterBuffersArray = std::array<T, IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS>;
+using AtomicCounterBufferMask   = angle::BitSet<IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS>;
+template <typename T>
+using ImagesArray = std::array<T, IMPLEMENTATION_MAX_IMAGE_UNITS>;
 
 using ImageUnitMask = angle::BitSet<IMPLEMENTATION_MAX_IMAGE_UNITS>;
+
+using SupportedSampleSet = std::set<GLuint>;
+
+template <typename T>
+using TransformFeedbackBuffersArray =
+    std::array<T, gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_BUFFERS>;
+
+constexpr size_t kBarrierVectorDefaultSize = 16;
+
+template <typename T>
+using BarrierVector = angle::FastVector<T, kBarrierVectorDefaultSize>;
+
+using BufferBarrierVector = BarrierVector<Buffer *>;
+
+struct TextureAndLayout
+{
+    Texture *texture;
+    GLenum layout;
+};
+using TextureBarrierVector = BarrierVector<TextureAndLayout>;
 
 // OffsetBindingPointer.getSize() returns the size specified by the user, which may be larger than
 // the size of the bound buffer. This function reduces the returned size to fit the bound buffer if
@@ -518,7 +580,7 @@ inline DestT *SafeGetImplAs(SrcT *src)
 
 }  // namespace rx
 
-#include "angletypes.inl"
+#include "angletypes.inc"
 
 namespace angle
 {

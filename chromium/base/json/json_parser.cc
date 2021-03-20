@@ -26,36 +26,26 @@ namespace internal {
 namespace {
 
 const int32_t kExtendedASCIIStart = 0x80;
-
-// Simple class that checks for maximum recursion/"stack overflow."
-class StackMarker {
- public:
-  StackMarker(int max_depth, int* depth)
-      : max_depth_(max_depth), depth_(depth) {
-    ++(*depth_);
-    DCHECK_LE(*depth_, max_depth_);
-  }
-  ~StackMarker() {
-    --(*depth_);
-  }
-
-  bool IsTooDeep() const { return *depth_ >= max_depth_; }
-
- private:
-  const int max_depth_;
-  int* const depth_;
-
-  DISALLOW_COPY_AND_ASSIGN(StackMarker);
-};
-
 constexpr uint32_t kUnicodeReplacementPoint = 0xFFFD;
+
+// UnprefixedHexStringToInt acts like |HexStringToInt|, but enforces that the
+// input consists purely of hex digits. I.e. no "0x" nor "OX" prefix is
+// permitted.
+bool UnprefixedHexStringToInt(StringPiece input, int* output) {
+  for (size_t i = 0; i < input.size(); i++) {
+    if (!IsHexDigit(input[i])) {
+      return false;
+    }
+  }
+  return HexStringToInt(input, output);
+}
 
 }  // namespace
 
 // This is U+FFFD.
 const char kUnicodeReplacementString[] = "\xEF\xBF\xBD";
 
-JSONParser::JSONParser(int options, int max_depth)
+JSONParser::JSONParser(int options, size_t max_depth)
     : options_(options),
       max_depth_(max_depth),
       index_(0),
@@ -65,7 +55,7 @@ JSONParser::JSONParser(int options, int max_depth)
       error_code_(JSONReader::JSON_NO_ERROR),
       error_line_(0),
       error_column_(0) {
-  CHECK_LE(max_depth, JSONReader::kStackMaxDepth);
+  CHECK_LE(max_depth, kAbsoluteMaxDepth);
 }
 
 JSONParser::~JSONParser() = default;
@@ -136,7 +126,7 @@ JSONParser::StringBuilder& JSONParser::StringBuilder::operator=(
     StringBuilder&& other) = default;
 
 void JSONParser::StringBuilder::Append(uint32_t point) {
-  DCHECK(IsValidCharacter(point));
+  DCHECK(IsValidCodepoint(point));
 
   if (point < kExtendedASCIIStart && !string_) {
     DCHECK_EQ(static_cast<char>(point), pos_[length_]);
@@ -270,11 +260,12 @@ void JSONParser::EatWhitespaceAndComments() {
 }
 
 bool JSONParser::EatComment() {
-  Optional<StringPiece> comment_start = ConsumeChars(2);
+  Optional<StringPiece> comment_start = PeekChars(2);
   if (!comment_start)
     return false;
 
   if (comment_start == "//") {
+    ConsumeChars(2);
     // Single line comment, read to newline.
     while (Optional<char> c = PeekChar()) {
       if (c == '\n' || c == '\r')
@@ -282,6 +273,7 @@ bool JSONParser::EatComment() {
       ConsumeChar();
     }
   } else if (comment_start == "/*") {
+    ConsumeChars(2);
     char previous_char = '\0';
     // Block comment, read until end marker.
     while (Optional<char> c = PeekChar()) {
@@ -385,8 +377,10 @@ Optional<Value> JSONParser::ConsumeDictionary() {
   }
 
   ConsumeChar();  // Closing '}'.
-
-  return Value(Value::DictStorage(std::move(dict_storage), KEEP_LAST_OF_DUPES));
+  // Reverse |dict_storage| to keep the last of elements with the same key in
+  // the input.
+  std::reverse(dict_storage.begin(), dict_storage.end());
+  return Value(Value::DictStorage(std::move(dict_storage)));
 }
 
 Optional<Value> JSONParser::ConsumeList() {
@@ -436,7 +430,6 @@ Optional<Value> JSONParser::ConsumeString() {
   StringBuilder string;
   if (!ConsumeStringRaw(&string))
     return nullopt;
-
   return Value(string.DestructiveAsString());
 }
 
@@ -454,10 +447,9 @@ bool JSONParser::ConsumeStringRaw(StringBuilder* out) {
   while (PeekChar()) {
     uint32_t next_char = 0;
     if (!ReadUnicodeCharacter(input_.data(),
-                              static_cast<int32_t>(input_.length()),
-                              &index_,
+                              static_cast<int32_t>(input_.length()), &index_,
                               &next_char) ||
-        !IsValidCharacter(next_char)) {
+        !IsValidCodepoint(next_char)) {
       if ((options_ & JSON_REPLACE_INVALID_CHARACTERS) == 0) {
         ReportError(JSONReader::JSON_UNSUPPORTED_ENCODING, 1);
         return false;
@@ -502,7 +494,7 @@ bool JSONParser::ConsumeStringRaw(StringBuilder* out) {
           }
 
           int hex_digit = 0;
-          if (!HexStringToInt(*escape_sequence, &hex_digit) ||
+          if (!UnprefixedHexStringToInt(*escape_sequence, &hex_digit) ||
               !IsValidCharacter(hex_digit)) {
             ReportError(JSONReader::JSON_INVALID_ESCAPE, -2);
             return false;
@@ -568,7 +560,7 @@ bool JSONParser::DecodeUTF16(uint32_t* out_code_point) {
 
   // Consume the UTF-16 code unit, which may be a high surrogate.
   int code_unit16_high = 0;
-  if (!HexStringToInt(*escape_sequence, &code_unit16_high))
+  if (!UnprefixedHexStringToInt(*escape_sequence, &code_unit16_high))
     return false;
 
   // If this is a high surrogate, consume the next code unit to get the
@@ -581,36 +573,35 @@ bool JSONParser::DecodeUTF16(uint32_t* out_code_point) {
 
     // Make sure that the token has more characters to consume the
     // lower surrogate.
-    if (!ConsumeIfMatch("\\u"))
-      return false;
+    if (!ConsumeIfMatch("\\u")) {
+      if ((options_ & JSON_REPLACE_INVALID_CHARACTERS) == 0)
+        return false;
+      *out_code_point = kUnicodeReplacementPoint;
+      return true;
+    }
 
     escape_sequence = ConsumeChars(4);
     if (!escape_sequence)
       return false;
 
     int code_unit16_low = 0;
-    if (!HexStringToInt(*escape_sequence, &code_unit16_low))
+    if (!UnprefixedHexStringToInt(*escape_sequence, &code_unit16_low))
       return false;
 
-    if (!CBU16_IS_TRAIL(code_unit16_low))
-      return false;
+    if (!CBU16_IS_TRAIL(code_unit16_low)) {
+      if ((options_ & JSON_REPLACE_INVALID_CHARACTERS) == 0)
+        return false;
+      *out_code_point = kUnicodeReplacementPoint;
+      return true;
+    }
 
     uint32_t code_point =
         CBU16_GET_SUPPLEMENTARY(code_unit16_high, code_unit16_low);
-    if (!IsValidCharacter(code_point))
-      return false;
 
     *out_code_point = code_point;
   } else {
     // Not a surrogate.
     DCHECK(CBU16_IS_SINGLE(code_unit16_high));
-    if (!IsValidCharacter(code_unit16_high)) {
-      if ((options_ & JSON_REPLACE_INVALID_CHARACTERS) == 0) {
-        return false;
-      }
-      *out_code_point = kUnicodeReplacementPoint;
-      return true;
-    }
 
     *out_code_point = code_unit16_high;
   }
@@ -687,6 +678,7 @@ Optional<Value> JSONParser::ConsumeNumber() {
     return Value(num_double);
   }
 
+  ReportError(JSONReader::JSON_UNREPRESENTABLE_NUMBER, 1);
   return nullopt;
 }
 

@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/views_export.h"
 
@@ -59,7 +60,7 @@ class VIEWS_EXPORT Background {
   SkColor get_color() const { return color_; }
 
  private:
-  SkColor color_;
+  SkColor color_ = gfx::kPlaceholderColor;
 
   DISALLOW_COPY_AND_ASSIGN(Background);
 };
@@ -67,14 +68,16 @@ class VIEWS_EXPORT Background {
 // Creates a background that fills the canvas in the specified color.
 VIEWS_EXPORT std::unique_ptr<Background> CreateSolidBackground(SkColor color);
 
+// Creates a background that fills the canvas with rounded corners.
+VIEWS_EXPORT std::unique_ptr<Background> CreateRoundedRectBackground(
+    SkColor color,
+    float radius);
+
 // Creates a background that fills the canvas in the color specified by the
 // view's NativeTheme and the given color identifier.
 VIEWS_EXPORT std::unique_ptr<Background> CreateThemedSolidBackground(
     View* view,
     ui::NativeTheme::ColorId color_id);
-
-// Creates Chrome's standard panel background
-VIEWS_EXPORT std::unique_ptr<Background> CreateStandardPanelBackground();
 
 // Creates a Background from the specified Painter.
 VIEWS_EXPORT std::unique_ptr<Background> CreateBackgroundFromPainter(

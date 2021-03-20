@@ -9,12 +9,12 @@
 
 #include <algorithm>
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include "base/bits.h"
 #include "base/format_macros.h"
 #include "base/lazy_instance.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -29,7 +29,6 @@
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/service_discardable_manager.h"
-#include "gpu/command_buffer/service/shared_image_representation.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_enums.h"
 #include "ui/gl/gl_implementation.h"
@@ -133,130 +132,134 @@ class FormatTypeValidator {
   FormatTypeValidator() {
     static const FormatType kSupportedFormatTypes[] = {
         // ES2.
-        {GL_RGB, GL_RGB, GL_UNSIGNED_BYTE},
-        {GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
-        {GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE},
-        {GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4},
-        {GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1},
-        {GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE},
-        {GL_LUMINANCE, GL_LUMINANCE, GL_UNSIGNED_BYTE},
-        {GL_ALPHA, GL_ALPHA, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGB, GL_RGB, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGB, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
+        FormatType{GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4},
+        FormatType{GL_RGBA, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1},
+        FormatType{GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE},
+        FormatType{GL_LUMINANCE, GL_LUMINANCE, GL_UNSIGNED_BYTE},
+        FormatType{GL_ALPHA, GL_ALPHA, GL_UNSIGNED_BYTE},
 
         // ES3.
-        {GL_R8, GL_RED, GL_UNSIGNED_BYTE},
-        {GL_R8_SNORM, GL_RED, GL_BYTE},
-        {GL_R16F, GL_RED, GL_HALF_FLOAT},
-        {GL_R16F, GL_RED, GL_FLOAT},
-        {GL_R32F, GL_RED, GL_FLOAT},
-        {GL_R8UI, GL_RED_INTEGER, GL_UNSIGNED_BYTE},
-        {GL_R8I, GL_RED_INTEGER, GL_BYTE},
-        {GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT},
-        {GL_R16I, GL_RED_INTEGER, GL_SHORT},
-        {GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT},
-        {GL_R32I, GL_RED_INTEGER, GL_INT},
-        {GL_RG8, GL_RG, GL_UNSIGNED_BYTE},
-        {GL_RG8_SNORM, GL_RG, GL_BYTE},
-        {GL_RG16F, GL_RG, GL_HALF_FLOAT},
-        {GL_RG16F, GL_RG, GL_FLOAT},
-        {GL_RG32F, GL_RG, GL_FLOAT},
-        {GL_RG8UI, GL_RG_INTEGER, GL_UNSIGNED_BYTE},
-        {GL_RG8I, GL_RG_INTEGER, GL_BYTE},
-        {GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT},
-        {GL_RG16I, GL_RG_INTEGER, GL_SHORT},
-        {GL_RG32UI, GL_RG_INTEGER, GL_UNSIGNED_INT},
-        {GL_RG32I, GL_RG_INTEGER, GL_INT},
-        {GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE},
-        {GL_SRGB8, GL_RGB, GL_UNSIGNED_BYTE},
-        {GL_RGB565, GL_RGB, GL_UNSIGNED_BYTE},
-        {GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
-        {GL_RGB8_SNORM, GL_RGB, GL_BYTE},
-        {GL_R11F_G11F_B10F, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV},
-        {GL_R11F_G11F_B10F, GL_RGB, GL_HALF_FLOAT},
-        {GL_R11F_G11F_B10F, GL_RGB, GL_FLOAT},
-        {GL_RGB9_E5, GL_RGB, GL_UNSIGNED_INT_5_9_9_9_REV},
-        {GL_RGB9_E5, GL_RGB, GL_HALF_FLOAT},
-        {GL_RGB9_E5, GL_RGB, GL_FLOAT},
-        {GL_RGB16F, GL_RGB, GL_HALF_FLOAT},
-        {GL_RGB16F, GL_RGB, GL_FLOAT},
-        {GL_RGB32F, GL_RGB, GL_FLOAT},
-        {GL_RGB8UI, GL_RGB_INTEGER, GL_UNSIGNED_BYTE},
-        {GL_RGB8I, GL_RGB_INTEGER, GL_BYTE},
-        {GL_RGB16UI, GL_RGB_INTEGER, GL_UNSIGNED_SHORT},
-        {GL_RGB16I, GL_RGB_INTEGER, GL_SHORT},
-        {GL_RGB32UI, GL_RGB_INTEGER, GL_UNSIGNED_INT},
-        {GL_RGB32I, GL_RGB_INTEGER, GL_INT},
-        {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
-        {GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE},
-        {GL_RGBA8_SNORM, GL_RGBA, GL_BYTE},
-        {GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_BYTE},
-        {GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1},
-        {GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV},
-        {GL_RGBA4, GL_RGBA, GL_UNSIGNED_BYTE},
-        {GL_RGBA4, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4},
-        {GL_RGB10_A2, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV},
-        {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},
-        {GL_RGBA16F, GL_RGBA, GL_FLOAT},
-        {GL_RGBA32F, GL_RGBA, GL_FLOAT},
-        {GL_RGBA8UI, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE},
-        {GL_RGBA8I, GL_RGBA_INTEGER, GL_BYTE},
-        {GL_RGB10_A2UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT_2_10_10_10_REV},
-        {GL_RGBA16UI, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT},
-        {GL_RGBA16I, GL_RGBA_INTEGER, GL_SHORT},
-        {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
-        {GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT},
-        {GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT},
-        {GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT},
-        {GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT},
-        {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT},
-        {GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8},
-        {GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,
+        FormatType{GL_R8, GL_RED, GL_UNSIGNED_BYTE},
+        FormatType{GL_R8_SNORM, GL_RED, GL_BYTE},
+        FormatType{GL_R16F, GL_RED, GL_HALF_FLOAT},
+        FormatType{GL_R16F, GL_RED, GL_FLOAT},
+        FormatType{GL_R32F, GL_RED, GL_FLOAT},
+        FormatType{GL_R8UI, GL_RED_INTEGER, GL_UNSIGNED_BYTE},
+        FormatType{GL_R8I, GL_RED_INTEGER, GL_BYTE},
+        FormatType{GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT},
+        FormatType{GL_R16I, GL_RED_INTEGER, GL_SHORT},
+        FormatType{GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT},
+        FormatType{GL_R32I, GL_RED_INTEGER, GL_INT},
+        FormatType{GL_RG8, GL_RG, GL_UNSIGNED_BYTE},
+        FormatType{GL_RG8_SNORM, GL_RG, GL_BYTE},
+        FormatType{GL_RG16F, GL_RG, GL_HALF_FLOAT},
+        FormatType{GL_RG16F, GL_RG, GL_FLOAT},
+        FormatType{GL_RG32F, GL_RG, GL_FLOAT},
+        FormatType{GL_RG8UI, GL_RG_INTEGER, GL_UNSIGNED_BYTE},
+        FormatType{GL_RG8I, GL_RG_INTEGER, GL_BYTE},
+        FormatType{GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT},
+        FormatType{GL_RG16I, GL_RG_INTEGER, GL_SHORT},
+        FormatType{GL_RG32UI, GL_RG_INTEGER, GL_UNSIGNED_INT},
+        FormatType{GL_RG32I, GL_RG_INTEGER, GL_INT},
+        FormatType{GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE},
+        FormatType{GL_SRGB8, GL_RGB, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGB565, GL_RGB, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
+        FormatType{GL_RGB8_SNORM, GL_RGB, GL_BYTE},
+        FormatType{GL_R11F_G11F_B10F, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV},
+        FormatType{GL_R11F_G11F_B10F, GL_RGB, GL_HALF_FLOAT},
+        FormatType{GL_R11F_G11F_B10F, GL_RGB, GL_FLOAT},
+        FormatType{GL_RGB9_E5, GL_RGB, GL_UNSIGNED_INT_5_9_9_9_REV},
+        FormatType{GL_RGB9_E5, GL_RGB, GL_HALF_FLOAT},
+        FormatType{GL_RGB9_E5, GL_RGB, GL_FLOAT},
+        FormatType{GL_RGB16F, GL_RGB, GL_HALF_FLOAT},
+        FormatType{GL_RGB16F, GL_RGB, GL_FLOAT},
+        FormatType{GL_RGB32F, GL_RGB, GL_FLOAT},
+        FormatType{GL_RGB8UI, GL_RGB_INTEGER, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGB8I, GL_RGB_INTEGER, GL_BYTE},
+        FormatType{GL_RGB16UI, GL_RGB_INTEGER, GL_UNSIGNED_SHORT},
+        FormatType{GL_RGB16I, GL_RGB_INTEGER, GL_SHORT},
+        FormatType{GL_RGB32UI, GL_RGB_INTEGER, GL_UNSIGNED_INT},
+        FormatType{GL_RGB32I, GL_RGB_INTEGER, GL_INT},
+        FormatType{GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
+        FormatType{GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGBA8_SNORM, GL_RGBA, GL_BYTE},
+        FormatType{GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1},
+        FormatType{GL_RGB5_A1, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV},
+        FormatType{GL_RGBA4, GL_RGBA, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGBA4, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4},
+        FormatType{GL_RGB10_A2, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV},
+        FormatType{GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT},
+        FormatType{GL_RGBA16F, GL_RGBA, GL_FLOAT},
+        FormatType{GL_RGBA32F, GL_RGBA, GL_FLOAT},
+        FormatType{GL_RGBA8UI, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE},
+        FormatType{GL_RGBA8I, GL_RGBA_INTEGER, GL_BYTE},
+        FormatType{GL_RGB10_A2UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT_2_10_10_10_REV},
+        FormatType{GL_RGBA16UI, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT},
+        FormatType{GL_RGBA16I, GL_RGBA_INTEGER, GL_SHORT},
+        FormatType{GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
+        FormatType{GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT},
+        FormatType{GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT},
+        FormatType{GL_DEPTH_COMPONENT16, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT},
+        FormatType{GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT},
+        FormatType{GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT},
+        FormatType{GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8},
+        FormatType{GL_DEPTH32F_STENCIL8, GL_DEPTH_STENCIL,
          GL_FLOAT_32_UNSIGNED_INT_24_8_REV},
 
         // Exposed by GL_APPLE_texture_format_BGRA8888 for TexStorage*
         // TODO(kainino): this actually exposes it for (Copy)TexImage* as well,
         // which is incorrect. crbug.com/663086
-        {GL_BGRA8_EXT, GL_BGRA_EXT, GL_UNSIGNED_BYTE},
+        FormatType{GL_BGRA8_EXT, GL_BGRA_EXT, GL_UNSIGNED_BYTE},
 
         // Exposed by GL_APPLE_texture_format_BGRA8888 and
         // GL_EXT_texture_format_BGRA8888
-        {GL_BGRA_EXT, GL_BGRA_EXT, GL_UNSIGNED_BYTE},
+        FormatType{GL_BGRA_EXT, GL_BGRA_EXT, GL_UNSIGNED_BYTE},
 
         // Exposed by GL_EXT_texture_norm16
-        {GL_R16_EXT, GL_RED, GL_UNSIGNED_SHORT},
+        FormatType{GL_R16_EXT, GL_RED, GL_UNSIGNED_SHORT},
+        FormatType{GL_RG16_EXT, GL_RG, GL_UNSIGNED_SHORT},
+        FormatType{GL_RGB16_EXT, GL_RGB, GL_UNSIGNED_SHORT},
+        FormatType{GL_RGBA16_EXT, GL_RGBA, GL_UNSIGNED_SHORT},
+        FormatType{GL_R16_SNORM_EXT, GL_RED, GL_SHORT},
+        FormatType{GL_RG16_SNORM_EXT, GL_RG, GL_SHORT},
+        FormatType{GL_RGB16_SNORM_EXT, GL_RGB, GL_SHORT},
+        FormatType{GL_RGBA16_SNORM_EXT, GL_RGBA, GL_SHORT},
     };
 
     static const FormatType kSupportedFormatTypesES2Only[] = {
         // Exposed by GL_OES_texture_float and GL_OES_texture_half_float
-        {GL_RGB, GL_RGB, GL_FLOAT},
-        {GL_RGBA, GL_RGBA, GL_FLOAT},
-        {GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_FLOAT},
-        {GL_LUMINANCE, GL_LUMINANCE, GL_FLOAT},
-        {GL_ALPHA, GL_ALPHA, GL_FLOAT},
-        {GL_RGB, GL_RGB, GL_HALF_FLOAT_OES},
-        {GL_RGBA, GL_RGBA, GL_HALF_FLOAT_OES},
-        {GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES},
-        {GL_LUMINANCE, GL_LUMINANCE, GL_HALF_FLOAT_OES},
-        {GL_ALPHA, GL_ALPHA, GL_HALF_FLOAT_OES},
+        FormatType{GL_RGB, GL_RGB, GL_FLOAT},
+        FormatType{GL_RGBA, GL_RGBA, GL_FLOAT},
+        FormatType{GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_FLOAT},
+        FormatType{GL_LUMINANCE, GL_LUMINANCE, GL_FLOAT},
+        FormatType{GL_ALPHA, GL_ALPHA, GL_FLOAT},
+        FormatType{GL_RGB, GL_RGB, GL_HALF_FLOAT_OES},
+        FormatType{GL_RGBA, GL_RGBA, GL_HALF_FLOAT_OES},
+        FormatType{GL_LUMINANCE_ALPHA, GL_LUMINANCE_ALPHA, GL_HALF_FLOAT_OES},
+        FormatType{GL_LUMINANCE, GL_LUMINANCE, GL_HALF_FLOAT_OES},
+        FormatType{GL_ALPHA, GL_ALPHA, GL_HALF_FLOAT_OES},
 
         // Exposed by GL_ANGLE_depth_texture
-        {GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT},
-        {GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT},
-        {GL_DEPTH_STENCIL, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8},
+        FormatType{GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT},
+        FormatType{GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT},
+        FormatType{GL_DEPTH_STENCIL, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8},
 
         // Exposed by GL_EXT_sRGB
-        {GL_SRGB, GL_SRGB, GL_UNSIGNED_BYTE},
-        {GL_SRGB_ALPHA, GL_SRGB_ALPHA, GL_UNSIGNED_BYTE},
+        FormatType{GL_SRGB, GL_SRGB, GL_UNSIGNED_BYTE},
+        FormatType{GL_SRGB_ALPHA, GL_SRGB_ALPHA, GL_UNSIGNED_BYTE},
 
         // Exposed by GL_EXT_texture_rg
-        {GL_RED, GL_RED, GL_UNSIGNED_BYTE},
-        {GL_RG, GL_RG, GL_UNSIGNED_BYTE},
-        {GL_RED, GL_RED, GL_FLOAT},
-        {GL_RG, GL_RG, GL_FLOAT},
-        {GL_RED, GL_RED, GL_HALF_FLOAT_OES},
-        {GL_RG, GL_RG, GL_HALF_FLOAT_OES},
-
-        // Exposed by GL_EXT_texture_norm16
-        {GL_RED, GL_RED, GL_UNSIGNED_SHORT},
+        FormatType{GL_RED, GL_RED, GL_UNSIGNED_BYTE},
+        FormatType{GL_RG, GL_RG, GL_UNSIGNED_BYTE},
+        FormatType{GL_RED, GL_RED, GL_FLOAT},
+        FormatType{GL_RG, GL_RG, GL_FLOAT},
+        FormatType{GL_RED, GL_RED, GL_HALF_FLOAT_OES},
+        FormatType{GL_RG, GL_RG, GL_HALF_FLOAT_OES},
     };
 
     for (size_t ii = 0; ii < base::size(kSupportedFormatTypes); ++ii) {
@@ -271,7 +274,7 @@ class FormatTypeValidator {
   // This may be accessed from multiple threads.
   bool IsValid(ContextType context_type, GLenum internal_format, GLenum format,
                GLenum type) const {
-    FormatType query = { internal_format, format, type };
+    FormatType query{ internal_format, format, type };
     if (supported_combinations_.find(query) != supported_combinations_.end()) {
       return true;
     }
@@ -286,21 +289,16 @@ class FormatTypeValidator {
   }
 
  private:
-  // TODO(zmo): once std::tuple is allowed, switch over to that.
-  struct FormatType {
-    GLenum internal_format;
-    GLenum format;
-    GLenum type;
-  };
-
+  // FormatType is a tuple of <internal_format, format, type>
+  typedef std::tuple<GLenum, GLenum, GLenum> FormatType;
   struct FormatTypeCompare {
     bool operator() (const FormatType& lhs, const FormatType& rhs) const {
-      return (lhs.internal_format < rhs.internal_format ||
-              ((lhs.internal_format == rhs.internal_format) &&
-               (lhs.format < rhs.format)) ||
-              ((lhs.internal_format == rhs.internal_format) &&
-               (lhs.format == rhs.format) &&
-               (lhs.type < rhs.type)));
+      return (std::get<0>(lhs) < std::get<0>(rhs) ||
+              ((std::get<0>(lhs) == std::get<0>(rhs)) &&
+               (std::get<1>(lhs) < std::get<1>(rhs))) ||
+              ((std::get<0>(lhs) == std::get<0>(rhs)) &&
+               (std::get<1>(lhs) == std::get<1>(rhs)) &&
+               (std::get<2>(lhs) < std::get<2>(rhs))));
     }
   };
 
@@ -369,8 +367,8 @@ bool SizedFormatAvailable(const FeatureInfo* feature_info,
   }
 
   if (internal_format == GL_RGB10_A2_EXT &&
-      (feature_info->feature_flags().chromium_image_xr30 ||
-       feature_info->feature_flags().chromium_image_xb30)) {
+      (feature_info->feature_flags().chromium_image_ar30 ||
+       feature_info->feature_flags().chromium_image_ab30)) {
     return true;
   }
 
@@ -506,17 +504,45 @@ void TextureManager::Destroy() {
   DCHECK_EQ(0u, memory_type_tracker_->GetMemRepresented());
 }
 
+TexturePassthrough::LevelInfo::LevelInfo() = default;
+
+TexturePassthrough::LevelInfo::LevelInfo(const LevelInfo& rhs) = default;
+
+TexturePassthrough::LevelInfo::~LevelInfo() = default;
+
 TexturePassthrough::TexturePassthrough(GLuint service_id, GLenum target)
     : TextureBase(service_id),
+      owned_service_id_(service_id),
       have_context_(true),
       level_images_(target == GL_TEXTURE_CUBE_MAP ? 6 : 1) {
   TextureBase::SetTarget(target);
 }
 
+TexturePassthrough::TexturePassthrough(GLuint service_id,
+                                       GLenum target,
+                                       GLenum internal_format,
+                                       GLsizei width,
+                                       GLsizei height,
+                                       GLsizei depth,
+                                       GLint border,
+                                       GLenum format,
+                                       GLenum type)
+    : TexturePassthrough(service_id, target) {
+  DCHECK(target != GL_TEXTURE_CUBE_MAP);
+  LevelInfo* level_info = GetLevelInfo(target, 0);
+  level_info->internal_format = internal_format;
+  level_info->width = width;
+  level_info->height = height;
+  level_info->depth = depth;
+  level_info->border = border;
+  level_info->format = format;
+  level_info->type = type;
+}
+
 TexturePassthrough::~TexturePassthrough() {
   DeleteFromMailboxManager();
   if (have_context_) {
-    glDeleteTextures(1, &service_id_);
+    glDeleteTextures(1, &owned_service_id_);
   }
 }
 
@@ -541,6 +567,96 @@ void TexturePassthrough::MarkContextLost() {
 void TexturePassthrough::SetLevelImage(GLenum target,
                                        GLint level,
                                        gl::GLImage* image) {
+  SetLevelImageInternal(target, level, image, nullptr, owned_service_id_);
+}
+
+gl::GLImage* TexturePassthrough::GetLevelImage(GLenum target,
+                                               GLint level) const {
+  size_t face_idx = 0;
+  if (!LevelInfoExists(target, level, &face_idx)) {
+    return nullptr;
+  }
+
+  return level_images_[face_idx][level].image.get();
+}
+
+void TexturePassthrough::SetStreamLevelImage(
+    GLenum target,
+    GLint level,
+    GLStreamTextureImage* stream_texture_image,
+    GLuint service_id) {
+  SetLevelImageInternal(target, level, stream_texture_image,
+                        stream_texture_image, service_id);
+}
+
+GLStreamTextureImage* TexturePassthrough::GetStreamLevelImage(
+    GLenum target,
+    GLint level) const {
+  size_t face_idx = 0;
+  if (!LevelInfoExists(target, level, &face_idx)) {
+    return nullptr;
+  }
+
+  return level_images_[face_idx][level].stream_texture_image.get();
+}
+
+void TexturePassthrough::SetEstimatedSize(size_t size) {
+  estimated_size_ = size;
+}
+
+bool TexturePassthrough::LevelInfoExists(GLenum target,
+                                         GLint level,
+                                         size_t* out_face_idx) const {
+  DCHECK(out_face_idx);
+
+  if (GLES2Util::GLFaceTargetToTextureTarget(target) != target_) {
+    return false;
+  }
+
+  size_t face_idx = GLES2Util::GLTargetToFaceIndex(target);
+  DCHECK(face_idx < level_images_.size());
+  DCHECK(level >= 0);
+
+  if (static_cast<GLint>(level_images_[face_idx].size()) <= level) {
+    return false;
+  }
+
+  *out_face_idx = face_idx;
+  return true;
+}
+
+void TexturePassthrough::SetLevelImageInternal(
+    GLenum target,
+    GLint level,
+    gl::GLImage* image,
+    GLStreamTextureImage* stream_texture_image,
+    GLuint service_id) {
+  LevelInfo* level_info = GetLevelInfo(target, level);
+  level_info->image = image;
+  level_info->stream_texture_image = stream_texture_image;
+
+  if (service_id != 0 && service_id != service_id_) {
+    service_id_ = service_id;
+  }
+
+  if (stream_texture_image &&
+      gl::g_current_gl_driver->ext.b_GL_ANGLE_texture_external_update) {
+    // Notify the texture that its size has changed
+    GLint prev_texture = 0;
+    glGetIntegerv(GetTextureBindingQuery(target_), &prev_texture);
+    glBindTexture(target_, service_id_);
+
+    glTexImage2DExternalANGLE(target_, level, level_info->internal_format,
+                              level_info->width, level_info->height,
+                              level_info->border, level_info->format,
+                              level_info->type);
+
+    glBindTexture(target_, prev_texture);
+  }
+}
+
+TexturePassthrough::LevelInfo* TexturePassthrough::GetLevelInfo(GLenum target,
+                                                                GLint level) {
   size_t face_idx = GLES2Util::GLTargetToFaceIndex(target);
   DCHECK(face_idx < level_images_.size());
   DCHECK(level >= 0);
@@ -550,28 +666,7 @@ void TexturePassthrough::SetLevelImage(GLenum target,
     level_images_[face_idx].resize(level + 1);
   }
 
-  level_images_[face_idx][level] = image;
-}
-
-gl::GLImage* TexturePassthrough::GetLevelImage(GLenum target,
-                                               GLint level) const {
-  if (GLES2Util::GLFaceTargetToTextureTarget(target) != target_) {
-    return nullptr;
-  }
-
-  size_t face_idx = GLES2Util::GLTargetToFaceIndex(target);
-  DCHECK(face_idx < level_images_.size());
-  DCHECK(level >= 0);
-
-  if (static_cast<GLint>(level_images_[face_idx].size()) <= level) {
-    return nullptr;
-  }
-
-  return level_images_[face_idx][level].get();
-}
-
-void TexturePassthrough::SetEstimatedSize(size_t size) {
-  estimated_size_ = size;
+  return &level_images_[face_idx][level];
 }
 
 Texture::Texture(GLuint service_id)
@@ -694,18 +789,15 @@ Texture::CanRenderCondition Texture::GetCanRenderCondition() const {
   if (target_ == 0)
     return CAN_RENDER_ALWAYS;
 
-  if (target_ != GL_TEXTURE_EXTERNAL_OES) {
-    if (face_infos_.empty() ||
-        static_cast<size_t>(base_level_) >= face_infos_[0].level_infos.size()) {
-      return CAN_RENDER_NEVER;
-    }
-    const Texture::LevelInfo& first_face =
-        face_infos_[0].level_infos[base_level_];
-    if (first_face.width == 0 ||
-        first_face.height == 0 ||
-        first_face.depth == 0) {
-      return CAN_RENDER_NEVER;
-    }
+  if (face_infos_.empty() ||
+      static_cast<size_t>(base_level_) >= face_infos_[0].level_infos.size()) {
+    return CAN_RENDER_NEVER;
+  }
+  const Texture::LevelInfo& first_face =
+      face_infos_[0].level_infos[base_level_];
+  if (first_face.width == 0 || first_face.height == 0 ||
+      first_face.depth == 0) {
+    return CAN_RENDER_NEVER;
   }
 
   if (target_ == GL_TEXTURE_CUBE_MAP && !cube_complete())
@@ -1264,8 +1356,8 @@ void Texture::SetLevelInfo(GLenum target,
   info.border = border;
   info.format = format;
   info.type = type;
-  info.image = 0;
-  info.stream_texture_image = 0;
+  info.image.reset();
+  info.stream_texture_image.reset();
   info.image_state = UNBOUND;
   info.internal_workaround = false;
 
@@ -1275,16 +1367,16 @@ void Texture::SetLevelInfo(GLenum target,
     ScopedMemTrackerChange change(this);
     estimated_size_ -= info.estimated_size;
 
-    if (format != GL_NONE) {
-      // Uncompressed image
-      GLES2Util::ComputeImageDataSizes(width, height, depth, format, type, 4,
-                                       &info.estimated_size, nullptr, nullptr);
-    } else if (internal_format != GL_NONE) {
+    if (::gpu::gles2::IsCompressedTextureFormat(internal_format)) {
       // Compressed image
       GLsizei compressed_size = 0;
       GetCompressedTexSizeInBytes(nullptr, width, height, depth,
                                   internal_format, &compressed_size, nullptr);
       info.estimated_size = compressed_size;
+    } else if (format != GL_NONE) {
+      // Uncompressed image
+      GLES2Util::ComputeImageDataSizes(width, height, depth, format, type, 4,
+                                       &info.estimated_size, nullptr, nullptr);
     } else {
       // No image
       info.estimated_size = 0;
@@ -1654,10 +1746,14 @@ bool Texture::ClearRenderableLevels(DecoderContext* decoder) {
   return true;
 }
 
-void Texture::SetImmutable(bool immutable) {
-  if (immutable_ == immutable)
+void Texture::SetImmutable(bool immutable, bool immutable_storage) {
+  DCHECK(!immutable_storage || immutable);
+
+  if (immutable_ == immutable && immutable_storage_ == immutable_storage)
     return;
+
   immutable_ = immutable;
+  immutable_storage_ = immutable_storage;
 
   UpdateNumMipLevels();
 }
@@ -1737,14 +1833,24 @@ bool Texture::ClearLevel(DecoderContext* decoder, GLenum target, GLint level) {
   }
 
   if (info.target == GL_TEXTURE_3D || info.target == GL_TEXTURE_2D_ARRAY) {
-    // For 3D textures, we always clear the entire texture.
-    DCHECK(info.cleared_rect == gfx::Rect());
-    bool cleared = decoder->ClearLevel3D(
-        this, info.target, info.level,
-        TextureManager::AdjustTexFormat(decoder->GetFeatureInfo(), info.format),
-        info.type, info.width, info.height, info.depth);
-    if (!cleared)
-      return false;
+    if (decoder->IsCompressedTextureFormat(info.internal_format)) {
+      DCHECK(IsImmutable());
+      bool cleared = decoder->ClearCompressedTextureLevel3D(
+          this, info.target, info.level, info.internal_format, info.width,
+          info.height, info.depth);
+      if (!cleared)
+        return false;
+    } else {
+      // For 3D textures, we always clear the entire texture.
+      DCHECK(info.cleared_rect == gfx::Rect());
+      bool cleared =
+          decoder->ClearLevel3D(this, info.target, info.level,
+                                TextureManager::AdjustTexFormat(
+                                    decoder->GetFeatureInfo(), info.format),
+                                info.type, info.width, info.height, info.depth);
+      if (!cleared)
+        return false;
+    }
   } else {
     if (decoder->IsCompressedTextureFormat(info.internal_format)) {
       // An uncleared level of a compressed texture can only occur when
@@ -1845,6 +1951,10 @@ void Texture::SetLevelImageState(GLenum target, GLint level, ImageState state) {
   Texture::LevelInfo& info = face_infos_[face_index].level_infos[level];
   DCHECK_EQ(info.target, target);
   DCHECK_EQ(info.level, level);
+  // Workaround for StreamTexture which must be re-copied on each access.
+  // TODO(ericrk): Remove this once SharedImage transition is complete.
+  if (info.image && !info.image->HasMutableState())
+    return;
   info.image_state = state;
 }
 
@@ -2009,6 +2119,30 @@ TextureRef::~TextureRef() {
     shared_image_->OnContextLost();
 }
 
+bool TextureRef::BeginAccessSharedImage(GLenum mode) {
+  // When accessing through TextureManager, we are using legacy GL logic which
+  // tracks clearning internally. Always allow access to uncleared
+  // SharedImages.
+  shared_image_scoped_access_ = shared_image_->BeginScopedAccess(
+      mode, SharedImageRepresentation::AllowUnclearedAccess::kYes);
+  if (!shared_image_scoped_access_) {
+    return false;
+  }
+  // After beginning access, the returned gles2::Texture's cleared status
+  // should match the SharedImage's.
+  DCHECK_EQ(shared_image_->ClearedRect(),
+            texture_->GetLevelClearedRect(texture_->target(), 0));
+  return true;
+}
+
+void TextureRef::EndAccessSharedImage() {
+  shared_image_scoped_access_.reset();
+  // After ending access, the SharedImages cleared rect should be synchronized
+  // with |texture_|'s.
+  DCHECK_EQ(shared_image_->ClearedRect(),
+            texture_->GetLevelClearedRect(texture_->target(), 0));
+}
+
 void TextureRef::ForceContextLost() {
   force_context_lost_ = true;
 }
@@ -2095,6 +2229,7 @@ void TextureManager::Initialize() {
       GL_TEXTURE_CUBE_MAP, &black_texture_ids_[kCubeMap]);
 
   if (feature_info_->IsWebGL2OrES3Context()) {
+    DCHECK(feature_info_->IsES3Capable());
     default_textures_[kTexture3D] = CreateDefaultAndBlackTextures(
         GL_TEXTURE_3D, &black_texture_ids_[kTexture3D]);
     default_textures_[kTexture2DArray] = CreateDefaultAndBlackTextures(
@@ -2226,6 +2361,7 @@ bool TextureManager::ClearRenderableLevels(DecoderContext* decoder,
   return ref->texture()->ClearRenderableLevels(decoder);
 }
 
+// static
 bool TextureManager::ClearTextureLevel(DecoderContext* decoder,
                                        TextureRef* ref,
                                        GLenum target,
@@ -2235,6 +2371,7 @@ bool TextureManager::ClearTextureLevel(DecoderContext* decoder,
   return ClearTextureLevel(decoder, texture, target, level);
 }
 
+// static
 bool TextureManager::ClearTextureLevel(DecoderContext* decoder,
                                        Texture* texture,
                                        GLenum target,
@@ -2476,11 +2613,9 @@ GLsizei TextureManager::ComputeMipMapCount(GLenum target,
     case GL_TEXTURE_RECTANGLE_ARB:
       return 1;
     case GL_TEXTURE_3D:
-      return 1 +
-             base::bits::Log2Floor(std::max(std::max(width, height), depth));
+      return 1 + base::bits::Log2Floor(std::max({width, height, depth}));
     default:
-      return 1 +
-             base::bits::Log2Floor(std::max(width, height));
+      return 1 + base::bits::Log2Floor(std::max(width, height));
   }
 }
 
@@ -2646,9 +2781,9 @@ bool TextureManager::ValidateTexImage(ContextState* state,
                                       const DoTexImageArguments& args,
                                       TextureRef** texture_ref) {
   const Validators* validators = feature_info_->validators();
-  if (((args.command_type == DoTexImageArguments::kTexImage2D) &&
+  if (((args.command_type == DoTexImageArguments::CommandType::kTexImage2D) &&
        !validators->texture_target.IsValid(args.target)) ||
-      ((args.command_type == DoTexImageArguments::kTexImage3D) &&
+      ((args.command_type == DoTexImageArguments::CommandType::kTexImage3D) &&
        !validators->texture_3_d_target.IsValid(args.target))) {
     ERRORSTATE_SET_GL_ERROR_INVALID_ENUM(
         error_state, function_name, args.target, "target");
@@ -2843,7 +2978,7 @@ void TextureManager::ValidateAndDoTexImage(
   if (texture_state->unpack_overlapping_rows_separately_unpack_buffer &&
       buffer) {
     ContextState::Dimension dimension =
-        (args.command_type == DoTexImageArguments::kTexImage3D)
+        (args.command_type == DoTexImageArguments::CommandType::kTexImage3D)
             ? ContextState::k3D
             : ContextState::k2D;
     const PixelStoreParams unpack_params(state->GetUnpackParams(dimension));
@@ -2857,11 +2992,22 @@ void TextureManager::ValidateAndDoTexImage(
                                 args);
 
       DoTexSubImageArguments sub_args = {
-          args.target, args.level, 0, 0, 0, args.width, args.height, args.depth,
-          args.format, args.type, args.pixels, args.pixels_size, args.padding,
-          args.command_type == DoTexImageArguments::kTexImage3D
-              ? DoTexSubImageArguments::kTexSubImage3D
-              : DoTexSubImageArguments::kTexSubImage2D};
+          args.target,
+          args.level,
+          0,
+          0,
+          0,
+          args.width,
+          args.height,
+          args.depth,
+          args.format,
+          args.type,
+          args.pixels,
+          args.pixels_size,
+          args.padding,
+          args.command_type == DoTexImageArguments::CommandType::kTexImage3D
+              ? DoTexSubImageArguments::CommandType::kTexSubImage3D
+              : DoTexSubImageArguments::CommandType::kTexSubImage2D};
       DoTexSubImageRowByRowWorkaround(texture_state, state, sub_args,
                                       unpack_params);
 
@@ -2870,7 +3016,7 @@ void TextureManager::ValidateAndDoTexImage(
     }
   }
 
-  if (args.command_type == DoTexImageArguments::kTexImage3D &&
+  if (args.command_type == DoTexImageArguments::CommandType::kTexImage3D &&
       texture_state->unpack_image_height_workaround_with_unpack_buffer &&
       buffer) {
     ContextState::Dimension dimension = ContextState::k3D;
@@ -2895,7 +3041,7 @@ void TextureManager::ValidateAndDoTexImage(
           args.pixels,
           args.pixels_size,
           args.padding,
-          DoTexSubImageArguments::kTexSubImage3D};
+          DoTexSubImageArguments::CommandType::kTexSubImage3D};
       DoTexSubImageLayerByLayerWorkaround(texture_state, state, sub_args,
                                           unpack_params);
 
@@ -2915,11 +3061,22 @@ void TextureManager::ValidateAndDoTexImage(
                                 args);
 
       DoTexSubImageArguments sub_args = {
-          args.target, args.level, 0, 0, 0, args.width, args.height, args.depth,
-          args.format, args.type, args.pixels, args.pixels_size, args.padding,
-          args.command_type == DoTexImageArguments::kTexImage3D ?
-              DoTexSubImageArguments::kTexSubImage3D :
-              DoTexSubImageArguments::kTexSubImage2D};
+          args.target,
+          args.level,
+          0,
+          0,
+          0,
+          args.width,
+          args.height,
+          args.depth,
+          args.format,
+          args.type,
+          args.pixels,
+          args.pixels_size,
+          args.padding,
+          args.command_type == DoTexImageArguments::CommandType::kTexImage3D
+              ? DoTexSubImageArguments::CommandType::kTexSubImage3D
+              : DoTexSubImageArguments::CommandType::kTexSubImage2D};
       DoTexSubImageWithAlignmentWorkaround(texture_state, state, sub_args);
 
       SetLevelCleared(texture_ref, args.target, args.level, true);
@@ -2957,9 +3114,11 @@ bool TextureManager::ValidateTexSubImage(ContextState* state,
                                          TextureRef** texture_ref) {
   const Validators* validators = feature_info_->validators();
 
-  if ((args.command_type == DoTexSubImageArguments::kTexSubImage2D &&
+  if ((args.command_type ==
+           DoTexSubImageArguments::CommandType::kTexSubImage2D &&
        !validators->texture_target.IsValid(args.target)) ||
-      (args.command_type == DoTexSubImageArguments::kTexSubImage3D &&
+      (args.command_type ==
+           DoTexSubImageArguments::CommandType::kTexSubImage3D &&
        !validators->texture_3_d_target.IsValid(args.target))) {
     ERRORSTATE_SET_GL_ERROR_INVALID_ENUM(error_state, function_name,
                                          args.target, "target");
@@ -3088,7 +3247,8 @@ void TextureManager::ValidateAndDoTexSubImage(
       args.width != tex_width || args.height != tex_height ||
       args.depth != tex_depth) {
     gfx::Rect cleared_rect;
-    if (args.command_type == DoTexSubImageArguments::kTexSubImage2D &&
+    if (args.command_type ==
+            DoTexSubImageArguments::CommandType::kTexSubImage2D &&
         CombineAdjacentRects(
             texture->GetLevelClearedRect(args.target, args.level),
             gfx::Rect(args.xoffset, args.yoffset, args.width, args.height),
@@ -3117,7 +3277,8 @@ void TextureManager::ValidateAndDoTexSubImage(
   if (texture_state->unpack_overlapping_rows_separately_unpack_buffer &&
       buffer) {
     ContextState::Dimension dimension =
-        (args.command_type == DoTexSubImageArguments::kTexSubImage3D)
+        (args.command_type ==
+         DoTexSubImageArguments::CommandType::kTexSubImage3D)
             ? ContextState::k3D
             : ContextState::k2D;
     const PixelStoreParams unpack_params(state->GetUnpackParams(dimension));
@@ -3132,7 +3293,8 @@ void TextureManager::ValidateAndDoTexSubImage(
     }
   }
 
-  if (args.command_type == DoTexSubImageArguments::kTexSubImage3D &&
+  if (args.command_type ==
+          DoTexSubImageArguments::CommandType::kTexSubImage3D &&
       texture_state->unpack_image_height_workaround_with_unpack_buffer &&
       buffer) {
     ContextState::Dimension dimension = ContextState::k3D;
@@ -3163,24 +3325,26 @@ void TextureManager::ValidateAndDoTexSubImage(
     texture->GetLevelType(args.target, args.level, &tex_type, &internal_format);
     // NOTE: In OpenGL ES 2/3 border is always zero. If that changes we'll need
     // to look it up.
-    if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
-      glTexImage3D(
-          args.target, args.level,
-          AdjustTexInternalFormat(feature_info_.get(), internal_format),
-          args.width, args.height, args.depth, 0,
-          AdjustTexFormat(feature_info_.get(), args.format), args.type,
-          args.pixels);
+    if (args.command_type ==
+        DoTexSubImageArguments::CommandType::kTexSubImage3D) {
+      glTexImage3D(args.target, args.level,
+                   AdjustTexInternalFormat(feature_info_.get(), internal_format,
+                                           args.type),
+                   args.width, args.height, args.depth, 0,
+                   AdjustTexFormat(feature_info_.get(), args.format), args.type,
+                   args.pixels);
     } else {
-      glTexImage2D(
-          args.target, args.level,
-          AdjustTexInternalFormat(feature_info_.get(), internal_format),
-          args.width, args.height, 0,
-          AdjustTexFormat(feature_info_.get(), args.format), args.type,
-          args.pixels);
+      glTexImage2D(args.target, args.level,
+                   AdjustTexInternalFormat(feature_info_.get(), internal_format,
+                                           args.type),
+                   args.width, args.height, 0,
+                   AdjustTexFormat(feature_info_.get(), args.format), args.type,
+                   args.pixels);
     }
   } else {
     TRACE_EVENT0("gpu", "SubImage");
-    if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
+    if (args.command_type ==
+        DoTexSubImageArguments::CommandType::kTexSubImage3D) {
       glTexSubImage3D(args.target, args.level, args.xoffset, args.yoffset,
                       args.zoffset, args.width, args.height, args.depth,
                       AdjustTexFormat(feature_info_.get(), args.format),
@@ -3202,7 +3366,8 @@ void TextureManager::DoTexSubImageWithAlignmentWorkaround(
   DCHECK(args.width > 0 && args.height > 0 && args.depth > 0);
 
   uint32_t offset = ToGLuint(args.pixels);
-  if (args.command_type == DoTexSubImageArguments::kTexSubImage2D) {
+  if (args.command_type ==
+      DoTexSubImageArguments::CommandType::kTexSubImage2D) {
     PixelStoreParams params = state->GetUnpackParams(ContextState::k2D);
     if (args.height > 1) {
       glTexSubImage2D(args.target, args.level, args.xoffset, args.yoffset,
@@ -3323,7 +3488,8 @@ void TextureManager::DoTexSubImageRowByRowWorkaround(
     row_bytes += unpack_params.alignment - alignment_diff;
   }
   DCHECK_EQ(0, row_bytes % unpack_params.alignment);
-  if (args.command_type == DoTexSubImageArguments::kTexSubImage3D) {
+  if (args.command_type ==
+      DoTexSubImageArguments::CommandType::kTexSubImage3D) {
     GLsizei image_height = args.height;
     if (unpack_params.image_height != 0) {
       image_height = unpack_params.image_height;
@@ -3414,12 +3580,36 @@ const Texture::CompatibilitySwizzle* TextureManager::GetCompatibilitySwizzle(
 // static
 GLenum TextureManager::AdjustTexInternalFormat(
     const gles2::FeatureInfo* feature_info,
-    GLenum format) {
+    GLenum format,
+    GLenum type) {
   if (feature_info->gl_version_info().NeedsLuminanceAlphaEmulation()) {
     const Texture::CompatibilitySwizzle* swizzle =
         GetCompatibilitySwizzleInternal(format);
-    if (swizzle)
-      return swizzle->dest_format;
+    if (swizzle) {
+      if (swizzle->dest_format == GL_RED) {
+        switch (type) {
+          case GL_FLOAT:
+            return GL_R32F;
+          case GL_HALF_FLOAT:
+          case GL_HALF_FLOAT_OES:
+            return GL_R16F;
+          default:
+            return GL_R8;
+        }
+      } else if (swizzle->dest_format == GL_RG) {
+        switch (type) {
+          case GL_FLOAT:
+            return GL_RG32F;
+          case GL_HALF_FLOAT:
+          case GL_HALF_FLOAT_OES:
+            return GL_RG16F;
+          default:
+            return GL_RG8;
+        }
+      } else {
+        NOTREACHED();
+      }
+    }
   }
   return format;
 }
@@ -3514,30 +3704,23 @@ void TextureManager::DoTexImage(DecoderTextureState* texture_state,
 
   ERRORSTATE_COPY_REAL_GL_ERRORS_TO_WRAPPER(error_state, function_name);
   {
-    if (args.command_type == DoTexImageArguments::kTexImage3D) {
-      glTexImage3D(
-          args.target, args.level,
-          AdjustTexInternalFormat(feature_info_.get(), args.internal_format),
-          args.width, args.height, args.depth, args.border,
-          AdjustTexFormat(feature_info_.get(), args.format), args.type,
-          args.pixels);
+    if (args.command_type == DoTexImageArguments::CommandType::kTexImage3D) {
+      glTexImage3D(args.target, args.level,
+                   AdjustTexInternalFormat(feature_info_.get(),
+                                           args.internal_format, args.type),
+                   args.width, args.height, args.depth, args.border,
+                   AdjustTexFormat(feature_info_.get(), args.format), args.type,
+                   args.pixels);
     } else {
-      glTexImage2D(
-          args.target, args.level,
-          AdjustTexInternalFormat(feature_info_.get(), args.internal_format),
-          args.width, args.height, args.border,
-          AdjustTexFormat(feature_info_.get(), args.format), args.type,
-          args.pixels);
+      glTexImage2D(args.target, args.level,
+                   AdjustTexInternalFormat(feature_info_.get(),
+                                           args.internal_format, args.type),
+                   args.width, args.height, args.border,
+                   AdjustTexFormat(feature_info_.get(), args.format), args.type,
+                   args.pixels);
     }
   }
   GLenum error = ERRORSTATE_PEEK_GL_ERROR(error_state, function_name);
-  if (args.command_type == DoTexImageArguments::kTexImage3D) {
-    UMA_HISTOGRAM_CUSTOM_ENUMERATION("GPU.Error_TexImage3D", error,
-        GetAllGLErrors());
-  } else {
-    UMA_HISTOGRAM_CUSTOM_ENUMERATION("GPU.Error_TexImage2D", error,
-        GetAllGLErrors());
-  }
   if (error == GL_NO_ERROR) {
     bool set_as_cleared = (args.pixels != nullptr || unpack_buffer_bound);
     SetLevelInfo(
@@ -3653,12 +3836,15 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
   switch (internalformat) {
     case GL_COMPRESSED_R11_EAC:
     case GL_COMPRESSED_SIGNED_R11_EAC:
+    case GL_COMPRESSED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
     case GL_RED:
     case GL_R8:
     case GL_R8_SNORM:
     case GL_R16F:
     case GL_R32F:
     case GL_R16_EXT:
+    case GL_R16_SNORM_EXT:
       return GL_RED;
     case GL_R8UI:
     case GL_R8I:
@@ -3669,9 +3855,13 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
       return GL_RED_INTEGER;
     case GL_COMPRESSED_RG11_EAC:
     case GL_COMPRESSED_SIGNED_RG11_EAC:
+    case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+    case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
     case GL_RG:
     case GL_RG8:
     case GL_RG8_SNORM:
+    case GL_RG16:
+    case GL_RG16_SNORM:
     case GL_RG16F:
     case GL_RG32F:
       return GL_RG;
@@ -3683,6 +3873,8 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_RG32I:
       return GL_RG_INTEGER;
     case GL_ATC_RGB_AMD:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
     case GL_COMPRESSED_RGB_PVRTC_2BPPV1_IMG:
     case GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG:
     case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
@@ -3693,9 +3885,11 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_RGB:
     case GL_RGB8:
     case GL_SRGB8:
+    case GL_RGB16:
     case GL_R11F_G11F_B10F:
     case GL_RGB565:
     case GL_RGB8_SNORM:
+    case GL_RGB16_SNORM:
     case GL_RGB9_E5:
     case GL_RGB16F:
     case GL_RGB32F:
@@ -3721,15 +3915,47 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
     case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
     case GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+    case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x12_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR:
     case GL_RGBA:
     case GL_RGBA8:
+    case GL_RGBA16:
     case GL_SRGB8_ALPHA8:
     case GL_RGBA8_SNORM:
+    case GL_RGBA16_SNORM:
     case GL_RGBA4:
     case GL_RGB5_A1:
     case GL_RGB10_A2:
@@ -3812,6 +4038,8 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
       return GL_SHORT;
     case GL_R16_EXT:
       return GL_UNSIGNED_SHORT;
+    case GL_R16_SNORM_EXT:
+      return GL_SHORT;
     case GL_R32UI:
       return GL_UNSIGNED_INT;
     case GL_R32I:
@@ -3831,6 +4059,10 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
     case GL_RG16UI:
       return GL_UNSIGNED_SHORT;
     case GL_RG16I:
+      return GL_SHORT;
+    case GL_RG16_EXT:
+      return GL_UNSIGNED_SHORT;
+    case GL_RG16_SNORM_EXT:
       return GL_SHORT;
     case GL_RG32UI:
       return GL_UNSIGNED_INT;
@@ -3858,6 +4090,10 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
     case GL_RGB16UI:
       return GL_UNSIGNED_SHORT;
     case GL_RGB16I:
+      return GL_SHORT;
+    case GL_RGB16_EXT:
+      return GL_UNSIGNED_SHORT;
+    case GL_RGB16_SNORM_EXT:
       return GL_SHORT;
     case GL_RGB32UI:
       return GL_UNSIGNED_INT;
@@ -3888,6 +4124,10 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
     case GL_RGBA16UI:
       return GL_UNSIGNED_SHORT;
     case GL_RGBA16I:
+      return GL_SHORT;
+    case GL_RGBA16_EXT:
+      return GL_UNSIGNED_SHORT;
+    case GL_RGBA16_SNORM_EXT:
       return GL_SHORT;
     case GL_RGBA32I:
       return GL_INT;
@@ -3923,6 +4163,78 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
       return GL_HALF_FLOAT_OES;
     case GL_BGRA8_EXT:
       return GL_UNSIGNED_BYTE;
+    // Compressed Formats
+    // S3TC
+    case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_SRGB_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    // ASTC
+    case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x12_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR:
+    // BPTC
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
+    // RGTC
+    case GL_COMPRESSED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+    case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
+    // ETC2/EAC
+    case GL_COMPRESSED_R11_EAC:
+    case GL_COMPRESSED_SIGNED_R11_EAC:
+    case GL_COMPRESSED_RGB8_ETC2:
+    case GL_COMPRESSED_SRGB8_ETC2:
+    case GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+    case GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+    case GL_COMPRESSED_RG11_EAC:
+    case GL_COMPRESSED_SIGNED_RG11_EAC:
+    case GL_COMPRESSED_RGBA8_ETC2_EAC:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
+    // ETC1
+    case GL_ETC1_RGB8_OES:
+    // PVRTC
+    case GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG:
+    case GL_COMPRESSED_RGBA_PVRTC_4BPPV1_IMG:
+    case GL_COMPRESSED_RGB_PVRTC_2BPPV1_IMG:
+    case GL_COMPRESSED_RGBA_PVRTC_2BPPV1_IMG:
+    // ATC
+    case GL_ATC_RGB_AMD:
+    case GL_ATC_RGBA_EXPLICIT_ALPHA_AMD:
+    case GL_ATC_RGBA_INTERPOLATED_ALPHA_AMD:
+      return GL_UNSIGNED_BYTE;
     default:
       return GL_NONE;
   }
@@ -3956,7 +4268,9 @@ GLenum Texture::GetInternalFormatOfBaseLevel() const {
   return level_info ? level_info->internal_format : GL_NONE;
 }
 
-bool Texture::CompatibleWithSamplerUniformType(GLenum type) const {
+bool Texture::CompatibleWithSamplerUniformType(
+    GLenum type,
+    const SamplerState& sampler_state) const {
   enum {
     SAMPLER_INVALID,
     SAMPLER_FLOAT,
@@ -4002,16 +4316,17 @@ bool Texture::CompatibleWithSamplerUniformType(GLenum type) const {
   }
   if ((level_info->format == GL_DEPTH_COMPONENT ||
        level_info->format == GL_DEPTH_STENCIL) &&
-      sampler_state_.compare_mode != GL_NONE) {
+      sampler_state.compare_mode != GL_NONE) {
     // If TEXTURE_COMPARE_MODE is set, then depth textures can only be sampled
     // by shadow samplers.
     return category == SAMPLER_SHADOW;
   }
 
-  if (level_info->type == GL_NONE && level_info->format == GL_NONE &&
-      level_info->internal_format != GL_NONE) {
-    // This is probably a compressed texture format. All compressed formats are
-    // sampled as float.
+  DCHECK(memory_tracking_ref_);
+  if (memory_tracking_ref_->manager()
+          ->feature_info_->validators()
+          ->compressed_texture_format.IsValid(level_info->internal_format)) {
+    // Compressed texture format. All compressed formats are sampled as float
     return category == SAMPLER_FLOAT;
   }
 
@@ -4022,7 +4337,8 @@ bool Texture::CompatibleWithSamplerUniformType(GLenum type) const {
       level_info->format == GL_DEPTH_STENCIL ||
       level_info->format == GL_LUMINANCE_ALPHA ||
       level_info->format == GL_LUMINANCE || level_info->format == GL_ALPHA ||
-      level_info->format == GL_BGRA_EXT || level_info->format == GL_SRGB_EXT;
+      level_info->format == GL_BGRA_EXT || level_info->format == GL_SRGB_EXT ||
+      level_info->format == GL_SRGB_ALPHA_EXT;
   if (normalized) {
     // All normalized texture formats are sampled as float.
     return category == SAMPLER_FLOAT;

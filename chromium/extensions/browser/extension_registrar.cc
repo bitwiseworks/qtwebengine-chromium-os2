@@ -4,6 +4,8 @@
 
 #include "extensions/browser/extension_registrar.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -23,6 +25,7 @@
 #include "extensions/browser/renderer_startup_helper.h"
 #include "extensions/browser/runtime_data.h"
 #include "extensions/browser/service_worker_task_queue.h"
+#include "extensions/browser/task_queue_util.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 
 using content::DevToolsAgentHost;
@@ -37,8 +40,8 @@ ExtensionRegistrar::ExtensionRegistrar(content::BrowserContext* browser_context,
       extension_prefs_(ExtensionPrefs::Get(browser_context)),
       registry_(ExtensionRegistry::Get(browser_context)),
       renderer_helper_(
-          RendererStartupHelperFactory::GetForBrowserContext(browser_context)),
-      weak_factory_(this) {}
+          RendererStartupHelperFactory::GetForBrowserContext(browser_context)) {
+}
 
 ExtensionRegistrar::~ExtensionRegistrar() = default;
 
@@ -109,6 +112,7 @@ void ExtensionRegistrar::AddExtension(
 void ExtensionRegistrar::AddNewExtension(
     scoped_refptr<const Extension> extension) {
   if (extension_prefs_->IsExtensionBlacklisted(extension->id())) {
+    DCHECK(!Manifest::IsComponentLocation(extension->location()));
     // Only prefs is checked for the blacklist. We rely on callers to check the
     // blacklist before calling into here, e.g. CrxInstaller checks before
     // installation then threads through the install and pending install flow
@@ -116,6 +120,7 @@ void ExtensionRegistrar::AddNewExtension(
     // extensions.
     registry_->AddBlacklisted(extension);
   } else if (delegate_->ShouldBlockExtension(extension.get())) {
+    DCHECK(!Manifest::IsComponentLocation(extension->location()));
     registry_->AddBlocked(extension);
   } else if (extension_prefs_->IsExtensionDisabled(extension->id())) {
     registry_->AddDisabled(extension);
@@ -246,7 +251,8 @@ void ExtensionRegistrar::DisableExtension(const ExtensionId& extension_id,
         extensions::disable_reason::DISABLE_RELOAD |
         extensions::disable_reason::DISABLE_CORRUPTED |
         extensions::disable_reason::DISABLE_UPDATE_REQUIRED_BY_POLICY |
-        extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY;
+        extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY |
+        extensions::disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED;
     disable_reasons &= internal_disable_reason_mask;
 
     if (disable_reasons == disable_reason::DISABLE_NONE)
@@ -351,7 +357,7 @@ void ExtensionRegistrar::TerminateExtension(const ExtensionId& extension_id) {
   // even if it's not permanently installed.
   unloaded_extension_paths_[extension->id()] = extension->path();
 
-  DCHECK(!base::ContainsKey(reloading_extensions_, extension->id()))
+  DCHECK(!base::Contains(reloading_extensions_, extension->id()))
       << "Enabled extension shouldn't be marked for reloading";
 
   registry_->AddTerminated(extension);
@@ -425,18 +431,20 @@ void ExtensionRegistrar::ActivateExtension(const Extension* extension,
   // ensure its URLRequestContexts appropriately discover the loaded extension.
   extension_system_->RegisterExtensionWithRequestContexts(
       extension,
-      base::Bind(&ExtensionRegistrar::OnExtensionRegisteredWithRequestContexts,
-                 weak_factory_.GetWeakPtr(), WrapRefCounted(extension)));
+      base::BindOnce(
+          &ExtensionRegistrar::OnExtensionRegisteredWithRequestContexts,
+          weak_factory_.GetWeakPtr(), WrapRefCounted(extension)));
 
-  renderer_helper_->OnExtensionLoaded(*extension);
-
+  // Activate the extension before calling
+  // RendererStartupHelper::OnExtensionLoaded() below, so that we have
+  // activation information ready while we send ExtensionMsg_Load IPC.
+  //
   // TODO(lazyboy): We should move all logic that is required to start up an
   // extension to a separate class, instead of calling adhoc methods like
   // service worker ones below.
-  if (BackgroundInfo::IsServiceWorkerBased(extension)) {
-    DCHECK(extension->is_extension());
-    ServiceWorkerTaskQueue::Get(browser_context_)->ActivateExtension(extension);
-  }
+  ActivateTaskQueueForExtension(browser_context_, extension);
+
+  renderer_helper_->OnExtensionLoaded(*extension);
 
   // Tell subsystems that use the ExtensionRegistryObserver::OnExtensionLoaded
   // about the new extension.
@@ -461,10 +469,8 @@ void ExtensionRegistrar::DeactivateExtension(const Extension* extension,
   renderer_helper_->OnExtensionUnloaded(*extension);
   extension_system_->UnregisterExtensionWithRequestContexts(extension->id(),
                                                             reason);
-  if (BackgroundInfo::IsServiceWorkerBased(extension)) {
-    ServiceWorkerTaskQueue::Get(browser_context_)
-        ->DeactivateExtension(extension);
-  }
+  DeactivateTaskQueueForExtension(browser_context_, extension);
+
   delegate_->PostDeactivateExtension(extension);
 }
 
@@ -509,7 +515,7 @@ void ExtensionRegistrar::MaybeSpinUpLazyBackgroundPage(
   // For orphaned devtools, we will reconnect devtools to it later in
   // DidCreateRenderViewForBackgroundPage().
   bool has_orphaned_dev_tools =
-      base::ContainsKey(orphaned_dev_tools_, extension->id());
+      base::Contains(orphaned_dev_tools_, extension->id());
 
   // Reloading component extension does not trigger install, so RuntimeAPI won't
   // be able to detect its loading. Therefore, we need to spin up its lazy

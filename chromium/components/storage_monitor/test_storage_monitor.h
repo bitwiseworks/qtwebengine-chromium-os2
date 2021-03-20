@@ -12,6 +12,11 @@
 #include "build/build_config.h"
 #include "components/storage_monitor/storage_monitor.h"
 
+#if defined(OS_CHROMEOS)
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/device/public/mojom/mtp_manager.mojom.h"
+#endif
+
 namespace storage_monitor {
 
 class TestStorageMonitor : public StorageMonitor {
@@ -55,7 +60,7 @@ class TestStorageMonitor : public StorageMonitor {
 
   void EjectDevice(
       const std::string& device_id,
-      base::Callback<void(StorageMonitor::EjectStatus)> callback) override;
+      base::OnceCallback<void(StorageMonitor::EjectStatus)> callback) override;
 
   const std::string& ejected_device() const { return ejected_device_; }
 
@@ -74,7 +79,7 @@ class TestStorageMonitor : public StorageMonitor {
   std::vector<base::FilePath> removable_paths_;
 
 #if defined(OS_CHROMEOS)
-  device::mojom::MtpManagerPtr media_transfer_protocol_manager_;
+  mojo::Remote<device::mojom::MtpManager> media_transfer_protocol_manager_;
 #endif
 };
 

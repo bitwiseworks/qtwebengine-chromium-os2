@@ -28,7 +28,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-
+ 
 /* Return true if the line is all zeros */
 static int allZero(unsigned char *aLine){
   int i;
@@ -51,7 +51,7 @@ int main(int argc, char **argv){
   unsigned char bShow[256];      /* Characters ok to display */
   memset(bShow, '.', sizeof(bShow));
   for(i=' '; i<='~'; i++){
-    if( i!='{' && i!='}' && i!='"' && i!='\\' ) bShow[i] = i;
+    if( i!='{' && i!='}' && i!='"' && i!='\\' ) bShow[i] = (unsigned char)i;
   }
   for(i=1; i<argc; i++){
     if( argv[i][0]=='-' ){

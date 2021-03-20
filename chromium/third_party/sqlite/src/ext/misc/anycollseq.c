@@ -40,15 +40,15 @@ static void anyCollNeeded(
   int eTextRep,
   const char *zCollName
 ){
-  sqlite3_create_collation(db, zCollName, eTextRep, 0, anyCollFunc);
+  sqlite3_create_collation(db, zCollName, eTextRep, 0, anyCollFunc); 
 }
 
 #ifdef _WIN32
 __declspec(dllexport)
 #endif
 int sqlite3_anycollseq_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

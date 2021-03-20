@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 buildconfig = "//build/config/BUILDCONFIG.gn"
-secondary_source = "//build/secondary/"
 
 default_args = {
   v8_extra_library_files = []
@@ -11,9 +10,6 @@ default_args = {
 
   # Turns on compiler optimizations in V8 in Debug build.
   v8_optimized_debug = true
-
-  # PDFium does not want to switch to C++14 yet.
-  use_cxx11 = true
 }
 
 check_targets = [

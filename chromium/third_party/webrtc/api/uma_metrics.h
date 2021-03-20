@@ -37,12 +37,6 @@ enum PeerConnectionAddressFamilyCounter {
   kPeerConnectionAddressFamilyCounter_Max,
 };
 
-// TODO(guoweis): Keep previous name here until all references are renamed.
-#define kBoundary kPeerConnectionAddressFamilyCounter_Max
-
-// TODO(guoweis): Keep previous name here until all references are renamed.
-typedef PeerConnectionAddressFamilyCounter PeerConnectionUMAMetricsCounter;
-
 // This enum defines types for UMA samples, which will have a range.
 enum PeerConnectionMetricsName {
   kNetworkInterfaces_IPv4,  // Number of IPv4 interfaces.
@@ -52,9 +46,6 @@ enum PeerConnectionMetricsName {
   kLocalCandidates_IPv6,    // Number of IPv6 local candidates.
   kPeerConnectionMetricsName_Max
 };
-
-// TODO(guoweis): Keep previous name here until all references are renamed.
-typedef PeerConnectionMetricsName PeerConnectionUMAMetricsName;
 
 // The IceCandidatePairType has the format of
 // <local_candidate_type>_<remote_candidate_type>. It is recorded based on the
@@ -153,6 +144,14 @@ enum AddIceCandidateResult {
   kAddIceCandidateFailInAddition,
   kAddIceCandidateFailNotUsable,
   kAddIceCandidateMax
+};
+
+// Metric for recording which api surface was used to enable simulcast.
+enum SimulcastApiVersion {
+  kSimulcastApiVersionNone,
+  kSimulcastApiVersionLegacy,
+  kSimulcastApiVersionSpecCompliant,
+  kSimulcastApiVersionMax,
 };
 
 }  // namespace webrtc

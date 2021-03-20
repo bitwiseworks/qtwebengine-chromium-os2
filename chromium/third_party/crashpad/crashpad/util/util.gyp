@@ -24,7 +24,9 @@
         '../compat/compat.gyp:crashpad_compat',
         '../third_party/mini_chromium/mini_chromium.gyp:base',
         '../third_party/zlib/zlib.gyp:zlib',
+        '../third_party/lss/lss.gyp:lss',
       ],
+      'defines': [ 'ZLIB_CONST' ],
       'include_dirs': [
         '..',
         '<(INTERMEDIATE_DIR)',
@@ -48,6 +50,8 @@
         'file/filesystem_win.cc',
         'file/file_writer.cc',
         'file/file_writer.h',
+        'file/output_stream_file_writer.cc',
+        'file/output_stream_file_writer.h',
         'file/scoped_remove_file.cc',
         'file/scoped_remove_file.h',
         'file/string_file.cc',
@@ -67,6 +71,8 @@
         'linux/memory_map.h',
         'linux/proc_stat_reader.cc',
         'linux/proc_stat_reader.h',
+        'linux/proc_task_reader.cc',
+        'linux/proc_task_reader.h',
         'linux/ptrace_broker.cc',
         'linux/ptrace_broker.h',
         'linux/ptrace_client.cc',
@@ -80,6 +86,8 @@
         'linux/scoped_pr_set_ptracer.h',
         'linux/scoped_ptrace_attach.cc',
         'linux/scoped_ptrace_attach.h',
+        'linux/socket.cc',
+        'linux/socket.h',
         'linux/thread_info.cc',
         'linux/thread_info.h',
         'linux/traits.h',
@@ -163,6 +171,7 @@
         'misc/symbolic_constants_common.h',
         'misc/time.cc',
         'misc/time.h',
+        'misc/time_linux.cc',
         'misc/time_win.cc',
         'misc/tri_state.h',
         'misc/uuid.cc',
@@ -179,7 +188,6 @@
         'net/http_transport.cc',
         'net/http_transport.h',
         'net/http_transport_mac.mm',
-        'net/http_transport_none.cc',
         'net/http_transport_win.cc',
         'net/url.cc',
         'net/url.h',
@@ -209,6 +217,7 @@
         'posix/signals.h',
         'posix/symbolic_constants_posix.cc',
         'posix/symbolic_constants_posix.h',
+        'process/process_id.h',
         'process/process_memory.cc',
         'process/process_memory.h',
         'process/process_memory_linux.cc',
@@ -229,6 +238,17 @@
         'stdlib/strnlen.cc',
         'stdlib/strnlen.h',
         'stdlib/thread_safe_vector.h',
+        'stream/base94_output_stream.cc',
+        'stream/base94_output_stream.h',
+        'stream/file_encoder.cc',
+        'stream/file_encoder.h',
+        'stream/file_output_stream.cc',
+        'stream/file_output_stream.h',
+        'stream/log_output_stream.cc',
+        'stream/log_output_stream.h',
+        'stream/output_stream_interface.h',
+        'stream/zlib_output_stream.cc',
+        'stream/zlib_output_stream.h',
         'string/split_string.cc',
         'string/split_string.h',
         'synchronization/semaphore_mac.cc',
@@ -387,18 +407,22 @@
             'win/safe_terminate_process.asm',
           ],
         }],
-        ['OS=="linux"', {
+        ['OS=="android"', {
+          'link_settings': {
+            'libraries': [
+              '-llog',
+            ],
+          },
+        }],
+        ['OS=="linux" or OS=="android"', {
           'sources': [
             'net/http_transport_socket.cc',
+            'process/process_memory_sanitized.cc',
+            'process/process_memory_sanitized.h',
           ],
         }, {  # else: OS!="linux"
           'sources!': [
             'misc/capture_context_linux.S',
-          ],
-        }],
-        ['OS!="android"', {
-          'sources!': [
-            'net/http_transport_none.cc',
           ],
         }],
         ['OS!="linux" and OS!="android"', {
@@ -413,10 +437,16 @@
             ['include', '^linux/'],
             ['include', '^misc/capture_context_linux\\.S$'],
             ['include', '^misc/paths_linux\\.cc$'],
+            ['include', '^misc/time_linux\\.cc$'],
             ['include', '^posix/process_info_linux\\.cc$'],
             ['include', '^process/process_memory_linux\\.cc$'],
             ['include', '^process/process_memory_linux\\.h$'],
           ],
+        }, { # else: OS!="android"
+          'sources!': [
+            'stream/log_output_stream.cc',
+            'stream/log_output_stream.h',
+          ]
         }],
       ],
     },

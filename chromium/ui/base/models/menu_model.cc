@@ -6,6 +6,13 @@
 
 namespace ui {
 
+MenuModel::MenuModel() : menu_model_delegate_(nullptr) {}
+
+MenuModel::~MenuModel() {
+  if (menu_model_delegate_)
+    menu_model_delegate_->OnMenuClearingDelegate();
+}
+
 bool MenuModel::IsVisibleAt(int index) const {
   return true;
 }
@@ -39,10 +46,6 @@ bool MenuModel::GetModelAndIndexForCommandId(int command_id,
   return false;
 }
 
-base::string16 MenuModel::GetSublabelAt(int index) const {
-  return base::string16();
-}
-
 base::string16 MenuModel::GetMinorTextAt(int index) const {
   return base::string16();
 }
@@ -55,9 +58,21 @@ const gfx::FontList* MenuModel::GetLabelFontListAt(int index) const {
   return NULL;
 }
 
+const gfx::VectorIcon* MenuModel::GetVectorIconAt(int index) const {
+  return nullptr;
+}
+
 // Default implementation ignores the event flags.
 void MenuModel::ActivatedAt(int index, int event_flags) {
   ActivatedAt(index);
+}
+
+void MenuModel::SetMenuModelDelegate(MenuModelDelegate* delegate) {
+  // A non-null delegate overwriting our non-null delegate is not allowed.
+  DCHECK(!(menu_model_delegate_ && delegate));
+  if (menu_model_delegate_)
+    menu_model_delegate_->OnMenuClearingDelegate();
+  menu_model_delegate_ = delegate;
 }
 
 }  // namespace ui

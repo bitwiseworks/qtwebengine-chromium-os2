@@ -5,6 +5,12 @@
 import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 
+# Reset sources_assignment_filter for the BUILD.gn file to prevent
+# regression during the migration of Chromium away from the feature.
+# See docs/no_sources_assignment_filter.md for more information.
+# TODO(crbug.com/1018739): remove this when migration is done.
+set_sources_assignment_filter([])
+
 if (is_android) {
   import("//build/config/android/config.gni")
   import("//build/config/android/rules.gni")
@@ -19,23 +25,42 @@ jumbo_component("animation") {
     "animation_container_element.h",
     "animation_container_observer.h",
     "animation_delegate.h",
+    "animation_delegate_notifier.h",
     "animation_export.h",
-    "animation_mac.mm",
-    "animation_win.cc",
+    "animation_runner.cc",
+    "animation_runner.h",
     "linear_animation.cc",
     "linear_animation.h",
     "multi_animation.cc",
     "multi_animation.h",
     "slide_animation.cc",
     "slide_animation.h",
-    "throb_animation.cc",
-    "throb_animation.h",
     "tween.cc",
     "tween.h",
   ]
 
   if (is_android) {
-    sources -= [
+    sources += [ "animation_android.cc" ]
+  }
+
+  if (is_mac) {
+    sources += [ "animation_mac.mm" ]
+  }
+
+  if (is_win) {
+    sources += [ "animation_win.cc" ]
+  }
+
+  if (is_linux) {
+    sources += [
+      "animation_linux.cc",
+      "animation_settings_provider_linux.cc",
+      "animation_settings_provider_linux.h",
+    ]
+  }
+
+  if (!is_android) {
+    sources += [
       "throb_animation.cc",
       "throb_animation.h",
     ]
@@ -56,7 +81,13 @@ jumbo_component("animation") {
     "//skia",
     "//ui/gfx:geometry_skia",
     "//ui/gfx:gfx_export",
+    "//ui/gfx:gfx_switches",
     "//ui/gfx/geometry",
   ]
+
+  if (is_android) {
+    deps += [ "//ui/gfx:gfx_jni_headers" ]
+  }
+
   defines = [ "ANIMATION_IMPLEMENTATION" ]
 }

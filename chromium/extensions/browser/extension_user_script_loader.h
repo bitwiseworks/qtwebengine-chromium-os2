@@ -6,9 +6,11 @@
 #define EXTENSIONS_BROWSER_EXTENSION_USER_SCRIPT_LOADER_H_
 
 #include "base/macros.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/user_script_loader.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_l10n_util.h"
 
 namespace content {
 class BrowserContext;
@@ -17,14 +19,17 @@ class BrowserContext;
 namespace extensions {
 
 class ContentVerifier;
-class ExtensionRegistry;
 
 // UserScriptLoader for extensions.
 class ExtensionUserScriptLoader : public UserScriptLoader,
                                   public ExtensionRegistryObserver {
  public:
-  using PathAndDefaultLocale = std::pair<base::FilePath, std::string>;
-  using HostsInfo = std::map<HostID, PathAndDefaultLocale>;
+  struct PathAndLocaleInfo {
+    base::FilePath file_path;
+    std::string default_locale;
+    extension_l10n_util::GzippedMessagesPermission gzip_permission;
+  };
+  using HostsInfo = std::map<HostID, PathAndLocaleInfo>;
 
   // The listen_for_extension_system_loaded is only set true when initilizing
   // the Extension System, e.g, when constructs SharedUserScriptMaster in
@@ -65,9 +70,9 @@ class ExtensionUserScriptLoader : public UserScriptLoader,
   scoped_refptr<ContentVerifier> content_verifier_;
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
-  base::WeakPtrFactory<ExtensionUserScriptLoader> weak_factory_;
+  base::WeakPtrFactory<ExtensionUserScriptLoader> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionUserScriptLoader);
 };

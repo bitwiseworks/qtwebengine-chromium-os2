@@ -24,6 +24,8 @@ blink_core_sources("clipboard") {
     "dragged_isolated_file_system.cc",
     "dragged_isolated_file_system.h",
     "paste_mode.h",
+    "raw_system_clipboard.cc",
+    "raw_system_clipboard.h",
     "system_clipboard.cc",
     "system_clipboard.h",
   ]
@@ -31,8 +33,11 @@ blink_core_sources("clipboard") {
   if (is_win) {
     sources += [ "clipboard_utilities_win.cc" ]
   }
+}
 
-  deps = [
-    "//ui/gfx/codec",
+blink_core_tests("unit_tests") {
+  sources = [
+    "data_object_test.cc",
+    "data_transfer_test.cc",
   ]
 }

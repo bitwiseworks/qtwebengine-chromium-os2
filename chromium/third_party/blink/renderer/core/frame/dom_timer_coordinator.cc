@@ -11,21 +11,16 @@
 
 namespace blink {
 
-DOMTimerCoordinator::DOMTimerCoordinator(
-    scoped_refptr<base::SingleThreadTaskRunner> timer_task_runner)
-    : circular_sequential_id_(0),
-      timer_nesting_level_(0),
-      timer_task_runner_(std::move(timer_task_runner)) {}
-
 int DOMTimerCoordinator::InstallNewTimeout(ExecutionContext* context,
                                            ScheduledAction* action,
-                                           TimeDelta timeout,
+                                           base::TimeDelta timeout,
                                            bool single_shot) {
   // FIXME: DOMTimers depends heavily on ExecutionContext. Decouple them.
   DCHECK_EQ(context->Timers(), this);
   int timeout_id = NextID();
-  timers_.insert(timeout_id, DOMTimer::Create(context, action, timeout,
-                                              single_shot, timeout_id));
+  timers_.insert(timeout_id,
+                 MakeGarbageCollected<DOMTimer>(context, action, timeout,
+                                                single_shot, timeout_id));
   return timeout_id;
 }
 
@@ -40,7 +35,7 @@ DOMTimer* DOMTimerCoordinator::RemoveTimeoutByID(int timeout_id) {
   return removed_timer;
 }
 
-void DOMTimerCoordinator::Trace(blink::Visitor* visitor) {
+void DOMTimerCoordinator::Trace(Visitor* visitor) {
   visitor->Trace(timers_);
 }
 

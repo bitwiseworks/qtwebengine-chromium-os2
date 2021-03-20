@@ -5,16 +5,18 @@
 #ifndef DEVICE_FIDO_MAC_SCOPED_TOUCH_ID_TEST_ENVIRONMENT_H_
 #define DEVICE_FIDO_MAC_SCOPED_TOUCH_ID_TEST_ENVIRONMENT_H_
 
+#include <os/availability.h>
+
 #include <memory>
 
 #include "base/component_export.h"
-#include "base/mac/availability.h"
 #include "base/macros.h"
 
 namespace device {
 namespace fido {
 namespace mac {
 
+struct AuthenticatorConfig;
 class FakeKeychain;
 class FakeTouchIdContext;
 class TouchIdContext;
@@ -46,10 +48,10 @@ class COMPONENT_EXPORT(DEVICE_FIDO)
 
  private:
   static std::unique_ptr<TouchIdContext> ForwardCreate();
-  static bool ForwardTouchIdAvailable();
+  static bool ForwardTouchIdAvailable(const AuthenticatorConfig& config);
 
   std::unique_ptr<TouchIdContext> CreateTouchIdContext();
-  bool TouchIdAvailable();
+  bool TouchIdAvailable(const AuthenticatorConfig&);
 
   using CreateFuncPtr = decltype(&ForwardCreate);
   CreateFuncPtr touch_id_context_create_ptr_;

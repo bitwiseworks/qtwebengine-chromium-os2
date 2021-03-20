@@ -21,6 +21,7 @@ class CFXJSE_HostObject;
 class CFXJSE_Value {
  public:
   explicit CFXJSE_Value(v8::Isolate* pIsolate);
+  CFXJSE_Value(v8::Isolate* pIsolate, v8::Local<v8::Value> value);
   ~CFXJSE_Value();
 
   bool IsEmpty() const;
@@ -33,7 +34,6 @@ class CFXJSE_Value {
   bool IsObject() const;
   bool IsArray() const;
   bool IsFunction() const;
-  bool IsDate() const;
   bool ToBoolean() const;
   float ToFloat() const;
   double ToDouble() const;
@@ -52,21 +52,21 @@ class CFXJSE_Value {
   void SetString(ByteStringView szString);
   void SetFloat(float fFloat);
 
-  void SetObject(CFXJSE_HostObject* lpObject, CFXJSE_Class* pClass);
+  void SetHostObject(CFXJSE_HostObject* lpObject, CFXJSE_Class* pClass);
+  void ClearHostObject();
+
   void SetArray(const std::vector<std::unique_ptr<CFXJSE_Value>>& values);
-  void SetDate(double dDouble);
 
   bool GetObjectProperty(ByteStringView szPropName, CFXJSE_Value* lpPropValue);
   bool SetObjectProperty(ByteStringView szPropName, CFXJSE_Value* lpPropValue);
   bool GetObjectPropertyByIdx(uint32_t uPropIdx, CFXJSE_Value* lpPropValue);
-  bool SetObjectProperty(uint32_t uPropIdx, CFXJSE_Value* lpPropValue);
   bool DeleteObjectProperty(ByteStringView szPropName);
   bool HasObjectOwnProperty(ByteStringView szPropName, bool bUseTypeGetter);
   bool SetObjectOwnProperty(ByteStringView szPropName,
                             CFXJSE_Value* lpPropValue);
   bool SetFunctionBind(CFXJSE_Value* lpOldFunction, CFXJSE_Value* lpNewThis);
 
-  v8::Isolate* GetIsolate() const { return m_pIsolate.Get(); }
+  v8::Local<v8::Value> GetValue() const;
   const v8::Global<v8::Value>& DirectGetValue() const { return m_hValue; }
   void ForceSetValue(v8::Local<v8::Value> hValue) {
     m_hValue.Reset(GetIsolate(), hValue);
@@ -81,12 +81,11 @@ class CFXJSE_Value {
   }
 
  private:
-  friend class CFXJSE_Class;
-  friend class CFXJSE_Context;
-
   CFXJSE_Value() = delete;
   CFXJSE_Value(const CFXJSE_Value&) = delete;
   CFXJSE_Value& operator=(const CFXJSE_Value&) = delete;
+
+  v8::Isolate* GetIsolate() const { return m_pIsolate.Get(); }
 
   UnownedPtr<v8::Isolate> const m_pIsolate;
   v8::Global<v8::Value> m_hValue;

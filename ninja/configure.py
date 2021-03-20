@@ -103,7 +103,7 @@ class Platform(object):
         return self._platform == 'aix'
 
     def uses_usr_local(self):
-        return self._platform in ('freebsd', 'openbsd', 'bitrig', 'dragonfly', 'netbsd')
+        return self._platform in ('freebsd', 'openbsd', 'bitrig', 'dragonfly')
 
     def supports_ppoll(self):
         return self._platform in ('freebsd', 'linux', 'openbsd', 'bitrig',
@@ -261,7 +261,7 @@ configure_args = sys.argv[1:]
 if '--bootstrap' in configure_args:
     configure_args.remove('--bootstrap')
 n.variable('configure_args', ' '.join(configure_args))
-env_keys = set(['CXX', 'AR', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS'])
+env_keys = set(['CXX', 'AR', 'CFLAGS', 'LDFLAGS'])
 configure_env = dict((k, os.environ[k]) for k in os.environ if k in env_keys)
 if configure_env:
     config_str = ' '.join([k + '=' + pipes.quote(configure_env[k])
@@ -368,14 +368,9 @@ else:
     if platform.uses_usr_local():
         cflags.append('-I/usr/local/include')
         ldflags.append('-L/usr/local/lib')
-    if platform.is_aix():
-        # printf formats for int64_t, uint64_t; large file support
-        cflags.append('-D__STDC_FORMAT_MACROS')
-        cflags.append('-D_LARGE_FILES')
     if platform.is_os2():
         # Use LIBCx to get .TRP on crashes.
         ldflags += ['-Zomf', '-Zhigh-mem', '-lcx']
-
 
 libs = []
 
@@ -417,10 +412,6 @@ def shell_escape(str):
 
 if 'CFLAGS' in configure_env:
     cflags.append(configure_env['CFLAGS'])
-    ldflags.append(configure_env['CFLAGS'])
-if 'CXXFLAGS' in configure_env:
-    cflags.append(configure_env['CXXFLAGS'])
-    ldflags.append(configure_env['CXXFLAGS'])
 n.variable('cflags', ' '.join(shell_escape(flag) for flag in cflags))
 if 'LDFLAGS' in configure_env:
     ldflags.append(configure_env['LDFLAGS'])
@@ -429,7 +420,7 @@ n.newline()
 
 if platform.is_msvc():
     n.rule('cxx',
-        command='$cxx $cflags -c $in /Fo$out /Fd' + built('$pdb'),
+        command='$cxx $cflags -c $in /Fo$out',
         description='CXX $out',
         deps='msvc'  # /showIncludes is included in $cflags.
     )
@@ -500,9 +491,6 @@ else:
 n.newline()
 
 n.comment('Core source files all build into ninja library.')
-cxxvariables = []
-if platform.is_msvc():
-    cxxvariables = [('pdb', 'ninja.pdb')]
 for name in ['build',
              'build_log',
              'clean',
@@ -523,15 +511,15 @@ for name in ['build',
              'string_piece_util',
              'util',
              'version']:
-    objs += cxx(name, variables=cxxvariables) 
+    objs += cxx(name)
 if platform.is_windows():
     for name in ['subprocess-win32',
                  'includes_normalize-win32',
                  'msvc_helper-win32',
                  'msvc_helper_main-win32']:
-        objs += cxx(name, variables=cxxvariables)
+        objs += cxx(name)
     if platform.is_msvc():
-        objs += cxx('minidump-win32', variables=cxxvariables)
+        objs += cxx('minidump-win32')
     objs += cc('getopt')
 else:
     objs += cxx('subprocess-posix')
@@ -554,7 +542,7 @@ if platform.is_aix():
 all_targets = []
 
 n.comment('Main executable is library plus main() function.')
-objs = cxx('ninja', variables=cxxvariables)
+objs = cxx('ninja')
 ninja = n.build(binary('ninja'), 'link', objs, implicit=ninja_lib,
                 variables=[('libs', libs)])
 n.newline()
@@ -569,8 +557,6 @@ if options.bootstrap:
 n.comment('Tests all build into ninja_test executable.')
 
 objs = []
-if platform.is_msvc():
-    cxxvariables = [('pdb', 'ninja_test.pdb')]
 
 for name in ['build_log_test',
              'build_test',
@@ -589,10 +575,10 @@ for name in ['build_log_test',
              'subprocess_test',
              'test',
              'util_test']:
-    objs += cxx(name, variables=cxxvariables)
+    objs += cxx(name)
 if platform.is_windows():
     for name in ['includes_normalize_test', 'msvc_helper_test']:
-        objs += cxx(name, variables=cxxvariables)
+        objs += cxx(name)
 
 ninja_test = n.build(binary('ninja_test'), 'link', objs, implicit=ninja_lib,
                      variables=[('libs', libs)])
@@ -608,9 +594,7 @@ for name in ['build_log_perftest',
              'hash_collision_bench',
              'manifest_parser_perftest',
              'clparser_perftest']:
-  if platform.is_msvc():
-    cxxvariables = [('pdb', name + '.pdb')]
-  objs = cxx(name, variables=cxxvariables)
+  objs = cxx(name)
   all_targets += n.build(binary(name), 'link', objs,
                          implicit=ninja_lib, variables=[('libs', libs)])
 

@@ -29,19 +29,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://html.spec.whatwg.org/#shared-workers-and-the-sharedworker-interface
+// https://html.spec.whatwg.org/C/#shared-workers-and-the-sharedworker-interface
 
 [
     ActiveScriptWrappable,
-    // TODO(nhiroki): The second argument should be |optional (DOMString or
-    // WorkerOptions) options)|.
-    Constructor(DOMString scriptURL, optional DOMString name = null),
-    ConstructorCallWith=ExecutionContext,
     // TODO(foolip): Exposed=(Window,Worker),
-    RaisesException=Constructor,
     RuntimeEnabled=SharedWorker
 ] interface SharedWorker : EventTarget {
+    [CallWith=ExecutionContext, RaisesException] constructor(ScriptURLString scriptURL, optional (DOMString or WorkerOptions) options = {});
     readonly attribute MessagePort port;
 };
 
-SharedWorker implements AbstractWorker;
+SharedWorker includes AbstractWorker;

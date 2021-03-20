@@ -22,8 +22,8 @@
 #include <bitset>
 #include <numeric>
 
-#include "src/trace_processor/sqlite_utils.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -32,36 +32,47 @@ SqlStatsTable::SqlStatsTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void SqlStatsTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  Table::Register<SqlStatsTable>(db, storage, "sqlstats");
+  SqliteTable::Register<SqlStatsTable>(db, storage, "sqlstats");
 }
 
-base::Optional<Table::Schema> SqlStatsTable::Init(int, const char* const*) {
-  return Schema(
+util::Status SqlStatsTable::Init(int, const char* const*, Schema* schema) {
+  *schema = Schema(
       {
-          Table::Column(Column::kQuery, "query", ColumnType::kString),
-          Table::Column(Column::kTimeQueued, "queued", ColumnType::kLong),
-          Table::Column(Column::kTimeStarted, "started", ColumnType::kLong),
-          Table::Column(Column::kTimeEnded, "ended", ColumnType::kLong),
+          SqliteTable::Column(Column::kQuery, "query", SqlValue::Type::kString),
+          SqliteTable::Column(Column::kTimeQueued, "queued",
+                              SqlValue::Type::kLong),
+          SqliteTable::Column(Column::kTimeStarted, "started",
+                              SqlValue::Type::kLong),
+          SqliteTable::Column(Column::kTimeFirstNext, "first_next",
+                              SqlValue::Type::kLong),
+          SqliteTable::Column(Column::kTimeEnded, "ended",
+                              SqlValue::Type::kLong),
       },
       {Column::kTimeQueued});
+  return util::OkStatus();
 }
 
-std::unique_ptr<Table::Cursor> SqlStatsTable::CreateCursor(
-    const QueryConstraints&,
-    sqlite3_value**) {
-  return std::unique_ptr<Table::Cursor>(new Cursor(storage_));
+std::unique_ptr<SqliteTable::Cursor> SqlStatsTable::CreateCursor() {
+  return std::unique_ptr<SqliteTable::Cursor>(new Cursor(this));
 }
 
 int SqlStatsTable::BestIndex(const QueryConstraints&, BestIndexInfo* info) {
-  info->order_by_consumed = false;  // Delegate sorting to SQLite.
+  info->sqlite_omit_order_by = true;
   return SQLITE_OK;
 }
 
-SqlStatsTable::Cursor::Cursor(const TraceStorage* storage) : storage_(storage) {
-  num_rows_ = storage->sql_stats().size();
-}
+SqlStatsTable::Cursor::Cursor(SqlStatsTable* table)
+    : SqliteTable::Cursor(table), storage_(table->storage_), table_(table) {}
 
 SqlStatsTable::Cursor::~Cursor() = default;
+
+int SqlStatsTable::Cursor::Filter(const QueryConstraints&,
+                                  sqlite3_value**,
+                                  FilterHistory) {
+  *this = Cursor(table_);
+  num_rows_ = storage_->sql_stats().size();
+  return SQLITE_OK;
+}
 
 int SqlStatsTable::Cursor::Next() {
   row_++;
@@ -80,16 +91,16 @@ int SqlStatsTable::Cursor::Column(sqlite3_context* context, int col) {
                           sqlite_utils::kSqliteStatic);
       break;
     case Column::kTimeQueued:
-      sqlite3_result_int64(context,
-                           static_cast<int64_t>(stats.times_queued()[row_]));
+      sqlite3_result_int64(context, stats.times_queued()[row_]);
       break;
     case Column::kTimeStarted:
-      sqlite3_result_int64(context,
-                           static_cast<int64_t>(stats.times_started()[row_]));
+      sqlite3_result_int64(context, stats.times_started()[row_]);
+      break;
+    case Column::kTimeFirstNext:
+      sqlite3_result_int64(context, stats.times_first_next()[row_]);
       break;
     case Column::kTimeEnded:
-      sqlite3_result_int64(context,
-                           static_cast<int64_t>(stats.times_ended()[row_]));
+      sqlite3_result_int64(context, stats.times_ended()[row_]);
       break;
   }
   return SQLITE_OK;

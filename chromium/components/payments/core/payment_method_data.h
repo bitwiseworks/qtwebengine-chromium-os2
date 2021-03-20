@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 
 namespace base {
 class DictionaryValue;
@@ -44,7 +44,6 @@ class PaymentMethodData {
   // When the methods include "basic-card", a list of networks and types that
   // are supported.
   std::vector<std::string> supported_networks;
-  std::set<autofill::CreditCard::CardType> supported_types;
 };
 
 }  // namespace payments

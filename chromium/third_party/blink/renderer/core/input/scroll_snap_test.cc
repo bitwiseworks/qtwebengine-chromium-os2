@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/input/scroll_manager.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
@@ -90,10 +91,10 @@ void ScrollSnapTest::ScrollBegin(double x,
                                  double hint_x,
                                  double hint_y) {
   WebGestureEvent event(WebInputEvent::kGestureScrollBegin,
-                        WebInputEvent::kNoModifiers, CurrentTimeTicks(),
-                        WebGestureDevice::kWebGestureDeviceTouchscreen);
-  event.SetPositionInWidget(WebFloatPoint(x, y));
-  event.SetPositionInScreen(WebFloatPoint(x, y));
+                        WebInputEvent::kNoModifiers, base::TimeTicks::Now(),
+                        WebGestureDevice::kTouchscreen);
+  event.SetPositionInWidget(gfx::PointF(x, y));
+  event.SetPositionInScreen(gfx::PointF(x, y));
   event.data.scroll_begin.delta_x_hint = hint_x;
   event.data.scroll_begin.delta_y_hint = hint_y;
   event.data.scroll_begin.pointer_count = 1;
@@ -107,14 +108,15 @@ void ScrollSnapTest::ScrollUpdate(double x,
                                   double delta_y,
                                   bool is_in_inertial_phase) {
   WebGestureEvent event(WebInputEvent::kGestureScrollUpdate,
-                        WebInputEvent::kNoModifiers, CurrentTimeTicks(),
-                        WebGestureDevice::kWebGestureDeviceTouchscreen);
-  event.SetPositionInWidget(WebFloatPoint(x, y));
-  event.SetPositionInScreen(WebFloatPoint(x, y));
+                        WebInputEvent::kNoModifiers, base::TimeTicks::Now(),
+                        WebGestureDevice::kTouchscreen);
+  event.SetPositionInWidget(gfx::PointF(x, y));
+  event.SetPositionInScreen(gfx::PointF(x, y));
   event.data.scroll_update.delta_x = delta_x;
   event.data.scroll_update.delta_y = delta_y;
   if (is_in_inertial_phase) {
-    event.data.scroll_update.inertial_phase = WebGestureEvent::kMomentumPhase;
+    event.data.scroll_update.inertial_phase =
+        WebGestureEvent::InertialPhaseState::kMomentum;
     event.SetTimeStamp(Compositor().LastFrameTime());
   }
   event.SetFrameScale(1);
@@ -123,20 +125,20 @@ void ScrollSnapTest::ScrollUpdate(double x,
 
 void ScrollSnapTest::ScrollEnd(double x, double y, bool is_in_inertial_phase) {
   WebGestureEvent event(WebInputEvent::kGestureScrollEnd,
-                        WebInputEvent::kNoModifiers, CurrentTimeTicks(),
-                        WebGestureDevice::kWebGestureDeviceTouchscreen);
-  event.SetPositionInWidget(WebFloatPoint(x, y));
-  event.SetPositionInScreen(WebFloatPoint(x, y));
+                        WebInputEvent::kNoModifiers, base::TimeTicks::Now(),
+                        WebGestureDevice::kTouchscreen);
+  event.SetPositionInWidget(gfx::PointF(x, y));
+  event.SetPositionInScreen(gfx::PointF(x, y));
   event.data.scroll_end.inertial_phase =
-      is_in_inertial_phase ? WebGestureEvent::kMomentumPhase
-                           : WebGestureEvent::kNonMomentumPhase;
+      is_in_inertial_phase ? WebGestureEvent::InertialPhaseState::kMomentum
+                           : WebGestureEvent::InertialPhaseState::kNonMomentum;
   GetDocument().GetFrame()->GetEventHandler().HandleGestureScrollEvent(event);
 }
 
 void ScrollSnapTest::SetInitialScrollOffset(double x, double y) {
   Element* scroller = GetDocument().getElementById("scroller");
-  scroller->GetLayoutBox()->SetScrollLeft(LayoutUnit::FromFloatRound(x));
-  scroller->GetLayoutBox()->SetScrollTop(LayoutUnit::FromFloatRound(y));
+  scroller->GetScrollableArea()->ScrollToAbsolutePosition(
+      FloatPoint(x, y), mojom::blink::ScrollBehavior::kAuto);
   ASSERT_EQ(scroller->scrollLeft(), x);
   ASSERT_EQ(scroller->scrollTop(), y);
 }
@@ -210,9 +212,11 @@ TEST_F(ScrollSnapTest, SnapWhenBodyViewportDefining) {
   request.Complete(R"HTML(
     <!DOCTYPE html>
     <style>
+    html {
+      scroll-snap-type: both mandatory;
+    }
     body {
       overflow: scroll;
-      scroll-snap-type: both mandatory;
       height: 300px;
       width: 300px;
       margin: 0px;
@@ -222,6 +226,14 @@ TEST_F(ScrollSnapTest, SnapWhenBodyViewportDefining) {
       padding: 0px;
       width: 500px;
       height: 500px;
+    }
+    #initial-area {
+      position: relative;
+      left: 0px;
+      top: 0px;
+      width: 100px;
+      height: 100px;
+      scroll-snap-align: start;
     }
     #area {
       position: relative;
@@ -233,12 +245,21 @@ TEST_F(ScrollSnapTest, SnapWhenBodyViewportDefining) {
     }
     </style>
     <div id='container'>
+      <div id='initial-area'></div>
       <div id='area'></div>
     </div>
   )HTML");
   Compositor().BeginFrame();
 
-  GestureScroll(100, 100, -50, -50);
+  // The scroller snaps to the snap area that is closest to the origin (0,0) on
+  // the initial layout.
+  ASSERT_EQ(Window().scrollX(), 0);
+  ASSERT_EQ(Window().scrollY(), 0);
+
+  // The scroll delta needs to be large enough such that the closer snap area
+  // will be the one at (200,200).
+  // i.e. distance((200,200), (110,110)) <  distance((0,0), (110,110))
+  GestureScroll(100, 100, -110, -110);
 
   // Sanity check that body is the viewport defining element
   ASSERT_EQ(GetDocument().body(), GetDocument().ViewportDefiningElement());
@@ -272,6 +293,14 @@ TEST_F(ScrollSnapTest, SnapWhenHtmlViewportDefining) {
       width: 500px;
       height: 500px;
     }
+    #initial-area {
+      position: relative;
+      left: 0px;
+      top: 0px;
+      width: 100px;
+      height: 100px;
+      scroll-snap-align: start;
+    }
     #area {
       position: relative;
       left: 200px;
@@ -282,12 +311,21 @@ TEST_F(ScrollSnapTest, SnapWhenHtmlViewportDefining) {
     }
     </style>
     <div id='container'>
+      <div id='initial-area'></div>
       <div id='area'></div>
     </div>
   )HTML");
   Compositor().BeginFrame();
 
-  GestureScroll(100, 100, -50, -50);
+  // The scroller snaps to the snap area that is closest to the origin (0,0) on
+  // the initial layout.
+  ASSERT_EQ(Window().scrollX(), 0);
+  ASSERT_EQ(Window().scrollY(), 0);
+
+  // The scroll delta needs to be large enough such that the closer snap area
+  // will be the one at (200,200).
+  // i.e. distance((200,200), (110,110)) <  distance((0,0), (110,110))
+  GestureScroll(100, 100, -110, -110);
 
   // Sanity check that document element is the viewport defining element
   ASSERT_EQ(GetDocument().documentElement(),
@@ -321,8 +359,16 @@ TEST_F(ScrollSnapTest, SnapWhenBodyOverflowHtmlViewportDefining) {
     #container {
       margin: 0px;
       padding: 0px;
-      width: 500px;
-      height: 500px;
+      width: 600px;
+      height: 600px;
+    }
+    #initial-area {
+      position: relative;
+      left: 0px;
+      top: 0px;
+      width: 100px;
+      height: 100px;
+      scroll-snap-align: start;
     }
     #area {
       position: relative;
@@ -334,12 +380,22 @@ TEST_F(ScrollSnapTest, SnapWhenBodyOverflowHtmlViewportDefining) {
     }
     </style>
     <div id='container'>
+      <div id='initial-area'></div>
       <div id='area'></div>
     </div>
   )HTML");
   Compositor().BeginFrame();
 
-  GestureScroll(100, 100, -50, -50);
+  // The scroller snaps to the snap area that is closest to the origin (0,0) on
+  // the initial layout.
+  Element* body = GetDocument().body();
+  ASSERT_EQ(body->scrollLeft(), 0);
+  ASSERT_EQ(body->scrollTop(), 0);
+
+  // The scroll delta needs to be large enough such that the closer snap area
+  // will be the one at (200,200).
+  // i.e. distance((200,200), (110,110)) <  distance((0,0), (110,110))
+  GestureScroll(100, 100, -110, -110);
 
   // Sanity check that document element is the viewport defining element
   ASSERT_EQ(GetDocument().documentElement(),
@@ -347,9 +403,8 @@ TEST_F(ScrollSnapTest, SnapWhenBodyOverflowHtmlViewportDefining) {
 
   // When body and document elements are both scrollable then body element
   // should capture snap points defined on it as opposed to layout view.
-  Element* body = GetDocument().body();
-  ASSERT_EQ(body->scrollLeft(), 100);
-  ASSERT_EQ(body->scrollTop(), 100);
+  ASSERT_EQ(body->scrollLeft(), 200);
+  ASSERT_EQ(body->scrollTop(), 200);
 }
 
 }  // namespace blink

@@ -32,6 +32,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_PERFORMANCE_ENTRY_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_PERFORMANCE_ENTRY_H_
 
+#include "third_party/blink/public/mojom/timing/performance_mark_or_measure.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
@@ -65,7 +66,8 @@ class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
     kEvent = 1 << 7,
     kFirstInput = 1 << 8,
     kElement = 1 << 9,
-    kLayoutJank = 1 << 10,
+    kLayoutShift = 1 << 10,
+    kLargestContentfulPaint = 1 << 11,
   };
 
   const AtomicString& name() const { return name_; }
@@ -93,6 +95,29 @@ class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
 
   static PerformanceEntry::EntryType ToEntryTypeEnum(
       const AtomicString& entry_type);
+
+  // Entries of the types listed here will be accessible from the
+  // PerformanceTimeline or the PerformanceObserver.  Those not listed will
+  // only be available via the PerformanceObserver.
+  // Note: Currently buffered flags don't support long task entries
+  // so leaving it out of this list for now.
+  static bool IsValidTimelineEntryType(const PerformanceEntryType& entry_type) {
+    if (entry_type == kInvalid) {
+      return true;
+    }
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(HashSet<PerformanceEntryType>,
+                                    valid_timeline_entry_types,
+                                    ({kNavigation, kMark, kMeasure, kResource,
+                                      kTaskAttribution, kPaint, kFirstInput}));
+    return valid_timeline_entry_types.Contains(entry_type);
+  }
+
+  // PerformanceMark/Measure override this and it returns Mojo structure pointer
+  // which has all members of PerformanceMark/Measure. Common data members are
+  // set by PerformanceMark/Measure calling
+  // PerformanceEntry::ToMojoPerformanceMarkOrMeasure().
+  virtual mojom::blink::PerformanceMarkOrMeasurePtr
+  ToMojoPerformanceMarkOrMeasure();
 
  protected:
   PerformanceEntry(const AtomicString& name,

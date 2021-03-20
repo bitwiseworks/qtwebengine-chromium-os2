@@ -9,7 +9,6 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -38,6 +37,8 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
+  enum class CrossDocumentAccessPolicy { kAllowed, kDisallowed };
+
   ~DOMWindow() override;
 
   Frame* GetFrame() const {
@@ -56,15 +57,15 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
     return frame_;
   }
 
-  // GarbageCollectedFinalized overrides:
-  void Trace(blink::Visitor*) override;
+  // GarbageCollected overrides:
+  void Trace(Visitor*) override;
 
   virtual bool IsLocalDOMWindow() const = 0;
   virtual bool IsRemoteDOMWindow() const = 0;
 
   // ScriptWrappable overrides:
-  v8::Local<v8::Object> Wrap(v8::Isolate*,
-                             v8::Local<v8::Object> creation_context) final;
+  v8::Local<v8::Value> Wrap(v8::Isolate*,
+                            v8::Local<v8::Object> creation_context) final;
   v8::Local<v8::Object> AssociateWithWrapper(
       v8::Isolate*,
       const WrapperTypeInfo*,
@@ -97,7 +98,7 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   void postMessage(v8::Isolate*,
                    const ScriptValue& message,
                    const String& target_origin,
-                   Vector<ScriptValue>& transfer,
+                   HeapVector<ScriptValue>& transfer,
                    ExceptionState&);
 
   void postMessage(v8::Isolate*,
@@ -109,10 +110,11 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   DOMWindow* AnonymousIndexedGetter(uint32_t index) const;
 
   String SanitizedCrossDomainAccessErrorMessage(
-      const LocalDOMWindow* accessing_window) const;
+      const LocalDOMWindow* accessing_window,
+      CrossDocumentAccessPolicy cross_document_access) const;
   String CrossDomainAccessErrorMessage(
-      const LocalDOMWindow* accessing_window) const;
-  bool IsInsecureScriptAccess(LocalDOMWindow& accessing_window, const KURL&);
+      const LocalDOMWindow* accessing_window,
+      CrossDocumentAccessPolicy cross_document_access) const;
 
   // FIXME: When this DOMWindow is no longer the active DOMWindow (i.e.,
   // when its document is no longer the document that is displayed in its
@@ -120,8 +122,6 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   // by the document that is currently active in |frame_|.
   // See https://bugs.webkit.org/show_bug.cgi?id=62054
   bool IsCurrentlyDisplayedInFrame() const;
-
-  bool isSecureContext() const;
 
   InputDeviceCapabilitiesConstants* GetInputDeviceCapabilities();
 
@@ -153,7 +153,7 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData {
   // of this object.
   const Member<WindowProxyManager> window_proxy_manager_;
   Member<InputDeviceCapabilitiesConstants> input_capabilities_;
-  mutable TraceWrapperMember<Location> location_;
+  mutable Member<Location> location_;
 
   // Set to true when close() has been called. Needed for
   // |window.closed| determinism; having it return 'true'

@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_SVG_TEXT_PAINTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_SVG_TEXT_PAINTER_H_
 
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -21,11 +21,6 @@ class SVGTextPainter {
   void Paint(const PaintInfo&);
 
  private:
-  // Paint a hit test display item and record hit test data. This should be
-  // called when painting the background even if there is no other painted
-  // content.
-  void RecordHitTestData(const PaintInfo&);
-
   const LayoutSVGText& layout_svg_text_;
 };
 

@@ -25,6 +25,13 @@ cr.define('cr.quota', function() {
   }
 
   /**
+   * Post triggerStoragePressure message to Browser.
+   */
+  function triggerStoragePressure(origin) {
+    chrome.send('triggerStoragePressure', [origin]);
+  }
+
+  /**
    * Callback entry point from Browser.
    * Messages are Dispatched as Event to:
    *   * onAvailableSpaceUpdated,
@@ -63,7 +70,7 @@ cr.define('cr.quota', function() {
         break;
     }
     if (target) {
-      const event = cr.doc.createEvent('CustomEvent');
+      const event = document.createEvent('CustomEvent');
       event.initCustomEvent('update', false, false, detail);
       target.dispatchEvent(event);
     }
@@ -77,6 +84,7 @@ cr.define('cr.quota', function() {
     onStatisticsUpdated: new cr.EventTarget(),
 
     requestInfo: requestInfo,
+    triggerStoragePressure: triggerStoragePressure,
     messageHandler: messageHandler
   };
 });

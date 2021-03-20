@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/animation/compositor_transform_operations.h"
 
+#include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/gfx/transform.h"
 
 namespace blink {
@@ -26,26 +27,30 @@ bool CompositorTransformOperations::CanBlendWith(
 void CompositorTransformOperations::AppendTranslate(double x,
                                                     double y,
                                                     double z) {
-  transform_operations_.AppendTranslate(x, y, z);
+  transform_operations_.AppendTranslate(
+      SkDoubleToScalar(x), SkDoubleToScalar(y), SkDoubleToScalar(z));
 }
 
 void CompositorTransformOperations::AppendRotate(double x,
                                                  double y,
                                                  double z,
                                                  double degrees) {
-  transform_operations_.AppendRotate(x, y, z, degrees);
+  transform_operations_.AppendRotate(SkDoubleToScalar(x), SkDoubleToScalar(y),
+                                     SkDoubleToScalar(z),
+                                     SkDoubleToScalar(degrees));
 }
 
 void CompositorTransformOperations::AppendScale(double x, double y, double z) {
-  transform_operations_.AppendScale(x, y, z);
+  transform_operations_.AppendScale(SkDoubleToScalar(x), SkDoubleToScalar(y),
+                                    SkDoubleToScalar(z));
 }
 
 void CompositorTransformOperations::AppendSkew(double x, double y) {
-  transform_operations_.AppendSkew(x, y);
+  transform_operations_.AppendSkew(SkDoubleToScalar(x), SkDoubleToScalar(y));
 }
 
 void CompositorTransformOperations::AppendPerspective(double depth) {
-  transform_operations_.AppendPerspective(depth);
+  transform_operations_.AppendPerspective(SkDoubleToScalar(depth));
 }
 
 void CompositorTransformOperations::AppendMatrix(const SkMatrix44& matrix) {

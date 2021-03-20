@@ -27,6 +27,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_VIDEO_H_
 
 #include "third_party/blink/renderer/core/layout/layout_media.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -39,7 +40,7 @@ class LayoutVideo final : public LayoutMedia {
 
   static LayoutSize DefaultSize();
 
-  LayoutRect ReplacedContentRect() const final;
+  PhysicalRect ReplacedContentRect() const final;
 
   bool SupportsAcceleratedRendering() const;
 
@@ -50,13 +51,13 @@ class LayoutVideo final : public LayoutMedia {
 
   void IntrinsicSizeChanged() override;
 
-  void UpdateAfterLayout() override;
+  bool ComputeShouldClipOverflow() const final { return true; }
 
  private:
   void UpdateFromElement() override;
 
   LayoutSize CalculateIntrinsicSize();
-  void UpdateIntrinsicSize();
+  void UpdateIntrinsicSize(bool is_in_layout);
 
   void ImageChanged(WrappedImagePtr, CanDeferInvalidation) override;
 
@@ -65,7 +66,7 @@ class LayoutVideo final : public LayoutMedia {
   }
 
   void PaintReplaced(const PaintInfo&,
-                     const LayoutPoint& paint_offset) const override;
+                     const PhysicalOffset& paint_offset) const override;
 
   void UpdateLayout() override;
 
@@ -75,14 +76,18 @@ class LayoutVideo final : public LayoutMedia {
       LayoutUnit estimated_used_width = LayoutUnit()) const override;
   LayoutUnit MinimumReplacedHeight() const override;
 
+  bool CanHaveAdditionalCompositingReasons() const override { return true; }
   CompositingReasons AdditionalCompositingReasons() const override;
 
-  void UpdatePlayer();
+  void UpdatePlayer(bool is_in_layout);
 
   LayoutSize cached_image_size_;
 };
 
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutVideo, IsVideo());
+template <>
+struct DowncastTraits<LayoutVideo> {
+  static bool AllowFrom(const LayoutObject& object) { return object.IsVideo(); }
+};
 
 }  // namespace blink
 

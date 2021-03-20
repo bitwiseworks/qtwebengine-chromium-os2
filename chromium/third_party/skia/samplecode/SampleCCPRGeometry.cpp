@@ -5,27 +5,34 @@
  * found in the LICENSE file.
  */
 
-#include "SkTypes.h"
+#include "include/core/SkTypes.h"
 
 #if SK_SUPPORT_GPU
 
-#include "GrContextPriv.h"
-#include "GrMemoryPool.h"
-#include "GrPathUtils.h"
-#include "GrRenderTargetContext.h"
-#include "GrRenderTargetContextPriv.h"
-#include "GrResourceProvider.h"
-#include "Sample.h"
-#include "SkCanvas.h"
-#include "SkPaint.h"
-#include "SkPath.h"
-#include "SkRectPriv.h"
-#include "ccpr/GrCCCoverageProcessor.h"
-#include "ccpr/GrCCFillGeometry.h"
-#include "ccpr/GrCCStroker.h"
-#include "gl/GrGLGpu.cpp"
-#include "glsl/GrGLSLFragmentProcessor.h"
-#include "ops/GrDrawOp.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "samplecode/Sample.h"
+#include "src/core/SkRectPriv.h"
+#include "src/gpu/GrClip.h"
+#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrGpu.h"
+#include "src/gpu/GrMemoryPool.h"
+#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrRenderTargetContextPriv.h"
+#include "src/gpu/GrResourceProvider.h"
+#include "src/gpu/ccpr/GrCCCoverageProcessor.h"
+#include "src/gpu/ccpr/GrCCFillGeometry.h"
+#include "src/gpu/ccpr/GrCCStroker.h"
+#include "src/gpu/ccpr/GrGSCoverageProcessor.h"
+#include "src/gpu/ccpr/GrVSCoverageProcessor.h"
+#include "src/gpu/geometry/GrPathUtils.h"
+#include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
+#include "src/gpu/ops/GrDrawOp.h"
+
+#ifdef SK_GL
+#include "src/gpu/gl/GrGLGpu.h"
+#endif
 
 using TriPointInstance = GrCCCoverageProcessor::TriPointInstance;
 using QuadPointInstance = GrCCCoverageProcessor::QuadPointInstance;
@@ -40,15 +47,14 @@ static constexpr float kDebugBloat = 40;
  * geometry processors.
  */
 class CCPRGeometryView : public Sample {
-public:
-    CCPRGeometryView() { this->updateGpuData(); }
+    void onOnceBeforeDraw() override { this->updateGpuData(); }
     void onDrawContent(SkCanvas*) override;
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned) override;
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, skui::ModifierKey) override;
     bool onClick(Sample::Click*) override;
-    bool onQuery(Sample::Event* evt) override;
+    bool onChar(SkUnichar) override;
+    SkString name() override { return SkString("CCPRGeometry"); }
 
-private:
     class Click;
     class DrawCoverageCountOp;
     class VisualizeCoverageCountFP;
@@ -71,8 +77,6 @@ private:
     SkTArray<TriPointInstance> fTriPointInstances;
     SkTArray<QuadPointInstance> fQuadPointInstances;
     SkPath fPath;
-
-    typedef Sample INHERITED;
 };
 
 class CCPRGeometryView::DrawCoverageCountOp : public GrDrawOp {
@@ -81,7 +85,7 @@ class CCPRGeometryView::DrawCoverageCountOp : public GrDrawOp {
 public:
     DrawCoverageCountOp(CCPRGeometryView* view) : INHERITED(ClassID()), fView(view) {
         this->setBounds(SkRect::MakeIWH(fView->width(), fView->height()), GrOp::HasAABloat::kNo,
-                        GrOp::IsZeroArea::kNo);
+                        GrOp::IsHairline::kNo);
     }
 
     const char* name() const override {
@@ -90,9 +94,14 @@ public:
 
 private:
     FixedFunctionFlags fixedFunctionFlags() const override { return FixedFunctionFlags::kNone; }
-    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*) override {
+    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*,
+                                      bool hasMixedSampledCoverage, GrClampType) override {
         return GrProcessorSet::EmptySetAnalysis();
     }
+    void onPrePrepare(GrRecordingContext*,
+                      const GrSurfaceProxyView* outputView,
+                      GrAppliedClip*,
+                      const GrXferProcessor::DstProxyView&) override {}
     void onPrepare(GrOpFlushState*) override {}
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
 
@@ -110,7 +119,7 @@ private:
         return "[Testing/Sample code] CCPRGeometryView::VisualizeCoverageCountFP";
     }
     std::unique_ptr<GrFragmentProcessor> clone() const override {
-        return skstd::make_unique<VisualizeCoverageCountFP>();
+        return std::make_unique<VisualizeCoverageCountFP>();
     }
     void onGetGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override {}
     bool onIsEqual(const GrFragmentProcessor&) const override { return true; }
@@ -180,16 +189,12 @@ void CCPRGeometryView::onDrawContent(SkCanvas* canvas) {
         GrContext* ctx = canvas->getGrContext();
         SkASSERT(ctx);
 
-        GrOpMemoryPool* pool = ctx->contextPriv().opMemoryPool();
+        GrOpMemoryPool* pool = ctx->priv().opMemoryPool();
 
-        const GrBackendFormat format =
-                ctx->contextPriv().caps()->getBackendFormatFromGrColorType(GrColorType::kAlpha_F16,
-                                                                           GrSRGBEncoded::kNo);
-        sk_sp<GrRenderTargetContext> ccbuff =
-                ctx->contextPriv().makeDeferredRenderTargetContext(format, SkBackingFit::kApprox,
-                                                                   this->width(), this->height(),
-                                                                   kAlpha_half_GrPixelConfig,
-                                                                   nullptr);
+        int width = this->width();
+        int height = this->height();
+        auto ccbuff = GrRenderTargetContext::Make(
+                ctx, GrColorType::kAlpha_F16, nullptr, SkBackingFit::kApprox, {width, height});
         SkASSERT(ccbuff);
         ccbuff->clear(nullptr, SK_PMColor4fTRANSPARENT,
                       GrRenderTargetContext::CanClearFullscreen::kYes);
@@ -198,9 +203,9 @@ void CCPRGeometryView::onDrawContent(SkCanvas* canvas) {
         // Visualize coverage count in main canvas.
         GrPaint paint;
         paint.addColorFragmentProcessor(
-                GrSimpleTextureEffect::Make(sk_ref_sp(ccbuff->asTextureProxy()), SkMatrix::I()));
+                GrTextureEffect::Make(ccbuff->readSurfaceView(), ccbuff->colorInfo().alphaType()));
         paint.addColorFragmentProcessor(
-                skstd::make_unique<VisualizeCoverageCountFP>());
+                std::make_unique<VisualizeCoverageCountFP>());
         paint.setPorterDuffXPFactory(SkBlendMode::kSrcOver);
         rtc->drawRect(GrNoClip(), std::move(paint), GrAA::kNo, SkMatrix::I(),
                       SkRect::MakeIWH(this->width(), this->height()));
@@ -304,7 +309,9 @@ void CCPRGeometryView::updateGpuData() {
             SkASSERT(Verb::kMonotonicQuadraticTo == verb || Verb::kMonotonicConicTo == verb);
             if (PrimitiveType::kQuadratics == fPrimitiveType &&
                 Verb::kMonotonicQuadraticTo == verb) {
-                fTriPointInstances.push_back().set(&geometry.points()[ptsIdx], Sk2f(0, 0));
+                fTriPointInstances.push_back().set(
+                        &geometry.points()[ptsIdx], Sk2f(0, 0),
+                        TriPointInstance::Ordering::kXYTransposed);
             } else if (PrimitiveType::kConics == fPrimitiveType &&
                        Verb::kMonotonicConicTo == verb) {
                 fQuadPointInstances.push_back().setW(&geometry.points()[ptsIdx], Sk2f(0, 0),
@@ -313,7 +320,9 @@ void CCPRGeometryView::updateGpuData() {
             ptsIdx += 2;
         }
     } else {
-        fTriPointInstances.push_back().set(fPoints[0], fPoints[1], fPoints[3], Sk2f(0, 0));
+        fTriPointInstances.push_back().set(
+                fPoints[0], fPoints[1], fPoints[3], Sk2f(0, 0),
+                TriPointInstance::Ordering::kXYTransposed);
         fPath.lineTo(fPoints[1]);
         fPath.lineTo(fPoints[3]);
         fPath.close();
@@ -324,7 +333,8 @@ void CCPRGeometryView::DrawCoverageCountOp::onExecute(GrOpFlushState* state,
                                                       const SkRect& chainBounds) {
     GrResourceProvider* rp = state->resourceProvider();
     GrContext* context = state->gpu()->getContext();
-    GrGLGpu* glGpu = GrBackendApi::kOpenGL == context->contextPriv().getBackend()
+#ifdef SK_GL
+    GrGLGpu* glGpu = GrBackendApi::kOpenGL == context->backend()
                              ? static_cast<GrGLGpu*>(state->gpu())
                              : nullptr;
     if (glGpu) {
@@ -332,39 +342,46 @@ void CCPRGeometryView::DrawCoverageCountOp::onExecute(GrOpFlushState* state,
         // GR_GL_CALL(glGpu->glInterface(), PolygonMode(GR_GL_FRONT_AND_BACK, GR_GL_LINE));
         GR_GL_CALL(glGpu->glInterface(), Enable(GR_GL_LINE_SMOOTH));
     }
+#endif
 
-    GrPipeline pipeline(state->drawOpArgs().fProxy, GrScissorTest::kDisabled, SkBlendMode::kPlus);
+    GrPipeline pipeline(GrScissorTest::kDisabled, SkBlendMode::kPlus,
+                        state->drawOpArgs().writeSwizzle());
+
+    std::unique_ptr<GrCCCoverageProcessor> proc;
+    if (state->caps().shaderCaps()->geometryShaderSupport()) {
+        proc = std::make_unique<GrGSCoverageProcessor>();
+    } else {
+        proc = std::make_unique<GrVSCoverageProcessor>();
+    }
+    SkDEBUGCODE(proc->enableDebugBloat(kDebugBloat));
+
+    GrOpsRenderPass* renderPass = state->opsRenderPass();
 
     if (!fView->fDoStroke) {
-        GrCCCoverageProcessor proc(rp, fView->fPrimitiveType);
-        SkDEBUGCODE(proc.enableDebugBloat(kDebugBloat));
+        for (int i = 0; i < proc->numSubpasses(); ++i) {
+            proc->reset(fView->fPrimitiveType, i, rp);
+            proc->bindPipeline(state, pipeline, this->bounds());
 
-        SkSTArray<1, GrMesh> mesh;
-        if (PrimitiveType::kCubics == fView->fPrimitiveType ||
-            PrimitiveType::kConics == fView->fPrimitiveType) {
-            sk_sp<GrBuffer> instBuff(rp->createBuffer(
-                    fView->fQuadPointInstances.count() * sizeof(QuadPointInstance),
-                    kVertex_GrBufferType, kDynamic_GrAccessPattern,
-                    GrResourceProvider::Flags::kNoPendingIO |
-                    GrResourceProvider::Flags::kRequireGpuMemory,
-                    fView->fQuadPointInstances.begin()));
-            if (!fView->fQuadPointInstances.empty() && instBuff) {
-                proc.appendMesh(instBuff.get(), fView->fQuadPointInstances.count(), 0, &mesh);
+            if (PrimitiveType::kCubics == fView->fPrimitiveType ||
+                PrimitiveType::kConics == fView->fPrimitiveType) {
+                sk_sp<GrGpuBuffer> instBuff(rp->createBuffer(
+                        fView->fQuadPointInstances.count() * sizeof(QuadPointInstance),
+                        GrGpuBufferType::kVertex, kDynamic_GrAccessPattern,
+                        fView->fQuadPointInstances.begin()));
+                if (!fView->fQuadPointInstances.empty() && instBuff) {
+                    proc->bindBuffers(renderPass, instBuff.get());
+                    proc->drawInstances(renderPass, fView->fQuadPointInstances.count(), 0);
+                }
+            } else {
+                sk_sp<GrGpuBuffer> instBuff(rp->createBuffer(
+                        fView->fTriPointInstances.count() * sizeof(TriPointInstance),
+                        GrGpuBufferType::kVertex, kDynamic_GrAccessPattern,
+                        fView->fTriPointInstances.begin()));
+                if (!fView->fTriPointInstances.empty() && instBuff) {
+                    proc->bindBuffers(renderPass, instBuff.get());
+                    proc->drawInstances(renderPass, fView->fTriPointInstances.count(), 0);
+                }
             }
-        } else {
-            sk_sp<GrBuffer> instBuff(rp->createBuffer(
-                    fView->fTriPointInstances.count() * sizeof(TriPointInstance),
-                    kVertex_GrBufferType, kDynamic_GrAccessPattern,
-                    GrResourceProvider::Flags::kNoPendingIO |
-                    GrResourceProvider::Flags::kRequireGpuMemory, fView->fTriPointInstances.begin()));
-            if (!fView->fTriPointInstances.empty() && instBuff) {
-                proc.appendMesh(instBuff.get(), fView->fTriPointInstances.count(), 0, &mesh);
-            }
-        }
-
-        if (!mesh.empty()) {
-            SkASSERT(1 == mesh.count());
-            proc.draw(state, pipeline, nullptr, mesh.begin(), 1, this->bounds());
         }
     } else if (PrimitiveType::kConics != fView->fPrimitiveType) {  // No conic stroke support yet.
         GrCCStroker stroker(0,0,0);
@@ -380,52 +397,49 @@ void CCPRGeometryView::DrawCoverageCountOp::onExecute(GrOpFlushState* state,
                                        SkIRect::MakeWH(fView->width(), fView->height()), {0, 0});
         GrCCStroker::BatchID batchID = stroker.closeCurrentBatch();
 
-        GrOnFlushResourceProvider onFlushRP(context->contextPriv().drawingManager());
+        GrOnFlushResourceProvider onFlushRP(context->priv().drawingManager());
         stroker.prepareToDraw(&onFlushRP);
 
         SkIRect ibounds;
         this->bounds().roundOut(&ibounds);
-        stroker.drawStrokes(state, batchID, ibounds);
+        stroker.drawStrokes(state, proc.get(), batchID, ibounds);
     }
 
+#ifdef SK_GL
     if (glGpu) {
         context->resetContext(kMisc_GrGLBackendState);
     }
+#endif
 }
 
 class CCPRGeometryView::Click : public Sample::Click {
 public:
-    Click(Sample* target, int ptIdx) : Sample::Click(target), fPtIdx(ptIdx) {}
+    Click(int ptIdx) : fPtIdx(ptIdx) {}
 
     void doClick(SkPoint points[]) {
         if (fPtIdx >= 0) {
-            this->dragPoint(points, fPtIdx);
+            points[fPtIdx] += fCurr - fPrev;
         } else {
             for (int i = 0; i < 4; ++i) {
-                this->dragPoint(points, i);
+                points[i] += fCurr - fPrev;
             }
         }
     }
 
 private:
-    void dragPoint(SkPoint points[], int idx) {
-        SkIPoint delta = fICurr - fIPrev;
-        points[idx] += SkPoint::Make(delta.x(), delta.y());
-    }
-
     int fPtIdx;
 };
 
-Sample::Click* CCPRGeometryView::onFindClickHandler(SkScalar x, SkScalar y, unsigned) {
+Sample::Click* CCPRGeometryView::onFindClickHandler(SkScalar x, SkScalar y, skui::ModifierKey) {
     for (int i = 0; i < 4; ++i) {
         if (PrimitiveType::kCubics != fPrimitiveType && 2 == i) {
             continue;
         }
         if (fabs(x - fPoints[i].x()) < 20 && fabsf(y - fPoints[i].y()) < 20) {
-            return new Click(this, i);
+            return new Click(i);
         }
     }
-    return new Click(this, -1);
+    return new Click(-1);
 }
 
 bool CCPRGeometryView::onClick(Sample::Click* click) {
@@ -435,13 +449,7 @@ bool CCPRGeometryView::onClick(Sample::Click* click) {
     return true;
 }
 
-bool CCPRGeometryView::onQuery(Sample::Event* evt) {
-    if (Sample::TitleQ(*evt)) {
-        Sample::TitleR(evt, "CCPRGeometry");
-        return true;
-    }
-    SkUnichar unichar;
-    if (Sample::CharQ(*evt, &unichar)) {
+bool CCPRGeometryView::onChar(SkUnichar unichar) {
         if (unichar >= '1' && unichar <= '4') {
             fPrimitiveType = PrimitiveType(unichar - '1');
             if (fPrimitiveType >= PrimitiveType::kWeightedTriangles) {
@@ -491,8 +499,7 @@ bool CCPRGeometryView::onQuery(Sample::Event* evt) {
             fDoStroke = !fDoStroke;
             this->updateAndInval();
         }
-    }
-    return this->INHERITED::onQuery(evt);
+        return false;
 }
 
 DEF_SAMPLE(return new CCPRGeometryView;)

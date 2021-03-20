@@ -6,13 +6,16 @@
 #define SERVICES_SERVICE_MANAGER_PUBLIC_CPP_INTERFACE_PROVIDER_H_
 
 #include "base/bind.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/service_manager/public/cpp/export.h"
 #include "services/service_manager/public/mojom/interface_provider.mojom.h"
 
 namespace service_manager {
 
-// Encapsulates a mojom::InterfaceProviderPtr implemented in a remote
-// application. Provides two main features:
+// Encapsulates a mojo::PendingRemote|Remote<mojom::InterfaceProvider>
+// implemented in a remote application. Provides two main features:
 // - a typesafe GetInterface() method for binding InterfacePtrs.
 // - a testing API that allows local callbacks to be registered that bind
 //   requests for remote interfaces.
@@ -20,8 +23,9 @@ namespace service_manager {
 // Connection.
 class SERVICE_MANAGER_PUBLIC_CPP_EXPORT InterfaceProvider {
  public:
-  using ForwardCallback = base::Callback<void(const std::string&,
-                                              mojo::ScopedMessagePipeHandle)>;
+  using ForwardCallback =
+      base::RepeatingCallback<void(const std::string&,
+                                   mojo::ScopedMessagePipeHandle)>;
   class TestApi {
    public:
     explicit TestApi(InterfaceProvider* provider) : provider_(provider) {}
@@ -57,18 +61,20 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT InterfaceProvider {
 
   // Constructs an InterfaceProvider which uses |interface_provider| to issue
   // remote interface requests.
-  explicit InterfaceProvider(mojom::InterfaceProviderPtr interface_provider);
+  explicit InterfaceProvider(
+      mojo::PendingRemote<mojom::InterfaceProvider> interface_provider);
 
   ~InterfaceProvider();
 
-  // Closes the currently bound InterfaceProviderPtr for this object, allowing
-  // it to be rebound to a new InterfaceProviderPtr.
+  // Closes the currently bound mojo::PendingRemote<InterfaceProvider> for this
+  // object, allowing it to be rebound to a new
+  // mojo::PendingRemote<InterfaceProvider>.
   void Close();
 
   // Binds this InterfaceProvider to an actual mojom::InterfaceProvider pipe.
   // It is an error to call this on a forwarding InterfaceProvider, i.e. this
   // call is exclusive to Forward().
-  void Bind(mojom::InterfaceProviderPtr interface_provider);
+  void Bind(mojo::PendingRemote<mojom::InterfaceProvider> interface_provider);
 
   // Sets this InterfaceProvider to forward all GetInterface() requests to
   // |callback|. It is an error to call this on a bound InterfaceProvider, i.e.
@@ -77,7 +83,7 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT InterfaceProvider {
   void Forward(const ForwardCallback& callback);
 
   // Sets a closure to be run when the remote InterfaceProvider pipe is closed.
-  void SetConnectionLostClosure(const base::Closure& connection_lost_closure);
+  void SetConnectionLostClosure(base::OnceClosure connection_lost_closure);
 
   base::WeakPtr<InterfaceProvider> GetWeakPtr();
 
@@ -93,15 +99,19 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT InterfaceProvider {
   void GetInterface(mojo::InterfaceRequest<Interface> request) {
     GetInterfaceByName(Interface::Name_, std::move(request.PassMessagePipe()));
   }
+  template <typename Interface>
+  void GetInterface(mojo::PendingReceiver<Interface> receiver) {
+    GetInterfaceByName(Interface::Name_, receiver.PassPipe());
+  }
   void GetInterfaceByName(const std::string& name,
                           mojo::ScopedMessagePipeHandle request_handle);
 
   // Returns a callback to GetInterface<Interface>(). This can be passed to
   // BinderRegistry::AddInterface() to forward requests.
   template <typename Interface>
-  base::Callback<void(mojo::InterfaceRequest<Interface>)>
+  base::RepeatingCallback<void(mojo::InterfaceRequest<Interface>)>
   CreateInterfaceFactory() {
-    return base::Bind(
+    return base::BindRepeating(
         &InterfaceProvider::BindInterfaceRequestFromSource<Interface>,
         GetWeakPtr());
   }
@@ -127,14 +137,14 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT InterfaceProvider {
                base::RepeatingCallback<void(mojo::ScopedMessagePipeHandle)>>;
   BinderMap binders_;
 
-  mojom::InterfaceProviderPtr interface_provider_;
-  mojom::InterfaceProviderRequest pending_request_;
+  mojo::Remote<mojom::InterfaceProvider> interface_provider_;
+  mojo::PendingReceiver<mojom::InterfaceProvider> pending_receiver_;
 
   // A callback to receive all GetInterface() requests in lieu of the
   // InterfaceProvider pipe.
   ForwardCallback forward_callback_;
 
-  base::WeakPtrFactory<InterfaceProvider> weak_factory_;
+  base::WeakPtrFactory<InterfaceProvider> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InterfaceProvider);
 };

@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/stl_util.h"
@@ -95,8 +97,8 @@ class AudioDecoderTest : public ::testing::TestWithParam<TestScenario> {
     // Encode |audio_bus| into |encoded_frame->data|.
     const int num_elements = audio_bus->channels() * audio_bus->frames();
     std::vector<int16_t> interleaved(num_elements);
-    audio_bus->ToInterleaved(audio_bus->frames(), sizeof(int16_t),
-                             &interleaved.front());
+    audio_bus->ToInterleaved<SignedInt16SampleTypeTraits>(audio_bus->frames(),
+                                                          &interleaved.front());
     if (GetParam().codec == CODEC_AUDIO_PCM16) {
       encoded_frame->data.resize(num_elements * sizeof(int16_t));
       int16_t* const pcm_data =
@@ -126,14 +128,12 @@ class AudioDecoderTest : public ::testing::TestWithParam<TestScenario> {
     }
 
     cast_environment_->PostTask(
-        CastEnvironment::MAIN,
-        FROM_HERE,
-        base::Bind(&AudioDecoder::DecodeFrame,
-                   base::Unretained(audio_decoder_.get()),
-                   base::Passed(&encoded_frame),
-                   base::Bind(&AudioDecoderTest::OnDecodedFrame,
-                              base::Unretained(this),
-                              num_dropped_frames == 0)));
+        CastEnvironment::MAIN, FROM_HERE,
+        base::BindOnce(
+            &AudioDecoder::DecodeFrame, base::Unretained(audio_decoder_.get()),
+            std::move(encoded_frame),
+            base::Bind(&AudioDecoderTest::OnDecodedFrame,
+                       base::Unretained(this), num_dropped_frames == 0)));
   }
 
   // Blocks the caller until all audio that has been feed in has been decoded.
@@ -164,7 +164,7 @@ class AudioDecoderTest : public ::testing::TestWithParam<TestScenario> {
     // recovery) because it introduces a tiny, significant delay.
     bool examine_signal = true;
     if (GetParam().codec == CODEC_AUDIO_OPUS) {
-      ++decoded_frames_seen_;
+      decoded_frames_seen_ = should_be_continuous ? decoded_frames_seen_ + 1 : 1;
       examine_signal = (decoded_frames_seen_ > 2) && should_be_continuous;
     }
     if (examine_signal) {
@@ -239,14 +239,13 @@ TEST_P(AudioDecoderTest, RecoversFromDroppedFrames) {
 }
 
 #if !defined(OS_ANDROID)  // https://crbug.com/831999
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AudioDecoderTestScenarios,
     AudioDecoderTest,
-    ::testing::Values(
-         TestScenario(CODEC_AUDIO_PCM16, 1, 8000),
-         TestScenario(CODEC_AUDIO_PCM16, 2, 48000),
-         TestScenario(CODEC_AUDIO_OPUS, 1, 8000),
-         TestScenario(CODEC_AUDIO_OPUS, 2, 48000)));
+    ::testing::Values(TestScenario(CODEC_AUDIO_PCM16, 1, 8000),
+                      TestScenario(CODEC_AUDIO_PCM16, 2, 48000),
+                      TestScenario(CODEC_AUDIO_OPUS, 1, 8000),
+                      TestScenario(CODEC_AUDIO_OPUS, 2, 48000)));
 #endif
 
 }  // namespace cast

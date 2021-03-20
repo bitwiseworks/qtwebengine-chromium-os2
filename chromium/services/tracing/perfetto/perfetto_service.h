@@ -5,15 +5,15 @@
 #ifndef SERVICES_TRACING_PERFETTO_PERFETTO_SERVICE_H_
 #define SERVICES_TRACING_PERFETTO_PERFETTO_SERVICE_H_
 
+#include <map>
 #include <memory>
 #include <set>
 
 #include "base/macros.h"
-#include "base/sequence_checker.h"
-#include "base/sequenced_task_runner.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/strong_binding_set.h"
-#include "services/service_manager/public/cpp/identity.h"
+#include "mojo/public/cpp/bindings/unique_receiver_set.h"
+#include "services/tracing/perfetto/consumer_host.h"
 #include "services/tracing/public/cpp/perfetto/task_runner.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 
@@ -34,27 +34,64 @@ class PerfettoService : public mojom::PerfettoService {
   ~PerfettoService() override;
 
   static PerfettoService* GetInstance();
+  static bool ParsePidFromProducerName(const std::string& producer_name,
+                                       base::ProcessId* pid);
 
-  void BindRequest(mojom::PerfettoServiceRequest request);
+  void BindReceiver(mojo::PendingReceiver<mojom::PerfettoService> receiver,
+                    uint32_t pid);
 
   // mojom::PerfettoService implementation.
-  void ConnectToProducerHost(mojom::ProducerClientPtr producer_client,
-                             mojom::ProducerHostRequest producer_host) override;
+  void ConnectToProducerHost(
+      mojo::PendingRemote<mojom::ProducerClient> producer_client,
+      mojo::PendingReceiver<mojom::ProducerHost> producer_host_receiver,
+      mojo::ScopedSharedBufferHandle shared_memory,
+      uint64_t shared_memory_buffer_page_size_bytes) override;
 
   perfetto::TracingService* GetService() const;
-  scoped_refptr<base::SequencedTaskRunner> task_runner() {
-    return perfetto_task_runner_.task_runner();
+
+  // Called when a ConsumerHost::TracingSession is created/destroyed (i.e. when
+  // a consumer starts/finishes tracing.
+  void RegisterTracingSession(ConsumerHost::TracingSession* consumer_host);
+  void UnregisterTracingSession(ConsumerHost::TracingSession* consumer_host);
+
+  // Make a request of the service for whether or not a TracingSession
+  // should be allowed to start tracing, in case of pre-existing sessions.
+  // |callback| will eventually be called once a session is allowed, or it
+  // will be destroyed.
+  void RequestTracingSession(mojom::TracingClientPriority priority,
+                             base::OnceClosure callback);
+
+  // Called by TracingService to notify the perfetto service of the PIDs of
+  // actively running services (whenever a service starts or stops).
+  void AddActiveServicePid(base::ProcessId pid);
+  void RemoveActiveServicePid(base::ProcessId pid);
+  void SetActiveServicePidsInitialized();
+
+  std::set<base::ProcessId> active_service_pids() const {
+    return active_service_pids_;
   }
 
+  bool active_service_pids_initialized() const {
+    return active_service_pids_initialized_;
+  }
+
+  PerfettoTaskRunner* perfetto_task_runner() { return &perfetto_task_runner_; }
+
  private:
-  void BindOnSequence(mojom::PerfettoServiceRequest request);
+  void BindOnSequence(mojo::PendingReceiver<mojom::PerfettoService> receiver);
   void CreateServiceOnSequence();
+  void OnProducerHostDisconnect();
+  void OnServiceDisconnect();
+  void OnDisconnectFromProcess(base::ProcessId pid);
 
   PerfettoTaskRunner perfetto_task_runner_;
   std::unique_ptr<perfetto::TracingService> service_;
-  mojo::BindingSet<mojom::PerfettoService> bindings_;
-  mojo::StrongBindingSet<mojom::ProducerHost> producer_bindings_;
-  SEQUENCE_CHECKER(sequence_checker_);
+  mojo::ReceiverSet<mojom::PerfettoService, uint32_t> receivers_;
+  mojo::UniqueReceiverSet<mojom::ProducerHost, uint32_t> producer_receivers_;
+  std::set<ConsumerHost::TracingSession*> tracing_sessions_;  // Not owned.
+  std::set<base::ProcessId> active_service_pids_;
+  std::map<base::ProcessId, int> num_active_connections_;
+  bool active_service_pids_initialized_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(PerfettoService);
 };

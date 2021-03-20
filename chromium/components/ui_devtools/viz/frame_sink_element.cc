@@ -4,6 +4,7 @@
 
 #include "components/ui_devtools/viz/frame_sink_element.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "components/ui_devtools/Protocol.h"
 #include "components/ui_devtools/ui_element_delegate.h"
@@ -21,7 +22,7 @@ FrameSinkElement::FrameSinkElement(
     UIElement* parent,
     bool is_root,
     bool has_created_frame_sink)
-    : UIElement(UIElementType::FRAMESINK, ui_element_delegate, parent),
+    : VizElement(UIElementType::FRAMESINK, ui_element_delegate, parent),
       frame_sink_id_(frame_sink_id),
       frame_sink_manager_(frame_sink_manager),
       is_root_(is_root),
@@ -33,14 +34,15 @@ FrameSinkElement::FrameSinkElement(
 
 FrameSinkElement::~FrameSinkElement() {}
 
-std::vector<std::pair<std::string, std::string>>
-FrameSinkElement::GetCustomProperties() const {
-  std::vector<std::pair<std::string, std::string>> v;
+std::vector<UIElement::ClassProperties>
+FrameSinkElement::GetCustomPropertiesForMatchedStyle() const {
+  std::vector<UIElement::ClassProperties> ret;
+  std::vector<UIElement::UIProperty> properties;
 
   // Hierarchical information about the FrameSink.
-  v.push_back(std::make_pair("Is root", is_root_ ? "true" : "false"));
-  v.push_back(std::make_pair("Has created frame sink",
-                             has_created_frame_sink_ ? "true" : "false"));
+  properties.emplace_back("Is root", is_root_ ? "true" : "false");
+  properties.emplace_back("Has created frame sink",
+                          has_created_frame_sink_ ? "true" : "false");
 
   // LastUsedBeingFrameArgs information.
   const viz::CompositorFrameSinkSupport* support =
@@ -49,14 +51,15 @@ FrameSinkElement::GetCustomProperties() const {
     const viz::BeginFrameArgs args =
         static_cast<const viz::BeginFrameObserver*>(support)
             ->LastUsedBeginFrameArgs();
-    v.push_back(std::make_pair("SourceId", std::to_string(args.source_id)));
-    v.push_back(
-        std::make_pair("SequenceNumber", std::to_string(args.sequence_number)));
-    v.push_back(std::make_pair(
-        "FrameType",
-        std::string(viz::BeginFrameArgs::TypeToString(args.type))));
+    properties.emplace_back("SourceId",
+                            base::NumberToString(args.frame_id.source_id));
+    properties.emplace_back(
+        "SequenceNumber", base::NumberToString(args.frame_id.sequence_number));
+    properties.emplace_back(
+        "FrameType", std::string(viz::BeginFrameArgs::TypeToString(args.type)));
   }
-  return v;
+  ret.emplace_back("FrameSink", properties);
+  return ret;
 }
 
 void FrameSinkElement::GetBounds(gfx::Rect* bounds) const {
@@ -86,15 +89,9 @@ void FrameSinkElement::GetVisible(bool* visible) const {
 
 void FrameSinkElement::SetVisible(bool visible) {}
 
-std::unique_ptr<protocol::Array<std::string>> FrameSinkElement::GetAttributes()
-    const {
-  auto attributes = protocol::Array<std::string>::create();
-  attributes->addItem("FrameSinkId");
-  attributes->addItem(frame_sink_id_.ToString());
-  attributes->addItem("Title");
-  attributes->addItem(
-      (frame_sink_manager_->GetFrameSinkDebugLabel(frame_sink_id_)).data());
-  return attributes;
+std::vector<std::string> FrameSinkElement::GetAttributes() const {
+  return {"FrameSinkId", frame_sink_id_.ToString(), "Title",
+          (frame_sink_manager_->GetFrameSinkDebugLabel(frame_sink_id_)).data()};
 }
 
 std::pair<gfx::NativeWindow, gfx::Rect>

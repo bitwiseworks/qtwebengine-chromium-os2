@@ -9,8 +9,8 @@
 
 #include "base/cancelable_callback.h"
 #include "media/base/media_export.h"
-#include "media/capture/video/chromeos/mojo/camera3.mojom.h"
-#include "media/capture/video/chromeos/stream_buffer_manager.h"
+#include "media/capture/video/chromeos/mojom/camera3.mojom.h"
+#include "media/capture/video/chromeos/request_manager.h"
 
 namespace media {
 
@@ -46,6 +46,10 @@ class CAPTURE_EXPORT Camera3AController
   // Set point of interest. The coordinate system is based on the active
   // pixel array.
   void SetPointOfInterest(gfx::Point point);
+
+  // Updates the availability of Zero-Shutter Lag (ZSL). We skip 3A (AE, AF,
+  // AWB) if ZSL is enabled.
+  void UpdateZeroShutterLagAvailability(bool enabled);
 
   base::WeakPtr<Camera3AController> GetWeakPtr();
 
@@ -114,6 +118,8 @@ class CAPTURE_EXPORT Camera3AController
 
   bool ae_locked_for_point_of_interest_;
 
+  bool zero_shutter_lag_enabled_;
+
   base::TimeDelta latest_sensor_timestamp_;
 
   std::unordered_set<cros::mojom::CameraMetadataTag> repeating_metadata_tags_;
@@ -134,7 +140,7 @@ class CAPTURE_EXPORT Camera3AController
 
   base::CancelableOnceClosure delayed_ae_unlock_callback_;
 
-  base::WeakPtrFactory<Camera3AController> weak_ptr_factory_;
+  base::WeakPtrFactory<Camera3AController> weak_ptr_factory_{this};
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(Camera3AController);
 };

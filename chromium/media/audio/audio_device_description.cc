@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "build/chromecast_buildflags.h"
 #include "media/base/localized_strings.h"
 
 namespace media {
@@ -37,9 +38,9 @@ bool AudioDeviceDescription::IsLoopbackDevice(const std::string& device_id) {
 
 // static
 bool AudioDeviceDescription::UseSessionIdToSelectDevice(
-    int session_id,
+    const base::UnguessableToken& session_id,
     const std::string& device_id) {
-  return session_id && device_id.empty();
+  return !session_id.is_empty() && device_id.empty();
 }
 
 // static
@@ -56,7 +57,7 @@ std::string AudioDeviceDescription::GetDefaultDeviceName() {
 std::string AudioDeviceDescription::GetCommunicationsDeviceName() {
 #if defined(OS_WIN)
   return GetLocalizedStringUTF8(COMMUNICATIONS_AUDIO_DEVICE_NAME);
-#elif defined(IS_CHROMECAST)
+#elif BUILDFLAG(IS_CHROMECAST)
   return "";
 #else
   NOTREACHED();

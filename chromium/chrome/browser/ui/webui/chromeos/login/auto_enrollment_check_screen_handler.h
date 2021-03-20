@@ -9,7 +9,6 @@
 #include "base/macros.h"
 #include "chrome/browser/chromeos/login/enrollment/auto_enrollment_check_screen_view.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
-#include "content/public/browser/web_ui.h"
 
 namespace chromeos {
 
@@ -17,7 +16,10 @@ namespace chromeos {
 class AutoEnrollmentCheckScreenHandler : public AutoEnrollmentCheckScreenView,
                                          public BaseScreenHandler {
  public:
-  AutoEnrollmentCheckScreenHandler();
+  using TView = AutoEnrollmentCheckScreenView;
+
+  explicit AutoEnrollmentCheckScreenHandler(
+      JSCallsContainer* js_calls_container);
   ~AutoEnrollmentCheckScreenHandler() override;
 
   // AutoEnrollmentCheckScreenActor implementation:

@@ -8,14 +8,15 @@
 
 namespace blink {
 
-void CSSCustomPropertyDeclaration::TraceAfterDispatch(blink::Visitor* visitor) {
+void CSSCustomPropertyDeclaration::TraceAfterDispatch(
+    blink::Visitor* visitor) const {
   CSSValue::TraceAfterDispatch(visitor);
 }
 
 String CSSCustomPropertyDeclaration::CustomCSSText() const {
   if (value_)
     return value_->TokenRange().Serialize();
-  DCHECK(value_id_ != CSSValueInternalVariableValue);
+  DCHECK(value_id_ != CSSValueID::kInternalVariableValue);
   return getValueName(value_id_);
 }
 

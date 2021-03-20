@@ -20,7 +20,7 @@
 #include "components/gcm_driver/gcm_internals_constants.h"
 #include "components/gcm_driver/gcm_internals_helper.h"
 #include "components/gcm_driver/gcm_profile_service.h"
-#include "components/grit/components_resources.h"
+#include "components/grit/dev_ui_components_resources.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -55,13 +55,12 @@ class GcmInternalsUIMessageHandler : public content::WebUIMessageHandler {
       const gcm::GCMClient::GCMStatistics& args) const;
 
   // Factory for creating references in callbacks.
-  base::WeakPtrFactory<GcmInternalsUIMessageHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<GcmInternalsUIMessageHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GcmInternalsUIMessageHandler);
 };
 
-GcmInternalsUIMessageHandler::GcmInternalsUIMessageHandler()
-    : weak_ptr_factory_(this) {}
+GcmInternalsUIMessageHandler::GcmInternalsUIMessageHandler() {}
 
 GcmInternalsUIMessageHandler::~GcmInternalsUIMessageHandler() {}
 
@@ -161,7 +160,7 @@ GCMInternalsUI::GCMInternalsUI(content::WebUI* web_ui)
   content::WebUIDataSource* html_source =
       content::WebUIDataSource::Create(chrome::kChromeUIGCMInternalsHost);
 
-  html_source->SetJsonPath("strings.js");
+  html_source->UseStringsJs();
 
   // Add required resources.
   html_source->AddResourcePath(gcm_driver::kGcmInternalsCSS,
@@ -169,7 +168,6 @@ GCMInternalsUI::GCMInternalsUI(content::WebUI* web_ui)
   html_source->AddResourcePath(gcm_driver::kGcmInternalsJS,
                                IDR_GCM_DRIVER_GCM_INTERNALS_JS);
   html_source->SetDefaultResource(IDR_GCM_DRIVER_GCM_INTERNALS_HTML);
-  html_source->UseGzip();
 
   Profile* profile = Profile::FromWebUI(web_ui);
   content::WebUIDataSource::Add(profile, html_source);

@@ -32,8 +32,7 @@ AffiliationBackend::AffiliationBackend(
     : task_runner_(task_runner),
       clock_(time_source),
       tick_clock_(time_tick_source),
-      construction_time_(clock_->Now()),
-      weak_ptr_factory_(this) {
+      construction_time_(clock_->Now()) {
   DCHECK_LT(base::Time(), clock_->Now());
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
@@ -42,8 +41,8 @@ AffiliationBackend::~AffiliationBackend() {
 }
 
 void AffiliationBackend::Initialize(
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        url_loader_factory_info,
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_url_loader_factory,
     network::NetworkConnectionTracker* network_connection_tracker,
     const base::FilePath& db_path) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -57,23 +56,23 @@ void AffiliationBackend::Initialize(
   // return value here. See: https://crbug.com/478831.
   cache_.reset(new AffiliationDatabase());
   cache_->Init(db_path);
-  DCHECK(url_loader_factory_info);
+  DCHECK(pending_url_loader_factory);
   DCHECK(!url_loader_factory_);
   url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-      std::move(url_loader_factory_info));
+      std::move(pending_url_loader_factory));
 }
 
 void AffiliationBackend::GetAffiliationsAndBranding(
     const FacetURI& facet_uri,
     StrategyOnCacheMiss cache_miss_strategy,
-    const AffiliationService::ResultCallback& callback,
+    AffiliationService::ResultCallback callback,
     const scoped_refptr<base::TaskRunner>& callback_task_runner) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   FacetManager* facet_manager = GetOrCreateFacetManager(facet_uri);
   DCHECK(facet_manager);
-  facet_manager->GetAffiliationsAndBranding(cache_miss_strategy, callback,
-                                            callback_task_runner);
+  facet_manager->GetAffiliationsAndBranding(
+      cache_miss_strategy, std::move(callback), callback_task_runner);
 
   if (facet_manager->CanBeDiscarded())
     facet_managers_.erase(facet_uri);

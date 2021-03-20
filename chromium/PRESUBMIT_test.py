@@ -128,6 +128,28 @@ class UmaHistogramChangeMatchedOrNotTest(unittest.TestCase):
                                                    MockOutputApi())
     self.assertEqual(0, len(warnings))
 
+  def testCorrectlyMatchedChangeViaSuffixesWithLineWrapping(self):
+    diff_cc = [
+        'UMA_HISTOGRAM_BOOL("LongHistogramNameNeedsLineWrapping.Dummy", true)']
+    diff_java = ['RecordHistogram.recordBooleanHistogram(' +
+                 '"LongHistogramNameNeedsLineWrapping.Dummy", true)']
+    diff_xml = ['<histogram_suffixes',
+                '    name="LongHistogramNameNeedsLineWrapping"',
+                '    separator=".">',
+                '  <suffix name="Dummy"/>',
+                '  <affected-histogram',
+                '      name="LongHistogramNameNeedsLineWrapping"/>',
+                '</histogram>']
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('some/path/foo.cc', diff_cc),
+      MockFile('some/path/foo.java', diff_java),
+      MockFile('tools/metrics/histograms/histograms.xml', diff_xml),
+    ]
+    warnings = PRESUBMIT._CheckUmaHistogramChanges(mock_input_api,
+                                                   MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
   def testNameMatch(self):
     # Check that the detected histogram name is "Dummy" and not, e.g.,
     # "Dummy\", true);  // The \"correct"
@@ -290,7 +312,7 @@ class InvalidIfDefinedMacroNamesTest(unittest.TestCase):
     self.assertEqual(0, len(errors))
 
 
-class CheckAddedDepsHaveTetsApprovalsTest(unittest.TestCase):
+class CheckAddedDepsHaveTestApprovalsTest(unittest.TestCase):
 
   def calculate(self, old_include_rules, old_specific_include_rules,
                 new_include_rules, new_specific_include_rules):
@@ -946,6 +968,15 @@ class IncludeGuardTest(unittest.TestCase):
           'struct SomeFileFoo;',
           '#endif  // REQUIRED_RPCNDR_H_',
         ]),
+        # Not having proper include guard in *_message_generator.h
+        # for old IPC messages is allowed.
+        MockAffectedFile('content/common/content_message_generator.h', [
+          '#undef CONTENT_COMMON_FOO_MESSAGES_H_',
+          '#include "content/common/foo_messages.h"',
+          '#ifndef CONTENT_COMMON_FOO_MESSAGES_H_',
+          '#error "Failed to include content/common/foo_messages.h"',
+          '#endif',
+        ]),
       ]
     msgs = PRESUBMIT._CheckForIncludeGuards(
         mock_input_api, mock_output_api)
@@ -1129,6 +1160,57 @@ class AndroidJUnitBaseClassTest(unittest.TestCase):
     self.assertTrue('IncorrectMultiLineTest.java:2' in msgs[0].items,
                     'IncorrectMultiLineTest not found in errors')
 
+class AndroidDebuggableBuildTest(unittest.TestCase):
+
+  def testCheckAndroidDebuggableBuild(self):
+    mock_input_api = MockInputApi()
+    mock_output_api = MockOutputApi()
+
+    mock_input_api.files = [
+      MockAffectedFile('RandomStuff.java', [
+        'random stuff'
+      ]),
+      MockAffectedFile('CorrectUsage.java', [
+        'import org.chromium.base.BuildInfo;',
+        'some random stuff',
+        'boolean isOsDebuggable = BuildInfo.isDebugAndroid();',
+      ]),
+      MockAffectedFile('JustCheckUserdebugBuild.java', [
+        'import android.os.Build;',
+        'some random stuff',
+        'boolean isOsDebuggable = Build.TYPE.equals("userdebug")',
+      ]),
+      MockAffectedFile('JustCheckEngineeringBuild.java', [
+        'import android.os.Build;',
+        'some random stuff',
+        'boolean isOsDebuggable = "eng".equals(Build.TYPE)',
+      ]),
+      MockAffectedFile('UsedBuildType.java', [
+        'import android.os.Build;',
+        'some random stuff',
+        'boolean isOsDebuggable = Build.TYPE.equals("userdebug")'
+            '|| "eng".equals(Build.TYPE)',
+      ]),
+      MockAffectedFile('UsedExplicitBuildType.java', [
+        'some random stuff',
+        'boolean isOsDebuggable = android.os.Build.TYPE.equals("userdebug")'
+            '|| "eng".equals(android.os.Build.TYPE)',
+      ]),
+    ]
+
+    msgs = PRESUBMIT._CheckAndroidDebuggableBuild(
+        mock_input_api, mock_output_api)
+    self.assertEqual(1, len(msgs),
+                     'Expected %d items, found %d: %s'
+                     % (1, len(msgs), msgs))
+    self.assertEqual(4, len(msgs[0].items),
+                     'Expected %d items, found %d: %s'
+                     % (4, len(msgs[0].items), msgs[0].items))
+    self.assertTrue('JustCheckUserdebugBuild.java:3' in msgs[0].items)
+    self.assertTrue('JustCheckEngineeringBuild.java:3' in msgs[0].items)
+    self.assertTrue('UsedBuildType.java:3' in msgs[0].items)
+    self.assertTrue('UsedExplicitBuildType.java:2' in msgs[0].items)
+
 
 class LogUsageTest(unittest.TestCase):
 
@@ -1185,6 +1267,12 @@ class LogUsageTest(unittest.TestCase):
         'private static final String TAG = "cr_foo.bar";',
         'Log.d(TAG, "foo");',
       ]),
+      MockAffectedFile('HasDottedTagPublic.java', [
+        'import org.chromium.base.Log;',
+        'some random stuff',
+        'public static final String TAG = "cr_foo.bar";',
+        'Log.d(TAG, "foo");',
+      ]),
       MockAffectedFile('HasNoTagDecl.java', [
         'import org.chromium.base.Log;',
         'some random stuff',
@@ -1202,6 +1290,12 @@ class LogUsageTest(unittest.TestCase):
         'private static final String TAG = "cr_Foo";',
         'Log.d("TAG", "foo");',
       ]),
+      MockAffectedFile('HasInlineTagWithSpace.java', [
+        'import org.chromium.base.Log;',
+        'some random stuff',
+        'private static final String TAG = "cr_Foo";',
+        'Log.d("log message", "foo");',
+      ]),
       MockAffectedFile('HasUnprefixedTag.java', [
         'import org.chromium.base.Log;',
         'some random stuff',
@@ -1213,6 +1307,11 @@ class LogUsageTest(unittest.TestCase):
         'some random stuff',
         'private static final String TAG = "21_charachers_long___";',
         'Log.d(TAG, "foo");',
+      ]),
+      MockAffectedFile('HasTooLongTagWithNoLogCallsInDiff.java', [
+        'import org.chromium.base.Log;',
+        'some random stuff',
+        'private static final String TAG = "21_charachers_long___";',
       ]),
     ]
 
@@ -1231,28 +1330,33 @@ class LogUsageTest(unittest.TestCase):
 
     # Tag length
     nb = len(msgs[1].items)
-    self.assertEqual(1, nb,
-                     'Expected %d items, found %d: %s' % (1, nb, msgs[1].items))
+    self.assertEqual(2, nb,
+                     'Expected %d items, found %d: %s' % (2, nb, msgs[1].items))
     self.assertTrue('HasTooLongTag.java' in msgs[1].items)
+    self.assertTrue('HasTooLongTagWithNoLogCallsInDiff.java' in msgs[1].items)
 
     # Tag must be a variable named TAG
     nb = len(msgs[2].items)
-    self.assertEqual(1, nb,
-                     'Expected %d items, found %d: %s' % (1, nb, msgs[2].items))
+    self.assertEqual(3, nb,
+                     'Expected %d items, found %d: %s' % (3, nb, msgs[2].items))
+    self.assertTrue('HasBothLog.java:5' in msgs[2].items)
     self.assertTrue('HasInlineTag.java:4' in msgs[2].items)
+    self.assertTrue('HasInlineTagWithSpace.java:4' in msgs[2].items)
 
     # Util Log usage
     nb = len(msgs[3].items)
-    self.assertEqual(2, nb,
-                     'Expected %d items, found %d: %s' % (2, nb, msgs[3].items))
+    self.assertEqual(3, nb,
+                     'Expected %d items, found %d: %s' % (3, nb, msgs[3].items))
     self.assertTrue('HasAndroidLog.java:3' in msgs[3].items)
+    self.assertTrue('HasExplicitUtilLog.java:2' in msgs[3].items)
     self.assertTrue('IsInBasePackageButImportsLog.java:4' in msgs[3].items)
 
     # Tag must not contain
     nb = len(msgs[4].items)
-    self.assertEqual(2, nb,
+    self.assertEqual(3, nb,
                      'Expected %d items, found %d: %s' % (2, nb, msgs[4].items))
     self.assertTrue('HasDottedTag.java' in msgs[4].items)
+    self.assertTrue('HasDottedTagPublic.java' in msgs[4].items)
     self.assertTrue('HasOldTag.java' in msgs[4].items)
 
 
@@ -1315,6 +1419,62 @@ class HardcodedGoogleHostsTest(unittest.TestCase):
     warnings = PRESUBMIT._CheckHardcodedGoogleHostsInLowerLayers(
       input_api, MockOutputApi())
     self.assertEqual(0, len(warnings))
+
+
+class ChromeOsSyncedPrefRegistrationTest(unittest.TestCase):
+
+  def testWarnsOnChromeOsDirectories(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('ash/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+      MockFile('chrome/browser/chromeos/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+      MockFile('chromeos/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+      MockFile('components/arc/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+      MockFile('components/exo/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+    ]
+    warnings = PRESUBMIT._CheckChromeOsSyncedPrefRegistration(
+      input_api, MockOutputApi())
+    self.assertEqual(1, len(warnings))
+
+  def testDoesNotWarnOnSyncOsPref(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('chromeos/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_OS_PREF']),
+    ]
+    warnings = PRESUBMIT._CheckChromeOsSyncedPrefRegistration(
+      input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testDoesNotWarnOnCrossPlatformDirectories(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('chrome/browser/ui/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+      MockFile('components/sync/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+      MockFile('content/browser/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF']),
+    ]
+    warnings = PRESUBMIT._CheckChromeOsSyncedPrefRegistration(
+      input_api, MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+  def testSeparateWarningForPriorityPrefs(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('chromeos/file.cc',
+               ['PrefRegistrySyncable::SYNCABLE_PREF',
+                'PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF']),
+    ]
+    warnings = PRESUBMIT._CheckChromeOsSyncedPrefRegistration(
+      input_api, MockOutputApi())
+    self.assertEqual(2, len(warnings))
 
 
 class ForwardDeclarationTest(unittest.TestCase):
@@ -1452,6 +1612,82 @@ class RelativeIncludesTest(unittest.TestCase):
     mock_output_api = MockOutputApi()
 
     errors = PRESUBMIT._CheckForRelativeIncludes(
+        mock_input_api, mock_output_api)
+    self.assertEqual(1, len(errors))
+
+
+class CCIncludeTest(unittest.TestCase):
+  def testThirdPartyNotBlinkIgnored(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('third_party/test.cpp', '#include "file.cc"'),
+    ]
+
+    mock_output_api = MockOutputApi()
+
+    errors = PRESUBMIT._CheckForCcIncludes(
+        mock_input_api, mock_output_api)
+    self.assertEqual(0, len(errors))
+
+  def testPythonFileIgnored(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('test.py', '#include "file.cc"'),
+    ]
+
+    mock_output_api = MockOutputApi()
+
+    errors = PRESUBMIT._CheckForCcIncludes(
+        mock_input_api, mock_output_api)
+    self.assertEqual(0, len(errors))
+
+  def testIncFilesAccepted(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('test.py', '#include "file.inc"'),
+    ]
+
+    mock_output_api = MockOutputApi()
+
+    errors = PRESUBMIT._CheckForCcIncludes(
+        mock_input_api, mock_output_api)
+    self.assertEqual(0, len(errors))
+
+  def testInnocuousChangesAllowed(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('test.cpp', '#include "header.h"'),
+      MockAffectedFile('test2.cpp', 'Something "file.cc"'),
+    ]
+
+    mock_output_api = MockOutputApi()
+
+    errors = PRESUBMIT._CheckForCcIncludes(
+        mock_input_api, mock_output_api)
+    self.assertEqual(0, len(errors))
+
+  def testCcIncludeNonBlinkProducesError(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('test.cpp', ['#include "file.cc"']),
+    ]
+
+    mock_output_api = MockOutputApi()
+
+    errors = PRESUBMIT._CheckForCcIncludes(
+        mock_input_api, mock_output_api)
+    self.assertEqual(1, len(errors))
+
+  def testCppIncludeBlinkProducesError(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('third_party/blink/test.cpp',
+                       ['#include "foo/file.cpp"']),
+    ]
+
+    mock_output_api = MockOutputApi()
+
+    errors = PRESUBMIT._CheckForCcIncludes(
         mock_input_api, mock_output_api)
     self.assertEqual(1, len(errors))
 
@@ -1751,9 +1987,64 @@ class ServiceManifestOwnerTest(unittest.TestCase):
     self.assertEqual([], errors)
 
 
-class BannedFunctionCheckTest(unittest.TestCase):
+class BannedTypeCheckTest(unittest.TestCase):
 
-  def testBannedIosObcjFunctions(self):
+  def testBannedCppFunctions(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('some/cpp/problematic/file.cc',
+               ['using namespace std;']),
+      MockFile('third_party/blink/problematic/file.cc',
+               ['GetInterfaceProvider()']),
+      MockFile('some/cpp/ok/file.cc',
+               ['using std::string;']),
+      MockFile('some/cpp/problematic/file2.cc',
+               ['set_owned_by_client()']),
+    ]
+
+    results = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
+
+     # warnings are results[0], errors are results[1]
+    self.assertEqual(2, len(results))
+    self.assertTrue('some/cpp/problematic/file.cc' in results[1].message)
+    self.assertTrue(
+        'third_party/blink/problematic/file.cc' in results[0].message)
+    self.assertTrue('some/cpp/ok/file.cc' not in results[1].message)
+    self.assertTrue('some/cpp/problematic/file2.cc' in results[0].message)
+
+  def testBannedBlinkDowncastHelpers(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('some/cpp/problematic/file1.cc',
+               ['DEFINE_TYPE_CASTS(ToType, FromType, from_argument,'
+                'PointerPredicate(), ReferencePredicate());']),
+      MockFile('some/cpp/problematic/file2.cc',
+               ['bool is_test_ele = IsHTMLTestElement(n);']),
+      MockFile('some/cpp/problematic/file3.cc',
+               ['auto* html_test_ele = ToHTMLTestElement(n);']),
+      MockFile('some/cpp/problematic/file4.cc',
+               ['auto* html_test_ele_or_null = ToHTMLTestElementOrNull(n);']),
+      MockFile('some/cpp/ok/file1.cc',
+               ['bool is_test_ele = IsA<HTMLTestElement>(n);']),
+      MockFile('some/cpp/ok/file2.cc',
+               ['auto* html_test_ele = To<HTMLTestElement>(n);']),
+      MockFile('some/cpp/ok/file3.cc',
+               ['auto* html_test_ele_or_null = ',
+                'DynamicTo<HTMLTestElement>(n);']),
+    ]
+
+    # warnings are errors[0], errors are errors[1]
+    errors = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
+    self.assertEqual(2, len(errors))
+    self.assertTrue('some/cpp/problematic/file1.cc' in errors[1].message)
+    self.assertTrue('some/cpp/problematic/file2.cc' in errors[0].message)
+    self.assertTrue('some/cpp/problematic/file3.cc' in errors[0].message)
+    self.assertTrue('some/cpp/problematic/file4.cc' in errors[0].message)
+    self.assertTrue('some/cpp/ok/file1.cc' not in errors[0].message)
+    self.assertTrue('some/cpp/ok/file2.cc' not in errors[0].message)
+    self.assertTrue('some/cpp/ok/file3.cc' not in errors[0].message)
+
+  def testBannedIosObjcFunctions(self):
     input_api = MockInputApi()
     input_api.files = [
       MockFile('some/ios/file.mm',
@@ -1764,6 +2055,10 @@ class BannedFunctionCheckTest(unittest.TestCase):
                 '}']),
       MockFile('another/ios_file.mm',
                ['class SomeTest : public testing::Test {};']),
+      MockFile('some/ios/file_egtest.mm',
+               ['- (void)testSomething { EXPECT_OCMOCK_VERIFY(aMock); }']),
+      MockFile('some/ios/file_unittest.mm',
+               ['TEST_F(SomeTest, TestThis) { EXPECT_OCMOCK_VERIFY(aMock); }']),
     ]
 
     errors = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
@@ -1771,6 +2066,143 @@ class BannedFunctionCheckTest(unittest.TestCase):
     self.assertTrue('some/ios/file.mm' in errors[0].message)
     self.assertTrue('another/ios_file.mm' in errors[0].message)
     self.assertTrue('some/mac/file.mm' not in errors[0].message)
+    self.assertTrue('some/ios/file_egtest.mm' in errors[0].message)
+    self.assertTrue('some/ios/file_unittest.mm' not in errors[0].message)
+
+  def testBannedMojoFunctions(self):
+    input_api = MockInputApi()
+    input_api.files = [
+      MockFile('some/cpp/problematic/file.cc',
+               ['mojo::DataPipe();']),
+      MockFile('some/cpp/problematic/file2.cc',
+               ['mojo::ConvertTo<>']),
+      MockFile('some/cpp/ok/file.cc',
+               ['CreateDataPipe();']),
+      MockFile('some/cpp/ok/file2.cc',
+               ['mojo::DataPipeDrainer();']),
+      MockFile('third_party/blink/ok/file3.cc',
+               ['mojo::ConvertTo<>']),
+      MockFile('content/renderer/ok/file3.cc',
+               ['mojo::ConvertTo<>']),
+    ]
+
+    results = PRESUBMIT._CheckNoBannedFunctions(input_api, MockOutputApi())
+
+    # warnings are results[0], errors are results[1]
+    self.assertEqual(2, len(results))
+    self.assertTrue('some/cpp/problematic/file.cc' in results[1].message)
+    self.assertTrue('some/cpp/problematic/file2.cc' in results[0].message)
+    self.assertTrue('some/cpp/ok/file.cc' not in results[1].message)
+    self.assertTrue('some/cpp/ok/file2.cc' not in results[1].message)
+    self.assertTrue('third_party/blink/ok/file3.cc' not in results[0].message)
+    self.assertTrue('content/renderer/ok/file3.cc' not in results[0].message)
+
+  def testDeprecatedMojoTypes(self):
+    ok_paths = ['components/arc']
+    warning_paths = ['some/cpp']
+    error_paths = ['third_party/blink', 'content']
+    test_cases = [
+      {
+        'type': 'mojo::AssociatedBinding<>;',
+        'file': 'file1.c'
+      },
+      {
+        'type': 'mojo::AssociatedBindingSet<>;',
+        'file': 'file2.c'
+      },
+      {
+        'type': 'mojo::AssociatedInterfacePtr<>',
+        'file': 'file3.cc'
+      },
+      {
+        'type': 'mojo::AssociatedInterfacePtrInfo<>',
+        'file': 'file4.cc'
+      },
+      {
+        'type': 'mojo::AssociatedInterfaceRequest<>',
+        'file': 'file5.cc'
+      },
+      {
+        'type': 'mojo::Binding<>',
+        'file': 'file6.cc'
+      },
+      {
+        'type': 'mojo::BindingSet<>',
+        'file': 'file7.cc'
+      },
+      {
+        'type': 'mojo::InterfacePtr<>',
+        'file': 'file8.cc'
+      },
+      {
+        'type': 'mojo::InterfacePtrInfo<>',
+        'file': 'file9.cc'
+      },
+      {
+        'type': 'mojo::InterfaceRequest<>',
+        'file': 'file10.cc'
+      },
+      {
+        'type': 'mojo::MakeRequest()',
+        'file': 'file11.cc'
+      },
+      {
+        'type': 'mojo::MakeRequestAssociatedWithDedicatedPipe()',
+        'file': 'file12.cc'
+      },
+      {
+        'type': 'mojo::MakeStrongBinding()<>',
+        'file': 'file13.cc'
+      },
+      {
+        'type': 'mojo::MakeStrongAssociatedBinding()<>',
+        'file': 'file14.cc'
+      },
+      {
+        'type': 'mojo::StrongAssociatedBindingSet<>',
+        'file': 'file15.cc'
+      },
+      {
+        'type': 'mojo::StrongBindingSet<>',
+        'file': 'file16.cc'
+      },
+    ]
+
+    # Build the list of MockFiles considering paths that should trigger warnings
+    # as well as paths that should trigger errors.
+    input_api = MockInputApi()
+    input_api.files = []
+    for test_case in test_cases:
+      for path in ok_paths:
+        input_api.files.append(MockFile(os.path.join(path, test_case['file']),
+                                        [test_case['type']]))
+      for path in warning_paths:
+        input_api.files.append(MockFile(os.path.join(path, test_case['file']),
+                                        [test_case['type']]))
+      for path in error_paths:
+        input_api.files.append(MockFile(os.path.join(path, test_case['file']),
+                                        [test_case['type']]))
+
+    results = PRESUBMIT._CheckNoDeprecatedMojoTypes(input_api, MockOutputApi())
+
+    # warnings are results[0], errors are results[1]
+    self.assertEqual(2, len(results))
+
+    for test_case in test_cases:
+      # Check that no warnings nor errors have been triggered for these paths.
+      for path in ok_paths:
+        self.assertFalse(path in results[0].message)
+        self.assertFalse(path in results[1].message)
+
+      # Check warnings have been triggered for these paths.
+      for path in warning_paths:
+        self.assertTrue(path in results[0].message)
+        self.assertFalse(path in results[1].message)
+
+      # Check errors have been triggered for these paths.
+      for path in error_paths:
+        self.assertFalse(path in results[0].message)
+        self.assertTrue(path in results[1].message)
 
 
 class NoProductionCodeUsingTestOnlyFunctionsTest(unittest.TestCase):
@@ -1850,6 +2282,38 @@ class NoProductionJavaCodeUsingTestOnlyFunctionsTest(unittest.TestCase):
 
     results = PRESUBMIT._CheckNoProductionCodeUsingTestOnlyFunctionsJava(
         mock_input_api, MockOutputApi())
+    self.assertEqual(0, len(results))
+
+
+class NewImagesWarningTest(unittest.TestCase):
+  def testTruePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/android/res/drawable/foo.png', []),
+      MockFile('dir/android/res/drawable-v21/bar.svg', []),
+      MockFile('dir/android/res/mipmap-v21-en/baz.webp', []),
+      MockFile('dir/android/res_gshoe/drawable-mdpi/foobar.png', []),
+    ]
+
+    results = PRESUBMIT._CheckNewImagesWarning(mock_input_api, MockOutputApi())
+    self.assertEqual(1, len(results))
+    self.assertEqual(4, len(results[0].items))
+    self.assertTrue('foo.png' in results[0].items[0].LocalPath())
+    self.assertTrue('bar.svg' in results[0].items[1].LocalPath())
+    self.assertTrue('baz.webp' in results[0].items[2].LocalPath())
+    self.assertTrue('foobar.png' in results[0].items[3].LocalPath())
+
+  def testFalsePositives(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockFile('dir/pngs/README.md', []),
+      MockFile('java/test/res/drawable/foo.png', []),
+      MockFile('third_party/blink/foo.png', []),
+      MockFile('dir/third_party/libpng/src/foo.cc', ['foobar']),
+      MockFile('dir/resources.webp/.gitignore', ['foo.png']),
+    ]
+
+    results = PRESUBMIT._CheckNewImagesWarning(mock_input_api, MockOutputApi())
     self.assertEqual(0, len(results))
 
 
@@ -1961,6 +2425,7 @@ class CheckNoDirectIncludesHeadersWhichRedefineStrCat(unittest.TestCase):
     results = PRESUBMIT._CheckNoStrCatRedefines(mock_input_api, MockOutputApi())
     self.assertEquals(0, len(results))
 
+
 class TranslationScreenshotsTest(unittest.TestCase):
   # An empty grd file.
   OLD_GRD_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
@@ -1998,6 +2463,31 @@ class TranslationScreenshotsTest(unittest.TestCase):
            </grit>
         """.splitlines()
 
+  OLD_GRDP_CONTENTS = (
+    '<?xml version="1.0" encoding="utf-8"?>',
+      '<grit-part>',
+    '</grit-part>'
+  )
+
+  NEW_GRDP_CONTENTS1 = (
+    '<?xml version="1.0" encoding="utf-8"?>',
+      '<grit-part>',
+        '<message name="IDS_PART_TEST1">',
+          'Part string 1',
+        '</message>',
+    '</grit-part>')
+
+  NEW_GRDP_CONTENTS2 = (
+    '<?xml version="1.0" encoding="utf-8"?>',
+      '<grit-part>',
+        '<message name="IDS_PART_TEST1">',
+          'Part string 1',
+        '</message>',
+        '<message name="IDS_PART_TEST2">',
+          'Part string 2',
+      '</message>',
+    '</grit-part>')
+
   DO_NOT_UPLOAD_PNG_MESSAGE = ('Do not include actual screenshots in the '
                                'changelist. Run '
                                'tools/translate/upload_screenshots.py to '
@@ -2013,35 +2503,63 @@ class TranslationScreenshotsTest(unittest.TestCase):
   def makeInputApi(self, files):
     input_api = MockInputApi()
     input_api.files = files
+    # Override os_path.exists because the presubmit uses the actual
+    # os.path.exists.
+    input_api.CreateMockFileInPath(
+        [x.LocalPath() for x in input_api.AffectedFiles(include_deletes=True)])
     return input_api
 
+  """ CL modified and added messages, but didn't add any screenshots."""
   def testNoScreenshots(self):
-    # CL modified and added messages, but didn't add any screenshots.
+    # No new strings (file contents same). Should not warn.
+    input_api = self.makeInputApi([
+      MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS1,
+                       self.NEW_GRD_CONTENTS1, action='M'),
+      MockAffectedFile('part.grdp', self.NEW_GRDP_CONTENTS1,
+                       self.NEW_GRDP_CONTENTS1, action='M')])
+    warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
+                                                      MockOutputApi())
+    self.assertEqual(0, len(warnings))
+
+    # Add two new strings. Should have two warnings.
     input_api = self.makeInputApi([
       MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS2,
-                       self.OLD_GRD_CONTENTS, action='M')])
+                       self.NEW_GRD_CONTENTS1, action='M'),
+      MockAffectedFile('part.grdp', self.NEW_GRDP_CONTENTS2,
+                       self.NEW_GRDP_CONTENTS1, action='M')])
     warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
                                                       MockOutputApi())
     self.assertEqual(1, len(warnings))
     self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[0].message)
     self.assertEqual([
-        os.path.join('test_grd', 'IDS_TEST1.png.sha1'),
-        os.path.join('test_grd', 'IDS_TEST2.png.sha1')
-    ], warnings[0].items)
+      os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
+      os.path.join('test_grd', 'IDS_TEST2.png.sha1')],
+                     warnings[0].items)
 
+    # Add four new strings. Should have four warnings.
     input_api = self.makeInputApi([
       MockAffectedFile('test.grd', self.NEW_GRD_CONTENTS2,
-                       self.NEW_GRD_CONTENTS1, action='M')])
+                       self.OLD_GRD_CONTENTS, action='M'),
+      MockAffectedFile('part.grdp', self.NEW_GRDP_CONTENTS2,
+                       self.OLD_GRDP_CONTENTS, action='M')])
     warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
                                                       MockOutputApi())
     self.assertEqual(1, len(warnings))
     self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[0].message)
-    self.assertEqual([os.path.join('test_grd', 'IDS_TEST2.png.sha1')],
-                     warnings[0].items)
+    self.assertEqual([
+        os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+        os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
+        os.path.join('test_grd', 'IDS_TEST1.png.sha1'),
+        os.path.join('test_grd', 'IDS_TEST2.png.sha1'),
+    ], warnings[0].items)
 
-
-  def testUnnecessaryScreenshots(self):
-    # CL added a single message and added the png file, but not the sha1 file.
+  def testPngAddedSha1NotAdded(self):
+    # CL added one new message in a grd file and added the png file associated
+    # with it, but did not add the corresponding sha1 file. This should warn
+    # twice:
+    # - Once for the added png file (because we don't want developers to upload
+    #   actual images)
+    # - Once for the missing .sha1 file
     input_api = self.makeInputApi([
         MockAffectedFile(
             'test.grd',
@@ -2061,38 +2579,59 @@ class TranslationScreenshotsTest(unittest.TestCase):
     self.assertEqual([os.path.join('test_grd', 'IDS_TEST1.png.sha1')],
                      warnings[1].items)
 
-    # CL added two messages, one has a png. Expect two messages:
-    # - One for the unnecessary png.
-    # - Another one for missing .sha1 files.
+    # CL added two messages (one in grd, one in grdp) and added the png files
+    # associated with the messages, but did not add the corresponding sha1
+    # files. This should warn twice:
+    # - Once for the added png files (because we don't want developers to upload
+    #   actual images)
+    # - Once for the missing .sha1 files
     input_api = self.makeInputApi([
+        # Modified files:
         MockAffectedFile(
             'test.grd',
-            self.NEW_GRD_CONTENTS2,
+            self.NEW_GRD_CONTENTS1,
             self.OLD_GRD_CONTENTS,
             action='M'),
         MockAffectedFile(
-            os.path.join('test_grd', 'IDS_TEST1.png'), 'binary', action='A')
+            'part.grdp',
+            self.NEW_GRDP_CONTENTS1,
+            self.OLD_GRDP_CONTENTS,
+            action='M'),
+        # Added files:
+        MockAffectedFile(
+            os.path.join('test_grd', 'IDS_TEST1.png'), 'binary', action='A'),
+        MockAffectedFile(
+            os.path.join('part_grdp', 'IDS_PART_TEST1.png'), 'binary',
+            action='A')
     ])
     warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
                                                       MockOutputApi())
     self.assertEqual(2, len(warnings))
     self.assertEqual(self.DO_NOT_UPLOAD_PNG_MESSAGE, warnings[0].message)
-    self.assertEqual([os.path.join('test_grd', 'IDS_TEST1.png')],
+    self.assertEqual([os.path.join('part_grdp', 'IDS_PART_TEST1.png'),
+                      os.path.join('test_grd', 'IDS_TEST1.png')],
                      warnings[0].items)
     self.assertEqual(self.GENERATE_SIGNATURES_MESSAGE, warnings[1].message)
-    self.assertEqual([
-        os.path.join('test_grd', 'IDS_TEST1.png.sha1'),
-        os.path.join('test_grd', 'IDS_TEST2.png.sha1')
-    ], warnings[1].items)
+    self.assertEqual([os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+                      os.path.join('test_grd', 'IDS_TEST1.png.sha1')],
+                      warnings[1].items)
 
   def testScreenshotsWithSha1(self):
-    # CL added two messages and their corresponding .sha1 files. No warnings.
+    # CL added four messages (two each in a grd and grdp) and their
+    # corresponding .sha1 files. No warnings.
     input_api = self.makeInputApi([
+        # Modified files:
         MockAffectedFile(
             'test.grd',
             self.NEW_GRD_CONTENTS2,
             self.OLD_GRD_CONTENTS,
             action='M'),
+        MockAffectedFile(
+            'part.grdp',
+            self.NEW_GRDP_CONTENTS2,
+            self.OLD_GRDP_CONTENTS,
+            action='M'),
+        # Added files:
         MockFile(
             os.path.join('test_grd', 'IDS_TEST1.png.sha1'),
             'binary',
@@ -2100,43 +2639,80 @@ class TranslationScreenshotsTest(unittest.TestCase):
         MockFile(
             os.path.join('test_grd', 'IDS_TEST2.png.sha1'),
             'binary',
-            action='A')
+            action='A'),
+        MockFile(
+            os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+            'binary',
+            action='A'),
+        MockFile(
+            os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
+            'binary',
+            action='A'),
     ])
     warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
                                                       MockOutputApi())
     self.assertEqual([], warnings)
 
   def testScreenshotsRemovedWithSha1(self):
-    # Swap old contents with new contents, remove IDS_TEST1 and IDS_TEST2. The
-    # sha1 files associated with the messages should also be removed by the CL.
+    # Replace new contents with old contents in grd and grp files, removing
+    # IDS_TEST1, IDS_TEST2, IDS_PART_TEST1 and IDS_PART_TEST2.
+    # Should warn to remove the sha1 files associated with these strings.
     input_api = self.makeInputApi([
+        # Modified files:
         MockAffectedFile(
             'test.grd',
-            self.OLD_GRD_CONTENTS,
-            self.NEW_GRD_CONTENTS2,
+            self.OLD_GRD_CONTENTS, # new_contents
+            self.NEW_GRD_CONTENTS2, # old_contents
             action='M'),
-        MockFile(os.path.join('test_grd', 'IDS_TEST1.png.sha1'), 'binary', ""),
-        MockFile(os.path.join('test_grd', 'IDS_TEST2.png.sha1'), 'binary', "")
+        MockAffectedFile(
+            'part.grdp',
+            self.OLD_GRDP_CONTENTS, # new_contents
+            self.NEW_GRDP_CONTENTS2, # old_contents
+            action='M'),
+        # Unmodified files:
+        MockFile(os.path.join('test_grd', 'IDS_TEST1.png.sha1'), 'binary', ''),
+        MockFile(os.path.join('test_grd', 'IDS_TEST2.png.sha1'), 'binary', ''),
+        MockFile(os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+                 'binary', ''),
+        MockFile(os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
+                 'binary', '')
     ])
     warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
                                                       MockOutputApi())
     self.assertEqual(1, len(warnings))
     self.assertEqual(self.REMOVE_SIGNATURES_MESSAGE, warnings[0].message)
     self.assertEqual([
+        os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+        os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
         os.path.join('test_grd', 'IDS_TEST1.png.sha1'),
         os.path.join('test_grd', 'IDS_TEST2.png.sha1')
     ], warnings[0].items)
 
-    # Same as above, but this time one of the .sha1 files is removed.
+    # Same as above, but this time one of the .sha1 files is also removed.
     input_api = self.makeInputApi([
+        # Modified files:
         MockAffectedFile(
             'test.grd',
-            self.OLD_GRD_CONTENTS,
-            self.NEW_GRD_CONTENTS2,
+            self.OLD_GRD_CONTENTS, # new_contents
+            self.NEW_GRD_CONTENTS2, # old_contents
             action='M'),
+        MockAffectedFile(
+            'part.grdp',
+            self.OLD_GRDP_CONTENTS, # new_contents
+            self.NEW_GRDP_CONTENTS2, # old_contents
+            action='M'),
+        # Unmodified files:
         MockFile(os.path.join('test_grd', 'IDS_TEST1.png.sha1'), 'binary', ''),
+        MockFile(os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+                 'binary', ''),
+        # Deleted files:
         MockAffectedFile(
             os.path.join('test_grd', 'IDS_TEST2.png.sha1'),
+            '',
+            'old_contents',
+            action='D'),
+        MockAffectedFile(
+            os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
             '',
             'old_contents',
             action='D')
@@ -2145,16 +2721,24 @@ class TranslationScreenshotsTest(unittest.TestCase):
                                                       MockOutputApi())
     self.assertEqual(1, len(warnings))
     self.assertEqual(self.REMOVE_SIGNATURES_MESSAGE, warnings[0].message)
-    self.assertEqual([os.path.join('test_grd', 'IDS_TEST1.png.sha1')],
-                     warnings[0].items)
+    self.assertEqual([os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+                      os.path.join('test_grd', 'IDS_TEST1.png.sha1')
+                     ], warnings[0].items)
 
-    # Remove both sha1 files. No presubmit warnings.
+    # Remove all sha1 files. There should be no warnings.
     input_api = self.makeInputApi([
+        # Modified files:
         MockAffectedFile(
             'test.grd',
             self.OLD_GRD_CONTENTS,
             self.NEW_GRD_CONTENTS2,
             action='M'),
+        MockAffectedFile(
+            'part.grdp',
+            self.OLD_GRDP_CONTENTS,
+            self.NEW_GRDP_CONTENTS2,
+            action='M'),
+        # Deleted files:
         MockFile(
             os.path.join('test_grd', 'IDS_TEST1.png.sha1'),
             'binary',
@@ -2162,11 +2746,149 @@ class TranslationScreenshotsTest(unittest.TestCase):
         MockFile(
             os.path.join('test_grd', 'IDS_TEST2.png.sha1'),
             'binary',
+            action='D'),
+        MockFile(
+            os.path.join('part_grdp', 'IDS_PART_TEST1.png.sha1'),
+            'binary',
+            action='D'),
+        MockFile(
+            os.path.join('part_grdp', 'IDS_PART_TEST2.png.sha1'),
+            'binary',
             action='D')
     ])
     warnings = PRESUBMIT._CheckTranslationScreenshots(input_api,
                                                       MockOutputApi())
     self.assertEqual([], warnings)
+
+
+class TranslationExpectationsTest(unittest.TestCase):
+  ERROR_MESSAGE_FORMAT = (
+    "Failed to get a list of translatable grd files. "
+    "This happens when:\n"
+    " - One of the modified grd or grdp files cannot be parsed or\n"
+    " - %s is not updated.\n"
+    "Stack:\n"
+  )
+  REPO_ROOT = os.path.join('tools', 'translation', 'testdata')
+  # This lists all .grd files under REPO_ROOT.
+  EXPECTATIONS = os.path.join(REPO_ROOT,
+                              "translation_expectations.pyl")
+  # This lists all .grd files under REPO_ROOT except unlisted.grd.
+  EXPECTATIONS_WITHOUT_UNLISTED_FILE = os.path.join(
+      REPO_ROOT, "translation_expectations_without_unlisted_file.pyl")
+
+  # Tests that the presubmit doesn't return when no grd or grdp files are
+  # modified.
+  def testExpectationsNoModifiedGrd(self):
+    input_api = MockInputApi()
+    input_api.files = [
+        MockAffectedFile('not_used.txt', 'not used', 'not used', action='M')
+    ]
+    # Fake list of all grd files in the repo. This list is missing all grd/grdps
+    # under tools/translation/testdata. This is OK because the presubmit won't
+    # run in the first place since there are no modified grd/grps in input_api.
+    grd_files = ['doesnt_exist_doesnt_matter.grd']
+    warnings = PRESUBMIT._CheckTranslationExpectations(
+        input_api, MockOutputApi(), self.REPO_ROOT, self.EXPECTATIONS,
+        grd_files)
+    self.assertEqual(0, len(warnings))
+
+
+  # Tests that the list of files passed to the presubmit matches the list of
+  # files in the expectations.
+  def testExpectationsSuccess(self):
+    # Mock input file list needs a grd or grdp file in order to run the
+    # presubmit. The file itself doesn't matter.
+    input_api = MockInputApi()
+    input_api.files = [
+        MockAffectedFile('dummy.grd', 'not used', 'not used', action='M')
+    ]
+    # List of all grd files in the repo.
+    grd_files = ['test.grd', 'unlisted.grd', 'not_translated.grd',
+                 'internal.grd']
+    warnings = PRESUBMIT._CheckTranslationExpectations(
+        input_api, MockOutputApi(), self.REPO_ROOT, self.EXPECTATIONS,
+        grd_files)
+    self.assertEqual(0, len(warnings))
+
+  # Tests that the presubmit warns when a file is listed in expectations, but
+  # does not actually exist.
+  def testExpectationsMissingFile(self):
+    # Mock input file list needs a grd or grdp file in order to run the
+    # presubmit.
+    input_api = MockInputApi()
+    input_api.files = [
+      MockAffectedFile('dummy.grd', 'not used', 'not used', action='M')
+    ]
+    # unlisted.grd is listed under tools/translation/testdata but is not
+    # included in translation expectations.
+    grd_files = ['unlisted.grd', 'not_translated.grd', 'internal.grd']
+    warnings = PRESUBMIT._CheckTranslationExpectations(
+        input_api, MockOutputApi(), self.REPO_ROOT, self.EXPECTATIONS,
+        grd_files)
+    self.assertEqual(1, len(warnings))
+    self.assertTrue(warnings[0].message.startswith(
+        self.ERROR_MESSAGE_FORMAT % self.EXPECTATIONS))
+    self.assertTrue(
+        ("test.grd is listed in the translation expectations, "
+         "but this grd file does not exist")
+        in warnings[0].message)
+
+  # Tests that the presubmit warns when a file is not listed in expectations but
+  # does actually exist.
+  def testExpectationsUnlistedFile(self):
+    # Mock input file list needs a grd or grdp file in order to run the
+    # presubmit.
+    input_api = MockInputApi()
+    input_api.files = [
+      MockAffectedFile('dummy.grd', 'not used', 'not used', action='M')
+    ]
+    # unlisted.grd is listed under tools/translation/testdata but is not
+    # included in translation expectations.
+    grd_files = ['test.grd', 'unlisted.grd', 'not_translated.grd',
+                 'internal.grd']
+    warnings = PRESUBMIT._CheckTranslationExpectations(
+        input_api, MockOutputApi(), self.REPO_ROOT,
+        self.EXPECTATIONS_WITHOUT_UNLISTED_FILE, grd_files)
+    self.assertEqual(1, len(warnings))
+    self.assertTrue(warnings[0].message.startswith(
+        self.ERROR_MESSAGE_FORMAT % self.EXPECTATIONS_WITHOUT_UNLISTED_FILE))
+    self.assertTrue(
+        ("unlisted.grd appears to be translatable "
+         "(because it contains <file> or <message> elements), "
+         "but is not listed in the translation expectations.")
+        in warnings[0].message)
+
+  # Tests that the presubmit warns twice:
+  # - for a non-existing file listed in expectations
+  # - for an existing file not listed in expectations
+  def testMultipleWarnings(self):
+    # Mock input file list needs a grd or grdp file in order to run the
+    # presubmit.
+    input_api = MockInputApi()
+    input_api.files = [
+      MockAffectedFile('dummy.grd', 'not used', 'not used', action='M')
+    ]
+    # unlisted.grd is listed under tools/translation/testdata but is not
+    # included in translation expectations.
+    # test.grd is not listed under tools/translation/testdata but is included
+    # in translation expectations.
+    grd_files = ['unlisted.grd', 'not_translated.grd', 'internal.grd']
+    warnings = PRESUBMIT._CheckTranslationExpectations(
+        input_api, MockOutputApi(), self.REPO_ROOT,
+        self.EXPECTATIONS_WITHOUT_UNLISTED_FILE, grd_files)
+    self.assertEqual(1, len(warnings))
+    self.assertTrue(warnings[0].message.startswith(
+        self.ERROR_MESSAGE_FORMAT % self.EXPECTATIONS_WITHOUT_UNLISTED_FILE))
+    self.assertTrue(
+        ("unlisted.grd appears to be translatable "
+         "(because it contains <file> or <message> elements), "
+         "but is not listed in the translation expectations.")
+        in warnings[0].message)
+    self.assertTrue(
+        ("test.grd is listed in the translation expectations, "
+         "but this grd file does not exist")
+        in warnings[0].message)
 
 
 class DISABLETypoInTest(unittest.TestCase):
@@ -2231,6 +2953,123 @@ class DISABLETypoInTest(unittest.TestCase):
     results = PRESUBMIT._CheckNoDISABLETypoInTests(mock_input_api,
                                                    MockOutputApi())
     self.assertEqual(0, len(results))
+
+
+class BuildtoolsRevisionsAreInSyncTest(unittest.TestCase):
+  # TODO(crbug.com/941824): We need to make sure the entries in
+  # //buildtools/DEPS are kept in sync with the entries in //DEPS
+  # so that users of //buildtools in other projects get the same tooling
+  # Chromium gets. If we ever fix the referenced bug and add 'includedeps'
+  # support to gclient, we can eliminate the duplication and delete
+  # these tests for the corresponding presubmit check.
+
+  def _check(self, files):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = []
+    for fname, contents in files.items():
+      mock_input_api.files.append(MockFile(fname, contents.splitlines()))
+    return PRESUBMIT._CheckBuildtoolsRevisionsAreInSync(mock_input_api,
+                                                        MockOutputApi())
+
+  def testOneFileChangedButNotTheOther(self):
+    results = self._check({
+        "DEPS": "'libunwind_revision': 'onerev'",
+    })
+    self.assertNotEqual(results, [])
+
+  def testNeitherFileChanged(self):
+    results = self._check({
+        "OWNERS": "foobar@example.com",
+    })
+    self.assertEqual(results, [])
+
+  def testBothFilesChangedAndMatch(self):
+    results = self._check({
+        "DEPS": "'libunwind_revision': 'onerev'",
+        "buildtools/DEPS": "'libunwind_revision': 'onerev'",
+    })
+    self.assertEqual(results, [])
+
+  def testBothFilesWereChangedAndDontMatch(self):
+    results = self._check({
+        "DEPS": "'libunwind_revision': 'onerev'",
+        "buildtools/DEPS": "'libunwind_revision': 'anotherrev'",
+    })
+    self.assertNotEqual(results, [])
+
+
+class CheckFuzzTargetsTest(unittest.TestCase):
+
+  def _check(self, files):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = []
+    for fname, contents in files.items():
+      mock_input_api.files.append(MockFile(fname, contents.splitlines()))
+    return PRESUBMIT._CheckFuzzTargets(mock_input_api, MockOutputApi())
+
+  def testLibFuzzerSourcesIgnored(self):
+    results = self._check({
+        "third_party/lib/Fuzzer/FuzzerDriver.cpp": "LLVMFuzzerInitialize",
+    })
+    self.assertEqual(results, [])
+
+  def testNonCodeFilesIgnored(self):
+    results = self._check({
+        "README.md": "LLVMFuzzerInitialize",
+    })
+    self.assertEqual(results, [])
+
+  def testNoErrorHeaderPresent(self):
+    results = self._check({
+        "fuzzer.cc": (
+            "#include \"testing/libfuzzer/libfuzzer_exports.h\"\n" +
+            "LLVMFuzzerInitialize"
+        )
+    })
+    self.assertEqual(results, [])
+
+  def testErrorMissingHeader(self):
+    results = self._check({
+        "fuzzer.cc": "LLVMFuzzerInitialize"
+    })
+    self.assertEqual(len(results), 1)
+    self.assertEqual(results[0].items, ['fuzzer.cc'])
+
+
+class SetNoParentTest(unittest.TestCase):
+  def testSetNoParentMissing(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('goat/OWNERS',
+                       [
+                         'set noparent',
+                         'jochen@chromium.org',
+                         'per-file *.json=set noparent',
+                         'per-file *.json=jochen@chromium.org',
+                       ])
+    ]
+    mock_output_api = MockOutputApi()
+    errors = PRESUBMIT._CheckSetNoParent(mock_input_api, mock_output_api)
+    self.assertEqual(1, len(errors))
+    self.assertTrue('goat/OWNERS:1' in errors[0].long_text)
+    self.assertTrue('goat/OWNERS:3' in errors[0].long_text)
+
+
+  def testSetNoParentWithCorrectRule(self):
+    mock_input_api = MockInputApi()
+    mock_input_api.files = [
+      MockAffectedFile('goat/OWNERS',
+                       [
+                         'set noparent',
+                         'file://ipc/SECURITY_OWNERS',
+                         'per-file *.json=set noparent',
+                         'per-file *.json=file://ipc/SECURITY_OWNERS',
+                       ])
+    ]
+    mock_output_api = MockOutputApi()
+    errors = PRESUBMIT._CheckSetNoParent(mock_input_api, mock_output_api)
+    self.assertEqual([], errors)
+
 
 if __name__ == '__main__':
   unittest.main()

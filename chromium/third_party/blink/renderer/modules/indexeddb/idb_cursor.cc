@@ -32,6 +32,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_idb_request.h"
 #include "third_party/blink/renderer/modules/indexed_db_names.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_any.h"
+#include "third_party/blink/renderer/modules/indexeddb/idb_cursor_with_value.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_object_store.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_tracing.h"
@@ -40,17 +41,10 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
-
-IDBCursor* IDBCursor::Create(std::unique_ptr<WebIDBCursor> backend,
-                             mojom::IDBCursorDirection direction,
-                             IDBRequest* request,
-                             const Source& source,
-                             IDBTransaction* transaction) {
-  return MakeGarbageCollected<IDBCursor>(std::move(backend), direction, request,
-                                         source, transaction);
-}
 
 IDBCursor::IDBCursor(std::unique_ptr<WebIDBCursor> backend,
                      mojom::IDBCursorDirection direction,
@@ -70,7 +64,7 @@ IDBCursor::IDBCursor(std::unique_ptr<WebIDBCursor> backend,
 
 IDBCursor::~IDBCursor() = default;
 
-void IDBCursor::Trace(blink::Visitor* visitor) {
+void IDBCursor::Trace(Visitor* visitor) {
   visitor->Trace(request_);
   visitor->Trace(source_);
   visitor->Trace(transaction_);
@@ -87,8 +81,9 @@ v8::Local<v8::Object> IDBCursor::AssociateWithWrapper(
   wrapper =
       ScriptWrappable::AssociateWithWrapper(isolate, wrapper_type, wrapper);
   if (!wrapper.IsEmpty()) {
-    V8PrivateProperty::GetIDBCursorRequest(isolate).Set(
-        wrapper, ToV8(request_.Get(), wrapper, isolate));
+    static const V8PrivateProperty::SymbolKey kPrivatePropertyRequest;
+    V8PrivateProperty::GetSymbol(isolate, kPrivatePropertyRequest)
+        .Set(wrapper, ToV8(request_.Get(), wrapper, isolate));
   }
   return wrapper;
 }
@@ -278,9 +273,9 @@ void IDBCursor::Continue(std::unique_ptr<IDBKey> key,
   const IDBKey* current_primary_key = IdbPrimaryKey();
 
   if (!key)
-    key = IDBKey::CreateNull();
+    key = IDBKey::CreateNone();
 
-  if (key->GetType() != mojom::IDBKeyType::Null) {
+  if (key->GetType() != mojom::IDBKeyType::None) {
     DCHECK(key_);
     if (direction_ == mojom::IDBCursorDirection::Next ||
         direction_ == mojom::IDBCursorDirection::NextNoDuplicate) {
@@ -308,7 +303,7 @@ void IDBCursor::Continue(std::unique_ptr<IDBKey> key,
   }
 
   if (!primary_key)
-    primary_key = IDBKey::CreateNull();
+    primary_key = IDBKey::CreateNone();
 
   // FIXME: We're not using the context from when continue was called, which
   // means the callback will be on the original context openCursor was called
@@ -399,7 +394,7 @@ ScriptValue IDBCursor::primaryKey(ScriptState* script_state) {
 }
 
 ScriptValue IDBCursor::value(ScriptState* script_state) {
-  DCHECK(IsCursorWithValue());
+  DCHECK(IsA<IDBCursorWithValue>(this));
 
   IDBAny* value;
   if (value_) {
@@ -414,7 +409,7 @@ ScriptValue IDBCursor::value(ScriptState* script_state) {
 #endif  // DCHECK_IS_ON()
 
   } else {
-    value = IDBAny::CreateUndefined();
+    value = MakeGarbageCollected<IDBAny>(IDBAny::kUndefinedType);
   }
 
   value_dirty_ = false;
@@ -437,7 +432,7 @@ void IDBCursor::SetValueReady(std::unique_ptr<IDBKey> key,
 
   got_value_ = true;
 
-  if (!IsCursorWithValue())
+  if (!IsA<IDBCursorWithValue>(this))
     return;
 
   value_dirty_ = true;
@@ -459,7 +454,7 @@ void IDBCursor::SetValueReady(std::unique_ptr<IDBKey> key,
 #endif  // DCHECK_IS_ON()
   }
 
-  value_ = IDBAny::Create(std::move(value));
+  value_ = MakeGarbageCollected<IDBAny>(std::move(value));
 }
 
 const IDBKey* IDBCursor::IdbPrimaryKey() const {

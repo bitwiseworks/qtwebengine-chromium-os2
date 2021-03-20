@@ -25,12 +25,14 @@
 #include <ws2tcpip.h>
 #endif
 #include <string.h>
+
 #include <string>
 
 #include "rtc_base/byte_order.h"
 #if defined(WEBRTC_WIN)
 #include "rtc_base/win32.h"
 #endif
+#include "rtc_base/system/rtc_export.h"
 
 namespace rtc {
 
@@ -48,7 +50,7 @@ enum IPv6AddressFlag {
 };
 
 // Version-agnostic IP address class, wraps a union of in_addr and in6_addr.
-class IPAddress {
+class RTC_EXPORT IPAddress {
  public:
   IPAddress() : family_(AF_UNSPEC) { ::memset(&u_, 0, sizeof(u_)); }
 
@@ -118,6 +120,9 @@ class IPAddress {
   // For socketaddress' benefit. Returns the IP in host byte order.
   uint32_t v4AddressAsHostOrderInteger() const;
 
+  // Get the network layer overhead per packet based on the IP address family.
+  int overhead() const;
+
   // Whether this is an unspecified IP address.
   bool IsNil() const;
 
@@ -133,7 +138,7 @@ class IPAddress {
 
 // IP class which could represent IPv6 address flags which is only
 // meaningful in IPv6 case.
-class InterfaceAddress : public IPAddress {
+class RTC_EXPORT InterfaceAddress : public IPAddress {
  public:
   InterfaceAddress() : ipv6_flags_(IPV6_ADDRESS_FLAG_NONE) {}
 
@@ -148,6 +153,7 @@ class InterfaceAddress : public IPAddress {
       : IPAddress(ip6), ipv6_flags_(ipv6_flags) {}
 #endif
 
+  InterfaceAddress(const InterfaceAddress& other) = default;
   const InterfaceAddress& operator=(const InterfaceAddress& other);
 
   bool operator==(const InterfaceAddress& other) const;
@@ -162,17 +168,23 @@ class InterfaceAddress : public IPAddress {
 };
 
 bool IPFromAddrInfo(struct addrinfo* info, IPAddress* out);
-bool IPFromString(const std::string& str, IPAddress* out);
-bool IPFromString(const std::string& str, int flags, InterfaceAddress* out);
+RTC_EXPORT bool IPFromString(const std::string& str, IPAddress* out);
+RTC_EXPORT bool IPFromString(const std::string& str,
+                             int flags,
+                             InterfaceAddress* out);
 bool IPIsAny(const IPAddress& ip);
 bool IPIsLoopback(const IPAddress& ip);
 bool IPIsLinkLocal(const IPAddress& ip);
 // Identify a private network address like "192.168.111.222"
 // (see https://en.wikipedia.org/wiki/Private_network )
 bool IPIsPrivateNetwork(const IPAddress& ip);
+// Identify a shared network address like "100.72.16.122"
+// (see RFC6598)
+bool IPIsSharedNetwork(const IPAddress& ip);
 // Identify if an IP is "private", that is a loopback
-// or an address belonging to a link-local or a private network.
-bool IPIsPrivate(const IPAddress& ip);
+// or an address belonging to a link-local, a private network or a shared
+// network.
+RTC_EXPORT bool IPIsPrivate(const IPAddress& ip);
 bool IPIsUnspec(const IPAddress& ip);
 size_t HashIP(const IPAddress& ip);
 
@@ -180,7 +192,7 @@ size_t HashIP(const IPAddress& ip);
 #ifndef WEBRTC_NO_INET6
 bool IPIs6Bone(const IPAddress& ip);
 bool IPIs6To4(const IPAddress& ip);
-bool IPIsMacBased(const IPAddress& ip);
+RTC_EXPORT bool IPIsMacBased(const IPAddress& ip);
 bool IPIsSiteLocal(const IPAddress& ip);
 bool IPIsTeredo(const IPAddress& ip);
 bool IPIsULA(const IPAddress& ip);
@@ -192,7 +204,7 @@ bool IPIsV4Mapped(const IPAddress& ip);
 int IPAddressPrecedence(const IPAddress& ip);
 
 // Returns 'ip' truncated to be 'length' bits long.
-IPAddress TruncateIP(const IPAddress& ip, int length);
+RTC_EXPORT IPAddress TruncateIP(const IPAddress& ip, int length);
 
 IPAddress GetLoopbackIP(int family);
 IPAddress GetAnyIP(int family);
@@ -200,7 +212,7 @@ IPAddress GetAnyIP(int family);
 // Returns the number of contiguously set bits, counting from the MSB in network
 // byte order, in this IPAddress. Bits after the first 0 encountered are not
 // counted.
-int CountIPMaskBits(IPAddress mask);
+int CountIPMaskBits(const IPAddress& mask);
 
 }  // namespace rtc
 

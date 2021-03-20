@@ -22,6 +22,34 @@ namespace memory_instrumentation {
 
 namespace {
 
+// Don't simply use sizeof(task_vm_info) / sizeof(natural_t):
+// In the 10.15 SDK, this structure is 87 32-bit words long, and in
+// mach_types.defs:
+//
+//   type task_info_t    = array[*:87] of integer_t;
+//
+// However in the 10.14 SDK, this structure is 42 32-bit words, and in
+// mach_types.defs:
+//
+//   type task_info_t    = array[*:52] of integer_t;
+//
+// As a result, the 10.15 SDK's task_vm_info won't fit inside the 10.14 SDK's
+// task_info_t, so the *rest of the system* (on 10.14 and earlier) can't handle
+// calls that request the full 10.15 structure. We have to request a prefix of
+// it that 10.14 and earlier can handle by limiting the length we request. The
+// rest of the fields just get ignored, but we don't use them anyway.
+
+constexpr mach_msg_type_number_t ChromeTaskVMInfoCount =
+    TASK_VM_INFO_REV2_COUNT;
+
+// The count field is in units of natural_t, which is the machine's word size
+// (64 bits on all modern machines), but the task_info_t array is in units of
+// integer_t, which is 32 bits.
+constexpr mach_msg_type_number_t MAX_MIG_SIZE_FOR_1014 =
+    52 / (sizeof(natural_t) / sizeof(integer_t));
+static_assert(ChromeTaskVMInfoCount <= MAX_MIG_SIZE_FOR_1014,
+              "task_vm_info must be small enough for 10.14 MIG interfaces");
+
 using VMRegion = mojom::VmRegion;
 
 bool IsAddressInSharedRegion(uint64_t address) {
@@ -209,14 +237,23 @@ void AddRegionByteStats(VMRegion* dest, const VMRegion& source) {
 // static
 bool OSMetrics::FillOSMemoryDump(base::ProcessId pid,
                                  mojom::RawOSMemDump* dump) {
-  // Creating process metrics for child processes in mac or windows requires
-  // additional information like ProcessHandle or port provider.
-  DCHECK_EQ(base::kNullProcessId, pid);
-  auto process_metrics = base::ProcessMetrics::CreateCurrentProcessMetrics();
-  base::ProcessMetrics::TaskVMInfo info = process_metrics->GetTaskVMInfo();
-  dump->platform_private_footprint->phys_footprint_bytes = info.phys_footprint;
+  task_vm_info info;
+  mach_msg_type_number_t count = ChromeTaskVMInfoCount;
+  kern_return_t result =
+      task_info(mach_task_self(), TASK_VM_INFO,
+                reinterpret_cast<task_info_t>(&info), &count);
+  if (result != KERN_SUCCESS)
+    return false;
+
   dump->platform_private_footprint->internal_bytes = info.internal;
   dump->platform_private_footprint->compressed_bytes = info.compressed;
+
+  // The |phys_footprint| field was introduced in 10.11.
+  if (count == ChromeTaskVMInfoCount) {
+    dump->platform_private_footprint->phys_footprint_bytes =
+        info.phys_footprint;
+  }
+
   return true;
 }
 

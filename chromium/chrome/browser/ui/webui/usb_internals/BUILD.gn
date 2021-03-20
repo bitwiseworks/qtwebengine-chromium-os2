@@ -5,11 +5,10 @@
 import("//mojo/public/tools/bindings/mojom.gni")
 
 mojom("mojo_bindings") {
-  sources = [
-    "usb_internals.mojom",
-  ]
+  sources = [ "usb_internals.mojom" ]
 
   deps = [
-    "//device/usb/public/mojom:test",
+    "//services/device/public/mojom:usb",
+    "//services/device/public/mojom:usb_test",
   ]
 }

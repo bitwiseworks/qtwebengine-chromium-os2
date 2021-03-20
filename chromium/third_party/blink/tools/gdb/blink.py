@@ -112,19 +112,6 @@ class WTFAtomicStringPrinter(StringPrinter):
     def to_string(self):
         return self.val['string_']
 
-
-class WTFCStringPrinter(StringPrinter):
-    "Print a WTF::CString"
-    def to_string(self):
-        # The CString holds a buffer, which is a refptr to a WTF::CStringBuffer.
-        buf_ptr = self.val['buffer_']['ptr_']
-        if not buf_ptr:
-            return 0
-        data = (buf_ptr + 1).cast(gdb.lookup_type('char').pointer())
-        length = self.val['buffer_']['ptr_']['length_']
-        return ''.join([chr((data + i).dereference()) for i in range(length)])
-
-
 class WTFStringImplPrinter(StringPrinter):
     "Print a WTF::StringImpl"
     def get_length(self):
@@ -373,11 +360,27 @@ class BlinkDataRefPrinter:
         return 'DataRef(%s)' % (str(self.val['data_']))
 
 
+class BlinkJSONValuePrinter:
+    def __init__(self, val):
+        self.val = val
+
+    def to_string(self):
+        s = str(gdb.parse_and_eval("((blink::JSONValue*) %s)->ToPrettyJSONString().Utf8(0)" % self.val.address))
+        return s.replace("\\n", "\n").replace('\\"', '"')
+
+
+class CcPaintOpBufferPrinter:
+    def __init__(self, val):
+        self.val = val
+
+    def to_string(self):
+        return gdb.parse_and_eval("blink::RecordAsJSON(*((cc::PaintOpBuffer*) %s))" % self.val.address)
+
+
 def add_pretty_printers():
     pretty_printers = (
         (re.compile("^WTF::Vector<.*>$"), WTFVectorPrinter),
         (re.compile("^WTF::AtomicString$"), WTFAtomicStringPrinter),
-        (re.compile("^WTF::CString$"), WTFCStringPrinter),
         (re.compile("^WTF::String$"), WTFStringPrinter),
         (re.compile("^WTF::StringImpl$"), WTFStringImplPrinter),
         (re.compile("^blink::KURL$"), blinkKURLPrinter),
@@ -388,6 +391,12 @@ def add_pretty_printers():
         (re.compile("^blink::PixelsAndPercent$"), BlinkPixelsAndPercentPrinter),
         (re.compile("^blink::Length$"), BlinkLengthPrinter),
         (re.compile("^blink::DataRef<.*>$"), BlinkDataRefPrinter),
+        (re.compile("^blink::JSONValue$"), BlinkJSONValuePrinter),
+        (re.compile("^blink::JSONBasicValue$"), BlinkJSONValuePrinter),
+        (re.compile("^blink::JSONString$"), BlinkJSONValuePrinter),
+        (re.compile("^blink::JSONObject$"), BlinkJSONValuePrinter),
+        (re.compile("^blink::JSONArray$"), BlinkJSONValuePrinter),
+        (re.compile("^cc::PaintOpBuffer$"), CcPaintOpBufferPrinter),
     )
 
     def lookup_function(val):

@@ -12,12 +12,11 @@
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/scheduler/web_rail_mode_observer.h"
 #include "third_party/blink/public/platform/scheduler/web_render_widget_scheduling_state.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
-#include "third_party/blink/public/platform/web_scoped_virtual_time_pauser.h"
-#include "v8/include/v8.h"
 
 namespace base {
 namespace trace_event {
@@ -27,7 +26,7 @@ class BlameContext;
 
 namespace blink {
 class Thread;
-class WebInputEvent;
+class WebInputEventAttribution;
 }  // namespace blink
 
 namespace viz {
@@ -38,6 +37,7 @@ namespace blink {
 namespace scheduler {
 
 enum class WebRendererProcessType;
+class WebWidgetScheduler;
 
 class BLINK_PLATFORM_EXPORT WebThreadScheduler {
  public:
@@ -71,22 +71,32 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
   // of the current process.
   static WebThreadScheduler* CompositorThreadScheduler();
 
+  // Returns main thread scheduler for the main thread of the current process.
+  static WebThreadScheduler* MainThreadScheduler();
+
   // Returns the default task runner.
   virtual scoped_refptr<base::SingleThreadTaskRunner> DefaultTaskRunner();
 
   // Returns the compositor task runner.
   virtual scoped_refptr<base::SingleThreadTaskRunner> CompositorTaskRunner();
 
-  // Returns the input task runner.
-  virtual scoped_refptr<base::SingleThreadTaskRunner> InputTaskRunner();
-
   virtual scoped_refptr<base::SingleThreadTaskRunner> IPCTaskRunner();
 
   // Returns the cleanup task runner, which is for cleaning up.
   virtual scoped_refptr<base::SingleThreadTaskRunner> CleanupTaskRunner();
 
+  // Returns a default task runner. This is basically same as the default task
+  // runner, but is explicitly allowed to run JavaScript. For the detail, see
+  // the comment at blink::ThreadScheduler::DeprecatedDefaultTaskRunner.
+  virtual scoped_refptr<base::SingleThreadTaskRunner>
+  DeprecatedDefaultTaskRunner();
+
   // Creates a WebThread implementation for the renderer main thread.
   virtual std::unique_ptr<Thread> CreateMainThread();
+
+  // Creates a WebWidgetScheduler implementation. Must be called from the main
+  // thread.
+  virtual std::unique_ptr<WebWidgetScheduler> CreateWidgetScheduler();
 
   // Returns a new WebRenderWidgetSchedulingState.  The signals from this will
   // be used to make scheduling decisions.
@@ -127,6 +137,19 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
       const WebInputEvent& web_input_event,
       InputEventState event_state);
 
+  // Tells the scheduler that an input event of the given type is about to be
+  // posted to the main thread. Must be followed later by a call to
+  // WillHandleInputEventOnMainThread. Called by the compositor thread.
+  virtual void WillPostInputEventToMainThread(
+      WebInputEvent::Type web_input_event_type,
+      const WebInputEventAttribution& web_input_event_attribution);
+
+  // Tells the scheduler the input event of the given type is about to be
+  // handled. Called on the main thread.
+  virtual void WillHandleInputEventOnMainThread(
+      WebInputEvent::Type web_input_event_type,
+      const WebInputEventAttribution& web_input_event_attribution);
+
   // Tells the scheduler that the system processed an input event. Must be
   // called from the main thread.
   virtual void DidHandleInputEventOnMainThread(
@@ -136,6 +159,16 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
   // Tells the scheduler that the system is displaying an input animation (e.g.
   // a fling). Called by the compositor (impl) thread.
   virtual void DidAnimateForInputOnCompositorThread();
+
+  // Tells the scheduler that the compositor thread queued up a BeginMainFrame
+  // task to run on the main thread.
+  virtual void DidScheduleBeginMainFrame();
+
+  // Tells the scheduler that the main thread processed a BeginMainFrame task
+  // from its queue. Note that DidRunBeginMainFrame will be called
+  // unconditionally, even if BeginMainFrame early-returns without committing
+  // a frame.
+  virtual void DidRunBeginMainFrame();
 
   // Tells the scheduler about the change of renderer visibility status (e.g.
   // "all widgets are hidden" condition). Used mostly for metric purposes.
@@ -202,27 +235,9 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
   virtual void SetTopLevelBlameContext(
       base::trace_event::BlameContext* blame_context);
 
-  // The renderer scheduler maintains an estimated RAIL mode[1]. This observer
-  // can be used to get notified when the mode changes. The observer will be
-  // called on the main thread and must outlive this class.
-  // [1]
-  // https://developers.google.com/web/tools/chrome-devtools/profile/evaluate-performance/rail
-  virtual void AddRAILModeObserver(WebRAILModeObserver* observer);
-
   // Sets the kind of renderer process. Should be called on the main thread
   // once.
   virtual void SetRendererProcessType(WebRendererProcessType type);
-
-  // Returns a WebScopedVirtualTimePauser which can be used to vote for pausing
-  // virtual time. Virtual time will be paused if any WebScopedVirtualTimePauser
-  // votes to pause it, and only unpaused only if all
-  // WebScopedVirtualTimePausers are either destroyed or vote to unpause.  Note
-  // the WebScopedVirtualTimePauser returned by this method is initially
-  // unpaused.
-  virtual WebScopedVirtualTimePauser CreateWebScopedVirtualTimePauser(
-      const char* name,
-      WebScopedVirtualTimePauser::VirtualTaskDuration duration =
-          WebScopedVirtualTimePauser::VirtualTaskDuration::kNonInstant);
 
  protected:
   WebThreadScheduler() = default;

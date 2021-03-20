@@ -32,12 +32,17 @@
 #include "third_party/blink/renderer/core/html/parser/html_srcset_parser.h"
 
 #include <algorithm>
+
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/platform/web_network_state_notifier.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
@@ -71,7 +76,7 @@ struct DescriptorToken {
   int ToInt(const CharType* attribute, bool& is_valid) {
     unsigned position = 0;
     // Make sure the integer is a valid non-negative integer
-    // https://html.spec.whatwg.org/multipage/infrastructure.html#valid-non-negative-integer
+    // https://html.spec.whatwg.org/C/#valid-non-negative-integer
     unsigned length_excluding_descriptor = length - 1;
     while (position < length_excluding_descriptor) {
       if (!IsASCIIDigit(*(attribute + start + position))) {
@@ -87,7 +92,7 @@ struct DescriptorToken {
   template <typename CharType>
   float ToFloat(const CharType* attribute, bool& is_valid) {
     // Make sure the is a valid floating point number
-    // https://html.spec.whatwg.org/multipage/infrastructure.html#valid-floating-point-number
+    // https://html.spec.whatwg.org/C/#valid-floating-point-number
     unsigned length_excluding_descriptor = length - 1;
     if (length_excluding_descriptor > 0 && *(attribute + start) == '+') {
       is_valid = false;
@@ -196,8 +201,10 @@ static void SrcsetError(Document* document, String message) {
     StringBuilder error_message;
     error_message.Append("Failed parsing 'srcset' attribute value since ");
     error_message.Append(message);
-    document->GetFrame()->Console().AddMessage(ConsoleMessage::Create(
-        kOtherMessageSource, kErrorMessageLevel, error_message.ToString()));
+    document->GetFrame()->Console().AddMessage(
+        MakeGarbageCollected<ConsoleMessage>(
+            mojom::ConsoleMessageSource::kOther,
+            mojom::ConsoleMessageLevel::kError, error_message.ToString()));
   }
 }
 
@@ -326,13 +333,15 @@ static void ParseImageCandidatesFromSrcsetAttribute(
         if (document) {
           UseCounter::Count(document, WebFeature::kSrcsetDroppedCandidate);
           if (document->GetFrame()) {
-            document->GetFrame()->Console().AddMessage(ConsoleMessage::Create(
-                kOtherMessageSource, kErrorMessageLevel,
-                String("Dropped srcset candidate ") +
-                    JSONValue::QuoteString(
-                        String(image_url_start,
-                               static_cast<wtf_size_t>(image_url_end -
-                                                       image_url_start)))));
+            document->GetFrame()->Console().AddMessage(
+                MakeGarbageCollected<ConsoleMessage>(
+                    mojom::ConsoleMessageSource::kOther,
+                    mojom::ConsoleMessageLevel::kError,
+                    String("Dropped srcset candidate ") +
+                        JSONValue::QuoteString(
+                            String(image_url_start,
+                                   static_cast<wtf_size_t>(image_url_end -
+                                                           image_url_start)))));
           }
         }
         continue;
@@ -441,8 +450,12 @@ static ImageCandidate PickBestImageCandidate(
       de_duped_image_candidates.push_back(&image);
     prev_density = image.Density();
   }
+
   unsigned winner =
-      SelectionLogic(de_duped_image_candidates, device_scale_factor);
+      blink::WebNetworkStateNotifier::SaveDataEnabled() &&
+              base::FeatureList::IsEnabled(blink::features::kSaveDataImgSrcset)
+          ? 0
+          : SelectionLogic(de_duped_image_candidates, device_scale_factor);
   DCHECK_LT(winner, de_duped_image_candidates.size());
   winner = AvoidDownloadIfHigherDensityResourceIsInCache(
       de_duped_image_candidates, winner, document);

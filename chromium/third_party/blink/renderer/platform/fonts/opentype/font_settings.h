@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -17,6 +17,7 @@
 namespace blink {
 
 uint32_t AtomicStringToFourByteTag(AtomicString tag);
+AtomicString FourByteTagToAtomicString(uint32_t tag);
 
 template <typename T>
 class FontTagValuePair {
@@ -24,17 +25,17 @@ class FontTagValuePair {
 
  public:
   FontTagValuePair(const AtomicString& tag, T value)
-      : tag_(tag), value_(value){};
+      : tag_(tag), value_(value) {}
   bool operator==(const FontTagValuePair& other) const {
     return tag_ == other.tag_ && value_ == other.value_;
-  };
+  }
 
   const AtomicString& Tag() const { return tag_; }
   T Value() const { return value_; }
 
  private:
   AtomicString tag_;
-  const T value_;
+  T value_;
 };
 
 template <typename T>
@@ -46,7 +47,8 @@ class FontSettings {
   const T& at(wtf_size_t index) const { return list_.at(index); }
   bool operator==(const FontSettings& other) const {
     return list_ == other.list_;
-  };
+  }
+  bool operator!=(const FontSettings& other) const { return !(*this == other); }
   String ToString() const {
     StringBuilder builder;
     wtf_size_t num_features = size();
@@ -60,6 +62,20 @@ class FontSettings {
     }
     return builder.ToString();
   }
+
+  bool FindPair(AtomicString tag, T* found_pair) const {
+    if (!found_pair)
+      return false;
+
+    for (auto& pair : list_) {
+      if (pair.Tag() == tag) {
+        *found_pair = pair;
+        return true;
+      }
+    }
+    return false;
+  }
+
   const T* begin() const { return list_.begin(); }
   const T* end() const { return list_.end(); }
   T* begin() { return list_.begin(); }

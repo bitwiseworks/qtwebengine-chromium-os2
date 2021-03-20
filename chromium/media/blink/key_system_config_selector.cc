@@ -18,11 +18,11 @@
 #include "media/base/logging_override_if_enabled.h"
 #include "media/base/media_permission.h"
 #include "media/base/mime_util.h"
-#include "media/blink/webmediaplayer_util.h"
 #include "third_party/blink/public/platform/url_conversion.h"
 #include "third_party/blink/public/platform/web_media_key_system_configuration.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/modules/media/webmediaplayer_util.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -174,9 +174,10 @@ struct KeySystemConfigSelector::SelectionRequest {
   std::string key_system;
   blink::WebVector<blink::WebMediaKeySystemConfiguration>
       candidate_configurations;
-  base::Callback<void(const blink::WebMediaKeySystemConfiguration&,
-                      const CdmConfig&)> succeeded_cb;
-  base::Closure not_supported_cb;
+  base::OnceCallback<void(const blink::WebMediaKeySystemConfiguration&,
+                          const CdmConfig&)>
+      succeeded_cb;
+  base::OnceClosure not_supported_cb;
   bool was_permission_requested = false;
   bool is_permission_granted = false;
 };
@@ -302,12 +303,11 @@ class KeySystemConfigSelector::ConfigState {
 };
 
 KeySystemConfigSelector::KeySystemConfigSelector(
-    const KeySystems* key_systems,
+    KeySystems* key_systems,
     MediaPermission* media_permission)
     : key_systems_(key_systems),
       media_permission_(media_permission),
-      is_supported_media_type_cb_(base::BindRepeating(&IsSupportedMediaType)),
-      weak_factory_(this) {
+      is_supported_media_type_cb_(base::BindRepeating(&IsSupportedMediaType)) {
   DCHECK(key_systems_);
   DCHECK(media_permission_);
 }
@@ -369,9 +369,10 @@ EmeConfigRule KeySystemConfigSelector::GetEncryptionSchemeConfigRule(
     const std::string& key_system,
     const EmeEncryptionScheme encryption_scheme) {
   switch (encryption_scheme) {
-    // https://github.com/WICG/encrypted-media-encryption-scheme/blob/master/explainer.md
-    // "A missing or null value indicates that any encryption scheme is
-    // acceptable."
+    // https://w3c.github.io/encrypted-media/#dom-mediakeysystemmediacapability-encryptionscheme
+    // "A value which is null or not present indicates to the user agent that
+    // no specific encryption scheme is required by the application, and
+    // therefore any encryption scheme is acceptable."
     // To fully implement this, we need to get the config rules for both kCenc
     // and kCbcs, which could be conflicting, and choose a final config rule
     // somehow. If we end up choosing the rule for kCbcs, we could actually
@@ -379,11 +380,19 @@ EmeConfigRule KeySystemConfigSelector::GetEncryptionSchemeConfigRule(
     // compatibility and simplicity, we treat kNotSpecified the same as kCenc.
     case EmeEncryptionScheme::kNotSpecified:
     case EmeEncryptionScheme::kCenc:
-      return key_systems_->GetEncryptionSchemeConfigRule(key_system,
-                                                         EncryptionMode::kCenc);
+      return key_systems_->GetEncryptionSchemeConfigRule(
+          key_system, EncryptionScheme::kCenc);
     case EmeEncryptionScheme::kCbcs:
-      return key_systems_->GetEncryptionSchemeConfigRule(key_system,
-                                                         EncryptionMode::kCbcs);
+    case EmeEncryptionScheme::kCbcs_1_9:
+      return key_systems_->GetEncryptionSchemeConfigRule(
+          key_system, EncryptionScheme::kCbcs);
+    case EmeEncryptionScheme::kUnrecognized:
+      // https://w3c.github.io/encrypted-media/#get-supported-capabilities-for-audio-video-type
+      // "If encryption scheme is non-null and is not recognized or not
+      // supported by implementation, continue to the next iteration."
+      // The value provided was an empty string or some other value that is
+      // not recognized, so treat it as a scheme that is not supported.
+      return EmeConfigRule::NOT_SUPPORTED;
   }
 
   NOTREACHED();
@@ -517,22 +526,20 @@ KeySystemConfigSelector::GetSupportedConfiguration(
 
   // 3. If the initDataTypes member of candidate configuration is non-empty,
   //    run the following steps:
-  if (!candidate.init_data_types.IsEmpty()) {
+  if (!candidate.init_data_types.empty()) {
     // 3.1. Let supported types be an empty sequence of DOMStrings.
-    std::vector<blink::WebEncryptedMediaInitDataType> supported_types;
+    std::vector<EmeInitDataType> supported_types;
 
     // 3.2. For each value in candidate configuration's initDataTypes member:
     for (size_t i = 0; i < candidate.init_data_types.size(); i++) {
       // 3.2.1. Let initDataType be the value.
-      blink::WebEncryptedMediaInitDataType init_data_type =
-          candidate.init_data_types[i];
+      EmeInitDataType init_data_type = candidate.init_data_types[i];
 
       // 3.2.2. If the implementation supports generating requests based on
       //        initDataType, add initDataType to supported types. String
       //        comparison is case-sensitive. The empty string is never
       //        supported.
-      if (key_systems_->IsSupportedInitDataType(
-              key_system, ConvertToEmeInitDataType(init_data_type))) {
+      if (key_systems_->IsSupportedInitDataType(key_system, init_data_type)) {
         supported_types.push_back(init_data_type);
       }
     }
@@ -705,8 +712,8 @@ KeySystemConfigSelector::GetSupportedConfiguration(
 
   // 15. If the videoCapabilities and audioCapabilities members in candidate
   //     configuration are both empty, return NotSupported.
-  if (candidate.video_capabilities.IsEmpty() &&
-      candidate.audio_capabilities.IsEmpty()) {
+  if (candidate.video_capabilities.empty() &&
+      candidate.audio_capabilities.empty()) {
     DVLOG(2) << "Rejecting requested configuration because "
              << "neither audioCapabilities nor videoCapabilities is specified";
     return CONFIGURATION_NOT_SUPPORTED;
@@ -715,7 +722,7 @@ KeySystemConfigSelector::GetSupportedConfiguration(
   // 16. If the videoCapabilities member in candidate configuration is
   //     non-empty:
   std::vector<blink::WebMediaKeySystemMediaCapability> video_capabilities;
-  if (!candidate.video_capabilities.IsEmpty()) {
+  if (!candidate.video_capabilities.empty()) {
     // 16.1. Let video capabilities be the result of executing the Get
     //       Supported Capabilities for Audio/Video Type algorithm on Video,
     //       candidate configuration's videoCapabilities member, accumulated
@@ -741,7 +748,7 @@ KeySystemConfigSelector::GetSupportedConfiguration(
   // 17. If the audioCapabilities member in candidate configuration is
   //     non-empty:
   std::vector<blink::WebMediaKeySystemMediaCapability> audio_capabilities;
-  if (!candidate.audio_capabilities.IsEmpty()) {
+  if (!candidate.audio_capabilities.empty()) {
     // 17.1. Let audio capabilities be the result of executing the Get
     //       Supported Capabilities for Audio/Video Type algorithm on Audio,
     //       candidate configuration's audioCapabilities member, accumulated
@@ -889,9 +896,9 @@ void KeySystemConfigSelector::SelectConfig(
     const blink::WebString& key_system,
     const blink::WebVector<blink::WebMediaKeySystemConfiguration>&
         candidate_configurations,
-    base::Callback<void(const blink::WebMediaKeySystemConfiguration&,
-                        const CdmConfig&)> succeeded_cb,
-    base::Closure not_supported_cb) {
+    base::OnceCallback<void(const blink::WebMediaKeySystemConfiguration&,
+                            const CdmConfig&)> succeeded_cb,
+    base::OnceClosure not_supported_cb) {
   // Continued from requestMediaKeySystemAccess(), step 6, from
   // https://w3c.github.io/encrypted-media/#requestmediakeysystemaccess
   //
@@ -899,13 +906,15 @@ void KeySystemConfigSelector::SelectConfig(
   //     agent, reject promise with a NotSupportedError. String comparison
   //     is case-sensitive.
   if (!key_system.ContainsOnlyASCII()) {
-    not_supported_cb.Run();
+    std::move(not_supported_cb).Run();
     return;
   }
 
+  key_systems_->UpdateIfNeeded();
+
   std::string key_system_ascii = key_system.Ascii();
   if (!key_systems_->IsSupportedKeySystem(key_system_ascii)) {
-    not_supported_cb.Run();
+    std::move(not_supported_cb).Run();
     return;
   }
 
@@ -927,7 +936,7 @@ void KeySystemConfigSelector::SelectConfig(
   // Therefore, always support Clear Key key system and only check settings for
   // other key systems.
   if (!is_encrypted_media_enabled && !IsClearKey(key_system_ascii)) {
-    not_supported_cb.Run();
+    std::move(not_supported_cb).Run();
     return;
   }
 
@@ -936,8 +945,8 @@ void KeySystemConfigSelector::SelectConfig(
   std::unique_ptr<SelectionRequest> request(new SelectionRequest());
   request->key_system = key_system_ascii;
   request->candidate_configurations = candidate_configurations;
-  request->succeeded_cb = succeeded_cb;
-  request->not_supported_cb = not_supported_cb;
+  request->succeeded_cb = std::move(succeeded_cb);
+  request->not_supported_cb = std::move(not_supported_cb);
   SelectConfigInternal(std::move(request));
 }
 
@@ -977,8 +986,8 @@ void KeySystemConfigSelector::SelectConfigInternal(
         DVLOG(3) << "Request permission.";
         media_permission_->RequestPermission(
             MediaPermission::PROTECTED_MEDIA_IDENTIFIER,
-            base::Bind(&KeySystemConfigSelector::OnPermissionResult,
-                       weak_factory_.GetWeakPtr(), base::Passed(&request)));
+            base::BindOnce(&KeySystemConfigSelector::OnPermissionResult,
+                           weak_factory_.GetWeakPtr(), std::move(request)));
         return;
       case CONFIGURATION_SUPPORTED:
         cdm_config.allow_distinctive_identifier =
@@ -989,13 +998,14 @@ void KeySystemConfigSelector::SelectConfigInternal(
              EmeFeatureRequirement::kRequired);
         cdm_config.use_hw_secure_codecs =
             config_state.AreHwSecureCodecsRequired();
-        request->succeeded_cb.Run(accumulated_configuration, cdm_config);
+        std::move(request->succeeded_cb)
+            .Run(accumulated_configuration, cdm_config);
         return;
     }
   }
 
   // 6.4. Reject promise with a NotSupportedError.
-  request->not_supported_cb.Run();
+  std::move(request->not_supported_cb).Run();
 }
 
 void KeySystemConfigSelector::OnPermissionResult(

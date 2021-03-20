@@ -13,7 +13,9 @@ ImeTextSpan::ImeTextSpan(Type type,
                          unsigned start_offset,
                          unsigned end_offset,
                          const Color& underline_color,
-                         ws::mojom::ImeTextSpanThickness thickness,
+                         ui::mojom::ImeTextSpanThickness thickness,
+                         ui::mojom::ImeTextSpanUnderlineStyle underline_style,
+                         const Color& text_color,
                          const Color& background_color,
                          const Color& suggestion_highlight_color,
                          bool remove_on_finish_composing,
@@ -21,6 +23,8 @@ ImeTextSpan::ImeTextSpan(Type type,
     : type_(type),
       underline_color_(underline_color),
       thickness_(thickness),
+      underline_style_(underline_style),
+      text_color_(text_color),
       background_color_(background_color),
       suggestion_highlight_color_(suggestion_highlight_color),
       remove_on_finish_composing_(remove_on_finish_composing),
@@ -38,8 +42,9 @@ namespace {
 Vector<String> ConvertStdVectorOfStdStringsToVectorOfStrings(
     const std::vector<std::string>& input) {
   Vector<String> output;
+  output.ReserveInitialCapacity(input.size());
   for (const std::string& val : input) {
-    output.push_back(String::FromUTF8(val.c_str()));
+    output.UncheckedAppend(String::FromUTF8(val));
   }
   return output;
 }
@@ -66,6 +71,8 @@ ImeTextSpan::ImeTextSpan(const WebImeTextSpan& ime_text_span)
                   ime_text_span.end_offset,
                   Color(ime_text_span.underline_color),
                   ime_text_span.thickness,
+                  ime_text_span.underline_style,
+                  Color(ime_text_span.text_color),
                   Color(ime_text_span.background_color),
                   Color(ime_text_span.suggestion_highlight_color),
                   ime_text_span.remove_on_finish_composing,

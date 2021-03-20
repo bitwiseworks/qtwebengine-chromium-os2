@@ -10,24 +10,17 @@
 #include "third_party/blink/renderer/core/css/css_image_generator_value.h"
 #include "third_party/blink/renderer/core/css/css_paint_image_generator.h"
 #include "third_party/blink/renderer/core/css/css_variable_data.h"
+#include "third_party/blink/renderer/core/css/cssom/cross_thread_style_value.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
 class CORE_EXPORT CSSPaintValue : public CSSImageGeneratorValue {
  public:
-  static CSSPaintValue* Create(CSSCustomIdentValue* name) {
-    return MakeGarbageCollected<CSSPaintValue>(name);
-  }
-
-  static CSSPaintValue* Create(
-      CSSCustomIdentValue* name,
-      Vector<scoped_refptr<CSSVariableData>>& variable_data) {
-    return MakeGarbageCollected<CSSPaintValue>(name, variable_data);
-  }
-
   explicit CSSPaintValue(CSSCustomIdentValue* name);
+  CSSPaintValue(CSSCustomIdentValue* name, bool threaded_compositing_enabled);
   CSSPaintValue(CSSCustomIdentValue* name,
                 Vector<scoped_refptr<CSSVariableData>>&);
   ~CSSPaintValue();
@@ -52,14 +45,33 @@ class CORE_EXPORT CSSPaintValue : public CSSImageGeneratorValue {
 
   bool Equals(const CSSPaintValue&) const;
 
-  const Vector<CSSPropertyID>* NativeInvalidationProperties() const {
-    return generator_ ? &generator_->NativeInvalidationProperties() : nullptr;
+  const Vector<CSSPropertyID>* NativeInvalidationProperties(
+      const Document&) const;
+  const Vector<AtomicString>* CustomInvalidationProperties(
+      const Document&) const;
+
+  const CSSStyleValueVector* GetParsedInputArgumentsForTesting() {
+    return parsed_input_arguments_;
   }
-  const Vector<AtomicString>* CustomInvalidationProperties() const {
-    return generator_ ? &generator_->CustomInvalidationProperties() : nullptr;
+  void BuildInputArgumentValuesForTesting(
+      Vector<std::unique_ptr<CrossThreadStyleValue>>& style_value) {
+    BuildInputArgumentValues(style_value);
   }
 
-  void TraceAfterDispatch(blink::Visitor*);
+  CSSPaintValue* ComputedCSSValue(const ComputedStyle&,
+                                  bool allow_visited_style) {
+    return this;
+  }
+
+  bool IsUsingCustomProperty(const AtomicString& custom_property_name,
+                             const Document&) const;
+
+  void CreateGeneratorForTesting(const Document& document) {
+    EnsureGenerator(document);
+  }
+  unsigned NumberOfGeneratorsForTesting() const { return generators_.size(); }
+
+  void TraceAfterDispatch(blink::Visitor*) const;
 
  private:
   class Observer final : public CSSPaintImageGenerator::Observer {
@@ -67,7 +79,7 @@ class CORE_EXPORT CSSPaintValue : public CSSImageGeneratorValue {
     explicit Observer(CSSPaintValue* owner_value) : owner_value_(owner_value) {}
 
     ~Observer() override = default;
-    void Trace(blink::Visitor* visitor) override {
+    void Trace(Visitor* visitor) override {
       visitor->Trace(owner_value_);
       CSSPaintImageGenerator::Observer::Trace(visitor);
     }
@@ -79,20 +91,38 @@ class CORE_EXPORT CSSPaintValue : public CSSImageGeneratorValue {
     DISALLOW_COPY_AND_ASSIGN(Observer);
   };
 
+  CSSPaintImageGenerator& EnsureGenerator(const Document&);
   void PaintImageGeneratorReady();
 
   bool ParseInputArguments(const Document&);
 
+  void BuildInputArgumentValues(
+      Vector<std::unique_ptr<CrossThreadStyleValue>>&);
+
   bool input_arguments_invalid_ = false;
 
   Member<CSSCustomIdentValue> name_;
-  Member<CSSPaintImageGenerator> generator_;
+  // CSSValues may be shared between Documents. This map stores the
+  // CSSPaintImageGenerator for each Document using this CSSPaintValue. We use a
+  // WeakMember to ensure that entries are removed when Documents are destroyed
+  // (since the CSSValue may outlive any given Document).
+  HeapHashMap<WeakMember<const Document>, Member<CSSPaintImageGenerator>>
+      generators_;
   Member<Observer> paint_image_generator_observer_;
   Member<CSSStyleValueVector> parsed_input_arguments_;
   Vector<scoped_refptr<CSSVariableData>> argument_variable_data_;
+  enum class OffThreadPaintState { kUnknown, kOffThread, kMainThread };
+  // Indicates whether this paint worklet is composited or not. kUnknown
+  // indicates that it has not been decided yet.
+  // TODO(crbug.com/987974): Make this variable reset when there is a style
+  // change.
+  OffThreadPaintState off_thread_paint_state_;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSPaintValue, IsPaintValue());
+template <>
+struct DowncastTraits<CSSPaintValue> {
+  static bool AllowFrom(const CSSValue& value) { return value.IsPaintValue(); }
+};
 
 }  // namespace blink
 

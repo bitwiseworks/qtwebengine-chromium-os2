@@ -6,8 +6,6 @@
  * Custom bindings for the mime handler API.
  */
 
-var binding =
-    apiBridge || require('binding').Binding.create('mimeHandlerPrivate');
 var utils = require('utils');
 
 var NO_STREAM_ERROR =
@@ -20,8 +18,9 @@ if ((typeof mojo === 'undefined') || !mojo.bindingsLibraryInitialized) {
 loadScript('extensions/common/api/mime_handler.mojom');
 
 var servicePtr = new extensions.mimeHandler.MimeHandlerServicePtr;
-Mojo.bindInterface(extensions.mimeHandler.MimeHandlerService.name,
-                   mojo.makeRequest(servicePtr).handle);
+Mojo.bindInterface(
+    extensions.mimeHandler.MimeHandlerService.name,
+    mojo.makeRequest(servicePtr).handle);
 var beforeUnloadControlPtr =
     new extensions.mimeHandler.BeforeUnloadControlPtr;
 Mojo.bindInterface(
@@ -59,7 +58,7 @@ function constructStreamInfoDict(streamInfo) {
   };
 }
 
-binding.registerCustomHook(function(bindingsAPI) {
+apiBridge.registerCustomHook(function(bindingsAPI) {
   var apiFunctions = bindingsAPI.apiFunctions;
   utils.handleRequestWithPromiseDoNotUse(
       apiFunctions, 'mimeHandlerPrivate', 'getStreamInfo',
@@ -70,17 +69,8 @@ binding.registerCustomHook(function(bindingsAPI) {
   });
 
   utils.handleRequestWithPromiseDoNotUse(
-      apiFunctions, 'mimeHandlerPrivate', 'abortStream',
-      function() {
-    return servicePtr.abortStream().then(function() {});
-  });
-
-  utils.handleRequestWithPromiseDoNotUse(
       apiFunctions, 'mimeHandlerPrivate', 'setShowBeforeUnloadDialog',
       function(showDialog) {
     return beforeUnloadControlPtr.setShowBeforeUnloadDialog(showDialog);
   });
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

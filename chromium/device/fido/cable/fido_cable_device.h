@@ -20,29 +20,16 @@
 
 namespace device {
 
+namespace cablev2 {
+class Crypter;
+}
+
 class BluetoothAdapter;
 class FidoBleConnection;
 class FidoBleFrame;
 
 class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoBleDevice {
  public:
-  // Encapsulates state FidoCableDevice maintains to encrypt and decrypt
-  // data within FidoBleFrame.
-  struct COMPONENT_EXPORT(DEVICE_FIDO) EncryptionData {
-    EncryptionData(std::string session_key, base::span<const uint8_t, 8> nonce);
-    EncryptionData(EncryptionData&& data);
-    EncryptionData& operator=(EncryptionData&& other);
-    ~EncryptionData();
-
-    std::string session_key;
-    std::array<uint8_t, 8> nonce;
-    crypto::Aead aes_key{crypto::Aead::AES_256_GCM};
-    uint32_t write_sequence_num = 0;
-    uint32_t read_sequence_num = 0;
-
-    DISALLOW_COPY_AND_ASSIGN(EncryptionData);
-  };
-
   using FrameCallback = FidoBleTransaction::FrameCallback;
 
   FidoCableDevice(BluetoothAdapter* adapter, std::string address);
@@ -51,8 +38,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoBleDevice {
   ~FidoCableDevice() override;
 
   // FidoBleDevice:
-  void DeviceTransact(std::vector<uint8_t> command,
-                      DeviceCallback callback) override;
+  CancelToken DeviceTransact(std::vector<uint8_t> command,
+                             DeviceCallback callback) override;
   void OnResponseFrame(FrameCallback callback,
                        base::Optional<FidoBleFrame> frame) override;
   base::WeakPtr<FidoDevice> GetWeakPtr() override;
@@ -60,18 +47,44 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoCableDevice : public FidoBleDevice {
   void SendHandshakeMessage(std::vector<uint8_t> handshake_message,
                             DeviceCallback callback);
 
-  void SetEncryptionData(std::string session_key,
-                         base::span<const uint8_t, 8> nonce);
+  // Configure caBLE v1 keys.
+  void SetV1EncryptionData(base::span<const uint8_t, 32> session_key,
+                           base::span<const uint8_t, 8> nonce);
+  // Configure caBLE v2 keys.
+  void SetV2EncryptionData(std::unique_ptr<cablev2::Crypter> crypter);
   FidoTransportProtocol DeviceTransport() const override;
 
+  // SetCountersForTesting allows tests to set the message counters. Non-test
+  // code must not call this function.
+  void SetSequenceNumbersForTesting(uint32_t read_counter,
+                                    uint32_t write_counter);
+
  private:
-  FRIEND_TEST_ALL_PREFIXES(FidoCableDeviceTest,
-                           TestCableDeviceSendMultipleRequests);
-  FRIEND_TEST_ALL_PREFIXES(FidoCableDeviceTest,
-                           TestCableDeviceErrorOnMaxCounter);
+  // Encapsulates state FidoCableDevice maintains to encrypt and decrypt
+  // data within FidoBleFrame.
+  struct EncryptionData {
+    EncryptionData();
+    ~EncryptionData();
+
+    std::array<uint8_t, 32> read_key;
+    std::array<uint8_t, 32> write_key;
+    std::array<uint8_t, 8> nonce;
+    uint32_t write_sequence_num = 0;
+    uint32_t read_sequence_num = 0;
+  };
+
+  bool EncryptOutgoingMessage(std::vector<uint8_t>* message_to_encrypt);
+  bool DecryptIncomingMessage(FidoBleFrame* incoming_frame);
+
+  static bool EncryptV1OutgoingMessage(
+      EncryptionData* encryption_data,
+      std::vector<uint8_t>* message_to_encrypt);
+  static bool DecryptV1IncomingMessage(EncryptionData* encryption_data,
+                                       FidoBleFrame* incoming_frame);
 
   base::Optional<EncryptionData> encryption_data_;
-  base::WeakPtrFactory<FidoCableDevice> weak_factory_;
+  base::Optional<std::unique_ptr<cablev2::Crypter>> v2_crypter_;
+  base::WeakPtrFactory<FidoCableDevice> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FidoCableDevice);
 };

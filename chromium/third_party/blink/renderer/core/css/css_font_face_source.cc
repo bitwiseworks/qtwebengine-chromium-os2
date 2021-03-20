@@ -53,7 +53,7 @@ scoped_refptr<SimpleFontData> CSSFontFaceSource::GetFontData(
   if (!IsValid())
     return nullptr;
 
-  if (IsLocal()) {
+  if (IsLocalNonBlocking()) {
     // We're local. Just return a SimpleFontData from the normal cache.
     return CreateFontData(font_description, font_selection_capabilities);
   }
@@ -84,7 +84,7 @@ scoped_refptr<SimpleFontData> CSSFontFaceSource::GetFontData(
 void CSSFontFaceSource::PruneOldestIfNeeded() {
   if (font_cache_key_age.size() > kMaxCachedFontData) {
     DCHECK_EQ(font_cache_key_age.size() - 1, kMaxCachedFontData);
-    FontCacheKey& key = font_cache_key_age.back();
+    const FontCacheKey& key = font_cache_key_age.back();
     auto font_data_entry = font_data_table_.Take(key);
     font_cache_key_age.pop_back();
     DCHECK_EQ(font_cache_key_age.size(), kMaxCachedFontData);

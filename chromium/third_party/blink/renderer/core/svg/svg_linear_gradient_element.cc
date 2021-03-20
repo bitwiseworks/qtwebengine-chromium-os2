@@ -26,46 +26,49 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_linear_gradient.h"
 #include "third_party/blink/renderer/core/svg/linear_gradient_attributes.h"
 #include "third_party/blink/renderer/core/svg/svg_length.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
-inline SVGLinearGradientElement::SVGLinearGradientElement(Document& document)
+SVGLinearGradientElement::SVGLinearGradientElement(Document& document)
     : SVGGradientElement(svg_names::kLinearGradientTag, document),
       // Spec: If the x1|y1|y2 attribute is not specified, the effect is as if a
       // value of "0%" were specified.
       // Spec: If the x2 attribute is not specified, the effect is as if a value
       // of "100%" were specified.
-      x1_(SVGAnimatedLength::Create(this,
-                                    svg_names::kX1Attr,
-                                    SVGLengthMode::kWidth,
-                                    SVGLength::Initial::kPercent0)),
-      y1_(SVGAnimatedLength::Create(this,
-                                    svg_names::kY1Attr,
-                                    SVGLengthMode::kHeight,
-                                    SVGLength::Initial::kPercent0)),
-      x2_(SVGAnimatedLength::Create(this,
-                                    svg_names::kX2Attr,
-                                    SVGLengthMode::kWidth,
-                                    SVGLength::Initial::kPercent100)),
-      y2_(SVGAnimatedLength::Create(this,
-                                    svg_names::kY2Attr,
-                                    SVGLengthMode::kHeight,
-                                    SVGLength::Initial::kPercent0)) {
+      x1_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kX1Attr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kPercent0)),
+      y1_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kY1Attr,
+          SVGLengthMode::kHeight,
+          SVGLength::Initial::kPercent0)),
+      x2_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kX2Attr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kPercent100)),
+      y2_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kY2Attr,
+          SVGLengthMode::kHeight,
+          SVGLength::Initial::kPercent0)) {
   AddToPropertyMap(x1_);
   AddToPropertyMap(y1_);
   AddToPropertyMap(x2_);
   AddToPropertyMap(y2_);
 }
 
-void SVGLinearGradientElement::Trace(blink::Visitor* visitor) {
+void SVGLinearGradientElement::Trace(Visitor* visitor) {
   visitor->Trace(x1_);
   visitor->Trace(y1_);
   visitor->Trace(x2_);
   visitor->Trace(y2_);
   SVGGradientElement::Trace(visitor);
 }
-
-DEFINE_NODE_FACTORY(SVGLinearGradientElement)
 
 void SVGLinearGradientElement::SvgAttributeChanged(
     const QualifiedName& attr_name) {
@@ -80,20 +83,19 @@ void SVGLinearGradientElement::SvgAttributeChanged(
   SVGGradientElement::SvgAttributeChanged(attr_name);
 }
 
-LayoutObject* SVGLinearGradientElement::CreateLayoutObject(
-    const ComputedStyle&) {
+LayoutObject* SVGLinearGradientElement::CreateLayoutObject(const ComputedStyle&,
+                                                           LegacyLayout) {
   return new LayoutSVGResourceLinearGradient(this);
 }
 
 static void SetGradientAttributes(const SVGGradientElement& element,
                                   LinearGradientAttributes& attributes,
                                   bool is_linear) {
-  element.SynchronizeAnimatedSVGAttribute(AnyQName());
   element.CollectCommonAttributes(attributes);
 
   if (!is_linear)
     return;
-  const SVGLinearGradientElement& linear = ToSVGLinearGradientElement(element);
+  const auto& linear = To<SVGLinearGradientElement>(element);
 
   if (!attributes.HasX1() && linear.x1()->IsSpecified())
     attributes.SetX1(linear.x1()->CurrentValue());
@@ -108,8 +110,8 @@ static void SetGradientAttributes(const SVGGradientElement& element,
     attributes.SetY2(linear.y2()->CurrentValue());
 }
 
-bool SVGLinearGradientElement::CollectGradientAttributes(
-    LinearGradientAttributes& attributes) {
+void SVGLinearGradientElement::CollectGradientAttributes(
+    LinearGradientAttributes& attributes) const {
   DCHECK(GetLayoutObject());
 
   VisitedSet visited;
@@ -117,16 +119,18 @@ bool SVGLinearGradientElement::CollectGradientAttributes(
 
   while (true) {
     SetGradientAttributes(*current, attributes,
-                          IsSVGLinearGradientElement(*current));
+                          IsA<SVGLinearGradientElement>(*current));
     visited.insert(current);
 
     current = current->ReferencedElement();
-    if (!current || visited.Contains(current))
+
+    // Ignore the referenced gradient element if it is not attached.
+    if (!current || !current->GetLayoutObject())
       break;
-    if (!current->GetLayoutObject())
-      return false;
+    // Cycle detection.
+    if (visited.Contains(current))
+      break;
   }
-  return true;
 }
 
 bool SVGLinearGradientElement::SelfHasRelativeLengths() const {

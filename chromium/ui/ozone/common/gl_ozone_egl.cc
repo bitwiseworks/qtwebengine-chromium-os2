@@ -35,11 +35,6 @@ bool GLOzoneEGL::InitializeStaticGLBindings(
   return true;
 }
 
-void GLOzoneEGL::InitializeDebugGLBindings() {
-  gl::InitializeDebugGLBindingsGL();
-  gl::InitializeDebugGLBindingsEGL();
-}
-
 void GLOzoneEGL::SetDisabledExtensionsPlatform(
     const std::string& disabled_extensions) {
   gl::SetDisabledExtensionsEGL(disabled_extensions);
@@ -56,6 +51,7 @@ void GLOzoneEGL::ShutdownGL() {
 }
 
 bool GLOzoneEGL::GetGLWindowSystemBindingInfo(
+    const gl::GLVersionInfo& gl_info,
     gl::GLWindowSystemBindingInfo* info) {
   return gl::GetGLWindowSystemBindingInfoEGL(info);
 }

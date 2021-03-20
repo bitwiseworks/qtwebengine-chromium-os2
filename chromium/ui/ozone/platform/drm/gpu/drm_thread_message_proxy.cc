@@ -4,6 +4,9 @@
 
 #include "ui/ozone/platform/drm/gpu/drm_thread_message_proxy.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ipc/ipc_message.h"
@@ -16,7 +19,7 @@
 
 namespace ui {
 
-DrmThreadMessageProxy::DrmThreadMessageProxy() : weak_ptr_factory_(this) {}
+DrmThreadMessageProxy::DrmThreadMessageProxy() {}
 
 DrmThreadMessageProxy::~DrmThreadMessageProxy() {}
 
@@ -55,19 +58,20 @@ bool DrmThreadMessageProxy::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(OzoneGpuMsg_SetHDCPState, OnSetHDCPState)
     IPC_MESSAGE_HANDLER(OzoneGpuMsg_SetColorMatrix, OnSetColorMatrix)
     IPC_MESSAGE_HANDLER(OzoneGpuMsg_SetGammaCorrection, OnSetGammaCorrection)
-    IPC_MESSAGE_HANDLER(OzoneGpuMsg_CheckOverlayCapabilities,
-                        OnCheckOverlayCapabilities)
+    IPC_MESSAGE_HANDLER(OzoneGpuMsg_SetPrivacyScreen, OnSetPrivacyScreen)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
   return handled;
 }
 
-void DrmThreadMessageProxy::OnCreateWindow(gfx::AcceleratedWidget widget) {
+void DrmThreadMessageProxy::OnCreateWindow(gfx::AcceleratedWidget widget,
+                                           const gfx::Rect& initial_bounds) {
   DCHECK(drm_thread_->IsRunning());
   drm_thread_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&DrmThread::CreateWindow,
-                                base::Unretained(drm_thread_), widget));
+      FROM_HERE,
+      base::BindOnce(&DrmThread::CreateWindow, base::Unretained(drm_thread_),
+                     widget, initial_bounds));
 }
 
 void DrmThreadMessageProxy::OnDestroyWindow(gfx::AcceleratedWidget widget) {
@@ -103,22 +107,6 @@ void DrmThreadMessageProxy::OnCursorMove(gfx::AcceleratedWidget widget,
       FROM_HERE,
       base::BindOnce(&DrmThread::MoveCursor, base::Unretained(drm_thread_),
                      widget, location));
-}
-
-void DrmThreadMessageProxy::OnCheckOverlayCapabilities(
-    gfx::AcceleratedWidget widget,
-    const std::vector<OverlayCheck_Params>& param_overlays) {
-  DCHECK(drm_thread_->IsRunning());
-  auto overlays = CreateOverlaySurfaceCandidateListFrom(param_overlays);
-  auto callback =
-      base::BindOnce(&DrmThreadMessageProxy::OnCheckOverlayCapabilitiesCallback,
-                     weak_ptr_factory_.GetWeakPtr());
-
-  auto safe_callback = CreateSafeOnceCallback(std::move(callback));
-  drm_thread_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&DrmThread::CheckOverlayCapabilities,
-                                base::Unretained(drm_thread_), widget, overlays,
-                                std::move(safe_callback)));
 }
 
 void DrmThreadMessageProxy::OnRefreshNativeDisplays() {
@@ -248,14 +236,13 @@ void DrmThreadMessageProxy::OnSetGammaCorrection(
                                 degamma_lut, gamma_lut));
 }
 
-void DrmThreadMessageProxy::OnCheckOverlayCapabilitiesCallback(
-    gfx::AcceleratedWidget widget,
-    const OverlaySurfaceCandidateList& candidates,
-    const OverlayStatusList& returns) const {
-  auto param_overlays = CreateParamsFromOverlaySurfaceCandidate(candidates);
-  auto param_returns = CreateParamsFromOverlayStatusList(returns);
-  sender_->Send(new OzoneHostMsg_OverlayCapabilitiesReceived(
-      widget, param_overlays, param_returns));
+void DrmThreadMessageProxy::OnSetPrivacyScreen(int64_t display_id,
+                                               bool enabled) {
+  DCHECK(drm_thread_->IsRunning());
+  drm_thread_->task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&DrmThread::SetPrivacyScreen,
+                     base::Unretained(drm_thread_), display_id, enabled));
 }
 
 void DrmThreadMessageProxy::OnRefreshNativeDisplaysCallback(

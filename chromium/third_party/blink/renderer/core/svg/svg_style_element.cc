@@ -31,17 +31,12 @@
 
 namespace blink {
 
-inline SVGStyleElement::SVGStyleElement(Document& document,
-                                        const CreateElementFlags flags)
+SVGStyleElement::SVGStyleElement(Document& document,
+                                 const CreateElementFlags flags)
     : SVGElement(svg_names::kStyleTag, document),
       StyleElement(&document, flags.IsCreatedByParser()) {}
 
 SVGStyleElement::~SVGStyleElement() = default;
-
-SVGStyleElement* SVGStyleElement::Create(Document& document,
-                                         const CreateElementFlags flags) {
-  return MakeGarbageCollected<SVGStyleElement>(document, flags);
-}
 
 bool SVGStyleElement::disabled() const {
   if (!sheet_)
@@ -143,7 +138,7 @@ void SVGStyleElement::DispatchPendingEvent() {
   DispatchEvent(*Event::Create(event_type_names::kError));
 }
 
-void SVGStyleElement::Trace(blink::Visitor* visitor) {
+void SVGStyleElement::Trace(Visitor* visitor) {
   StyleElement::Trace(visitor);
   SVGElement::Trace(visitor);
 }

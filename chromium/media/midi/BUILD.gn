@@ -49,9 +49,11 @@ if (is_android) {
   android_library("midi_java") {
     deps = [
       "//base:base_java",
+      "//base:jni_java",
     ]
+    annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
 
-    java_files = [
+    sources = [
       "java/src/org/chromium/midi/MidiDeviceAndroid.java",
       "java/src/org/chromium/midi/MidiInputPortAndroid.java",
       "java/src/org/chromium/midi/MidiManagerAndroid.java",
@@ -70,7 +72,6 @@ if (is_android) {
       "java/src/org/chromium/midi/UsbMidiDeviceAndroid.java",
       "java/src/org/chromium/midi/UsbMidiDeviceFactoryAndroid.java",
     ]
-    jni_package = "midi"
   }
 }
 
@@ -137,13 +138,15 @@ component("midi") {
   }
 
   if (is_win) {
-    deps += [ "//device/usb" ]
+    deps += [ "//services/device/public/cpp/usb" ]
     sources += [
       "midi_manager_win.cc",
       "midi_manager_win.h",
       "midi_manager_winrt.cc",
       "midi_manager_winrt.h",
     ]
+
+    libs += [ "setupapi.lib" ]
 
     # This library is included in base in static builds.
     if (is_component_build) {
@@ -169,13 +172,9 @@ component("midi") {
 }
 
 mojom("mojo") {
-  sources = [
-    "midi_service.mojom",
-  ]
+  sources = [ "midi_service.mojom" ]
 
-  deps = [
-    "//mojo/public/mojom/base",
-  ]
+  deps = [ "//mojo/public/mojom/base" ]
 }
 
 test("midi_unittests") {
@@ -219,21 +218,23 @@ test("midi_unittests") {
 }
 
 fuzzer_test("midi_webmidi_data_validator_fuzzer") {
-  sources = [
-    "midi_webmidi_data_validator_fuzzer.cc",
-  ]
+  sources = [ "midi_webmidi_data_validator_fuzzer.cc" ]
   seed_corpus = "fuzz/corpus"
-  deps = [
-    ":midi",
-  ]
+  deps = [ ":midi" ]
 }
 
 fuzzer_test("midi_message_queue_fuzzer") {
-  sources = [
-    "midi_message_queue_fuzzer.cc",
-  ]
+  sources = [ "midi_message_queue_fuzzer.cc" ]
   seed_corpus = "fuzz/corpus"
+  deps = [ ":midi" ]
+}
+
+fuzzer_test("usb_midi_descriptor_parser_fuzzer") {
+  sources = [ "usb_midi_descriptor_parser_fuzzer.cc" ] + usb_midi_sources
+  seed_corpus = "fuzz/usb_midi_descriptor_corpus"
   deps = [
     ":midi",
+    ":mojo",
+    "//base",
   ]
 }

@@ -25,11 +25,11 @@ def IsDiagnosticTypename(name):
 
 
 def GetDiagnosticTypenames():
-  return _MODULES_BY_DIAGNOSTIC_NAME.keys()
+  return list(_MODULES_BY_DIAGNOSTIC_NAME.keys())
 
 
 def GetDiagnosticClassForName(name):
-  assert IsDiagnosticTypename(name)
+  assert IsDiagnosticTypename(name), name
 
   if name in _CLASSES_BY_NAME:
     return _CLASSES_BY_NAME[name]

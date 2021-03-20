@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/navigation_handle.h"
@@ -23,7 +22,7 @@ ScreenOrientationDelegate* ScreenOrientationProvider::delegate_ = nullptr;
 ScreenOrientationProvider::ScreenOrientationProvider(WebContents* web_contents)
     : WebContentsObserver(web_contents),
       lock_applied_(false),
-      bindings_(web_contents, this) {}
+      receivers_(web_contents, this) {}
 
 ScreenOrientationProvider::~ScreenOrientationProvider() = default;
 
@@ -110,7 +109,7 @@ void ScreenOrientationProvider::OnOrientationChange() {
 void ScreenOrientationProvider::NotifyLockResult(
     ScreenOrientationLockResult result) {
   if (!pending_callback_.is_null())
-    base::ResetAndReturn(&pending_callback_).Run(result);
+    std::move(pending_callback_).Run(result);
 
   pending_lock_orientation_.reset();
 }

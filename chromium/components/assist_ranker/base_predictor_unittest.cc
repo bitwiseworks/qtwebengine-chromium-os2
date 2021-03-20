@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/assist_ranker/fake_ranker_model_loader.h"
 #include "components/assist_ranker/predictor_config.h"
 #include "components/assist_ranker/proto/ranker_example.pb.h"
@@ -71,7 +71,7 @@ class FakePredictor : public BasePredictor {
   // |predictor_config|.
   static std::unique_ptr<FakePredictor> Create(
       PredictorConfig predictor_config);
-  ~FakePredictor() override{};
+  ~FakePredictor() override {}
   // Validation will always succeed.
   static RankerModelStatus ValidateModel(const RankerModel& model) {
     return RankerModelStatus::OK;
@@ -79,7 +79,7 @@ class FakePredictor : public BasePredictor {
 
  protected:
   // Not implementing any inference logic.
-  bool Initialize() override { return true; };
+  bool Initialize() override { return true; }
 
  private:
   FakePredictor(const PredictorConfig& config) : BasePredictor(config) {}
@@ -113,7 +113,7 @@ class BasePredictorTest : public ::testing::Test {
 
  private:
   // Sets up the task scheduling/task-runner environment for each test.
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   // Sets itself as the global UkmRecorder on construction.
   ukm::TestAutoSetUkmRecorder test_ukm_recorder_;

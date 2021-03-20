@@ -9,7 +9,6 @@
 
 #include "base/callback_list.h"
 #include "base/macros.h"
-#include "base/memory/singleton.h"
 #include "services/device/public/mojom/battery_status.mojom.h"
 
 namespace base {
@@ -21,7 +20,7 @@ class BatteryStatusManager;
 
 class BatteryStatusService {
  public:
-  typedef base::Callback<void(const mojom::BatteryStatus&)>
+  typedef base::RepeatingCallback<void(const mojom::BatteryStatus&)>
       BatteryUpdateCallback;
   typedef base::CallbackList<void(const mojom::BatteryStatus&)>
       BatteryUpdateCallbackList;
@@ -29,6 +28,12 @@ class BatteryStatusService {
 
   // Returns the BatteryStatusService singleton.
   static BatteryStatusService* GetInstance();
+
+  // NOTE: These must be public due to internal stashing of the global
+  // BatteryStatusService object in an std::unique_ptr. Clients should use only
+  // the static GetInstance() method above.
+  BatteryStatusService();
+  virtual ~BatteryStatusService();
 
   // Adds a callback to receive battery status updates.  Must be called on the
   // main thread. The callback itself will be called on the main thread as well.
@@ -47,11 +52,7 @@ class BatteryStatusService {
   const BatteryUpdateCallback& GetUpdateCallbackForTesting() const;
 
  private:
-  friend struct base::DefaultSingletonTraits<BatteryStatusService>;
   friend class BatteryStatusServiceTest;
-
-  BatteryStatusService();
-  virtual ~BatteryStatusService();
 
   // Updates current battery status and sends new status to interested
   // render processes. Can be called on any thread via a callback.

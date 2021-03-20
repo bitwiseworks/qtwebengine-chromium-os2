@@ -17,19 +17,21 @@ enum NetworkErrorPageEvent {
   NETWORK_ERROR_PAGE_RELOAD_BUTTON_ERROR = 3,    // Reload button clicked
                                                  // -> error.
 
-  // Same for the "Show saved copy" button.
-  NETWORK_ERROR_PAGE_SHOW_SAVED_COPY_BUTTON_SHOWN = 4,
-  NETWORK_ERROR_PAGE_SHOW_SAVED_COPY_BUTTON_CLICKED = 5,
-  NETWORK_ERROR_PAGE_SHOW_SAVED_COPY_BUTTON_ERROR = 6,
+  // Obsolete values used for the "Show saved copy" button.
+  // NETWORK_ERROR_PAGE_SHOW_SAVED_COPY_BUTTON_SHOWN = 4,
+  // NETWORK_ERROR_PAGE_SHOW_SAVED_COPY_BUTTON_CLICKED = 5,
+  // NETWORK_ERROR_PAGE_SHOW_SAVED_COPY_BUTTON_ERROR = 6,
 
   NETWORK_ERROR_PAGE_MORE_BUTTON_CLICKED = 7,  // More button clicked.
 
   NETWORK_ERROR_PAGE_BROWSER_INITIATED_RELOAD = 8,  // Reload from browser.
 
-  // Keep track of which button the user chooses when both are shown.
-  NETWORK_ERROR_PAGE_BOTH_BUTTONS_SHOWN = 9,
-  NETWORK_ERROR_PAGE_BOTH_BUTTONS_RELOAD_CLICKED = 10,
-  NETWORK_ERROR_PAGE_BOTH_BUTTONS_SHOWN_SAVED_COPY_CLICKED = 11,
+  // Obsolete values used for when "Show saved copy" and "Reload" buttons were
+  // both shown.
+  //
+  // NETWORK_ERROR_PAGE_BOTH_BUTTONS_SHOWN = 9,
+  // NETWORK_ERROR_PAGE_BOTH_BUTTONS_RELOAD_CLICKED = 10,
+  // NETWORK_ERROR_PAGE_BOTH_BUTTONS_SHOWN_SAVED_COPY_CLICKED = 11,
 
   NETWORK_ERROR_EASTER_EGG_ACTIVATED = 12,  // Easter egg activated.
 
@@ -69,6 +71,9 @@ enum NetworkErrorPageEvent {
   // A list containing at least one item of offline content suggestions was
   // shown in the collapsed/hidden state.
   NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN_COLLAPSED = 28,
+  // The error page was shown because the device is offline (this is the dino
+  // page).
+  NETWORK_ERROR_PAGE_OFFLINE_ERROR_SHOWN = 29,
 
   NETWORK_ERROR_PAGE_EVENT_MAX,
 };
@@ -108,6 +113,9 @@ enum DnsProbeStatus {
 
   // The DNS servers are working fine, so the domain must not exist.
   DNS_PROBE_FINISHED_NXDOMAIN,
+
+  // The secure DNS configuration is wrong, or the servers are down or broken.
+  DNS_PROBE_FINISHED_BAD_SECURE_CONFIG,
 
   DNS_PROBE_MAX
 };

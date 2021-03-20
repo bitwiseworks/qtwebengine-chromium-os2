@@ -4,6 +4,7 @@
 
 #include "extensions/browser/guest_view/web_view/web_view_content_script_manager.h"
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_context.h"
@@ -222,7 +223,9 @@ void WebViewContentScriptManager::SignalOnScriptsLoaded(
   pending_scripts_loading_callbacks_.push_back(std::move(callback));
 }
 
-void WebViewContentScriptManager::OnScriptsLoaded(UserScriptLoader* loader) {
+void WebViewContentScriptManager::OnScriptsLoaded(
+    UserScriptLoader* loader,
+    content::BrowserContext* browser_context) {
   user_script_loader_observer_.Remove(loader);
   RunCallbacksIfReady();
 }

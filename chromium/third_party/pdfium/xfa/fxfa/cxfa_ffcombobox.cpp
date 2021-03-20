@@ -23,54 +23,66 @@ CFWL_ComboBox* ToComboBox(CFWL_Widget* widget) {
   return static_cast<CFWL_ComboBox*>(widget);
 }
 
+const CFWL_ComboBox* ToComboBox(const CFWL_Widget* widget) {
+  return static_cast<const CFWL_ComboBox*>(widget);
+}
+
 }  // namespace
 
-CXFA_FFComboBox::CXFA_FFComboBox(CXFA_Node* pNode)
-    : CXFA_FFDropDown(pNode), m_pOldDelegate(nullptr) {}
+CXFA_FFComboBox::CXFA_FFComboBox(CXFA_Node* pNode) : CXFA_FFDropDown(pNode) {}
 
-CXFA_FFComboBox::~CXFA_FFComboBox() {}
+CXFA_FFComboBox::~CXFA_FFComboBox() = default;
 
-CFX_RectF CXFA_FFComboBox::GetBBox(uint32_t dwStatus, FocusOption focus) {
+CXFA_FFComboBox* CXFA_FFComboBox::AsComboBox() {
+  return this;
+}
+
+CFX_RectF CXFA_FFComboBox::GetBBox(FocusOption focus) {
   if (focus == kDrawFocus)
     return CFX_RectF();
-  return CXFA_FFWidget::GetBBox(dwStatus, kDoNotDrawFocus);
+  return CXFA_FFWidget::GetBBox(kDoNotDrawFocus);
 }
 
 bool CXFA_FFComboBox::PtInActiveRect(const CFX_PointF& point) {
-  auto* pComboBox = ToComboBox(m_pNormalWidget.get());
+  auto* pComboBox = ToComboBox(GetNormalWidget());
   return pComboBox && pComboBox->GetBBox().Contains(point);
 }
 
 bool CXFA_FFComboBox::LoadWidget() {
+  ASSERT(!IsLoaded());
+
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   auto pNew = pdfium::MakeUnique<CFWL_ComboBox>(GetFWLApp());
   CFWL_ComboBox* pComboBox = pNew.get();
-  m_pNormalWidget = std::move(pNew);
-  m_pNormalWidget->SetLayoutItem(this);
+  SetNormalWidget(std::move(pNew));
+  pComboBox->SetAdapterIface(this);
 
-  CFWL_NoteDriver* pNoteDriver =
-      m_pNormalWidget->GetOwnerApp()->GetNoteDriver();
-  pNoteDriver->RegisterEventTarget(m_pNormalWidget.get(),
-                                   m_pNormalWidget.get());
-  m_pOldDelegate = m_pNormalWidget->GetDelegate();
-  m_pNormalWidget->SetDelegate(this);
-  m_pNormalWidget->LockUpdate();
+  CFWL_NoteDriver* pNoteDriver = pComboBox->GetOwnerApp()->GetNoteDriver();
+  pNoteDriver->RegisterEventTarget(pComboBox, pComboBox);
+  m_pOldDelegate = pComboBox->GetDelegate();
+  pComboBox->SetDelegate(this);
 
-  for (const auto& label : m_pNode->GetChoiceListItems(false))
-    pComboBox->AddString(label.AsStringView());
+  {
+    CFWL_Widget::ScopedUpdateLock update_lock(pComboBox);
+    for (const auto& label : m_pNode->GetChoiceListItems(false))
+      pComboBox->AddString(label);
 
-  std::vector<int32_t> iSelArray = m_pNode->GetSelectedItems();
-  if (iSelArray.empty())
-    pComboBox->SetEditText(m_pNode->GetValue(XFA_VALUEPICTURE_Raw));
-  else
-    pComboBox->SetCurSel(iSelArray.front());
+    std::vector<int32_t> iSelArray = m_pNode->GetSelectedItems();
+    if (iSelArray.empty())
+      pComboBox->SetEditText(m_pNode->GetValue(XFA_VALUEPICTURE_Raw));
+    else
+      pComboBox->SetCurSel(iSelArray.front());
 
-  UpdateWidgetProperty();
-  m_pNormalWidget->UnlockUpdate();
+    UpdateWidgetProperty();
+  }
+
   return CXFA_FFField::LoadWidget();
 }
 
 void CXFA_FFComboBox::UpdateWidgetProperty() {
-  auto* pComboBox = ToComboBox(m_pNormalWidget.get());
+  auto* pComboBox = ToComboBox(GetNormalWidget());
   if (!pComboBox)
     return;
 
@@ -86,7 +98,7 @@ void CXFA_FFComboBox::UpdateWidgetProperty() {
     dwExtendedStyle |= FWL_STYLEEXT_CMB_ReadOnly;
   }
   dwExtendedStyle |= GetAlignment();
-  m_pNormalWidget->ModifyStylesEx(dwExtendedStyle, 0xFFFFFFFF);
+  GetNormalWidget()->ModifyStylesEx(dwExtendedStyle, 0xFFFFFFFF);
 
   if (!m_pNode->IsHorizontalScrollPolicyOff())
     dwEditStyles |= FWL_STYLEEXT_EDT_AutoHScroll;
@@ -95,6 +107,9 @@ void CXFA_FFComboBox::UpdateWidgetProperty() {
 }
 
 bool CXFA_FFComboBox::OnRButtonUp(uint32_t dwFlags, const CFX_PointF& point) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   if (!CXFA_FFField::OnRButtonUp(dwFlags, point))
     return false;
 
@@ -103,15 +118,18 @@ bool CXFA_FFComboBox::OnRButtonUp(uint32_t dwFlags, const CFX_PointF& point) {
 }
 
 bool CXFA_FFComboBox::OnKillFocus(CXFA_FFWidget* pNewWidget) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
+  ObservedPtr<CXFA_FFWidget> pNewWatched(pNewWidget);
   if (!ProcessCommittedData())
     UpdateFWLData();
 
-  CXFA_FFField::OnKillFocus(pNewWidget);
-  return true;
+  return pNewWatched && CXFA_FFField::OnKillFocus(pNewWatched.Get());
 }
 
 void CXFA_FFComboBox::OpenDropDownList() {
-  ToComboBox(m_pNormalWidget.get())->OpenDropDownList(true);
+  ToComboBox(GetNormalWidget())->OpenDropDownList(true);
 }
 
 bool CXFA_FFComboBox::CommitData() {
@@ -130,12 +148,12 @@ bool CXFA_FFComboBox::IsDataChanged() {
 void CXFA_FFComboBox::FWLEventSelChange(CXFA_EventParam* pParam) {
   pParam->m_eType = XFA_EVENT_Change;
   pParam->m_pTarget = m_pNode.Get();
-  pParam->m_wsPrevText = ToComboBox(m_pNormalWidget.get())->GetEditText();
+  pParam->m_wsPrevText = ToComboBox(GetNormalWidget())->GetEditText();
   m_pNode->ProcessEvent(GetDocView(), XFA_AttributeValue::Change, pParam);
 }
 
 WideString CXFA_FFComboBox::GetCurrentText() const {
-  auto* pFWLcombobox = ToComboBox(m_pNormalWidget.get());
+  auto* pFWLcombobox = ToComboBox(GetNormalWidget());
   WideString wsText = pFWLcombobox->GetEditText();
   int32_t iCursel = pFWLcombobox->GetCurSel();
   if (iCursel >= 0) {
@@ -187,10 +205,12 @@ uint32_t CXFA_FFComboBox::GetAlignment() {
 }
 
 bool CXFA_FFComboBox::UpdateFWLData() {
-  auto* pComboBox = ToComboBox(m_pNormalWidget.get());
+  auto* pComboBox = ToComboBox(GetNormalWidget());
   if (!pComboBox)
     return false;
 
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
   std::vector<int32_t> iSelArray = m_pNode->GetSelectedItems();
   if (!iSelArray.empty()) {
     pComboBox->SetCurSel(iSelArray.front());
@@ -204,31 +224,21 @@ bool CXFA_FFComboBox::UpdateFWLData() {
 
 bool CXFA_FFComboBox::CanUndo() {
   return m_pNode->IsChoiceListAllowTextEntry() &&
-         ToComboBox(m_pNormalWidget.get())->EditCanUndo();
+         ToComboBox(GetNormalWidget())->EditCanUndo();
 }
 
 bool CXFA_FFComboBox::CanRedo() {
   return m_pNode->IsChoiceListAllowTextEntry() &&
-         ToComboBox(m_pNormalWidget.get())->EditCanRedo();
-}
-
-bool CXFA_FFComboBox::Undo() {
-  return m_pNode->IsChoiceListAllowTextEntry() &&
-         ToComboBox(m_pNormalWidget.get())->EditUndo();
-}
-
-bool CXFA_FFComboBox::Redo() {
-  return m_pNode->IsChoiceListAllowTextEntry() &&
-         ToComboBox(m_pNormalWidget.get())->EditRedo();
+         ToComboBox(GetNormalWidget())->EditCanRedo();
 }
 
 bool CXFA_FFComboBox::CanCopy() {
-  return ToComboBox(m_pNormalWidget.get())->EditCanCopy();
+  return ToComboBox(GetNormalWidget())->EditCanCopy();
 }
 
 bool CXFA_FFComboBox::CanCut() {
   return m_pNode->IsOpenAccess() && m_pNode->IsChoiceListAllowTextEntry() &&
-         ToComboBox(m_pNormalWidget.get())->EditCanCut();
+         ToComboBox(GetNormalWidget())->EditCanCut();
 }
 
 bool CXFA_FFComboBox::CanPaste() {
@@ -236,35 +246,69 @@ bool CXFA_FFComboBox::CanPaste() {
 }
 
 bool CXFA_FFComboBox::CanSelectAll() {
-  return ToComboBox(m_pNormalWidget.get())->EditCanSelectAll();
+  return ToComboBox(GetNormalWidget())->EditCanSelectAll();
+}
+
+bool CXFA_FFComboBox::Undo() {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return m_pNode->IsChoiceListAllowTextEntry() &&
+         ToComboBox(GetNormalWidget())->EditUndo();
+}
+
+bool CXFA_FFComboBox::Redo() {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return m_pNode->IsChoiceListAllowTextEntry() &&
+         ToComboBox(GetNormalWidget())->EditRedo();
 }
 
 Optional<WideString> CXFA_FFComboBox::Copy() {
-  return ToComboBox(m_pNormalWidget.get())->EditCopy();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return ToComboBox(GetNormalWidget())->EditCopy();
 }
 
 Optional<WideString> CXFA_FFComboBox::Cut() {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   if (!m_pNode->IsChoiceListAllowTextEntry())
     return {};
 
-  return ToComboBox(m_pNormalWidget.get())->EditCut();
+  return ToComboBox(GetNormalWidget())->EditCut();
 }
 
 bool CXFA_FFComboBox::Paste(const WideString& wsPaste) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   return m_pNode->IsChoiceListAllowTextEntry() &&
-         ToComboBox(m_pNormalWidget.get())->EditPaste(wsPaste);
+         ToComboBox(GetNormalWidget())->EditPaste(wsPaste);
 }
 
 void CXFA_FFComboBox::SelectAll() {
-  ToComboBox(m_pNormalWidget.get())->EditSelectAll();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  ToComboBox(GetNormalWidget())->EditSelectAll();
 }
 
 void CXFA_FFComboBox::Delete() {
-  ToComboBox(m_pNormalWidget.get())->EditDelete();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  ToComboBox(GetNormalWidget())->EditDelete();
 }
 
 void CXFA_FFComboBox::DeSelect() {
-  ToComboBox(m_pNormalWidget.get())->EditDeSelect();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  ToComboBox(GetNormalWidget())->EditDeSelect();
 }
 
 WideString CXFA_FFComboBox::GetText() {
@@ -276,29 +320,32 @@ FormFieldType CXFA_FFComboBox::GetFormFieldType() {
 }
 
 void CXFA_FFComboBox::SetItemState(int32_t nIndex, bool bSelected) {
-  ToComboBox(m_pNormalWidget.get())->SetCurSel(bSelected ? nIndex : -1);
-  m_pNormalWidget->Update();
+  ToComboBox(GetNormalWidget())->SetCurSel(bSelected ? nIndex : -1);
+  GetNormalWidget()->Update();
   InvalidateRect();
 }
 
-void CXFA_FFComboBox::InsertItem(WideStringView wsLabel, int32_t nIndex) {
-  ToComboBox(m_pNormalWidget.get())->AddString(wsLabel);
-  m_pNormalWidget->Update();
+void CXFA_FFComboBox::InsertItem(const WideString& wsLabel, int32_t nIndex) {
+  ToComboBox(GetNormalWidget())->AddString(wsLabel);
+  GetNormalWidget()->Update();
   InvalidateRect();
 }
 
 void CXFA_FFComboBox::DeleteItem(int32_t nIndex) {
   if (nIndex < 0)
-    ToComboBox(m_pNormalWidget.get())->RemoveAll();
+    ToComboBox(GetNormalWidget())->RemoveAll();
   else
-    ToComboBox(m_pNormalWidget.get())->RemoveAt(nIndex);
+    ToComboBox(GetNormalWidget())->RemoveAt(nIndex);
 
-  m_pNormalWidget->Update();
+  GetNormalWidget()->Update();
   InvalidateRect();
 }
 
 void CXFA_FFComboBox::OnTextChanged(CFWL_Widget* pWidget,
                                     const WideString& wsChanged) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   CXFA_EventParam eParam;
   eParam.m_wsPrevText = m_pNode->GetValue(XFA_VALUEPICTURE_Raw);
   eParam.m_wsChange = wsChanged;
@@ -306,6 +353,9 @@ void CXFA_FFComboBox::OnTextChanged(CFWL_Widget* pWidget,
 }
 
 void CXFA_FFComboBox::OnSelectChanged(CFWL_Widget* pWidget, bool bLButtonUp) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   CXFA_EventParam eParam;
   eParam.m_wsPrevText = m_pNode->GetValue(XFA_VALUEPICTURE_Raw);
   FWLEventSelChange(&eParam);
@@ -314,6 +364,9 @@ void CXFA_FFComboBox::OnSelectChanged(CFWL_Widget* pWidget, bool bLButtonUp) {
 }
 
 void CXFA_FFComboBox::OnPreOpen(CFWL_Widget* pWidget) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   CXFA_EventParam eParam;
   eParam.m_eType = XFA_EVENT_PreOpen;
   eParam.m_pTarget = m_pNode.Get();
@@ -321,6 +374,9 @@ void CXFA_FFComboBox::OnPreOpen(CFWL_Widget* pWidget) {
 }
 
 void CXFA_FFComboBox::OnPostOpen(CFWL_Widget* pWidget) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   CXFA_EventParam eParam;
   eParam.m_eType = XFA_EVENT_PostOpen;
   eParam.m_pTarget = m_pNode.Get();
@@ -328,28 +384,34 @@ void CXFA_FFComboBox::OnPostOpen(CFWL_Widget* pWidget) {
 }
 
 void CXFA_FFComboBox::OnProcessMessage(CFWL_Message* pMessage) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   m_pOldDelegate->OnProcessMessage(pMessage);
 }
 
 void CXFA_FFComboBox::OnProcessEvent(CFWL_Event* pEvent) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   CXFA_FFField::OnProcessEvent(pEvent);
   switch (pEvent->GetType()) {
     case CFWL_Event::Type::SelectChanged: {
       auto* postEvent = static_cast<CFWL_EventSelectChanged*>(pEvent);
-      OnSelectChanged(m_pNormalWidget.get(), postEvent->bLButtonUp);
+      OnSelectChanged(GetNormalWidget(), postEvent->bLButtonUp);
       break;
     }
     case CFWL_Event::Type::EditChanged: {
       WideString wsChanged;
-      OnTextChanged(m_pNormalWidget.get(), wsChanged);
+      OnTextChanged(GetNormalWidget(), wsChanged);
       break;
     }
     case CFWL_Event::Type::PreDropDown: {
-      OnPreOpen(m_pNormalWidget.get());
+      OnPreOpen(GetNormalWidget());
       break;
     }
     case CFWL_Event::Type::PostDropDown: {
-      OnPostOpen(m_pNormalWidget.get());
+      OnPostOpen(GetNormalWidget());
       break;
     }
     default:
@@ -360,5 +422,8 @@ void CXFA_FFComboBox::OnProcessEvent(CFWL_Event* pEvent) {
 
 void CXFA_FFComboBox::OnDrawWidget(CXFA_Graphics* pGraphics,
                                    const CFX_Matrix& matrix) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   m_pOldDelegate->OnDrawWidget(pGraphics, matrix);
 }

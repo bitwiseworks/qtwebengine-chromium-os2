@@ -52,18 +52,20 @@
 // Legacy support for NT1(https://www.w3.org/TR/navigation-timing/).
 namespace blink {
 
-static unsigned long long ToIntegerMilliseconds(TimeDelta duration) {
+static uint64_t ToIntegerMilliseconds(base::TimeDelta duration) {
   // TODO(npm): add histograms to understand when/why |duration| is sometimes
   // negative.
+  // TODO(crbug.com/1063989): stop clamping when it is not needed (i.e. for
+  // methods which do not expose the timestamp to a web perf API).
   double clamped_seconds =
       Performance::ClampTimeResolution(duration.InSecondsF());
-  return static_cast<unsigned long long>(clamped_seconds * 1000.0);
+  return static_cast<uint64_t>(clamped_seconds * 1000.0);
 }
 
 PerformanceTiming::PerformanceTiming(LocalFrame* frame)
     : DOMWindowClient(frame) {}
 
-unsigned long long PerformanceTiming::navigationStart() const {
+uint64_t PerformanceTiming::navigationStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -71,7 +73,7 @@ unsigned long long PerformanceTiming::navigationStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->NavigationStart());
 }
 
-unsigned long long PerformanceTiming::inputStart() const {
+uint64_t PerformanceTiming::inputStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -79,7 +81,7 @@ unsigned long long PerformanceTiming::inputStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->InputStart());
 }
 
-unsigned long long PerformanceTiming::unloadEventStart() const {
+uint64_t PerformanceTiming::unloadEventStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -91,7 +93,7 @@ unsigned long long PerformanceTiming::unloadEventStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->UnloadEventStart());
 }
 
-unsigned long long PerformanceTiming::unloadEventEnd() const {
+uint64_t PerformanceTiming::unloadEventEnd() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -103,7 +105,7 @@ unsigned long long PerformanceTiming::unloadEventEnd() const {
   return MonotonicTimeToIntegerMilliseconds(timing->UnloadEventEnd());
 }
 
-unsigned long long PerformanceTiming::redirectStart() const {
+uint64_t PerformanceTiming::redirectStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -114,7 +116,7 @@ unsigned long long PerformanceTiming::redirectStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->RedirectStart());
 }
 
-unsigned long long PerformanceTiming::redirectEnd() const {
+uint64_t PerformanceTiming::redirectEnd() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -125,7 +127,7 @@ unsigned long long PerformanceTiming::redirectEnd() const {
   return MonotonicTimeToIntegerMilliseconds(timing->RedirectEnd());
 }
 
-unsigned long long PerformanceTiming::fetchStart() const {
+uint64_t PerformanceTiming::fetchStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -133,7 +135,7 @@ unsigned long long PerformanceTiming::fetchStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->FetchStart());
 }
 
-unsigned long long PerformanceTiming::domainLookupStart() const {
+uint64_t PerformanceTiming::domainLookupStart() const {
   ResourceLoadTiming* timing = GetResourceLoadTiming();
   if (!timing)
     return fetchStart();
@@ -141,14 +143,14 @@ unsigned long long PerformanceTiming::domainLookupStart() const {
   // This will be zero when a DNS request is not performed.  Rather than
   // exposing a special value that indicates no DNS, we "backfill" with
   // fetchStart.
-  TimeTicks dns_start = timing->DnsStart();
+  base::TimeTicks dns_start = timing->DnsStart();
   if (dns_start.is_null())
     return fetchStart();
 
   return MonotonicTimeToIntegerMilliseconds(dns_start);
 }
 
-unsigned long long PerformanceTiming::domainLookupEnd() const {
+uint64_t PerformanceTiming::domainLookupEnd() const {
   ResourceLoadTiming* timing = GetResourceLoadTiming();
   if (!timing)
     return domainLookupStart();
@@ -156,14 +158,14 @@ unsigned long long PerformanceTiming::domainLookupEnd() const {
   // This will be zero when a DNS request is not performed.  Rather than
   // exposing a special value that indicates no DNS, we "backfill" with
   // domainLookupStart.
-  TimeTicks dns_end = timing->DnsEnd();
+  base::TimeTicks dns_end = timing->DnsEnd();
   if (dns_end.is_null())
     return domainLookupStart();
 
   return MonotonicTimeToIntegerMilliseconds(dns_end);
 }
 
-unsigned long long PerformanceTiming::connectStart() const {
+uint64_t PerformanceTiming::connectStart() const {
   DocumentLoader* loader = GetDocumentLoader();
   if (!loader)
     return domainLookupEnd();
@@ -175,7 +177,7 @@ unsigned long long PerformanceTiming::connectStart() const {
   // connectStart will be zero when a network request is not made.  Rather than
   // exposing a special value that indicates no new connection, we "backfill"
   // with domainLookupEnd.
-  TimeTicks connect_start = timing->ConnectStart();
+  base::TimeTicks connect_start = timing->ConnectStart();
   if (connect_start.is_null() || loader->GetResponse().ConnectionReused())
     return domainLookupEnd();
 
@@ -188,7 +190,7 @@ unsigned long long PerformanceTiming::connectStart() const {
   return MonotonicTimeToIntegerMilliseconds(connect_start);
 }
 
-unsigned long long PerformanceTiming::connectEnd() const {
+uint64_t PerformanceTiming::connectEnd() const {
   DocumentLoader* loader = GetDocumentLoader();
   if (!loader)
     return connectStart();
@@ -200,14 +202,14 @@ unsigned long long PerformanceTiming::connectEnd() const {
   // connectEnd will be zero when a network request is not made.  Rather than
   // exposing a special value that indicates no new connection, we "backfill"
   // with connectStart.
-  TimeTicks connect_end = timing->ConnectEnd();
+  base::TimeTicks connect_end = timing->ConnectEnd();
   if (connect_end.is_null() || loader->GetResponse().ConnectionReused())
     return connectStart();
 
   return MonotonicTimeToIntegerMilliseconds(connect_end);
 }
 
-unsigned long long PerformanceTiming::secureConnectionStart() const {
+uint64_t PerformanceTiming::secureConnectionStart() const {
   DocumentLoader* loader = GetDocumentLoader();
   if (!loader)
     return 0;
@@ -216,14 +218,14 @@ unsigned long long PerformanceTiming::secureConnectionStart() const {
   if (!timing)
     return 0;
 
-  TimeTicks ssl_start = timing->SslStart();
+  base::TimeTicks ssl_start = timing->SslStart();
   if (ssl_start.is_null())
     return 0;
 
   return MonotonicTimeToIntegerMilliseconds(ssl_start);
 }
 
-unsigned long long PerformanceTiming::requestStart() const {
+uint64_t PerformanceTiming::requestStart() const {
   ResourceLoadTiming* timing = GetResourceLoadTiming();
 
   if (!timing || timing->SendStart().is_null())
@@ -232,12 +234,12 @@ unsigned long long PerformanceTiming::requestStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->SendStart());
 }
 
-unsigned long long PerformanceTiming::responseStart() const {
+uint64_t PerformanceTiming::responseStart() const {
   ResourceLoadTiming* timing = GetResourceLoadTiming();
   if (!timing)
     return requestStart();
 
-  TimeTicks response_start = timing->ReceiveHeadersStart();
+  base::TimeTicks response_start = timing->ReceiveHeadersStart();
   if (response_start.is_null())
     response_start = timing->ReceiveHeadersEnd();
   if (response_start.is_null())
@@ -246,7 +248,7 @@ unsigned long long PerformanceTiming::responseStart() const {
   return MonotonicTimeToIntegerMilliseconds(response_start);
 }
 
-unsigned long long PerformanceTiming::responseEnd() const {
+uint64_t PerformanceTiming::responseEnd() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -254,7 +256,7 @@ unsigned long long PerformanceTiming::responseEnd() const {
   return MonotonicTimeToIntegerMilliseconds(timing->ResponseEnd());
 }
 
-unsigned long long PerformanceTiming::domLoading() const {
+uint64_t PerformanceTiming::domLoading() const {
   const DocumentTiming* timing = GetDocumentTiming();
   if (!timing)
     return fetchStart();
@@ -262,7 +264,7 @@ unsigned long long PerformanceTiming::domLoading() const {
   return MonotonicTimeToIntegerMilliseconds(timing->DomLoading());
 }
 
-unsigned long long PerformanceTiming::domInteractive() const {
+uint64_t PerformanceTiming::domInteractive() const {
   const DocumentTiming* timing = GetDocumentTiming();
   if (!timing)
     return 0;
@@ -270,7 +272,7 @@ unsigned long long PerformanceTiming::domInteractive() const {
   return MonotonicTimeToIntegerMilliseconds(timing->DomInteractive());
 }
 
-unsigned long long PerformanceTiming::domContentLoadedEventStart() const {
+uint64_t PerformanceTiming::domContentLoadedEventStart() const {
   const DocumentTiming* timing = GetDocumentTiming();
   if (!timing)
     return 0;
@@ -279,7 +281,7 @@ unsigned long long PerformanceTiming::domContentLoadedEventStart() const {
       timing->DomContentLoadedEventStart());
 }
 
-unsigned long long PerformanceTiming::domContentLoadedEventEnd() const {
+uint64_t PerformanceTiming::domContentLoadedEventEnd() const {
   const DocumentTiming* timing = GetDocumentTiming();
   if (!timing)
     return 0;
@@ -287,7 +289,7 @@ unsigned long long PerformanceTiming::domContentLoadedEventEnd() const {
   return MonotonicTimeToIntegerMilliseconds(timing->DomContentLoadedEventEnd());
 }
 
-unsigned long long PerformanceTiming::domComplete() const {
+uint64_t PerformanceTiming::domComplete() const {
   const DocumentTiming* timing = GetDocumentTiming();
   if (!timing)
     return 0;
@@ -295,7 +297,7 @@ unsigned long long PerformanceTiming::domComplete() const {
   return MonotonicTimeToIntegerMilliseconds(timing->DomComplete());
 }
 
-unsigned long long PerformanceTiming::loadEventStart() const {
+uint64_t PerformanceTiming::loadEventStart() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -303,7 +305,7 @@ unsigned long long PerformanceTiming::loadEventStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->LoadEventStart());
 }
 
-unsigned long long PerformanceTiming::loadEventEnd() const {
+uint64_t PerformanceTiming::loadEventEnd() const {
   DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -311,15 +313,15 @@ unsigned long long PerformanceTiming::loadEventEnd() const {
   return MonotonicTimeToIntegerMilliseconds(timing->LoadEventEnd());
 }
 
-unsigned long long PerformanceTiming::FirstLayout() const {
-  const DocumentTiming* timing = GetDocumentTiming();
+base::TimeTicks PerformanceTiming::NavigationStartAsMonotonicTime() const {
+  DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
-    return 0;
+    return base::TimeTicks();
 
-  return MonotonicTimeToIntegerMilliseconds(timing->FirstLayout());
+  return timing->NavigationStart();
 }
 
-unsigned long long PerformanceTiming::FirstPaint() const {
+uint64_t PerformanceTiming::FirstPaint() const {
   const PaintTiming* timing = GetPaintTiming();
   if (!timing)
     return 0;
@@ -327,7 +329,7 @@ unsigned long long PerformanceTiming::FirstPaint() const {
   return MonotonicTimeToIntegerMilliseconds(timing->FirstPaint());
 }
 
-unsigned long long PerformanceTiming::FirstImagePaint() const {
+uint64_t PerformanceTiming::FirstImagePaint() const {
   const PaintTiming* timing = GetPaintTiming();
   if (!timing)
     return 0;
@@ -335,7 +337,7 @@ unsigned long long PerformanceTiming::FirstImagePaint() const {
   return MonotonicTimeToIntegerMilliseconds(timing->FirstImagePaint());
 }
 
-unsigned long long PerformanceTiming::FirstContentfulPaint() const {
+uint64_t PerformanceTiming::FirstContentfulPaint() const {
   const PaintTiming* timing = GetPaintTiming();
   if (!timing)
     return 0;
@@ -343,7 +345,15 @@ unsigned long long PerformanceTiming::FirstContentfulPaint() const {
   return MonotonicTimeToIntegerMilliseconds(timing->FirstContentfulPaint());
 }
 
-unsigned long long PerformanceTiming::FirstMeaningfulPaint() const {
+base::TimeTicks PerformanceTiming::FirstContentfulPaintAsMonotonicTime() const {
+  const PaintTiming* timing = GetPaintTiming();
+  if (!timing)
+    return base::TimeTicks();
+
+  return timing->FirstContentfulPaint();
+}
+
+uint64_t PerformanceTiming::FirstMeaningfulPaint() const {
   const PaintTiming* timing = GetPaintTiming();
   if (!timing)
     return 0;
@@ -351,7 +361,7 @@ unsigned long long PerformanceTiming::FirstMeaningfulPaint() const {
   return MonotonicTimeToIntegerMilliseconds(timing->FirstMeaningfulPaint());
 }
 
-unsigned long long PerformanceTiming::FirstMeaningfulPaintCandidate() const {
+uint64_t PerformanceTiming::FirstMeaningfulPaintCandidate() const {
   const PaintTiming* timing = GetPaintTiming();
   if (!timing)
     return 0;
@@ -360,13 +370,13 @@ unsigned long long PerformanceTiming::FirstMeaningfulPaintCandidate() const {
       timing->FirstMeaningfulPaintCandidate());
 }
 
-unsigned long long PerformanceTiming::LargestImagePaint() const {
+uint64_t PerformanceTiming::LargestImagePaint() const {
   PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
   if (!paint_timing_detector)
     return 0;
 
   return MonotonicTimeToIntegerMilliseconds(
-      paint_timing_detector->GetImagePaintTimingDetector().LargestImagePaint());
+      paint_timing_detector->LargestImagePaint());
 }
 
 uint64_t PerformanceTiming::LargestImagePaintSize() const {
@@ -374,35 +384,16 @@ uint64_t PerformanceTiming::LargestImagePaintSize() const {
   if (!paint_timing_detector)
     return 0;
 
-  return paint_timing_detector->GetImagePaintTimingDetector()
-      .LargestImagePaintSize();
+  return paint_timing_detector->LargestImagePaintSize();
 }
 
-unsigned long long PerformanceTiming::LastImagePaint() const {
+uint64_t PerformanceTiming::LargestTextPaint() const {
   PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
   if (!paint_timing_detector)
     return 0;
 
   return MonotonicTimeToIntegerMilliseconds(
-      paint_timing_detector->GetImagePaintTimingDetector().LastImagePaint());
-}
-
-uint64_t PerformanceTiming::LastImagePaintSize() const {
-  PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
-  if (!paint_timing_detector)
-    return 0;
-
-  return paint_timing_detector->GetImagePaintTimingDetector()
-      .LastImagePaintSize();
-}
-
-unsigned long long PerformanceTiming::LargestTextPaint() const {
-  PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
-  if (!paint_timing_detector)
-    return 0;
-
-  return MonotonicTimeToIntegerMilliseconds(
-      paint_timing_detector->GetTextPaintTimingDetector().LargestTextPaint());
+      paint_timing_detector->LargestTextPaint());
 }
 
 uint64_t PerformanceTiming::LargestTextPaintSize() const {
@@ -410,91 +401,54 @@ uint64_t PerformanceTiming::LargestTextPaintSize() const {
   if (!paint_timing_detector)
     return 0;
 
-  return paint_timing_detector->GetTextPaintTimingDetector()
-      .LargestTextPaintSize();
+  return paint_timing_detector->LargestTextPaintSize();
 }
 
-unsigned long long PerformanceTiming::LastTextPaint() const {
+uint64_t PerformanceTiming::FirstInputOrScrollNotifiedTimestamp() const {
   PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
   if (!paint_timing_detector)
     return 0;
 
   return MonotonicTimeToIntegerMilliseconds(
-      paint_timing_detector->GetTextPaintTimingDetector().LastTextPaint());
+      paint_timing_detector->FirstInputOrScrollNotifiedTimestamp());
 }
 
-uint64_t PerformanceTiming::LastTextPaintSize() const {
-  PaintTimingDetector* paint_timing_detector = GetPaintTimingDetector();
-  if (!paint_timing_detector)
-    return 0;
-
-  return paint_timing_detector->GetTextPaintTimingDetector()
-      .LastTextPaintSize();
-}
-
-unsigned long long PerformanceTiming::PageInteractive() const {
-  InteractiveDetector* interactive_detector = GetInteractiveDetector();
-  if (!interactive_detector)
-    return 0;
-
-  return MonotonicTimeToIntegerMilliseconds(
-      interactive_detector->GetInteractiveTime());
-}
-
-unsigned long long PerformanceTiming::PageInteractiveDetection() const {
-  InteractiveDetector* interactive_detector = GetInteractiveDetector();
-  if (!interactive_detector)
-    return 0;
-
-  return MonotonicTimeToIntegerMilliseconds(
-      interactive_detector->GetInteractiveDetectionTime());
-}
-
-unsigned long long PerformanceTiming::FirstInputInvalidatingInteractive()
-    const {
-  InteractiveDetector* interactive_detector = GetInteractiveDetector();
-  if (!interactive_detector)
-    return 0;
-
-  return MonotonicTimeToIntegerMilliseconds(
-      interactive_detector->GetFirstInvalidatingInputTime());
-}
-
-unsigned long long PerformanceTiming::FirstInputDelay() const {
+base::Optional<base::TimeDelta> PerformanceTiming::FirstInputDelay() const {
   const InteractiveDetector* interactive_detector = GetInteractiveDetector();
   if (!interactive_detector)
-    return 0;
+    return base::nullopt;
 
-  return ToIntegerMilliseconds(interactive_detector->GetFirstInputDelay());
+  return interactive_detector->GetFirstInputDelay();
 }
 
-unsigned long long PerformanceTiming::FirstInputTimestamp() const {
+base::Optional<base::TimeDelta> PerformanceTiming::FirstInputTimestamp() const {
   const InteractiveDetector* interactive_detector = GetInteractiveDetector();
   if (!interactive_detector)
-    return 0;
+    return base::nullopt;
 
-  return MonotonicTimeToIntegerMilliseconds(
+  return MonotonicTimeToPseudoWallTime(
       interactive_detector->GetFirstInputTimestamp());
 }
 
-unsigned long long PerformanceTiming::LongestInputDelay() const {
+base::Optional<base::TimeDelta> PerformanceTiming::LongestInputDelay() const {
   const InteractiveDetector* interactive_detector = GetInteractiveDetector();
   if (!interactive_detector)
-    return 0;
+    return base::nullopt;
 
-  return ToIntegerMilliseconds(interactive_detector->GetLongestInputDelay());
+  return interactive_detector->GetLongestInputDelay();
 }
 
-unsigned long long PerformanceTiming::LongestInputTimestamp() const {
+base::Optional<base::TimeDelta> PerformanceTiming::LongestInputTimestamp()
+    const {
   const InteractiveDetector* interactive_detector = GetInteractiveDetector();
   if (!interactive_detector)
-    return 0;
+    return base::nullopt;
 
-  return MonotonicTimeToIntegerMilliseconds(
+  return MonotonicTimeToPseudoWallTime(
       interactive_detector->GetLongestInputTimestamp());
 }
 
-unsigned long long PerformanceTiming::ParseStart() const {
+uint64_t PerformanceTiming::ParseStart() const {
   const DocumentParserTiming* timing = GetDocumentParserTiming();
   if (!timing)
     return 0;
@@ -502,7 +456,7 @@ unsigned long long PerformanceTiming::ParseStart() const {
   return MonotonicTimeToIntegerMilliseconds(timing->ParserStart());
 }
 
-unsigned long long PerformanceTiming::ParseStop() const {
+uint64_t PerformanceTiming::ParseStop() const {
   const DocumentParserTiming* timing = GetDocumentParserTiming();
   if (!timing)
     return 0;
@@ -510,7 +464,7 @@ unsigned long long PerformanceTiming::ParseStop() const {
   return MonotonicTimeToIntegerMilliseconds(timing->ParserStop());
 }
 
-unsigned long long PerformanceTiming::ParseBlockedOnScriptLoadDuration() const {
+uint64_t PerformanceTiming::ParseBlockedOnScriptLoadDuration() const {
   const DocumentParserTiming* timing = GetDocumentParserTiming();
   if (!timing)
     return 0;
@@ -518,8 +472,8 @@ unsigned long long PerformanceTiming::ParseBlockedOnScriptLoadDuration() const {
   return ToIntegerMilliseconds(timing->ParserBlockedOnScriptLoadDuration());
 }
 
-unsigned long long
-PerformanceTiming::ParseBlockedOnScriptLoadFromDocumentWriteDuration() const {
+uint64_t PerformanceTiming::ParseBlockedOnScriptLoadFromDocumentWriteDuration()
+    const {
   const DocumentParserTiming* timing = GetDocumentParserTiming();
   if (!timing)
     return 0;
@@ -528,8 +482,7 @@ PerformanceTiming::ParseBlockedOnScriptLoadFromDocumentWriteDuration() const {
       timing->ParserBlockedOnScriptLoadFromDocumentWriteDuration());
 }
 
-unsigned long long PerformanceTiming::ParseBlockedOnScriptExecutionDuration()
-    const {
+uint64_t PerformanceTiming::ParseBlockedOnScriptExecutionDuration() const {
   const DocumentParserTiming* timing = GetDocumentParserTiming();
   if (!timing)
     return 0;
@@ -538,7 +491,7 @@ unsigned long long PerformanceTiming::ParseBlockedOnScriptExecutionDuration()
       timing->ParserBlockedOnScriptExecutionDuration());
 }
 
-unsigned long long
+uint64_t
 PerformanceTiming::ParseBlockedOnScriptExecutionFromDocumentWriteDuration()
     const {
   const DocumentParserTiming* timing = GetDocumentParserTiming();
@@ -627,42 +580,72 @@ PaintTimingDetector* PerformanceTiming::GetPaintTimingDetector() const {
   return &view->GetPaintTimingDetector();
 }
 
+base::Optional<base::TimeDelta>
+PerformanceTiming::MonotonicTimeToPseudoWallTime(
+    const base::Optional<base::TimeTicks>& time) const {
+  if (!time.has_value())
+    return base::nullopt;
+
+  const DocumentLoadTiming* timing = GetDocumentLoadTiming();
+  if (!timing)
+    return base::nullopt;
+
+  return timing->MonotonicTimeToPseudoWallTime(*time);
+}
+
 std::unique_ptr<TracedValue> PerformanceTiming::GetNavigationTracingData() {
-  std::unique_ptr<TracedValue> data = TracedValue::Create();
+  auto data = std::make_unique<TracedValue>();
   data->SetString("navigationId",
                   IdentifiersFactory::LoaderId(GetDocumentLoader()));
   return data;
 }
 
+// static
+const PerformanceTiming::NameToAttributeMap&
+PerformanceTiming::GetAttributeMapping() {
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<NameToAttributeMap>, map, ());
+  if (!map.IsSet()) {
+    *map = {
+        {"navigationStart", &PerformanceTiming::navigationStart},
+        {"unloadEventStart", &PerformanceTiming::unloadEventStart},
+        {"unloadEventEnd", &PerformanceTiming::unloadEventEnd},
+        {"redirectStart", &PerformanceTiming::redirectStart},
+        {"redirectEnd", &PerformanceTiming::redirectEnd},
+        {"fetchStart", &PerformanceTiming::fetchStart},
+        {"domainLookupStart", &PerformanceTiming::domainLookupStart},
+        {"domainLookupEnd", &PerformanceTiming::domainLookupEnd},
+        {"connectStart", &PerformanceTiming::connectStart},
+        {"connectEnd", &PerformanceTiming::connectEnd},
+        {"secureConnectionStart", &PerformanceTiming::secureConnectionStart},
+        {"requestStart", &PerformanceTiming::requestStart},
+        {"responseStart", &PerformanceTiming::responseStart},
+        {"responseEnd", &PerformanceTiming::responseEnd},
+        {"domLoading", &PerformanceTiming::domLoading},
+        {"domInteractive", &PerformanceTiming::domInteractive},
+        {"domContentLoadedEventStart",
+         &PerformanceTiming::domContentLoadedEventStart},
+        {"domContentLoadedEventEnd",
+         &PerformanceTiming::domContentLoadedEventEnd},
+        {"domComplete", &PerformanceTiming::domComplete},
+        {"loadEventStart", &PerformanceTiming::loadEventStart},
+        {"loadEventEnd", &PerformanceTiming::loadEventEnd},
+    };
+  }
+  return *map;
+}
+
 ScriptValue PerformanceTiming::toJSONForBinding(
     ScriptState* script_state) const {
   V8ObjectBuilder result(script_state);
-  result.AddNumber("navigationStart", navigationStart());
-  result.AddNumber("unloadEventStart", unloadEventStart());
-  result.AddNumber("unloadEventEnd", unloadEventEnd());
-  result.AddNumber("redirectStart", redirectStart());
-  result.AddNumber("redirectEnd", redirectEnd());
-  result.AddNumber("fetchStart", fetchStart());
-  result.AddNumber("domainLookupStart", domainLookupStart());
-  result.AddNumber("domainLookupEnd", domainLookupEnd());
-  result.AddNumber("connectStart", connectStart());
-  result.AddNumber("connectEnd", connectEnd());
-  result.AddNumber("secureConnectionStart", secureConnectionStart());
-  result.AddNumber("requestStart", requestStart());
-  result.AddNumber("responseStart", responseStart());
-  result.AddNumber("responseEnd", responseEnd());
-  result.AddNumber("domLoading", domLoading());
-  result.AddNumber("domInteractive", domInteractive());
-  result.AddNumber("domContentLoadedEventStart", domContentLoadedEventStart());
-  result.AddNumber("domContentLoadedEventEnd", domContentLoadedEventEnd());
-  result.AddNumber("domComplete", domComplete());
-  result.AddNumber("loadEventStart", loadEventStart());
-  result.AddNumber("loadEventEnd", loadEventEnd());
+  for (const auto& name_attribute_pair : GetAttributeMapping()) {
+    result.AddNumber(name_attribute_pair.key,
+                     (this->*(name_attribute_pair.value))());
+  }
   return result.GetScriptValue();
 }
 
-unsigned long long PerformanceTiming::MonotonicTimeToIntegerMilliseconds(
-    TimeTicks time) const {
+uint64_t PerformanceTiming::MonotonicTimeToIntegerMilliseconds(
+    base::TimeTicks time) const {
   const DocumentLoadTiming* timing = GetDocumentLoadTiming();
   if (!timing)
     return 0;
@@ -670,7 +653,7 @@ unsigned long long PerformanceTiming::MonotonicTimeToIntegerMilliseconds(
   return ToIntegerMilliseconds(timing->MonotonicTimeToPseudoWallTime(time));
 }
 
-void PerformanceTiming::Trace(blink::Visitor* visitor) {
+void PerformanceTiming::Trace(Visitor* visitor) {
   ScriptWrappable::Trace(visitor);
   DOMWindowClient::Trace(visitor);
 }

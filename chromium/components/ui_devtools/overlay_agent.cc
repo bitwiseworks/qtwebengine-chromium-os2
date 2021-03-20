@@ -13,21 +13,21 @@ OverlayAgent::OverlayAgent(DOMAgent* dom_agent) : dom_agent_(dom_agent) {
 OverlayAgent::~OverlayAgent() {}
 
 protocol::Response OverlayAgent::setInspectMode(
-    const String& in_mode,
+    const protocol::String& in_mode,
     protocol::Maybe<protocol::Overlay::HighlightConfig> in_highlightConfig) {
   NOTREACHED();
-  return protocol::Response::OK();
+  return protocol::Response::Success();
 }
 
 protocol::Response OverlayAgent::highlightNode(
     std::unique_ptr<protocol::Overlay::HighlightConfig> highlight_config,
     protocol::Maybe<int> node_id) {
   NOTREACHED();
-  return protocol::Response::OK();
+  return protocol::Response::Success();
 }
 
 protocol::Response OverlayAgent::hideHighlight() {
-  return protocol::Response::OK();
+  return protocol::Response::Success();
 }
 
 }  // namespace ui_devtools

@@ -22,6 +22,7 @@
 #include "ui/events/ozone/evdev/event_converter_evdev_impl.h"
 #include "ui/events/ozone/evdev/event_device_info.h"
 #include "ui/events/ozone/evdev/gamepad_event_converter_evdev.h"
+#include "ui/events/ozone/evdev/stylus_button_event_converter_evdev.h"
 #include "ui/events/ozone/evdev/tablet_event_converter_evdev.h"
 #include "ui/events/ozone/evdev/touch_event_converter_evdev.h"
 #include "ui/events/ozone/gamepad/gamepad_provider_ozone.h"
@@ -56,6 +57,7 @@ struct OpenInputDeviceParams {
 #if defined(USE_EVDEV_GESTURES)
   GesturePropertyProvider* gesture_property_provider;
 #endif
+  SharedPalmDetectionFilterState* shared_palm_state;
 };
 
 #if defined(USE_EVDEV_GESTURES)
@@ -105,7 +107,8 @@ std::unique_ptr<EventConverterEvdev> CreateConverter(
   if (devinfo.HasTouchscreen()) {
     std::unique_ptr<TouchEventConverterEvdev> converter(
         new TouchEventConverterEvdev(std::move(fd), params.path, params.id,
-                                     devinfo, params.dispatcher));
+                                     devinfo, params.shared_palm_state,
+                                     params.dispatcher));
     converter->Initialize(devinfo);
     return std::move(converter);
   }
@@ -120,6 +123,12 @@ std::unique_ptr<EventConverterEvdev> CreateConverter(
   if (devinfo.HasGamepad()) {
     return base::WrapUnique<EventConverterEvdev>(new GamepadEventConverterEvdev(
         std::move(fd), params.path, params.id, devinfo, params.dispatcher));
+  }
+
+  if (devinfo.IsStylusButtonDevice()) {
+    return base::WrapUnique<EventConverterEvdev>(
+        new StylusButtonEventConverterEvdev(
+            std::move(fd), params.path, params.id, devinfo, params.dispatcher));
   }
 
   // Everything else: use EventConverterEvdevImpl.
@@ -156,6 +165,12 @@ std::unique_ptr<EventConverterEvdev> OpenInputDevice(
   return CreateConverter(params, std::move(fd), devinfo);
 }
 
+bool IsUncategorizedDevice(const EventConverterEvdev& converter) {
+  return !converter.HasTouchscreen() && !converter.HasKeyboard() &&
+         !converter.HasMouse() && !converter.HasTouchpad() &&
+         !converter.HasGamepad();
+}
+
 }  // namespace
 
 InputDeviceFactoryEvdev::InputDeviceFactoryEvdev(
@@ -163,11 +178,11 @@ InputDeviceFactoryEvdev::InputDeviceFactoryEvdev(
     CursorDelegateEvdev* cursor)
     : task_runner_(base::ThreadTaskRunnerHandle::Get()),
       cursor_(cursor),
+      shared_palm_state_(new SharedPalmDetectionFilterState),
 #if defined(USE_EVDEV_GESTURES)
       gesture_property_provider_(new GesturePropertyProvider),
 #endif
-      dispatcher_(std::move(dispatcher)),
-      weak_ptr_factory_(this) {
+      dispatcher_(std::move(dispatcher)) {
 }
 
 InputDeviceFactoryEvdev::~InputDeviceFactoryEvdev() {
@@ -180,6 +195,7 @@ void InputDeviceFactoryEvdev::AddInputDevice(int id,
   params.path = path;
   params.cursor = cursor_;
   params.dispatcher = dispatcher_.get();
+  params.shared_palm_state = shared_palm_state_.get();
 
 #if defined(USE_EVDEV_GESTURES)
   params.gesture_property_provider = gesture_property_provider_.get();
@@ -289,6 +305,14 @@ void InputDeviceFactoryEvdev::GetTouchEventLog(
 #endif
 }
 
+void InputDeviceFactoryEvdev::GetGesturePropertiesService(
+    mojo::PendingReceiver<ozone::mojom::GesturePropertiesService> receiver) {
+#if defined(USE_EVDEV_GESTURES)
+  gesture_properties_service_ = std::make_unique<GesturePropertiesService>(
+      gesture_property_provider_.get(), std::move(receiver));
+#endif
+}
+
 base::WeakPtr<InputDeviceFactoryEvdev> InputDeviceFactoryEvdev::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
@@ -299,7 +323,13 @@ void InputDeviceFactoryEvdev::ApplyInputDeviceSettings() {
   SetIntPropertyForOneType(DT_TOUCHPAD, "Pointer Sensitivity",
                            input_device_settings_.touchpad_sensitivity);
   SetIntPropertyForOneType(DT_TOUCHPAD, "Scroll Sensitivity",
-                           input_device_settings_.touchpad_sensitivity);
+                           input_device_settings_.touchpad_scroll_sensitivity);
+  SetBoolPropertyForOneType(
+      DT_TOUCHPAD, "Pointer Acceleration",
+      input_device_settings_.touchpad_acceleration_enabled);
+  SetBoolPropertyForOneType(
+      DT_TOUCHPAD, "Scroll Acceleration",
+      input_device_settings_.touchpad_scroll_acceleration_enabled);
 
   SetBoolPropertyForOneType(DT_TOUCHPAD, "Tap Enable",
                             input_device_settings_.tap_to_click_enabled);
@@ -313,8 +343,13 @@ void InputDeviceFactoryEvdev::ApplyInputDeviceSettings() {
 
   SetIntPropertyForOneType(DT_MOUSE, "Pointer Sensitivity",
                            input_device_settings_.mouse_sensitivity);
-  SetIntPropertyForOneType(DT_MOUSE, "Scroll Sensitivity",
-                           input_device_settings_.mouse_sensitivity);
+  SetIntPropertyForOneType(DT_MOUSE, "Mouse Scroll Sensitivity",
+                           input_device_settings_.mouse_scroll_sensitivity);
+  SetBoolPropertyForOneType(DT_MOUSE, "Pointer Acceleration",
+                            input_device_settings_.mouse_acceleration_enabled);
+  SetBoolPropertyForOneType(
+      DT_MOUSE, "Mouse Scroll Acceleration",
+      input_device_settings_.mouse_scroll_acceleration_enabled);
   SetBoolPropertyForOneType(
       DT_MOUSE, "Mouse Reverse Scrolling",
       input_device_settings_.mouse_reverse_scroll_enabled);
@@ -391,6 +426,9 @@ void InputDeviceFactoryEvdev::UpdateDirtyFlags(
 
   if (converter->HasGamepad())
     gamepad_list_dirty_ = true;
+
+  if (IsUncategorizedDevice(*converter))
+    uncategorized_list_dirty_ = true;
 }
 
 void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
@@ -406,6 +444,8 @@ void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
     NotifyTouchpadDevicesUpdated();
   if (gamepad_list_dirty_)
     NotifyGamepadDevicesUpdated();
+  if (uncategorized_list_dirty_)
+    NotifyUncategorizedDevicesUpdated();
   if (!startup_devices_opened_) {
     dispatcher_->DispatchDeviceListsComplete();
     startup_devices_opened_ = true;
@@ -415,6 +455,7 @@ void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
   mouse_list_dirty_ = false;
   touchpad_list_dirty_ = false;
   gamepad_list_dirty_ = false;
+  uncategorized_list_dirty_ = false;
 }
 
 void InputDeviceFactoryEvdev::NotifyTouchscreensUpdated() {
@@ -464,14 +505,25 @@ void InputDeviceFactoryEvdev::NotifyTouchpadDevicesUpdated() {
 }
 
 void InputDeviceFactoryEvdev::NotifyGamepadDevicesUpdated() {
-  std::vector<InputDevice> gamepads;
+  std::vector<GamepadDevice> gamepads;
   for (auto it = converters_.begin(); it != converters_.end(); ++it) {
     if (it->second->HasGamepad()) {
-      gamepads.push_back(it->second->input_device());
+      gamepads.emplace_back(it->second->input_device(),
+                            it->second->GetGamepadAxes());
     }
   }
 
   dispatcher_->DispatchGamepadDevicesUpdated(gamepads);
+}
+
+void InputDeviceFactoryEvdev::NotifyUncategorizedDevicesUpdated() {
+  std::vector<InputDevice> uncategorized_devices;
+  for (auto it = converters_.begin(); it != converters_.end(); ++it) {
+    if (IsUncategorizedDevice(*(it->second)))
+      uncategorized_devices.push_back(it->second->input_device());
+  }
+
+  dispatcher_->DispatchUncategorizedDevicesUpdated(uncategorized_devices);
 }
 
 void InputDeviceFactoryEvdev::SetIntPropertyForOneType(

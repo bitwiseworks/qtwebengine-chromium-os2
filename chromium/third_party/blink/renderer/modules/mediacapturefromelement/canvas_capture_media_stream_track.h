@@ -14,34 +14,22 @@ namespace blink {
 
 class ExecutionContext;
 class HTMLCanvasElement;
-class WebCanvasCaptureHandler;
+class CanvasCaptureHandler;
 
 class CanvasCaptureMediaStreamTrack final : public MediaStreamTrack {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static CanvasCaptureMediaStreamTrack* Create(
-      MediaStreamComponent*,
-      HTMLCanvasElement*,
-      ExecutionContext*,
-      std::unique_ptr<WebCanvasCaptureHandler>);
-  static CanvasCaptureMediaStreamTrack* Create(
-      MediaStreamComponent*,
-      HTMLCanvasElement*,
-      ExecutionContext*,
-      std::unique_ptr<WebCanvasCaptureHandler>,
-      double frame_rate);
-
   CanvasCaptureMediaStreamTrack(const CanvasCaptureMediaStreamTrack&,
                                 MediaStreamComponent*);
   CanvasCaptureMediaStreamTrack(MediaStreamComponent*,
                                 HTMLCanvasElement*,
                                 ExecutionContext*,
-                                std::unique_ptr<WebCanvasCaptureHandler>);
+                                std::unique_ptr<CanvasCaptureHandler>);
   CanvasCaptureMediaStreamTrack(MediaStreamComponent*,
                                 HTMLCanvasElement*,
                                 ExecutionContext*,
-                                std::unique_ptr<WebCanvasCaptureHandler>,
+                                std::unique_ptr<CanvasCaptureHandler>,
                                 double frame_rate);
 
   HTMLCanvasElement* canvas() const;
@@ -49,7 +37,7 @@ class CanvasCaptureMediaStreamTrack final : public MediaStreamTrack {
 
   CanvasCaptureMediaStreamTrack* clone(ScriptState*) override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<HTMLCanvasElement> canvas_element_;

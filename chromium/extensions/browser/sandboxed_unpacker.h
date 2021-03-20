@@ -12,18 +12,21 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "extensions/browser/api/declarative_net_request/ruleset_checksum.h"
 #include "extensions/browser/crx_file_info.h"
 #include "extensions/browser/image_sanitizer.h"
 #include "extensions/browser/install/crx_install_error.h"
 #include "extensions/browser/json_file_sanitizer.h"
 #include "extensions/common/manifest.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/data_decoder/public/mojom/json_parser.mojom.h"
-#include "services/service_manager/public/cpp/service_filter.h"
 
 class SkBitmap;
 
@@ -35,16 +38,12 @@ namespace crx_file {
 enum class VerifierFormat;
 }
 
-namespace service_manager {
-class Connector;
-}
-
 namespace extensions {
 class Extension;
 enum class SandboxedUnpackerFailureReason;
 
 namespace declarative_net_request {
-struct IndexAndPersistRulesResult;
+struct IndexAndPersistJSONRulesetResult;
 }
 
 class SandboxedUnpackerClient
@@ -53,6 +52,14 @@ class SandboxedUnpackerClient
   // Initialize the ref-counted base to always delete on the UI thread. Note
   // the constructor call must also happen on the UI thread.
   SandboxedUnpackerClient();
+
+  // Determines whether |extension| requires computing and storing
+  // computed_hashes.json and returns the result through |callback|.
+  // Currently we do this only for force-installed extensions outside of Chrome
+  // Web Store, and that is reflected in method's name.
+  virtual void ShouldComputeHashesForOffWebstoreExtension(
+      scoped_refptr<const Extension> extension,
+      base::OnceCallback<void(bool)> callback);
 
   // temp_dir - A temporary directory containing the results of the extension
   // unpacking. The client is responsible for deleting this directory.
@@ -67,9 +74,8 @@ class SandboxedUnpackerClient
   //
   // install_icon - The icon we will display in the installation UI, if any.
   //
-  // dnr_ruleset_checksum - Checksum for the indexed ruleset corresponding to
-  // the Declarative Net Request API. Optional since it's only valid for
-  // extensions which provide a declarative ruleset.
+  // ruleset_checksums - Checksums for the indexed rulesets corresponding to
+  // the Declarative Net Request API.
   //
   // Note: OnUnpackSuccess/Failure may be called either synchronously or
   // asynchronously from SandboxedUnpacker::StartWithCrx/Directory.
@@ -79,7 +85,7 @@ class SandboxedUnpackerClient
       std::unique_ptr<base::DictionaryValue> original_manifest,
       const Extension* extension,
       const SkBitmap& install_icon,
-      const base::Optional<int>& dnr_ruleset_checksum) = 0;
+      declarative_net_request::RulesetChecksums ruleset_checksums) = 0;
   virtual void OnUnpackFailure(const CrxInstallError& error) = 0;
 
  protected:
@@ -110,12 +116,19 @@ class SandboxedUnpackerClient
 //
 class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
  public:
+  // Overrides the required verifier format for testing purposes. Only one
+  // ScopedVerifierFormatOverrideForTest may exist at a time.
+  class ScopedVerifierFormatOverrideForTest {
+   public:
+    explicit ScopedVerifierFormatOverrideForTest(
+        crx_file::VerifierFormat format);
+    ~ScopedVerifierFormatOverrideForTest();
+  };
+
   // Creates a SandboxedUnpacker that will do work to unpack an extension,
   // passing the |location| and |creation_flags| to Extension::Create. The
   // |extensions_dir| parameter should specify the directory under which we'll
   // create a subdirectory to write the unpacked extension contents.
-  // |connector| must be a fresh connector (not yet associated to any thread) to
-  // the service manager.
   // Note: Because this requires disk I/O, the task runner passed should use
   // TaskShutdownBehavior::SKIP_ON_SHUTDOWN to ensure that either the task is
   // fully run (if initiated before shutdown) or not run at all (if shutdown is
@@ -125,7 +138,6 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
   // TODO(devlin): SKIP_ON_SHUTDOWN is also not quite sufficient for this. We
   // should probably instead be using base::ImportantFileWriter or similar.
   SandboxedUnpacker(
-      std::unique_ptr<service_manager::Connector> connector,
       Manifest::Location location,
       int creation_flags,
       const base::FilePath& extensions_dir,
@@ -173,30 +185,25 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
   void Unpack(const base::FilePath& directory);
   void ReadManifestDone(base::Optional<base::Value> manifest,
                         const base::Optional<std::string>& error);
-  void UnpackExtensionSucceeded(
-      std::unique_ptr<base::DictionaryValue> manifest);
+  void UnpackExtensionSucceeded(base::Value manifest);
 
   // Helper which calls ReportFailure.
   void ReportUnpackExtensionFailed(base::StringPiece error);
 
-  void ImageSanitizationDone(std::unique_ptr<base::DictionaryValue> manifest,
-                             ImageSanitizer::Status status,
+  void ImageSanitizationDone(ImageSanitizer::Status status,
                              const base::FilePath& path);
   void ImageSanitizerDecodedImage(const base::FilePath& path, SkBitmap image);
 
-  void ReadMessageCatalogs(std::unique_ptr<base::DictionaryValue> manifest);
+  void ReadMessageCatalogs();
 
   void SanitizeMessageCatalogs(
-      std::unique_ptr<base::DictionaryValue> manifest,
       const std::set<base::FilePath>& message_catalog_paths);
 
-  void MessageCatalogsSanitized(std::unique_ptr<base::DictionaryValue> manifest,
-                                JsonFileSanitizer::Status status,
+  void MessageCatalogsSanitized(JsonFileSanitizer::Status status,
                                 const std::string& error_msg);
 
   // Reports unpack success or failure, or unzip failure.
-  void ReportSuccess(std::unique_ptr<base::DictionaryValue> original_manifest,
-                     const base::Optional<int>& dnr_ruleset_checksum);
+  void ReportSuccess();
 
   // Puts a sanboxed unpacker failure in histogram
   // Extensions.SandboxUnpackFailureReason.
@@ -204,22 +211,28 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
                      const base::string16& error);
 
   // Overwrites original manifest with safe result from utility process.
-  // Returns NULL on error. Caller owns the returned object.
-  base::DictionaryValue* RewriteManifestFile(
-      const base::DictionaryValue& manifest);
+  // Returns nullopt on error.
+  base::Optional<base::Value> RewriteManifestFile(const base::Value& manifest);
 
   // Cleans up temp directory artifacts.
   void Cleanup();
 
   // If a Declarative Net Request JSON ruleset is present, parses the JSON
-  // ruleset for the Declarative Net Request API and persists the indexed
-  // ruleset.
-  void IndexAndPersistJSONRulesetIfNeeded(
-      std::unique_ptr<base::DictionaryValue> manifest);
+  // rulesets for the Declarative Net Request API and persists the indexed
+  // rulesets.
+  void IndexAndPersistJSONRulesetsIfNeeded();
 
-  void OnJSONRulesetIndexed(
-      std::unique_ptr<base::DictionaryValue> manifest,
-      declarative_net_request::IndexAndPersistRulesResult result);
+  void OnJSONRulesetsIndexed(
+      std::vector<declarative_net_request::IndexAndPersistJSONRulesetResult>
+          results);
+
+  // Computed hashes: if requested (via ShouldComputeHashes callback in
+  // SandbloxedUnpackerClient), calculate hashes of all extensions' resources
+  // and writes them in _metadata/computed_hashes.json. This is used by content
+  // verification system for extensions outside of Chrome Web Store.
+  void CheckComputeHashes();
+
+  void MaybeComputeHashes(bool should_compute_hashes);
 
   // Returns a JsonParser that can be used on the |unpacker_io_task_runner|.
   data_decoder::mojom::JsonParser* GetJsonParserPtr();
@@ -229,9 +242,6 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
   // This must be called from the |unpacker_io_task_runner_|.
   void ParseJsonFile(const base::FilePath& path,
                      data_decoder::mojom::JsonParser::ParseCallback callback);
-
-  // Connector to the ServiceManager required by the Unzip API.
-  std::unique_ptr<service_manager::Connector> connector_;
 
   // If we unpacked a CRX file, we hold on to the path name for use
   // in various histograms.
@@ -248,6 +258,15 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
 
   // Root directory of the unpacked extension (a child of temp_dir_).
   base::FilePath extension_root_;
+
+  // Parsed original manifest of the extension. Set after unpacking the
+  // extension and working with its manifest, so after UnpackExtensionSucceeded
+  // is called.
+  base::Optional<base::Value> manifest_;
+
+  // Checksums for the indexed rulesets, see more in
+  // SandboxedUnpackerClient::OnUnpackSuccess description.
+  declarative_net_request::RulesetChecksums ruleset_checksums_;
 
   // Represents the extension we're unpacking.
   scoped_refptr<Extension> extension_;
@@ -279,14 +298,13 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
   // The decoded install icon.
   SkBitmap install_icon_;
 
-  // The ServiceFilter used to connect to the data decoder service. It is unique
-  // to this SandboxedUnpacker instance so that data decoder operations for
-  // unpacking this extension share the same process, and so that no unrelated
-  // data decoder operation use that process.
-  const service_manager::ServiceFilter data_decoder_service_filter_;
+  // Controls our own lazily started, isolated instance of the Data Decoder
+  // service so that multiple decode operations related to this
+  // SandboxedUnpacker can share a single instance.
+  data_decoder::DataDecoder data_decoder_;
 
-  // The JSONParser interface pointer from the data decoder service.
-  data_decoder::mojom::JsonParserPtr json_parser_ptr_;
+  // The JSONParser remote from the data decoder service.
+  mojo::Remote<data_decoder::mojom::JsonParser> json_parser_;
 
   // The ImageSanitizer used to clean-up images.
   std::unique_ptr<ImageSanitizer> image_sanitizer_;

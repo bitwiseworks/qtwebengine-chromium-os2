@@ -86,8 +86,8 @@ int lsmStringBinAppend(LsmString *pStr, const u8 *a, int n){
 ** Append printf-formatted content to an LsmString.
 */
 void lsmStringVAppendf(
-  LsmString *pStr,
-  const char *zFormat,
+  LsmString *pStr, 
+  const char *zFormat, 
   va_list ap1,
   va_list ap2
 ){

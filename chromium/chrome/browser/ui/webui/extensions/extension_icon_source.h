@@ -68,13 +68,13 @@ class ExtensionIconSource : public content::URLDataSource,
   static SkBitmap* LoadImageByResourceId(int resource_id);
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
-  std::string GetMimeType(const std::string&) const override;
+  std::string GetSource() override;
+  std::string GetMimeType(const std::string&) override;
   void StartDataRequest(
-      const std::string& path,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-      const content::URLDataSource::GotDataCallback& callback) override;
-  bool AllowCaching() const override;
+      const GURL& url,
+      const content::WebContents::Getter& wc_getter,
+      content::URLDataSource::GotDataCallback callback) override;
+  bool AllowCaching() override;
 
  private:
   // Encapsulates the request parameters for |request_id|.
@@ -120,15 +120,15 @@ class ExtensionIconSource : public content::URLDataSource,
   void LoadIconFailed(int request_id);
 
   // Parses and saves an ExtensionIconRequest for the URL |path| for the
-  // specified |request_id|.
+  // specified |request_id|. Takes the |callback| if it returns true.
   bool ParseData(const std::string& path,
                  int request_id,
-                 const content::URLDataSource::GotDataCallback& callback);
+                 content::URLDataSource::GotDataCallback* callback);
 
   // Stores the parameters associated with the |request_id|, making them
   // as an ExtensionIconRequest via GetData.
   void SetData(int request_id,
-               const content::URLDataSource::GotDataCallback& callback,
+               content::URLDataSource::GotDataCallback callback,
                const Extension* extension,
                bool grayscale,
                int size,

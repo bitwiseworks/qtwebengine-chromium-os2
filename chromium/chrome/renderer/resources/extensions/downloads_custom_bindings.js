@@ -4,17 +4,10 @@
 
 // Custom bindings for the downloads API.
 
-var binding = apiBridge || require('binding').Binding.create('downloads');
-var downloadsInternal =
-    getInternalApi ?
-        getInternalApi('downloadsInternal') :
-        require('binding').Binding.create('downloadsInternal').generate();
-var registerArgumentMassager = bindingUtil ?
-    $Function.bind(bindingUtil.registerEventArgumentMassager, bindingUtil) :
-    require('event_bindings').registerArgumentMassager;
+var downloadsInternal = getInternalApi('downloadsInternal');
 
-registerArgumentMassager('downloads.onDeterminingFilename',
-                         function(args, dispatch) {
+bindingUtil.registerEventArgumentMassager('downloads.onDeterminingFilename',
+                                          function(args, dispatch) {
   var downloadItem = args[0];
   // Copy the id so that extensions can't change it.
   var downloadId = downloadItem.id;
@@ -22,18 +15,20 @@ registerArgumentMassager('downloads.onDeterminingFilename',
   function isValidResult(result) {
     if (result === undefined)
       return false;
-    if (typeof(result) != 'object') {
-      console.error('Error: Invocation of form suggest(' + typeof(result) +
-                    ') doesn\'t match definition suggest({filename: string, ' +
-                    'conflictAction: string})');
+    if (typeof result !== 'object') {
+      console.error(
+          'Error: Invocation of form suggest(' + typeof result +
+          ') doesn\'t match definition suggest({filename: string, ' +
+          'conflictAction: string})');
       return false;
-    } else if ((typeof(result.filename) != 'string') ||
-               (result.filename.length == 0)) {
+    } else if (
+        typeof result.filename !== 'string' || result.filename.length === 0) {
       console.error('Error: "filename" parameter to suggest() must be a ' +
                     'non-empty string');
       return false;
-    } else if ([undefined, 'uniquify', 'overwrite', 'prompt'].indexOf(
-                 result.conflictAction) < 0) {
+    } else if ([
+                 undefined, 'uniquify', 'overwrite', 'prompt'
+               ].indexOf(result.conflictAction) < 0) {
       console.error('Error: "conflictAction" parameter to suggest() must be ' +
                     'one of undefined, "uniquify", "overwrite", "prompt"');
       return false;
@@ -55,10 +50,9 @@ registerArgumentMassager('downloads.onDeterminingFilename',
   }
   try {
     var results = dispatch([downloadItem, suggestCallback]);
-    var async = (results &&
-                 results.results &&
-                 (results.results.length != 0) &&
-                 (results.results[0] === true));
+    var async =
+        (results && results.results && (results.results.length !== 0) &&
+         (results.results[0] === true));
     if (suggestable && !async)
       suggestCallback();
   } catch (e) {
@@ -66,6 +60,3 @@ registerArgumentMassager('downloads.onDeterminingFilename',
     throw e;
   }
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

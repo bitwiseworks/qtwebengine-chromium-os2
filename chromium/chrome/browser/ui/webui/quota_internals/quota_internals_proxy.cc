@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/task/post_task.h"
-#include "base/trace_event/trace_event.h"
 #include "chrome/browser/ui/webui/quota_internals/quota_internals_handler.h"
 #include "chrome/browser/ui/webui/quota_internals/quota_internals_types.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -22,15 +21,13 @@ using content::BrowserThread;
 namespace quota_internals {
 
 QuotaInternalsProxy::QuotaInternalsProxy(QuotaInternalsHandler* handler)
-    : handler_(handler),
-      weak_factory_(this) {
-}
+    : handler_(handler) {}
 
 void QuotaInternalsProxy::RequestInfo(
     scoped_refptr<storage::QuotaManager> quota_manager) {
   DCHECK(quota_manager.get());
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&QuotaInternalsProxy::RequestInfo, this, quota_manager));
     return;
@@ -70,20 +67,32 @@ void QuotaInternalsProxy::RequestInfo(
   ReportStatistics(stats);
 }
 
-QuotaInternalsProxy::~QuotaInternalsProxy() {}
+void QuotaInternalsProxy::TriggerStoragePressure(
+    url::Origin origin,
+    scoped_refptr<storage::QuotaManager> quota_manager) {
+  DCHECK(quota_manager.get());
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    base::PostTask(FROM_HERE, {BrowserThread::IO},
+                   base::BindOnce(&QuotaInternalsProxy::TriggerStoragePressure,
+                                  this, origin, quota_manager));
+    return;
+  }
+  quota_manager->SimulateStoragePressure(origin);
+}
 
-#define RELAY_TO_HANDLER(func, arg_t)                             \
-  void QuotaInternalsProxy::func(arg_t arg) {                     \
-    if (!handler_)                                                \
-      return;                                                     \
-    if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {         \
-      base::PostTaskWithTraits(                                   \
-          FROM_HERE, {BrowserThread::UI},                         \
-          base::BindOnce(&QuotaInternalsProxy::func, this, arg)); \
-      return;                                                     \
-    }                                                             \
-                                                                  \
-    handler_->func(arg);                                          \
+QuotaInternalsProxy::~QuotaInternalsProxy() = default;
+
+#define RELAY_TO_HANDLER(func, arg_t)                                        \
+  void QuotaInternalsProxy::func(arg_t arg) {                                \
+    if (!handler_)                                                           \
+      return;                                                                \
+    if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {                    \
+      base::PostTask(FROM_HERE, {BrowserThread::UI},                         \
+                     base::BindOnce(&QuotaInternalsProxy::func, this, arg)); \
+      return;                                                                \
+    }                                                                        \
+                                                                             \
+    handler_->func(arg);                                                     \
   }
 
 RELAY_TO_HANDLER(ReportAvailableSpace, int64_t)
@@ -123,9 +132,9 @@ void QuotaInternalsProxy::DidDumpQuotaTable(const QuotaTableEntries& entries) {
   std::vector<PerHostStorageInfo> host_info;
   host_info.reserve(entries.size());
 
-  for (auto itr(entries.begin()); itr != entries.end(); ++itr) {
-    PerHostStorageInfo info(itr->host, itr->type);
-    info.set_quota(itr->quota);
+  for (const auto& entry : entries) {
+    PerHostStorageInfo info(entry.host, entry.type);
+    info.set_quota(entry.quota);
     host_info.push_back(info);
   }
 
@@ -173,8 +182,7 @@ void QuotaInternalsProxy::DidGetHostUsage(const std::string& host,
 void QuotaInternalsProxy::RequestPerOriginInfo(StorageType type) {
   DCHECK(quota_manager_.get());
 
-  std::set<url::Origin> origins;
-  quota_manager_->GetCachedOrigins(type, &origins);
+  std::set<url::Origin> origins = quota_manager_->GetCachedOrigins(type);
 
   std::vector<PerOriginStorageInfo> origin_info;
   origin_info.reserve(origins.size());

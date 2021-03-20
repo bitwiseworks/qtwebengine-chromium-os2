@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
@@ -29,7 +30,7 @@ bool matchesOrigin(const url::Origin& origin, const GURL& url) {
 namespace password_manager {
 
 PasswordFormData CreateTestPasswordFormDataByOrigin(const char* origin_url) {
-  PasswordFormData data = {PasswordForm::SCHEME_HTML,
+  PasswordFormData data = {PasswordForm::Scheme::kHtml,
                            origin_url,
                            origin_url,
                            "login_element",
@@ -58,7 +59,7 @@ class PasswordStoreOriginTest : public testing::Test {
   T delegate_;
 };
 
-TYPED_TEST_CASE_P(PasswordStoreOriginTest);
+TYPED_TEST_SUITE_P(PasswordStoreOriginTest);
 
 TYPED_TEST_P(PasswordStoreOriginTest,
              RemoveLoginsByURLAndTimeImpl_AllFittingOriginAndTime) {
@@ -72,7 +73,8 @@ TYPED_TEST_P(PasswordStoreOriginTest,
   this->delegate_.store()->AddObserver(&observer);
 
   const url::Origin origin = url::Origin::Create((GURL(origin_url)));
-  base::Callback<bool(const GURL&)> filter = base::Bind(&matchesOrigin, origin);
+  base::RepeatingCallback<bool(const GURL&)> filter =
+      base::BindRepeating(&matchesOrigin, origin);
   base::RunLoop run_loop;
   EXPECT_CALL(observer, OnLoginsChanged(ElementsAre(PasswordStoreChange(
                             PasswordStoreChange::REMOVE, *form))));
@@ -100,8 +102,8 @@ TYPED_TEST_P(PasswordStoreOriginTest,
   this->delegate_.store()->AddObserver(&observer);
 
   const url::Origin fitting_origin = url::Origin::Create((GURL(fitting_url)));
-  base::Callback<bool(const GURL&)> filter =
-      base::Bind(&matchesOrigin, fitting_origin);
+  base::RepeatingCallback<bool(const GURL&)> filter =
+      base::BindRepeating(&matchesOrigin, fitting_origin);
   base::RunLoop run_loop;
   EXPECT_CALL(observer, OnLoginsChanged(ElementsAre(PasswordStoreChange(
                             PasswordStoreChange::REMOVE, *form))));
@@ -125,8 +127,8 @@ TYPED_TEST_P(PasswordStoreOriginTest,
 
   const url::Origin other_origin =
       url::Origin::Create(GURL("http://bar.example.com/"));
-  base::Callback<bool(const GURL&)> filter =
-      base::Bind(&matchesOrigin, other_origin);
+  base::RepeatingCallback<bool(const GURL&)> filter =
+      base::BindRepeating(&matchesOrigin, other_origin);
   base::RunLoop run_loop;
   EXPECT_CALL(observer, OnLoginsChanged(_)).Times(0);
   this->delegate_.store()->RemoveLoginsByURLAndTime(
@@ -148,7 +150,8 @@ TYPED_TEST_P(PasswordStoreOriginTest,
   this->delegate_.store()->AddObserver(&observer);
 
   const url::Origin origin = url::Origin::Create((GURL(origin_url)));
-  base::Callback<bool(const GURL&)> filter = base::Bind(&matchesOrigin, origin);
+  base::RepeatingCallback<bool(const GURL&)> filter =
+      base::BindRepeating(&matchesOrigin, origin);
   base::Time time_after_creation_date =
       form->date_created + base::TimeDelta::FromDays(1);
   base::RunLoop run_loop;
@@ -161,7 +164,7 @@ TYPED_TEST_P(PasswordStoreOriginTest,
   this->delegate_.store()->RemoveObserver(&observer);
 }
 
-REGISTER_TYPED_TEST_CASE_P(
+REGISTER_TYPED_TEST_SUITE_P(
     PasswordStoreOriginTest,
     RemoveLoginsByURLAndTimeImpl_AllFittingOriginAndTime,
     RemoveLoginsByURLAndTimeImpl_SomeFittingOriginAndTime,

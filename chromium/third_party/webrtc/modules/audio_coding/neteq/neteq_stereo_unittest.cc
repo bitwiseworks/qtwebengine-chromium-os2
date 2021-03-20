@@ -17,11 +17,13 @@
 
 #include "api/audio/audio_frame.h"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
+#include "api/neteq/neteq.h"
 #include "modules/audio_coding/codecs/pcm16b/pcm16b.h"
-#include "modules/audio_coding/neteq/include/neteq.h"
+#include "modules/audio_coding/neteq/default_neteq_factory.h"
 #include "modules/audio_coding/neteq/tools/input_audio_file.h"
 #include "modules/audio_coding/neteq/tools/rtp_generator.h"
 #include "rtc_base/strings/string_builder.h"
+#include "system_wrappers/include/clock.h"
 #include "test/gtest.h"
 #include "test/testsupport/file_utils.h"
 
@@ -57,6 +59,7 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
         frame_size_samples_(
             static_cast<size_t>(frame_size_ms_ * samples_per_ms_)),
         output_size_samples_(10 * samples_per_ms_),
+        clock_(0),
         rtp_generator_mono_(samples_per_ms_),
         rtp_generator_(samples_per_ms_),
         payload_size_bytes_(0),
@@ -65,10 +68,10 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
         last_arrival_time_(0) {
     NetEq::Config config;
     config.sample_rate_hz = sample_rate_hz_;
-    rtc::scoped_refptr<AudioDecoderFactory> factory =
-        CreateBuiltinAudioDecoderFactory();
-    neteq_mono_ = NetEq::Create(config, factory);
-    neteq_ = NetEq::Create(config, factory);
+    DefaultNetEqFactory neteq_factory;
+    auto decoder_factory = CreateBuiltinAudioDecoderFactory();
+    neteq_mono_ = neteq_factory.CreateNetEq(config, decoder_factory, &clock_);
+    neteq_ = neteq_factory.CreateNetEq(config, decoder_factory, &clock_);
     input_ = new int16_t[frame_size_samples_];
     encoded_ = new uint8_t[2 * frame_size_samples_];
     input_multi_channel_ = new int16_t[frame_size_samples_ * num_channels_];
@@ -77,8 +80,6 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
   }
 
   ~NetEqStereoTest() {
-    delete neteq_mono_;
-    delete neteq_;
     delete[] input_;
     delete[] encoded_;
     delete[] input_multi_channel_;
@@ -110,8 +111,7 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
     }
     int next_send_time = rtp_generator_mono_.GetRtpHeader(
         kPayloadTypeMono, frame_size_samples_, &rtp_header_mono_);
-    test::InputAudioFile::DuplicateInterleaved(
-        input_, frame_size_samples_, num_channels_, input_multi_channel_);
+    MakeMultiChannelInput();
     multi_payload_size_bytes_ = WebRtcPcm16b_Encode(
         input_multi_channel_, frame_size_samples_ * num_channels_,
         encoded_multi_channel_);
@@ -121,6 +121,11 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
     rtp_generator_.GetRtpHeader(kPayloadTypeMulti, frame_size_samples_,
                                 &rtp_header_);
     return next_send_time;
+  }
+
+  virtual void MakeMultiChannelInput() {
+    test::InputAudioFile::DuplicateInterleaved(
+        input_, frame_size_samples_, num_channels_, input_multi_channel_);
   }
 
   virtual void VerifyOutput(size_t num_samples) {
@@ -159,17 +164,14 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
       while (time_now >= next_arrival_time) {
         // Insert packet in mono instance.
         ASSERT_EQ(NetEq::kOK,
-                  neteq_mono_->InsertPacket(rtp_header_mono_,
-                                            rtc::ArrayView<const uint8_t>(
-                                                encoded_, payload_size_bytes_),
-                                            next_arrival_time));
+                  neteq_mono_->InsertPacket(
+                      rtp_header_mono_, rtc::ArrayView<const uint8_t>(
+                                            encoded_, payload_size_bytes_)));
         // Insert packet in multi-channel instance.
-        ASSERT_EQ(NetEq::kOK,
-                  neteq_->InsertPacket(
-                      rtp_header_,
-                      rtc::ArrayView<const uint8_t>(encoded_multi_channel_,
-                                                    multi_payload_size_bytes_),
-                      next_arrival_time));
+        ASSERT_EQ(NetEq::kOK, neteq_->InsertPacket(
+                                  rtp_header_, rtc::ArrayView<const uint8_t>(
+                                                   encoded_multi_channel_,
+                                                   multi_payload_size_bytes_)));
         // Get next input packets (mono and multi-channel).
         do {
           next_send_time = GetNewPackets();
@@ -196,6 +198,7 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
       ASSERT_NO_FATAL_FAILURE(VerifyOutput(output_size_samples_));
 
       time_now += kTimeStepMs;
+      clock_.AdvanceTimeMilliseconds(kTimeStepMs);
     }
   }
 
@@ -205,8 +208,9 @@ class NetEqStereoTest : public ::testing::TestWithParam<TestParameters> {
   const int frame_size_ms_;
   const size_t frame_size_samples_;
   const size_t output_size_samples_;
-  NetEq* neteq_mono_;
-  NetEq* neteq_;
+  SimulatedClock clock_;
+  std::unique_ptr<NetEq> neteq_mono_;
+  std::unique_ptr<NetEq> neteq_;
   test::RtpGenerator rtp_generator_mono_;
   test::RtpGenerator rtp_generator_;
   int16_t* input_;
@@ -330,6 +334,36 @@ TEST_P(NetEqStereoTestLosses, RunTest) {
   RunTest(100);
 }
 
+class NetEqStereoTestSingleActiveChannelPlc : public NetEqStereoTestLosses {
+ protected:
+  NetEqStereoTestSingleActiveChannelPlc() : NetEqStereoTestLosses() {}
+
+  virtual void MakeMultiChannelInput() override {
+    // Create a multi-channel input by copying the mono channel from file to the
+    // first channel, and setting the others to zero.
+    memset(input_multi_channel_, 0,
+           frame_size_samples_ * num_channels_ * sizeof(int16_t));
+    for (size_t i = 0; i < frame_size_samples_; ++i) {
+      input_multi_channel_[i * num_channels_] = input_[i];
+    }
+  }
+
+  virtual void VerifyOutput(size_t num_samples) override {
+    // Simply verify that all samples in channels other than the first are zero.
+    const int16_t* output_multi_channel_data = output_multi_channel_.data();
+    for (size_t i = 0; i < num_samples; ++i) {
+      for (size_t j = 1; j < num_channels_; ++j) {
+        EXPECT_EQ(0, output_multi_channel_data[i * num_channels_ + j])
+            << "Sample " << i << ", channel " << j << " is non-zero.";
+      }
+    }
+  }
+};
+
+TEST_P(NetEqStereoTestSingleActiveChannelPlc, RunTest) {
+  RunTest(100);
+}
+
 // Creates a list of parameter sets.
 std::list<TestParameters> GetTestParameters() {
   std::list<TestParameters> l;
@@ -364,24 +398,27 @@ void PrintTo(const TestParameters& p, ::std::ostream* os) {
 
 // Instantiate the tests. Each test is instantiated using the function above,
 // so that all different parameter combinations are tested.
-INSTANTIATE_TEST_CASE_P(MultiChannel,
-                        NetEqStereoTestNoJitter,
-                        ::testing::ValuesIn(GetTestParameters()));
+INSTANTIATE_TEST_SUITE_P(MultiChannel,
+                         NetEqStereoTestNoJitter,
+                         ::testing::ValuesIn(GetTestParameters()));
 
-INSTANTIATE_TEST_CASE_P(MultiChannel,
-                        NetEqStereoTestPositiveDrift,
-                        ::testing::ValuesIn(GetTestParameters()));
+INSTANTIATE_TEST_SUITE_P(MultiChannel,
+                         NetEqStereoTestPositiveDrift,
+                         ::testing::ValuesIn(GetTestParameters()));
 
-INSTANTIATE_TEST_CASE_P(MultiChannel,
-                        NetEqStereoTestNegativeDrift,
-                        ::testing::ValuesIn(GetTestParameters()));
+INSTANTIATE_TEST_SUITE_P(MultiChannel,
+                         NetEqStereoTestNegativeDrift,
+                         ::testing::ValuesIn(GetTestParameters()));
 
-INSTANTIATE_TEST_CASE_P(MultiChannel,
-                        NetEqStereoTestDelays,
-                        ::testing::ValuesIn(GetTestParameters()));
+INSTANTIATE_TEST_SUITE_P(MultiChannel,
+                         NetEqStereoTestDelays,
+                         ::testing::ValuesIn(GetTestParameters()));
 
-INSTANTIATE_TEST_CASE_P(MultiChannel,
-                        NetEqStereoTestLosses,
-                        ::testing::ValuesIn(GetTestParameters()));
+INSTANTIATE_TEST_SUITE_P(MultiChannel,
+                         NetEqStereoTestLosses,
+                         ::testing::ValuesIn(GetTestParameters()));
 
+INSTANTIATE_TEST_SUITE_P(MultiChannel,
+                         NetEqStereoTestSingleActiveChannelPlc,
+                         ::testing::ValuesIn(GetTestParameters()));
 }  // namespace webrtc

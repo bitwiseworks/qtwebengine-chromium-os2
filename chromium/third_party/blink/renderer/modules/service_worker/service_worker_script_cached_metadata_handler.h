@@ -13,37 +13,32 @@
 
 namespace blink {
 
-class WorkerGlobalScope;
 class CachedMetadata;
+class ServiceWorkerGlobalScope;
 
 class ServiceWorkerScriptCachedMetadataHandler
     : public SingleCachedMetadataHandler {
  public:
-  static ServiceWorkerScriptCachedMetadataHandler* Create(
-      WorkerGlobalScope* worker_global_scope,
+  ServiceWorkerScriptCachedMetadataHandler(
+      ServiceWorkerGlobalScope*,
       const KURL& script_url,
-      const Vector<uint8_t>* meta_data) {
-    return MakeGarbageCollected<ServiceWorkerScriptCachedMetadataHandler>(
-        worker_global_scope, script_url, meta_data);
-  }
-
-  ServiceWorkerScriptCachedMetadataHandler(WorkerGlobalScope*,
-                                           const KURL& script_url,
-                                           const Vector<uint8_t>* meta_data);
+      std::unique_ptr<Vector<uint8_t>> meta_data);
   ~ServiceWorkerScriptCachedMetadataHandler() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   void SetCachedMetadata(uint32_t data_type_id,
                          const uint8_t*,
-                         size_t,
-                         CacheType) override;
-  void ClearCachedMetadata(CacheType) override;
+                         size_t) override;
+  void ClearCachedMetadata(ClearCacheType) override;
   scoped_refptr<CachedMetadata> GetCachedMetadata(
       uint32_t data_type_id) const override;
   String Encoding() const override;
   bool IsServedFromCacheStorage() const override;
+  void OnMemoryDump(WebProcessMemoryDump* pmd,
+                    const String& dump_prefix) const override;
+  size_t GetCodeCacheSize() const override;
 
  private:
-  Member<WorkerGlobalScope> worker_global_scope_;
+  Member<ServiceWorkerGlobalScope> global_scope_;
   KURL script_url_;
   scoped_refptr<CachedMetadata> cached_metadata_;
 };

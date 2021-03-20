@@ -15,7 +15,6 @@
  */
 
 syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
 package perfetto.protos;
 
@@ -29,4 +28,7 @@ message AndroidPowerConfig {
   }
   optional uint32 battery_poll_ms = 1;
   repeated BatteryCounters battery_counters = 2;
+
+  // Where available enables per-power-rail measurements.
+  optional bool collect_power_rails = 3;
 }

@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -22,7 +23,6 @@
 #include "net/http/http_request_info.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/test_net_log.h"
-#include "net/log/test_net_log_entry.h"
 #include "net/log/test_net_log_util.h"
 #include "net/socket/socket_tag.h"
 #include "net/socket/socket_test_util.h"
@@ -36,7 +36,7 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -62,11 +62,11 @@ base::TimeTicks InstantaneousReads() {
 
 }  // namespace
 
-class SpdyStreamTest : public TestWithScopedTaskEnvironment {
+class SpdyStreamTest : public TestWithTaskEnvironment {
  protected:
   // A function that takes a SpdyStream and the number of bytes which
   // will unstall the next frame completely.
-  typedef base::Callback<void(const base::WeakPtr<SpdyStream>&, int32_t)>
+  typedef base::OnceCallback<void(const base::WeakPtr<SpdyStream>&, int32_t)>
       UnstallFunction;
 
   SpdyStreamTest()
@@ -80,17 +80,17 @@ class SpdyStreamTest : public TestWithScopedTaskEnvironment {
   base::WeakPtr<SpdySession> CreateDefaultSpdySession() {
     SpdySessionKey key(HostPortPair::FromURL(url_), ProxyServer::Direct(),
                        PRIVACY_MODE_DISABLED,
-                       SpdySessionKey::IsProxySession::kFalse, SocketTag());
+                       SpdySessionKey::IsProxySession::kFalse, SocketTag(),
+                       NetworkIsolationKey(), false /* disable_secure_dns */);
     return CreateSpdySession(session_.get(), key, NetLogWithSource());
   }
 
   void TearDown() override { base::RunLoop().RunUntilIdle(); }
 
   void RunResumeAfterUnstallRequestResponseTest(
-      const UnstallFunction& unstall_function);
+      UnstallFunction unstall_function);
 
-  void RunResumeAfterUnstallBidirectionalTest(
-      const UnstallFunction& unstall_function);
+  void RunResumeAfterUnstallBidirectionalTest(UnstallFunction unstall_function);
 
   // Add{Read,Write}() populates lists that are eventually passed to a
   // SocketData class. |frame| must live for the whole test.
@@ -343,9 +343,10 @@ TEST_F(SpdyStreamTest, PushedStream) {
 
   data.RunUntilPaused();
 
-  const SpdySessionKey key(HostPortPair::FromURL(url_), ProxyServer::Direct(),
-                           PRIVACY_MODE_DISABLED,
-                           SpdySessionKey::IsProxySession::kFalse, SocketTag());
+  const SpdySessionKey key(
+      HostPortPair::FromURL(url_), ProxyServer::Direct(), PRIVACY_MODE_DISABLED,
+      SpdySessionKey::IsProxySession::kFalse, SocketTag(),
+      NetworkIsolationKey(), false /* disable_secure_dns */);
   const GURL pushed_url(kPushUrl);
   HttpRequestInfo push_request;
   push_request.url = pushed_url;
@@ -413,7 +414,7 @@ TEST_F(SpdyStreamTest, StreamError) {
 
   AddReadEOF();
 
-  BoundTestNetLog log;
+  RecordingBoundTestNetLog log;
 
   SequencedSocketData data(GetReads(), GetWrites());
   MockConnect connect_data(SYNCHRONOUS, OK);
@@ -448,17 +449,15 @@ TEST_F(SpdyStreamTest, StreamError) {
   EXPECT_TRUE(data.AllWriteDataConsumed());
 
   // Check that the NetLog was filled reasonably.
-  TestNetLogEntry::List entries;
-  log.GetEntries(&entries);
+  auto entries = log.GetEntries();
   EXPECT_LT(0u, entries.size());
 
   // Check that we logged SPDY_STREAM_ERROR correctly.
   int pos = ExpectLogContainsSomewhere(
       entries, 0, NetLogEventType::HTTP2_STREAM_ERROR, NetLogEventPhase::NONE);
 
-  int stream_id2;
-  ASSERT_TRUE(entries[pos].GetIntegerValue("stream_id", &stream_id2));
-  EXPECT_EQ(static_cast<int>(stream_id), stream_id2);
+  EXPECT_EQ(static_cast<int>(stream_id),
+            GetIntegerValueFromParams(entries[pos], "stream_id"));
 }
 
 // Make sure that large blocks of data are properly split up into frame-sized
@@ -604,7 +603,7 @@ TEST_F(SpdyStreamTest, UpperCaseHeaders) {
       stream->SendRequestHeaders(std::move(headers), NO_MORE_DATA_TO_SEND),
       IsError(ERR_IO_PENDING));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -719,7 +718,7 @@ TEST_F(SpdyStreamTest, HeadersMustHaveStatus) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -838,7 +837,7 @@ TEST_F(SpdyStreamTest, HeadersMustPreceedData) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 }
 
 TEST_F(SpdyStreamTest, HeadersMustPreceedDataOnPushedStream) {
@@ -961,7 +960,7 @@ TEST_F(SpdyStreamTest, TrailersMustNotFollowTrailers) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -1020,7 +1019,7 @@ TEST_F(SpdyStreamTest, DataMustNotFollowTrailers) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -1124,7 +1123,7 @@ TEST_F(SpdyStreamTest, StatusMustBeNumber) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -1177,7 +1176,7 @@ TEST_F(SpdyStreamTest, StatusCannotHaveExtraText) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -1228,7 +1227,7 @@ TEST_F(SpdyStreamTest, StatusMustBePresent) {
   EXPECT_EQ(ERR_IO_PENDING, stream->SendRequestHeaders(std::move(headers),
                                                        NO_MORE_DATA_TO_SEND));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
 
   // Finish async network reads and writes.
   base::RunLoop().RunUntilIdle();
@@ -1254,7 +1253,7 @@ TEST_F(SpdyStreamTest, IncreaseSendWindowSizeOverflow) {
 
   AddReadEOF();
 
-  BoundTestNetLog log;
+  RecordingBoundTestNetLog log;
 
   SequencedSocketData data(GetReads(), GetWrites());
   MockConnect connect_data(SYNCHRONOUS, OK);
@@ -1290,7 +1289,7 @@ TEST_F(SpdyStreamTest, IncreaseSendWindowSizeOverflow) {
   data.Resume();
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_FLOW_CONTROL_ERROR));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_FLOW_CONTROL_ERROR));
 }
 
 // Functions used with
@@ -1327,7 +1326,7 @@ void AdjustStreamSendWindowSize(const base::WeakPtr<SpdyStream>& stream,
 // request/response (i.e., an HTTP-like) stream resumes after a stall
 // and unstall.
 void SpdyStreamTest::RunResumeAfterUnstallRequestResponseTest(
-    const UnstallFunction& unstall_function) {
+    UnstallFunction unstall_function) {
   spdy::SpdySerializedFrame req(spdy_util_.ConstructSpdyPost(
       kDefaultUrl, 1, kPostBodyLength, LOWEST, nullptr, 0));
   AddWrite(req);
@@ -1372,7 +1371,7 @@ void SpdyStreamTest::RunResumeAfterUnstallRequestResponseTest(
 
   EXPECT_TRUE(stream->send_stalled_by_flow_control());
 
-  unstall_function.Run(stream, kPostBodyLength);
+  std::move(unstall_function).Run(stream, kPostBodyLength);
 
   EXPECT_FALSE(stream->send_stalled_by_flow_control());
 
@@ -1386,18 +1385,18 @@ void SpdyStreamTest::RunResumeAfterUnstallRequestResponseTest(
 
 TEST_F(SpdyStreamTest, ResumeAfterSendWindowSizeIncreaseRequestResponse) {
   RunResumeAfterUnstallRequestResponseTest(
-      base::Bind(&IncreaseStreamSendWindowSize));
+      base::BindOnce(&IncreaseStreamSendWindowSize));
 }
 
 TEST_F(SpdyStreamTest, ResumeAfterSendWindowSizeAdjustRequestResponse) {
   RunResumeAfterUnstallRequestResponseTest(
-      base::Bind(&AdjustStreamSendWindowSize));
+      base::BindOnce(&AdjustStreamSendWindowSize));
 }
 
 // Given an unstall function, runs a test to make sure that a bidirectional
 // (i.e., non-HTTP-like) stream resumes after a stall and unstall.
 void SpdyStreamTest::RunResumeAfterUnstallBidirectionalTest(
-    const UnstallFunction& unstall_function) {
+    UnstallFunction unstall_function) {
   spdy::SpdySerializedFrame req(spdy_util_.ConstructSpdyPost(
       kDefaultUrl, 1, kPostBodyLength, LOWEST, nullptr, 0));
   AddWrite(req);
@@ -1451,7 +1450,7 @@ void SpdyStreamTest::RunResumeAfterUnstallBidirectionalTest(
 
   EXPECT_TRUE(stream->send_stalled_by_flow_control());
 
-  unstall_function.Run(stream, kPostBodyLength);
+  std::move(unstall_function).Run(stream, kPostBodyLength);
 
   EXPECT_FALSE(stream->send_stalled_by_flow_control());
 
@@ -1466,12 +1465,12 @@ void SpdyStreamTest::RunResumeAfterUnstallBidirectionalTest(
 
 TEST_F(SpdyStreamTest, ResumeAfterSendWindowSizeIncreaseBidirectional) {
   RunResumeAfterUnstallBidirectionalTest(
-      base::Bind(&IncreaseStreamSendWindowSize));
+      base::BindOnce(&IncreaseStreamSendWindowSize));
 }
 
 TEST_F(SpdyStreamTest, ResumeAfterSendWindowSizeAdjustBidirectional) {
   RunResumeAfterUnstallBidirectionalTest(
-      base::Bind(&AdjustStreamSendWindowSize));
+      base::BindOnce(&AdjustStreamSendWindowSize));
 }
 
 // Test calculation of amount of bytes received from network.
@@ -1589,7 +1588,7 @@ TEST_F(SpdyStreamTest, DataOnHalfClosedRemoveStream) {
   EXPECT_THAT(stream->SendRequestHeaders(std::move(headers), MORE_DATA_TO_SEND),
               IsError(ERR_IO_PENDING));
 
-  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_SPDY_STREAM_CLOSED));
+  EXPECT_THAT(delegate.WaitForClose(), IsError(ERR_HTTP2_STREAM_CLOSED));
 
   base::RunLoop().RunUntilIdle();
 

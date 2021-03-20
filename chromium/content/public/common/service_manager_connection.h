@@ -11,15 +11,15 @@
 #include "base/sequenced_task_runner.h"
 #include "content/common/content_export.h"
 #include "services/service_manager/public/cpp/identity.h"
-#include "services/service_manager/public/mojom/service.mojom.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/service_manager/public/mojom/connector.mojom-forward.h"
+#include "services/service_manager/public/mojom/service.mojom-forward.h"
 
 namespace service_manager {
 class Connector;
 }
 
 namespace content {
-
-class ConnectionFilter;
 
 // Encapsulates a connection to a //services/service_manager.
 // Access a global instance on the thread the ServiceContext was bound by
@@ -35,9 +35,9 @@ class CONTENT_EXPORT ServiceManagerConnection {
  public:
   using ServiceRequestHandler =
       base::RepeatingCallback<void(service_manager::mojom::ServiceRequest)>;
-  using ServiceRequestHandlerWithPID =
-      base::RepeatingCallback<void(service_manager::mojom::ServiceRequest,
-                                   service_manager::mojom::PIDReceiverPtr)>;
+  using ServiceRequestHandlerWithCallback = base::RepeatingCallback<void(
+      service_manager::mojom::ServiceRequest,
+      service_manager::Service::CreatePackagedServiceInstanceCallback)>;
   using Factory =
       base::RepeatingCallback<std::unique_ptr<ServiceManagerConnection>(void)>;
 
@@ -68,10 +68,12 @@ class CONTENT_EXPORT ServiceManagerConnection {
       service_manager::mojom::ServiceRequest request,
       scoped_refptr<base::SequencedTaskRunner> io_task_runner);
 
-  // Begins accepting incoming connections. Connection filters MUST be added
-  // before calling this in order to avoid races. See AddConnectionFilter()
-  // below.
+  // Begins accepting incoming connections.
   virtual void Start() = 0;
+
+  // Stops accepting incoming connections. This happens asynchronously by
+  // posting to the IO thread, and cannot be undone.
+  virtual void Stop() = 0;
 
   // Returns the service_manager::Connector received via this connection's
   // Service
@@ -81,26 +83,7 @@ class CONTENT_EXPORT ServiceManagerConnection {
   // Sets a closure that is called when the connection is lost. Note that
   // connection may already have been closed, in which case |closure| will be
   // run immediately before returning from this function.
-  virtual void SetConnectionLostClosure(const base::Closure& closure) = 0;
-
-  static const int kInvalidConnectionFilterId = 0;
-
-  // Allows the caller to filter inbound connections and/or expose interfaces
-  // on them. |filter| may be created on any thread, but will be used and
-  // destroyed exclusively on the IO thread (the thread corresponding to
-  // |io_task_runner| passed to Create() above.)
-  //
-  // Connection filters MUST be added before calling Start() in order to avoid
-  // races.
-  //
-  // Returns a unique identifier that can be passed to RemoveConnectionFilter()
-  // below.
-  virtual int AddConnectionFilter(
-      std::unique_ptr<ConnectionFilter> filter) = 0;
-
-  // Removes a filter using the id value returned by AddConnectionFilter().
-  // Removal (and destruction) happens asynchronously on the IO thread.
-  virtual void RemoveConnectionFilter(int filter_id) = 0;
+  virtual void SetConnectionLostClosure(base::OnceClosure closure) = 0;
 
   // Adds a generic ServiceRequestHandler for a given service name. This
   // will be used to satisfy any incoming calls to CreateService() which
@@ -111,9 +94,9 @@ class CONTENT_EXPORT ServiceManagerConnection {
 
   // Similar to above but for registering handlers which want to communicate
   // additional information the process hosting the new service.
-  virtual void AddServiceRequestHandlerWithPID(
+  virtual void AddServiceRequestHandlerWithCallback(
       const std::string& name,
-      const ServiceRequestHandlerWithPID& handler) = 0;
+      const ServiceRequestHandlerWithCallback& handler) = 0;
 
   // Sets a request handler to use if no registered handlers were interested in
   // an incoming service request. Must be called before |Start()|.

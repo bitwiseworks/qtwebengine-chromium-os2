@@ -42,7 +42,9 @@ bool IfAddrsConverter::ConvertIfAddrsToIPAddress(
       return true;
     }
 #endif
-    default: { return false; }
+    default: {
+      return false;
+    }
   }
 }
 

@@ -21,6 +21,7 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/synchronization/synchronization_buildflags.h"
 #include "build/build_config.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/bpf_dsl/seccomp_macros.h"
@@ -309,6 +310,11 @@ ResultExpr RestrictFutex() {
   const Arg<int> op(1);
   return Switch(op & ~kAllowedFutexFlags)
       .CASES((FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
+#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
+              // Enable priority-inheritance operations.
+              FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
+              FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI,
+#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
               FUTEX_WAKE_OP, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET),
              Allow())
       .Default(IsBuggyGlibcSemPost() ? Error(EINVAL) : CrashSIGSYSFutex());
@@ -366,11 +372,10 @@ ResultExpr RestrictClockID() {
   return
     If((clockid & kIsPidBit) == 0,
       Switch(clockid).CASES((
-#if defined(OS_ANDROID)
               CLOCK_BOOTTIME,
-#endif
               CLOCK_MONOTONIC,
               CLOCK_MONOTONIC_COARSE,
+              CLOCK_MONOTONIC_RAW,
               CLOCK_PROCESS_CPUTIME_ID,
               CLOCK_REALTIME,
               CLOCK_REALTIME_COARSE,
@@ -398,6 +403,15 @@ ResultExpr RestrictPrlimit(pid_t target_pid) {
   const Arg<pid_t> pid(0);
   // Only allow operations for the current process.
   return If(AnyOf(pid == 0, pid == target_pid), Allow()).Else(Error(EPERM));
+}
+
+ResultExpr RestrictPrlimitToGetrlimit(pid_t target_pid) {
+  const Arg<pid_t> pid(0);
+  const Arg<uintptr_t> new_limit(2);
+  // Only allow operations for the current process, and only with |new_limit|
+  // set to null.
+  return If(AllOf(new_limit == 0, AnyOf(pid == 0, pid == target_pid)), Allow())
+      .Else(Error(EPERM));
 }
 
 #if !defined(OS_NACL_NONSFI)

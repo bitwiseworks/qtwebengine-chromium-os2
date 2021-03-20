@@ -45,7 +45,6 @@ class HTMLElementStack {
 
  public:
   HTMLElementStack();
-  ~HTMLElementStack();
 
   class ElementRecord final : public GarbageCollected<ElementRecord> {
    public:
@@ -191,8 +190,6 @@ class HTMLElementStack {
 
   DISALLOW_COPY_AND_ASSIGN(HTMLElementStack);
 };
-
-WILL_NOT_BE_EAGERLY_TRACED_CLASS(HTMLElementStack::ElementRecord);
 
 }  // namespace blink
 

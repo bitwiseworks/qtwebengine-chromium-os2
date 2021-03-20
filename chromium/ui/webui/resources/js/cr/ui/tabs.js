@@ -3,16 +3,16 @@
 // found in the LICENSE file.
 
 cr.define('cr.ui', function() {
-
   /**
    * Returns the TabBox for a Tab or a TabPanel.
-   * @param {Tab|TabPanel} el The tab or tabpanel element.
-   * @return {TabBox} The tab box if found.
+   * @param {cr.ui.Tab|cr.ui.Tabs|cr.ui.TabPanel} el The tab or tabpanel
+   *     element.
+   * @return {cr.ui.TabBox} The tab box if found.
    */
   function getTabBox(el) {
-    return findAncestor(el, function(node) {
-      return node.tagName == 'TABBOX';
-    });
+    return /** @type {cr.ui.TabBox} */ (findAncestor(el, function(node) {
+      return node.tagName === 'TABBOX';
+    }));
   }
 
   /**
@@ -21,21 +21,7 @@ cr.define('cr.ui', function() {
    * @return {boolean} Whether the element is a tab related element.
    */
   function isTabElement(el) {
-    return el.tagName == 'TAB' || el.tagName == 'TABPANEL';
-  }
-
-  /**
-   * Set hook for the selected property for Tab and TabPanel.
-   * This sets the selectedIndex on the parent TabBox.
-   * @param {boolean} newValue The new selected value
-   * @param {boolean} oldValue The old selected value. (This is ignored atm.)
-   * @this {Tab|TabPanel}
-   */
-  function selectedSetHook(newValue, oldValue) {
-    let tabBox;
-    if (newValue && (tabBox = getTabBox(this))) {
-      tabBox.selectedIndex = Array.prototype.indexOf.call(p.children, this);
-    }
+    return el.tagName === 'TAB' || el.tagName === 'TABPANEL';
   }
 
   /**
@@ -54,7 +40,7 @@ cr.define('cr.ui', function() {
     Object.keys(map).forEach(function(tagName) {
       const children = this.getElementsByTagName(tagName);
       const constr = map[tagName];
-      for (let i = 0; child = children[i]; i++) {
+      for (const child of children) {
         cr.ui.decorate(child, constr);
       }
     }.bind(this));
@@ -63,7 +49,7 @@ cr.define('cr.ui', function() {
   /**
    * Set hook for TabBox selectedIndex.
    * @param {number} selectedIndex The new selected index.
-   * @this {TabBox}
+   * @this {cr.ui.TabBox}
    */
   function selectedIndexSetHook(selectedIndex) {
     let child, tabChild, element;
@@ -71,7 +57,20 @@ cr.define('cr.ui', function() {
     if (element) {
       let i;
       for (i = 0; child = element.children[i]; i++) {
-        child.selected = i == selectedIndex;
+        const isSelected = i === selectedIndex;
+        child.selected = isSelected;
+
+        // Update tabIndex for a11y
+        child.setAttribute('tabindex', isSelected ? 0 : -1);
+
+        // Update aria-selected attribute for a11y
+        const firstSelection = !child.hasAttribute('aria-selected');
+        child.setAttribute('aria-selected', isSelected);
+
+        // Update focus, but don't override initial focus.
+        if (isSelected && !firstSelection) {
+          child.focus();
+        }
       }
     }
 
@@ -79,7 +78,7 @@ cr.define('cr.ui', function() {
     if (element) {
       let i;
       for (i = 0; child = element.children[i]; i++) {
-        child.selected = i == selectedIndex;
+        child.selected = i === selectedIndex;
       }
     }
   }
@@ -94,7 +93,7 @@ cr.define('cr.ui', function() {
 
   TabBox.prototype = {
     __proto__: HTMLElement.prototype,
-    decorate: function() {
+    decorate() {
       decorateChildren.call(this);
       this.addEventListener('selectedChange', this.handleSelectedChange_, true);
       this.selectedIndex = 0;
@@ -105,9 +104,9 @@ cr.define('cr.ui', function() {
      * @param {Event} e The property change event.
      * @private
      */
-    handleSelectedChange_: function(e) {
-      const target = e.target;
-      if (e.newValue && isTabElement(target) && getTabBox(target) == this) {
+    handleSelectedChange_(e) {
+      const target = /** @type {cr.ui.Tab|cr.ui.TabPanel}} */ (e.target);
+      if (e.newValue && isTabElement(target) && getTabBox(target) === this) {
         const index =
             Array.prototype.indexOf.call(target.parentElement.children, target);
         this.selectedIndex = index;
@@ -122,27 +121,25 @@ cr.define('cr.ui', function() {
    * @type {number}
    */
   cr.defineProperty(
-      TabBox, 'selectedIndex', cr.PropertyKind.JS_PROP, selectedIndexSetHook);
+      TabBox, 'selectedIndex', cr.PropertyKind.JS, selectedIndexSetHook);
 
   /**
    * Creates a new tabs element.
-   * @param {string} opt_label The text label for the item.
+   * @param {Object=} opt_propertyBag Optional properties.
    * @constructor
    * @extends {HTMLElement}
    */
   const Tabs = cr.ui.define('tabs');
   Tabs.prototype = {
     __proto__: HTMLElement.prototype,
-    decorate: function() {
+    decorate() {
       decorateChildren.call(this);
 
-      // Make the Tabs element focusable.
-      this.tabIndex = 0;
       this.addEventListener('keydown', this.handleKeyDown_.bind(this));
 
       // Get (and initializes a focus outline manager.
-      this.focusOutlineManager_ =
-          cr.ui.FocusOutlineManager.forDocument(this.ownerDocument);
+      this.focusOutlineManager_ = cr.ui.FocusOutlineManager.forDocument(
+          /** @type {!Document} */ (this.ownerDocument));
     },
 
     /**
@@ -151,7 +148,7 @@ cr.define('cr.ui', function() {
      * @param {Event} e The keyboard event.
      * @private
      */
-    handleKeyDown_: function(e) {
+    handleKeyDown_(e) {
       let delta = 0;
       switch (e.key) {
         case 'ArrowLeft':
@@ -169,7 +166,7 @@ cr.define('cr.ui', function() {
       }
 
       const cs = this.ownerDocument.defaultView.getComputedStyle(this);
-      if (cs.direction == 'rtl') {
+      if (cs.direction === 'rtl') {
         delta *= -1;
       }
 
@@ -185,14 +182,14 @@ cr.define('cr.ui', function() {
 
   /**
    * Creates a new tab element.
-   * @param {string} opt_label The text label for the item.
+   * @param {Object=} opt_propertyBag Optional properties.
    * @constructor
    * @extends {HTMLElement}
    */
   const Tab = cr.ui.define('tab');
   Tab.prototype = {
     __proto__: HTMLElement.prototype,
-    decorate: function() {
+    decorate() {
       const self = this;
       this.addEventListener(cr.isMac ? 'click' : 'mousedown', function() {
         self.selected = true;
@@ -208,7 +205,7 @@ cr.define('cr.ui', function() {
 
   /**
    * Creates a new tabpanels element.
-   * @param {string} opt_label The text label for the item.
+   * @param {Object=} opt_propertyBag Optional properties.
    * @constructor
    * @extends {HTMLElement}
    */
@@ -220,15 +217,12 @@ cr.define('cr.ui', function() {
 
   /**
    * Creates a new tabpanel element.
-   * @param {string} opt_label The text label for the item.
+   * @param {Object=} opt_propertyBag Optional properties.
    * @constructor
    * @extends {HTMLElement}
    */
   const TabPanel = cr.ui.define('tabpanel');
-  TabPanel.prototype = {
-    __proto__: HTMLElement.prototype,
-    decorate: function() {}
-  };
+  TabPanel.prototype = {__proto__: HTMLElement.prototype, decorate() {}};
 
   /**
    * Whether the tab is selected.

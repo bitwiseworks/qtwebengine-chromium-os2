@@ -24,8 +24,7 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task/post_task.h"
-#include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/win/atl.h"
 #include "base/win/scoped_co_mem.h"
 #include "components/update_client/task_traits.h"
@@ -399,7 +398,7 @@ void CleanupJob(const ComPtr<IBackgroundCopyJob>& job) {
 BackgroundDownloader::BackgroundDownloader(
     std::unique_ptr<CrxDownloader> successor)
     : CrxDownloader(std::move(successor)),
-      com_task_runner_(base::CreateCOMSTATaskRunnerWithTraits(
+      com_task_runner_(base::ThreadPool::CreateCOMSTATaskRunner(
           kTaskTraitsBackgroundDownloader)),
       git_cookie_bits_manager_(0),
       git_cookie_job_(0) {}
@@ -441,6 +440,8 @@ void BackgroundDownloader::BeginDownload(const GURL& url) {
     EndDownload(hr);
     return;
   }
+
+  VLOG(1) << "Starting BITS download for: " << url.spec();
 
   ResetInterfacePointers();
   main_task_runner()->PostTask(FROM_HERE,

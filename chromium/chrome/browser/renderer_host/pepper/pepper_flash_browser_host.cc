@@ -4,6 +4,7 @@
 
 #include "chrome/browser/renderer_host/pepper/pepper_flash_browser_host.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -14,19 +15,18 @@
 #include "content/public/browser/browser_ppapi_host.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/device_service.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/common/service_manager_connection.h"
 #include "ipc/ipc_message_macros.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/private/ppb_flash.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/resource_message_params.h"
 #include "ppapi/shared_impl/time_conversion.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "url/gurl.h"
 
 #if defined(OS_WIN)
@@ -38,7 +38,6 @@
 using content::BrowserPpapiHost;
 using content::BrowserThread;
 using content::RenderProcessHost;
-using content::ServiceManagerConnection;
 
 namespace {
 
@@ -53,17 +52,13 @@ scoped_refptr<content_settings::CookieSettings> GetCookieSettings(
         Profile::FromBrowserContext(render_process_host->GetBrowserContext());
     return CookieSettingsFactory::GetForProfile(profile);
   }
-  return NULL;
+  return nullptr;
 }
 
-void PepperBindConnectorRequest(
-    service_manager::mojom::ConnectorRequest connector_request) {
+void BindWakeLockProviderOnUIThread(
+    mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(ServiceManagerConnection::GetForProcess());
-
-  ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindConnectorRequest(std::move(connector_request));
+  content::GetDeviceService().BindWakeLockProvider(std::move(receiver));
 }
 
 }  // namespace
@@ -73,9 +68,10 @@ PepperFlashBrowserHost::PepperFlashBrowserHost(BrowserPpapiHost* host,
                                                PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
       host_(host),
-      delay_timer_(FROM_HERE, base::TimeDelta::FromSeconds(45), this,
-                   &PepperFlashBrowserHost::OnDelayTimerFired),
-      weak_factory_(this) {
+      delay_timer_(FROM_HERE,
+                   base::TimeDelta::FromSeconds(45),
+                   this,
+                   &PepperFlashBrowserHost::OnDelayTimerFired) {
   int unused;
   host->GetRenderFrameIDsForInstance(instance, &render_process_id_, &unused);
 }
@@ -136,13 +132,13 @@ int32_t PepperFlashBrowserHost::OnGetLocalDataRestrictions(
                              plugin_url,
                              cookie_settings_);
   } else {
-    base::PostTaskWithTraitsAndReplyWithResult(
+    base::PostTaskAndReplyWithResult(
         FROM_HERE, {BrowserThread::UI},
-        base::Bind(&GetCookieSettings, render_process_id_),
-        base::Bind(&PepperFlashBrowserHost::GetLocalDataRestrictions,
-                   weak_factory_.GetWeakPtr(),
-                   context->MakeReplyMessageContext(), document_url,
-                   plugin_url));
+        base::BindOnce(&GetCookieSettings, render_process_id_),
+        base::BindOnce(&PepperFlashBrowserHost::GetLocalDataRestrictions,
+                       weak_factory_.GetWeakPtr(),
+                       context->MakeReplyMessageContext(), document_url,
+                       plugin_url));
   }
   return PP_OK_COMPLETIONPENDING;
 }
@@ -181,29 +177,14 @@ device::mojom::WakeLock* PepperFlashBrowserHost::GetWakeLock() {
   if (wake_lock_)
     return wake_lock_.get();
 
-  device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
-
-  // Service manager connection might be not initialized in some testing
-  // contexts.
-  if (!ServiceManagerConnection::GetForProcess())
-    return wake_lock_.get();
-
-  service_manager::mojom::ConnectorRequest connector_request;
-  auto connector = service_manager::Connector::Create(&connector_request);
-
-  // The existing connector is bound to the UI thread, the current thread is
-  // IO thread. So bind the ConnectorRequest of IO thread to the connector
-  // in UI thread.
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(&PepperBindConnectorRequest,
-                                          std::move(connector_request)));
-
-  device::mojom::WakeLockProviderPtr wake_lock_provider;
-  connector->BindInterface(device::mojom::kServiceName,
-                           mojo::MakeRequest(&wake_lock_provider));
+  mojo::Remote<device::mojom::WakeLockProvider> wake_lock_provider;
+  base::PostTask(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&BindWakeLockProviderOnUIThread,
+                     wake_lock_provider.BindNewPipeAndPassReceiver()));
   wake_lock_provider->GetWakeLockWithoutContext(
       device::mojom::WakeLockType::kPreventDisplaySleep,
       device::mojom::WakeLockReason::kOther, "Requested By PepperFlash",
-      std::move(request));
+      wake_lock_.BindNewPipeAndPassReceiver());
   return wake_lock_.get();
 }

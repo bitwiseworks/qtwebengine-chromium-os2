@@ -5,11 +5,25 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "sk_tool_utils.h"
-#include "SkCanvas.h"
-#include "SkFont.h"
-#include "SkPath.h"
+#include "gm/gm.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkClipOp.h"
+#include "include/core/SkColor.h"
+#include "include/core/SkFont.h"
+#include "include/core/SkFontTypes.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypeface.h"
+#include "include/core/SkTypes.h"
+#include "src/core/SkClipOpPriv.h"
+#include "tools/Resources.h"
+#include "tools/ToolUtils.h"
+
+#include <string.h>
 
 namespace skiagm {
 
@@ -55,9 +69,9 @@ protected:
             .lineTo(50,  150)
             .close();
         if (fInvertDraw) {
-            path.setFillType(SkPath::kInverseEvenOdd_FillType);
+            path.setFillType(SkPathFillType::kInverseEvenOdd);
         } else {
-            path.setFillType(SkPath::kEvenOdd_FillType);
+            path.setFillType(SkPathFillType::kEvenOdd);
         }
         SkPaint pathPaint;
         pathPaint.setAntiAlias(true);
@@ -69,7 +83,7 @@ protected:
         SkPath clipB;
         clipB.addPoly({{40,  10}, {190, 15}, {195, 190}, {40,  185}, {155, 100}}, false).close();
 
-        SkFont font(sk_tool_utils::create_portable_typeface(), 20);
+        SkFont font(ToolUtils::create_portable_typeface(), 20);
 
         constexpr struct {
             SkClipOp fOp;
@@ -113,10 +127,10 @@ protected:
                 bool doInvB = SkToBool(invBits & 2);
                 canvas->save();
                     // set clip
-                    clipA.setFillType(doInvA ? SkPath::kInverseEvenOdd_FillType :
-                                      SkPath::kEvenOdd_FillType);
-                    clipB.setFillType(doInvB ? SkPath::kInverseEvenOdd_FillType :
-                                      SkPath::kEvenOdd_FillType);
+                    clipA.setFillType(doInvA ? SkPathFillType::kInverseEvenOdd :
+                                      SkPathFillType::kEvenOdd);
+                    clipB.setFillType(doInvB ? SkPathFillType::kInverseEvenOdd :
+                                      SkPathFillType::kEvenOdd);
                     canvas->clipPath(clipA, fDoAAClip);
                     canvas->clipPath(clipB, gOps[op].fOp, fDoAAClip);
 
@@ -139,15 +153,15 @@ protected:
                 SkScalar txtX = 45;
                 paint.setColor(gClipAColor);
                 const char* aTxt = doInvA ? "InvA " : "A ";
-                canvas->drawSimpleText(aTxt, strlen(aTxt), kUTF8_SkTextEncoding, txtX, 220, font, paint);
-                txtX += font.measureText(aTxt, strlen(aTxt), kUTF8_SkTextEncoding);
+                canvas->drawSimpleText(aTxt, strlen(aTxt), SkTextEncoding::kUTF8, txtX, 220, font, paint);
+                txtX += font.measureText(aTxt, strlen(aTxt), SkTextEncoding::kUTF8);
                 paint.setColor(SK_ColorBLACK);
-                canvas->drawSimpleText(gOps[op].fName, strlen(gOps[op].fName), kUTF8_SkTextEncoding, txtX, 220,
+                canvas->drawSimpleText(gOps[op].fName, strlen(gOps[op].fName), SkTextEncoding::kUTF8, txtX, 220,
                                        font, paint);
-                txtX += font.measureText(gOps[op].fName, strlen(gOps[op].fName), kUTF8_SkTextEncoding);
+                txtX += font.measureText(gOps[op].fName, strlen(gOps[op].fName), SkTextEncoding::kUTF8);
                 paint.setColor(gClipBColor);
                 const char* bTxt = doInvB ? "InvB " : "B ";
-                canvas->drawSimpleText(bTxt, strlen(bTxt), kUTF8_SkTextEncoding, txtX, 220, font, paint);
+                canvas->drawSimpleText(bTxt, strlen(bTxt), SkTextEncoding::kUTF8, txtX, 220, font, paint);
 
                 canvas->translate(250,0);
             }
@@ -195,4 +209,56 @@ DEF_GM(return new ComplexClipGM(true, false, false);)
 DEF_GM(return new ComplexClipGM(true, false, true);)
 DEF_GM(return new ComplexClipGM(true, true, false);)
 DEF_GM(return new ComplexClipGM(true, true, true);)
+}
+
+DEF_SIMPLE_GM(clip_shader, canvas, 840, 650) {
+    auto img = GetResourceAsImage("images/yellow_rose.png");
+    auto sh = img->makeShader();
+
+    SkRect r = SkRect::MakeIWH(img->width(), img->height());
+    SkPaint p;
+
+    canvas->translate(10, 10);
+    canvas->drawImage(img, 0, 0, nullptr);
+
+    canvas->save();
+    canvas->translate(img->width() + 10, 0);
+    canvas->clipShader(sh, SkClipOp::kIntersect);
+    p.setColor(SK_ColorRED);
+    canvas->drawRect(r, p);
+    canvas->restore();
+
+    canvas->save();
+    canvas->translate(0, img->height() + 10);
+    canvas->clipShader(sh, SkClipOp::kDifference);
+    p.setColor(SK_ColorGREEN);
+    canvas->drawRect(r, p);
+    canvas->restore();
+
+    canvas->save();
+    canvas->translate(img->width() + 10, img->height() + 10);
+    canvas->clipShader(sh, SkClipOp::kIntersect);
+    canvas->save();
+    SkMatrix lm = SkMatrix::MakeScale(1.0f / 5);
+    canvas->clipShader(img->makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, &lm));
+    canvas->drawImage(img, 0, 0, nullptr);
+
+    canvas->restore();
+    canvas->restore();
+}
+
+DEF_SIMPLE_GM(clip_shader_layer, canvas, 430, 320) {
+    auto img = GetResourceAsImage("images/yellow_rose.png");
+    auto sh = img->makeShader();
+
+    SkRect r = SkRect::MakeIWH(img->width(), img->height());
+
+    canvas->translate(10, 10);
+    // now add the cool clip
+    canvas->clipRect(r);
+    canvas->clipShader(sh);
+    // now draw a layer with the same image, and watch it get restored w/ the clip
+    canvas->saveLayer(&r, nullptr);
+    canvas->drawColor(0xFFFF0000);
+    canvas->restore();
 }

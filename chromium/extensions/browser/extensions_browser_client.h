@@ -12,14 +12,16 @@
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "content/public/browser/bluetooth_chooser.h"
-#include "content/public/common/resource_type.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/browser/extensions_browser_api_provider.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/view_type.h"
-#include "services/network/public/mojom/url_loader.mojom.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/network/public/mojom/url_loader.mojom-forward.h"
+#include "services/service_manager/public/cpp/binder_map.h"
+#include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "ui/base/page_transition_types.h"
 
 class ExtensionFunctionRegistry;
@@ -36,13 +38,6 @@ namespace content {
 class BrowserContext;
 class RenderFrameHost;
 class WebContents;
-}
-
-namespace net {
-class NetLog;
-class NetworkDelegate;
-class URLRequest;
-class URLRequestJob;
 }
 
 namespace network {
@@ -62,10 +57,6 @@ class Extension;
 class ExtensionCache;
 class ExtensionError;
 class ExtensionHostDelegate;
-class ExtensionPrefsObserver;
-class ExtensionApiFrameIdMap;
-class ExtensionApiFrameIdMapHelper;
-class ExtensionNavigationUIData;
 class ExtensionSet;
 class ExtensionSystem;
 class ExtensionSystemProvider;
@@ -154,17 +145,6 @@ class ExtensionsBrowserClient {
       const extensions::Extension* extension,
       content::BrowserContext* context) const = 0;
 
-  // Returns an URLRequestJob to load an extension resource from the embedder's
-  // resource bundle (.pak) files. Returns NULL if the request is not for a
-  // resource bundle resource or if the embedder does not support this feature.
-  // Used for component extensions. Called on the IO thread.
-  virtual net::URLRequestJob* MaybeCreateResourceBundleRequestJob(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate,
-      const base::FilePath& directory_path,
-      const std::string& content_security_policy,
-      bool send_cors_header) = 0;
-
   // Return the resource relative path and id for the given request.
   virtual base::FilePath GetBundleResourcePath(
       const network::ResourceRequest& request,
@@ -175,11 +155,11 @@ class ExtensionsBrowserClient {
   // embedder's resource bundle (.pak) files. Used for component extensions.
   virtual void LoadResourceFromResourceBundle(
       const network::ResourceRequest& request,
-      network::mojom::URLLoaderRequest loader,
+      mojo::PendingReceiver<network::mojom::URLLoader> loader,
       const base::FilePath& resource_relative_path,
       int resource_id,
       const std::string& content_security_policy,
-      network::mojom::URLLoaderClientPtr client,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
       bool send_cors_header) = 0;
 
   // Returns true if the embedder wants to allow a chrome-extension:// resource
@@ -188,7 +168,7 @@ class ExtensionsBrowserClient {
   // webview and dev tools. May be called on either the UI or IO thread.
   virtual bool AllowCrossRendererResourceLoad(
       const GURL& url,
-      content::ResourceType resource_type,
+      blink::mojom::ResourceType resource_type,
       ui::PageTransition page_transition,
       int child_id,
       bool is_incognito,
@@ -205,7 +185,7 @@ class ExtensionsBrowserClient {
   // are not owned by ExtensionPrefs.
   virtual void GetEarlyExtensionPrefsObservers(
       content::BrowserContext* context,
-      std::vector<ExtensionPrefsObserver*>* observers) const = 0;
+      std::vector<EarlyExtensionPrefsObserver*>* observers) const = 0;
 
   // Returns the ProcessManagerDelegate shared across all BrowserContexts. May
   // return NULL in tests or for simple embedders.
@@ -246,10 +226,11 @@ class ExtensionsBrowserClient {
   // ExtensionSystem::Get.
   virtual ExtensionSystemProvider* GetExtensionSystemFactory() = 0;
 
-  // Registers additional interfaces to expose to a RenderFrame.
-  virtual void RegisterExtensionInterfaces(
-      service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
-          registry,
+  // Registers additional interfaces to a binder map for a browser interface
+  // broker.
+  virtual void RegisterBrowserInterfaceBindersForFrame(
+      service_manager::BinderMapWithContext<content::RenderFrameHost*>*
+          binder_map,
       content::RenderFrameHost* render_frame_host,
       const Extension* extension) const = 0;
 
@@ -269,10 +250,8 @@ class ExtensionsBrowserClient {
   virtual void BroadcastEventToRenderers(
       events::HistogramValue histogram_value,
       const std::string& event_name,
-      std::unique_ptr<base::ListValue> args) = 0;
-
-  // Returns the embedder's net::NetLog.
-  virtual net::NetLog* GetNetLog() = 0;
+      std::unique_ptr<base::ListValue> args,
+      bool dispatch_to_off_the_record_profiles) = 0;
 
   // Gets the single ExtensionCache instance shared across the browser process.
   virtual ExtensionCache* GetExtensionCache() = 0;
@@ -310,18 +289,12 @@ class ExtensionsBrowserClient {
   virtual scoped_refptr<update_client::UpdateClient> CreateUpdateClient(
       content::BrowserContext* context);
 
-  virtual std::unique_ptr<ExtensionApiFrameIdMapHelper>
-  CreateExtensionApiFrameIdMapHelper(ExtensionApiFrameIdMap* map);
-
   virtual std::unique_ptr<content::BluetoothChooser> CreateBluetoothChooser(
       content::RenderFrameHost* frame,
       const content::BluetoothChooser::EventHandler& event_handler);
 
   // Returns true if activity logging is enabled for the given |context|.
   virtual bool IsActivityLoggingEnabled(content::BrowserContext* context);
-
-  virtual ExtensionNavigationUIData* GetExtensionNavigationUIData(
-      net::URLRequest* request);
 
   // Retrives the embedder's notion of tab and window ID for a given
   // WebContents. May return -1 for either or both values if the embedder does
@@ -364,6 +337,17 @@ class ExtensionsBrowserClient {
 
   // Returns the user agent used by the content module.
   virtual std::string GetUserAgent() const;
+
+  // Returns whether |scheme| should bypass extension-specific navigation checks
+  // (e.g. whether the |scheme| is allowed to initiate navigations to extension
+  // resources that are not declared as web accessible).
+  virtual bool ShouldSchemeBypassNavigationChecks(
+      const std::string& scheme) const;
+
+  // Returns true when we should enforce 'extraHeaders' option for any
+  // webRequest API callbacks so to mitigate CORS related compatibility issues.
+  virtual bool ShouldForceWebRequestExtraHeaders(
+      content::BrowserContext* context) const;
 
  private:
   std::vector<std::unique_ptr<ExtensionsBrowserAPIProvider>> providers_;

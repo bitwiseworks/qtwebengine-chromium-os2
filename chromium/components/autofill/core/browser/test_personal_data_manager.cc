@@ -10,13 +10,17 @@
 namespace autofill {
 
 TestPersonalDataManager::TestPersonalDataManager()
-    : PersonalDataManager("en-US") {}
+    : PersonalDataManager("en-US", "US") {}
 
 TestPersonalDataManager::~TestPersonalDataManager() {}
 
 void TestPersonalDataManager::OnSyncServiceInitialized(
     syncer::SyncService* sync_service) {
   sync_service_initialized_ = true;
+}
+
+AutofillSyncSigninState TestPersonalDataManager::GetSyncSigninState() const {
+  return sync_and_signin_state_;
 }
 
 void TestPersonalDataManager::RecordUseOf(const AutofillDataModel& data_model) {
@@ -42,11 +46,15 @@ std::string TestPersonalDataManager::SaveImportedCreditCard(
   return imported_credit_card.guid();
 }
 
+void TestPersonalDataManager::AddUpiId(const std::string& profile) {
+  num_times_save_upi_id_called_++;
+}
+
 void TestPersonalDataManager::AddProfile(const AutofillProfile& profile) {
   std::unique_ptr<AutofillProfile> profile_ptr =
       std::make_unique<AutofillProfile>(profile);
   web_profiles_.push_back(std::move(profile_ptr));
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::UpdateProfile(const AutofillProfile& profile) {
@@ -82,7 +90,7 @@ void TestPersonalDataManager::AddCreditCard(const CreditCard& credit_card) {
   std::unique_ptr<CreditCard> local_credit_card =
       std::make_unique<CreditCard>(credit_card);
   local_credit_cards_.push_back(std::move(local_credit_card));
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::DeleteLocalCreditCards(
@@ -90,7 +98,7 @@ void TestPersonalDataManager::DeleteLocalCreditCards(
   for (const auto& card : cards)
     RemoveByGUID(card.guid());
 
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::UpdateCreditCard(const CreditCard& credit_card) {
@@ -182,12 +190,32 @@ void TestPersonalDataManager::LoadCreditCards() {
   }
 }
 
+void TestPersonalDataManager::LoadCreditCardCloudTokenData() {
+  pending_server_creditcard_cloud_token_data_query_ = 127;
+  {
+    std::vector<std::unique_ptr<CreditCardCloudTokenData>> cloud_token_data;
+    server_credit_card_cloud_token_data_.swap(cloud_token_data);
+    std::unique_ptr<WDTypedResult> result = std::make_unique<
+        WDResult<std::vector<std::unique_ptr<CreditCardCloudTokenData>>>>(
+        AUTOFILL_CLOUDTOKEN_RESULT, std::move(cloud_token_data));
+    OnWebDataServiceRequestDone(
+        pending_server_creditcard_cloud_token_data_query_, std::move(result));
+  }
+}
+
+void TestPersonalDataManager::LoadUpiIds() {
+  pending_upi_ids_query_ = 128;
+  {
+    std::vector<std::string> upi_ids = {"vpa@indianbank"};
+    std::unique_ptr<WDTypedResult> result =
+        std::make_unique<WDResult<std::vector<std::string>>>(
+            AUTOFILL_UPI_RESULT, std::move(upi_ids));
+    OnWebDataServiceRequestDone(pending_upi_ids_query_, std::move(result));
+  }
+}
+
 bool TestPersonalDataManager::IsAutofillEnabled() const {
-  // Return the value of autofill_enabled_ if it has been set, otherwise fall
-  // back to the normal behavior of checking the pref_service.
-  if (autofill_enabled_.has_value())
-    return autofill_enabled_.value();
-  return PersonalDataManager::IsAutofillEnabled();
+  return IsAutofillProfileEnabled() || IsAutofillCreditCardEnabled();
 }
 
 bool TestPersonalDataManager::IsAutofillProfileEnabled() const {
@@ -218,8 +246,7 @@ bool TestPersonalDataManager::ShouldSuggestServerCards() const {
   return IsAutofillCreditCardEnabled() && IsAutofillWalletImportEnabled();
 }
 
-std::string TestPersonalDataManager::CountryCodeForCurrentTimezone()
-    const {
+std::string TestPersonalDataManager::CountryCodeForCurrentTimezone() const {
   return timezone_country_code_;
 }
 
@@ -248,7 +275,8 @@ bool TestPersonalDataManager::IsSyncFeatureEnabled() const {
   return sync_feature_enabled_;
 }
 
-AccountInfo TestPersonalDataManager::GetAccountInfoForPaymentsServer() const {
+CoreAccountInfo TestPersonalDataManager::GetAccountInfoForPaymentsServer()
+    const {
   return account_info_;
 }
 
@@ -259,6 +287,10 @@ void TestPersonalDataManager::ClearProfiles() {
 void TestPersonalDataManager::ClearCreditCards() {
   local_credit_cards_.clear();
   server_credit_cards_.clear();
+}
+
+void TestPersonalDataManager::ClearCloudTokenData() {
+  server_credit_card_cloud_token_data_.clear();
 }
 
 AutofillProfile* TestPersonalDataManager::GetProfileWithGUID(const char* guid) {
@@ -282,7 +314,15 @@ void TestPersonalDataManager::AddServerCreditCard(
   std::unique_ptr<CreditCard> server_credit_card =
       std::make_unique<CreditCard>(credit_card);
   server_credit_cards_.push_back(std::move(server_credit_card));
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
+}
+
+void TestPersonalDataManager::AddCloudTokenData(
+    const CreditCardCloudTokenData& cloud_token_data) {
+  std::unique_ptr<CreditCardCloudTokenData> data =
+      std::make_unique<CreditCardCloudTokenData>(cloud_token_data);
+  server_credit_card_cloud_token_data_.push_back(std::move(data));
+  NotifyPersonalDataObserver();
 }
 
 }  // namespace autofill

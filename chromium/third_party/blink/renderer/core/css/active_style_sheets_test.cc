@@ -6,6 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_shadow_root_init.h"
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
@@ -14,23 +15,23 @@
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/css/style_sheet_list.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
-#include "third_party/blink/renderer/core/dom/shadow_root_init.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
 class ActiveStyleSheetsTest : public PageTestBase {
  protected:
   static CSSStyleSheet* CreateSheet(const String& css_text = String()) {
-    StyleSheetContents* contents =
-        StyleSheetContents::Create(CSSParserContext::Create(
+    auto* contents = MakeGarbageCollected<StyleSheetContents>(
+        MakeGarbageCollected<CSSParserContext>(
             kHTMLStandardMode, SecureContextMode::kInsecureContext));
     contents->ParseString(css_text);
     contents->EnsureRuleSet(MediaQueryEvaluator(),
                             kRuleHasDocumentSecurityOrigin);
-    return CSSStyleSheet::Create(contents);
+    return MakeGarbageCollected<CSSStyleSheet>(contents);
   }
 };
 
@@ -401,7 +402,7 @@ TEST_F(ActiveStyleSheetsTest, CompareActiveStyleSheets_AddRemoveNonMatchingMQ) {
 
   CSSStyleSheet* sheet1 = CreateSheet();
   scoped_refptr<MediaQuerySet> mq =
-      MediaQueryParser::ParseMediaQuerySet("(min-width: 9000px)");
+      MediaQueryParser::ParseMediaQuerySet("(min-width: 9000px)", nullptr);
   sheet1->SetMediaQueries(mq);
   sheet1->MatchesMediaQueries(MediaQueryEvaluator());
 
@@ -430,11 +431,12 @@ TEST_F(ApplyRulesetsTest, AddUniversalRuleToDocument) {
   GetStyleEngine().ApplyRuleSetChanges(GetDocument(), ActiveStyleSheetVector(),
                                        new_style_sheets);
 
-  EXPECT_EQ(kSubtreeStyleChange, GetDocument().GetStyleChangeType());
+  EXPECT_EQ(kSubtreeStyleChange,
+            GetDocument().documentElement()->GetStyleChangeType());
 }
 
 TEST_F(ApplyRulesetsTest, AddUniversalRuleToShadowTree) {
-  GetDocument().body()->SetInnerHTMLFromString("<div id=host></div>");
+  GetDocument().body()->setInnerHTML("<div id=host></div>");
   Element* host = GetElementById("host");
   ASSERT_TRUE(host);
 
@@ -468,11 +470,12 @@ TEST_F(ApplyRulesetsTest, AddFontFaceRuleToDocument) {
   GetStyleEngine().ApplyRuleSetChanges(GetDocument(), ActiveStyleSheetVector(),
                                        new_style_sheets);
 
-  EXPECT_EQ(kSubtreeStyleChange, GetDocument().GetStyleChangeType());
+  EXPECT_EQ(kSubtreeStyleChange,
+            GetDocument().documentElement()->GetStyleChangeType());
 }
 
 TEST_F(ApplyRulesetsTest, AddFontFaceRuleToShadowTree) {
-  GetDocument().body()->SetInnerHTMLFromString("<div id=host></div>");
+  GetDocument().body()->setInnerHTML("<div id=host></div>");
   Element* host = GetElementById("host");
   ASSERT_TRUE(host);
 
@@ -497,14 +500,13 @@ TEST_F(ApplyRulesetsTest, AddFontFaceRuleToShadowTree) {
 }
 
 TEST_F(ApplyRulesetsTest, RemoveSheetFromShadowTree) {
-  GetDocument().body()->SetInnerHTMLFromString("<div id=host></div>");
+  GetDocument().body()->setInnerHTML("<div id=host></div>");
   Element* host = GetElementById("host");
   ASSERT_TRUE(host);
 
   ShadowRoot& shadow_root =
       host->AttachShadowRootInternal(ShadowRootType::kOpen);
-  shadow_root.SetInnerHTMLFromString(
-      "<style>::slotted(#dummy){color:pink}</style>");
+  shadow_root.setInnerHTML("<style>::slotted(#dummy){color:pink}</style>");
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_TRUE(GetStyleEngine().TreeBoundaryCrossingScopes().IsEmpty());
@@ -514,7 +516,7 @@ TEST_F(ApplyRulesetsTest, RemoveSheetFromShadowTree) {
   ASSERT_TRUE(sheet);
   ASSERT_TRUE(sheet->IsCSSStyleSheet());
 
-  CSSStyleSheet* css_sheet = ToCSSStyleSheet(sheet);
+  auto* css_sheet = To<CSSStyleSheet>(sheet);
   ActiveStyleSheetVector old_style_sheets;
   old_style_sheets.push_back(
       std::make_pair(css_sheet, &css_sheet->Contents()->GetRuleSet()));

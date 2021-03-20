@@ -24,7 +24,7 @@ namespace {
 static scoped_refptr<SimpleFontData> CreateTestSimpleFontData(
     bool force_rotation = false) {
   FontPlatformData platform_data(
-      SkTypeface::MakeDefault(), CString(), 10, false, false,
+      SkTypeface::MakeDefault(), std::string(), 10, false, false,
       force_rotation ? FontOrientation::kVerticalUpright
                      : FontOrientation::kHorizontal);
   return SimpleFontData::Create(platform_data, nullptr);
@@ -39,7 +39,6 @@ class ShapeResultBloberizerTest : public testing::Test {
     font_description.SetGenericFamily(FontDescription::kStandardFamily);
 
     font = Font(font_description);
-    font.Update(nullptr);
     ASSERT_TRUE(font.CanShapeWordByWord());
     fallback_fonts = nullptr;
     cache = std::make_unique<ShapeCache>();
@@ -267,7 +266,6 @@ TEST_F(ShapeResultBloberizerTest, CommonAccentLeftToRightFillGlyphBuffer) {
   bloberizer.FillGlyphs(run_info, buffer);
 
   Font reference_font(font_description);
-  reference_font.Update(nullptr);
   reference_font.SetCanShapeWordByWordForTesting(false);
 
   ShapeResultBloberizer reference_bloberizer(reference_font, 1);
@@ -305,7 +303,6 @@ TEST_F(ShapeResultBloberizerTest, CommonAccentRightToLeftFillGlyphBuffer) {
   bloberizer.FillGlyphs(run_info, buffer);
 
   Font reference_font(font_description);
-  reference_font.Update(nullptr);
   reference_font.SetCanShapeWordByWordForTesting(false);
 
   ShapeResultBloberizer reference_bloberizer(reference_font, 1);

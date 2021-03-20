@@ -33,6 +33,7 @@
 
 #include "third_party/blink/renderer/core/svg/properties/svg_property_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -44,11 +45,7 @@ class SVGNumber : public SVGPropertyHelper<SVGNumber> {
   typedef SVGNumberTearOff TearOffType;
   typedef float PrimitiveType;
 
-  static SVGNumber* Create(float value = 0.0f) {
-    return MakeGarbageCollected<SVGNumber>(value);
-  }
-
-  explicit SVGNumber(float);
+  explicit SVGNumber(float = 0.0f);
 
   virtual SVGNumber* Clone() const;
 
@@ -59,7 +56,7 @@ class SVGNumber : public SVGPropertyHelper<SVGNumber> {
   virtual SVGParsingError SetValueAsString(const String&);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -81,7 +78,12 @@ class SVGNumber : public SVGPropertyHelper<SVGNumber> {
   float value_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGNumber);
+template <>
+struct DowncastTraits<SVGNumber> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGNumber::ClassType();
+  }
+};
 
 // SVGNumber which also accepts percentage as its value.
 // This is used for <stop> "offset"
@@ -89,11 +91,7 @@ DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGNumber);
 //   offset = "<number> | <percentage>"
 class SVGNumberAcceptPercentage final : public SVGNumber {
  public:
-  static SVGNumberAcceptPercentage* Create(float value = 0) {
-    return MakeGarbageCollected<SVGNumberAcceptPercentage>(value);
-  }
-
-  explicit SVGNumberAcceptPercentage(float);
+  explicit SVGNumberAcceptPercentage(float = 0);
 
   SVGNumber* Clone() const override;
   SVGParsingError SetValueAsString(const String&) override;

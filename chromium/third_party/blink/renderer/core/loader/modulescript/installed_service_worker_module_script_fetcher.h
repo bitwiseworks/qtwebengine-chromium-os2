@@ -15,13 +15,13 @@ class WorkerGlobalScope;
 // ModuleScriptFetcher for retrieving an installed ServiceWorker script
 // from ServiceWorker's script storage.
 class CORE_EXPORT InstalledServiceWorkerModuleScriptFetcher final
-    : public GarbageCollectedFinalized<
-          InstalledServiceWorkerModuleScriptFetcher>,
+    : public GarbageCollected<InstalledServiceWorkerModuleScriptFetcher>,
       public ModuleScriptFetcher {
   USING_GARBAGE_COLLECTED_MIXIN(InstalledServiceWorkerModuleScriptFetcher);
 
  public:
-  explicit InstalledServiceWorkerModuleScriptFetcher(WorkerGlobalScope*);
+  InstalledServiceWorkerModuleScriptFetcher(WorkerGlobalScope*,
+                                            util::PassKey<ModuleScriptLoader>);
 
   // Implements ModuleScriptFetcher.
   void Fetch(FetchParameters&,
@@ -29,7 +29,7 @@ class CORE_EXPORT InstalledServiceWorkerModuleScriptFetcher final
              ModuleGraphLevel,
              ModuleScriptFetcher::Client*) override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   String DebugName() const override {

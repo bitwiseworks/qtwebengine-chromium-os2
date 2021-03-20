@@ -24,11 +24,9 @@ DomDistillerRequestViewBase::DomDistillerRequestViewBase(
     DistilledPagePrefs* distilled_page_prefs)
     : page_count_(0),
       distilled_page_prefs_(distilled_page_prefs),
-      is_error_page_(false) {
-}
+      is_error_page_(false) {}
 
-DomDistillerRequestViewBase::~DomDistillerRequestViewBase() {
-}
+DomDistillerRequestViewBase::~DomDistillerRequestViewBase() {}
 
 void DomDistillerRequestViewBase::FlagAsErrorPage() {
   // Viewer handle is not passed to this in the case of error pages
@@ -91,13 +89,12 @@ void DomDistillerRequestViewBase::OnArticleUpdated(
   }
 }
 
-void DomDistillerRequestViewBase::OnChangeTheme(
-    DistilledPagePrefs::Theme new_theme) {
+void DomDistillerRequestViewBase::OnChangeTheme(mojom::Theme new_theme) {
   SendJavaScript(viewer::GetDistilledPageThemeJs(new_theme));
 }
 
 void DomDistillerRequestViewBase::OnChangeFontFamily(
-    DistilledPagePrefs::FontFamily new_font) {
+    mojom::FontFamily new_font) {
   SendJavaScript(viewer::GetDistilledPageFontFamilyJs(new_font));
 }
 

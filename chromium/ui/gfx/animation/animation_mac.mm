@@ -7,7 +7,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/mac/mac_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 
 // Only available since 10.12.
 @interface NSWorkspace (AvailableSinceSierra)
@@ -15,6 +15,11 @@
 @end
 
 namespace gfx {
+
+// static
+bool Animation::ShouldRenderRichAnimationImpl() {
+  return !PrefersReducedMotion();
+}
 
 // static
 bool Animation::ScrollAnimationsEnabledBySystem() {
@@ -33,21 +38,18 @@ bool Animation::ScrollAnimationsEnabledBySystem() {
 }
 
 // static
-bool Animation::PrefersReducedMotion() {
-  // Because of sandboxing, OS settings should only be queried from the browser
-  // process.
-  DCHECK(base::MessageLoopCurrentForUI::IsSet() ||
-         base::MessageLoopCurrentForIO::IsSet());
+void Animation::UpdatePrefersReducedMotion() {
+  // prefers_reduced_motion_ should only be modified on the UI thread.
+  // TODO(crbug.com/927163): DCHECK this assertion once tests are well-behaved.
 
   // We default to assuming that animations are enabled, to avoid impacting the
   // experience for users on pre-10.12 systems.
-  bool prefers_reduced_motion = false;
+  prefers_reduced_motion_ = false;
   SEL sel = @selector(accessibilityDisplayShouldReduceMotion);
   if ([[NSWorkspace sharedWorkspace] respondsToSelector:sel]) {
-    prefers_reduced_motion =
+    prefers_reduced_motion_ =
         [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
   }
-  return prefers_reduced_motion;
 }
 
 } // namespace gfx

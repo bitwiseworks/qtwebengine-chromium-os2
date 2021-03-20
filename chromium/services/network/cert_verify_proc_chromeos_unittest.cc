@@ -6,14 +6,17 @@
 
 #include <stddef.h>
 
+#include "base/bind_helpers.h"
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_test_nss_chromeos_user.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/cert_verify_result.h"
+#include "net/cert/crl_set.h"
 #include "net/cert/nss_cert_database_chromeos.h"
 #include "net/cert/x509_util.h"
 #include "net/cert/x509_util_nss.h"
+#include "net/log/net_log_with_source.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -46,14 +49,12 @@ class CertVerifyProcChromeOSTest : public testing::Test {
     // Create NSSCertDatabaseChromeOS for each user.
     db_1_.reset(new net::NSSCertDatabaseChromeOS(
         crypto::GetPublicSlotForChromeOSUser(user_1_.username_hash()),
-        crypto::GetPrivateSlotForChromeOSUser(
-            user_1_.username_hash(),
-            base::Callback<void(crypto::ScopedPK11Slot)>())));
+        crypto::GetPrivateSlotForChromeOSUser(user_1_.username_hash(),
+                                              base::NullCallback())));
     db_2_.reset(new net::NSSCertDatabaseChromeOS(
         crypto::GetPublicSlotForChromeOSUser(user_2_.username_hash()),
-        crypto::GetPrivateSlotForChromeOSUser(
-            user_2_.username_hash(),
-            base::Callback<void(crypto::ScopedPK11Slot)>())));
+        crypto::GetPrivateSlotForChromeOSUser(user_2_.username_hash(),
+                                              base::NullCallback())));
 
     // Create default verifier and for each user.
     verify_proc_default_ = new CertVerifyProcChromeOS();
@@ -106,9 +107,11 @@ class CertVerifyProcChromeOSTest : public testing::Test {
       std::string* root_subject_name) {
     int flags = 0;
     net::CertVerifyResult verify_result;
-    int error =
-        verify_proc->Verify(cert, "127.0.0.1", std::string(), flags, NULL,
-                            additional_trust_anchors, &verify_result);
+    int error = verify_proc->Verify(
+        cert, "127.0.0.1",
+        /*ocsp_response=*/std::string(),
+        /*sct_list=*/std::string(), flags, net::CRLSet::BuiltinCRLSet().get(),
+        additional_trust_anchors, &verify_result, net::NetLogWithSource());
     if (!verify_result.verified_cert->intermediate_buffers().empty()) {
       root_subject_name->assign(GetSubjectCN(
           verify_result.verified_cert->intermediate_buffers().back().get()));
@@ -376,7 +379,7 @@ TEST_P(CertVerifyProcChromeOSOrderingTest, DISABLED_TrustThenVerify) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Variations,
     CertVerifyProcChromeOSOrderingTest,
     ::testing::Combine(

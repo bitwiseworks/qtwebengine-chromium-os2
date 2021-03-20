@@ -127,18 +127,15 @@ void PrintMsg_PrintPages_Params::Reset() {
   pages = std::vector<int>();
 }
 
-PrintMsg_PrintFrame_Params::PrintMsg_PrintFrame_Params() {}
-
-PrintMsg_PrintFrame_Params::~PrintMsg_PrintFrame_Params() {}
-
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 PrintHostMsg_RequestPrintPreview_Params::
     PrintHostMsg_RequestPrintPreview_Params()
-    : is_modifiable(false),
+    : is_from_arc(false),
+      is_modifiable(false),
+      is_pdf(false),
       webnode_only(false),
       has_selection(false),
-      selection_only(false) {
-}
+      selection_only(false) {}
 
 PrintHostMsg_RequestPrintPreview_Params::
     ~PrintHostMsg_RequestPrintPreview_Params() {}

@@ -2,11 +2,11 @@
 
 Organization of test case files:
 
-  lsmtest1.c: Data tests. Tests that perform many inserts and deletes on a
+  lsmtest1.c: Data tests. Tests that perform many inserts and deletes on a 
               database file, then verify that the contents of the database can
               be queried.
 
-  lsmtest2.c: Crash tests. Tests that attempt to verify that the database
+  lsmtest2.c: Crash tests. Tests that attempt to verify that the database 
               recovers correctly following an application or system crash.
 
   lsmtest3.c: Rollback tests. Tests that focus on the explicit rollback of

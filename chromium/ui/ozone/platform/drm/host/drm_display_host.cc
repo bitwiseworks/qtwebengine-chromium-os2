@@ -4,6 +4,9 @@
 
 #include "ui/ozone/platform/drm/host/drm_display_host.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -112,6 +115,10 @@ void DrmDisplayHost::SetGammaCorrection(
     const std::vector<display::GammaRampRGBEntry>& gamma_lut) {
   sender_->GpuSetGammaCorrection(snapshot_->display_id(), degamma_lut,
                                  gamma_lut);
+}
+
+void DrmDisplayHost::SetPrivacyScreen(bool enabled) {
+  sender_->GpuSetPrivacyScreen(snapshot_->display_id(), enabled);
 }
 
 void DrmDisplayHost::OnGpuProcessLaunched() {}

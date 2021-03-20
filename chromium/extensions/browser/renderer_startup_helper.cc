@@ -23,14 +23,16 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
+#include "extensions/browser/service_worker_task_queue.h"
+#include "extensions/common/activation_sequence.h"
 #include "extensions/common/cors_util.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/features/feature_session_type.h"
+#include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "services/network/public/cpp/features.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "url/origin.h"
 
@@ -57,40 +59,44 @@ bool IsExtensionVisibleToContext(const Extension& extension,
          util::IsIncognitoEnabled(extension.id(), browser_context);
 }
 
+// Returns the current ActivationSequence of |extension| if the extension is
+// Service Worker-based, otherwise returns base::nullopt.
+base::Optional<ActivationSequence> GetWorkerActivationSequence(
+    BrowserContext* browser_context,
+    const Extension& extension) {
+  if (BackgroundInfo::IsServiceWorkerBased(&extension)) {
+    return ServiceWorkerTaskQueue::Get(browser_context)
+        ->GetCurrentSequence(extension.id());
+  }
+  return base::nullopt;
+}
+
 }  // namespace
 
 RendererStartupHelper::RendererStartupHelper(BrowserContext* browser_context)
     : browser_context_(browser_context) {
   DCHECK(browser_context);
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
-                 content::NotificationService::AllBrowserContextsAndSources());
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_TERMINATED,
-                 content::NotificationService::AllBrowserContextsAndSources());
-  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CLOSED,
-                 content::NotificationService::AllBrowserContextsAndSources());
 }
 
-RendererStartupHelper::~RendererStartupHelper() {}
+RendererStartupHelper::~RendererStartupHelper() {
+  for (auto* process : initialized_processes_)
+    process->RemoveObserver(this);
+}
 
-void RendererStartupHelper::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  switch (type) {
-    case content::NOTIFICATION_RENDERER_PROCESS_CREATED:
-      InitializeProcess(
-          content::Source<content::RenderProcessHost>(source).ptr());
-      break;
-    case content::NOTIFICATION_RENDERER_PROCESS_TERMINATED:
-    // Fall through.
-    case content::NOTIFICATION_RENDERER_PROCESS_CLOSED:
-      // This is needed to take care of the case when a RenderProcessHost is
-      // reused for a different renderer process.
-      UntrackProcess(content::Source<content::RenderProcessHost>(source).ptr());
-      break;
-    default:
-      NOTREACHED() << "Unexpected notification: " << type;
-  }
+void RendererStartupHelper::OnRenderProcessHostCreated(
+    content::RenderProcessHost* host) {
+  InitializeProcess(host);
+}
+
+void RendererStartupHelper::RenderProcessExited(
+    content::RenderProcessHost* host,
+    const content::ChildProcessTerminationInfo& info) {
+  UntrackProcess(host);
+}
+
+void RendererStartupHelper::RenderProcessHostDestroyed(
+    content::RenderProcessHost* host) {
+  UntrackProcess(host);
 }
 
 void RendererStartupHelper::InitializeProcess(
@@ -135,24 +141,26 @@ void RendererStartupHelper::InitializeProcess(
         WebViewGuest::GetPartitionID(process)));
   }
 
+  BrowserContext* renderer_context = process->GetBrowserContext();
+
   // Load default policy_blocked_hosts and policy_allowed_hosts settings, part
   // of the ExtensionSettings policy.
   ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params params;
+  int context_id = util::GetBrowserContextId(renderer_context);
   params.default_policy_blocked_hosts =
-      PermissionsData::default_policy_blocked_hosts().Clone();
+      PermissionsData::GetDefaultPolicyBlockedHosts(context_id);
   params.default_policy_allowed_hosts =
-      PermissionsData::default_policy_allowed_hosts().Clone();
+      PermissionsData::GetDefaultPolicyAllowedHosts(context_id);
   process->Send(new ExtensionMsg_UpdateDefaultPolicyHostRestrictions(params));
 
   // Loaded extensions.
   std::vector<ExtensionMsg_Loaded_Params> loaded_extensions;
-  BrowserContext* renderer_context = process->GetBrowserContext();
   const ExtensionSet& extensions =
       ExtensionRegistry::Get(browser_context_)->enabled_extensions();
   for (const auto& ext : extensions) {
     // OnLoadedExtension should have already been called for the extension.
-    DCHECK(base::ContainsKey(extension_process_map_, ext->id()));
-    DCHECK(!base::ContainsKey(extension_process_map_[ext->id()], process));
+    DCHECK(base::Contains(extension_process_map_, ext->id()));
+    DCHECK(!base::Contains(extension_process_map_[ext->id()], process));
 
     if (!IsExtensionVisibleToContext(*ext, renderer_context))
       continue;
@@ -162,8 +170,9 @@ void RendererStartupHelper::InitializeProcess(
     // I am not sure this is possible to know this here, at such a low
     // level of the stack. Perhaps site isolation can help.
     bool include_tab_permissions = true;
-    loaded_extensions.push_back(
-        ExtensionMsg_Loaded_Params(ext.get(), include_tab_permissions));
+    loaded_extensions.push_back(ExtensionMsg_Loaded_Params(
+        ext.get(), include_tab_permissions,
+        GetWorkerActivationSequence(renderer_context, *ext)));
     extension_process_map_[ext->id()].insert(process);
   }
 
@@ -174,14 +183,15 @@ void RendererStartupHelper::InitializeProcess(
     for (const ExtensionId& id : iter->second) {
       // The extension should be loaded in the process.
       DCHECK(extensions.Contains(id));
-      DCHECK(base::ContainsKey(extension_process_map_, id));
-      DCHECK(base::ContainsKey(extension_process_map_[id], process));
+      DCHECK(base::Contains(extension_process_map_, id));
+      DCHECK(base::Contains(extension_process_map_[id], process));
       process->Send(new ExtensionMsg_ActivateExtension(id));
     }
   }
 
   initialized_processes_.insert(process);
   pending_active_extensions_.erase(process);
+  process->AddObserver(this);
 }
 
 void RendererStartupHelper::UntrackProcess(
@@ -191,6 +201,7 @@ void RendererStartupHelper::UntrackProcess(
     return;
   }
 
+  process->RemoveObserver(this);
   initialized_processes_.erase(process);
   pending_active_extensions_.erase(process);
   for (auto& extension_process_pair : extension_process_map_)
@@ -202,7 +213,7 @@ void RendererStartupHelper::ActivateExtensionInProcess(
     content::RenderProcessHost* process) {
   // The extension should have been loaded already. Dump without crashing to
   // debug crbug.com/528026.
-  if (!base::ContainsKey(extension_process_map_, extension.id())) {
+  if (!base::Contains(extension_process_map_, extension.id())) {
 #if DCHECK_IS_ON()
     NOTREACHED() << "Extension " << extension.id()
                  << "activated before loading";
@@ -215,8 +226,8 @@ void RendererStartupHelper::ActivateExtensionInProcess(
   if (!IsExtensionVisibleToContext(extension, process->GetBrowserContext()))
     return;
 
-  if (base::ContainsKey(initialized_processes_, process)) {
-    DCHECK(base::ContainsKey(extension_process_map_[extension.id()], process));
+  if (base::Contains(initialized_processes_, process)) {
+    DCHECK(base::Contains(extension_process_map_[extension.id()], process));
     process->Send(new ExtensionMsg_ActivateExtension(extension.id()));
   } else {
     pending_active_extensions_[process].insert(extension.id());
@@ -227,7 +238,7 @@ void RendererStartupHelper::OnExtensionLoaded(const Extension& extension) {
   // Extension was already loaded.
   // TODO(crbug.com/708230): Ensure that clients don't call this for an
   // already loaded extension and change this to a DCHECK.
-  if (base::ContainsKey(extension_process_map_, extension.id()))
+  if (base::Contains(extension_process_map_, extension.id()))
     return;
 
   // Mark the extension as loaded.
@@ -243,12 +254,9 @@ void RendererStartupHelper::OnExtensionLoaded(const Extension& extension) {
   // asynchronously.
   url::Origin extension_origin = url::Origin::Create(extension.url());
   std::vector<network::mojom::CorsOriginPatternPtr> allow_list =
-      CreateCorsOriginAccessAllowList(extension);
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    ExtensionsClient::Get()->AddOriginAccessPermissions(extension, true,
-                                                        &allow_list);
-  }
-
+      CreateCorsOriginAccessAllowList(
+          extension,
+          PermissionsData::EffectiveHostPermissionsMode::kOmitTabSpecific);
   browser_context_->SetCorsOriginAccessListForOrigin(
       extension_origin, std::move(allow_list),
       CreateCorsOriginAccessBlockList(extension), base::DoNothing::Once());
@@ -258,7 +266,8 @@ void RendererStartupHelper::OnExtensionLoaded(const Extension& extension) {
   // Uninitialized renderers will be informed of the extension load during the
   // first batch of messages.
   std::vector<ExtensionMsg_Loaded_Params> params;
-  params.emplace_back(&extension, false /* no tab permissions */);
+  params.emplace_back(&extension, false /* no tab permissions */,
+                      GetWorkerActivationSequence(browser_context_, extension));
 
   for (content::RenderProcessHost* process : initialized_processes_) {
     if (!IsExtensionVisibleToContext(extension, process->GetBrowserContext()))
@@ -272,13 +281,13 @@ void RendererStartupHelper::OnExtensionUnloaded(const Extension& extension) {
   // Extension is not loaded.
   // TODO(crbug.com/708230): Ensure that clients call this for a loaded
   // extension only and change this to a DCHECK.
-  if (!base::ContainsKey(extension_process_map_, extension.id()))
+  if (!base::Contains(extension_process_map_, extension.id()))
     return;
 
   const std::set<content::RenderProcessHost*>& loaded_process_set =
       extension_process_map_[extension.id()];
   for (content::RenderProcessHost* process : loaded_process_set) {
-    DCHECK(base::ContainsKey(initialized_processes_, process));
+    DCHECK(base::Contains(initialized_processes_, process));
     process->Send(new ExtensionMsg_Unloaded(extension.id()));
   }
 

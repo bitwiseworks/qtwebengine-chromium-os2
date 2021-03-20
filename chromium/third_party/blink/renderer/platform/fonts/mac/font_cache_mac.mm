@@ -29,15 +29,20 @@
 
 #import "third_party/blink/renderer/platform/fonts/font_cache.h"
 
-#import <AppKit/AppKit.h>
 #include <memory>
+
+#import <AppKit/AppKit.h>
+#import <CoreText/CoreText.h>
+
 #include "base/location.h"
+#include "base/mac/foundation_util.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_face_creation_params.h"
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/mac/font_matcher_mac.h"
+#include "third_party/blink/renderer/platform/fonts/mac/font_platform_data_mac.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
@@ -56,6 +61,22 @@
            forCharacter:(UniChar)uc
              inLanguage:(id)useNil;
 @end
+
+namespace {
+
+NSString* GetLocalizedString(CTFontDescriptorRef fd, CFStringRef attribute) {
+  base::ScopedCFTypeRef<CFStringRef> cf_str(base::mac::CFCast<CFStringRef>(
+      CTFontDescriptorCopyLocalizedAttribute(fd, attribute, nullptr)));
+  return [base::mac::CFToNSCast(cf_str.release()) autorelease];
+}
+
+NSString* GetString(CTFontDescriptorRef fd, CFStringRef attribute) {
+  base::ScopedCFTypeRef<CFStringRef> cf_str(base::mac::CFCast<CFStringRef>(
+      CTFontDescriptorCopyAttribute(fd, attribute)));
+  return [base::mac::CFToNSCast(cf_str.release()) autorelease];
+}
+
+}  // namespace
 
 namespace blink {
 
@@ -131,7 +152,7 @@ scoped_refptr<SimpleFontData> FontCache::PlatformFallbackFontForCharacter(
 
   const FontPlatformData& platform_data =
       font_data_to_substitute->PlatformData();
-  NSFont* ns_font = toNSFont(platform_data.CtFont());
+  NSFont* ns_font = base::mac::CFToNSCast(platform_data.CtFont());
 
   NSString* string =
       [[NSString alloc] initWithCharactersNoCopy:code_units
@@ -215,14 +236,17 @@ scoped_refptr<SimpleFontData> FontCache::PlatformFallbackFontForCharacter(
       !IsAppKitFontWeightBold(substitute_font_weight) &&
       ![substitute_font.familyName isEqual:@"Apple Color Emoji"];
 
-  FontPlatformData alternate_font(
+  std::unique_ptr<FontPlatformData> alternate_font = FontPlatformDataFromNSFont(
       substitute_font, platform_data.size(), synthetic_bold,
       (traits & NSFontItalicTrait) &&
           !(substitute_font_traits & NSFontItalicTrait),
-      platform_data.Orientation(),
+      platform_data.Orientation(), font_description.FontOpticalSizing(),
       nullptr);  // No variation paramaters in fallback.
 
-  return FontDataFromFontPlatformData(&alternate_font, kDoNotRetain);
+  if (!alternate_font)
+    return nullptr;
+
+  return FontDataFromFontPlatformData(alternate_font.get(), kDoNotRetain);
 }
 
 scoped_refptr<SimpleFontData> FontCache::GetLastResortFallbackFont(
@@ -291,14 +315,45 @@ std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
   // font loading failing.  Out-of-process loading occurs for registered fonts
   // stored in non-system locations.  When loading fails, we do not want to use
   // the returned FontPlatformData since it will not have a valid SkTypeface.
-  std::unique_ptr<FontPlatformData> platform_data =
-      std::make_unique<FontPlatformData>(
-          platform_font, size, synthetic_bold, synthetic_italic,
-          font_description.Orientation(), font_description.VariationSettings());
-  if (!platform_data->Typeface()) {
+  std::unique_ptr<FontPlatformData> platform_data = FontPlatformDataFromNSFont(
+      platform_font, size, synthetic_bold, synthetic_italic,
+      font_description.Orientation(), font_description.FontOpticalSizing(),
+      font_description.VariationSettings());
+  if (!platform_data || !platform_data->Typeface()) {
     return nullptr;
   }
   return platform_data;
+}
+
+std::vector<FontEnumerationEntry> FontCache::EnumeratePlatformAvailableFonts() {
+  DCHECK(RuntimeEnabledFeatures::FontAccessEnabled());
+  @autoreleasepool {
+    std::vector<FontEnumerationEntry> output;
+
+    CFTypeRef values[1] = {kCFBooleanTrue};
+    base::ScopedCFTypeRef<CFDictionaryRef> options(CFDictionaryCreate(
+        kCFAllocatorDefault,
+        (const void**)kCTFontCollectionRemoveDuplicatesOption,
+        (const void**)&values,
+        /*numValues=*/1, &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks));
+    base::ScopedCFTypeRef<CTFontCollectionRef> collection(
+        CTFontCollectionCreateFromAvailableFonts(options));
+
+    base::ScopedCFTypeRef<CFArrayRef> font_descs(
+        CTFontCollectionCreateMatchingFontDescriptors(collection));
+
+    for (CFIndex i = 0; i < CFArrayGetCount(font_descs); ++i) {
+      CTFontDescriptorRef fd = base::mac::CFCast<CTFontDescriptorRef>(
+          CFArrayGetValueAtIndex(font_descs, i));
+      NSString* postscript_name = GetString(fd, kCTFontNameAttribute);
+      NSString* full_name = GetLocalizedString(fd, kCTFontDisplayNameAttribute);
+      NSString* family = GetLocalizedString(fd, kCTFontFamilyNameAttribute);
+      output.push_back(FontEnumerationEntry{String(postscript_name),
+                                            String(full_name), String(family)});
+    }
+    return output;
+  }
 }
 
 }  // namespace blink

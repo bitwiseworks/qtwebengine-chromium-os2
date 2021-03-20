@@ -10,11 +10,11 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/common/scheduling_priority.h"
 #include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/sync_point_manager.h"
-#include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/ipc/service/command_buffer_stub.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "media/gpu/gles2_decoder_helper.h"
@@ -28,13 +28,22 @@ class CommandBufferHelperImpl
     : public CommandBufferHelper,
       public gpu::CommandBufferStub::DestructionObserver {
  public:
-  explicit CommandBufferHelperImpl(gpu::CommandBufferStub* stub) : stub_(stub) {
+  explicit CommandBufferHelperImpl(gpu::CommandBufferStub* stub)
+      : CommandBufferHelper(stub->channel()->task_runner()), stub_(stub) {
     DVLOG(1) << __func__;
     DCHECK(stub_->channel()->task_runner()->BelongsToCurrentThread());
 
     stub_->AddDestructionObserver(this);
     wait_sequence_id_ = stub_->channel()->scheduler()->CreateSequence(
-        gpu::SchedulingPriority::kNormal);
+#if defined(OS_MACOSX)
+        // Workaround for crbug.com/1035750.
+        // TODO(sandersd): Investigate whether there is a deeper scheduling
+        // problem that can be resolved.
+        gpu::SchedulingPriority::kHigh
+#else
+        gpu::SchedulingPriority::kNormal
+#endif  // defined(OS_MACOSX)
+    );
     decoder_helper_ = GLES2DecoderHelper::Create(stub_->decoder_context());
   }
 
@@ -207,6 +216,11 @@ class CommandBufferHelperImpl
 };
 
 }  // namespace
+
+CommandBufferHelper::CommandBufferHelper(
+    scoped_refptr<base::SequencedTaskRunner> task_runner)
+    : base::RefCountedDeleteOnSequence<CommandBufferHelper>(
+          std::move(task_runner)) {}
 
 // static
 scoped_refptr<CommandBufferHelper> CommandBufferHelper::Create(

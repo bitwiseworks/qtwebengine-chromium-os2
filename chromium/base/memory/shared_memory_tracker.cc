@@ -4,7 +4,6 @@
 
 #include "base/memory/shared_memory_tracker.h"
 
-#include "base/memory/shared_memory.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -34,16 +33,6 @@ SharedMemoryTracker::GetGlobalDumpIdForTracing(const UnguessableToken& id) {
   return trace_event::MemoryAllocatorDumpGuid(dump_name);
 }
 
-// static
-const trace_event::MemoryAllocatorDump*
-SharedMemoryTracker::GetOrCreateSharedMemoryDump(
-    const SharedMemory* shared_memory,
-    trace_event::ProcessMemoryDump* pmd) {
-  return GetOrCreateSharedMemoryDumpInternal(shared_memory->memory(),
-                                             shared_memory->mapped_size(),
-                                             shared_memory->mapped_id(), pmd);
-}
-
 const trace_event::MemoryAllocatorDump*
 SharedMemoryTracker::GetOrCreateSharedMemoryDump(
     const SharedMemoryMapping& shared_memory,
@@ -51,23 +40,6 @@ SharedMemoryTracker::GetOrCreateSharedMemoryDump(
   return GetOrCreateSharedMemoryDumpInternal(shared_memory.raw_memory_ptr(),
                                              shared_memory.mapped_size(),
                                              shared_memory.guid(), pmd);
-}
-
-void SharedMemoryTracker::IncrementMemoryUsage(
-    const SharedMemory& shared_memory) {
-  AutoLock hold(usages_lock_);
-#if defined(OS_OS2)
-  auto found = usages_.find(shared_memory.memory());
-  if (found != usages_.end()) {
-    ++found->second.count;
-    DCHECK(found->second.count);
-  }
-  else
-#else
-  DCHECK(usages_.find(shared_memory.memory()) == usages_.end());
-#endif
-  usages_.emplace(shared_memory.memory(), UsageInfo(shared_memory.mapped_size(),
-                                                    shared_memory.mapped_id()));
 }
 
 void SharedMemoryTracker::IncrementMemoryUsage(
@@ -84,24 +56,6 @@ void SharedMemoryTracker::IncrementMemoryUsage(
 #endif
   usages_.emplace(mapping.raw_memory_ptr(),
                   UsageInfo(mapping.mapped_size(), mapping.guid()));
-}
-
-void SharedMemoryTracker::DecrementMemoryUsage(
-    const SharedMemory& shared_memory) {
-  AutoLock hold(usages_lock_);
-#if defined(OS_OS2)
-  auto found = usages_.find(shared_memory.memory());
-  DCHECK(found != usages_.end());
-  if (found != usages_.end()) {
-    DCHECK(found->second.count);
-    --found->second.count;
-    if (!found->second.count)
-      usages_.erase(found);
-  }
-#else
-  DCHECK(usages_.find(shared_memory.memory()) != usages_.end());
-  usages_.erase(shared_memory.memory());
-#endif
 }
 
 void SharedMemoryTracker::DecrementMemoryUsage(

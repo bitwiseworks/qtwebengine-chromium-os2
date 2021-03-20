@@ -7,6 +7,10 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/events/gesture_event.h"
+#include "third_party/blink/renderer/core/events/keyboard_event.h"
+#include "third_party/blink/renderer/core/events/mouse_event.h"
+#include "third_party/blink/renderer/core/events/pointer_event.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -18,7 +22,7 @@ namespace blink {
 
 MediaControlVolumeSliderElement::MediaControlVolumeSliderElement(
     MediaControlsImpl& media_controls)
-    : MediaControlSliderElement(media_controls, kMediaIgnore) {
+    : MediaControlSliderElement(media_controls) {
   setAttribute(html_names::kMaxAttr, "1");
   setAttribute(html_names::kAriaValuemaxAttr, "100");
   setAttribute(html_names::kAriaValueminAttr, "0");
@@ -26,9 +30,7 @@ MediaControlVolumeSliderElement::MediaControlVolumeSliderElement(
   SetShadowPseudoId(AtomicString("-webkit-media-controls-volume-slider"));
   SetVolumeInternal(MediaElement().volume());
 
-  // The slider starts closed in modern media controls.
-  if (MediaControlsImpl::IsModern())
-    CloseSlider();
+  CloseSlider();
 }
 
 void MediaControlVolumeSliderElement::SetVolume(double volume) {
@@ -71,8 +73,8 @@ void MediaControlVolumeSliderElement::DefaultEventHandler(Event& event) {
 
   MediaControlInputElement::DefaultEventHandler(event);
 
-  if (event.IsMouseEvent() || event.IsKeyboardEvent() ||
-      event.IsGestureEvent() || event.IsPointerEvent()) {
+  if (IsA<MouseEvent>(event) || IsA<KeyboardEvent>(event) ||
+      IsA<GestureEvent>(event) || IsA<PointerEvent>(event)) {
     MaybeRecordInteracted();
   }
 
@@ -93,15 +95,11 @@ void MediaControlVolumeSliderElement::DefaultEventHandler(Event& event) {
     SetVolumeInternal(volume);
   }
 
-  if (event.type() == event_type_names::kMouseover ||
-      event.type() == event_type_names::kFocus) {
+  if (event.type() == event_type_names::kFocus)
     GetMediaControls().OpenVolumeSliderIfNecessary();
-  }
 
-  if (event.type() == event_type_names::kMouseout ||
-      event.type() == event_type_names::kBlur) {
+  if (event.type() == event_type_names::kBlur)
     GetMediaControls().CloseVolumeSliderIfNecessary();
-  }
 }
 
 void MediaControlVolumeSliderElement::SetVolumeInternal(double volume) {

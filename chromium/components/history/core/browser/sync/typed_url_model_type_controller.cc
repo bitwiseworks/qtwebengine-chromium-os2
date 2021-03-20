@@ -40,16 +40,19 @@ TypedURLModelTypeController::TypedURLModelTypeController(
   pref_registrar_.Init(pref_service_);
   pref_registrar_.Add(
       history_disabled_pref_name_,
-      base::Bind(
+      base::BindRepeating(
           &TypedURLModelTypeController::OnSavingBrowserHistoryDisabledChanged,
           base::AsWeakPtr(this)));
 }
 
 TypedURLModelTypeController::~TypedURLModelTypeController() {}
 
-bool TypedURLModelTypeController::ReadyForStart() const {
-  return history_service_ &&
-         !pref_service_->GetBoolean(history_disabled_pref_name_);
+syncer::DataTypeController::PreconditionState
+TypedURLModelTypeController::GetPreconditionState() const {
+  return (history_service_ &&
+          !pref_service_->GetBoolean(history_disabled_pref_name_))
+             ? PreconditionState::kPreconditionsMet
+             : PreconditionState::kMustStopAndClearData;
 }
 
 void TypedURLModelTypeController::OnSavingBrowserHistoryDisabledChanged() {
@@ -57,6 +60,7 @@ void TypedURLModelTypeController::OnSavingBrowserHistoryDisabledChanged() {
     // We've turned off history persistence, so if we are running,
     // generate an unrecoverable error. This can be fixed by restarting
     // Chrome (on restart, typed urls will not be a registered type).
+    // TODO(crbug.com/990802): Adopt DataTypePreconditionChanged().
     if (state() != NOT_RUNNING && state() != STOPPING) {
       ReportModelError(
           syncer::SyncError::DATATYPE_POLICY_ERROR,

@@ -8,7 +8,6 @@
 
 #include <algorithm>
 
-#include "base/macros.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -75,6 +74,7 @@ class ZeroCopyRasterBufferImpl : public RasterBuffer {
         resource_format_(in_use_resource.format()),
         resource_color_space_(in_use_resource.color_space()),
         gpu_memory_buffer_(std::move(backing_->gpu_memory_buffer)) {}
+  ZeroCopyRasterBufferImpl(const ZeroCopyRasterBufferImpl&) = delete;
 
   ~ZeroCopyRasterBufferImpl() override {
     // If GpuMemoryBuffer allocation failed (https://crbug.com/554541), then
@@ -107,6 +107,8 @@ class ZeroCopyRasterBufferImpl : public RasterBuffer {
     backing_->gpu_memory_buffer = std::move(gpu_memory_buffer_);
   }
 
+  ZeroCopyRasterBufferImpl& operator=(const ZeroCopyRasterBufferImpl&) = delete;
+
   // Overridden from RasterBuffer:
   void Playback(const RasterSource* raster_source,
                 const gfx::Rect& raster_full_rect,
@@ -127,7 +129,7 @@ class ZeroCopyRasterBufferImpl : public RasterBuffer {
         return;
     }
 
-    DCHECK_EQ(1u, gfx::NumberOfPlanesForBufferFormat(
+    DCHECK_EQ(1u, gfx::NumberOfPlanesForLinearBufferFormat(
                       gpu_memory_buffer_->GetFormat()));
     bool rv = gpu_memory_buffer_->Map();
     DCHECK(rv);
@@ -154,8 +156,6 @@ class ZeroCopyRasterBufferImpl : public RasterBuffer {
   viz::ResourceFormat resource_format_;
   gfx::ColorSpace resource_color_space_;
   std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer_;
-
-  DISALLOW_COPY_AND_ASSIGN(ZeroCopyRasterBufferImpl);
 };
 
 }  // namespace
@@ -174,7 +174,10 @@ std::unique_ptr<RasterBuffer>
 ZeroCopyRasterBufferProvider::AcquireBufferForRaster(
     const ResourcePool::InUsePoolResource& resource,
     uint64_t resource_content_id,
-    uint64_t previous_content_id) {
+    uint64_t previous_content_id,
+    bool depends_on_at_raster_decodes,
+    bool depends_on_hardware_accelerated_jpeg_candidates,
+    bool depends_on_hardware_accelerated_webp_candidates) {
   if (!resource.gpu_backing()) {
     auto backing = std::make_unique<ZeroCopyGpuBacking>();
     const gpu::Capabilities& caps =
@@ -202,10 +205,6 @@ void ZeroCopyRasterBufferProvider::Flush() {}
 
 viz::ResourceFormat ZeroCopyRasterBufferProvider::GetResourceFormat() const {
   return tile_format_;
-}
-
-bool ZeroCopyRasterBufferProvider::IsResourceSwizzleRequired() const {
-  return !viz::PlatformColor::SameComponentOrder(GetResourceFormat());
 }
 
 bool ZeroCopyRasterBufferProvider::IsResourcePremultiplied() const {

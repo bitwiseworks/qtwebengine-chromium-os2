@@ -35,6 +35,7 @@ typedef CJS_Result (*CJX_MethodCall)(
     CJX_Object* obj,
     CFX_V8* runtime,
     const std::vector<v8::Local<v8::Value>>& params);
+
 struct CJX_MethodSpec {
   const char* pName;
   CJX_MethodCall pMethodCall;
@@ -56,33 +57,23 @@ enum XFA_SOM_MESSAGETYPE {
 
 class CJX_Object {
  public:
-  // Similar, but not exactly equal to XFA_Element enum.
-  // TODO(tsepez): unify with XFA_Element.
+  // Corresponds 1:1 with CJX_ subclasses.
   enum class TypeTag {
     Boolean,
-    Comb,
     Container,
-    DataValue,
     DataWindow,
-    Date,
-    DateTime,
-    Decimal,
     Delta,
     Desc,
     Draw,
     Encrypt,
     EventPseudoModel,
     ExclGroup,
-    ExData,
     Extras,
     Field,
-    Float,
     Form,
     Handler,
     HostPseudoModel,
-    Image,
     InstanceManager,
-    Integer,
     LayoutPseudoModel,
     List,
     LogPseudoModel,
@@ -92,19 +83,15 @@ class CJX_Object {
     Object,
     Occur,
     Packet,
-    Picture,
     Script,
     SignaturePesudoModel,
     Source,
     Subform,
     SubformSet,
     Template,
-    Text,
     TextNode,
-    Time,
     Tree,
     TreeList,
-    Value,
     WsdlConnection,
     Xfa,
   };
@@ -122,8 +109,8 @@ class CJX_Object {
   void SetCalcRecursionCount(size_t count) { calc_recursion_count_ = count; }
   size_t GetCalcRecursionCount() const { return calc_recursion_count_; }
 
-  void SetLayoutItem(CXFA_LayoutItem* item) { layout_item_ = item; }
-  CXFA_LayoutItem* GetLayoutItem() const { return layout_item_; }
+  void SetLayoutItem(CXFA_LayoutItem* item) { layout_item_.Reset(item); }
+  CXFA_LayoutItem* GetLayoutItem() const { return layout_item_.Get(); }
 
   bool HasMethod(const WideString& func) const;
   CJS_Result RunMethod(const WideString& func,
@@ -176,16 +163,12 @@ class CJX_Object {
   JSE_PROP(ScriptSomBorderWidth);
   JSE_PROP(ScriptSomValidationMessage);
   JSE_PROP(ScriptSomMandatoryMessage);
-  JSE_PROP(ScriptFieldLength);
   JSE_PROP(ScriptSomDefaultValue);
   JSE_PROP(ScriptSomDefaultValue_Read);
   JSE_PROP(ScriptSomDataNode);
   JSE_PROP(ScriptSomMandatory);
   JSE_PROP(ScriptSomInstanceIndex);
-  JSE_PROP(ScriptSubformInstanceManager);
   JSE_PROP(ScriptSubmitFormatMode);
-  JSE_PROP(ScriptFormChecksumS);
-  JSE_PROP(ScriptExclGroupErrorText);
 
   void ScriptSomMessage(CFXJSE_Value* pValue,
                         bool bSetting,
@@ -193,16 +176,16 @@ class CJX_Object {
 
   Optional<WideString> TryNamespace();
 
-  Optional<int32_t> TryInteger(XFA_Attribute eAttr, bool bUseDefault);
+  Optional<int32_t> TryInteger(XFA_Attribute eAttr, bool bUseDefault) const;
   void SetInteger(XFA_Attribute eAttr, int32_t iValue, bool bNotify);
-  int32_t GetInteger(XFA_Attribute eAttr);
+  int32_t GetInteger(XFA_Attribute eAttr) const;
 
-  Optional<WideString> TryCData(XFA_Attribute eAttr, bool bUseDefault);
+  Optional<WideString> TryCData(XFA_Attribute eAttr, bool bUseDefault) const;
   void SetCData(XFA_Attribute eAttr,
                 const WideString& wsValue,
                 bool bNotify,
                 bool bScriptModify);
-  WideString GetCData(XFA_Attribute eAttr);
+  WideString GetCData(XFA_Attribute eAttr) const;
 
   Optional<XFA_AttributeValue> TryEnum(XFA_Attribute eAttr,
                                        bool bUseDefault) const;
@@ -218,15 +201,13 @@ class CJX_Object {
   Optional<float> TryMeasureAsFloat(XFA_Attribute attr) const;
   void SetMeasure(XFA_Attribute eAttr, CXFA_Measurement mValue, bool bNotify);
   CXFA_Measurement GetMeasure(XFA_Attribute eAttr) const;
+  float GetMeasureInUnit(XFA_Attribute eAttr, XFA_Unit unit) const;
 
   void MergeAllData(CXFA_Object* pDstModule);
 
   void SetCalcData(std::unique_ptr<CXFA_CalcData> data);
   CXFA_CalcData* GetCalcData() const { return calc_data_.get(); }
   std::unique_ptr<CXFA_CalcData> ReleaseCalcData();
-
-  int32_t InstanceManager_SetInstances(int32_t iDesired);
-  int32_t InstanceManager_MoveInstance(int32_t iTo, int32_t iFrom);
 
   void ThrowInvalidPropertyException() const;
   void ThrowArgumentMismatchException() const;
@@ -263,7 +244,7 @@ class CJX_Object {
   XFA_MAPMODULEDATA* GetMapModuleData() const;
   void SetMapModuleValue(void* pKey, void* pValue);
   Optional<void*> GetMapModuleValue(void* pKey) const;
-  Optional<WideString> GetMapModuleString(void* pKey);
+  Optional<WideString> GetMapModuleString(void* pKey) const;
   void SetMapModuleBuffer(void* pKey,
                           void* pValue,
                           int32_t iBytes,
@@ -275,13 +256,7 @@ class CJX_Object {
   void MoveBufferMapData(CXFA_Object* pDstModule);
 
   UnownedPtr<CXFA_Object> object_;
-  // This is an UnownedPtr but, due to lifetime issues, can't be marked as such
-  // at this point. The CJX_Node is freed by its parent CXFA_Node. The CXFA_Node
-  // will be freed during CXFA_NodeHolder destruction (CXFA_Document
-  // destruction as the only implementation). This will happen after the
-  // CXFA_LayoutProcessor is destroyed in the CXFA_Document, leaving this as a
-  // bad unowned ptr.
-  CXFA_LayoutItem* layout_item_ = nullptr;
+  UnownedPtr<CXFA_LayoutItem> layout_item_;
   std::unique_ptr<XFA_MAPMODULEDATA> map_module_data_;
   std::unique_ptr<CXFA_CalcData> calc_data_;
   std::map<ByteString, CJX_MethodCall> method_specs_;

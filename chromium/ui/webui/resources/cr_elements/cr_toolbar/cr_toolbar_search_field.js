@@ -47,27 +47,27 @@ Polymer({
   },
 
   /** @return {!HTMLInputElement} */
-  getSearchInput: function() {
-    return this.$.searchInput;
+  getSearchInput() {
+    return /** @type {!HTMLInputElement} */ (this.$.searchInput);
   },
 
   /** @return {boolean} */
-  isSearchFocused: function() {
+  isSearchFocused() {
     return this.searchFocused_;
   },
 
-  showAndFocus: function() {
+  showAndFocus() {
     this.showingSearch = true;
     this.focus_();
   },
 
-  onSearchTermInput: function() {
+  onSearchTermInput() {
     CrSearchFieldBehavior.onSearchTermInput.call(this);
     this.showingSearch = this.hasSearchText || this.isSearchFocused();
   },
 
   /** @private */
-  focus_: function() {
+  focus_() {
     this.getSearchInput().focus();
   },
 
@@ -76,8 +76,8 @@ Polymer({
    * @return {number}
    * @private
    */
-  computeIconTabIndex_: function(narrow) {
-    return narrow ? 0 : -1;
+  computeIconTabIndex_(narrow) {
+    return narrow && !this.hasSearchText ? 0 : -1;
   },
 
   /**
@@ -85,15 +85,15 @@ Polymer({
    * @return {string}
    * @private
    */
-  computeIconAriaHidden_: function(narrow) {
-    return Boolean(!narrow).toString();
+  computeIconAriaHidden_(narrow) {
+    return Boolean(!narrow || this.hasSearchText).toString();
   },
 
   /**
    * @return {boolean}
    * @private
    */
-  computeIsSpinnerShown_: function() {
+  computeIsSpinnerShown_() {
     const showSpinner = this.spinnerActive && this.showingSearch;
     if (showSpinner) {
       this.$.spinnerTemplate.if = true;
@@ -102,12 +102,12 @@ Polymer({
   },
 
   /** @private */
-  onInputFocus_: function() {
+  onInputFocus_() {
     this.searchFocused_ = true;
   },
 
   /** @private */
-  onInputBlur_: function() {
+  onInputBlur_() {
     this.searchFocused_ = false;
     if (!this.hasSearchText) {
       this.showingSearch = false;
@@ -115,8 +115,8 @@ Polymer({
   },
 
   /** @private */
-  onSearchTermKeydown_: function(e) {
-    if (e.key == 'Escape') {
+  onSearchTermKeydown_(e) {
+    if (e.key === 'Escape') {
       this.showingSearch = false;
     }
   },
@@ -125,8 +125,8 @@ Polymer({
    * @param {Event} e
    * @private
    */
-  showSearch_: function(e) {
-    if (e.target != this.$.clearSearch) {
+  showSearch_(e) {
+    if (e.target !== this.$.clearSearch) {
       this.showingSearch = true;
     }
   },
@@ -135,9 +135,10 @@ Polymer({
    * @param {Event} e
    * @private
    */
-  clearSearch_: function(e) {
+  clearSearch_(e) {
     this.setValue('');
     this.focus_();
+    this.spinnerActive = false;
   },
 
   /**
@@ -145,9 +146,9 @@ Polymer({
    * @param {boolean|undefined} previous
    * @private
    */
-  showingSearchChanged_: function(current, previous) {
+  showingSearchChanged_(current, previous) {
     // Prevent unnecessary 'search-changed' event from firing on startup.
-    if (previous == undefined) {
+    if (previous === undefined) {
       return;
     }
 

@@ -11,7 +11,8 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point_conversions.h"
@@ -19,6 +20,7 @@
 #include "ui/gfx/range/range.h"
 
 namespace gfx {
+class Insets;
 class Point;
 class Rect;
 class Size;
@@ -27,6 +29,9 @@ class Size;
 namespace ui {
 enum class DomCode;
 class TextInputClient;
+#if defined(TOOLKIT_QT)
+class Compositor;
+#endif
 }
 
 namespace viz {
@@ -61,7 +66,7 @@ class CONTENT_EXPORT RenderWidgetHostView {
   virtual void InitAsChild(gfx::NativeView parent_view) = 0;
 
   // Returns the associated RenderWidgetHost.
-  virtual RenderWidgetHost* GetRenderWidgetHost() const = 0;
+  virtual RenderWidgetHost* GetRenderWidgetHost() = 0;
 
   // Tells the View to size itself to the specified size.
   virtual void SetSize(const gfx::Size& size) = 0;
@@ -79,7 +84,7 @@ class CONTENT_EXPORT RenderWidgetHostView {
   virtual void SetBounds(const gfx::Rect& rect) = 0;
 
   // Indicates whether the scroll offset of the view is at top.
-  virtual bool IsScrollOffsetAtTop() const = 0;
+  virtual bool IsScrollOffsetAtTop() = 0;
 
   // Sets a flag that indicates if it is in virtual reality mode.
   virtual void SetIsInVR(bool is_in_vr) = 0;
@@ -106,8 +111,12 @@ class CONTENT_EXPORT RenderWidgetHostView {
 
   // Retrieves the native view used to contain plugins and identify the
   // renderer in IPC messages.
-  virtual gfx::NativeView GetNativeView() const = 0;
+  virtual gfx::NativeView GetNativeView() = 0;
   virtual gfx::NativeViewAccessible GetNativeViewAccessible() = 0;
+
+#if defined(TOOLKIT_QT)
+  virtual ui::Compositor *GetCompositor() { return nullptr; }
+#endif
 
   // Returns a ui::TextInputClient to support text input or nullptr if this RWHV
   // doesn't support text input.
@@ -119,7 +128,7 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // Set focus to the associated View component.
   virtual void Focus() = 0;
   // Returns true if the View currently has the focus.
-  virtual bool HasFocus() const = 0;
+  virtual bool HasFocus() = 0;
 
   // Shows/hides the view.  These must always be called together in pairs.
   // It is not legal to call Hide() multiple times in a row.
@@ -136,16 +145,14 @@ class CONTENT_EXPORT RenderWidgetHostView {
   virtual void WasOccluded() = 0;
 
   // Retrieve the bounds of the View, in screen coordinates.
-  virtual gfx::Rect GetViewBounds() const = 0;
+  virtual gfx::Rect GetViewBounds() = 0;
 
   // Returns the currently selected text in both of editable text fields and
   // non-editable texts.
   virtual base::string16 GetSelectedText() = 0;
 
   // This only returns non-null on platforms that implement touch
-  // selection editing (TSE), currently Aura and (soon) Android.
-  // TODO(wjmaclean): update this comment when OOPIF TSE is implemented on
-  // Android. https://crbug.com/470662.
+  // selection editing (TSE), currently Aura and Android.
   virtual TouchSelectionControllerClientManager*
   GetTouchSelectionControllerClientManager() = 0;
 
@@ -157,13 +164,22 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // which is shown if the background color of the renderer is not available.
   virtual void SetBackgroundColor(SkColor color) = 0;
   // GetBackgroundColor returns the current background color of the view.
-  virtual base::Optional<SkColor> GetBackgroundColor() const = 0;
+  virtual base::Optional<SkColor> GetBackgroundColor() = 0;
 
-  // Return value indicates whether the mouse is locked successfully or not.
-  virtual bool LockMouse() = 0;
+  // Return value indicates whether the mouse is locked successfully or a
+  // reason why it failed.
+  virtual blink::mojom::PointerLockResult LockMouse(
+      bool request_unadjusted_movement) = 0;
+  // Return value indicates whether the MouseLock was changed successfully
+  // or a reason why the change failed.
+  virtual blink::mojom::PointerLockResult ChangeMouseLock(
+      bool request_unadjusted_movement) = 0;
   virtual void UnlockMouse() = 0;
   // Returns true if the mouse pointer is currently locked.
   virtual bool IsMouseLocked() = 0;
+  // Get the pointer lock unadjusted movement setting for testing.
+  // Returns true if mouse is locked and is in unadjusted movement mode.
+  virtual bool GetIsMouseLockedUnadjustedMovementForTesting() = 0;
 
   // Start/Stop intercepting future system keyboard events.
   virtual bool LockKeyboard(
@@ -180,14 +196,14 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // Retrives the size of the viewport for the visible region. May be smaller
   // than the view size if a portion of the view is obstructed (e.g. by a
   // virtual keyboard).
-  virtual gfx::Size GetVisibleViewportSize() const = 0;
+  virtual gfx::Size GetVisibleViewportSize() = 0;
 
   // Set insets for the visible region of the root window. Used to compute the
   // visible viewport.
   virtual void SetInsets(const gfx::Insets& insets) = 0;
 
   // Returns true if the current display surface is available.
-  virtual bool IsSurfaceAvailableForCopy() const = 0;
+  virtual bool IsSurfaceAvailableForCopy() = 0;
 
   // Copies the given subset of the view's surface, optionally scales it, and
   // returns the result as a bitmap via the provided callback. This is meant for
@@ -226,27 +242,13 @@ class CONTENT_EXPORT RenderWidgetHostView {
   virtual std::unique_ptr<viz::ClientFrameSinkVideoCapturer>
   CreateVideoCapturer() = 0;
 
-  // Notification that a node was touched.
-  // The |editable| parameter indicates if the node is editable, for e.g.
-  // an input field, etc.
-  virtual void FocusedNodeTouched(bool editable) = 0;
-
-  // Informs the view that its associated render widget has frames to draw and
-  // wants to have BeginFrame messages sent to it.  This should only be called
-  // when the value has changed.  Views must initially default to false.
-  virtual void SetNeedsBeginFrames(bool needs_begin_frames) = 0;
-
-  // Informs the view that its associated render widget also wants to receive
-  // animate_only BeginFrames.
-  virtual void SetWantsAnimateOnlyBeginFrames() = 0;
-
   // This method returns the ScreenInfo used by the view to render. If the
   // information is not knowable (e.g, because the view is not attached to a
   // screen yet), then a default best-guess will be used.
-  virtual void GetScreenInfo(ScreenInfo* screen_info) const = 0;
+  virtual void GetScreenInfo(ScreenInfo* screen_info) = 0;
 
   // This must always return the same device scale factor as GetScreenInfo.
-  virtual float GetDeviceScaleFactor() const = 0;
+  virtual float GetDeviceScaleFactor() = 0;
 
 #if defined(OS_MACOSX)
   // Set the view's active state (i.e., tint state of controls).
@@ -262,6 +264,32 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // Indicates that this view should show the contents of |view| if it doesn't
   // have anything to show.
   virtual void TakeFallbackContentFrom(RenderWidgetHostView* view) = 0;
+
+  // Set the last time a content to visible event starts to be processed for
+  // this RenderWidgetHostView. Will merge with the previous value if exists
+  // (which means that several events may happen at the same time and must be
+  // induvidually reported).  |start_time| marks event start time to calculate
+  // the duration later.
+  //
+  // |destination_is_loaded| is true when
+  //   ResourceCoordinatorTabHelper::IsLoaded() is true for the new tab
+  //   contents.
+  // |destination_is_frozen| is true when
+  //   ResourceCoordinatorTabHelper::IsFrozen() is true for the new tab
+  //   contents.
+  // |show_reason_tab_switching| is true when tab switch event should be
+  //   reported.
+  // |show_reason_unoccluded| is true when "unoccluded" event should be
+  //   reported.
+  // |show_reason_bfcache_restore| is true when page restored from bfcache event
+  // should be reported.
+  virtual void SetRecordContentToVisibleTimeRequest(
+      base::TimeTicks start_time,
+      base::Optional<bool> destination_is_loaded,
+      base::Optional<bool> destination_is_frozen,
+      bool show_reason_tab_switching,
+      bool show_reason_unoccluded,
+      bool show_reason_bfcache_restore) = 0;
 };
 
 }  // namespace content

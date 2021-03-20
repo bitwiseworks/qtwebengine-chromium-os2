@@ -48,7 +48,7 @@ NetworkInformation* WorkerNavigatorNetworkInformation::connection(
       .connection(context);
 }
 
-void WorkerNavigatorNetworkInformation::Trace(blink::Visitor* visitor) {
+void WorkerNavigatorNetworkInformation::Trace(Visitor* visitor) {
   visitor->Trace(connection_);
   Supplement<WorkerNavigator>::Trace(visitor);
 }
@@ -57,7 +57,7 @@ NetworkInformation* WorkerNavigatorNetworkInformation::connection(
     ExecutionContext* context) {
   DCHECK(context);
   if (!connection_)
-    connection_ = NetworkInformation::Create(context);
+    connection_ = MakeGarbageCollected<NetworkInformation>(context);
   return connection_.Get();
 }
 

@@ -16,31 +16,23 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/variations/proto/client_variations.pb.h"
+#include "components/variations/variations_client.h"
 
 namespace variations {
 
-// The following documents how adding/removing http headers for web content
-// requests are implemented when Network Service is enabled or not enabled.
-//
-// When Network Service is not enabled, adding headers is implemented in
-// ChromeResourceDispatcherHostDelegate::RequestBeginning() by calling
-// variations::AppendVariationHeaders(), and removing headers is implemented in
-// ChromeNetworkDelegate::OnBeforeRedirect() by calling
-// variations::StripVariationHeaderIfNeeded().
-//
-// When Network Service is enabled, adding/removing headers is implemented by
-// request consumers, and how it is implemented depends on the request type.
+// Adding/removing headers is implemented by request consumers, and how it is
+// implemented depends on the request type.
 // There are three cases:
-// 1. Subresources request in renderer, it is implemented
-// in URLLoaderThrottleProviderImpl::CreateThrottles() by adding a
-// GoogleURLLoaderThrottle to a content::URLLoaderThrottle vector.
+// 1. Subresources request in renderer, it is implemented by
+// WebURLLoaderImpl::Context::Start() by adding a VariationsURLLoaderThrottle
+// to a content::URLLoaderThrottle vector.
 // 2. Navigations/Downloads request in browser, it is implemented in
-// ChromeContentBrowserClient::CreateURLLoaderThrottles() by also adding a
-// GoogleURLLoaderThrottle to a content::URLLoaderThrottle vector.
+// ChromeContentBrowserClient::CreateURLLoaderThrottles() which calls
+// CreateContentBrowserURLLoaderThrottles which also adds a
+// VariationsURLLoaderThrottle to a content::URLLoaderThrottle vector.
 // 3. SimpleURLLoader in browser, it is implemented in a SimpleURLLoader wrapper
-// function variations::CreateSimpleURLLoaderWithVariationsHeaders().
+// function variations::CreateSimpleURLLoaderWithVariationsHeader().
 
 // static
 VariationsHttpHeaderProvider* VariationsHttpHeaderProvider::GetInstance() {
@@ -74,12 +66,34 @@ std::string VariationsHttpHeaderProvider::GetVariationsString() {
     base::AutoLock scoped_lock(lock_);
     for (const VariationIDEntry& entry : GetAllVariationIds()) {
       if (entry.second == GOOGLE_WEB_PROPERTIES) {
-        ids_string.append(base::IntToString(entry.first));
+        ids_string.append(base::NumberToString(entry.first));
         ids_string.push_back(' ');
       }
     }
   }
   return ids_string;
+}
+
+std::vector<VariationID> VariationsHttpHeaderProvider::GetVariationsVector(
+    IDCollectionKey key) {
+  InitVariationIDsCacheIfNeeded();
+
+  // Get all the active variation ids while holding the lock.
+  std::set<VariationIDEntry> all_variation_ids;
+  {
+    base::AutoLock scoped_lock(lock_);
+    all_variation_ids = GetAllVariationIds();
+  }
+
+  // Copy the requested variations to the output vector. Note that the ids will
+  // be in sorted order because they're coming from a std::set.
+  std::vector<VariationID> result;
+  result.reserve(all_variation_ids.size());
+  for (const VariationIDEntry& entry : all_variation_ids) {
+    if (entry.second == key)
+      result.push_back(entry.first);
+  }
+  return result;
 }
 
 VariationsHttpHeaderProvider::ForceIdsResult
@@ -88,17 +102,21 @@ VariationsHttpHeaderProvider::ForceVariationIds(
     const std::string& command_line_variation_ids) {
   default_variation_ids_set_.clear();
 
-  if (!AddDefaultVariationIds(variation_ids))
+  if (!AddVariationIdsToSet(variation_ids, &default_variation_ids_set_))
     return ForceIdsResult::INVALID_VECTOR_ENTRY;
 
-  if (!command_line_variation_ids.empty()) {
-    std::vector<std::string> variation_ids_from_command_line =
-        base::SplitString(command_line_variation_ids, ",",
-                          base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-    if (!AddDefaultVariationIds(variation_ids_from_command_line))
-      return ForceIdsResult::INVALID_SWITCH_ENTRY;
+  if (!ParseVariationIdsParameter(command_line_variation_ids,
+                                  &default_variation_ids_set_)) {
+    return ForceIdsResult::INVALID_SWITCH_ENTRY;
   }
   return ForceIdsResult::SUCCESS;
+}
+
+bool VariationsHttpHeaderProvider::ForceDisableVariationIds(
+    const std::string& command_line_variation_ids) {
+  force_disabled_ids_set_.clear();
+  return ParseVariationIdsParameter(command_line_variation_ids,
+                                    &force_disabled_ids_set_);
 }
 
 void VariationsHttpHeaderProvider::AddObserver(Observer* observer) {
@@ -119,6 +137,7 @@ void VariationsHttpHeaderProvider::ResetForTesting() {
   variation_ids_set_.clear();
   default_variation_ids_set_.clear();
   synthetic_variation_ids_set_.clear();
+  force_disabled_ids_set_.clear();
   cached_variation_ids_header_.clear();
   cached_variation_ids_header_signed_in_.clear();
 }
@@ -126,7 +145,9 @@ void VariationsHttpHeaderProvider::ResetForTesting() {
 VariationsHttpHeaderProvider::VariationsHttpHeaderProvider()
     : variation_ids_cache_initialized_(false) {}
 
-VariationsHttpHeaderProvider::~VariationsHttpHeaderProvider() {}
+VariationsHttpHeaderProvider::~VariationsHttpHeaderProvider() {
+  base::FieldTrialList::RemoveObserver(this);
+}
 
 void VariationsHttpHeaderProvider::OnFieldTrialGroupFinalized(
     const std::string& trial_name,
@@ -169,10 +190,8 @@ void VariationsHttpHeaderProvider::InitVariationIDsCacheIfNeeded() {
 
   // Register for additional cache updates. This is done first to avoid a race
   // that could cause registered FieldTrials to be missed.
-  DCHECK(base::ThreadTaskRunnerHandle::IsSet());
-  base::FieldTrialList::AddObserver(this);
-
-  base::TimeTicks before_time = base::TimeTicks::Now();
+  bool success = base::FieldTrialList::AddObserver(this);
+  DCHECK(success);
 
   base::FieldTrial::ActiveGroups initial_groups;
   base::FieldTrialList::GetActiveFieldTrialGroups(&initial_groups);
@@ -186,11 +205,6 @@ void VariationsHttpHeaderProvider::InitVariationIDsCacheIfNeeded() {
                       GOOGLE_WEB_PROPERTIES_TRIGGER);
   }
   UpdateVariationIDsHeaderValue();
-
-  UMA_HISTOGRAM_CUSTOM_COUNTS(
-      "Variations.HeaderConstructionTime",
-      (base::TimeTicks::Now() - before_time).InMicroseconds(), 1,
-      base::TimeDelta::FromSeconds(1).InMicroseconds(), 50);
 
   variation_ids_cache_initialized_ = true;
 }
@@ -220,8 +234,7 @@ void VariationsHttpHeaderProvider::UpdateVariationIDsHeaderValue() {
   cached_variation_ids_header_signed_in_ = GenerateBase64EncodedProto(true);
 
   for (auto& observer : observer_list_) {
-    observer.VariationIdsHeaderUpdated(cached_variation_ids_header_,
-                                       cached_variation_ids_header_signed_in_);
+    observer.VariationIdsHeaderUpdated();
   }
 }
 
@@ -242,10 +255,9 @@ std::string VariationsHttpHeaderProvider::GenerateBase64EncodedProto(
       case GOOGLE_WEB_PROPERTIES_TRIGGER:
         proto.add_trigger_variation_id(entry.first);
         break;
-      case CHROME_SYNC_EVENT_LOGGER:
       case ID_COLLECTION_COUNT:
-        // These cases included to get full enum coverage for switch, so that
-        // new enums introduce compiler warnings. Nothing to do for these.
+        // This case included to get full enum coverage for switch, so that
+        // new enums introduce compiler warnings. Nothing to do for this.
         break;
     }
   }
@@ -259,10 +271,10 @@ std::string VariationsHttpHeaderProvider::GenerateBase64EncodedProto(
   // This is the bottleneck for the creation of the header, so validate the size
   // here. Force a hard maximum on the ID count in case the Variations server
   // returns too many IDs and DOSs receiving servers with large requests.
-  DCHECK_LE(total_id_count, 20U);
+  DCHECK_LE(total_id_count, 35U);
   UMA_HISTOGRAM_COUNTS_100("Variations.Headers.ExperimentCount",
                            total_id_count);
-  if (total_id_count > 30)
+  if (total_id_count > 50)
     return std::string();
 
   std::string serialized;
@@ -273,11 +285,13 @@ std::string VariationsHttpHeaderProvider::GenerateBase64EncodedProto(
   return hashed;
 }
 
-bool VariationsHttpHeaderProvider::AddDefaultVariationIds(
-    const std::vector<std::string>& variation_ids) {
+// static
+bool VariationsHttpHeaderProvider::AddVariationIdsToSet(
+    const std::vector<std::string>& variation_ids,
+    std::set<VariationIDEntry>* target_set) {
   for (const std::string& entry : variation_ids) {
     if (entry.empty()) {
-      default_variation_ids_set_.clear();
+      target_set->clear();
       return false;
     }
     bool trigger_id =
@@ -287,14 +301,27 @@ bool VariationsHttpHeaderProvider::AddDefaultVariationIds(
 
     int variation_id = 0;
     if (!base::StringToInt(trimmed_entry, &variation_id)) {
-      default_variation_ids_set_.clear();
+      target_set->clear();
       return false;
     }
-    default_variation_ids_set_.insert(VariationIDEntry(
+    target_set->insert(VariationIDEntry(
         variation_id,
         trigger_id ? GOOGLE_WEB_PROPERTIES_TRIGGER : GOOGLE_WEB_PROPERTIES));
   }
   return true;
+}
+
+// static
+bool VariationsHttpHeaderProvider::ParseVariationIdsParameter(
+    const std::string& command_line_variation_ids,
+    std::set<VariationIDEntry>* target_set) {
+  if (command_line_variation_ids.empty())
+    return true;
+
+  std::vector<std::string> variation_ids_from_command_line =
+      base::SplitString(command_line_variation_ids, ",", base::TRIM_WHITESPACE,
+                        base::SPLIT_WANT_ALL);
+  return AddVariationIdsToSet(variation_ids_from_command_line, target_set);
 }
 
 std::set<VariationsHttpHeaderProvider::VariationIDEntry>
@@ -307,6 +334,9 @@ VariationsHttpHeaderProvider::GetAllVariationIds() {
   }
   for (const VariationIDEntry& entry : synthetic_variation_ids_set_) {
     all_variation_ids_set.insert(entry);
+  }
+  for (const VariationIDEntry& entry : force_disabled_ids_set_) {
+    all_variation_ids_set.erase(entry);
   }
   return all_variation_ids_set;
 }

@@ -17,129 +17,176 @@
 
 #include "System/Math.hpp"
 
-namespace sw
+#include <type_traits>
+#include <unordered_map>
+
+namespace sw {
+
+template<class Key, class Data>
+class LRUCache
 {
-	template<class Key, class Data>
-	class LRUCache
-	{
-	public:
-		LRUCache(int n);
+public:
+	LRUCache(int n);
 
-		~LRUCache();
+	virtual ~LRUCache();
 
-		Data *query(const Key &key) const;
-		Data *add(const Key &key, Data *data);
-	
-		int getSize() {return size;}
-		Key &getKey(int i) {return key[i];}
+	Data query(const Key &key) const;
+	virtual Data add(const Key &key, const Data &data);
 
-	private:
-		int size;
-		int mask;
-		int top;
-		int fill;
+	int getSize() { return size; }
+	Key &getKey(int i) { return key[i]; }
 
-		Key *key;
-		Key **ref;
-		Data **data;
-	};
-}
+protected:
+	int size;
+	int mask;
+	int top;
+	int fill;
 
-namespace sw
+	Key *key;
+	Key **ref;
+	Data *data;
+};
+
+// An LRU cache which can take a 'snapshot' of its current state. This is useful
+// for allowing concurrent read access without requiring a mutex to be locked.
+template<class Key, class Data, class Hasher = std::hash<Key>>
+class LRUSnapshotCache : public LRUCache<Key, Data>
 {
-	template<class Key, class Data>
-	LRUCache<Key, Data>::LRUCache(int n)
+	using LRUBase = LRUCache<Key, Data>;
+
+public:
+	LRUSnapshotCache(int n)
+	    : LRUBase(n)
+	{}
+	~LRUSnapshotCache() { clearSnapshot(); }
+
+	Data add(const Key &key, const Data &data) override
 	{
-		size = ceilPow2(n);
-		mask = size - 1;
-		top = 0;
-		fill = 0;
-
-		key = new Key[size];
-		ref = new Key*[size];
-		data = new Data*[size];
-
-		for(int i = 0; i < size; i++)
-		{
-			data[i] = nullptr;
-
-			ref[i] = &key[i];
-		}
+		snapshotNeedsUpdate = true;
+		return LRUBase::add(key, data);
 	}
 
-	template<class Key, class Data>
-	LRUCache<Key, Data>::~LRUCache()
+	void updateSnapshot();
+	const Data &querySnapshot(const Key &key) const;
+
+private:
+	void clearSnapshot();
+	bool snapshotNeedsUpdate = false;
+	std::unordered_map<Key, Data, Hasher> snapshot;
+};
+
+}  // namespace sw
+
+namespace sw {
+
+template<class Key, class Data>
+LRUCache<Key, Data>::LRUCache(int n)
+{
+	size = ceilPow2(n);
+	mask = size - 1;
+	top = 0;
+	fill = 0;
+
+	key = new Key[size];
+	ref = new Key *[size];
+	data = new Data[size];
+
+	for(int i = 0; i < size; i++)
 	{
-		delete[] key;
-		key = nullptr;
-
-		delete[] ref;
-		ref = nullptr;
-
-		for(int i = 0; i < size; i++)
-		{
-			if(data[i])
-			{
-				data[i]->unbind();
-				data[i] = nullptr;
-			}
-		}
-
-		delete[] data;
-		data = nullptr;
-	}
-
-	template<class Key, class Data>
-	Data *LRUCache<Key, Data>::query(const Key &key) const
-	{
-		for(int i = top; i > top - fill; i--)
-		{
-			int j = i & mask;
-
-			if(key == *ref[j])
-			{
-				Data *hit = data[j];
-
-				if(i != top)
-				{
-					// Move one up
-					int k = (j + 1) & mask;
-
-					Data *swapD = data[k];
-					data[k] = data[j];
-					data[j] = swapD;
-
-					Key *swapK = ref[k];
-					ref[k] = ref[j];
-					ref[j] = swapK;
-				}
-
-				return hit;
-			}
-		}
-
-		return nullptr;   // Not found
-	}
-
-	template<class Key, class Data>
-	Data *LRUCache<Key, Data>::add(const Key &key, Data *data)
-	{
-		top = (top + 1) & mask;
-		fill = fill + 1 < size ? fill + 1 : size;
-
-		*ref[top] = key;
-
-		data->bind();
-
-		if(this->data[top])
-		{
-			this->data[top]->unbind();
-		}
-
-		this->data[top] = data;
-
-		return data;
+		ref[i] = &key[i];
 	}
 }
 
-#endif   // sw_LRUCache_hpp
+template<class Key, class Data>
+LRUCache<Key, Data>::~LRUCache()
+{
+	delete[] key;
+	key = nullptr;
+
+	delete[] ref;
+	ref = nullptr;
+
+	delete[] data;
+	data = nullptr;
+}
+
+template<class Key, class Data>
+Data LRUCache<Key, Data>::query(const Key &key) const
+{
+	for(int i = top; i > top - fill; i--)
+	{
+		int j = i & mask;
+
+		if(key == *ref[j])
+		{
+			Data hit = data[j];
+
+			if(i != top)
+			{
+				// Move one up
+				int k = (j + 1) & mask;
+
+				Data swapD = data[k];
+				data[k] = data[j];
+				data[j] = swapD;
+
+				Key *swapK = ref[k];
+				ref[k] = ref[j];
+				ref[j] = swapK;
+			}
+
+			return hit;
+		}
+	}
+
+	return {};  // Not found
+}
+
+template<class Key, class Data>
+Data LRUCache<Key, Data>::add(const Key &key, const Data &data)
+{
+	top = (top + 1) & mask;
+	fill = fill + 1 < size ? fill + 1 : size;
+
+	*ref[top] = key;
+	this->data[top] = data;
+
+	return data;
+}
+
+template<class Key, class Data, class Hasher>
+void LRUSnapshotCache<Key, Data, Hasher>::clearSnapshot()
+{
+	snapshot.clear();
+}
+
+template<class Key, class Data, class Hasher>
+void LRUSnapshotCache<Key, Data, Hasher>::updateSnapshot()
+{
+	if(snapshotNeedsUpdate)
+	{
+		clearSnapshot();
+
+		for(int i = 0; i < LRUBase::size; i++)
+		{
+			if(LRUBase::data[i])
+			{
+				snapshot[*LRUBase::ref[i]] = LRUBase::data[i];
+			}
+		}
+
+		snapshotNeedsUpdate = false;
+	}
+}
+
+template<class Key, class Data, class Hasher>
+const Data &LRUSnapshotCache<Key, Data, Hasher>::querySnapshot(const Key &key) const
+{
+	auto it = snapshot.find(key);
+	static Data null = {};
+	return (it != snapshot.end()) ? it->second : null;
+}
+
+}  // namespace sw
+
+#endif  // sw_LRUCache_hpp

@@ -32,9 +32,7 @@ WebGLVertexArrayObjectBase::WebGLVertexArrayObjectBase(
   }
 }
 
-WebGLVertexArrayObjectBase::~WebGLVertexArrayObjectBase() {
-  RunDestructor();
-}
+WebGLVertexArrayObjectBase::~WebGLVertexArrayObjectBase() = default;
 
 void WebGLVertexArrayObjectBase::DispatchDetached(
     gpu::gles2::GLES2Interface* gl) {
@@ -126,7 +124,7 @@ void WebGLVertexArrayObjectBase::UnbindBuffer(WebGLBuffer* buffer) {
   UpdateAttribBufferBoundStatus();
 }
 
-void WebGLVertexArrayObjectBase::Trace(blink::Visitor* visitor) {
+void WebGLVertexArrayObjectBase::Trace(Visitor* visitor) {
   visitor->Trace(bound_element_array_buffer_);
   visitor->Trace(array_buffer_list_);
   WebGLContextObject::Trace(visitor);

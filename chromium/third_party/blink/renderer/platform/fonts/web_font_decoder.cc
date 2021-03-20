@@ -34,11 +34,9 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/web_font_typeface_factory.h"
-#include "third_party/blink/renderer/platform/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
-#include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+
 #include "third_party/ots/include/ots-memory-stream.h"
 #include "third_party/skia/include/core/SkStream.h"
 
@@ -144,38 +142,6 @@ ots::TableAction BlinkOTSContext::GetTableAction(uint32_t tag) {
   }
 }
 
-void RecordDecodeSpeedHistogram(const char* data,
-                                size_t length,
-                                double decode_time,
-                                size_t decoded_size) {
-  if (decode_time <= 0)
-    return;
-
-  double kb_per_second = decoded_size / (1000 * decode_time);
-  if (length >= 4) {
-    if (data[0] == 'w' && data[1] == 'O' && data[2] == 'F' && data[3] == 'F') {
-      DEFINE_THREAD_SAFE_STATIC_LOCAL(
-          CustomCountHistogram, woff_histogram,
-          ("WebFont.DecodeSpeed.WOFF", 1000, 300000, 50));
-      woff_histogram.Count(kb_per_second);
-      return;
-    }
-
-    if (data[0] == 'w' && data[1] == 'O' && data[2] == 'F' && data[3] == '2') {
-      DEFINE_THREAD_SAFE_STATIC_LOCAL(
-          CustomCountHistogram, woff2_histogram,
-          ("WebFont.DecodeSpeed.WOFF2", 1000, 300000, 50));
-      woff2_histogram.Count(kb_per_second);
-      return;
-    }
-  }
-
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      CustomCountHistogram, sfnt_histogram,
-      ("WebFont.DecodeSpeed.SFNT", 1000, 300000, 50));
-  sfnt_histogram.Count(kb_per_second);
-}
-
 }  // namespace
 
 sk_sp<SkTypeface> WebFontDecoder::Decode(SharedBuffer* buffer) {
@@ -195,14 +161,13 @@ sk_sp<SkTypeface> WebFontDecoder::Decode(SharedBuffer* buffer) {
   // Most web fonts are compressed, so the result can be much larger than
   // the original.
   ots::ExpandingMemoryStream output(buffer->size(), kMaxWebFontSize);
-  double start = CurrentTime();
   BlinkOTSContext ots_context;
   SharedBuffer::DeprecatedFlatData flattened_buffer(buffer);
-  const char* data = flattened_buffer.Data();
 
   TRACE_EVENT_BEGIN0("blink", "DecodeFont");
-  bool ok = ots_context.Process(&output, reinterpret_cast<const uint8_t*>(data),
-                                buffer->size());
+  bool ok = ots_context.Process(
+      &output, reinterpret_cast<const uint8_t*>(flattened_buffer.Data()),
+      buffer->size());
   TRACE_EVENT_END0("blink", "DecodeFont");
 
   if (!ok) {
@@ -211,9 +176,6 @@ sk_sp<SkTypeface> WebFontDecoder::Decode(SharedBuffer* buffer) {
   }
 
   const size_t decoded_length = SafeCast<size_t>(output.Tell());
-  RecordDecodeSpeedHistogram(data, buffer->size(), CurrentTime() - start,
-                             decoded_length);
-
   sk_sp<SkData> sk_data = SkData::MakeWithCopy(output.get(), decoded_length);
 
   sk_sp<SkTypeface> new_typeface;

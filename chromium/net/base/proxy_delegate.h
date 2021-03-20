@@ -24,11 +24,8 @@ class ProxyServer;
 // Delegate for setting up a connection.
 class NET_EXPORT ProxyDelegate {
  public:
-  ProxyDelegate() {
-  }
-
-  virtual ~ProxyDelegate() {
-  }
+  ProxyDelegate() = default;
+  virtual ~ProxyDelegate() = default;
 
   // Called as the proxy is being resolved for |url| for a |method| request.
   // The caller may pass an empty string to get method agnostic resoulution.
@@ -44,11 +41,10 @@ class NET_EXPORT ProxyDelegate {
   // the network error encountered, if any, and OK if the fallback was
   // for a reason other than a network error (e.g. the proxy service was
   // explicitly directed to skip a proxy).
-  virtual void OnFallback(const ProxyServer& bad_proxy,
-                          int net_error) = 0;
+  virtual void OnFallback(const ProxyServer& bad_proxy, int net_error) = 0;
 
-  // Called immediately before a proxy tunnel request is sent.
-  // Provides the embedder an opportunity to add extra request headers.
+  // Called immediately before a proxy tunnel request is sent. Provides the
+  // embedder an opportunity to add extra request headers.
   virtual void OnBeforeTunnelRequest(const ProxyServer& proxy_server,
                                      HttpRequestHeaders* extra_headers) = 0;
 

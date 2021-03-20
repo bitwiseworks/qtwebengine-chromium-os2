@@ -9,8 +9,8 @@
 #define CHROME_BROWSER_EXTENSIONS_API_TAB_CAPTURE_TAB_CAPTURE_API_H_
 
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/tab_capture.h"
+#include "extensions/browser/extension_function.h"
 
 namespace extensions {
 
@@ -22,7 +22,7 @@ extern const char* const kStableChromecastExtensionId;
 // Extension ids for the chromecast.
 extern const char* const kChromecastExtensionIds[6];
 
-class TabCaptureCaptureFunction : public UIThreadExtensionFunction {
+class TabCaptureCaptureFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("tabCapture.capture", TABCAPTURE_CAPTURE)
 
@@ -33,7 +33,7 @@ class TabCaptureCaptureFunction : public UIThreadExtensionFunction {
   ResponseAction Run() final;
 };
 
-class TabCaptureGetCapturedTabsFunction : public UIThreadExtensionFunction {
+class TabCaptureGetCapturedTabsFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("tabCapture.getCapturedTabs",
                              TABCAPTURE_GETCAPTUREDTABS)
@@ -45,7 +45,7 @@ class TabCaptureGetCapturedTabsFunction : public UIThreadExtensionFunction {
   ResponseAction Run() final;
 };
 
-class TabCaptureCaptureOffscreenTabFunction : public UIThreadExtensionFunction {
+class TabCaptureCaptureOffscreenTabFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("tabCapture.captureOffscreenTab",
                              TABCAPTURE_CAPTUREOFFSCREENTAB)
@@ -62,7 +62,7 @@ class TabCaptureCaptureOffscreenTabFunction : public UIThreadExtensionFunction {
   ResponseAction Run() final;
 };
 
-class TabCaptureGetMediaStreamIdFunction : public UIThreadExtensionFunction {
+class TabCaptureGetMediaStreamIdFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("tabCapture.getMediaStreamId",
                              TABCAPTURE_GETMEDIASTREAMID)

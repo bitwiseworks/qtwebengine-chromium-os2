@@ -8,7 +8,6 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/element_definition_options.h"
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
 #include "third_party/blink/renderer/core/html/custom/ce_reactions_scope.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_definition.h"
@@ -16,10 +15,10 @@
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 #include <utility>
-#include <vector>
 
 namespace blink {
 
@@ -79,7 +78,8 @@ class TestCustomElementDefinition : public CustomElementDefinition {
   bool HasAdoptedCallback() const override { return false; }
   bool HasFormAssociatedCallback() const override { return false; }
   bool HasFormResetCallback() const override { return false; }
-  bool HasDisabledStateChangedCallback() const override { return false; }
+  bool HasFormDisabledCallback() const override { return false; }
+  bool HasFormStateRestoreCallback() const override { return false; }
 
   void RunConnectedCallback(Element&) override {
     NOTREACHED() << "definition does not have connected callback";
@@ -110,9 +110,14 @@ class TestCustomElementDefinition : public CustomElementDefinition {
     NOTREACHED() << "definition does not have formResetCallback";
   }
 
-  void RunDisabledStateChangedCallback(Element& element,
-                                       bool is_disabled) override {
+  void RunFormDisabledCallback(Element& element, bool is_disabled) override {
     NOTREACHED() << "definition does not have disabledStateChangedCallback";
+  }
+
+  void RunFormStateRestoreCallback(Element& element,
+                                   const FileOrUSVStringOrFormData& value,
+                                   const String& mode) override {
+    NOTREACHED() << "definition does not have restoreValueCallback";
   }
 
   DISALLOW_COPY_AND_ASSIGN(TestCustomElementDefinition);
@@ -147,9 +152,9 @@ class CreateElement {
   }
 
   operator Element*() const {
-    Document* document = document_.Get();
+    Document* document = document_;
     if (!document)
-      document = HTMLDocument::CreateForTest();
+      document = MakeGarbageCollected<HTMLDocument>();
     NonThrowableExceptionState no_exceptions;
     Element* element = document->CreateElement(
         QualifiedName(g_null_atom, local_name_, namespace_uri_),
@@ -160,11 +165,11 @@ class CreateElement {
   }
 
  private:
-  Member<Document> document_;
+  Document* document_ = nullptr;
   AtomicString namespace_uri_;
   AtomicString local_name_;
   AtomicString is_value_;
-  std::vector<std::pair<QualifiedName, AtomicString>> attributes_;
+  Vector<std::pair<QualifiedName, AtomicString>> attributes_;
 };
 
 }  // namespace blink

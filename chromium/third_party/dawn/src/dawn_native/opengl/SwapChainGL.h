@@ -17,20 +17,20 @@
 
 #include "dawn_native/SwapChain.h"
 
-#include "glad/glad.h"
+#include "dawn_native/opengl/opengl_platform.h"
 
 namespace dawn_native { namespace opengl {
 
     class Device;
 
-    class SwapChain : public SwapChainBase {
+    class SwapChain : public OldSwapChainBase {
       public:
-        SwapChain(SwapChainBuilder* builder);
+        SwapChain(Device* device, const SwapChainDescriptor* descriptor);
         ~SwapChain();
 
       protected:
         TextureBase* GetNextTextureImpl(const TextureDescriptor* descriptor) override;
-        void OnBeforePresent(TextureBase* texture) override;
+        MaybeError OnBeforePresent(TextureBase* texture) override;
     };
 
 }}  // namespace dawn_native::opengl

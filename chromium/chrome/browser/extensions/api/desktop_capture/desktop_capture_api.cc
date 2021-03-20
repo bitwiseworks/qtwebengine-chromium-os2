@@ -6,10 +6,10 @@
 
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
-#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/origin_util.h"
@@ -38,12 +38,13 @@ DesktopCaptureChooseDesktopMediaFunction::
     ~DesktopCaptureChooseDesktopMediaFunction() {
 }
 
-bool DesktopCaptureChooseDesktopMediaFunction::RunAsync() {
+ExtensionFunction::ResponseAction
+DesktopCaptureChooseDesktopMediaFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(args_->GetSize() > 0);
 
   EXTENSION_FUNCTION_VALIDATE(args_->GetInteger(0, &request_id_));
-  DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(
-      render_frame_host()->GetProcess()->GetID(), request_id_, this);
+  DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(source_process_id(),
+                                                            request_id_, this);
 
   args_->Remove(0, NULL);
 
@@ -58,35 +59,32 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunAsync() {
   GURL origin;
   if (params->target_tab) {
     if (!params->target_tab->url) {
-      error_ = kDesktopCaptureApiNoUrlError;
-      return false;
+      return RespondNow(Error(kDesktopCaptureApiNoUrlError));
     }
     origin = GURL(*(params->target_tab->url)).GetOrigin();
 
     if (!origin.is_valid()) {
-      error_ = kDesktopCaptureApiInvalidOriginError;
-      return false;
+      return RespondNow(Error(kDesktopCaptureApiInvalidOriginError));
     }
 
     if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
             ::switches::kAllowHttpScreenCapture) &&
         !content::IsOriginSecure(origin)) {
-      error_ = kDesktopCaptureApiTabUrlNotSecure;
-      return false;
+      return RespondNow(Error(kDesktopCaptureApiTabUrlNotSecure));
     }
     target_name = base::UTF8ToUTF16(content::IsOriginSecure(origin) ?
         net::GetHostAndOptionalPort(origin) : origin.spec());
 
     if (!params->target_tab->id ||
         *params->target_tab->id == api::tabs::TAB_ID_NONE) {
-      error_ = kDesktopCaptureApiNoTabIdError;
-      return false;
+      return RespondNow(Error(kDesktopCaptureApiNoTabIdError));
     }
 
-    if (!ExtensionTabUtil::GetTabById(*(params->target_tab->id), GetProfile(),
-                                      true, NULL, NULL, &web_contents, NULL)) {
-      error_ = kDesktopCaptureApiInvalidTabIdError;
-      return false;
+    ChromeExtensionFunctionDetails details(this);
+    if (!ExtensionTabUtil::GetTabById(*(params->target_tab->id),
+                                      details.GetProfile(), true,
+                                      &web_contents)) {
+      return RespondNow(Error(kDesktopCaptureApiInvalidTabIdError));
     }
     DCHECK(web_contents);
   } else {

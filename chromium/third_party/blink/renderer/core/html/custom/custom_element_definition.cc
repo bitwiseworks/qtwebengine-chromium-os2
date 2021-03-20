@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html_element_factory.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -33,6 +34,7 @@ CustomElementDefinition::CustomElementDefinition(
       observed_attributes_(observed_attributes),
       has_style_attribute_changed_callback_(
           observed_attributes.Contains(html_names::kStyleAttr.LocalName())),
+      disable_shadow_(disabled_features.Contains(String("shadow"))),
       disable_internals_(disabled_features.Contains(String("internals"))),
       is_form_associated_(form_association_flag == FormAssociationFlag::kYes) {}
 
@@ -104,13 +106,13 @@ HTMLElement* CustomElementDefinition::CreateElementForConstructor(
   if (element) {
     element->SetIsValue(Descriptor().GetName());
   } else {
-    element =
-        HTMLElement::Create(QualifiedName(g_null_atom, Descriptor().LocalName(),
-                                          html_names::xhtmlNamespaceURI),
-                            document);
+    element = MakeGarbageCollected<HTMLElement>(
+        QualifiedName(g_null_atom, Descriptor().LocalName(),
+                      html_names::xhtmlNamespaceURI),
+        document);
   }
   // TODO(davaajav): write this as one call to setCustomElementState instead of
-  // two
+  // two.
   element->SetCustomElementState(CustomElementState::kUndefined);
   element->SetCustomElementDefinition(this);
   return element;
@@ -121,8 +123,9 @@ HTMLElement* CustomElementDefinition::CreateElement(
     Document& document,
     const QualifiedName& tag_name,
     CreateElementFlags flags) {
-  DCHECK(CustomElement::ShouldCreateCustomElement(tag_name) ||
-         CustomElement::ShouldCreateCustomizedBuiltinElement(tag_name))
+  DCHECK(
+      CustomElement::ShouldCreateCustomElement(tag_name) ||
+      CustomElement::ShouldCreateCustomizedBuiltinElement(tag_name, document))
       << tag_name;
 
   // 5. If definition is non-null, and definition’s name is not equal to
@@ -140,15 +143,20 @@ HTMLElement* CustomElementDefinition::CreateElement(
     result->SetCustomElementState(CustomElementState::kUndefined);
     result->SetIsValue(Descriptor().GetName());
 
-    // 5.3. If the synchronous custom elements flag is set, upgrade
-    // element using definition.
-    // 5.4. Otherwise, enqueue a custom element upgrade reaction given
-    // result and definition.
-    if (!flags.IsAsyncCustomElements())
+    if (!flags.IsAsyncCustomElements()) {
+      // 5.3 If the synchronous custom elements flag is set, then run this step
+      // while catching any exceptions:
+      //   1. Upgrade element using definition.
+      // If this step threw an exception, then:
+      //   1. Report the exception.
+      //   2. Set result's custom element state to "failed".
       Upgrade(*result);
-    else
+    } else {
+      // 5.4. Otherwise, enqueue a custom element upgrade reaction given
+      // result and definition.
       EnqueueUpgradeReaction(*result);
-    return ToHTMLElement(result);
+    }
+    return To<HTMLElement>(result);
   }
 
   // 6. If definition is non-null, then:
@@ -162,7 +170,7 @@ HTMLElement* CustomElementDefinition::CreateElement(
   // interface, with no attributes, namespace set to the HTML namespace,
   // namespace prefix set to prefix, local name set to localName, custom
   // element state set to "undefined", and node document set to document.
-  HTMLElement* element = HTMLElement::Create(tag_name, document);
+  auto* element = MakeGarbageCollected<HTMLElement>(tag_name, document);
   element->SetCustomElementState(CustomElementState::kUndefined);
   // 6.2.2. Enqueue a custom element upgrade reaction given result and
   // definition.
@@ -173,7 +181,7 @@ HTMLElement* CustomElementDefinition::CreateElement(
 CustomElementDefinition::ConstructionStackScope::ConstructionStackScope(
     CustomElementDefinition& definition,
     Element& element)
-    : construction_stack_(definition.construction_stack_), element_(element) {
+    : construction_stack_(definition.construction_stack_), element_(&element) {
   // Push the construction stack.
   construction_stack_.push_back(&element);
   depth_ = construction_stack_.size();
@@ -186,23 +194,41 @@ CustomElementDefinition::ConstructionStackScope::~ConstructionStackScope() {
   construction_stack_.pop_back();
 }
 
-// https://html.spec.whatwg.org/multipage/scripting.html#concept-upgrade-an-element
+// https://html.spec.whatwg.org/C/#concept-upgrade-an-element
 void CustomElementDefinition::Upgrade(Element& element) {
-  DCHECK_EQ(element.GetCustomElementState(), CustomElementState::kUndefined);
+  // 4.13.5.1 If element is custom, then return.
+  // 4.13.5.2 If element's custom element state is "failed", then return.
+  if (element.GetCustomElementState() == CustomElementState::kCustom ||
+      element.GetCustomElementState() == CustomElementState::kFailed) {
+    return;
+  }
 
+  // 4.13.5.3. Set element's custom element state to "failed".
+  element.SetCustomElementState(CustomElementState::kFailed);
+
+  // 4.13.5.4: For each attribute in element's attribute list, in order, enqueue
+  // a custom element callback reaction with element, callback name
+  // "attributeChangedCallback", and an argument list containing attribute's
+  // local name, null, attribute's value, and attribute's namespace.
   if (!observed_attributes_.IsEmpty())
     EnqueueAttributeChangedCallbackForAllAttributes(element);
 
+  // 4.13.5.5: If element is connected, then enqueue a custom element callback
+  // reaction with element, callback name "connectedCallback", and an empty
+  // argument list.
   if (element.isConnected() && HasConnectedCallback())
     EnqueueConnectedCallback(element);
 
   bool succeeded = false;
   {
+    // 4.13.5.6: Add element to the end of definition's construction stack.
     ConstructionStackScope construction_stack_scope(*this, element);
+    // 4.13.5.8: Run the constructor, catching exceptions.
     succeeded = RunConstructor(element);
   }
   if (!succeeded) {
-    element.SetCustomElementState(CustomElementState::kFailed);
+    // 4.13.5.?: If the above steps threw an exception, then element's custom
+    // element state will remain "failed".
     CustomElementReactionStack::Current().ClearQueue(element);
     return;
   }
@@ -210,7 +236,7 @@ void CustomElementDefinition::Upgrade(Element& element) {
   element.SetCustomElementDefinition(this);
 
   if (IsFormAssociated())
-    ToHTMLElement(element).EnsureElementInternals().DidUpgrade();
+    To<HTMLElement>(element).EnsureElementInternals().DidUpgrade();
   AddDefaultStylesTo(element);
 }
 
@@ -287,7 +313,7 @@ void CustomElementDefinition::EnqueueAttributeChangedCallbackForAllAttributes(
     Element& element) {
   // Avoid synchronizing all attributes unless it is needed, while enqueing
   // callbacks "in order" as defined in the spec.
-  // https://html.spec.whatwg.org/multipage/scripting.html#concept-upgrade-an-element
+  // https://html.spec.whatwg.org/C/#concept-upgrade-an-element
   for (const AtomicString& name : observed_attributes_)
     element.SynchronizeAttribute(name);
   for (const auto& attribute : element.AttributesWithoutUpdate()) {

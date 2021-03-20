@@ -5,7 +5,8 @@
 module blink.mojom;
 
 import "mojo/public/mojom/base/string16.mojom";
-import "skia/public/interfaces/bitmap.mojom";
+import "mojo/public/mojom/base/big_buffer.mojom";
+import "skia/public/mojom/bitmap.mojom";
 import "url/mojom/url.mojom";
 
 enum ClipboardFormat {
@@ -24,6 +25,10 @@ enum ClipboardBuffer {
   kSelection,
 };
 
+// Allows communication with the system clipboard.
+// Individual operations are atomic, but successive operations are not.
+// Therefore, it's possible that one may see text available from
+// ReadAvailableTypes(), but that a subsequent ReadText() may then fail.
 interface ClipboardHost {
   [Sync]
   GetSequenceNumber(ClipboardBuffer buffer) => (uint64 result);
@@ -32,6 +37,7 @@ interface ClipboardHost {
   IsFormatAvailable(ClipboardFormat format,
                     ClipboardBuffer buffer) => (bool result);
 
+  // Reads sanitized platform-neutral types.
   [Sync]
   ReadAvailableTypes(ClipboardBuffer buffer) =>
       (array<mojo_base.mojom.String16> types, bool result);
@@ -55,34 +61,29 @@ interface ClipboardHost {
   ReadCustomData(ClipboardBuffer buffer, mojo_base.mojom.String16 type) =>
       (mojo_base.mojom.BigString16 result);
 
-  // Writing to the clipboard via IPC is a two-phase operation. First, the
+  // Writing to the clipboard via mojo is a two-phase operation. First, the
   // sender sends the different types of data it'd like to write to the
   // receiver. Then, it sends a commit message to commit the data to the system
   // clipboard.
-  // TODO(dcheng): Remove |buffer| parameters from Write* functions.
-  WriteText(ClipboardBuffer buffer, mojo_base.mojom.BigString16 text);
+  WriteText(mojo_base.mojom.BigString16 text);
 
-  WriteHtml(ClipboardBuffer buffer,
-            mojo_base.mojom.BigString16 markup,
-            url.mojom.Url url);
+  WriteHtml(mojo_base.mojom.BigString16 markup, url.mojom.Url url);
 
-  WriteSmartPasteMarker(ClipboardBuffer buffer);
+  WriteSmartPasteMarker();
 
-  WriteCustomData(
-      ClipboardBuffer buffer,
-      map<mojo_base.mojom.String16, mojo_base.mojom.BigString16> data);
+  // Chrome-specific pickled data.
+  WriteCustomData(map<mojo_base.mojom.String16, mojo_base.mojom.BigString16> data);
 
   // TODO(dcheng): The |url| parameter should really be a GURL, but <canvas>'s
   // copy as image tries to set very long data: URLs on the clipboard. Using
   // GURL causes the browser to kill the renderer for sending a bad IPC (GURLs
   // bigger than 2 megabytes are considered to be bad). https://crbug.com/459822
-  WriteBookmark(ClipboardBuffer buffer,
-                string url,
+  WriteBookmark(string url,
                 mojo_base.mojom.String16 title);
 
-  WriteImage(ClipboardBuffer buffer, skia.mojom.Bitmap image);
+  WriteImage(skia.mojom.Bitmap image);
 
-  CommitWrite(ClipboardBuffer buffer);
+  CommitWrite();
 
   [EnableIf=is_mac]
   WriteStringToFindPboard(mojo_base.mojom.String16 text);

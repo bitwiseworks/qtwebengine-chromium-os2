@@ -25,7 +25,7 @@
 **
 **   * Each table must contain a distinct range of rowid values.
 **
-** The difference between the two virtual table modules is that for
+** The difference between the two virtual table modules is that for 
 ** "unionvtab", all source tables must be located in the main database or
 ** in databases ATTACHed to the main database by the user. For "swarmvtab",
 ** the tables may be located in any database file on disk. The "swarmvtab"
@@ -124,7 +124,7 @@
 **
 **   If an option name begins with a ":" character, then it is assumed
 **   to be an SQL parameter. In this case, the specified text value is
-**   bound to the same variable of the <sql-statement> before it is
+**   bound to the same variable of the <sql-statement> before it is 
 **   executed. It is an error of the named SQL parameter does not exist.
 **   For example:
 **
@@ -183,7 +183,7 @@ typedef struct UnionTab UnionTab;
 typedef struct UnionSrc UnionSrc;
 
 /*
-** Each source table (row returned by the initialization query) is
+** Each source table (row returned by the initialization query) is 
 ** represented by an instance of the following structure stored in the
 ** UnionTab.aSrc[] array.
 */
@@ -238,7 +238,7 @@ struct UnionCsr {
 /*
 ** Given UnionTab table pTab and UnionSrc object pSrc, return the database
 ** handle that should be used to access the table identified by pSrc. This
-** is the main db handle for "unionvtab" tables, or the source-specific
+** is the main db handle for "unionvtab" tables, or the source-specific 
 ** handle for "swarmvtab".
 */
 #define unionGetDb(pTab, pSrc) ((pTab)->bSwarm ? (pSrc)->db : (pTab)->db)
@@ -247,7 +247,7 @@ struct UnionCsr {
 ** If *pRc is other than SQLITE_OK when this function is called, it
 ** always returns NULL. Otherwise, it attempts to allocate and return
 ** a pointer to nByte bytes of zeroed memory. If the memory allocation
-** is attempted but fails, NULL is returned and *pRc is set to
+** is attempted but fails, NULL is returned and *pRc is set to 
 ** SQLITE_NOMEM.
 */
 static void *unionMalloc(int *pRc, sqlite3_int64 nByte){
@@ -256,7 +256,7 @@ static void *unionMalloc(int *pRc, sqlite3_int64 nByte){
   if( *pRc==SQLITE_OK ){
     pRet = sqlite3_malloc64(nByte);
     if( pRet ){
-      memset(pRet, 0, nByte);
+      memset(pRet, 0, (size_t)nByte);
     }else{
       *pRc = SQLITE_NOMEM;
     }
@@ -270,7 +270,7 @@ static void *unionMalloc(int *pRc, sqlite3_int64 nByte){
 ** If *pRc is other than SQLITE_OK when this function is called, it
 ** always returns NULL. Otherwise, it attempts to allocate and return
 ** a copy of the nul-terminated string passed as the second argument.
-** If the allocation is attempted but fails, NULL is returned and *pRc is
+** If the allocation is attempted but fails, NULL is returned and *pRc is 
 ** set to SQLITE_NOMEM.
 */
 static char *unionStrdup(int *pRc, const char *zIn){
@@ -279,7 +279,7 @@ static char *unionStrdup(int *pRc, const char *zIn){
     sqlite3_int64 nByte = strlen(zIn) + 1;
     zRet = unionMalloc(pRc, nByte);
     if( zRet ){
-      memcpy(zRet, zIn, nByte);
+      memcpy(zRet, zIn, (size_t)nByte);
     }
   }
   return zRet;
@@ -288,7 +288,7 @@ static char *unionStrdup(int *pRc, const char *zIn){
 /*
 ** If the first character of the string passed as the only argument to this
 ** function is one of the 4 that may be used as an open quote character
-** in SQL, this function assumes that the input is a well-formed quoted SQL
+** in SQL, this function assumes that the input is a well-formed quoted SQL 
 ** string. In this case the string is dequoted in place.
 **
 ** If the first character of the input is not an open quote, then this
@@ -302,7 +302,7 @@ static void unionDequote(char *z){
     if( q=='[' || q=='\'' || q=='"' || q=='`' ){
       int iIn = 1;
       int iOut = 0;
-      if( q=='[' ) q = ']';
+      if( q=='[' ) q = ']';  
       while( ALWAYS(z[iIn]) ){
         if( z[iIn]==q ){
           if( z[iIn+1]!=q ){
@@ -311,7 +311,7 @@ static void unionDequote(char *z){
             break;
           }else{
             /* Character iIn and iIn+1 form an escaped quote character. Skip
-            ** the input cursor past both and copy a single quote character
+            ** the input cursor past both and copy a single quote character 
             ** to the output buffer. */
             iIn += 2;
             z[iOut++] = q;
@@ -331,7 +331,7 @@ static void unionDequote(char *z){
 **
 ** Otherwise, the SQL statement passed as the third argument is prepared
 ** against the database handle passed as the second. If the statement is
-** successfully prepared, a pointer to the new statement handle is
+** successfully prepared, a pointer to the new statement handle is 
 ** returned. It is the responsibility of the caller to eventually free the
 ** statement by calling sqlite3_finalize(). Alternatively, if statement
 ** compilation fails, NULL is returned, *pRc is set to an SQLite error
@@ -388,7 +388,7 @@ static sqlite3_stmt *unionPreparePrintf(
 
 
 /*
-** Call sqlite3_reset() on SQL statement pStmt. If *pRc is set to
+** Call sqlite3_reset() on SQL statement pStmt. If *pRc is set to 
 ** SQLITE_OK when this function is called, then it is set to the
 ** value returned by sqlite3_reset() before this function exits.
 ** In this case, *pzErr may be set to point to an error message
@@ -407,7 +407,7 @@ static void unionReset(int *pRc, sqlite3_stmt *pStmt, char **pzErr){
 #endif
 
 /*
-** Call sqlite3_finalize() on SQL statement pStmt. If *pRc is set to
+** Call sqlite3_finalize() on SQL statement pStmt. If *pRc is set to 
 ** SQLITE_OK when this function is called, then it is set to the
 ** value returned by sqlite3_finalize() before this function exits.
 */
@@ -429,12 +429,12 @@ static void unionFinalize(int *pRc, sqlite3_stmt *pStmt, char **pzErr){
 **
 ** If successful, return SQLITE_OK. Otherwise an SQLite error code. In this
 ** case if argument pzErr is not NULL, also set (*pzErr) to an English
-** language error message. The caller is responsible for eventually freeing
+** language error message. The caller is responsible for eventually freeing 
 ** any error message using sqlite3_free().
 */
 static int unionInvokeOpenClose(
-  UnionTab *pTab,
-  UnionSrc *pSrc,
+  UnionTab *pTab, 
+  UnionSrc *pSrc, 
   int bClose,
   char **pzErr
 ){
@@ -522,7 +522,7 @@ static int unionIsIntkeyTable(
       db, pSrc->zDb, pSrc->zTab, "_rowid_", &zType, 0, 0, &bPk, 0
   );
   rc = sqlite3_errcode(db);
-  if( rc==SQLITE_ERROR
+  if( rc==SQLITE_ERROR 
    || (rc==SQLITE_OK && (!bPk || sqlite3_stricmp("integer", zType)))
   ){
     rc = SQLITE_ERROR;
@@ -540,14 +540,14 @@ static int unionIsIntkeyTable(
 ** called. In this case it returns NULL.
 **
 ** Otherwise, this function checks that the source table passed as the
-** second argument (a) exists, (b) is not a view and (c) has a column
+** second argument (a) exists, (b) is not a view and (c) has a column 
 ** named "_rowid_" of type "integer" that is the primary key.
 ** If this is not the case, *pRc is set to SQLITE_ERROR and NULL is
 ** returned.
 **
 ** Finally, if the source table passes the checks above, a nul-terminated
 ** string describing the column names and types belonging to the source
-** table is returned. Tables with the same set of column names and types
+** table is returned. Tables with the same set of column names and types 
 ** cause this function to return identical strings. Is is the responsibility
 ** of the caller to free the returned string using sqlite3_free() when
 ** it is no longer required.
@@ -562,7 +562,7 @@ static char *unionSourceToStr(
   if( *pRc==SQLITE_OK ){
     sqlite3 *db = unionGetDb(pTab, pSrc);
     int rc = unionIsIntkeyTable(db, pSrc, pzErr);
-    sqlite3_stmt *pStmt = unionPrepare(&rc, db,
+    sqlite3_stmt *pStmt = unionPrepare(&rc, db, 
         "SELECT group_concat(quote(name) || '.' || quote(type)) "
         "FROM pragma_table_info(?, ?)", pzErr
     );
@@ -655,7 +655,7 @@ static int unionOpenDatabaseInner(UnionTab *pTab, UnionSrc *pSrc, char **pzErr){
 ** database schema is unsuitable, an SQLite error code is returned and (*pzErr)
 ** may be set to point to an English language error message. In this case it is
 ** the responsibility of the caller to eventually free the error message buffer
-** using sqlite3_free().
+** using sqlite3_free(). 
 */
 static int unionOpenDatabase(UnionTab *pTab, int iSrc, char **pzErr){
   int rc = SQLITE_OK;
@@ -696,7 +696,7 @@ static int unionOpenDatabase(UnionTab *pTab, int iSrc, char **pzErr){
 
 
 /*
-** This function is a no-op for unionvtab tables. For swarmvtab, increment
+** This function is a no-op for unionvtab tables. For swarmvtab, increment 
 ** the reference count for source table iTab. If the reference count was
 ** zero before it was incremented, also remove the source from the closable
 ** list.
@@ -743,15 +743,15 @@ static int unionFinalizeCsrStmt(UnionCsr *pCsr){
   return rc;
 }
 
-/*
+/* 
 ** Return true if the argument is a space, tab, CR or LF character.
 */
 static int union_isspace(char c){
   return (c==' ' || c=='\n' || c=='\r' || c=='\t');
 }
 
-/*
-** Return true if the argument is an alphanumeric character in the
+/* 
+** Return true if the argument is an alphanumeric character in the 
 ** ASCII range.
 */
 static int union_isidchar(char c){
@@ -759,9 +759,9 @@ static int union_isidchar(char c){
 }
 
 /*
-** This function is called to handle all arguments following the first
-** (the SQL statement) passed to a swarmvtab (not unionvtab) CREATE
-** VIRTUAL TABLE statement. It may bind parameters to the SQL statement
+** This function is called to handle all arguments following the first 
+** (the SQL statement) passed to a swarmvtab (not unionvtab) CREATE 
+** VIRTUAL TABLE statement. It may bind parameters to the SQL statement 
 ** or configure members of the UnionTab object passed as the second
 ** argument.
 **
@@ -771,7 +771,7 @@ static int union_isidchar(char c){
 ** This function is a no-op if *pRc is other than SQLITE_OK when it is
 ** called. Otherwise, if an error occurs, *pRc is set to an SQLite error
 ** code. In this case *pzErr may be set to point to a buffer containing
-** an English language error message. It is the responsibility of the
+** an English language error message. It is the responsibility of the 
 ** caller to eventually free the buffer using sqlite3_free().
 */
 static void unionConfigureVtab(
@@ -869,7 +869,7 @@ static void unionConfigureVtab(
   *pRc = rc;
 }
 
-/*
+/* 
 ** xConnect/xCreate method.
 **
 ** The argv[] array contains the following:
@@ -906,10 +906,10 @@ static int unionConnect(
 
     /* Prepare the SQL statement. Instead of executing it directly, sort
     ** the results by the "minimum rowid" field. This makes it easier to
-    ** check that there are no rowid range overlaps between source tables
+    ** check that there are no rowid range overlaps between source tables 
     ** and that the UnionTab.aSrc[] array is always sorted by rowid.  */
     unionDequote(zArg);
-    pStmt = unionPreparePrintf(&rc, pzErr, db,
+    pStmt = unionPreparePrintf(&rc, pzErr, db, 
         "SELECT * FROM (%z) ORDER BY 3", zArg
     );
 
@@ -978,14 +978,14 @@ static int unionConnect(
     pStmt = 0;
 
     /* It is an error if the SELECT statement returned zero rows. If only
-    ** because there is no way to determine the schema of the virtual
+    ** because there is no way to determine the schema of the virtual 
     ** table in this case.  */
     if( rc==SQLITE_OK && pTab->nSrc==0 ){
       *pzErr = sqlite3_mprintf("no source tables configured");
       rc = SQLITE_ERROR;
     }
 
-    /* For unionvtab, verify that all source tables exist and have
+    /* For unionvtab, verify that all source tables exist and have 
     ** compatible schemas. For swarmvtab, attach the first database and
     ** check that the first table is a rowid table only.  */
     if( rc==SQLITE_OK ){
@@ -1005,7 +1005,7 @@ static int unionConnect(
           "    || group_concat(quote(name) || ' ' || type, ', ')"
           "    || ')',"
           "max((cid+1) * (type='INTEGER' COLLATE nocase AND pk=1))-1 "
-          "FROM pragma_table_info(%Q, ?)",
+          "FROM pragma_table_info(%Q, ?)", 
           pSrc->zTab, pSrc->zDb
       );
     }
@@ -1131,7 +1131,7 @@ static int unionEof(sqlite3_vtab_cursor *cur){
 ** xFilter
 */
 static int unionFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -1145,7 +1145,7 @@ static int unionFilter(
   sqlite3_int64 iMin = SMALLEST_INT64;
   sqlite3_int64 iMax = LARGEST_INT64;
 
-  assert( idxNum==0
+  assert( idxNum==0 
        || idxNum==SQLITE_INDEX_CONSTRAINT_EQ
        || idxNum==SQLITE_INDEX_CONSTRAINT_LE
        || idxNum==SQLITE_INDEX_CONSTRAINT_GE
@@ -1155,7 +1155,7 @@ static int unionFilter(
   );
 
   (void)idxStr;  /* Suppress harmless warning */
-
+  
   if( idxNum==SQLITE_INDEX_CONSTRAINT_EQ ){
     assert( argc==1 );
     iMin = iMax = sqlite3_value_int64(argv[0]);
@@ -1248,7 +1248,7 @@ static int unionFilter(
 /*
 ** xBestIndex.
 **
-** This implementation searches for constraints on the rowid field. EQ,
+** This implementation searches for constraints on the rowid field. EQ, 
 ** LE, LT, GE and GT are handled.
 **
 ** If there is an EQ comparison, then idxNum is set to INDEX_CONSTRAINT_EQ.
@@ -1257,7 +1257,7 @@ static int unionFilter(
 **
 ** Otherwise, if an LE or LT constraint is found, then the INDEX_CONSTRAINT_LE
 ** or INDEX_CONSTRAINT_LT (but not both) bit is set in idxNum. The first
-** argument to xFilter is the rhs of the <= or < operator.  Similarly, if
+** argument to xFilter is the rhs of the <= or < operator.  Similarly, if 
 ** an GE or GT constraint is found, then the INDEX_CONSTRAINT_GE or
 ** INDEX_CONSTRAINT_GT bit is set in idxNum. The rhs of the >= or > operator
 ** is passed as either the first or second argument to xFilter, depending
@@ -1332,7 +1332,7 @@ static int createUnionVtab(sqlite3 *db){
     unionConnect,
     unionConnect,
     unionBestIndex,               /* xBestIndex - query planner */
-    unionDisconnect,
+    unionDisconnect, 
     unionDisconnect,
     unionOpen,                    /* xOpen - open a cursor */
     unionClose,                   /* xClose - close a cursor */
@@ -1368,8 +1368,8 @@ static int createUnionVtab(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_unionvtab_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

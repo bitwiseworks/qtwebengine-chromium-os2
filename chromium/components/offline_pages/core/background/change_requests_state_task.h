@@ -26,10 +26,9 @@ class ChangeRequestsStateTask : public Task {
                           RequestQueueStore::UpdateCallback callback);
   ~ChangeRequestsStateTask() override;
 
+ private:
   // TaskQueue::Task implementation.
   void Run() override;
-
- private:
   // Step 1. Reading the requests.
   void ReadRequests();
   // Step 2. Updates available requests.
@@ -47,7 +46,7 @@ class ChangeRequestsStateTask : public Task {
   // Callback to complete the task.
   RequestQueueStore::UpdateCallback callback_;
 
-  base::WeakPtrFactory<ChangeRequestsStateTask> weak_ptr_factory_;
+  base::WeakPtrFactory<ChangeRequestsStateTask> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChangeRequestsStateTask);
 };

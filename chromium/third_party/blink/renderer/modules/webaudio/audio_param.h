@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/modules/webaudio/audio_param_timeline.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_summing_junction.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
+#include "third_party/blink/renderer/modules/webaudio/inspector_helper_mixin.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
@@ -44,46 +45,6 @@
 namespace blink {
 
 class AudioNodeOutput;
-
-// Each AudioParam gets an identifier here.  This is mostly for instrospection
-// if warnings or other messages need to be printed. It's useful to know what
-// the AudioParam represents.  The name should include the node type and the
-// name of the AudioParam.
-enum AudioParamType {
-  kParamTypeAudioBufferSourcePlaybackRate,
-  kParamTypeAudioBufferSourceDetune,
-  kParamTypeBiquadFilterFrequency,
-  kParamTypeBiquadFilterQ,
-  kParamTypeBiquadFilterGain,
-  kParamTypeBiquadFilterDetune,
-  kParamTypeDelayDelayTime,
-  kParamTypeDynamicsCompressorThreshold,
-  kParamTypeDynamicsCompressorKnee,
-  kParamTypeDynamicsCompressorRatio,
-  kParamTypeDynamicsCompressorAttack,
-  kParamTypeDynamicsCompressorRelease,
-  kParamTypeGainGain,
-  kParamTypeOscillatorFrequency,
-  kParamTypeOscillatorDetune,
-  kParamTypeStereoPannerPan,
-  kParamTypePannerPositionX,
-  kParamTypePannerPositionY,
-  kParamTypePannerPositionZ,
-  kParamTypePannerOrientationX,
-  kParamTypePannerOrientationY,
-  kParamTypePannerOrientationZ,
-  kParamTypeAudioListenerPositionX,
-  kParamTypeAudioListenerPositionY,
-  kParamTypeAudioListenerPositionZ,
-  kParamTypeAudioListenerForwardX,
-  kParamTypeAudioListenerForwardY,
-  kParamTypeAudioListenerForwardZ,
-  kParamTypeAudioListenerUpX,
-  kParamTypeAudioListenerUpY,
-  kParamTypeAudioListenerUpZ,
-  kParamTypeConstantSourceOffset,
-  kParamTypeAudioWorklet,
-};
 
 // AudioParamHandler is an actual implementation of web-exposed AudioParam
 // interface. Each of AudioParam object creates and owns an AudioParamHandler,
@@ -97,6 +58,46 @@ enum AudioParamType {
 class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
                                 public AudioSummingJunction {
  public:
+  // Each AudioParam gets an identifier here.  This is mostly for instrospection
+  // if warnings or other messages need to be printed. It's useful to know what
+  // the AudioParam represents.  The name should include the node type and the
+  // name of the AudioParam.
+  enum AudioParamType {
+    kParamTypeAudioBufferSourcePlaybackRate,
+    kParamTypeAudioBufferSourceDetune,
+    kParamTypeBiquadFilterFrequency,
+    kParamTypeBiquadFilterQ,
+    kParamTypeBiquadFilterGain,
+    kParamTypeBiquadFilterDetune,
+    kParamTypeDelayDelayTime,
+    kParamTypeDynamicsCompressorThreshold,
+    kParamTypeDynamicsCompressorKnee,
+    kParamTypeDynamicsCompressorRatio,
+    kParamTypeDynamicsCompressorAttack,
+    kParamTypeDynamicsCompressorRelease,
+    kParamTypeGainGain,
+    kParamTypeOscillatorFrequency,
+    kParamTypeOscillatorDetune,
+    kParamTypeStereoPannerPan,
+    kParamTypePannerPositionX,
+    kParamTypePannerPositionY,
+    kParamTypePannerPositionZ,
+    kParamTypePannerOrientationX,
+    kParamTypePannerOrientationY,
+    kParamTypePannerOrientationZ,
+    kParamTypeAudioListenerPositionX,
+    kParamTypeAudioListenerPositionY,
+    kParamTypeAudioListenerPositionZ,
+    kParamTypeAudioListenerForwardX,
+    kParamTypeAudioListenerForwardY,
+    kParamTypeAudioListenerForwardZ,
+    kParamTypeAudioListenerUpX,
+    kParamTypeAudioListenerUpY,
+    kParamTypeAudioListenerUpZ,
+    kParamTypeConstantSourceOffset,
+    kParamTypeAudioWorklet,
+  };
+
   // Automation rate of the AudioParam
   enum AutomationRate {
     // a-rate
@@ -150,7 +151,7 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
   AutomationRate GetAutomationRate() const { return automation_rate_; }
   void SetAutomationRate(AutomationRate automation_rate) {
     automation_rate_ = automation_rate;
-  };
+  }
 
   bool IsAutomationRateFixed() const {
     return rate_mode_ == AutomationRateMode::kFixed;
@@ -189,6 +190,17 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
     return has_values || NumberOfRenderingConnections();
   }
 
+  // TODO(crbug.com/1015760) This is like HasSAmpleAccurateValues, but
+  // we don't check for the rate.  When the bug is fixed,
+  // HasSampleAccurateValues can be removed and this methed renamed.
+  bool HasSampleAccurateValuesTimeline() {
+    bool has_values =
+        timeline_.HasValues(destination_handler_->CurrentSampleFrame(),
+                            destination_handler_->SampleRate());
+
+    return has_values || NumberOfRenderingConnections();
+  }
+
   bool IsAudioRate() const { return automation_rate_ == kAudio; }
 
   // Calculates numberOfValues parameter values starting at the context's
@@ -215,8 +227,6 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
                             unsigned number_of_values,
                             bool sample_accurate);
   void CalculateTimelineValues(float* values, unsigned number_of_values);
-
-  int ComputeQHistogramValue(float) const;
 
   // The type of AudioParam, indicating what this AudioParam represents and what
   // node it belongs to.  Mostly for informational purposes and doesn't affect
@@ -257,19 +267,15 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
 };
 
 // AudioParam class represents web-exposed AudioParam interface.
-class AudioParam final : public ScriptWrappable {
+class AudioParam final : public ScriptWrappable, public InspectorHelperMixin {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(AudioParam);
 
  public:
-  // The most common case where the rate, mode, and limits can default.
-  static AudioParam* Create(BaseAudioContext&,
-                            AudioParamType,
-                            double default_value);
-  // The general case where the rate and mode cannot use defaults (but the
-  // limits can).
   static AudioParam* Create(
       BaseAudioContext&,
-      AudioParamType,
+      const String& parent_uuid,
+      AudioParamHandler::AudioParamType,
       double default_value,
       AudioParamHandler::AutomationRate rate,
       AudioParamHandler::AutomationRateMode rate_mode,
@@ -277,24 +283,28 @@ class AudioParam final : public ScriptWrappable {
       float max_value = std::numeric_limits<float>::max());
 
   AudioParam(BaseAudioContext&,
-             AudioParamType,
+             const String& parent_uuid,
+             AudioParamHandler::AudioParamType,
              double default_value,
              AudioParamHandler::AutomationRate rate,
              AudioParamHandler::AutomationRateMode rate_mode,
              float min,
              float max);
+
   ~AudioParam() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   // |handler| always returns a valid object.
   AudioParamHandler& Handler() const { return *handler_; }
   // |context| always returns a valid object.
   BaseAudioContext* Context() const { return context_; }
 
-  AudioParamType GetParamType() const { return Handler().GetParamType(); }
-  void SetParamType(AudioParamType);
+  AudioParamHandler::AudioParamType GetParamType() const {
+    return Handler().GetParamType();
+  }
+  String GetParamName() const { return Handler().GetParamName(); }
+  void SetParamType(AudioParamHandler::AudioParamType);
   void SetCustomParamName(const String name);
-  String GetParamName() const;
 
   float value() const;
   void setValue(float, ExceptionState&);
@@ -325,6 +335,11 @@ class AudioParam final : public ScriptWrappable {
                                   ExceptionState&);
   AudioParam* cancelScheduledValues(double start_time, ExceptionState&);
   AudioParam* cancelAndHoldAtTime(double start_time, ExceptionState&);
+
+  // InspectorHelperMixin: an AudioParam is always owned by an AudioNode so
+  // its notification is done by the parent AudioNode.
+  void ReportDidCreate() final {}
+  void ReportWillBeDestroyed() final {}
 
  private:
   void WarnIfOutsideRange(const String& param_methd, float value);

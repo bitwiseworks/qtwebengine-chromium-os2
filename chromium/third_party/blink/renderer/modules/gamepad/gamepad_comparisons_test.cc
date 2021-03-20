@@ -17,15 +17,40 @@ class GamepadComparisonsTest : public testing::Test {
   GamepadComparisonsTest() = default;
 
  protected:
-  GamepadList* CreateEmptyGamepadList() { return GamepadList::Create(); }
+  void InitGamepadQuaternion(device::GamepadQuaternion& q) {
+    q.not_null = true;
+    q.x = 0.f;
+    q.y = 0.f;
+    q.z = 0.f;
+    q.w = 0.f;
+  }
+
+  void InitGamepadVector(device::GamepadVector& v) {
+    v.not_null = true;
+    v.x = 0.f;
+    v.y = 0.f;
+    v.z = 0.f;
+  }
+
+  Gamepad* CreateGamepad() {
+    base::TimeTicks dummy_time_origin =
+        base::TimeTicks() + base::TimeDelta::FromMicroseconds(1000);
+    base::TimeTicks dummy_time_floor =
+        base::TimeTicks() + base::TimeDelta::FromMicroseconds(2000);
+    return MakeGarbageCollected<Gamepad>(nullptr, 0, dummy_time_origin,
+                                         dummy_time_floor);
+  }
+
+  GamepadList* CreateEmptyGamepadList() {
+    return MakeGarbageCollected<GamepadList>();
+  }
 
   GamepadList* CreateGamepadListWithNeutralGamepad() {
     double axes[1] = {0.0};
     device::GamepadButton buttons[1] = {{false, false, 0.0}};
-    auto* list = GamepadList::Create();
-    auto* gamepad = Gamepad::Create(nullptr);
+    auto* list = MakeGarbageCollected<GamepadList>();
+    auto* gamepad = CreateGamepad();
     gamepad->SetId("gamepad");
-    gamepad->SetIndex(0);
     gamepad->SetAxes(1, axes);
     gamepad->SetButtons(1, buttons);
     gamepad->SetConnected(true);
@@ -37,10 +62,9 @@ class GamepadComparisonsTest : public testing::Test {
     double axes[1] = {0.95};
     device::GamepadButton buttons[1] = {{false, false, 0.0}};
 
-    auto* list = GamepadList::Create();
-    auto* gamepad = Gamepad::Create(nullptr);
+    auto* list = MakeGarbageCollected<GamepadList>();
+    auto* gamepad = CreateGamepad();
     gamepad->SetId("gamepad");
-    gamepad->SetIndex(0);
     gamepad->SetAxes(1, axes);
     gamepad->SetButtons(1, buttons);
     gamepad->SetConnected(true);
@@ -52,10 +76,9 @@ class GamepadComparisonsTest : public testing::Test {
     double axes[1] = {0.0};
     device::GamepadButton buttons[1] = {{true, true, 1.0}};
 
-    auto* list = GamepadList::Create();
-    auto* gamepad = Gamepad::Create(nullptr);
+    auto* list = MakeGarbageCollected<GamepadList>();
+    auto* gamepad = CreateGamepad();
     gamepad->SetId("gamepad");
-    gamepad->SetIndex(0);
     gamepad->SetAxes(1, axes);
     gamepad->SetButtons(1, buttons);
     gamepad->SetConnected(true);
@@ -72,10 +95,9 @@ class GamepadComparisonsTest : public testing::Test {
         device::GamepadButton::kDefaultButtonPressedThreshold - 0.01,
     }};
 
-    auto* list = GamepadList::Create();
-    auto* gamepad = Gamepad::Create(nullptr);
+    auto* list = MakeGarbageCollected<GamepadList>();
+    auto* gamepad = CreateGamepad();
     gamepad->SetId("gamepad");
-    gamepad->SetIndex(0);
     gamepad->SetAxes(1, axes);
     gamepad->SetButtons(1, buttons);
     gamepad->SetConnected(true);
@@ -92,10 +114,9 @@ class GamepadComparisonsTest : public testing::Test {
         device::GamepadButton::kDefaultButtonPressedThreshold + 0.01,
     }};
 
-    auto* list = GamepadList::Create();
-    auto* gamepad = Gamepad::Create(nullptr);
+    auto* list = MakeGarbageCollected<GamepadList>();
+    auto* gamepad = CreateGamepad();
     gamepad->SetId("gamepad");
-    gamepad->SetIndex(0);
     gamepad->SetAxes(1, axes);
     gamepad->SetButtons(1, buttons);
     gamepad->SetConnected(true);

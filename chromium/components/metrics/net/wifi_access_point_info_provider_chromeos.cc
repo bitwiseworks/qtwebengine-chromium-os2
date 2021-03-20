@@ -55,7 +55,8 @@ void WifiAccessPointInfoProviderChromeos::DefaultNetworkChanged(
   // Retrieve access point info for wifi connection.
   NetworkHandler::Get()->network_configuration_handler()->GetShillProperties(
       default_network->path(),
-      base::Bind(&WifiAccessPointInfoProviderChromeos::ParseInfo, AsWeakPtr()),
+      base::BindRepeating(&WifiAccessPointInfoProviderChromeos::ParseInfo,
+                          AsWeakPtr()),
       chromeos::network_handler::ErrorCallback());
 }
 
@@ -101,7 +102,7 @@ void WifiAccessPointInfoProviderChromeos::ParseInfo(
 
   properties.GetStringWithoutPathExpansion(
       shill::kWifiBSsid, &wifi_access_point_info_.bssid);
-  const base::DictionaryValue* vendor_dict = NULL;
+  const base::DictionaryValue* vendor_dict = nullptr;
   if (!properties.GetDictionaryWithoutPathExpansion(
           shill::kWifiVendorInformationProperty,
           &vendor_dict))

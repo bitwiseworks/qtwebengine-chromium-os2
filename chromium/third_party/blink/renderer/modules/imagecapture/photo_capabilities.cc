@@ -6,11 +6,6 @@
 
 namespace blink {
 
-// static
-PhotoCapabilities* PhotoCapabilities::Create() {
-  return MakeGarbageCollected<PhotoCapabilities>();
-}
-
 Vector<String> PhotoCapabilities::fillLightMode() const {
   Vector<String> fill_light_modes;
   for (const auto& mode : fill_light_modes_) {
@@ -50,7 +45,7 @@ bool PhotoCapabilities::IsRedEyeReductionControllable() const {
          media::mojom::blink::RedEyeReduction::CONTROLLABLE;
 }
 
-void PhotoCapabilities::Trace(blink::Visitor* visitor) {
+void PhotoCapabilities::Trace(Visitor* visitor) {
   visitor->Trace(image_height_);
   visitor->Trace(image_width_);
   ScriptWrappable::Trace(visitor);

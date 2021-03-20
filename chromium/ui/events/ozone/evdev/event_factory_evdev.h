@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -15,15 +16,14 @@
 #include "ui/events/ozone/device/device_event_observer.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/event_thread_evdev.h"
-#include "ui/events/ozone/evdev/events_ozone_evdev_export.h"
 #include "ui/events/ozone/evdev/input_controller_evdev.h"
 #include "ui/events/ozone/evdev/keyboard_evdev.h"
 #include "ui/events/ozone/evdev/mouse_button_map_evdev.h"
 #include "ui/events/ozone/gamepad/gamepad_event.h"
 #include "ui/events/platform/platform_event_source.h"
-#include "ui/events/system_input_injector.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/sequential_id_generator.h"
+#include "ui/ozone/public/system_input_injector.h"
 
 namespace gfx {
 class PointF;
@@ -41,15 +41,15 @@ enum class DomCode;
 enum class StylusState;
 
 #if !defined(USE_EVDEV)
-#error Missing dependency on ui/events/ozone:events_ozone_evdev
+#error Missing dependency on ui/events/ozone/evdev
 #endif
 
 // Ozone events implementation for the Linux input subsystem ("evdev").
 //
 // This is a UI thread object, but creates its own thread for I/O. See
 // InputDeviceFactoryEvdev for the I/O thread part.
-class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
-                                                    public PlatformEventSource {
+class COMPONENT_EXPORT(EVDEV) EventFactoryEvdev : public DeviceEventObserver,
+                                                  public PlatformEventSource {
  public:
   EventFactoryEvdev(CursorDelegateEvdev* cursor,
                     DeviceManager* device_manager,
@@ -81,13 +81,15 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
       const std::vector<TouchscreenDevice>& devices);
   void DispatchMouseDevicesUpdated(const std::vector<InputDevice>& devices);
   void DispatchTouchpadDevicesUpdated(const std::vector<InputDevice>& devices);
+  void DispatchUncategorizedDevicesUpdated(
+      const std::vector<InputDevice>& devices);
   void DispatchDeviceListsComplete();
   void DispatchStylusStateChanged(StylusState stylus_state);
 
   // Gamepad event and gamepad device event. These events are dispatched to
   // GamepadObserver through GamepadProviderOzone.
   void DispatchGamepadEvent(const GamepadEvent& event);
-  void DispatchGamepadDevicesUpdated(const std::vector<InputDevice>& devices);
+  void DispatchGamepadDevicesUpdated(const std::vector<GamepadDevice>& devices);
 
  protected:
   // DeviceEventObserver overrides:
@@ -113,10 +115,10 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
   int last_device_id_ = 0;
 
   // Interface for scanning & monitoring input devices.
-  DeviceManager* device_manager_;  // Not owned.
+  DeviceManager* const device_manager_;  // Not owned.
 
   // Gamepad provider to dispatch gamepad events.
-  GamepadProviderOzone* gamepad_provider_;
+  GamepadProviderOzone* const gamepad_provider_;
 
   // Proxy for input device factory (manages device I/O objects).
   // The real object lives on a different thread.
@@ -132,7 +134,7 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
   KeyboardEvdev keyboard_;
 
   // Cursor movement.
-  CursorDelegateEvdev* cursor_;
+  CursorDelegateEvdev* const cursor_;
 
   // Object for controlling input devices.
   InputControllerEvdev input_controller_;
@@ -147,7 +149,7 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
   SequentialIDGenerator touch_id_generator_;
 
   // Support weak pointers for attach & detach callbacks.
-  base::WeakPtrFactory<EventFactoryEvdev> weak_ptr_factory_;
+  base::WeakPtrFactory<EventFactoryEvdev> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EventFactoryEvdev);
 };

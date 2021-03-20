@@ -33,67 +33,72 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
-#include "third_party/blink/renderer/bindings/modules/v8/array_buffer_or_array_buffer_view_or_dictionary.h"
-#include "third_party/blink/renderer/bindings/modules/v8/dictionary_or_string.h"
+#include "third_party/blink/renderer/modules/crypto/normalize_algorithm.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
+class ArrayBufferOrArrayBufferViewOrJsonWebKey;
 class CryptoKey;
 
-typedef ArrayBufferOrArrayBufferView BufferSource;
-typedef DictionaryOrString AlgorithmIdentifier;
+using BufferSource = ArrayBufferOrArrayBufferView;
 
 class SubtleCrypto final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SubtleCrypto* Create() { return MakeGarbageCollected<SubtleCrypto>(); }
-
   SubtleCrypto();
 
   ScriptPromise encrypt(ScriptState*,
                         const AlgorithmIdentifier&,
                         CryptoKey*,
-                        const BufferSource&);
+                        const BufferSource&,
+                        ExceptionState&);
   ScriptPromise decrypt(ScriptState*,
                         const AlgorithmIdentifier&,
                         CryptoKey*,
-                        const BufferSource&);
+                        const BufferSource&,
+                        ExceptionState&);
   ScriptPromise sign(ScriptState*,
                      const AlgorithmIdentifier&,
                      CryptoKey*,
-                     const BufferSource&);
+                     const BufferSource&,
+                     ExceptionState&);
   // Note that this is not named "verify" because when compiling on Mac that
   // expands to a macro and breaks.
   ScriptPromise verifySignature(ScriptState*,
                                 const AlgorithmIdentifier&,
                                 CryptoKey*,
                                 const BufferSource& signature,
-                                const BufferSource& data);
+                                const BufferSource& data,
+                                ExceptionState&);
   ScriptPromise digest(ScriptState*,
                        const AlgorithmIdentifier&,
-                       const BufferSource& data);
+                       const BufferSource& data,
+                       ExceptionState&);
 
   ScriptPromise generateKey(ScriptState*,
                             const AlgorithmIdentifier&,
                             bool extractable,
-                            const Vector<String>& key_usages);
+                            const Vector<String>& key_usages,
+                            ExceptionState&);
   ScriptPromise importKey(ScriptState*,
                           const String&,
-                          const ArrayBufferOrArrayBufferViewOrDictionary&,
+                          const ArrayBufferOrArrayBufferViewOrJsonWebKey&,
                           const AlgorithmIdentifier&,
                           bool extractable,
-                          const Vector<String>& key_usages);
+                          const Vector<String>& key_usages,
+                          ExceptionState&);
   ScriptPromise exportKey(ScriptState*, const String&, CryptoKey*);
 
   ScriptPromise wrapKey(ScriptState*,
                         const String&,
                         CryptoKey*,
                         CryptoKey*,
-                        const AlgorithmIdentifier&);
+                        const AlgorithmIdentifier&,
+                        ExceptionState&);
   ScriptPromise unwrapKey(ScriptState*,
                           const String&,
                           const BufferSource&,
@@ -101,18 +106,21 @@ class SubtleCrypto final : public ScriptWrappable {
                           const AlgorithmIdentifier&,
                           const AlgorithmIdentifier&,
                           bool,
-                          const Vector<String>&);
+                          const Vector<String>&,
+                          ExceptionState&);
 
   ScriptPromise deriveBits(ScriptState*,
                            const AlgorithmIdentifier&,
                            CryptoKey*,
-                           unsigned);
+                           unsigned,
+                           ExceptionState&);
   ScriptPromise deriveKey(ScriptState*,
                           const AlgorithmIdentifier&,
                           CryptoKey*,
                           const AlgorithmIdentifier&,
                           bool extractable,
-                          const Vector<String>&);
+                          const Vector<String>&,
+                          ExceptionState&);
 };
 
 }  // namespace blink

@@ -36,11 +36,11 @@ namespace blink {
 namespace cssvalue {
 
 static bool SubimageIsPending(const CSSValue& value) {
-  if (value.IsImageValue())
-    return ToCSSImageValue(value).IsCachePending();
+  if (auto* image_value = DynamicTo<CSSImageValue>(value))
+    return image_value->IsCachePending();
 
-  if (value.IsImageGeneratorValue())
-    return ToCSSImageGeneratorValue(value).IsPending();
+  if (auto* image_generator_value = DynamicTo<CSSImageGeneratorValue>(value))
+    return image_generator_value->IsPending();
 
   NOTREACHED();
 
@@ -50,11 +50,11 @@ static bool SubimageIsPending(const CSSValue& value) {
 static bool SubimageKnownToBeOpaque(const CSSValue& value,
                                     const Document& document,
                                     const ComputedStyle& style) {
-  if (value.IsImageValue())
-    return ToCSSImageValue(value).KnownToBeOpaque(document, style);
+  if (auto* image_value = DynamicTo<CSSImageValue>(value))
+    return image_value->KnownToBeOpaque(document, style);
 
-  if (value.IsImageGeneratorValue())
-    return ToCSSImageGeneratorValue(value).KnownToBeOpaque(document, style);
+  if (auto* img_generator_value = DynamicTo<CSSImageGeneratorValue>(value))
+    return img_generator_value->KnownToBeOpaque(document, style);
 
   NOTREACHED();
 
@@ -66,17 +66,17 @@ static ImageResourceContent* CachedImageForCSSValue(CSSValue* value,
   if (!value)
     return nullptr;
 
-  if (value->IsImageValue()) {
-    StyleImage* style_image_resource = ToCSSImageValue(value)->CacheImage(
-        document, FetchParameters::kAllowPlaceholder);
+  if (auto* image_value = DynamicTo<CSSImageValue>(value)) {
+    StyleImage* style_image_resource =
+        image_value->CacheImage(document, FetchParameters::kAllowPlaceholder);
     if (!style_image_resource)
       return nullptr;
 
     return style_image_resource->CachedImage();
   }
 
-  if (value->IsImageGeneratorValue()) {
-    ToCSSImageGeneratorValue(value)->LoadSubimages(document);
+  if (auto* img_generator_value = DynamicTo<CSSImageGeneratorValue>(value)) {
+    img_generator_value->LoadSubimages(document);
     // FIXME: Handle CSSImageGeneratorValue (and thus cross-fades with gradients
     // and canvas).
     return nullptr;
@@ -99,10 +99,11 @@ static Image* RenderableImageForCSSValue(CSSValue* value,
 }
 
 static KURL UrlForCSSValue(const CSSValue& value) {
-  if (!value.IsImageValue())
+  auto* image_value = DynamicTo<CSSImageValue>(value);
+  if (!image_value)
     return KURL();
 
-  return KURL(ToCSSImageValue(value).Url());
+  return KURL(image_value->Url());
 }
 
 CSSCrossfadeValue::CSSCrossfadeValue(CSSValue* from_value,
@@ -141,14 +142,26 @@ String CSSCrossfadeValue::CustomCSSText() const {
   return result.ToString();
 }
 
-CSSCrossfadeValue* CSSCrossfadeValue::ValueWithURLsMadeAbsolute() {
+CSSCrossfadeValue* CSSCrossfadeValue::ComputedCSSValue(
+    const ComputedStyle& style,
+    bool allow_visited_style) {
   CSSValue* from_value = from_value_;
-  if (from_value_->IsImageValue())
-    from_value = ToCSSImageValue(*from_value_).ValueWithURLMadeAbsolute();
+  if (auto* from_image_value = DynamicTo<CSSImageValue>(from_value_.Get())) {
+    from_value = from_image_value->ValueWithURLMadeAbsolute();
+  } else if (auto* from_generator_value =
+                 DynamicTo<CSSImageGeneratorValue>(from_value_.Get())) {
+    from_value =
+        from_generator_value->ComputedCSSValue(style, allow_visited_style);
+  }
   CSSValue* to_value = to_value_;
-  if (to_value_->IsImageValue())
-    to_value = ToCSSImageValue(*to_value_).ValueWithURLMadeAbsolute();
-  return CSSCrossfadeValue::Create(from_value, to_value, percentage_value_);
+  if (auto* to_image_value = DynamicTo<CSSImageValue>(to_value_.Get())) {
+    to_value = to_image_value->ValueWithURLMadeAbsolute();
+  } else if (auto* to_generator_value =
+                 DynamicTo<CSSImageGeneratorValue>(to_value_.Get())) {
+    to_value = to_generator_value->ComputedCSSValue(style, allow_visited_style);
+  }
+  return MakeGarbageCollected<CSSCrossfadeValue>(from_value, to_value,
+                                                 percentage_value_);
 }
 
 FloatSize CSSCrossfadeValue::FixedSize(
@@ -163,14 +176,12 @@ FloatSize CSSCrossfadeValue::FixedSize(
   FloatSize from_image_size(from_image->Size());
   FloatSize to_image_size(to_image->Size());
 
-  if (from_image->IsSVGImage()) {
-    from_image_size =
-        ToSVGImage(from_image)->ConcreteObjectSize(default_object_size);
+  if (auto* from_svg_image = DynamicTo<SVGImage>(from_image)) {
+    from_image_size = from_svg_image->ConcreteObjectSize(default_object_size);
   }
 
-  if (to_image->IsSVGImage()) {
-    to_image_size =
-        ToSVGImage(to_image)->ConcreteObjectSize(default_object_size);
+  if (auto* to_svg_image = DynamicTo<SVGImage>(to_image)) {
+    to_image_size = to_svg_image->ConcreteObjectSize(default_object_size);
   }
 
   // Rounding issues can cause transitions between images of equal size to
@@ -239,13 +250,13 @@ scoped_refptr<Image> CSSCrossfadeValue::GetImage(
   scoped_refptr<Image> from_image_ref(from_image);
   scoped_refptr<Image> to_image_ref(to_image);
 
-  if (from_image->IsSVGImage()) {
-    from_image_ref = SVGImageForContainer::Create(
-        ToSVGImage(from_image), size, 1, UrlForCSSValue(*from_value_));
+  if (auto* from_svg_image = DynamicTo<SVGImage>(from_image)) {
+    from_image_ref = SVGImageForContainer::Create(from_svg_image, size, 1,
+                                                  UrlForCSSValue(*from_value_));
   }
 
-  if (to_image->IsSVGImage()) {
-    to_image_ref = SVGImageForContainer::Create(ToSVGImage(to_image), size, 1,
+  if (auto* to_svg_image = DynamicTo<SVGImage>(to_image)) {
+    to_image_ref = SVGImageForContainer::Create(to_svg_image, size, 1,
                                                 UrlForCSSValue(*to_value_));
   }
 
@@ -298,7 +309,7 @@ bool CSSCrossfadeValue::Equals(const CSSCrossfadeValue& other) const {
          DataEquivalent(percentage_value_, other.percentage_value_);
 }
 
-void CSSCrossfadeValue::TraceAfterDispatch(blink::Visitor* visitor) {
+void CSSCrossfadeValue::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(from_value_);
   visitor->Trace(to_value_);
   visitor->Trace(percentage_value_);

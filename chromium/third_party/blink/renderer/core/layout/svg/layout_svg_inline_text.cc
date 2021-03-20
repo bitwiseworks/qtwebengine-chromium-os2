@@ -56,11 +56,11 @@ LayoutSVGInlineText::LayoutSVGInlineText(Node* n,
     : LayoutText(n, NormalizeWhitespace(std::move(string))),
       scaling_factor_(1) {}
 
-void LayoutSVGInlineText::SetTextInternal(scoped_refptr<StringImpl> text) {
-  LayoutText::SetTextInternal(NormalizeWhitespace(std::move(text)));
-  if (LayoutSVGText* text_layout_object =
-          LayoutSVGText::LocateLayoutSVGTextAncestor(this))
-    text_layout_object->SubtreeTextDidChange();
+void LayoutSVGInlineText::TextDidChange() {
+  SetTextInternal(NormalizeWhitespace(GetText().Impl()));
+  LayoutText::TextDidChange();
+  LayoutSVGText::NotifySubtreeStructureChanged(
+      this, layout_invalidation_reason::kTextChanged);
 }
 
 void LayoutSVGInlineText::StyleDidChange(StyleDifference diff,
@@ -68,12 +68,11 @@ void LayoutSVGInlineText::StyleDidChange(StyleDifference diff,
   LayoutText::StyleDidChange(diff, old_style);
   UpdateScaledFont();
 
-  bool new_preserves =
-      Style() ? StyleRef().WhiteSpace() == EWhiteSpace::kPre : false;
+  bool new_preserves = StyleRef().WhiteSpace() == EWhiteSpace::kPre;
   bool old_preserves =
-      old_style ? old_style->WhiteSpace() == EWhiteSpace::kPre : false;
+      old_style && old_style->WhiteSpace() == EWhiteSpace::kPre;
   if (old_preserves != new_preserves) {
-    SetText(OriginalText(), true);
+    ForceSetText(OriginalText());
     return;
   }
 
@@ -89,8 +88,7 @@ void LayoutSVGInlineText::StyleDidChange(StyleDifference diff,
   }
 }
 
-InlineTextBox* LayoutSVGInlineText::CreateTextBox(int start,
-                                                  unsigned short length) {
+InlineTextBox* LayoutSVGInlineText::CreateTextBox(int start, uint16_t length) {
   InlineTextBox* box =
       new SVGInlineTextBox(LineLayoutItem(this), start, length);
   box->SetHasVirtualLogicalHeight();
@@ -130,8 +128,8 @@ FloatRect LayoutSVGInlineText::FloatLinesBoundingBox() const {
   return bounding_box;
 }
 
-LayoutRect LayoutSVGInlineText::LinesBoundingBox() const {
-  return EnclosingLayoutRect(FloatLinesBoundingBox());
+PhysicalRect LayoutSVGInlineText::PhysicalLinesBoundingBox() const {
+  return PhysicalRect::EnclosingRect(FloatLinesBoundingBox());
 }
 
 bool LayoutSVGInlineText::CharacterStartsNewTextChunk(int position) const {
@@ -152,8 +150,8 @@ bool LayoutSVGInlineText::CharacterStartsNewTextChunk(int position) const {
 }
 
 PositionWithAffinity LayoutSVGInlineText::PositionForPoint(
-    const LayoutPoint& point) const {
-  if (!HasTextBoxes() || !TextLength())
+    const PhysicalOffset& point) const {
+  if (!HasInlineFragments() || !TextLength())
     return CreatePositionWithAffinity(0);
 
   DCHECK(scaling_factor_);
@@ -170,7 +168,7 @@ PositionWithAffinity LayoutSVGInlineText::PositionForPoint(
   // Map local point to absolute point, as the character origins stored in the
   // text fragments use absolute coordinates.
   FloatPoint absolute_point(point);
-  absolute_point.MoveBy(containing_block->Location());
+  absolute_point.MoveBy(FloatPoint(containing_block->Location()));
 
   float closest_distance = std::numeric_limits<float>::max();
   float position_in_fragment = 0;
@@ -178,10 +176,10 @@ PositionWithAffinity LayoutSVGInlineText::PositionForPoint(
   SVGInlineTextBox* closest_distance_box = nullptr;
 
   for (InlineTextBox* box : TextBoxes()) {
-    if (!box->IsSVGInlineTextBox())
+    auto* text_box = DynamicTo<SVGInlineTextBox>(box);
+    if (!text_box)
       continue;
 
-    SVGInlineTextBox* text_box = ToSVGInlineTextBox(box);
     for (const SVGTextFragment& fragment : text_box->TextFragments()) {
       FloatRect fragment_rect = fragment.BoundingBox(baseline);
 
@@ -416,12 +414,13 @@ void LayoutSVGInlineText::ComputeNewScaledFontForStyle(
   FontDescription font_description = unscaled_font_description;
   font_description.SetComputedSize(scaled_font_size);
 
-  scaled_font = Font(font_description);
-  scaled_font.Update(document.GetStyleEngine().GetFontSelector());
+  scaled_font =
+      Font(font_description, document.GetStyleEngine().GetFontSelector());
 }
 
-LayoutRect LayoutSVGInlineText::VisualRectInDocument() const {
-  return Parent()->VisualRectInDocument();
+PhysicalRect LayoutSVGInlineText::VisualRectInDocument(
+    VisualRectFlags flags) const {
+  return Parent()->VisualRectInDocument(flags);
 }
 
 FloatRect LayoutSVGInlineText::VisualRectInLocalSVGCoordinates() const {

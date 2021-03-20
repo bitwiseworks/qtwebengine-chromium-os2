@@ -13,7 +13,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
@@ -26,16 +26,13 @@
 #include "third_party/sqlite/sqlite3.h"
 
 using base::ASCIIToUTF16;
-using storage::DatabaseConnections;
-using storage::DatabaseTracker;
-using storage::OriginInfo;
 
-namespace {
+namespace storage {
 
 const char kOrigin1Url[] = "http://origin1";
 const char kOrigin2Url[] = "http://protected_origin2";
 
-class TestObserver : public storage::DatabaseTracker::Observer {
+class TestObserver : public DatabaseTracker::Observer {
  public:
   TestObserver()
       : new_notification_received_(false),
@@ -95,29 +92,27 @@ void CheckNotificationReceived(TestObserver* observer,
   EXPECT_EQ(expected_database_size, observer->GetNotificationDatabaseSize());
 }
 
-class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
+class TestQuotaManagerProxy : public QuotaManagerProxy {
  public:
   TestQuotaManagerProxy()
       : QuotaManagerProxy(nullptr, nullptr), registered_client_(nullptr) {}
 
-  void RegisterClient(storage::QuotaClient* client) override {
+  void RegisterClient(scoped_refptr<QuotaClient> client) override {
     EXPECT_FALSE(registered_client_);
     registered_client_ = client;
   }
 
-  void NotifyStorageAccessed(storage::QuotaClient::ID client_id,
-                             const url::Origin& origin,
+  void NotifyStorageAccessed(const url::Origin& origin,
                              blink::mojom::StorageType type) override {
-    EXPECT_EQ(storage::QuotaClient::kDatabase, client_id);
     EXPECT_EQ(blink::mojom::StorageType::kTemporary, type);
     accesses_[origin] += 1;
   }
 
-  void NotifyStorageModified(storage::QuotaClient::ID client_id,
+  void NotifyStorageModified(QuotaClient::ID client_id,
                              const url::Origin& origin,
                              blink::mojom::StorageType type,
                              int64_t delta) override {
-    EXPECT_EQ(storage::QuotaClient::kDatabase, client_id);
+    EXPECT_EQ(QuotaClient::kDatabase, client_id);
     EXPECT_EQ(blink::mojom::StorageType::kTemporary, type);
     modifications_[origin].first += 1;
     modifications_[origin].second += delta;
@@ -126,7 +121,7 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
   // Not needed for our tests.
   void NotifyOriginInUse(const url::Origin& origin) override {}
   void NotifyOriginNoLongerInUse(const url::Origin& origin) override {}
-  void SetUsageCacheEnabled(storage::QuotaClient::ID client_id,
+  void SetUsageCacheEnabled(QuotaClient::ID client_id,
                             const url::Origin& origin,
                             blink::mojom::StorageType type,
                             bool enabled) override {}
@@ -156,7 +151,7 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
     modifications_.clear();
   }
 
-  storage::QuotaClient* registered_client_;
+  scoped_refptr<QuotaClient> registered_client_;
 
   // Map from origin to count of access notifications.
   std::map<url::Origin, int> accesses_;
@@ -176,10 +171,6 @@ bool EnsureFileOfSize(const base::FilePath& file_path, int64_t length) {
   return file.SetLength(length);
 }
 
-}  // namespace
-
-namespace content {
-
 // We declare a helper class, and make it a friend of DatabaseTracker using
 // the FORWARD_DECLARE_TEST macro, and we implement all tests we want to run as
 // static methods of this class. Then we make our TEST() targets call these
@@ -189,7 +180,7 @@ class DatabaseTracker_TestHelper_Test {
  public:
   static void TestDeleteOpenDatabase(bool incognito_mode) {
     // Initialize the tracker database.
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     scoped_refptr<MockSpecialStoragePolicy> special_storage_policy =
@@ -204,10 +195,8 @@ class DatabaseTracker_TestHelper_Test {
 
     // Create and open three databases.
     int64_t database_size = 0;
-    const std::string kOrigin1 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
-    const std::string kOrigin2 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin2Url));
+    const std::string kOrigin1 = GetIdentifierFromOrigin(GURL(kOrigin1Url));
+    const std::string kOrigin2 = GetIdentifierFromOrigin(GURL(kOrigin2Url));
     const base::string16 kDB1 = ASCIIToUTF16("db1");
     const base::string16 kDB2 = ASCIIToUTF16("db2");
     const base::string16 kDB3 = ASCIIToUTF16("db3");
@@ -232,15 +221,15 @@ class DatabaseTracker_TestHelper_Test {
     // Delete db1. Should also delete origin1.
     TestObserver observer;
     tracker->AddObserver(&observer);
-    net::TestCompletionCallback callback;
-    int result = tracker->DeleteDatabase(kOrigin1, kDB1, callback.callback());
+    net::TestCompletionCallback callback1;
+    int result = tracker->DeleteDatabase(kOrigin1, kDB1, callback1.callback());
     EXPECT_EQ(net::ERR_IO_PENDING, result);
-    ASSERT_FALSE(callback.have_result());
+    ASSERT_FALSE(callback1.have_result());
     EXPECT_TRUE(observer.DidReceiveNewNotification());
     EXPECT_EQ(kOrigin1, observer.GetNotificationOriginIdentifier());
     EXPECT_EQ(kDB1, observer.GetNotificationDatabaseName());
     tracker->DatabaseClosed(kOrigin1, kDB1);
-    result = callback.GetResult(result);
+    result = callback1.GetResult(result);
     EXPECT_EQ(net::OK, result);
     EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOrigin1)));
 
@@ -265,13 +254,15 @@ class DatabaseTracker_TestHelper_Test {
     // Delete databases modified since yesterday. db2 is whitelisted.
     base::Time yesterday = base::Time::Now();
     yesterday -= base::TimeDelta::FromDays(1);
-    result = tracker->DeleteDataModifiedSince(yesterday, callback.callback());
+
+    net::TestCompletionCallback callback2;
+    result = tracker->DeleteDataModifiedSince(yesterday, callback2.callback());
     EXPECT_EQ(net::ERR_IO_PENDING, result);
-    ASSERT_FALSE(callback.have_result());
+    ASSERT_FALSE(callback2.have_result());
     EXPECT_TRUE(observer.DidReceiveNewNotification());
     tracker->DatabaseClosed(kOrigin1, kDB1);
     tracker->DatabaseClosed(kOrigin2, kDB2);
-    result = callback.GetResult(result);
+    result = callback2.GetResult(result);
     EXPECT_EQ(net::OK, result);
     EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOrigin1)));
     EXPECT_TRUE(base::PathExists(tracker->GetFullDBFilePath(kOrigin2, kDB2)));
@@ -283,7 +274,7 @@ class DatabaseTracker_TestHelper_Test {
 
   static void TestDatabaseTracker(bool incognito_mode) {
     // Initialize the tracker database.
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     scoped_refptr<MockSpecialStoragePolicy> special_storage_policy =
@@ -304,10 +295,8 @@ class DatabaseTracker_TestHelper_Test {
 
     // Open three new databases.
     int64_t database_size = 0;
-    const std::string kOrigin1 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
-    const std::string kOrigin2 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin2Url));
+    const std::string kOrigin1 = GetIdentifierFromOrigin(GURL(kOrigin1Url));
+    const std::string kOrigin2 = GetIdentifierFromOrigin(GURL(kOrigin2Url));
     const base::string16 kDB1 = ASCIIToUTF16("db1");
     const base::string16 kDB2 = ASCIIToUTF16("db2");
     const base::string16 kDB3 = ASCIIToUTF16("db3");
@@ -420,11 +409,11 @@ class DatabaseTracker_TestHelper_Test {
 
   static void DatabaseTrackerQuotaIntegration(bool incognito_mode) {
     const url::Origin kOrigin(url::Origin::Create(GURL(kOrigin1Url)));
-    const std::string kOriginId = storage::GetIdentifierFromOrigin(kOrigin);
+    const std::string kOriginId = GetIdentifierFromOrigin(kOrigin);
     const base::string16 kName = ASCIIToUTF16("name");
     const base::string16 kDescription = ASCIIToUTF16("description");
 
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -526,16 +515,14 @@ class DatabaseTracker_TestHelper_Test {
 
   static void DatabaseTrackerClearSessionOnlyDatabasesOnExit() {
     int64_t database_size = 0;
-    const std::string kOrigin1 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
-    const std::string kOrigin2 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin2Url));
+    const std::string kOrigin1 = GetIdentifierFromOrigin(GURL(kOrigin1Url));
+    const std::string kOrigin2 = GetIdentifierFromOrigin(GURL(kOrigin2Url));
     const base::string16 kDB1 = ASCIIToUTF16("db1");
     const base::string16 kDB2 = ASCIIToUTF16("db2");
     const base::string16 kDescription = ASCIIToUTF16("database_description");
 
     // Initialize the tracker database.
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     base::FilePath origin1_db_dir;
@@ -606,16 +593,14 @@ class DatabaseTracker_TestHelper_Test {
 
   static void DatabaseTrackerSetForceKeepSessionState() {
     int64_t database_size = 0;
-    const std::string kOrigin1 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
-    const std::string kOrigin2 =
-        storage::GetIdentifierFromOrigin(GURL(kOrigin2Url));
+    const std::string kOrigin1 = GetIdentifierFromOrigin(GURL(kOrigin1Url));
+    const std::string kOrigin2 = GetIdentifierFromOrigin(GURL(kOrigin2Url));
     const base::string16 kDB1 = ASCIIToUTF16("db1");
     const base::string16 kDB2 = ASCIIToUTF16("db2");
     const base::string16 kDescription = ASCIIToUTF16("database_description");
 
     // Initialize the tracker database.
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     base::FilePath origin1_db_dir;
@@ -683,7 +668,7 @@ class DatabaseTracker_TestHelper_Test {
 
   static void EmptyDatabaseNameIsValid() {
     const GURL kOrigin(kOrigin1Url);
-    const std::string kOriginId = storage::GetIdentifierFromOrigin(kOrigin);
+    const std::string kOriginId = GetIdentifierFromOrigin(kOrigin);
     const base::string16 kEmptyName;
     const base::string16 kDescription(ASCIIToUTF16("description"));
     const base::string16 kChangedDescription(
@@ -691,7 +676,7 @@ class DatabaseTracker_TestHelper_Test {
 
     // Initialize a tracker database, no need to put it on disk.
     const bool kUseInMemoryTrackerDatabase = true;
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     scoped_refptr<DatabaseTracker> tracker(
@@ -734,13 +719,13 @@ class DatabaseTracker_TestHelper_Test {
 
   static void HandleSqliteError() {
     const GURL kOrigin(kOrigin1Url);
-    const std::string kOriginId = storage::GetIdentifierFromOrigin(kOrigin);
+    const std::string kOriginId = GetIdentifierFromOrigin(kOrigin);
     const base::string16 kName(ASCIIToUTF16("name"));
     const base::string16 kDescription(ASCIIToUTF16("description"));
 
     // Initialize a tracker database, no need to put it on disk.
     const bool kUseInMemoryTrackerDatabase = true;
-    base::test::ScopedTaskEnvironment scoped_task_environment;
+    base::test::TaskEnvironment task_environment;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     scoped_refptr<DatabaseTracker> tracker(
@@ -852,4 +837,4 @@ TEST(DatabaseTrackerTest, HandleSqliteError) {
   DatabaseTracker_TestHelper_Test::HandleSqliteError();
 }
 
-}  // namespace content
+}  // namespace storage

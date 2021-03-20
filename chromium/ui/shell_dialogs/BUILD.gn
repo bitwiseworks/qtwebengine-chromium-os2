@@ -12,30 +12,51 @@ if (is_mac) {
   import("//build/config/mac/rules.gni")
 }
 
+# Reset sources_assignment_filter for the BUILD.gn file to prevent
+# regression during the migration of Chromium away from the feature.
+# See docs/no_sources_assignment_filter.md for more information.
+# TODO(crbug.com/1018739): remove this when migration is done.
+set_sources_assignment_filter([])
+
 jumbo_component("shell_dialogs") {
   sources = [
     "base_shell_dialog.cc",
     "base_shell_dialog.h",
-    "base_shell_dialog_win.cc",
-    "base_shell_dialog_win.h",
-    "execute_select_file_win.cc",
-    "execute_select_file_win.h",
     "select_file_dialog.cc",
     "select_file_dialog.h",
     "select_file_dialog_factory.cc",
     "select_file_dialog_factory.h",
-    "select_file_dialog_mac.h",
-    "select_file_dialog_mac.mm",
-    "select_file_dialog_win.cc",
-    "select_file_dialog_win.h",
     "select_file_policy.cc",
     "select_file_policy.h",
     "selected_file_info.cc",
     "selected_file_info.h",
-    "shell_dialog_linux.cc",
-    "shell_dialog_linux.h",
     "shell_dialogs_export.h",
   ]
+
+  if (is_linux) {
+    sources += [
+      "shell_dialog_linux.cc",
+      "shell_dialog_linux.h",
+    ]
+  }
+
+  if (is_mac) {
+    sources += [
+      "select_file_dialog_mac.h",
+      "select_file_dialog_mac.mm",
+    ]
+  }
+
+  if (is_win) {
+    sources += [
+      "base_shell_dialog_win.cc",
+      "base_shell_dialog_win.h",
+      "execute_select_file_win.cc",
+      "execute_select_file_win.h",
+      "select_file_dialog_win.cc",
+      "select_file_dialog_win.h",
+    ]
+  }
 
   defines = [ "SHELL_DIALOGS_IMPLEMENTATION" ]
 
@@ -75,6 +96,11 @@ jumbo_component("shell_dialogs") {
       "Foundation.framework",
       "AppKit.framework",
     ]
+    deps += [
+      "//components/remote_cocoa/app_shim",
+      "//components/remote_cocoa/browser",
+      "//components/remote_cocoa/common:mojo",
+    ]
   }
 
   if (is_fuchsia) {
@@ -86,41 +112,29 @@ jumbo_component("shell_dialogs") {
   }
 }
 
-if (is_mac) {
-  mac_xib_bundle_data("shell_dialogs_unittests_xibs") {
-    testonly = true
-    sources = [
-      "//chrome/app/nibs/SaveAccessoryView.xib",
-    ]
-  }
-
-  mac_framework_bundle("shell_dialogs_unittests_bundle") {
-    testonly = true
-    framework_version = "S"
-    framework_contents = [ "Resources" ]
-    info_plist = "//ui/base/test/framework-Info.plist"
-    deps = [
-      ":shell_dialogs_unittests_xibs",
-      "//ui/resources:ui_test_pak_bundle_data",
-    ]
-    extra_substitutions = [ "CHROMIUM_BUNDLE_ID=$target_name" ]
-  }
-}
-
 test("shell_dialogs_unittests") {
   testonly = true
   sources = [
-    "execute_select_file_win_unittest.cc",
     "run_all_unittests.cc",
-    "select_file_dialog_mac_unittest.mm",
     "select_file_dialog_unittest.cc",
-    "select_file_dialog_win_unittest.cc",
   ]
+
+  if (is_mac) {
+    sources += [ "select_file_dialog_mac_unittest.mm" ]
+  }
+
+  if (is_win) {
+    sources += [
+      "execute_select_file_win_unittest.cc",
+      "select_file_dialog_win_unittest.cc",
+    ]
+  }
 
   deps = [
     ":shell_dialogs",
     "//base",
     "//base/test:test_support",
+    "//mojo/core/embedder",
     "//testing/gtest",
     "//ui/base",
     "//ui/resources:ui_test_pak_data",
@@ -128,6 +142,21 @@ test("shell_dialogs_unittests") {
   ]
 
   if (is_mac) {
-    deps += [ ":shell_dialogs_unittests_bundle" ]
+    deps += [ "//components/remote_cocoa/app_shim" ]
   }
+
+  # TODO: Remove once http://crbug.com/951419 is fixed.
+  if (is_android) {
+    deps += [ "//ui/android:ui_java" ]
+  }
+}
+
+source_set("test_support") {
+  testonly = true
+  sources = [
+    "fake_select_file_dialog.cc",
+    "fake_select_file_dialog.h",
+  ]
+  public_deps = [ ":shell_dialogs" ]
+  deps = [ "//base" ]
 }

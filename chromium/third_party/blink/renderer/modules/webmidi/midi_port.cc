@@ -34,9 +34,10 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/modules/webmidi/midi_access.h"
 #include "third_party/blink/renderer/modules/webmidi/midi_connection_event.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 using midi::mojom::PortState;
@@ -50,7 +51,7 @@ MIDIPort::MIDIPort(MIDIAccess* access,
                    TypeCode type,
                    const String& version,
                    PortState state)
-    : ContextLifecycleObserver(access->GetExecutionContext()),
+    : ExecutionContextLifecycleObserver(access->GetExecutionContext()),
       id_(id),
       manufacturer_(manufacturer),
       name_(name),
@@ -103,7 +104,7 @@ ScriptPromise MIDIPort::open(ScriptState* script_state) {
   if (connection_ == kConnectionStateOpen)
     return Accept(script_state);
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   GetExecutionContext()
       ->GetTaskRunner(TaskType::kMiscPlatformAPI)
       ->PostTask(FROM_HERE,
@@ -127,7 +128,7 @@ ScriptPromise MIDIPort::close(ScriptState* script_state) {
   if (connection_ == kConnectionStateClosed)
     return Accept(script_state);
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   GetExecutionContext()
       ->GetTaskRunner(TaskType::kMiscPlatformAPI)
       ->PostTask(FROM_HERE,
@@ -182,15 +183,15 @@ bool MIDIPort::HasPendingActivity() const {
   return connection_ != kConnectionStateClosed;
 }
 
-void MIDIPort::ContextDestroyed(ExecutionContext*) {
+void MIDIPort::ContextDestroyed() {
   // Should be "closed" to assume there are no pending activities.
   connection_ = kConnectionStateClosed;
 }
 
-void MIDIPort::Trace(blink::Visitor* visitor) {
+void MIDIPort::Trace(Visitor* visitor) {
   visitor->Trace(access_);
   EventTargetWithInlineData::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 void MIDIPort::OpenAsynchronously(ScriptPromiseResolver* resolver) {
@@ -199,7 +200,7 @@ void MIDIPort::OpenAsynchronously(ScriptPromiseResolver* resolver) {
   if (!GetExecutionContext())
     return;
 
-  UseCounter::Count(*To<Document>(GetExecutionContext()),
+  UseCounter::Count(*Document::From(GetExecutionContext()),
                     WebFeature::kMIDIPortOpen);
   DCHECK_NE(0u, running_open_count_);
   running_open_count_--;

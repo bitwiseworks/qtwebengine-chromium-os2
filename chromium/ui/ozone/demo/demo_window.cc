@@ -4,6 +4,8 @@
 
 #include "ui/ozone/demo/demo_window.h"
 
+#include <utility>
+
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -15,10 +17,7 @@
 #include "ui/platform_window/platform_window_init_properties.h"
 
 #if defined(OS_FUCHSIA)
-#include <fuchsia/ui/policy/cpp/fidl.h>
-#include <lib/zx/eventpair.h>
-#include "base/fuchsia/component_context.h"
-#include "base/fuchsia/fuchsia_logging.h"
+#include "ui/platform_window/fuchsia/initialize_presenter_api_view.h"
 #endif
 
 namespace ui {
@@ -26,9 +25,7 @@ namespace ui {
 DemoWindow::DemoWindow(WindowManager* window_manager,
                        RendererFactory* renderer_factory,
                        const gfx::Rect& bounds)
-    : window_manager_(window_manager),
-      renderer_factory_(renderer_factory),
-      weak_ptr_factory_(this) {
+    : window_manager_(window_manager), renderer_factory_(renderer_factory) {
   PlatformWindowInitProperties properties;
   properties.bounds = bounds;
 
@@ -38,17 +35,7 @@ DemoWindow::DemoWindow(WindowManager* window_manager,
   if (ui::OzonePlatform::GetInstance()
           ->GetPlatformProperties()
           .needs_view_token) {
-    // Create view_token and view_holder_token.
-    zx::eventpair view_holder_token;
-    zx_status_t status = zx::eventpair::create(
-        /*options=*/0, &properties.view_token, &view_holder_token);
-    ZX_CHECK(status == ZX_OK, status) << "zx_eventpair_create";
-
-    // Request Presenter to show the view full-screen.
-    auto presenter = base::fuchsia::ComponentContext::GetDefault()
-                         ->ConnectToService<fuchsia::ui::policy::Presenter>();
-
-    presenter->Present2(std::move(view_holder_token), nullptr);
+    ui::fuchsia::InitializeViewTokenAndPresentView(&properties);
   }
 #endif
 
@@ -81,6 +68,8 @@ void DemoWindow::Quit() {
 void DemoWindow::OnBoundsChanged(const gfx::Rect& new_bounds) {
   StartRendererIfNecessary();
 }
+
+void DemoWindow::OnMouseEnter() {}
 
 void DemoWindow::OnDamageRect(const gfx::Rect& damaged_region) {}
 

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "build/build_config.h"
@@ -125,7 +126,11 @@ scoped_refptr<SerialIoHandler> SerialIoHandler::Create(
 void SerialIoHandlerPosix::ReadImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(pending_read_buffer());
-  DCHECK(file().IsValid());
+
+  if (!file().IsValid()) {
+    QueueReadCompleted(0, mojom::SerialReceiveError::DISCONNECTED);
+    return;
+  }
 
   // Try to read immediately. This is needed because on some platforms
   // (e.g., OSX) there may not be a notification from the message loop
@@ -137,20 +142,24 @@ void SerialIoHandlerPosix::ReadImpl() {
 void SerialIoHandlerPosix::WriteImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(pending_write_buffer());
-  DCHECK(file().IsValid());
+
+  if (!file().IsValid()) {
+    QueueWriteCompleted(0, mojom::SerialSendError::DISCONNECTED);
+    return;
+  }
 
   EnsureWatchingWrites();
 }
 
 void SerialIoHandlerPosix::CancelReadImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  file_read_watcher_.reset();
+  StopWatchingFileRead();
   QueueReadCompleted(0, read_cancel_reason());
 }
 
 void SerialIoHandlerPosix::CancelWriteImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  file_write_watcher_.reset();
+  StopWatchingFileWrite();
   QueueWriteCompleted(0, write_cancel_reason());
 }
 
@@ -294,6 +303,11 @@ bool SerialIoHandlerPosix::PostOpen() {
 #endif
 }
 
+void SerialIoHandlerPosix::PreClose() {
+  StopWatchingFileRead();
+  StopWatchingFileWrite();
+}
+
 SerialIoHandlerPosix::SerialIoHandlerPosix(
     const base::FilePath& port,
     scoped_refptr<base::SingleThreadTaskRunner> ui_thread_task_runner)
@@ -342,7 +356,7 @@ void SerialIoHandlerPosix::AttemptRead(bool within_read) {
   } else {
     // Stop watching the fd if we get notifications with no pending
     // reads or writes to avoid starving the message loop.
-    file_read_watcher_.reset();
+    StopWatchingFileRead();
   }
 }
 
@@ -352,7 +366,7 @@ void SerialIoHandlerPosix::RunReadCompleted(bool within_read,
   if (within_read) {
     // Stop watching the fd to avoid more reads until the queued ReadCompleted()
     // completes and releases the pending_read_buffer.
-    file_read_watcher_.reset();
+    StopWatchingFileRead();
 
     QueueReadCompleted(bytes_read, error);
   } else {
@@ -375,7 +389,7 @@ void SerialIoHandlerPosix::OnFileCanWriteWithoutBlocking() {
   } else {
     // Stop watching the fd if we get notifications with no pending
     // writes to avoid starving the message loop.
-    file_write_watcher_.reset();
+    StopWatchingFileWrite();
   }
 }
 
@@ -399,6 +413,26 @@ void SerialIoHandlerPosix::EnsureWatchingWrites() {
         base::BindRepeating(
             &SerialIoHandlerPosix::OnFileCanWriteWithoutBlocking,
             base::Unretained(this)));
+  }
+}
+
+void SerialIoHandlerPosix::StopWatchingFileRead() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (file_read_watcher_) {
+    // Check that file is valid before stopping the watch, to avoid getting a
+    // hard to diagnose crash in MessagePumpLibEvent. https://crbug.com/996777
+    CHECK(file().IsValid());
+    file_read_watcher_.reset();
+  }
+}
+
+void SerialIoHandlerPosix::StopWatchingFileWrite() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (file_write_watcher_) {
+    // Check that file is valid before stopping the watch, to avoid getting a
+    // hard to diagnose crash in MessagePumpLibEvent. https://crbug.com/996777
+    CHECK(file().IsValid());
+    file_write_watcher_.reset();
   }
 }
 
@@ -428,33 +462,50 @@ mojom::SerialPortControlSignalsPtr SerialIoHandlerPosix::GetControlSignals()
 
 bool SerialIoHandlerPosix::SetControlSignals(
     const mojom::SerialHostControlSignals& signals) {
-  int status;
-
-  if (ioctl(file().GetPlatformFile(), TIOCMGET, &status) == -1) {
-    VPLOG(1) << "Failed to get port control signals";
-    return false;
-  }
+  // Collect signals that need to be set or cleared on the port.
+  int set = 0;
+  int clear = 0;
 
   if (signals.has_dtr) {
     if (signals.dtr) {
-      status |= TIOCM_DTR;
+      set |= TIOCM_DTR;
     } else {
-      status &= ~TIOCM_DTR;
+      clear |= TIOCM_DTR;
     }
   }
 
   if (signals.has_rts) {
     if (signals.rts) {
-      status |= TIOCM_RTS;
+      set |= TIOCM_RTS;
     } else {
-      status &= ~TIOCM_RTS;
+      clear |= TIOCM_RTS;
     }
   }
 
-  if (ioctl(file().GetPlatformFile(), TIOCMSET, &status) != 0) {
+  if (set && ioctl(file().GetPlatformFile(), TIOCMBIS, &set) != 0) {
     VPLOG(1) << "Failed to set port control signals";
     return false;
   }
+
+  if (clear && ioctl(file().GetPlatformFile(), TIOCMBIC, &clear) != 0) {
+    VPLOG(1) << "Failed to clear port control signals";
+    return false;
+  }
+
+  if (signals.has_brk) {
+    if (signals.brk) {
+      if (ioctl(file().GetPlatformFile(), TIOCSBRK, 0) != 0) {
+        VPLOG(1) << "Failed to set break";
+        return false;
+      }
+    } else {
+      if (ioctl(file().GetPlatformFile(), TIOCCBRK, 0) != 0) {
+        VPLOG(1) << "Failed to clear break";
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 
@@ -504,23 +555,6 @@ mojom::SerialConnectionInfoPtr SerialIoHandlerPosix::GetPortInfo() const {
                                               : mojom::SerialStopBits::ONE;
   info->cts_flow_control = (config.c_cflag & CRTSCTS) != 0;
   return info;
-}
-
-bool SerialIoHandlerPosix::SetBreak() {
-  if (ioctl(file().GetPlatformFile(), TIOCSBRK, 0) != 0) {
-    VPLOG(1) << "Failed to set break";
-    return false;
-  }
-
-  return true;
-}
-
-bool SerialIoHandlerPosix::ClearBreak() {
-  if (ioctl(file().GetPlatformFile(), TIOCCBRK, 0) != 0) {
-    VPLOG(1) << "Failed to clear break";
-    return false;
-  }
-  return true;
 }
 
 // break sequence:

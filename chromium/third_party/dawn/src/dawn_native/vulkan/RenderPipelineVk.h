@@ -18,6 +18,7 @@
 #include "dawn_native/RenderPipeline.h"
 
 #include "common/vulkan_platform.h"
+#include "dawn_native/Error.h"
 
 namespace dawn_native { namespace vulkan {
 
@@ -25,12 +26,23 @@ namespace dawn_native { namespace vulkan {
 
     class RenderPipeline : public RenderPipelineBase {
       public:
-        RenderPipeline(Device* device, const RenderPipelineDescriptor* descriptor);
+        static ResultOrError<RenderPipeline*> Create(Device* device,
+                                                     const RenderPipelineDescriptor* descriptor);
         ~RenderPipeline();
 
         VkPipeline GetHandle() const;
 
       private:
+        using RenderPipelineBase::RenderPipelineBase;
+        MaybeError Initialize(const RenderPipelineDescriptor* descriptor);
+
+        struct PipelineVertexInputStateCreateInfoTemporaryAllocations {
+            std::array<VkVertexInputBindingDescription, kMaxVertexBuffers> bindings;
+            std::array<VkVertexInputAttributeDescription, kMaxVertexAttributes> attributes;
+        };
+        VkPipelineVertexInputStateCreateInfo ComputeVertexInputDesc(
+            PipelineVertexInputStateCreateInfoTemporaryAllocations* temporaryAllocations);
+
         VkPipeline mHandle = VK_NULL_HANDLE;
     };
 

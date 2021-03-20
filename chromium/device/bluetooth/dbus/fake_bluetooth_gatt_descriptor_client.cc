@@ -36,27 +36,26 @@ FakeBluetoothGattDescriptorClient::Properties::~Properties() = default;
 void FakeBluetoothGattDescriptorClient::Properties::Get(
     dbus::PropertyBase* property,
     dbus::PropertySet::GetCallback callback) {
-  VLOG(1) << "Get " << property->name();
-  callback.Run(true);
+  DVLOG(1) << "Get " << property->name();
+  std::move(callback).Run(true);
 }
 
 void FakeBluetoothGattDescriptorClient::Properties::GetAll() {
-  VLOG(1) << "GetAll";
+  DVLOG(1) << "GetAll";
 }
 
 void FakeBluetoothGattDescriptorClient::Properties::Set(
     dbus::PropertyBase* property,
     dbus::PropertySet::SetCallback callback) {
-  VLOG(1) << "Set " << property->name();
-  callback.Run(false);
+  DVLOG(1) << "Set " << property->name();
+  std::move(callback).Run(false);
 }
 
 FakeBluetoothGattDescriptorClient::DescriptorData::DescriptorData() = default;
 
 FakeBluetoothGattDescriptorClient::DescriptorData::~DescriptorData() = default;
 
-FakeBluetoothGattDescriptorClient::FakeBluetoothGattDescriptorClient()
-    : weak_ptr_factory_(this) {}
+FakeBluetoothGattDescriptorClient::FakeBluetoothGattDescriptorClient() {}
 
 FakeBluetoothGattDescriptorClient::~FakeBluetoothGattDescriptorClient() {
   for (auto iter = properties_.begin(); iter != properties_.end(); iter++)
@@ -96,11 +95,11 @@ FakeBluetoothGattDescriptorClient::GetProperties(
 
 void FakeBluetoothGattDescriptorClient::ReadValue(
     const dbus::ObjectPath& object_path,
-    const ValueCallback& callback,
-    const ErrorCallback& error_callback) {
+    ValueCallback callback,
+    ErrorCallback error_callback) {
   auto iter = properties_.find(object_path);
   if (iter == properties_.end()) {
-    error_callback.Run(kUnknownDescriptorError, "");
+    std::move(error_callback).Run(kUnknownDescriptorError, "");
     return;
   }
 
@@ -122,31 +121,32 @@ void FakeBluetoothGattDescriptorClient::ReadValue(
     }
   }
 
-  callback.Run(iter->second->properties->value.value());
+  std::move(callback).Run(iter->second->properties->value.value());
 }
 
 void FakeBluetoothGattDescriptorClient::WriteValue(
     const dbus::ObjectPath& object_path,
     const std::vector<uint8_t>& value,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   if (properties_.find(object_path) == properties_.end()) {
-    error_callback.Run(kUnknownDescriptorError, "");
+    std::move(error_callback).Run(kUnknownDescriptorError, "");
     return;
   }
 
   // Since the only fake descriptor is "Client Characteristic Configuration"
   // and BlueZ doesn't allow writing to it, return failure.
-  error_callback.Run(bluetooth_gatt_service::kErrorNotPermitted,
-                     "Writing to the Client Characteristic Configuration "
-                     "descriptor not allowed");
+  std::move(error_callback)
+      .Run(bluetooth_gatt_service::kErrorNotPermitted,
+           "Writing to the Client Characteristic Configuration "
+           "descriptor not allowed");
 }
 
 dbus::ObjectPath FakeBluetoothGattDescriptorClient::ExposeDescriptor(
     const dbus::ObjectPath& characteristic_path,
     const std::string& uuid) {
   if (uuid != kClientCharacteristicConfigurationUUID) {
-    VLOG(2) << "Unsupported UUID: " << uuid;
+    DVLOG(2) << "Unsupported UUID: " << uuid;
     return dbus::ObjectPath();
   }
 
@@ -157,13 +157,13 @@ dbus::ObjectPath FakeBluetoothGattDescriptorClient::ExposeDescriptor(
   DCHECK(object_path.IsValid());
   PropertiesMap::const_iterator iter = properties_.find(object_path);
   if (iter != properties_.end()) {
-    VLOG(1) << "Descriptor already exposed: " << object_path.value();
+    DVLOG(1) << "Descriptor already exposed: " << object_path.value();
     return dbus::ObjectPath();
   }
 
   Properties* properties = new Properties(
-      base::Bind(&FakeBluetoothGattDescriptorClient::OnPropertyChanged,
-                 weak_ptr_factory_.GetWeakPtr(), object_path));
+      base::BindRepeating(&FakeBluetoothGattDescriptorClient::OnPropertyChanged,
+                          weak_ptr_factory_.GetWeakPtr(), object_path));
   properties->uuid.ReplaceValue(uuid);
   properties->characteristic.ReplaceValue(characteristic_path);
 
@@ -181,7 +181,7 @@ void FakeBluetoothGattDescriptorClient::HideDescriptor(
     const dbus::ObjectPath& descriptor_path) {
   auto iter = properties_.find(descriptor_path);
   if (iter == properties_.end()) {
-    VLOG(1) << "Descriptor not exposed: " << descriptor_path.value();
+    DVLOG(1) << "Descriptor not exposed: " << descriptor_path.value();
     return;
   }
 
@@ -194,8 +194,8 @@ void FakeBluetoothGattDescriptorClient::HideDescriptor(
 void FakeBluetoothGattDescriptorClient::OnPropertyChanged(
     const dbus::ObjectPath& object_path,
     const std::string& property_name) {
-  VLOG(2) << "Descriptor property changed: " << object_path.value() << ": "
-          << property_name;
+  DVLOG(2) << "Descriptor property changed: " << object_path.value() << ": "
+           << property_name;
 
   for (auto& observer : observers_)
     observer.GattDescriptorPropertyChanged(object_path, property_name);

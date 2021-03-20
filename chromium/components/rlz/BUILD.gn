@@ -15,7 +15,7 @@ static_library("rlz") {
 
   deps = [
     "//base",
-    "//components/google/core/browser",
+    "//components/google/core/common",
     "//net",
     "//rlz:rlz_lib",
     "//services/network/public/cpp:cpp",
@@ -28,9 +28,7 @@ static_library("rlz") {
 
 source_set("unit_tests") {
   testonly = true
-  sources = [
-    "rlz_tracker_unittest.cc",
-  ]
+  sources = [ "rlz_tracker_unittest.cc" ]
 
   deps = [
     ":rlz",
@@ -41,6 +39,6 @@ source_set("unit_tests") {
   ]
 
   if (is_chromeos) {
-    deps += [ "//chromeos:test_support" ]
+    deps += [ "//chromeos/system" ]
   }
 }

@@ -24,9 +24,9 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_css_style_sheet_init.h"
 #include "third_party/blink/renderer/core/css/css_import_rule.h"
 #include "third_party/blink/renderer/core/css/css_rule_list.h"
-#include "third_party/blink/renderer/core/css/css_style_sheet_init.h"
 #include "third_party/blink/renderer/core/css/media_list.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
@@ -45,22 +45,17 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
-using namespace html_names;
-
 class StyleSheetCSSRuleList final : public CSSRuleList {
  public:
-  static StyleSheetCSSRuleList* Create(CSSStyleSheet* sheet) {
-    return MakeGarbageCollected<StyleSheetCSSRuleList>(sheet);
-  }
-
   StyleSheetCSSRuleList(CSSStyleSheet* sheet) : style_sheet_(sheet) {}
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(style_sheet_);
     CSSRuleList::Trace(visitor);
   }
@@ -73,7 +68,7 @@ class StyleSheetCSSRuleList final : public CSSRuleList {
 
   CSSStyleSheet* GetStyleSheet() const override { return style_sheet_; }
 
-  TraceWrapperMember<CSSStyleSheet> style_sheet_;
+  Member<CSSStyleSheet> style_sheet_;
 };
 
 #if DCHECK_IS_ON()
@@ -81,8 +76,9 @@ static bool IsAcceptableCSSStyleSheetParent(const Node& parent_node) {
   // Only these nodes can be parents of StyleSheets, and they need to call
   // clearOwnerNode() when moved out of document. Note that destructor of
   // the nodes don't call clearOwnerNode() with Oilpan.
-  return parent_node.IsDocumentNode() || IsHTMLLinkElement(parent_node) ||
-         IsHTMLStyleElement(parent_node) || IsSVGStyleElement(parent_node) ||
+  return parent_node.IsDocumentNode() || IsA<HTMLLinkElement>(parent_node) ||
+         IsA<HTMLStyleElement>(parent_node) ||
+         IsA<SVGStyleElement>(parent_node) ||
          parent_node.getNodeType() == Node::kProcessingInstructionNode;
 }
 #endif
@@ -96,18 +92,12 @@ const Document* CSSStyleSheet::SingleOwnerDocument(
 }
 
 CSSStyleSheet* CSSStyleSheet::Create(Document& document,
-                                     ExceptionState& exception_state) {
-  return CSSStyleSheet::Create(document, CSSStyleSheetInit::Create(),
-                               exception_state);
-}
-
-CSSStyleSheet* CSSStyleSheet::Create(Document& document,
                                      const CSSStyleSheetInit* options,
                                      ExceptionState& exception_state) {
   // Folowing steps at spec draft
   // https://wicg.github.io/construct-stylesheets/#dom-cssstylesheet-cssstylesheet
-  CSSParserContext* parser_context = CSSParserContext::Create(document);
-  StyleSheetContents* contents = StyleSheetContents::Create(parser_context);
+  auto* parser_context = MakeGarbageCollected<CSSParserContext>(document);
+  auto* contents = MakeGarbageCollected<StyleSheetContents>(parser_context);
   CSSStyleSheet* sheet = MakeGarbageCollected<CSSStyleSheet>(contents, nullptr);
   sheet->SetAssociatedDocument(&document);
   sheet->SetIsConstructed(true);
@@ -116,29 +106,20 @@ CSSStyleSheet* CSSStyleSheet::Create(Document& document,
   sheet->ClearOwnerRule();
   contents->RegisterClient(sheet);
   scoped_refptr<MediaQuerySet> media_query_set;
-  if (options->media().IsString())
-    media_query_set = MediaQuerySet::Create(options->media().GetAsString());
-  else
+  if (options->media().IsString()) {
+    media_query_set = MediaQuerySet::Create(options->media().GetAsString(),
+                                            document.GetExecutionContext());
+  } else {
     media_query_set = options->media().GetAsMediaList()->Queries()->Copy();
-  MediaList* media_list =
-      MediaList::Create(media_query_set, const_cast<CSSStyleSheet*>(sheet));
+  }
+  auto* media_list = MakeGarbageCollected<MediaList>(
+      media_query_set, const_cast<CSSStyleSheet*>(sheet));
   sheet->SetMedia(media_list);
   if (options->alternate())
     sheet->SetAlternateFromConstructor(true);
   if (options->disabled())
     sheet->setDisabled(true);
   return sheet;
-}
-
-CSSStyleSheet* CSSStyleSheet::Create(StyleSheetContents* sheet,
-                                     CSSImportRule* owner_rule) {
-  return MakeGarbageCollected<CSSStyleSheet>(sheet, owner_rule);
-}
-
-CSSStyleSheet* CSSStyleSheet::Create(StyleSheetContents* sheet,
-                                     Node& owner_node) {
-  return MakeGarbageCollected<CSSStyleSheet>(sheet, owner_node, false,
-                                             TextPosition::MinimumPosition());
 }
 
 CSSStyleSheet* CSSStyleSheet::CreateInline(StyleSheetContents* sheet,
@@ -153,12 +134,12 @@ CSSStyleSheet* CSSStyleSheet::CreateInline(Node& owner_node,
                                            const KURL& base_url,
                                            const TextPosition& start_position,
                                            const WTF::TextEncoding& encoding) {
-  CSSParserContext* parser_context = CSSParserContext::Create(
+  auto* parser_context = MakeGarbageCollected<CSSParserContext>(
       owner_node.GetDocument(), owner_node.GetDocument().BaseURL(),
       true /* origin_clean */, owner_node.GetDocument().GetReferrerPolicy(),
       encoding);
-  StyleSheetContents* sheet =
-      StyleSheetContents::Create(base_url.GetString(), parser_context);
+  auto* sheet = MakeGarbageCollected<StyleSheetContents>(parser_context,
+                                                         base_url.GetString());
   return MakeGarbageCollected<CSSStyleSheet>(sheet, owner_node, true,
                                              start_position);
 }
@@ -230,6 +211,8 @@ void CSSStyleSheet::DidMutateRules() {
       resolver->InvalidateMatchedPropertiesCache();
   } else if (!adopted_tree_scopes_.IsEmpty()) {
     for (auto tree_scope : adopted_tree_scopes_) {
+      if (!tree_scope->RootNode().isConnected())
+        continue;
       tree_scope->GetDocument().GetStyleEngine().SetNeedsActiveStyleUpdate(
           *tree_scope);
       if (StyleResolver* resolver =
@@ -312,7 +295,7 @@ CSSRule* CSSStyleSheet::item(unsigned index) {
     child_rule_cssom_wrappers_.Grow(rule_count);
   DCHECK_EQ(child_rule_cssom_wrappers_.size(), rule_count);
 
-  TraceWrapperMember<CSSRule>& css_rule = child_rule_cssom_wrappers_[index];
+  Member<CSSRule>& css_rule = child_rule_cssom_wrappers_[index];
   if (!css_rule)
     css_rule = contents_->RuleAt(index)->CreateCSSOMWrapper(this);
   return css_rule.Get();
@@ -361,8 +344,8 @@ unsigned CSSStyleSheet::insertRule(const String& rule_string,
             ").");
     return 0;
   }
-  const CSSParserContext* context =
-      CSSParserContext::CreateWithStyleSheet(contents_->ParserContext(), this);
+  const auto* context =
+      MakeGarbageCollected<CSSParserContext>(contents_->ParserContext(), this);
   StyleRuleBase* rule =
       CSSParser::ParseRule(context, contents_.Get(), rule_string);
 
@@ -417,11 +400,16 @@ void CSSStyleSheet::deleteRule(unsigned index,
          child_rule_cssom_wrappers_.size() == contents_->RuleCount());
 
   if (index >= length()) {
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kIndexSizeError,
-        "The index provided (" + String::Number(index) +
-            ") is larger than the maximum index (" +
-            String::Number(length() - 1) + ").");
+    if (length()) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kIndexSizeError,
+          "The index provided (" + String::Number(index) +
+              ") is larger than the maximum index (" +
+              String::Number(length() - 1) + ").");
+    } else {
+      exception_state.ThrowDOMException(DOMExceptionCode::kIndexSizeError,
+                                        "Style sheet is empty (length 0).");
+    }
     return;
   }
   RuleMutationScope mutation_scope(this);
@@ -464,37 +452,41 @@ int CSSStyleSheet::addRule(const String& selector,
 }
 
 ScriptPromise CSSStyleSheet::replace(ScriptState* script_state,
-                                     const String& text,
-                                     ExceptionState& exception_state) {
+                                     const String& text) {
   if (!is_constructed_) {
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kNotAllowedError,
-        "Can't call replace on non-constructed CSSStyleSheets.");
+    return ScriptPromise::RejectWithDOMException(
+        script_state,
+        MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kNotAllowedError,
+            "Can't call replace on non-constructed CSSStyleSheets."));
   }
   // Parses the text synchronously, loads import rules asynchronously.
-  SetText(text, true /* allow_import_rules */, exception_state);
+  SetText(text, true /* allow_import_rules */, nullptr);
   if (!IsLoading())
     return ScriptPromise::Cast(script_state, ToV8(this, script_state));
-  resolver_ = ScriptPromiseResolver::Create(script_state);
+  // We're loading a stylesheet that contains @import rules. This is deprecated.
+  Deprecation::CountDeprecation(OwnerDocument(),
+                                WebFeature::kCssStyleSheetReplaceWithImport);
+  resolver_ = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   return resolver_->Promise();
 }
 
 void CSSStyleSheet::replaceSync(const String& text,
                                 ExceptionState& exception_state) {
   if (!is_constructed_) {
-    exception_state.ThrowDOMException(
+    return exception_state.ThrowDOMException(
         DOMExceptionCode::kNotAllowedError,
         "Can't call replaceSync on non-constructed CSSStyleSheets.");
   }
-  SetText(text, false /* allow_import_rules */, exception_state);
+  SetText(text, false /* allow_import_rules */, &exception_state);
 }
 
 void CSSStyleSheet::ResolveReplacePromiseIfNeeded(bool load_error_occured) {
   if (!resolver_)
     return;
   if (load_error_occured) {
-    resolver_->Reject(DOMException::Create(DOMExceptionCode::kNotAllowedError,
-                                           "Loading @imports failed."));
+    resolver_->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kNotAllowedError, "Loading @imports failed."));
   } else {
     resolver_->Resolve(this);
   }
@@ -507,8 +499,10 @@ CSSRuleList* CSSStyleSheet::cssRules(ExceptionState& exception_state) {
     exception_state.ThrowSecurityError("Cannot access rules");
     return nullptr;
   }
-  if (!rule_list_cssom_wrapper_)
-    rule_list_cssom_wrapper_ = StyleSheetCSSRuleList::Create(this);
+  if (!rule_list_cssom_wrapper_) {
+    rule_list_cssom_wrapper_ =
+        MakeGarbageCollected<StyleSheetCSSRuleList>(this);
+  }
   return rule_list_cssom_wrapper_.Get();
 }
 
@@ -528,9 +522,10 @@ MediaList* CSSStyleSheet::media() {
   if (!media_queries_)
     media_queries_ = MediaQuerySet::Create();
 
-  if (!media_cssom_wrapper_)
-    media_cssom_wrapper_ = MediaList::Create(media_queries_.get(),
-                                             const_cast<CSSStyleSheet*>(this));
+  if (!media_cssom_wrapper_) {
+    media_cssom_wrapper_ = MakeGarbageCollected<MediaList>(
+        media_queries_.get(), const_cast<CSSStyleSheet*>(this));
+  }
   return media_cssom_wrapper_.Get();
 }
 
@@ -576,16 +571,17 @@ void CSSStyleSheet::SetLoadCompleted(bool completed) {
 
 void CSSStyleSheet::SetText(const String& text,
                             bool allow_import_rules,
-                            ExceptionState& exception_state) {
+                            ExceptionState* exception_state) {
   child_rule_cssom_wrappers_.clear();
 
   CSSStyleSheet::RuleMutationScope mutation_scope(this);
   contents_->ClearRules();
   if (contents_->ParseString(text, allow_import_rules) ==
       ParseSheetResult::kHasUnallowedImportRule) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kNotAllowedError,
-                                      "@import rules are not allowed when "
-                                      "creating stylesheet synchronously.");
+    DCHECK(exception_state);
+    exception_state->ThrowDOMException(DOMExceptionCode::kNotAllowedError,
+                                       "@import rules are not allowed when "
+                                       "creating stylesheet synchronously.");
   }
 }
 
@@ -596,8 +592,10 @@ void CSSStyleSheet::SetAlternateFromConstructor(
 
 bool CSSStyleSheet::IsAlternate() const {
   if (owner_node_) {
-    return owner_node_->IsElementNode() &&
-           ToElement(owner_node_)->getAttribute(kRelAttr).Contains("alternate");
+    auto* owner_element = DynamicTo<Element>(owner_node_.Get());
+    return owner_element &&
+           owner_element->FastGetAttribute(html_names::kRelAttr)
+               .Contains("alternate");
   }
   return alternate_from_constructor_;
 }
@@ -608,17 +606,18 @@ bool CSSStyleSheet::CanBeActivated(
     return false;
 
   if (owner_node_ && owner_node_->IsInShadowTree()) {
-    if (IsHTMLStyleElement(owner_node_) || IsSVGStyleElement(owner_node_))
+    if (IsA<HTMLStyleElement>(owner_node_.Get()) ||
+        IsA<SVGStyleElement>(owner_node_.Get()))
       return true;
-    if (IsHTMLLinkElement(owner_node_) &&
-        ToHTMLLinkElement(owner_node_)->IsImport())
+    auto* html_link_element = DynamicTo<HTMLLinkElement>(owner_node_.Get());
+    if (html_link_element && html_link_element->IsImport())
       return !IsAlternate();
   }
 
+  auto* html_link_element = DynamicTo<HTMLLinkElement>(owner_node_.Get());
   if (!owner_node_ ||
       owner_node_->getNodeType() == Node::kProcessingInstructionNode ||
-      !IsHTMLLinkElement(owner_node_) ||
-      !ToHTMLLinkElement(owner_node_)->IsEnabledViaScript()) {
+      !html_link_element || !html_link_element->IsEnabledViaScript()) {
     if (!title_.IsEmpty() && title_ != current_preferrable_name)
       return false;
   }
@@ -629,7 +628,7 @@ bool CSSStyleSheet::CanBeActivated(
   return true;
 }
 
-void CSSStyleSheet::Trace(blink::Visitor* visitor) {
+void CSSStyleSheet::Trace(Visitor* visitor) {
   visitor->Trace(contents_);
   visitor->Trace(owner_node_);
   visitor->Trace(owner_rule_);

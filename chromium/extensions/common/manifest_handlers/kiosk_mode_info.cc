@@ -147,11 +147,10 @@ bool KioskModeHandler::Parse(Extension* extension, base::string16* error) {
       return false;
     }
 
-    const base::Value::ListStorage& list = secondary_apps_value->GetList();
     const bool allow_enabled_on_launch =
         AllowSecondaryAppEnabledOnLaunch(extension);
 
-    for (const auto& value : list) {
+    for (const auto& value : secondary_apps_value->GetList()) {
       std::unique_ptr<KioskSecondaryAppsType> app =
           KioskSecondaryAppsType::FromValue(value, error);
       if (!app) {
@@ -213,7 +212,11 @@ base::span<const char* const> KioskModeHandler::Keys() const {
   static constexpr const char* kKeys[] = {keys::kKiosk, keys::kKioskEnabled,
                                           keys::kKioskOnly,
                                           keys::kKioskSecondaryApps};
+#if !defined(__GNUC__) || __GNUC__ > 5
   return kKeys;
+#else
+  return base::make_span(kKeys, 4);
+#endif
 }
 
 }  // namespace extensions

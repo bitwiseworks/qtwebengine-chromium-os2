@@ -25,7 +25,6 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 """Functions shared by various parts of the code generator.
 
 Design doc: http://www.chromium.org/developers/design-documents/idl-compiler
@@ -56,15 +55,15 @@ ACRONYMS = [
     'XSLT',
 ]
 
-
 ################################################################################
 # Extended attribute parsing
 ################################################################################
 
+
 def extended_attribute_value_contains(extended_attribute_value, key):
-    return (extended_attribute_value == key or
-            (isinstance(extended_attribute_value, list) and
-             key in extended_attribute_value))
+    return (extended_attribute_value == key
+            or (isinstance(extended_attribute_value, list)
+                and key in extended_attribute_value))
 
 
 def has_extended_attribute(definition_or_member, extended_attribute_list):
@@ -74,8 +73,8 @@ def has_extended_attribute(definition_or_member, extended_attribute_list):
 
 def has_extended_attribute_value(definition_or_member, name, value):
     extended_attributes = definition_or_member.extended_attributes
-    return (name in extended_attributes and
-            extended_attribute_value_contains(extended_attributes[name], value))
+    return (name in extended_attributes and extended_attribute_value_contains(
+        extended_attributes[name], value))
 
 
 def extended_attribute_value_as_list(definition_or_member, name):
@@ -91,6 +90,7 @@ def extended_attribute_value_as_list(definition_or_member, name):
 ################################################################################
 # String handling
 ################################################################################
+
 
 def capitalize(name):
     """Capitalize first letter or initial acronym (used in setter names)."""
@@ -126,14 +126,16 @@ def runtime_enabled_function(name):
 # C++
 ################################################################################
 
+
 def scoped_name(interface, definition, base_name):
     # partial interfaces are implemented as separate classes, with their members
     # implemented as static member functions
-    partial_interface_implemented_as = definition.extended_attributes.get('PartialInterfaceImplementedAs')
+    partial_interface_implemented_as = definition.extended_attributes.get(
+        'PartialInterfaceImplementedAs')
     if partial_interface_implemented_as:
         return '%s::%s' % (partial_interface_implemented_as, base_name)
-    if (definition.is_static or
-            definition.name in ('Constructor', 'NamedConstructor')):
+    if (definition.is_static
+            or definition.name in ('Constructor', 'NamedConstructor')):
         return '%s::%s' % (cpp_name(interface), base_name)
     return 'impl->%s' % base_name
 
@@ -168,6 +170,7 @@ def binding_header_filename(name):
 # Specific extended attributes
 ################################################################################
 
+
 # [ActivityLogging]
 def activity_logging_world_list(member, access_type=''):
     """Returns a set of world suffixes for which a definition member has activity logging, for specified access type.
@@ -198,8 +201,8 @@ def activity_logging_world_check(member):
     extended_attributes = member.extended_attributes
     if 'LogActivity' not in extended_attributes:
         return False
-    if ('PerWorldBindings' not in extended_attributes and
-            'LogAllWorlds' not in extended_attributes):
+    if ('PerWorldBindings' not in extended_attributes
+            and 'LogAllWorlds' not in extended_attributes):
         return True
     return False
 
@@ -209,18 +212,14 @@ CALL_WITH_ARGUMENTS = {
     'Isolate': 'info.GetIsolate()',
     'ScriptState': 'script_state',
     'ExecutionContext': 'execution_context',
-    'CurrentWindow': 'CurrentDOMWindow(info.GetIsolate())',
-    'EnteredWindow': 'EnteredDOMWindow(info.GetIsolate())',
     'Document': 'document',
-    'ThisValue': 'ScriptValue(script_state, info.Holder())',
+    'ThisValue': 'ScriptValue(info.GetIsolate(), info.Holder())',
 }
 # List because key order matters, as we want arguments in deterministic order
 CALL_WITH_VALUES = [
     'Isolate',
     'ScriptState',
     'ExecutionContext',
-    'CurrentWindow',
-    'EnteredWindow',
     'Document',
     'ThisValue',
 ]
@@ -229,16 +228,17 @@ CALL_WITH_VALUES = [
 def call_with_arguments(call_with_values):
     if not call_with_values:
         return []
-    return [CALL_WITH_ARGUMENTS[value]
-            for value in CALL_WITH_VALUES
-            if extended_attribute_value_contains(call_with_values, value)]
+    return [
+        CALL_WITH_ARGUMENTS[value] for value in CALL_WITH_VALUES
+        if extended_attribute_value_contains(call_with_values, value)
+    ]
 
 
 # [Constructor], [NamedConstructor]
 def is_constructor_attribute(member):
     # TODO(yukishiino): replace this with [Constructor] and [NamedConstructor] extended attribute
-    return (type(member) == IdlAttribute and
-            member.idl_type.name.endswith('Constructor'))
+    return (type(member) == IdlAttribute
+            and member.idl_type.name.endswith('Constructor'))
 
 
 # [DeprecateAs]
@@ -264,7 +264,6 @@ EXPOSED_EXECUTION_CONTEXT_METHOD = {
     'Worklet': 'IsWorkletGlobalScope',
 }
 
-
 EXPOSED_WORKERS = set([
     'DedicatedWorker',
     'SharedWorker',
@@ -274,6 +273,7 @@ EXPOSED_WORKERS = set([
 
 class ExposureSet:
     """An ExposureSet is a collection of Exposure instructions."""
+
     def __init__(self, exposures=None):
         self.exposures = set(exposures) if exposures else set()
 
@@ -305,9 +305,10 @@ class ExposureSet:
     @staticmethod
     def _code(exposure):
         condition = ('execution_context->%s()' %
-                   EXPOSED_EXECUTION_CONTEXT_METHOD[exposure.exposed])
+                     EXPOSED_EXECUTION_CONTEXT_METHOD[exposure.exposed])
         if exposure.runtime_enabled is not None:
-            runtime_enabled = (runtime_enabled_function(exposure.runtime_enabled))
+            runtime_enabled = (runtime_enabled_function(
+                exposure.runtime_enabled))
             return '({0} && {1})'.format(condition, runtime_enabled)
         return condition
 
@@ -342,7 +343,9 @@ def exposed(member, interface):
 
     # Methods must not be exposed to a broader scope than their interface.
     if not exposure_set.issubset(interface_exposure_set):
-        raise ValueError('Interface members\' exposure sets must be a subset of the interface\'s.')
+        raise ValueError(
+            'Interface members\' exposure sets must be a subset of the interface\'s.'
+        )
 
     return exposure_set.code()
 
@@ -352,14 +355,29 @@ def secure_context(member, interface):
     """Returns C++ code that checks whether an interface/method/attribute/etc. is exposed
     to the current context. Requires that the surrounding code defines an |is_secure_context|
     variable prior to this check."""
-    if 'SecureContext' in member.extended_attributes or 'SecureContext' in interface.extended_attributes:
-        conditions = ['is_secure_context']
-        if 'SecureContext' in member.extended_attributes and member.extended_attributes['SecureContext'] is not None:
-            conditions.append('!%s' % runtime_enabled_function(member.extended_attributes['SecureContext']))
-        if 'SecureContext' in interface.extended_attributes and interface.extended_attributes['SecureContext'] is not None:
-            conditions.append('!%s' % runtime_enabled_function(interface.extended_attributes['SecureContext']))
-        return ' || '.join(conditions)
-    return None
+    member_is_secure_context = 'SecureContext' in member.extended_attributes
+    interface_is_secure_context = (
+        (member.defined_in is None or member.defined_in == interface.name)
+        and 'SecureContext' in interface.extended_attributes)
+
+    if not (member_is_secure_context or interface_is_secure_context):
+        return None
+
+    conditions = ['is_secure_context']
+
+    if member_is_secure_context:
+        conditional = member.extended_attributes['SecureContext']
+        if conditional:
+            conditions.append('!{}'.format(
+                runtime_enabled_function(conditional)))
+
+    if interface_is_secure_context:
+        conditional = interface.extended_attributes['SecureContext']
+        if conditional:
+            conditions.append('!{}'.format(
+                runtime_enabled_function(conditional)))
+
+    return ' || '.join(conditions)
 
 
 # [ImplementedAs]
@@ -372,7 +390,8 @@ def cpp_name(definition_or_member):
     #
     # [1] https://heycam.github.io/webidl/#prod-identifier
     if '-' in definition_or_member.name:
-        return NameStyleConverter(definition_or_member.name).to_lower_camel_case()
+        return NameStyleConverter(
+            definition_or_member.name).to_lower_camel_case()
     return definition_or_member.name
 
 
@@ -387,17 +406,39 @@ def cpp_name_or_partial(interface):
     return cpp_class_name
 
 
+def cpp_encoded_property_name(member):
+    """
+    Returns a property name that the bindings generator can use in generated
+    code internally.
+
+    Note that Web IDL allows '-' (hyphen-minus) and '_' (low line) in
+    identifiers but C++ does not allow or recommend them.  This function
+    encodes these characters.
+    """
+    property_name = member.name
+    # We're optimistic about name conflict.  It's highly unlikely that these
+    # replacements will cause a conflict.
+    assert "Dec45" not in property_name
+    assert "Dec95" not in property_name
+    property_name = property_name.replace("-", "Dec45")
+    property_name = property_name.replace("_", "Dec95")
+    return property_name
+
+
 # [MeasureAs]
 def measure_as(definition_or_member, interface):
     extended_attributes = definition_or_member.extended_attributes
     if 'MeasureAs' in extended_attributes:
-        includes.add('core/frame/use_counter.h')
+        includes.add('core/frame/web_feature.h')
+        includes.add('platform/instrumentation/use_counter.h')
         return lambda suffix: extended_attributes['MeasureAs']
     if 'Measure' in extended_attributes:
-        includes.add('core/frame/use_counter.h')
+        includes.add('core/frame/web_feature.h')
+        includes.add('platform/instrumentation/use_counter.h')
         measure_as_name = capitalize(definition_or_member.name)
         if interface is not None:
-            measure_as_name = '%s_%s' % (capitalize(interface.name), measure_as_name)
+            measure_as_name = '%s_%s' % (capitalize(interface.name),
+                                         measure_as_name)
         return lambda suffix: 'V8%s_%s' % (measure_as_name, suffix)
     return None
 
@@ -407,41 +448,40 @@ def high_entropy(definition_or_member):
     extended_attributes = definition_or_member.extended_attributes
     if 'HighEntropy' in extended_attributes:
         includes.add('core/frame/dactyloscoper.h')
-        if not ('Measure' in extended_attributes or 'MeasureAs' in extended_attributes):
-            raise Exception('%s specified [HighEntropy], but does not include '
-                            'either [Measure] or [MeasureAs]'
-                            % definition_or_member.name)
+        if not ('Measure' in extended_attributes
+                or 'MeasureAs' in extended_attributes):
+            raise Exception(
+                '%s specified [HighEntropy], but does not include '
+                'either [Measure] or [MeasureAs]' % definition_or_member.name)
         return True
     return False
 
 
-# [OriginTrialEnabled]
-def origin_trial_feature_name(definition_or_member):
-    """Returns the name of the feature for the OriginTrialEnabled attribute.
+# [RuntimeEnabled]
+def _is_origin_trial_feature(feature_name, runtime_features):
+    assert feature_name in runtime_features, feature_name + ' is not a runtime feature.'
+    feature = runtime_features[feature_name]
+    return feature['in_origin_trial']
 
-    An exception is raised if OriginTrialEnabled is used in conjunction with any
-    of the following (which must be mutually exclusive with origin trials):
-      - RuntimeEnabled
 
-    If the OriginTrialEnabled extended attribute is found, the includes are
-    also updated as a side-effect.
+def origin_trial_feature_name(definition_or_member, runtime_features):
+    """
+    Returns the name of the origin trial feature if found, None otherwise.
+    Looks for origin trial feature specified by the RuntimeEnabled attribute.
     """
     extended_attributes = definition_or_member.extended_attributes
-    feature_name = extended_attributes.get('OriginTrialEnabled')
-
-    if feature_name and 'RuntimeEnabled' in extended_attributes:
-        raise Exception('[OriginTrialEnabled] and [RuntimeEnabled] must '
-                        'not be specified on the same definition: %s'
-                        % definition_or_member.name)
-
-    return feature_name
+    feature_name = extended_attributes.get('RuntimeEnabled')
+    if feature_name and _is_origin_trial_feature(feature_name,
+                                                 runtime_features):
+        return feature_name
 
 
 def origin_trial_function_call(feature_name, execution_context=None):
     """Returns a function call to determine if an origin trial is enabled."""
-    return 'origin_trials::{feature_name}Enabled({context})'.format(
+    return 'RuntimeEnabledFeatures::{feature_name}Enabled({context})'.format(
         feature_name=feature_name,
-        context=execution_context if execution_context else "execution_context")
+        context=execution_context
+        if execution_context else "execution_context")
 
 
 # [ContextEnabled]
@@ -460,23 +500,18 @@ def rcs_counter_name(member, generic_counter_name):
 
 
 # [RuntimeEnabled]
-def runtime_enabled_feature_name(definition_or_member):
+def runtime_enabled_feature_name(definition_or_member, runtime_features):
     extended_attributes = definition_or_member.extended_attributes
-    if 'RuntimeEnabled' not in extended_attributes:
-        return None
-    includes.add('platform/runtime_enabled_features.h')
-    return extended_attributes['RuntimeEnabled']
+    feature_name = extended_attributes.get('RuntimeEnabled')
+    if feature_name and not _is_origin_trial_feature(feature_name,
+                                                     runtime_features):
+        includes.add('platform/runtime_enabled_features.h')
+        return feature_name
 
 
 # [Unforgeable]
 def is_unforgeable(member):
     return 'Unforgeable' in member.extended_attributes
-
-
-# [LegacyInterfaceTypeChecking]
-def is_legacy_interface_type_checking(interface, member):
-    return ('LegacyInterfaceTypeChecking' in interface.extended_attributes or
-            'LegacyInterfaceTypeChecking' in member.extended_attributes)
 
 
 # [Unforgeable], [Global]
@@ -501,8 +536,8 @@ def on_instance(interface, member):
     if is_constructor_attribute(member):
         return True
 
-    if ('Global' in interface.extended_attributes or
-            'Unforgeable' in member.extended_attributes):
+    if ('Global' in interface.extended_attributes
+            or 'Unforgeable' in member.extended_attributes):
         return True
     return False
 
@@ -531,8 +566,8 @@ def on_prototype(interface, member):
     if is_constructor_attribute(member):
         return False
 
-    if ('Global' in interface.extended_attributes or
-            'Unforgeable' in member.extended_attributes):
+    if ('Global' in interface.extended_attributes
+            or 'Unforgeable' in member.extended_attributes):
         return False
     return True
 
@@ -555,16 +590,15 @@ def on_interface(interface, member):
 # http://heycam.github.io/webidl/#idl-indexed-properties
 ################################################################################
 
+
 def indexed_property_getter(interface):
     try:
         # Find indexed property getter, if present; has form:
         # getter TYPE [OPTIONAL_IDENTIFIER](unsigned long ARG1)
         return next(
-            method
-            for method in interface.operations
-            if ('getter' in method.specials and
-                len(method.arguments) == 1 and
-                str(method.arguments[0].idl_type) == 'unsigned long'))
+            method for method in interface.operations
+            if ('getter' in method.specials and len(method.arguments) == 1
+                and str(method.arguments[0].idl_type) == 'unsigned long'))
     except StopIteration:
         return None
 
@@ -574,11 +608,9 @@ def indexed_property_setter(interface):
         # Find indexed property setter, if present; has form:
         # setter RETURN_TYPE [OPTIONAL_IDENTIFIER](unsigned long ARG1, ARG_TYPE ARG2)
         return next(
-            method
-            for method in interface.operations
-            if ('setter' in method.specials and
-                len(method.arguments) == 2 and
-                str(method.arguments[0].idl_type) == 'unsigned long'))
+            method for method in interface.operations
+            if ('setter' in method.specials and len(method.arguments) == 2
+                and str(method.arguments[0].idl_type) == 'unsigned long'))
     except StopIteration:
         return None
 
@@ -588,11 +620,9 @@ def indexed_property_deleter(interface):
         # Find indexed property deleter, if present; has form:
         # deleter TYPE [OPTIONAL_IDENTIFIER](unsigned long ARG)
         return next(
-            method
-            for method in interface.operations
-            if ('deleter' in method.specials and
-                len(method.arguments) == 1 and
-                str(method.arguments[0].idl_type) == 'unsigned long'))
+            method for method in interface.operations
+            if ('deleter' in method.specials and len(method.arguments) == 1
+                and str(method.arguments[0].idl_type) == 'unsigned long'))
     except StopIteration:
         return None
 
@@ -602,16 +632,15 @@ def indexed_property_deleter(interface):
 # http://heycam.github.io/webidl/#idl-named-properties
 ################################################################################
 
+
 def named_property_getter(interface):
     try:
         # Find named property getter, if present; has form:
         # getter TYPE [OPTIONAL_IDENTIFIER](DOMString ARG1)
         getter = next(
-            method
-            for method in interface.operations
-            if ('getter' in method.specials and
-                len(method.arguments) == 1 and
-                str(method.arguments[0].idl_type) == 'DOMString'))
+            method for method in interface.operations
+            if ('getter' in method.specials and len(method.arguments) == 1
+                and str(method.arguments[0].idl_type) == 'DOMString'))
         getter.name = getter.name or 'AnonymousNamedGetter'
         return getter
     except StopIteration:
@@ -623,11 +652,9 @@ def named_property_setter(interface):
         # Find named property setter, if present; has form:
         # setter RETURN_TYPE [OPTIONAL_IDENTIFIER](DOMString ARG1, ARG_TYPE ARG2)
         return next(
-            method
-            for method in interface.operations
-            if ('setter' in method.specials and
-                len(method.arguments) == 2 and
-                str(method.arguments[0].idl_type) == 'DOMString'))
+            method for method in interface.operations
+            if ('setter' in method.specials and len(method.arguments) == 2
+                and str(method.arguments[0].idl_type) == 'DOMString'))
     except StopIteration:
         return None
 
@@ -637,11 +664,9 @@ def named_property_deleter(interface):
         # Find named property deleter, if present; has form:
         # deleter TYPE [OPTIONAL_IDENTIFIER](DOMString ARG)
         return next(
-            method
-            for method in interface.operations
-            if ('deleter' in method.specials and
-                len(method.arguments) == 1 and
-                str(method.arguments[0].idl_type) == 'DOMString'))
+            method for method in interface.operations
+            if ('deleter' in method.specials and len(method.arguments) == 1
+                and str(method.arguments[0].idl_type) == 'DOMString'))
     except StopIteration:
         return None
 

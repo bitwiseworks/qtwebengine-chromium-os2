@@ -24,12 +24,12 @@ using ui::OSExchangeData;
 namespace gfx {
 class FontList;
 class Point;
-}
+}  // namespace gfx
 
 namespace ui {
 class Accelerator;
 class DropTargetEvent;
-}
+}  // namespace ui
 
 namespace views {
 
@@ -45,20 +45,20 @@ class VIEWS_EXPORT MenuDelegate {
  public:
   // Used during drag and drop to indicate where the drop indicator should
   // be rendered.
-  enum DropPosition {
-    DROP_UNKNOWN = -1,
+  enum class DropPosition {
+    kUnknow = -1,
 
     // Indicates a drop is not allowed here.
-    DROP_NONE,
+    kNone,
 
     // Indicates the drop should occur before the item.
-    DROP_BEFORE,
+    kBefore,
 
     // Indicates the drop should occur after the item.
-    DROP_AFTER,
+    kAfter,
 
     // Indicates the drop should occur on the item.
-    DROP_ON
+    kOn
   };
 
   // Used when indicating the style for a given label.
@@ -108,8 +108,7 @@ class VIEWS_EXPORT MenuDelegate {
   virtual bool IsCommandEnabled(int id) const;
   virtual bool IsCommandVisible(int id) const;
   virtual bool GetContextualLabel(int id, base::string16* out) const;
-  virtual void ExecuteCommand(int id) {
-  }
+  virtual void ExecuteCommand(int id) {}
 
   // If nested menus are showing (nested menus occur when a menu shows a context
   // menu) this is invoked to determine if all the menus should be closed when

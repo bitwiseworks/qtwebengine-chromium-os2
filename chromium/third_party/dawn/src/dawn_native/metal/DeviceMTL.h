@@ -19,44 +19,53 @@
 
 #include "common/Serial.h"
 #include "dawn_native/Device.h"
+#include "dawn_native/metal/CommandRecordingContext.h"
 #include "dawn_native/metal/Forward.h"
 
+#import <IOSurface/IOSurfaceRef.h>
 #import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/QuartzCore.h>
 
+#include <atomic>
 #include <memory>
-#include <type_traits>
+#include <mutex>
 
 namespace dawn_native { namespace metal {
 
     class MapRequestTracker;
-    class ResourceUploader;
 
     class Device : public DeviceBase {
       public:
-        Device();
+        Device(AdapterBase* adapter, id<MTLDevice> mtlDevice, const DeviceDescriptor* descriptor);
         ~Device();
 
-        CommandBufferBase* CreateCommandBuffer(CommandBufferBuilder* builder) override;
-        InputStateBase* CreateInputState(InputStateBuilder* builder) override;
-        RenderPassDescriptorBase* CreateRenderPassDescriptor(
-            RenderPassDescriptorBuilder* builder) override;
-        SwapChainBase* CreateSwapChain(SwapChainBuilder* builder) override;
+        CommandBufferBase* CreateCommandBuffer(CommandEncoder* encoder,
+                                               const CommandBufferDescriptor* descriptor) override;
 
         Serial GetCompletedCommandSerial() const final override;
         Serial GetLastSubmittedCommandSerial() const final override;
-        void TickImpl() override;
-
-        const dawn_native::PCIInfo& GetPCIInfo() const override;
+        MaybeError TickImpl() override;
 
         id<MTLDevice> GetMTLDevice();
+        id<MTLCommandQueue> GetMTLQueue();
 
-        id<MTLCommandBuffer> GetPendingCommandBuffer();
-        Serial GetPendingCommandSerial() const;
+        CommandRecordingContext* GetPendingCommandContext();
+        Serial GetPendingCommandSerial() const override;
         void SubmitPendingCommandBuffer();
 
         MapRequestTracker* GetMapTracker() const;
-        ResourceUploader* GetResourceUploader() const;
+
+        TextureBase* CreateTextureWrappingIOSurface(const ExternalImageDescriptor* descriptor,
+                                                    IOSurfaceRef ioSurface,
+                                                    uint32_t plane);
+        void WaitForCommandsToBeScheduled();
+
+        ResultOrError<std::unique_ptr<StagingBufferBase>> CreateStagingBuffer(size_t size) override;
+        MaybeError CopyFromStagingToBuffer(StagingBufferBase* source,
+                                           uint64_t sourceOffset,
+                                           BufferBase* destination,
+                                           uint64_t destinationOffset,
+                                           uint64_t size) override;
 
       private:
         ResultOrError<BindGroupBase*> CreateBindGroupImpl(
@@ -74,24 +83,36 @@ namespace dawn_native { namespace metal {
         ResultOrError<SamplerBase*> CreateSamplerImpl(const SamplerDescriptor* descriptor) override;
         ResultOrError<ShaderModuleBase*> CreateShaderModuleImpl(
             const ShaderModuleDescriptor* descriptor) override;
+        ResultOrError<SwapChainBase*> CreateSwapChainImpl(
+            const SwapChainDescriptor* descriptor) override;
+        ResultOrError<NewSwapChainBase*> CreateSwapChainImpl(
+            Surface* surface,
+            NewSwapChainBase* previousSwapChain,
+            const SwapChainDescriptor* descriptor) override;
         ResultOrError<TextureBase*> CreateTextureImpl(const TextureDescriptor* descriptor) override;
         ResultOrError<TextureViewBase*> CreateTextureViewImpl(
             TextureBase* texture,
             const TextureViewDescriptor* descriptor) override;
-        void CollectPCIInfo();
 
-        void OnCompletedHandler();
+        void InitTogglesFromDriver();
+        void Destroy() override;
+        MaybeError WaitForIdleForDestruction() override;
 
         id<MTLDevice> mMtlDevice = nil;
         id<MTLCommandQueue> mCommandQueue = nil;
         std::unique_ptr<MapRequestTracker> mMapTracker;
-        std::unique_ptr<ResourceUploader> mResourceUploader;
 
-        Serial mCompletedSerial = 0;
         Serial mLastSubmittedSerial = 0;
-        id<MTLCommandBuffer> mPendingCommands = nil;
+        CommandRecordingContext mCommandContext;
 
-        dawn_native::PCIInfo mPCIInfo;
+        // The completed serial is updated in a Metal completion handler that can be fired on a
+        // different thread, so it needs to be atomic.
+        std::atomic<uint64_t> mCompletedSerial;
+
+        // mLastSubmittedCommands will be accessed in a Metal schedule handler that can be fired on
+        // a different thread so we guard access to it with a mutex.
+        std::mutex mLastSubmittedCommandsMutex;
+        id<MTLCommandBuffer> mLastSubmittedCommands = nil;
     };
 
 }}  // namespace dawn_native::metal

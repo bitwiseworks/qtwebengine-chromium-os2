@@ -28,13 +28,14 @@
 
 #include "third_party/blink/renderer/modules/event_modules.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
-class DeviceAcceleration;
+class DeviceMotionEventAcceleration;
 class DeviceMotionData;
 class DeviceMotionEventInit;
-class DeviceRotationRate;
+class DeviceMotionEventRotationRate;
 
 class DeviceMotionEvent final : public Event {
   DEFINE_WRAPPERTYPEINFO();
@@ -62,26 +63,25 @@ class DeviceMotionEvent final : public Event {
     return device_motion_data_.Get();
   }
 
-  DeviceAcceleration* acceleration();
-  DeviceAcceleration* accelerationIncludingGravity();
-  DeviceRotationRate* rotationRate();
+  DeviceMotionEventAcceleration* acceleration();
+  DeviceMotionEventAcceleration* accelerationIncludingGravity();
+  DeviceMotionEventRotationRate* rotationRate();
   double interval() const;
 
   const AtomicString& InterfaceName() const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<const DeviceMotionData> device_motion_data_;
 };
 
-DEFINE_TYPE_CASTS(DeviceMotionEvent,
-                  Event,
-                  event,
-                  event->InterfaceName() ==
-                      event_interface_names::kDeviceMotionEvent,
-                  event.InterfaceName() ==
-                      event_interface_names::kDeviceMotionEvent);
+template <>
+struct DowncastTraits<DeviceMotionEvent> {
+  static bool AllowFrom(const Event& event) {
+    return event.InterfaceName() == event_interface_names::kDeviceMotionEvent;
+  }
+};
 
 }  // namespace blink
 

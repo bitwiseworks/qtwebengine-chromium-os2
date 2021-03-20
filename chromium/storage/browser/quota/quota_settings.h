@@ -6,12 +6,14 @@
 #define STORAGE_BROWSER_QUOTA_QUOTA_SETTINGS_H_
 
 #include <stdint.h>
+#include <memory>
 
 #include "base/callback.h"
 #include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/optional.h"
 #include "base/time/time.h"
+#include "storage/browser/quota/quota_device_info_helper.h"
 
 namespace storage {
 
@@ -77,7 +79,10 @@ using GetQuotaSettingsFunc =
 COMPONENT_EXPORT(STORAGE_BROWSER)
 void GetNominalDynamicSettings(const base::FilePath& partition_path,
                                bool is_incognito,
+                               QuotaDeviceInfoHelper* deviceInfoHelper,
                                OptionalQuotaSettingsCallback callback);
+
+COMPONENT_EXPORT(STORAGE_BROWSER)
 
 // Returns settings with a poolsize of zero and no per host quota.
 inline QuotaSettings GetNoQuotaSettings() {
@@ -91,6 +96,10 @@ inline QuotaSettings GetHardCodedSettings(int64_t per_host_quota) {
                        per_host_quota, per_host_quota);
 }
 
+// Returns object that can fetch actual total disk space; instance lives
+// as long as the process is a live.
+COMPONENT_EXPORT(STORAGE_BROWSER)
+QuotaDeviceInfoHelper* GetDefaultDeviceInfoHelper();
 }  // namespace storage
 
-#endif  // STORAGE_BROWSER_QUOTA_QUOTA_MANAGER_H_
+#endif  // STORAGE_BROWSER_QUOTA_QUOTA_SETTINGS_H_

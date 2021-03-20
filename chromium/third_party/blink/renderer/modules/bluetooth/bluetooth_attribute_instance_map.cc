@@ -50,7 +50,7 @@ BluetoothAttributeInstanceMap::GetOrCreateRemoteGATTCharacteristic(
       characteristic_id_to_object_.at(instance_id);
 
   if (!characteristic) {
-    characteristic = BluetoothRemoteGATTCharacteristic::Create(
+    characteristic = MakeGarbageCollected<BluetoothRemoteGATTCharacteristic>(
         context, std::move(remote_gatt_characteristic), service, device_);
     characteristic_id_to_object_.insert(instance_id, characteristic);
   }
@@ -91,7 +91,7 @@ void BluetoothAttributeInstanceMap::Clear() {
   descriptor_id_to_object_.clear();
 }
 
-void BluetoothAttributeInstanceMap::Trace(blink::Visitor* visitor) {
+void BluetoothAttributeInstanceMap::Trace(Visitor* visitor) {
   visitor->Trace(device_);
   visitor->Trace(service_id_to_object_);
   visitor->Trace(characteristic_id_to_object_);

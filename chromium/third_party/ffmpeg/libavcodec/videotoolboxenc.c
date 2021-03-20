@@ -39,6 +39,11 @@
 enum { kCMVideoCodecType_HEVC = 'hvc1' };
 #endif
 
+#if !HAVE_KCVPIXELFORMATTYPE_420YPCBCR10BIPLANARVIDEORANGE
+enum { kCVPixelFormatType_420YpCbCr10BiPlanarFullRange = 'xf20' };
+enum { kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange = 'x420' };
+#endif
+
 typedef OSStatus (*getParameterSetAtIndex)(CMFormatDescriptionRef videoDesc,
                                            size_t parameterSetIndex,
                                            const uint8_t **parameterSetPointerOut,
@@ -75,6 +80,8 @@ static struct{
     CFStringRef kVTProfileLevel_H264_High_5_1;
     CFStringRef kVTProfileLevel_H264_High_5_2;
     CFStringRef kVTProfileLevel_H264_High_AutoLevel;
+    CFStringRef kVTProfileLevel_H264_Extended_5_0;
+    CFStringRef kVTProfileLevel_H264_Extended_AutoLevel;
 
     CFStringRef kVTProfileLevel_HEVC_Main_AutoLevel;
     CFStringRef kVTProfileLevel_HEVC_Main10_AutoLevel;
@@ -132,6 +139,8 @@ static void loadVTEncSymbols(){
     GET_SYM(kVTProfileLevel_H264_High_5_1,           "H264_High_5_1");
     GET_SYM(kVTProfileLevel_H264_High_5_2,           "H264_High_5_2");
     GET_SYM(kVTProfileLevel_H264_High_AutoLevel,     "H264_High_AutoLevel");
+    GET_SYM(kVTProfileLevel_H264_Extended_5_0,       "H264_Extended_5_0");
+    GET_SYM(kVTProfileLevel_H264_Extended_AutoLevel, "H264_Extended_AutoLevel");
 
     GET_SYM(kVTProfileLevel_HEVC_Main_AutoLevel,     "HEVC_Main_AutoLevel");
     GET_SYM(kVTProfileLevel_HEVC_Main10_AutoLevel,   "HEVC_Main10_AutoLevel");
@@ -149,6 +158,7 @@ typedef enum VT_H264Profile {
     H264_PROF_BASELINE,
     H264_PROF_MAIN,
     H264_PROF_HIGH,
+    H264_PROF_EXTENDED,
     H264_PROF_COUNT
 } VT_H264Profile;
 
@@ -210,6 +220,7 @@ typedef struct VTEncContext {
     int64_t frames_after;
 
     int64_t allow_sw;
+    int64_t require_sw;
 
     bool flushing;
     bool has_b_frames;
@@ -563,9 +574,13 @@ static void vtenc_output_callback(
         return;
     }
 
-    if (status || !sample_buffer) {
+    if (status) {
         av_log(avctx, AV_LOG_ERROR, "Error encoding frame: %d\n", (int)status);
         set_async_error(vtctx, AVERROR_EXTERNAL);
+        return;
+    }
+
+    if (!sample_buffer) {
         return;
     }
 
@@ -698,6 +713,14 @@ static bool get_vt_h264_profile_level(AVCodecContext *avctx,
                                   compat_keys.kVTProfileLevel_H264_High_5_2;       break;
             }
             break;
+        case H264_PROF_EXTENDED:
+            switch (vtctx->level) {
+                case  0: *profile_level_val =
+                                  compat_keys.kVTProfileLevel_H264_Extended_AutoLevel; break;
+                case 50: *profile_level_val =
+                                  compat_keys.kVTProfileLevel_H264_Extended_5_0;       break;
+            }
+            break;
     }
 
     if (!*profile_level_val) {
@@ -761,6 +784,11 @@ static int get_cv_pixel_format(AVCodecContext* avctx,
         *av_pixel_format = range == AVCOL_RANGE_JPEG ?
                                         kCVPixelFormatType_420YpCbCr8PlanarFullRange :
                                         kCVPixelFormatType_420YpCbCr8Planar;
+    } else if (fmt == AV_PIX_FMT_P010LE) {
+        *av_pixel_format = range == AVCOL_RANGE_JPEG ?
+                                        kCVPixelFormatType_420YpCbCr10BiPlanarFullRange :
+                                        kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+        *av_pixel_format = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
     } else {
         return AVERROR(EINVAL);
     }
@@ -866,6 +894,14 @@ static int get_cv_color_primaries(AVCodecContext *avctx,
             *primaries = NULL;
             break;
 
+        case AVCOL_PRI_BT470BG:
+            *primaries = kCVImageBufferColorPrimaries_EBU_3213;
+            break;
+
+        case AVCOL_PRI_SMPTE170M:
+            *primaries = kCVImageBufferColorPrimaries_SMPTE_C;
+            break;
+
         case AVCOL_PRI_BT709:
             *primaries = kCVImageBufferColorPrimaries_ITU_R_709_2;
             break;
@@ -904,6 +940,22 @@ static int get_cv_transfer_function(AVCodecContext *avctx,
             *transfer_fnc = kCVImageBufferTransferFunction_SMPTE_240M_1995;
             break;
 
+#if HAVE_KCVIMAGEBUFFERTRANSFERFUNCTION_SMPTE_ST_2084_PQ
+        case AVCOL_TRC_SMPTE2084:
+            *transfer_fnc = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ;
+            break;
+#endif
+#if HAVE_KCVIMAGEBUFFERTRANSFERFUNCTION_LINEAR
+        case AVCOL_TRC_LINEAR:
+            *transfer_fnc = kCVImageBufferTransferFunction_Linear;
+            break;
+#endif
+#if HAVE_KCVIMAGEBUFFERTRANSFERFUNCTION_ITU_R_2100_HLG
+        case AVCOL_TRC_ARIB_STD_B67:
+            *transfer_fnc = kCVImageBufferTransferFunction_ITU_R_2100_HLG;
+            break;
+#endif
+
         case AVCOL_TRC_GAMMA22:
             gamma = 2.2;
             *transfer_fnc = kCVImageBufferTransferFunction_UseGamma;
@@ -922,6 +974,7 @@ static int get_cv_transfer_function(AVCodecContext *avctx,
             break;
 
         default:
+            *transfer_fnc = NULL;
             av_log(avctx, AV_LOG_ERROR, "Transfer function %s is not supported.\n", av_color_transfer_name(trc));
             return -1;
     }
@@ -1067,7 +1120,7 @@ static int vtenc_create_encoder(AVCodecContext   *avctx,
                                         kVTCompressionPropertyKey_ProfileLevel,
                                         profile_level);
             if (status) {
-                av_log(avctx, AV_LOG_ERROR, "Error setting profile/level property: %d\n", status);
+                av_log(avctx, AV_LOG_ERROR, "Error setting profile/level property: %d. Output will be encoded using a supported profile/level combination.\n", status);
             }
         }
     }
@@ -1314,7 +1367,11 @@ static int vtenc_configure_encoder(AVCodecContext *avctx)
     if (!enc_info) return AVERROR(ENOMEM);
 
 #if !TARGET_OS_IPHONE
-    if (!vtctx->allow_sw) {
+    if(vtctx->require_sw) {
+        CFDictionarySetValue(enc_info,
+                             compat_keys.kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder,
+                             kCFBooleanFalse);
+    } else if (!vtctx->allow_sw) {
         CFDictionarySetValue(enc_info,
                              compat_keys.kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
                              kCFBooleanTrue);
@@ -1981,6 +2038,17 @@ static int get_cv_pixel_info(
         strides[2] = frame ? frame->linesize[2] : (avctx->width + 1) / 2;
         break;
 
+    case AV_PIX_FMT_P010LE:
+        *plane_count = 2;
+        widths[0] = avctx->width;
+        heights[0] = avctx->height;
+        strides[0] = frame ? frame->linesize[0] : (avctx->width * 2 + 63) & -64;
+
+        widths[1] = (avctx->width + 1) / 2;
+        heights[1] = (avctx->height + 1) / 2;
+        strides[1] = frame ? frame->linesize[1] : ((avctx->width + 1) / 2 + 63) & -64;
+        break;
+
     default:
         av_log(
                avctx,
@@ -2006,19 +2074,6 @@ static int get_cv_pixel_info(
     return 0;
 }
 
-#if !TARGET_OS_IPHONE
-//Not used on iOS - frame is always copied.
-static void free_avframe(
-    void       *release_ctx,
-    const void *data,
-    size_t      size,
-    size_t      plane_count,
-    const void *plane_addresses[])
-{
-    AVFrame *frame = release_ctx;
-    av_frame_free(&frame);
-}
-#else
 //Not used on OSX - frame is never copied.
 static int copy_avframe_to_pixel_buffer(AVCodecContext   *avctx,
                                         const AVFrame    *frame,
@@ -2111,7 +2166,6 @@ static int copy_avframe_to_pixel_buffer(AVCodecContext   *avctx,
 
     return 0;
 }
-#endif //!TARGET_OS_IPHONE
 
 static int create_cv_pixel_buffer(AVCodecContext   *avctx,
                                   const AVFrame    *frame,
@@ -2124,18 +2178,8 @@ static int create_cv_pixel_buffer(AVCodecContext   *avctx,
     size_t strides[AV_NUM_DATA_POINTERS];
     int status;
     size_t contiguous_buf_size;
-#if TARGET_OS_IPHONE
     CVPixelBufferPoolRef pix_buf_pool;
     VTEncContext* vtctx = avctx->priv_data;
-#else
-    CFMutableDictionaryRef pix_buf_attachments = CFDictionaryCreateMutable(
-                                                   kCFAllocatorDefault,
-                                                   10,
-                                                   &kCFCopyStringDictionaryKeyCallBacks,
-                                                   &kCFTypeDictionaryValueCallBacks);
-
-    if (!pix_buf_attachments) return AVERROR(ENOMEM);
-#endif
 
     if (avctx->pix_fmt == AV_PIX_FMT_VIDEOTOOLBOX) {
         av_assert0(frame->format == AV_PIX_FMT_VIDEOTOOLBOX);
@@ -2175,7 +2219,6 @@ static int create_cv_pixel_buffer(AVCodecContext   *avctx,
         return AVERROR_EXTERNAL;
     }
 
-#if TARGET_OS_IPHONE
     pix_buf_pool = VTCompressionSessionGetPixelBufferPool(vtctx->session);
     if (!pix_buf_pool) {
         /* On iOS, the VT session is invalidated when the APP switches from
@@ -2217,43 +2260,6 @@ static int create_cv_pixel_buffer(AVCodecContext   *avctx,
         *cv_img = NULL;
         return status;
     }
-#else
-    AVFrame *enc_frame = av_frame_alloc();
-    if (!enc_frame) return AVERROR(ENOMEM);
-
-    status = av_frame_ref(enc_frame, frame);
-    if (status) {
-        av_frame_free(&enc_frame);
-        return status;
-    }
-
-    status = CVPixelBufferCreateWithPlanarBytes(
-        kCFAllocatorDefault,
-        enc_frame->width,
-        enc_frame->height,
-        color,
-        NULL,
-        contiguous_buf_size,
-        plane_count,
-        (void **)enc_frame->data,
-        widths,
-        heights,
-        strides,
-        free_avframe,
-        enc_frame,
-        NULL,
-        cv_img
-    );
-
-    add_color_attr(avctx, pix_buf_attachments);
-    CVBufferSetAttachments(*cv_img, pix_buf_attachments, kCVAttachmentMode_ShouldPropagate);
-    CFRelease(pix_buf_attachments);
-
-    if (status) {
-        av_log(avctx, AV_LOG_ERROR, "Error: Could not create CVPixelBuffer: %d\n", status);
-        return AVERROR_EXTERNAL;
-    }
-#endif
 
     return 0;
 }
@@ -2405,21 +2411,11 @@ static int vtenc_populate_extradata(AVCodecContext   *avctx,
                                     CFDictionaryRef  pixel_buffer_info)
 {
     VTEncContext *vtctx = avctx->priv_data;
-    AVFrame *frame = av_frame_alloc();
-    int y_size = avctx->width * avctx->height;
-    int chroma_size = (avctx->width / 2) * (avctx->height / 2);
-    CMSampleBufferRef buf = NULL;
     int status;
-
-    if (!frame)
-        return AVERROR(ENOMEM);
-
-    frame->buf[0] = av_buffer_alloc(y_size + 2 * chroma_size);
-
-    if(!frame->buf[0]){
-        status = AVERROR(ENOMEM);
-        goto pe_cleanup;
-    }
+    CVPixelBufferPoolRef pool = NULL;
+    CVPixelBufferRef pix_buf = NULL;
+    CMTime time;
+    CMSampleBufferRef buf = NULL;
 
     status = vtenc_create_encoder(avctx,
                                   codec_type,
@@ -2431,39 +2427,36 @@ static int vtenc_populate_extradata(AVCodecContext   *avctx,
     if (status)
         goto pe_cleanup;
 
-    frame->data[0] = frame->buf[0]->data;
-    memset(frame->data[0],   0,      y_size);
-
-    frame->data[1] = frame->buf[0]->data + y_size;
-    memset(frame->data[1], 128, chroma_size);
-
-
-    if (avctx->pix_fmt == AV_PIX_FMT_YUV420P) {
-        frame->data[2] = frame->buf[0]->data + y_size + chroma_size;
-        memset(frame->data[2], 128, chroma_size);
+    pool = VTCompressionSessionGetPixelBufferPool(vtctx->session);
+    if(!pool){
+        av_log(avctx, AV_LOG_ERROR, "Error getting pixel buffer pool.\n");
+        goto pe_cleanup;
     }
 
-    frame->linesize[0] = avctx->width;
+    status = CVPixelBufferPoolCreatePixelBuffer(NULL,
+                                                pool,
+                                                &pix_buf);
 
-    if (avctx->pix_fmt == AV_PIX_FMT_YUV420P) {
-        frame->linesize[1] =
-        frame->linesize[2] = (avctx->width + 1) / 2;
-    } else {
-        frame->linesize[1] = (avctx->width + 1) / 2;
+    if(status != kCVReturnSuccess){
+        av_log(avctx, AV_LOG_ERROR, "Error creating frame from pool: %d\n", status);
+        goto pe_cleanup;
     }
 
-    frame->format          = avctx->pix_fmt;
-    frame->width           = avctx->width;
-    frame->height          = avctx->height;
-    frame->colorspace      = avctx->colorspace;
-    frame->color_range     = avctx->color_range;
-    frame->color_trc       = avctx->color_trc;
-    frame->color_primaries = avctx->color_primaries;
+    time = CMTimeMake(0, avctx->time_base.den);
+    status = VTCompressionSessionEncodeFrame(vtctx->session,
+                                             pix_buf,
+                                             time,
+                                             kCMTimeInvalid,
+                                             NULL,
+                                             NULL,
+                                             NULL);
 
-    frame->pts = 0;
-    status = vtenc_send_frame(avctx, vtctx, frame);
     if (status) {
-        av_log(avctx, AV_LOG_ERROR, "Error sending frame: %d\n", status);
+        av_log(avctx,
+               AV_LOG_ERROR,
+               "Error sending frame for extradata: %d\n",
+               status);
+
         goto pe_cleanup;
     }
 
@@ -2490,9 +2483,6 @@ pe_cleanup:
 
     vtctx->session = NULL;
     vtctx->frame_ct_out = 0;
-
-    av_frame_unref(frame);
-    av_frame_free(&frame);
 
     av_assert0(status != 0 || (avctx->extradata && avctx->extradata_size > 0));
 
@@ -2532,16 +2522,26 @@ static av_cold int vtenc_close(AVCodecContext *avctx)
     return 0;
 }
 
-static const enum AVPixelFormat pix_fmts[] = {
+static const enum AVPixelFormat avc_pix_fmts[] = {
     AV_PIX_FMT_VIDEOTOOLBOX,
     AV_PIX_FMT_NV12,
     AV_PIX_FMT_YUV420P,
     AV_PIX_FMT_NONE
 };
 
+static const enum AVPixelFormat hevc_pix_fmts[] = {
+    AV_PIX_FMT_VIDEOTOOLBOX,
+    AV_PIX_FMT_NV12,
+    AV_PIX_FMT_YUV420P,
+    AV_PIX_FMT_P010LE,
+    AV_PIX_FMT_NONE
+};
+
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 #define COMMON_OPTIONS \
     { "allow_sw", "Allow software encoding", OFFSET(allow_sw), AV_OPT_TYPE_BOOL, \
+        { .i64 = 0 }, 0, 1, VE }, \
+    { "require_sw", "Require software encoding", OFFSET(require_sw), AV_OPT_TYPE_BOOL, \
         { .i64 = 0 }, 0, 1, VE }, \
     { "realtime", "Hint that encoding should happen in real-time if not faster (e.g. capturing from camera).", \
         OFFSET(realtime), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE }, \
@@ -2556,6 +2556,7 @@ static const AVOption h264_options[] = {
     { "baseline", "Baseline Profile", 0, AV_OPT_TYPE_CONST, { .i64 = H264_PROF_BASELINE }, INT_MIN, INT_MAX, VE, "profile" },
     { "main",     "Main Profile",     0, AV_OPT_TYPE_CONST, { .i64 = H264_PROF_MAIN     }, INT_MIN, INT_MAX, VE, "profile" },
     { "high",     "High Profile",     0, AV_OPT_TYPE_CONST, { .i64 = H264_PROF_HIGH     }, INT_MIN, INT_MAX, VE, "profile" },
+    { "extended", "Extend Profile",   0, AV_OPT_TYPE_CONST, { .i64 = H264_PROF_EXTENDED }, INT_MIN, INT_MAX, VE, "profile" },
 
     { "level", "Level", OFFSET(level), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 52, VE, "level" },
     { "1.3", "Level 1.3, only available with Baseline Profile", 0, AV_OPT_TYPE_CONST, { .i64 = 13 }, INT_MIN, INT_MAX, VE, "level" },
@@ -2594,7 +2595,7 @@ AVCodec ff_h264_videotoolbox_encoder = {
     .type             = AVMEDIA_TYPE_VIDEO,
     .id               = AV_CODEC_ID_H264,
     .priv_data_size   = sizeof(VTEncContext),
-    .pix_fmts         = pix_fmts,
+    .pix_fmts         = avc_pix_fmts,
     .init             = vtenc_init,
     .encode2          = vtenc_frame,
     .close            = vtenc_close,
@@ -2626,7 +2627,7 @@ AVCodec ff_hevc_videotoolbox_encoder = {
     .type             = AVMEDIA_TYPE_VIDEO,
     .id               = AV_CODEC_ID_HEVC,
     .priv_data_size   = sizeof(VTEncContext),
-    .pix_fmts         = pix_fmts,
+    .pix_fmts         = hevc_pix_fmts,
     .init             = vtenc_init,
     .encode2          = vtenc_frame,
     .close            = vtenc_close,

@@ -16,7 +16,7 @@
 namespace blink {
 
 class MODULES_EXPORT EventSourceParser final
-    : public GarbageCollectedFinalized<EventSourceParser> {
+    : public GarbageCollected<EventSourceParser> {
  public:
   class MODULES_EXPORT Client : public GarbageCollectedMixin {
    public:
@@ -24,9 +24,8 @@ class MODULES_EXPORT EventSourceParser final
     virtual void OnMessageEvent(const AtomicString& type,
                                 const String& data,
                                 const AtomicString& last_event_id) = 0;
-    virtual void OnReconnectionTimeSet(
-        unsigned long long reconnection_time) = 0;
-    void Trace(blink::Visitor* visitor) override {}
+    virtual void OnReconnectionTimeSet(uint64_t reconnection_time) = 0;
+    void Trace(Visitor* visitor) override {}
   };
 
   EventSourceParser(const AtomicString& last_event_id, Client*);
@@ -35,7 +34,7 @@ class MODULES_EXPORT EventSourceParser final
   const AtomicString& LastEventId() const { return last_event_id_; }
   // Stop parsing. This can be called from Client::onMessageEvent.
   void Stop() { is_stopped_ = true; }
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   void ParseLine();

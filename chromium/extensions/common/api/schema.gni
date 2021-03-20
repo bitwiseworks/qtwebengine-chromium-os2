@@ -11,6 +11,8 @@ extensions_api_schema_files_ = [
   "app_view_guest_internal.json",
   "app_window.idl",
   "audio.idl",
+  "automation.idl",
+  "automation_internal.idl",
   "bluetooth.idl",
   "bluetooth_low_energy.idl",
   "bluetooth_private.idl",
@@ -25,7 +27,6 @@ extensions_api_schema_files_ = [
   "events.json",
   "extensions_manifest_types.json",
   "extension_options_internal.idl",
-  "extension_view_internal.json",
   "extension_types.json",
   "feedback_private.idl",
   "file_system.idl",
@@ -64,6 +65,7 @@ extensions_api_schema_files_ = [
 
 if (is_chromeos) {
   extensions_api_schema_files_ += [
+    "crash_report_private.idl",
     "diagnostics.idl",
     "lock_screen_data.idl",
     "media_perception_private.idl",
@@ -80,6 +82,7 @@ if (use_qt) {
     "bluetooth_private.idl",
     "bluetooth_socket.idl",
     "cast_channel.idl",
+    "feedback_private.idl",
     "system_cpu.idl",
     "system_display.idl",
     "system_memory.idl",

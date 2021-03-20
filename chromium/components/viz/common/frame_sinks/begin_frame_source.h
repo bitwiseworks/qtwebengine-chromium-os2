@@ -14,8 +14,18 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_sinks/delay_based_time_source.h"
+
+namespace perfetto {
+namespace protos {
+namespace pbzero {
+class BeginFrameObserverState;
+class BeginFrameSourceState;
+}  // namespace pbzero
+}  // namespace protos
+}  // namespace perfetto
 
 namespace viz {
 
@@ -26,10 +36,11 @@ class VIZ_COMMON_EXPORT BeginFrameObserver {
   virtual ~BeginFrameObserver() {}
 
   // The |args| given to OnBeginFrame is guaranteed to have
-  // |args|.IsValid()==true. If |args|.source_id did not change between
-  // invocations, |args|.sequence_number is guaranteed to be be strictly greater
-  // than the previous call. Further, |args|.frame_time is guaranteed to be
-  // greater than or equal to the previous call even if the source_id changes.
+  // |args|.IsValid()==true. If |args|.frame_id.source_id did not change
+  // between invocations, |args|.frame_id.sequence_number is guaranteed to be
+  // be strictly greater than the previous call. Further, |args|.frame_time is
+  // guaranteed to be greater than or equal to the previous call even if the
+  // source_id changes.
   //
   // Side effects: This function can (and most of the time *will*) change the
   // return value of the LastUsedBeginFrameArgs method. See the documentation
@@ -61,6 +72,13 @@ class VIZ_COMMON_EXPORT BeginFrameObserver {
 
   // Whether the observer also wants to receive animate_only BeginFrames.
   virtual bool WantsAnimateOnlyBeginFrames() const = 0;
+
+  // Indicates whether this observer is the root frame sink. This helps in
+  // a workaround for input jank, allowing us to deliver BeginFrames to the
+  // root last, avoiding a race.
+  // TODO(ericrk): Remove this once we have a longer-term fix.
+  // https://crbug.com/947717
+  virtual bool IsRoot() const;
 };
 
 // Simple base class which implements a BeginFrameObserver which checks the
@@ -90,7 +108,8 @@ class VIZ_COMMON_EXPORT BeginFrameObserverBase : public BeginFrameObserver {
   // Return true if the given argument is (or will be) used.
   virtual bool OnBeginFrameDerivedImpl(const BeginFrameArgs& args) = 0;
 
-  void AsValueInto(base::trace_event::TracedValue* state) const;
+  void AsProtozeroInto(
+      perfetto::protos::pbzero::BeginFrameObserverState* state) const;
 
   BeginFrameArgs last_begin_frame_args_;
   int64_t dropped_begin_frame_args_ = 0;
@@ -111,6 +130,34 @@ class VIZ_COMMON_EXPORT BeginFrameObserverBase : public BeginFrameObserver {
 // all BeginFrameSources *must* provide.
 class VIZ_COMMON_EXPORT BeginFrameSource {
  public:
+  class VIZ_COMMON_EXPORT BeginFrameArgsGenerator {
+   public:
+    BeginFrameArgsGenerator() = default;
+    ~BeginFrameArgsGenerator() = default;
+
+    BeginFrameArgs GenerateBeginFrameArgs(uint64_t source_id,
+                                          base::TimeTicks frame_time,
+                                          base::TimeTicks next_frame_time,
+                                          base::TimeDelta vsync_interval);
+
+   private:
+    static uint64_t EstimateTickCountsBetween(
+        base::TimeTicks frame_time,
+        base::TimeTicks next_expected_frame_time,
+        base::TimeDelta vsync_interval);
+
+    // Used for determining what the sequence number should be on
+    // CreateBeginFrameArgs.
+    base::TimeTicks next_expected_frame_time_;
+
+    // This is what the sequence number should be for any args created between
+    // |next_expected_frame_time_| to |next_expected_frame_time_| + vsync
+    // interval. Args created outside of this range will have their sequence
+    // number assigned relative to this, based on how many intervals the frame
+    // time is off.
+    uint64_t next_sequence_number_ = BeginFrameArgs::kStartingFrameNumber;
+  };
+
   // This restart_id should be used for BeginFrameSources that don't have to
   // worry about process restart. For example, if a BeginFrameSource won't
   // generate and forward BeginFrameArgs to another process or the process can't
@@ -149,7 +196,8 @@ class VIZ_COMMON_EXPORT BeginFrameSource {
   // begin frames without waiting.
   virtual bool IsThrottled() const = 0;
 
-  virtual void AsValueInto(base::trace_event::TracedValue* state) const;
+  virtual void AsProtozeroInto(
+      perfetto::protos::pbzero::BeginFrameSourceState* state) const;
 
  protected:
   // Returns whether begin-frames to clients should be withheld (because the gpu
@@ -168,9 +216,21 @@ class VIZ_COMMON_EXPORT BeginFrameSource {
   // The BeginFrameSource should not send the begin-frame messages to clients if
   // gpu is busy.
   bool is_gpu_busy_ = false;
+
   // Keeps track of whether a begin-frame was paused, and whether
   // OnGpuNoLongerBusy() should be invoked when the gpu is no longer busy.
-  bool request_notification_on_gpu_availability_ = false;
+  enum class GpuBusyThrottlingState {
+    // No BeginFrames ticks were received since gpu was marked busy.
+    kIdle,
+    // One BeginFrame has been dispatched since gpu was marked busy.
+    kOneBeginFrameAfterBusySent,
+    // At least one BeginFrame was throttled since gpu was marked busy. If set
+    // to throttled state, the sub-class is informed to send the throttled
+    // BeginFrame once gpu is marked not busy.
+    kThrottled
+  };
+  GpuBusyThrottlingState gpu_busy_response_state_ =
+      GpuBusyThrottlingState::kIdle;
 
   DISALLOW_COPY_AND_ASSIGN(BeginFrameSource);
 };
@@ -226,7 +286,7 @@ class VIZ_COMMON_EXPORT BackToBackBeginFrameSource
   base::flat_set<BeginFrameObserver*> observers_;
   base::flat_set<BeginFrameObserver*> pending_begin_frame_observers_;
   uint64_t next_sequence_number_;
-  base::WeakPtrFactory<BackToBackBeginFrameSource> weak_factory_;
+  base::WeakPtrFactory<BackToBackBeginFrameSource> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BackToBackBeginFrameSource);
 };
@@ -256,6 +316,11 @@ class VIZ_COMMON_EXPORT DelayBasedBeginFrameSource
   void OnTimerTick() override;
 
  private:
+  // The created BeginFrameArgs' sequence_number is calculated based on what
+  // interval |frame_time| is in. For example, if |last_frame_time_| is 100,
+  // |next_sequence_number_| is 5, |last_timebase_| is 110 and the interval is
+  // 20, then a |frame_time| of 175 would result in the sequence number being 8
+  // (3 intervals since 110).
   BeginFrameArgs CreateBeginFrameArgs(base::TimeTicks frame_time);
   void IssueBeginFrameToObserver(BeginFrameObserver* obs,
                                  const BeginFrameArgs& args);
@@ -264,7 +329,8 @@ class VIZ_COMMON_EXPORT DelayBasedBeginFrameSource
   base::flat_set<BeginFrameObserver*> observers_;
   base::TimeTicks last_timebase_;
   BeginFrameArgs last_begin_frame_args_;
-  uint64_t next_sequence_number_;
+
+  BeginFrameArgsGenerator begin_frame_args_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(DelayBasedBeginFrameSource);
 };
@@ -293,11 +359,18 @@ class VIZ_COMMON_EXPORT ExternalBeginFrameSource : public BeginFrameSource {
   void RemoveObserver(BeginFrameObserver* obs) override;
   void DidFinishFrame(BeginFrameObserver* obs) override {}
   bool IsThrottled() const override;
-  void AsValueInto(base::trace_event::TracedValue* state) const override;
+  void AsProtozeroInto(
+      perfetto::protos::pbzero::BeginFrameSourceState* state) const override;
   void OnGpuNoLongerBusy() override;
 
   void OnSetBeginFrameSourcePaused(bool paused);
   void OnBeginFrame(const BeginFrameArgs& args);
+
+#if defined(OS_ANDROID)
+  // Notifies when the refresh rate of the display is updated. |refresh_rate| is
+  // the rate in frames per second.
+  virtual void UpdateRefreshRate(float refresh_rate) {}
+#endif
 
  protected:
   // Called on AddObserver and gets missed BeginFrameArgs for the given

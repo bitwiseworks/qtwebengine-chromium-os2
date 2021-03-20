@@ -4,14 +4,15 @@
 
 #include "ui/views/controls/menu/menu_config.h"
 
-#include <windows.h>
-#include <uxtheme.h>
+#include <windows.h>  // Must come before other Windows system headers.
+
 #include <Vssym32.h>
+#include <uxtheme.h>
 
 #include "base/logging.h"
 #include "base/win/scoped_gdi_object.h"
 #include "ui/gfx/color_utils.h"
-#include "ui/gfx/platform_font_win.h"
+#include "ui/gfx/system_fonts_win.h"
 #include "ui/native_theme/native_theme_win.h"
 
 using ui::NativeTheme;
@@ -20,8 +21,8 @@ namespace views {
 
 void MenuConfig::Init() {
   arrow_color = color_utils::GetSysSkColor(COLOR_MENUTEXT);
-  font_list = gfx::FontList(gfx::PlatformFontWin::GetSystemFont(
-      gfx::PlatformFontWin::SystemFont::kMenu));
+  font_list =
+      gfx::FontList(gfx::win::GetSystemFont(gfx::win::SystemFont::kMenu));
 
   NativeTheme::ExtraParams extra;
   gfx::Size arrow_size = NativeTheme::GetInstanceForNativeUi()->GetPartSize(

@@ -2,13 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/jumbo.gni")
 import("../../pdfium.gni")
 import("../../testing/test.gni")
 
 assert(pdf_enable_xfa)
 
-jumbo_source_set("fxfa") {
+source_set("fxfa") {
   sources = [
     "cxfa_eventparam.cpp",
     "cxfa_eventparam.h",
@@ -72,8 +71,6 @@ jumbo_source_set("fxfa") {
     "cxfa_fwltheme.h",
     "cxfa_imagerenderer.cpp",
     "cxfa_imagerenderer.h",
-    "cxfa_linkuserdata.cpp",
-    "cxfa_linkuserdata.h",
     "cxfa_loadercontext.cpp",
     "cxfa_loadercontext.h",
     "cxfa_pieceline.cpp",
@@ -94,19 +91,14 @@ jumbo_source_set("fxfa") {
     "cxfa_textprovider.h",
     "cxfa_texttabstopscontext.cpp",
     "cxfa_texttabstopscontext.h",
-    "cxfa_textuserdata.cpp",
-    "cxfa_textuserdata.h",
     "fxfa.h",
     "fxfa_basic.h",
   ]
   deps = [
-    "../../core/fpdfapi",
-    "../../core/fpdfapi/font",
     "../../core/fpdfapi/parser",
     "../../core/fpdfdoc",
     "../../core/fxcodec",
     "../../core/fxcrt",
-    "../../core/fxcrt:seekablemultistream",
     "../../core/fxcrt/css",
     "../../core/fxge",
     "../../fxbarcode",
@@ -116,13 +108,12 @@ jumbo_source_set("fxfa") {
     "../fgas/layout",
     "../fwl",
     "../fxgraphics",
+    "layout",
     "parser",
   ]
   allow_circular_includes_from = [
     "../../fxjs",
-    "../fgas",
-    "../fgas/layout",
-    "../fwl",
+    "layout",
     "parser",
   ]
   configs += [
@@ -138,8 +129,6 @@ pdfium_unittest_source_set("unittests") {
     "cxfa_textparser_unittest.cpp",
     "fxfa_basic_unittest.cpp",
   ]
-  deps = [
-    ":fxfa",
-  ]
+  deps = [ ":fxfa" ]
   pdfium_root_dir = "../../"
 }

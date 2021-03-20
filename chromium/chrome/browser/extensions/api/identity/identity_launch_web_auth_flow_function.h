@@ -8,16 +8,16 @@
 #include <string>
 
 #include "chrome/browser/extensions/api/identity/web_auth_flow.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
+#include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_function_histogram_value.h"
 
 namespace extensions {
 
-class IdentityLaunchWebAuthFlowFunction : public ChromeAsyncExtensionFunction,
+class IdentityLaunchWebAuthFlowFunction : public ExtensionFunction,
                                           public WebAuthFlow::Delegate {
  public:
   DECLARE_EXTENSION_FUNCTION("identity.launchWebAuthFlow",
-                             EXPERIMENTAL_IDENTITY_LAUNCHWEBAUTHFLOW);
+                             EXPERIMENTAL_IDENTITY_LAUNCHWEBAUTHFLOW)
 
   IdentityLaunchWebAuthFlowFunction();
 
@@ -26,7 +26,7 @@ class IdentityLaunchWebAuthFlowFunction : public ChromeAsyncExtensionFunction,
 
  private:
   ~IdentityLaunchWebAuthFlowFunction() override;
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
   // WebAuthFlow::Delegate implementation.
   void OnAuthFlowFailure(WebAuthFlow::Failure failure) override;

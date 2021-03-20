@@ -30,8 +30,11 @@
 
 #include "third_party/blink/renderer/core/page/page_popup_client.h"
 
+#include "third_party/blink/renderer/core/css/css_font_selector.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/page/chrome_client.h"
+#include "third_party/blink/renderer/core/page/page_popup_controller.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
@@ -43,6 +46,12 @@ float PagePopupClient::ZoomFactor() {
   if (LocalFrame* frame = OwnerElement().GetDocument().GetFrame())
     return frame->PageZoomFactor();
   return 1;
+}
+
+float PagePopupClient::ScaledZoomFactor() {
+  float scale_factor = GetChromeClient().WindowToViewportScalar(
+      OwnerElement().GetDocument().GetFrame(), 1.0f);
+  return ZoomFactor() / scale_factor;
 }
 
 #define addLiteral(literal, data) data->Append(literal, sizeof(literal) - 1)
@@ -66,32 +75,13 @@ void PagePopupClient::AddJavaScriptString(const String& str,
       builder.Append("\\x3C");
     } else if (str[i] < 0x20 || str[i] == kLineSeparator ||
                str[i] == kParagraphSeparator) {
-      builder.Append(String::Format("\\u%04X", str[i]));
+      builder.AppendFormat("\\u%04X", str[i]);
     } else {
       builder.Append(str[i]);
     }
   }
   AddString(builder.ToString(), data);
   addLiteral("\"", data);
-}
-
-void PagePopupClient::AddHTMLString(const String& str, SharedBuffer* data) {
-  StringBuilder builder;
-  builder.ReserveCapacity(str.length());
-  for (unsigned i = 0; i < str.length(); ++i) {
-    if (str[i] == '&') {
-      builder.Append("&amp;");
-    } else if (str[i] == '<') {
-      builder.Append("&lt;");
-    } else if (str[i] == '\'') {
-      builder.Append("&apos;");
-    } else if (str[i] == '"') {
-      builder.Append("&quot;");
-    } else {
-      builder.Append(str[i]);
-    }
-  }
-  AddString(builder.ToString(), data);
 }
 
 void PagePopupClient::AddProperty(const char* name,
@@ -165,6 +155,16 @@ void PagePopupClient::AddProperty(const char* name,
   AddProperty("width", rect.Width(), data);
   AddProperty("height", rect.Height(), data);
   addLiteral("},\n", data);
+}
+
+CSSFontSelector* PagePopupClient::CreateCSSFontSelector(
+    Document& popup_document) {
+  return MakeGarbageCollected<CSSFontSelector>(&popup_document);
+}
+
+PagePopupController* PagePopupClient::CreatePagePopupController(
+    PagePopup& popup) {
+  return MakeGarbageCollected<PagePopupController>(popup, this);
 }
 
 }  // namespace blink

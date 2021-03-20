@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//components/ui_devtools/devtools.gni")
+import("//build/config/ui.gni")
 import("//components/viz/viz.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
@@ -12,6 +12,8 @@ viz_component("host") {
   sources = [
     "client_frame_sink_video_capturer.cc",
     "client_frame_sink_video_capturer.h",
+    "compositing_mode_reporter_impl.cc",
+    "compositing_mode_reporter_impl.h",
     "gpu_client.cc",
     "gpu_client.h",
     "gpu_client_delegate.h",
@@ -41,24 +43,20 @@ viz_component("host") {
 
   deps = [
     "//base",
-    "//components/viz/common",
+    "//components/ui_devtools:buildflags",
     "//gpu/ipc/client",
     "//gpu/ipc/common",
-    "//services/viz/privileged/interfaces",
+    "//services/viz/privileged/mojom",
     "//ui/base",
     "//ui/gfx",
-
-    # TODO(kylechar): This is temporary and will be removed when all host to
-    # service communication is over Mojo.
-    "//components/viz/service",
   ]
 
   public_deps = [
+    "//components/viz/common",
     "//gpu/command_buffer/client",
     "//gpu/ipc/host",
-    "//services/viz/privileged/interfaces/compositing",
-    "//services/viz/public/interfaces",
-    "//services/ws/public/mojom",
+    "//services/viz/privileged/mojom/compositing",
+    "//services/viz/public/mojom",
     "//ui/gfx/geometry",
   ]
 
@@ -66,8 +64,8 @@ viz_component("host") {
     deps += [ "//ui/accelerated_widget_mac" ]
   }
 
-  if (use_viz_devtools) {
-    defines += [ "USE_VIZ_DEVTOOLS" ]
+  if (use_ozone) {
+    deps += [ "//ui/ozone" ]
   }
 }
 
@@ -88,21 +86,19 @@ viz_source_set("unit_tests") {
     "//gpu",
     "//gpu/ipc/host",
     "//mojo/public/cpp/bindings",
-    "//services/viz/privileged/interfaces",
-    "//services/viz/public/interfaces",
+    "//services/viz/privileged/mojom",
+    "//services/viz/public/mojom",
     "//testing/gmock",
     "//testing/gtest",
-
-    # TODO(kylechar): This is temporary and will be removed when all host to
-    # service communication is over Mojo.
-    "//components/viz/service",
   ]
+
+  if (use_ozone) {
+    deps += [ "//ui/ozone" ]
+  }
 }
 
 fuzzer_test("hit_test_query_fuzzer") {
-  sources = [
-    "hit_test/hit_test_query_fuzzer.cc",
-  ]
+  sources = [ "hit_test/hit_test_query_fuzzer.cc" ]
 
   libfuzzer_options = [ "max_len=4096" ]
 

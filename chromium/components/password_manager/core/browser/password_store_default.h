@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "components/password_manager/core/browser/compromised_credentials_table.h"
 #include "components/password_manager/core/browser/login_database.h"
 #include "components/password_manager/core/browser/password_store.h"
 
@@ -25,15 +26,6 @@ class PasswordStoreDefault : public PasswordStore {
 
   void ShutdownOnUIThread() override;
 
-#if defined(USE_X11)
-  // Dispose the current |login_db_| and use |login_db|. |login_db| is expected
-  // to have been initialised. A null value is equivalent to a database which
-  // can't be opened.
-  // TODO(crbug.com/571003) This is only used to migrate Linux to an encrypted
-  // LoginDatabase.
-  void SetLoginDB(std::unique_ptr<LoginDatabase> login_db);
-#endif  // defined(USE_X11)
-
   // To be used only for testing or in subclasses.
   LoginDatabase* login_db() const { return login_db_.get(); }
 
@@ -41,38 +33,36 @@ class PasswordStoreDefault : public PasswordStore {
   ~PasswordStoreDefault() override;
 
   // Opens |login_db_| on the background sequence.
-  bool InitOnBackgroundSequence(
-      const syncer::SyncableService::StartSyncFlare& flare) override;
+  bool InitOnBackgroundSequence() override;
 
   // Implements PasswordStore interface.
   void ReportMetricsImpl(const std::string& sync_username,
-                         bool custom_passphrase_sync_enabled) override;
-  PasswordStoreChangeList AddLoginImpl(
-      const autofill::PasswordForm& form) override;
-  PasswordStoreChangeList UpdateLoginImpl(
-      const autofill::PasswordForm& form) override;
+                         bool custom_passphrase_sync_enabled,
+                         BulkCheckDone bulk_check_done) override;
+  PasswordStoreChangeList AddLoginImpl(const autofill::PasswordForm& form,
+                                       AddLoginError* error) override;
+  PasswordStoreChangeList UpdateLoginImpl(const autofill::PasswordForm& form,
+                                          UpdateLoginError* error) override;
   PasswordStoreChangeList RemoveLoginImpl(
       const autofill::PasswordForm& form) override;
   PasswordStoreChangeList RemoveLoginsByURLAndTimeImpl(
-      const base::Callback<bool(const GURL&)>& url_filter,
+      const base::RepeatingCallback<bool(const GURL&)>& url_filter,
       base::Time delete_begin,
       base::Time delete_end) override;
   PasswordStoreChangeList RemoveLoginsCreatedBetweenImpl(
       base::Time delete_begin,
       base::Time delete_end) override;
-  PasswordStoreChangeList RemoveLoginsSyncedBetweenImpl(
-      base::Time delete_begin,
-      base::Time delete_end) override;
   PasswordStoreChangeList DisableAutoSignInForOriginsImpl(
-      const base::Callback<bool(const GURL&)>& origin_filter) override;
+      const base::RepeatingCallback<bool(const GURL&)>& origin_filter) override;
   bool RemoveStatisticsByOriginAndTimeImpl(
-      const base::Callback<bool(const GURL&)>& origin_filter,
+      const base::RepeatingCallback<bool(const GURL&)>& origin_filter,
       base::Time delete_begin,
       base::Time delete_end) override;
   std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
       const FormDigest& form) override;
   std::vector<std::unique_ptr<autofill::PasswordForm>>
-  FillLoginsForSameOrganizationName(const std::string& signon_realm) override;
+  FillMatchingLoginsByPassword(
+      const base::string16& plain_text_password) override;
   bool FillAutofillableLogins(
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(
@@ -83,17 +73,34 @@ class PasswordStoreDefault : public PasswordStore {
   std::vector<InteractionsStats> GetAllSiteStatsImpl() override;
   std::vector<InteractionsStats> GetSiteStatsImpl(
       const GURL& origin_domain) override;
+  bool AddCompromisedCredentialsImpl(
+      const CompromisedCredentials& compromised_credentials) override;
+  bool RemoveCompromisedCredentialsImpl(
+      const std::string& signon_realm,
+      const base::string16& username,
+      RemoveCompromisedCredentialsReason reason) override;
+  std::vector<CompromisedCredentials> GetAllCompromisedCredentialsImpl()
+      override;
+  bool RemoveCompromisedCredentialsByUrlAndTimeImpl(
+      const base::RepeatingCallback<bool(const GURL&)>& url_filter,
+      base::Time remove_begin,
+      base::Time remove_end) override;
+
+  void AddFieldInfoImpl(const FieldInfo& field_info) override;
+  std::vector<FieldInfo> GetAllFieldInfoImpl() override;
+  void RemoveFieldInfoByTimeImpl(base::Time remove_begin,
+                                 base::Time remove_end) override;
 
   // Implements PasswordStoreSync interface.
   bool BeginTransaction() override;
+  void RollbackTransaction() override;
   bool CommitTransaction() override;
-  bool ReadAllLogins(PrimaryKeyToFormMap* key_to_form_map) override;
+  FormRetrievalResult ReadAllLogins(
+      PrimaryKeyToFormMap* key_to_form_map) override;
   PasswordStoreChangeList RemoveLoginByPrimaryKeySync(int primary_key) override;
-  syncer::SyncMetadataStore* GetMetadataStore() override;
-
-  inline bool DeleteAndRecreateDatabaseFile() {
-    return login_db_->DeleteAndRecreateDatabaseFile();
-  }
+  PasswordStoreSync::MetadataStore* GetMetadataStore() override;
+  bool IsAccountStore() const override;
+  bool DeleteAndRecreateDatabaseFile() override;
 
  private:
   // Resets |login_db_| on the background sequence.

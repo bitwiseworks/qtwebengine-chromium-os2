@@ -24,11 +24,11 @@ class ReconcileTask : public Task {
                 RequestQueueStore::UpdateCallback callback);
   ~ReconcileTask() override;
 
+ private:
   // TaskQueue::Task implementation:
   // Starts the async chain.
   void Run() override;
 
- private:
   // Step 1. Get results from the store.
   void GetRequests();
 
@@ -44,7 +44,7 @@ class ReconcileTask : public Task {
   // Callback to complete the task.
   RequestQueueStore::UpdateCallback callback_;
   // Allows us to pass a weak pointer to callbacks.
-  base::WeakPtrFactory<ReconcileTask> weak_ptr_factory_;
+  base::WeakPtrFactory<ReconcileTask> weak_ptr_factory_{this};
 };
 
 }  // namespace offline_pages

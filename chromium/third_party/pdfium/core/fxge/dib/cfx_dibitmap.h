@@ -8,6 +8,7 @@
 #define CORE_FXGE_DIB_CFX_DIBITMAP_H_
 
 #include "core/fxcrt/fx_coordinates.h"
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/maybe_owned.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxge/dib/cfx_dibbase.h"
@@ -51,7 +52,7 @@ class CFX_DIBitmap : public CFX_DIBBase {
   bool LoadChannel(FXDIB_Channel destChannel, int value);
 
   bool MultiplyAlpha(int alpha);
-  bool MultiplyAlpha(const RetainPtr<CFX_DIBBase>& pAlphaMask);
+  bool MultiplyAlpha(const RetainPtr<CFX_DIBBase>& pSrcBitmap);
 
   bool TransferBitmap(int dest_left,
                       int dest_top,
@@ -82,8 +83,7 @@ class CFX_DIBitmap : public CFX_DIBBase {
                      int src_top,
                      BlendMode blend_type,
                      const CFX_ClipRgn* pClipRgn,
-                     bool bRgbByteOrder,
-                     int alpha_flag);
+                     bool bRgbByteOrder);
 
   bool CompositeRect(int dest_left,
                      int dest_top,

@@ -29,44 +29,18 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
-#include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/omnibox_controller_emitter.h"
 #include "components/search_engines/template_url.h"
 #include "content/public/browser/web_ui.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
 
 using bookmarks::BookmarkModel;
-using OmniboxPageImageCallback =
-    base::RepeatingCallback<void(const SkBitmap& bitmap)>;
 
 namespace {
-
-using ImageReciever = std::function<void(std::string)>;
-
-class OmniboxPageImageObserver : public BitmapFetcherService::Observer {
- public:
-  explicit OmniboxPageImageObserver(ImageReciever image_reciever)
-      : image_reciever_(image_reciever) {}
-
-  void OnImageChanged(BitmapFetcherService::RequestId request_id,
-                      const SkBitmap& bitmap) override {
-    auto data = gfx::Image::CreateFrom1xBitmap(bitmap).As1xPNGBytes();
-    std::string base_64;
-    base::Base64Encode(base::StringPiece(data->front_as<char>(), data->size()),
-                       &base_64);
-    const char kDataUrlPrefix[] = "data:image/png;base64,";
-    std::string data_url = GURL(kDataUrlPrefix + base_64).spec();
-    image_reciever_(data_url);
-  }
-
- private:
-  const ImageReciever image_reciever_;
-
-  DISALLOW_COPY_AND_ASSIGN(OmniboxPageImageObserver);
-};
 
 std::string SuggestionAnswerTypeToString(int answer_type) {
   switch (answer_type) {
@@ -118,6 +92,21 @@ std::string SuggestionAnswerImageLineToString(
 namespace mojo {
 
 template <>
+struct TypeConverter<std::vector<mojom::ACMatchClassificationPtr>,
+                     AutocompleteMatch::ACMatchClassifications> {
+  static std::vector<mojom::ACMatchClassificationPtr> Convert(
+      const AutocompleteMatch::ACMatchClassifications& input) {
+    std::vector<mojom::ACMatchClassificationPtr> array;
+    for (auto classification : input) {
+      auto item = mojom::ACMatchClassification::New(classification.offset,
+                                                    classification.style);
+      array.push_back(std::move(item));
+    }
+    return array;
+  }
+};
+
+template <>
 struct TypeConverter<std::vector<mojom::AutocompleteAdditionalInfoPtr>,
                      AutocompleteMatch::AdditionalInfo> {
   static std::vector<mojom::AutocompleteAdditionalInfoPtr> Convert(
@@ -149,15 +138,17 @@ struct TypeConverter<mojom::AutocompleteMatchPtr, AutocompleteMatch> {
     result->inline_autocompletion =
         base::UTF16ToUTF8(input.inline_autocompletion);
     result->destination_url = input.destination_url.spec();
+    result->stripped_destination_url = input.stripped_destination_url.spec();
     result->image = input.ImageUrl().spec().c_str();
     result->contents = base::UTF16ToUTF8(input.contents);
-    // At this time, we're not bothering to send along the long vector that
-    // represent contents classification.  i.e., for each character, what
-    // type of text it is.
+    result->contents_class =
+        mojo::ConvertTo<std::vector<mojom::ACMatchClassificationPtr>>(
+            input.contents_class);
     result->description = base::UTF16ToUTF8(input.description);
-    // At this time, we're not bothering to send along the long vector that
-    // represents description classification.  i.e., for each character, what
-    // type of text it is.
+    result->description_class =
+        mojo::ConvertTo<std::vector<mojom::ACMatchClassificationPtr>>(
+            input.description_class);
+    result->swap_contents_and_description = input.swap_contents_and_description;
     if (input.answer) {
       result->answer =
           SuggestionAnswerImageLineToString(input.answer->first_line()) +
@@ -205,37 +196,40 @@ struct TypeConverter<mojom::AutocompleteResultsForProviderPtr,
 
 OmniboxPageHandler::OmniboxPageHandler(
     Profile* profile,
-    mojo::InterfaceRequest<mojom::OmniboxPageHandler> request)
-    : profile_(profile), binding_(this, std::move(request)), observer_(this) {
+    mojo::PendingReceiver<mojom::OmniboxPageHandler> receiver)
+    : profile_(profile),
+      receiver_(this, std::move(receiver)),
+      observer_(this) {
   observer_.Add(OmniboxControllerEmitter::GetForBrowserContext(profile_));
   ResetController();
 }
 
-OmniboxPageHandler::~OmniboxPageHandler() {}
+OmniboxPageHandler::~OmniboxPageHandler() = default;
 
-void OmniboxPageHandler::OnResultChanged(bool default_match_changed) {
-  OnOmniboxResultChanged(default_match_changed, controller_.get());
+void OmniboxPageHandler::OnStart(AutocompleteController* controller,
+                                 const AutocompleteInput& input) {
+  time_omnibox_started_ = base::Time::Now();
+  input_ = input;
+  page_->HandleNewAutocompleteQuery(controller == controller_.get(),
+                                    base::UTF16ToUTF8(input.text()));
 }
 
-void OmniboxPageHandler::OnOmniboxQuery(AutocompleteController* controller) {
-  page_->HandleNewAutocompleteQuery(controller == controller_.get());
-}
-
-void OmniboxPageHandler::OnOmniboxResultChanged(
-    bool default_match_changed,
-    AutocompleteController* controller) {
+void OmniboxPageHandler::OnResultChanged(AutocompleteController* controller,
+                                         bool default_match_changed) {
   mojom::OmniboxResponsePtr response(mojom::OmniboxResponse::New());
-  response->done = controller->done();
+  response->cursor_position = input_.cursor_position();
   response->time_since_omnibox_started_ms =
       (base::Time::Now() - time_omnibox_started_).InMilliseconds();
+  response->done = controller->done();
+  response->type = AutocompleteInput::TypeToString(input_.type());
   const base::string16 host =
       input_.text().substr(input_.parts().host.begin, input_.parts().host.len);
   response->host = base::UTF16ToUTF8(host);
-  response->type = AutocompleteInput::TypeToString(input_.type());
   bool is_typed_host;
   if (!LookupIsTypedHost(host, &is_typed_host))
     is_typed_host = false;
   response->is_typed_host = is_typed_host;
+  response->input_text = base::UTF16ToUTF8(input_.text());
 
   {
     // Copy to an ACMatches to make conversion easier. Since this isn't
@@ -277,64 +271,32 @@ void OmniboxPageHandler::OnOmniboxResultChanged(
       image_urls.push_back(result_by_provider.results[j]->image);
   }
 
-  page_->handleNewAutocompleteResponse(std::move(response),
+  page_->HandleNewAutocompleteResponse(std::move(response),
                                        controller == controller_.get());
 
   // Fill in image data
-  BitmapFetcherService* image_service =
+  BitmapFetcherService* bitmap_fetcher_service =
       BitmapFetcherServiceFactory::GetForBrowserContext(profile_);
-  if (!image_service)
-    return;
+
   for (std::string image_url : image_urls) {
-    const ImageReciever handleAnswerImageData = [this,
-                                                 image_url](std::string data) {
-      page_->HandleAnswerImageData(image_url, data);
-    };
-    if (!image_url.empty()) {
-      // TODO(jdonnelly, rhalavati, manukh): Create a helper function with
-      // Callback to create annotation and pass it to image_service, merging
-      // the annotations in omnibox_page_handler.cc, chrome_omnibox_client.cc,
-      // and chrome_autocomplete_provider_client.cc.
-      auto traffic_annotation = net::DefineNetworkTrafficAnnotation(
-          "omnibox_debug_results_change", R"(
-          semantics {
-            sender: "Omnibox"
-            description:
-              "Chromium provides answers in the suggestion list for "
-              "certain queries that user types in the omnibox. This request "
-              "retrieves a small image (for example, an icon illustrating "
-              "the current weather conditions) when this can add information "
-              "to an answer."
-            trigger:
-              "Change of results for the query typed by the user in the "
-              "omnibox."
-            data:
-              "The only data sent is the path to an image. No user data is "
-              "included, although some might be inferrable (e.g. whether the "
-              "weather is sunny or rainy in the user's current location) "
-              "from the name of the image in the path."
-            destination: WEBSITE
-          }
-          policy {
-            cookies_allowed: YES
-            cookies_store: "user"
-            setting:
-              "You can enable or disable this feature via 'Use a prediction "
-              "service to help complete searches and URLs typed in the "
-              "address bar.' in Chromium's settings under Advanced. The "
-              "feature is enabled by default."
-            chrome_policy {
-              SearchSuggestEnabled {
-                  policy_options {mode: MANDATORY}
-                  SearchSuggestEnabled: false
-              }
-            }
-          })");
-      image_service->RequestImage(
-          GURL(image_url), new OmniboxPageImageObserver(handleAnswerImageData),
-          traffic_annotation);
+    if (image_url.empty()) {
+      continue;
     }
+    bitmap_fetcher_service->RequestImage(
+        GURL(image_url), base::BindOnce(&OmniboxPageHandler::OnBitmapFetched,
+                                        weak_factory_.GetWeakPtr(), image_url));
   }
+}
+
+void OmniboxPageHandler::OnBitmapFetched(const std::string& image_url,
+                                         const SkBitmap& bitmap) {
+  auto data = gfx::Image::CreateFrom1xBitmap(bitmap).As1xPNGBytes();
+  std::string base_64;
+  base::Base64Encode(base::StringPiece(data->front_as<char>(), data->size()),
+                     &base_64);
+  const char kDataUrlPrefix[] = "data:image/png;base64,";
+  std::string data_url = GURL(kDataUrlPrefix + base_64).spec();
+  page_->HandleAnswerImageData(image_url, data_url);
 }
 
 bool OmniboxPageHandler::LookupIsTypedHost(const base::string16& host,
@@ -352,8 +314,9 @@ bool OmniboxPageHandler::LookupIsTypedHost(const base::string16& host,
   return true;
 }
 
-void OmniboxPageHandler::SetClientPage(mojom::OmniboxPagePtr page) {
-  page_ = std::move(page);
+void OmniboxPageHandler::SetClientPage(
+    mojo::PendingRemote<mojom::OmniboxPage> page) {
+  page_.Bind(std::move(page));
 }
 
 void OmniboxPageHandler::StartOmniboxQuery(const std::string& input_string,
@@ -371,35 +334,29 @@ void OmniboxPageHandler::StartOmniboxQuery(const std::string& input_string,
   // actual results to not depend on the state of the previous request.
   if (reset_autocomplete_controller)
     ResetController();
-  // TODO (manukh): OmniboxPageHandler::StartOmniboxQuery is invoked only for
-  // queries from the debug page and not for queries from the browser omnibox.
-  // time_omnibox_started_ and input_ are therefore not set for browser omnibox
-  // queries, resulting in inaccurate time_since_omnibox_started_ms, host, type,
-  // and is_typed_host values in the result object being sent to the debug page.
-  // For the user, this means the 'details' section is mostly inaccurate for
-  // browser omnibox queries.
-  time_omnibox_started_ = base::Time::Now();
-  input_ = AutocompleteInput(
+  AutocompleteInput input(
       base::UTF8ToUTF16(input_string), cursor_position,
       static_cast<metrics::OmniboxEventProto::PageClassification>(
           page_classification),
       ChromeAutocompleteSchemeClassifier(profile_));
   GURL current_url_gurl{current_url};
   if (current_url_gurl.is_valid())
-    input_.set_current_url(current_url_gurl);
-  input_.set_current_title(base::UTF8ToUTF16(current_url));
-  input_.set_prevent_inline_autocomplete(prevent_inline_autocomplete);
-  input_.set_prefer_keyword(prefer_keyword);
+    input.set_current_url(current_url_gurl);
+  input.set_current_title(base::UTF8ToUTF16(current_url));
+  input.set_prevent_inline_autocomplete(prevent_inline_autocomplete);
+  input.set_prefer_keyword(prefer_keyword);
   if (prefer_keyword)
-    input_.set_keyword_mode_entry_method(metrics::OmniboxEventProto::TAB);
-  input_.set_from_omnibox_focus(zero_suggest);
+    input.set_keyword_mode_entry_method(metrics::OmniboxEventProto::TAB);
+  input.set_from_omnibox_focus(zero_suggest);
 
-  OnOmniboxQuery(controller_.get());
-  controller_->Start(input_);
+  controller_->Start(input);
 }
 
 void OmniboxPageHandler::ResetController() {
-  controller_.reset(new AutocompleteController(
-      std::make_unique<ChromeAutocompleteProviderClient>(profile_), this,
-      AutocompleteClassifier::DefaultOmniboxProviders()));
+  controller_ = std::make_unique<AutocompleteController>(
+      std::make_unique<ChromeAutocompleteProviderClient>(profile_),
+      AutocompleteClassifier::DefaultOmniboxProviders());
+  // We will observe our internal AutocompleteController directly, so there's
+  // no reason to hook it up to the profile-keyed OmniboxControllerEmitter.
+  controller_->AddObserver(this);
 }

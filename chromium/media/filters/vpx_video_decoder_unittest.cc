@@ -8,7 +8,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/limits.h"
@@ -39,7 +39,12 @@ class VpxVideoDecoderTest : public testing::Test {
   void InitializeWithConfigWithResult(const VideoDecoderConfig& config,
                                       bool success) {
     decoder_->Initialize(
-        config, false, nullptr, NewExpectedBoolCB(success),
+        config, false, nullptr,
+        base::BindOnce(
+            [](bool success, Status status) {
+              EXPECT_EQ(status.is_ok(), success);
+            },
+            success),
         base::Bind(&VpxVideoDecoderTest::FrameReady, base::Unretained(this)),
         base::NullCallback());
     base::RunLoop().RunUntilIdle();
@@ -147,22 +152,22 @@ class VpxVideoDecoderTest : public testing::Test {
     DecodeStatus status;
     EXPECT_CALL(*this, DecodeDone(_)).WillOnce(testing::SaveArg<0>(&status));
 
-    decoder_->Decode(
-        std::move(buffer),
-        base::Bind(&VpxVideoDecoderTest::DecodeDone, base::Unretained(this)));
+    decoder_->Decode(std::move(buffer),
+                     base::BindOnce(&VpxVideoDecoderTest::DecodeDone,
+                                    base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
 
     return status;
   }
 
-  void FrameReady(const scoped_refptr<VideoFrame>& frame) {
+  void FrameReady(scoped_refptr<VideoFrame> frame) {
     DCHECK(!frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM));
-    output_frames_.push_back(frame);
+    output_frames_.push_back(std::move(frame));
   }
 
   MOCK_METHOD1(DecodeDone, void(DecodeStatus));
 
-  base::test::ScopedTaskEnvironment task_env_;
+  base::test::TaskEnvironment task_env_;
   std::unique_ptr<VideoDecoder> decoder_;
 
   scoped_refptr<DecoderBuffer> i_frame_buffer_;

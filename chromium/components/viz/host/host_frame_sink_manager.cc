@@ -6,42 +6,37 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "components/viz/common/surfaces/surface_info.h"
-#include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
-#include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
-#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
 
 namespace viz {
 
-HostFrameSinkManager::HostFrameSinkManager()
-    : binding_(this), weak_ptr_factory_(this) {}
+HostFrameSinkManager::HostFrameSinkManager() = default;
 
 HostFrameSinkManager::~HostFrameSinkManager() = default;
 
 void HostFrameSinkManager::SetLocalManager(
-    FrameSinkManagerImpl* frame_sink_manager_impl) {
-  DCHECK(!frame_sink_manager_ptr_);
-  frame_sink_manager_impl_ = frame_sink_manager_impl;
-
-  frame_sink_manager_ = frame_sink_manager_impl;
+    mojom::FrameSinkManager* frame_sink_manager) {
+  DCHECK(!frame_sink_manager_remote_);
+  frame_sink_manager_ = frame_sink_manager;
 }
 
 void HostFrameSinkManager::BindAndSetManager(
-    mojom::FrameSinkManagerClientRequest request,
+    mojo::PendingReceiver<mojom::FrameSinkManagerClient> receiver,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    mojom::FrameSinkManagerPtr ptr) {
-  DCHECK(!frame_sink_manager_impl_);
-  DCHECK(!binding_.is_bound());
+    mojo::PendingRemote<mojom::FrameSinkManager> remote) {
+  DCHECK(!receiver_.is_bound());
 
-  binding_.Bind(std::move(request), std::move(task_runner));
-  frame_sink_manager_ptr_ = std::move(ptr);
-  frame_sink_manager_ = frame_sink_manager_ptr_.get();
+  receiver_.Bind(std::move(receiver), std::move(task_runner));
+  frame_sink_manager_remote_.Bind(std::move(remote));
+  frame_sink_manager_ = frame_sink_manager_remote_.get();
 
-  frame_sink_manager_ptr_.set_connection_error_handler(base::BindOnce(
+  frame_sink_manager_remote_.set_disconnect_handler(base::BindOnce(
       &HostFrameSinkManager::OnConnectionLost, base::Unretained(this)));
 
   if (connection_was_lost_) {
@@ -53,11 +48,6 @@ void HostFrameSinkManager::BindAndSetManager(
 void HostFrameSinkManager::SetConnectionLostCallback(
     base::RepeatingClosure callback) {
   connection_lost_callback_ = std::move(callback);
-}
-
-void HostFrameSinkManager::SetBadMessageReceivedFromGpuCallback(
-    base::RepeatingClosure callback) {
-  bad_message_received_from_gpu_callback_ = std::move(callback);
 }
 
 void HostFrameSinkManager::RegisterFrameSinkId(
@@ -90,7 +80,13 @@ void HostFrameSinkManager::InvalidateFrameSinkId(
   DCHECK(data.IsFrameSinkRegistered());
 
   const bool destroy_synchronously =
+#if defined(TOOLKIT_QT)
+      // NOTE(juvaldma): It should not be necessary to wait for the destruction to
+      // take effect since even our root GL context is offscreen.
+      false;
+#else
       data.has_created_compositor_frame_sink && data.is_root;
+#endif
 
   data.has_created_compositor_frame_sink = false;
   data.client = nullptr;
@@ -113,21 +109,8 @@ void HostFrameSinkManager::InvalidateFrameSinkId(
     // HostFrameSinkManager has been mutated. |data| might not be a valid
     // reference at this point.
   }
-
-  frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id);
-}
-
-void HostFrameSinkManager::EnableSynchronizationReporting(
-    const FrameSinkId& frame_sink_id,
-    const std::string& reporting_label) {
-  DCHECK(frame_sink_id.is_valid());
-
-  FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
-  DCHECK(data.IsFrameSinkRegistered());
-
-  data.synchronization_reporting_label = reporting_label;
-  frame_sink_manager_->EnableSynchronizationReporting(frame_sink_id,
-                                                      reporting_label);
+  if (frame_sink_manager_)
+    frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id);
 }
 
 void HostFrameSinkManager::SetFrameSinkDebugLabel(
@@ -145,7 +128,7 @@ void HostFrameSinkManager::SetFrameSinkDebugLabel(
 void HostFrameSinkManager::CreateRootCompositorFrameSink(
     mojom::RootCompositorFrameSinkParamsPtr params) {
   // Should only be used with an out-of-process display compositor.
-  DCHECK(frame_sink_manager_ptr_);
+  DCHECK(frame_sink_manager_remote_ || !frame_sink_manager_);
 
   FrameSinkId frame_sink_id = params->frame_sink_id;
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
@@ -158,18 +141,18 @@ void HostFrameSinkManager::CreateRootCompositorFrameSink(
                                                     base::DoNothing());
   }
 
-  data.is_root = true;
-  data.has_created_compositor_frame_sink = true;
-
-  frame_sink_manager_->CreateRootCompositorFrameSink(std::move(params));
-  display_hit_test_query_[frame_sink_id] =
-      std::make_unique<HitTestQuery>(bad_message_received_from_gpu_callback_);
+  if (frame_sink_manager_) {
+     data.is_root = true;
+     data.has_created_compositor_frame_sink = true;
+     frame_sink_manager_->CreateRootCompositorFrameSink(std::move(params));
+  }
+  display_hit_test_query_[frame_sink_id] = std::make_unique<HitTestQuery>();
 }
 
 void HostFrameSinkManager::CreateCompositorFrameSink(
     const FrameSinkId& frame_sink_id,
-    mojom::CompositorFrameSinkRequest request,
-    mojom::CompositorFrameSinkClientPtr client) {
+    mojo::PendingReceiver<mojom::CompositorFrameSink> receiver,
+    mojo::PendingRemote<mojom::CompositorFrameSinkClient> client) {
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
   DCHECK(data.IsFrameSinkRegistered());
 
@@ -180,11 +163,12 @@ void HostFrameSinkManager::CreateCompositorFrameSink(
                                                     base::DoNothing());
   }
 
-  data.is_root = false;
-  data.has_created_compositor_frame_sink = true;
-
-  frame_sink_manager_->CreateCompositorFrameSink(
-      frame_sink_id, std::move(request), std::move(client));
+  if (frame_sink_manager_) {
+    data.is_root = false;
+    data.has_created_compositor_frame_sink = true;
+    frame_sink_manager_->CreateCompositorFrameSink(
+      frame_sink_id, std::move(receiver), std::move(client));
+  }
 }
 
 void HostFrameSinkManager::OnFrameTokenChanged(const FrameSinkId& frame_sink_id,
@@ -221,12 +205,11 @@ bool HostFrameSinkManager::RegisterFrameSinkHierarchy(
                                                   child_frame_sink_id);
 
   FrameSinkData& child_data = frame_sink_data_map_[child_frame_sink_id];
-  DCHECK(child_data.IsFrameSinkRegistered());
-  DCHECK(!base::ContainsValue(child_data.parents, parent_frame_sink_id));
+  DCHECK(!base::Contains(child_data.parents, parent_frame_sink_id));
   child_data.parents.push_back(parent_frame_sink_id);
 
   FrameSinkData& parent_data = iter->second;
-  DCHECK(!base::ContainsValue(parent_data.children, child_frame_sink_id));
+  DCHECK(!base::Contains(parent_data.children, child_frame_sink_id));
   parent_data.children.push_back(child_frame_sink_id);
 
   return true;
@@ -237,15 +220,16 @@ void HostFrameSinkManager::UnregisterFrameSinkHierarchy(
     const FrameSinkId& child_frame_sink_id) {
   // Unregister and clear the stored parent.
   FrameSinkData& child_data = frame_sink_data_map_[child_frame_sink_id];
-  DCHECK(base::ContainsValue(child_data.parents, parent_frame_sink_id));
+  DCHECK(base::Contains(child_data.parents, parent_frame_sink_id));
   base::Erase(child_data.parents, parent_frame_sink_id);
 
   FrameSinkData& parent_data = frame_sink_data_map_[parent_frame_sink_id];
-  DCHECK(base::ContainsValue(parent_data.children, child_frame_sink_id));
+  DCHECK(base::Contains(parent_data.children, child_frame_sink_id));
   base::Erase(parent_data.children, child_frame_sink_id);
 
-  frame_sink_manager_->UnregisterFrameSinkHierarchy(parent_frame_sink_id,
-                                                    child_frame_sink_id);
+  if (frame_sink_manager_)
+    frame_sink_manager_->UnregisterFrameSinkHierarchy(parent_frame_sink_id,
+                                                      child_frame_sink_id);
 
   // The reference parent_data will become invalid when the container is
   // modified. So we have to call IsEmpty() in advance.
@@ -262,7 +246,7 @@ bool HostFrameSinkManager::IsFrameSinkHierarchyRegistered(
     const FrameSinkId& child_frame_sink_id) const {
   auto iter = frame_sink_data_map_.find(parent_frame_sink_id);
   return iter != frame_sink_data_map_.end() &&
-         base::ContainsValue(iter->second.children, child_frame_sink_id);
+         base::Contains(iter->second.children, child_frame_sink_id);
 }
 
 base::Optional<FrameSinkId> HostFrameSinkManager::FindRootFrameSinkId(
@@ -283,21 +267,21 @@ base::Optional<FrameSinkId> HostFrameSinkManager::FindRootFrameSinkId(
 }
 
 void HostFrameSinkManager::AddVideoDetectorObserver(
-    mojom::VideoDetectorObserverPtr observer) {
+    mojo::PendingRemote<mojom::VideoDetectorObserver> observer) {
   frame_sink_manager_->AddVideoDetectorObserver(std::move(observer));
 }
 
 void HostFrameSinkManager::CreateVideoCapturer(
-    mojom::FrameSinkVideoCapturerRequest request) {
-  frame_sink_manager_->CreateVideoCapturer(std::move(request));
+    mojo::PendingReceiver<mojom::FrameSinkVideoCapturer> receiver) {
+  frame_sink_manager_->CreateVideoCapturer(std::move(receiver));
 }
 
 std::unique_ptr<ClientFrameSinkVideoCapturer>
 HostFrameSinkManager::CreateVideoCapturer() {
   return std::make_unique<ClientFrameSinkVideoCapturer>(base::BindRepeating(
       [](base::WeakPtr<HostFrameSinkManager> self,
-         mojom::FrameSinkVideoCapturerRequest request) {
-        self->CreateVideoCapturer(std::move(request));
+         mojo::PendingReceiver<mojom::FrameSinkVideoCapturer> receiver) {
+        self->CreateVideoCapturer(std::move(receiver));
       },
       weak_ptr_factory_.GetWeakPtr()));
 }
@@ -323,36 +307,16 @@ void HostFrameSinkManager::RemoveHitTestRegionObserver(
   observers_.RemoveObserver(observer);
 }
 
-std::unique_ptr<CompositorFrameSinkSupport>
-HostFrameSinkManager::CreateCompositorFrameSinkSupport(
-    mojom::CompositorFrameSinkClient* client,
-    const FrameSinkId& frame_sink_id,
-    bool is_root,
-    bool needs_sync_points) {
-  DCHECK(frame_sink_manager_impl_);
-
-  FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
-  DCHECK(data.IsFrameSinkRegistered());
-  DCHECK(!data.has_created_compositor_frame_sink);
-
-  auto support = std::make_unique<CompositorFrameSinkSupport>(
-      client, frame_sink_manager_impl_, frame_sink_id, is_root,
-      needs_sync_points);
-
-  data.is_root = is_root;
-
-  if (is_root)
-    display_hit_test_query_[frame_sink_id] = std::make_unique<HitTestQuery>();
-
-  return support;
-}
-
 void HostFrameSinkManager::OnConnectionLost() {
   connection_was_lost_ = true;
 
-  binding_.Close();
-  frame_sink_manager_ptr_.reset();
+  receiver_.reset();
+  frame_sink_manager_remote_.reset();
   frame_sink_manager_ = nullptr;
+
+  // Any cached back buffers are invalid once the connection to the
+  // FrameSinkManager is lost.
+  min_valid_cache_back_buffer_id_ = next_cache_back_buffer_id_;
 
   // CompositorFrameSinks are lost along with the connection to
   // mojom::FrameSinkManager.
@@ -372,10 +336,6 @@ void HostFrameSinkManager::RegisterAfterConnectionLoss() {
       frame_sink_manager_->RegisterFrameSinkId(
           frame_sink_id,
           data.report_activation == ReportFirstSurfaceActivation::kYes);
-    }
-    if (!data.synchronization_reporting_label.empty()) {
-      frame_sink_manager_->EnableSynchronizationReporting(
-          frame_sink_id, data.synchronization_reporting_label);
     }
     if (!data.debug_label.empty()) {
       frame_sink_manager_->SetFrameSinkDebugLabel(frame_sink_id,
@@ -423,6 +383,32 @@ void HostFrameSinkManager::OnAggregatedHitTestRegionListUpdated(
   // stale data.
   for (HitTestRegionObserver& observer : observers_)
     observer.OnAggregatedHitTestRegionListUpdated(frame_sink_id, hit_test_data);
+}
+
+uint32_t HostFrameSinkManager::CacheBackBufferForRootSink(
+    const FrameSinkId& root_sink_id) {
+  auto it = frame_sink_data_map_.find(root_sink_id);
+  DCHECK(it != frame_sink_data_map_.end());
+  DCHECK(it->second.is_root);
+  DCHECK(it->second.IsFrameSinkRegistered());
+  DCHECK(frame_sink_manager_remote_);
+
+  uint32_t cache_id = next_cache_back_buffer_id_++;
+  frame_sink_manager_remote_->CacheBackBuffer(cache_id, root_sink_id);
+  return cache_id;
+}
+
+void HostFrameSinkManager::EvictCachedBackBuffer(uint32_t cache_id) {
+  DCHECK(frame_sink_manager_remote_);
+
+  if (cache_id < min_valid_cache_back_buffer_id_)
+    return;
+
+  // This synchronous call ensures that the GL context/surface that draw to
+  // the platform window (eg. XWindow or HWND) get destroyed before the
+  // platform window is destroyed.
+  mojo::SyncCallRestrictions::ScopedAllowSyncCall allow_sync_call;
+  frame_sink_manager_remote_->EvictBackBuffer(cache_id);
 }
 
 HostFrameSinkManager::FrameSinkData::FrameSinkData() = default;

@@ -131,21 +131,8 @@ struct OptionalStorageBase<T, true /* trivially destructible */> {
 // the condition of constexpr-ness is satisfied because the base class also has
 // compiler generated constexpr {copy,move} constructors). Note that
 // placement-new is prohibited in constexpr.
-#if defined(__GNUC__) && __GNUC__ < 5
-// gcc <5 does not implement std::is_trivially_copy_constructible.
-// Conservatively assume false for this configuration.
-// TODO(clemensh): Remove this once we drop support for gcc <5.
-#define TRIVIALLY_COPY_CONSTRUCTIBLE(T) false
-#define TRIVIALLY_MOVE_CONSTRUCTIBLE(T) false
-#else
-#define TRIVIALLY_COPY_CONSTRUCTIBLE(T) \
-  std::is_trivially_copy_constructible<T>::value
-#define TRIVIALLY_MOVE_CONSTRUCTIBLE(T) \
-  std::is_trivially_move_constructible<T>::value
-#endif
-template <typename T, bool = TRIVIALLY_COPY_CONSTRUCTIBLE(T),
-          bool = TRIVIALLY_MOVE_CONSTRUCTIBLE(T)>
-#undef TRIVIALLY_COPY_CONSTRUCTIBLE
+template <typename T, bool = std::is_trivially_copy_constructible<T>::value,
+          bool = std::is_trivially_move_constructible<T>::value>
 struct OptionalStorage : OptionalStorageBase<T> {
   // This is no trivially {copy,move} constructible case. Other cases are
   // defined below as specializations.
@@ -304,7 +291,7 @@ struct CopyConstructible {};
 template <>
 struct CopyConstructible<false> {
   constexpr CopyConstructible() = default;
-  constexpr CopyConstructible(const CopyConstructible&) = delete;
+  constexpr CopyConstructible(const CopyConstructible&) V8_NOEXCEPT = delete;
   constexpr CopyConstructible(CopyConstructible&&) V8_NOEXCEPT = default;
   CopyConstructible& operator=(const CopyConstructible&) V8_NOEXCEPT = default;
   CopyConstructible& operator=(CopyConstructible&&) V8_NOEXCEPT = default;
@@ -317,7 +304,7 @@ template <>
 struct MoveConstructible<false> {
   constexpr MoveConstructible() = default;
   constexpr MoveConstructible(const MoveConstructible&) V8_NOEXCEPT = default;
-  constexpr MoveConstructible(MoveConstructible&&) = delete;
+  constexpr MoveConstructible(MoveConstructible&&) V8_NOEXCEPT = delete;
   MoveConstructible& operator=(const MoveConstructible&) V8_NOEXCEPT = default;
   MoveConstructible& operator=(MoveConstructible&&) V8_NOEXCEPT = default;
 };
@@ -330,7 +317,7 @@ struct CopyAssignable<false> {
   constexpr CopyAssignable() = default;
   constexpr CopyAssignable(const CopyAssignable&) V8_NOEXCEPT = default;
   constexpr CopyAssignable(CopyAssignable&&) V8_NOEXCEPT = default;
-  CopyAssignable& operator=(const CopyAssignable&) = delete;
+  CopyAssignable& operator=(const CopyAssignable&) V8_NOEXCEPT = delete;
   CopyAssignable& operator=(CopyAssignable&&) V8_NOEXCEPT = default;
 };
 
@@ -343,7 +330,7 @@ struct MoveAssignable<false> {
   constexpr MoveAssignable(const MoveAssignable&) V8_NOEXCEPT = default;
   constexpr MoveAssignable(MoveAssignable&&) V8_NOEXCEPT = default;
   MoveAssignable& operator=(const MoveAssignable&) V8_NOEXCEPT = default;
-  MoveAssignable& operator=(MoveAssignable&&) = delete;
+  MoveAssignable& operator=(MoveAssignable&&) V8_NOEXCEPT = delete;
 };
 
 // Helper to conditionally enable converting constructors and assign operators.

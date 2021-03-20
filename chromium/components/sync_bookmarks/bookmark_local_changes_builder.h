@@ -21,14 +21,13 @@ class BookmarkLocalChangesBuilder {
  public:
   // |bookmark_tracker| and |bookmark_model| must not be null and must outlive
   // this object.
-  BookmarkLocalChangesBuilder(const SyncedBookmarkTracker* bookmark_tracker,
+  BookmarkLocalChangesBuilder(SyncedBookmarkTracker* bookmark_tracker,
                               bookmarks::BookmarkModel* bookmark_model);
   // Builds the commit requests list.
-  std::vector<syncer::CommitRequestData> BuildCommitRequests(
-      size_t max_entries) const;
+  syncer::CommitRequestDataList BuildCommitRequests(size_t max_entries) const;
 
  private:
-  const SyncedBookmarkTracker* const bookmark_tracker_;
+  SyncedBookmarkTracker* const bookmark_tracker_;
   bookmarks::BookmarkModel* const bookmark_model_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkLocalChangesBuilder);

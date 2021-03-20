@@ -8,10 +8,12 @@
 #include <set>
 #include <utility>
 
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/arc/arc_bridge_service.h"
-#include "components/arc/common/ime.mojom.h"
+#include "components/arc/mojom/ime.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
@@ -22,7 +24,6 @@
 #include "ui/events/event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
-#include "ui/keyboard/keyboard_controller.h"
 
 namespace arc {
 
@@ -31,11 +32,16 @@ namespace {
 class FakeArcImeBridge : public ArcImeBridge {
  public:
   FakeArcImeBridge()
-      : count_send_insert_text_(0), last_keyboard_availability_(false) {}
+      : count_send_insert_text_(0),
+        last_keyboard_availability_(false),
+        selection_range_(gfx::Range()) {}
 
   void SendSetCompositionText(const ui::CompositionText& composition) override {
   }
   void SendConfirmCompositionText() override {
+  }
+  void SendSelectionRange(const gfx::Range& selection_range) override {
+    selection_range_ = selection_range;
   }
   void SendInsertText(const base::string16& text) override {
     count_send_insert_text_++;
@@ -55,11 +61,13 @@ class FakeArcImeBridge : public ArcImeBridge {
   bool last_keyboard_availability() const {
     return last_keyboard_availability_;
   }
+  gfx::Range selection_range() { return selection_range_; }
 
  private:
   int count_send_insert_text_;
   gfx::Rect last_keyboard_bounds_;
   bool last_keyboard_availability_;
+  gfx::Range selection_range_;
 };
 
 class FakeInputMethod : public ui::DummyInputMethod {
@@ -141,6 +149,10 @@ class FakeArcWindowDelegate : public ArcImeService::ArcWindowDelegate {
     return window ? test_input_method_ : nullptr;
   }
 
+  bool IsImeBlocked(aura::Window* window) const override {
+    return ime_blocked_;
+  }
+
   std::unique_ptr<aura::Window> CreateFakeArcWindow() {
     const int id = next_id_++;
     arc_window_id_.insert(id);
@@ -154,11 +166,14 @@ class FakeArcWindowDelegate : public ArcImeService::ArcWindowDelegate {
         &dummy_delegate_, id, gfx::Rect(), nullptr));
   }
 
+  void set_ime_blocked(bool ime_blocked) { ime_blocked_ = ime_blocked; }
+
  private:
   aura::test::TestWindowDelegate dummy_delegate_;
   int next_id_;
   std::set<int> arc_window_id_;
   ui::InputMethod* test_input_method_;
+  bool ime_blocked_ = false;
 };
 
 }  // namespace
@@ -177,7 +192,7 @@ class ArcImeServiceTest : public testing::Test {
   std::unique_ptr<aura::Window> arc_win_;
 
   // Needed by ArcImeService.
-  keyboard::KeyboardController keyboard_controller_;
+  keyboard::KeyboardUIController keyboard_ui_controller_;
 
  private:
   void SetUp() override {
@@ -220,7 +235,7 @@ TEST_F(ArcImeServiceTest, HasCompositionText) {
 
   instance_->SetCompositionText(composition);
   EXPECT_TRUE(instance_->HasCompositionText());
-  instance_->ConfirmCompositionText();
+  instance_->ConfirmCompositionText(/* keep_selection */ false);
   EXPECT_FALSE(instance_->HasCompositionText());
 
   instance_->SetCompositionText(composition);
@@ -232,6 +247,40 @@ TEST_F(ArcImeServiceTest, HasCompositionText) {
   EXPECT_TRUE(instance_->HasCompositionText());
   instance_->SetCompositionText(ui::CompositionText());
   EXPECT_FALSE(instance_->HasCompositionText());
+}
+
+TEST_F(ArcImeServiceTest, SetEditableSelectionRange) {
+  instance_->OnWindowFocused(arc_win_.get(), nullptr);
+  ui::CompositionText composition;
+  instance_->SetCompositionText(composition);
+  EXPECT_TRUE(instance_->SetEditableSelectionRange(gfx::Range(3, 8)));
+  gfx::Range selection;
+  instance_->GetEditableSelectionRange(&selection);
+  EXPECT_EQ(gfx::Range(3, 8), selection);
+
+  EXPECT_TRUE(instance_->SetEditableSelectionRange(gfx::Range(2, 4)));
+  instance_->GetEditableSelectionRange(&selection);
+  EXPECT_EQ(gfx::Range(2, 4), selection);
+}
+
+TEST_F(ArcImeServiceTest, ConfirmCompositionText) {
+  instance_->OnWindowFocused(arc_win_.get(), nullptr);
+
+  ui::CompositionText composition;
+  composition.text = base::UTF8ToUTF16("nonempty text");
+  EXPECT_FALSE(instance_->HasCompositionText());
+  instance_->SetCompositionText(composition);
+  EXPECT_TRUE(instance_->HasCompositionText());
+
+  instance_->SetEditableSelectionRange(gfx::Range(3, 8));
+
+  gfx::Range selection;
+  instance_->GetEditableSelectionRange(&selection);
+  EXPECT_EQ(gfx::Range(3, 8), selection);
+  instance_->ConfirmCompositionText(/* keep_selection */ true);
+  selection = gfx::Range();
+  instance_->GetEditableSelectionRange(&selection);
+  EXPECT_EQ(gfx::Range(3, 8), selection);
 }
 
 TEST_F(ArcImeServiceTest, ShowVirtualKeyboardIfEnabled) {
@@ -270,6 +319,11 @@ TEST_F(ArcImeServiceTest, InsertChar) {
   // When the bridge is accepting text inputs, forward the event.
   instance_->OnTextInputTypeChanged(ui::TEXT_INPUT_TYPE_TEXT, true,
                                     mojom::TEXT_INPUT_FLAG_NONE);
+  instance_->InsertChar(ui::KeyEvent('a', ui::VKEY_A, ui::DomCode::NONE, 0));
+  EXPECT_EQ(1, fake_arc_ime_bridge_->count_send_insert_text());
+
+  // When IME is blocked, the event is not forwarded.
+  fake_window_delegate_->set_ime_blocked(true);
   instance_->InsertChar(ui::KeyEvent('a', ui::VKEY_A, ui::DomCode::NONE, 0));
   EXPECT_EQ(1, fake_arc_ime_bridge_->count_send_insert_text());
 }
@@ -358,8 +412,8 @@ TEST_F(ArcImeServiceTest, OnKeyboardAppearanceChanged) {
   EXPECT_FALSE(fake_arc_ime_bridge_->last_keyboard_availability());
 
   const gfx::Rect keyboard_bounds(0, 480, 1200, 320);
-  keyboard::KeyboardStateDescriptor desc{true, keyboard_bounds, keyboard_bounds,
-                                         keyboard_bounds};
+  ash::KeyboardStateDescriptor desc{true, keyboard_bounds, keyboard_bounds,
+                                    keyboard_bounds};
   instance_->OnKeyboardAppearanceChanged(desc);
   EXPECT_EQ(keyboard_bounds, fake_arc_ime_bridge_->last_keyboard_bounds());
   EXPECT_TRUE(fake_arc_ime_bridge_->last_keyboard_availability());

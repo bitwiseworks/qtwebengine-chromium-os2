@@ -8,13 +8,14 @@
 
 namespace blink {
 
-Color StyleColor::ColorFromKeyword(CSSValueID keyword) {
+Color StyleColor::ColorFromKeyword(CSSValueID keyword,
+                                   WebColorScheme color_scheme) {
   if (const char* value_name = getValueName(keyword)) {
     if (const NamedColor* named_color =
             FindColor(value_name, static_cast<wtf_size_t>(strlen(value_name))))
       return Color(named_color->argb_value);
   }
-  return LayoutTheme::GetTheme().SystemColor(keyword);
+  return LayoutTheme::GetTheme().SystemColor(keyword, color_scheme);
 }
 
 bool StyleColor::IsColorKeyword(CSSValueID id) {
@@ -40,14 +41,14 @@ bool StyleColor::IsColorKeyword(CSSValueID id) {
   //   '-webkit-focus-ring-color'
   //   '-internal-quirk-inherit'
   //
-  return (id >= CSSValueAqua && id <= CSSValueInternalQuirkInherit) ||
-         (id >= CSSValueAliceblue && id <= CSSValueYellowgreen) ||
-         id == CSSValueMenu;
+  return (id >= CSSValueID::kAqua && id <= CSSValueID::kInternalQuirkInherit) ||
+         (id >= CSSValueID::kAliceblue && id <= CSSValueID::kYellowgreen) ||
+         id == CSSValueID::kMenu;
 }
 
 bool StyleColor::IsSystemColor(CSSValueID id) {
-  return (id >= CSSValueActiveborder && id <= CSSValueWindowtext) ||
-         id == CSSValueMenu;
+  return (id >= CSSValueID::kActiveborder && id <= CSSValueID::kWindowtext) ||
+         id == CSSValueID::kMenu;
 }
 
 }  // namespace blink

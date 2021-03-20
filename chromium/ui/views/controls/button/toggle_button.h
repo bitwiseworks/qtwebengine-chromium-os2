@@ -5,6 +5,9 @@
 #ifndef UI_VIEWS_CONTROLS_BUTTON_TOGGLE_BUTTON_H_
 #define UI_VIEWS_CONTROLS_BUTTON_TOGGLE_BUTTON_H_
 
+#include <memory>
+
+#include "base/optional.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/controls/button/button.h"
 
@@ -15,17 +18,27 @@ namespace views {
 // slider.
 class VIEWS_EXPORT ToggleButton : public Button {
  public:
-  static const char kViewClassName[];
+  METADATA_HEADER(ToggleButton);
 
   explicit ToggleButton(ButtonListener* listener);
   ~ToggleButton() override;
 
-  void SetIsOn(bool is_on, bool animate);
-  bool is_on() const { return is_on_; }
+  // AnimateIsOn() animates the state change to |is_on|; SetIsOn() doesn't.
+  void AnimateIsOn(bool is_on);
+  void SetIsOn(bool is_on);
+  bool GetIsOn() const;
 
-  void set_accepts_events(bool accepts_events) {
-    accepts_events_ = accepts_events;
-  }
+  void SetThumbOnColor(const base::Optional<SkColor>& thumb_on_color);
+  base::Optional<SkColor> GetThumbOnColor() const;
+  void SetThumbOffColor(const base::Optional<SkColor>& thumb_off_color);
+  base::Optional<SkColor> GetThumbOffColor() const;
+  void SetTrackOnColor(const base::Optional<SkColor>& track_on_color);
+  base::Optional<SkColor> GetTrackOnColor() const;
+  void SetTrackOffColor(const base::Optional<SkColor>& track_off_color);
+  base::Optional<SkColor> GetTrackOffColor() const;
+
+  void SetAcceptsEvents(bool accepts_events);
+  bool GetAcceptsEvents() const;
 
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
@@ -40,16 +53,15 @@ class VIEWS_EXPORT ToggleButton : public Button {
   // Calculates and returns the bounding box for the thumb (the circle).
   gfx::Rect GetThumbBounds() const;
 
-  // Updates position and color of the thumb.
+  // Updates position of the thumb.
   void UpdateThumb();
 
   SkColor GetTrackColor(bool is_on) const;
 
   // views::View:
-  const char* GetClassName() const override;
   bool CanAcceptEvent(const ui::Event& event) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnFocus() override;
   void OnBlur() override;
@@ -60,15 +72,17 @@ class VIEWS_EXPORT ToggleButton : public Button {
   void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
   void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
   std::unique_ptr<InkDrop> CreateInkDrop() override;
+  std::unique_ptr<InkDropMask> CreateInkDropMask() const override;
   std::unique_ptr<InkDropRipple> CreateInkDropRipple() const override;
   SkColor GetInkDropBaseColor() const override;
 
   // gfx::AnimationDelegate:
   void AnimationProgressed(const gfx::Animation* animation) override;
 
-  bool is_on_ = false;
   gfx::SlideAnimation slide_animation_{this};
   ThumbView* thumb_view_;
+  base::Optional<SkColor> track_on_color_;
+  base::Optional<SkColor> track_off_color_;
 
   // When false, this button won't accept input. Different from View::SetEnabled
   // in that the view retains focus when this is false but not when disabled.

@@ -13,18 +13,16 @@
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
-#include "net/dns/mock_host_resolver.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
-#include "net/log/test_net_log_entry.h"
 #include "net/log/test_net_log_util.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/tcp_client_socket.h"
 #include "net/socket/tcp_server_socket.h"
 #include "net/test/gtest_util.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -45,7 +43,7 @@ enum ClientSocketTestTypes { TCP, SCTP };
 
 class TransportClientSocketTest
     : public ::testing::TestWithParam<ClientSocketTestTypes>,
-      public WithScopedTaskEnvironment {
+      public WithTaskEnvironment {
  public:
   TransportClientSocketTest()
       : listen_port_(0),
@@ -93,7 +91,7 @@ class TransportClientSocketTest
  protected:
   base::RunLoop connect_loop_;
   uint16_t listen_port_;
-  TestNetLog net_log_;
+  RecordingTestNetLog net_log_;
   ClientSocketFactory* const socket_factory_;
   std::unique_ptr<StreamSocket> sock_;
   std::unique_ptr<StreamSocket> connected_sock_;
@@ -107,28 +105,20 @@ void TransportClientSocketTest::SetUp() {
   ::testing::TestWithParam<ClientSocketTestTypes>::SetUp();
 
   // Open a server socket on an ephemeral port.
-  listen_sock_.reset(new TCPServerSocket(NULL, NetLogSource()));
+  listen_sock_.reset(new TCPServerSocket(nullptr, NetLogSource()));
   IPEndPoint local_address(IPAddress::IPv4Localhost(), 0);
   ASSERT_THAT(listen_sock_->Listen(local_address, 1), IsOk());
   // Get the server's address (including the actual port number).
   ASSERT_THAT(listen_sock_->GetLocalAddress(&local_address), IsOk());
   listen_port_ = local_address.port();
-  listen_sock_->Accept(&connected_sock_,
-                       base::Bind(&TransportClientSocketTest::AcceptCallback,
-                                  base::Unretained(this)));
+  listen_sock_->Accept(
+      &connected_sock_,
+      base::BindOnce(&TransportClientSocketTest::AcceptCallback,
+                     base::Unretained(this)));
 
-  AddressList addr;
-  // MockHostResolver resolves everything to 127.0.0.1.
-  std::unique_ptr<HostResolver> resolver(new MockHostResolver());
-  HostResolver::RequestInfo info(HostPortPair("localhost", listen_port_));
-  TestCompletionCallback callback;
-  std::unique_ptr<HostResolver::Request> request;
-  int rv = resolver->Resolve(info, DEFAULT_PRIORITY, &addr, callback.callback(),
-                             &request, NetLogWithSource());
-  CHECK_EQ(ERR_IO_PENDING, rv);
-  rv = callback.WaitForResult();
-  CHECK_EQ(rv, OK);
-  sock_ = socket_factory_->CreateTransportClientSocket(addr, NULL, &net_log_,
+  AddressList addr = AddressList::CreateFromIPAddress(
+      IPAddress::IPv4Localhost(), listen_port_);
+  sock_ = socket_factory_->CreateTransportClientSocket(addr, nullptr, &net_log_,
                                                        NetLogSource());
 }
 
@@ -234,9 +224,9 @@ std::string TransportClientSocketTest::ReadServerData(int expected_bytes_read) {
 }
 
 // TODO(leighton):  Add SCTP to this list when it is ready.
-INSTANTIATE_TEST_CASE_P(StreamSocket,
-                        TransportClientSocketTest,
-                        ::testing::Values(TCP));
+INSTANTIATE_TEST_SUITE_P(StreamSocket,
+                         TransportClientSocketTest,
+                         ::testing::Values(TCP));
 
 TEST_P(TransportClientSocketTest, Connect) {
   TestCompletionCallback callback;
@@ -246,8 +236,7 @@ TEST_P(TransportClientSocketTest, Connect) {
   // Wait for |listen_sock_| to accept a connection.
   connect_loop_.Run();
 
-  TestNetLogEntry::List net_log_entries;
-  net_log_.GetEntries(&net_log_entries);
+  auto net_log_entries = net_log_.GetEntries();
   EXPECT_TRUE(
       LogContainsBeginEvent(net_log_entries, 0, NetLogEventType::SOCKET_ALIVE));
   EXPECT_TRUE(
@@ -260,7 +249,7 @@ TEST_P(TransportClientSocketTest, Connect) {
   }
 
   EXPECT_TRUE(sock_->IsConnected());
-  net_log_.GetEntries(&net_log_entries);
+  net_log_entries = net_log_.GetEntries();
   EXPECT_TRUE(
       LogContainsEndEvent(net_log_entries, -1, NetLogEventType::TCP_CONNECT));
 
@@ -432,8 +421,7 @@ TEST_P(TransportClientSocketTest, FullDuplex_ReadFirst) {
   EXPECT_GE(rv, 0);
 }
 
-// FLaky on Win 10 Tests x64 builder: http://crbug/552053
-TEST_P(TransportClientSocketTest, DISABLED_FullDuplex_WriteFirst) {
+TEST_P(TransportClientSocketTest, FullDuplex_WriteFirst) {
   TestCompletionCallback callback;
   EstablishConnection(&callback);
 
@@ -477,12 +465,8 @@ TEST_P(TransportClientSocketTest, DISABLED_FullDuplex_WriteFirst) {
   int rv = write_callback.WaitForResult();
   EXPECT_GE(rv, 0);
 
-  // It's possible the read is blocked because it's already read all the data.
-  // Close the server socket, so there will at least be a 0-byte read.
-  CloseServerSocket();
-
   rv = callback.WaitForResult();
-  EXPECT_GE(rv, 0);
+  EXPECT_GT(rv, 0);
 }
 
 }  // namespace net

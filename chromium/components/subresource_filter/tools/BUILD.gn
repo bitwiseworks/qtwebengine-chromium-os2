@@ -46,9 +46,7 @@ if (!is_ios) {
   executable("subresource_filter_tool") {
     # Production code should not depend on this.
     testonly = true
-    sources = [
-      "filter_tool_main.cc",
-    ]
+    sources = [ "filter_tool_main.cc" ]
     deps = [
       ":tools_lib",
       "//base",
@@ -58,9 +56,7 @@ if (!is_ios) {
   executable("subresource_indexing_tool") {
     # Production code should not depend on this.
     testonly = true
-    sources = [
-      "indexing_tool_main.cc",
-    ]
+    sources = [ "indexing_tool_main.cc" ]
     deps = [
       ":tools_lib",
       "../core/common",
@@ -69,9 +65,7 @@ if (!is_ios) {
   }
 
   executable("ruleset_converter") {
-    sources = [
-      "ruleset_converter/main.cc",
-    ]
+    sources = [ "ruleset_converter/main.cc" ]
     deps = [
       "ruleset_converter:support",
       "//base",
@@ -98,21 +92,16 @@ if (!is_ios) {
 
     outputs = [
       "$target_gen_dir/GeneratedRulesetData",
+      "$target_gen_dir/default_local_state.json",
     ]
 
-    inputs = [
-      "//components/subresource_filter/core/common/perftests/data/UnindexedRules_8.0",
-    ]
-    deps = [
-      ":subresource_indexing_tool",
-    ]
+    inputs = [ "//third_party/subresource-filter-ruleset/data/UnindexedRules" ]
+    deps = [ ":subresource_indexing_tool" ]
 
     args = [
       rebase_path(inputs[0], root_build_dir),
-      rebase_path("$target_gen_dir/GeneratedRulesetData", root_build_dir),
-      "--version_output=" +
-          rebase_path("$target_gen_dir/default_local_state.json",
-                      root_build_dir),
+      rebase_path(outputs[0], root_build_dir),
+      "--version_output=" + rebase_path(outputs[1], root_build_dir),
       "--content_version=1000",
     ]
   }

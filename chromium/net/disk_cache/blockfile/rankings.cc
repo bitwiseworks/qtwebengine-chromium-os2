@@ -192,7 +192,7 @@ void UpdateTimes(disk_cache::CacheRankingsBlock* node, bool modified) {
 
 namespace disk_cache {
 
-Rankings::ScopedRankingsBlock::ScopedRankingsBlock() : rankings_(NULL) {}
+Rankings::ScopedRankingsBlock::ScopedRankingsBlock() : rankings_(nullptr) {}
 
 Rankings::ScopedRankingsBlock::ScopedRankingsBlock(Rankings* rankings)
     : rankings_(rankings) {}
@@ -242,11 +242,10 @@ void Rankings::Reset() {
     heads_[i].set_value(0);
     tails_[i].set_value(0);
   }
-  control_data_ = NULL;
+  control_data_ = nullptr;
 }
 
 void Rankings::Insert(CacheRankingsBlock* node, bool modified, List list) {
-  Trace("Insert 0x%x l %d", node->address().value(), list);
   DCHECK(node->HasData());
   Addr& my_head = heads_[list];
   Addr& my_tail = tails_[list];
@@ -317,8 +316,6 @@ void Rankings::Insert(CacheRankingsBlock* node, bool modified, List list) {
 //    3. a(x, a), r(a, r), head(x), tail(a)           prev.Store()
 //    4. a(x, a), r(0, 0), head(x), tail(a)           next.Store()
 void Rankings::Remove(CacheRankingsBlock* node, List list, bool strict) {
-  Trace("Remove 0x%x (0x%x 0x%x) l %d", node->address().value(),
-        node->Data()->next, node->Data()->prev, list);
   DCHECK(node->HasData());
 
   Addr next_addr(node->Data()->next);
@@ -421,30 +418,30 @@ CacheRankingsBlock* Rankings::GetNext(CacheRankingsBlock* node, List list) {
   if (!node) {
     Addr& my_head = heads_[list];
     if (!my_head.is_initialized())
-      return NULL;
+      return nullptr;
     next.reset(new CacheRankingsBlock(backend_->File(my_head), my_head));
   } else {
     if (!node->HasData())
       node->Load();
     Addr& my_tail = tails_[list];
     if (!my_tail.is_initialized())
-      return NULL;
+      return nullptr;
     if (my_tail.value() == node->address().value())
-      return NULL;
+      return nullptr;
     Addr address(node->Data()->next);
     if (address.value() == node->address().value())
-      return NULL;  // Another tail? fail it.
+      return nullptr;  // Another tail? fail it.
     next.reset(new CacheRankingsBlock(backend_->File(address), address));
   }
 
   TrackRankingsBlock(next.get(), true);
 
   if (!GetRanking(next.get()))
-    return NULL;
+    return nullptr;
 
   ConvertToLongLived(next.get());
   if (node && !CheckSingleLink(node, next.get()))
-    return NULL;
+    return nullptr;
 
   return next.release();
 }
@@ -454,30 +451,30 @@ CacheRankingsBlock* Rankings::GetPrev(CacheRankingsBlock* node, List list) {
   if (!node) {
     Addr& my_tail = tails_[list];
     if (!my_tail.is_initialized())
-      return NULL;
+      return nullptr;
     prev.reset(new CacheRankingsBlock(backend_->File(my_tail), my_tail));
   } else {
     if (!node->HasData())
       node->Load();
     Addr& my_head = heads_[list];
     if (!my_head.is_initialized())
-      return NULL;
+      return nullptr;
     if (my_head.value() == node->address().value())
-      return NULL;
+      return nullptr;
     Addr address(node->Data()->prev);
     if (address.value() == node->address().value())
-      return NULL;  // Another head? fail it.
+      return nullptr;  // Another head? fail it.
     prev.reset(new CacheRankingsBlock(backend_->File(address), address));
   }
 
   TrackRankingsBlock(prev.get(), true);
 
   if (!GetRanking(prev.get()))
-    return NULL;
+    return nullptr;
 
   ConvertToLongLived(prev.get());
   if (node && !CheckSingleLink(prev.get(), node))
-    return NULL;
+    return nullptr;
 
   return prev.release();
 }
@@ -628,7 +625,7 @@ void Rankings::ConvertToLongLived(CacheRankingsBlock* rankings) {
   // We cannot return a shared node because we are not keeping a reference
   // to the entry that owns the buffer. Make this node a copy of the one that
   // we have, and let the iterator logic update it when the entry changes.
-  CacheRankingsBlock temp(NULL, Addr(0));
+  CacheRankingsBlock temp(nullptr, Addr(0));
   *temp.Data() = *rankings->Data();
   rankings->StopSharingData();
   *rankings->Data() = *temp.Data();
@@ -642,25 +639,18 @@ void Rankings::CompleteTransaction() {
     return;
   }
 
-  Trace("CompleteTransaction 0x%x", node_addr.value());
-
   CacheRankingsBlock node(backend_->File(node_addr), node_addr);
   if (!node.Load())
     return;
 
   node.Store();
 
-  Addr& my_head = heads_[control_data_->operation_list];
-  Addr& my_tail = tails_[control_data_->operation_list];
-
   // We want to leave the node inside the list. The entry must me marked as
   // dirty, and will be removed later. Otherwise, we'll get assertions when
   // attempting to remove the dirty entry.
   if (INSERT == control_data_->operation) {
-    Trace("FinishInsert h:0x%x t:0x%x", my_head.value(), my_tail.value());
     FinishInsert(&node);
   } else if (REMOVE == control_data_->operation) {
-    Trace("RevertRemove h:0x%x t:0x%x", my_head.value(), my_tail.value());
     RevertRemove(&node);
   } else {
     NOTREACHED();
@@ -753,15 +743,11 @@ bool Rankings::CheckLinks(CacheRankingsBlock* node, CacheRankingsBlock* prev,
     return true;
   }
 
-  Trace("CheckLinks 0x%x (0x%x 0x%x)", node_addr,
-        prev->Data()->next, next->Data()->prev);
-
   if (node_addr != prev->address().value() &&
       node_addr != next->address().value() &&
       prev->Data()->next == next->address().value() &&
       next->Data()->prev == prev->address().value()) {
     // The list is actually ok, node is wrong.
-    Trace("node 0x%x out of list %d", node_addr, list);
     node->Data()->next = 0;
     node->Data()->prev = 0;
     node->Store();
@@ -860,8 +846,6 @@ int Rankings::CheckListSection(List list, Addr end1, Addr end2, bool forward,
 bool Rankings::IsHead(CacheAddr addr, List* list) const {
   for (int i = 0; i < LAST_ELEMENT; i++) {
     if (addr == heads_[i].value()) {
-      if (*list != i)
-        Trace("Changing list %d to %d", *list, i);
       *list = static_cast<List>(i);
       return true;
     }
@@ -872,8 +856,6 @@ bool Rankings::IsHead(CacheAddr addr, List* list) const {
 bool Rankings::IsTail(CacheAddr addr, List* list) const {
   for (int i = 0; i < LAST_ELEMENT; i++) {
     if (addr == tails_[i].value()) {
-      if (*list != i)
-        Trace("Changing list %d to %d", *list, i);
       *list = static_cast<List>(i);
       return true;
     }

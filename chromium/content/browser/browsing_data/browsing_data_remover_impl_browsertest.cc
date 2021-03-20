@@ -10,6 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/test/bind_test_util.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
@@ -61,7 +62,7 @@ std::unique_ptr<net::test_server::HttpResponse> HandleHttpAuthRequest(
     return nullptr;
 
   auto http_response = std::make_unique<net::test_server::BasicHttpResponse>();
-  if (base::ContainsKey(request.headers, "Authorization")) {
+  if (base::Contains(request.headers, "Authorization")) {
     http_response->set_code(net::HTTP_OK);
     http_response->set_content("Success!");
   } else {
@@ -83,8 +84,7 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
     // Use localhost instead of 127.0.0.1, as HSTS isn't allowed on IPs.
     ssl_server_.SetSSLConfig(
         net::test_server::EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN);
-    ssl_server_.AddDefaultHandlers(
-        base::FilePath(FILE_PATH_LITERAL("content/test/data")));
+    ssl_server_.AddDefaultHandlers(GetTestDataFilePath());
     ssl_server_.RegisterRequestHandler(base::BindRepeating(&HandleHstsRequest));
     ssl_server_.RegisterRequestHandler(
         base::BindRepeating(&HandleHttpAuthRequest));
@@ -102,6 +102,20 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
         base::Time(), base::Time::Max(), remove_mask,
         content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
         &completion_observer);
+    completion_observer.BlockUntilCompletion();
+  }
+
+  void RemoveWithFilterAndWait(
+      int remove_mask,
+      std::unique_ptr<BrowsingDataFilterBuilder> filter) {
+    content::BrowsingDataRemover* remover =
+        content::BrowserContext::GetBrowsingDataRemover(
+            shell()->web_contents()->GetBrowserContext());
+    content::BrowsingDataRemoverCompletionObserver completion_observer(remover);
+    remover->RemoveWithFilterAndReply(
+        base::Time(), base::Time::Max(), remove_mask,
+        content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
+        std::move(filter), &completion_observer);
     completion_observer.BlockUntilCompletion();
   }
 
@@ -180,7 +194,8 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
     // on all platforms.
     bool login_requested = false;
     ShellContentBrowserClient::Get()->set_login_request_callback(
-        base::BindLambdaForTesting([&]() { login_requested = true; }));
+        base::BindLambdaForTesting(
+            [&](bool is_main_frame /* unused */) { login_requested = true; }));
 
     GURL url = ssl_server_.GetURL(kHttpAuthPath);
     bool navigation_suceeded = NavigateToURL(shell(), url);
@@ -214,12 +229,20 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverImplBrowserTest,
 }
 
 // Verify that TransportSecurityState data is not cleared if REMOVE_CACHE is not
-// set.
+// set or there is a WHITELIST filter.
+// TODO(crbug.com/1040065): Add support for filtered deletions and update test.
 IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverImplBrowserTest,
                        PreserveTransportSecurityState) {
   IssueRequestThatSetsHsts();
 
   RemoveAndWait(BrowsingDataRemover::DATA_TYPE_DOWNLOADS);
+  EXPECT_TRUE(IsHstsSet());
+
+  auto filter =
+      BrowsingDataFilterBuilder::Create(BrowsingDataFilterBuilder::WHITELIST);
+  filter->AddRegisterableDomain("foobar.com");
+  RemoveWithFilterAndWait(BrowsingDataRemover::DATA_TYPE_CACHE,
+                          std::move(filter));
   EXPECT_TRUE(IsHstsSet());
 }
 

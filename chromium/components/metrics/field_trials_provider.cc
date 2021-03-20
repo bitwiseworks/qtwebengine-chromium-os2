@@ -4,6 +4,9 @@
 
 #include "components/metrics/field_trials_provider.h"
 
+#include <string>
+#include <vector>
+
 #include "base/strings/string_piece.h"
 #include "components/variations/active_field_trials.h"
 #include "components/variations/synthetic_trial_registry.h"
@@ -36,13 +39,14 @@ void FieldTrialsProvider::GetFieldTrialIds(
   variations::GetFieldTrialActiveGroupIds(suffix_, field_trial_ids);
 }
 
-void FieldTrialsProvider::OnDidCreateMetricsLog() {
-  if (registry_) {
-    creation_times_.push_back(base::TimeTicks::Now());
-  }
+void FieldTrialsProvider::ProvideSystemProfileMetrics(
+    metrics::SystemProfileProto* system_profile_proto) {
+  // ProvideSystemProfileMetricsWithLogCreationTime() should be called instead.
+  NOTREACHED();
 }
 
-void FieldTrialsProvider::ProvideSystemProfileMetrics(
+void FieldTrialsProvider::ProvideSystemProfileMetricsWithLogCreationTime(
+    base::TimeTicks log_creation_time,
     metrics::SystemProfileProto* system_profile_proto) {
   std::vector<ActiveGroupId> field_trial_ids;
   const std::string& version = variations::GetSeedVersion();
@@ -52,14 +56,8 @@ void FieldTrialsProvider::ProvideSystemProfileMetrics(
   WriteFieldTrials(field_trial_ids, system_profile_proto);
 
   if (registry_) {
-    base::TimeTicks creation_time;
-    // Should always be true, but don't crash even if there is a bug.
-    if (!creation_times_.empty()) {
-      creation_time = creation_times_.back();
-      creation_times_.pop_back();
-    }
     std::vector<ActiveGroupId> synthetic_trials;
-    registry_->GetSyntheticFieldTrialsOlderThan(creation_time,
+    registry_->GetSyntheticFieldTrialsOlderThan(log_creation_time,
                                                 &synthetic_trials);
     WriteFieldTrials(synthetic_trials, system_profile_proto);
   }

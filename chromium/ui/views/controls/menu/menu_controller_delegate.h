@@ -17,10 +17,7 @@ namespace internal {
 // the class using MenuController. This is implemented by MenuRunnerImpl.
 class MenuControllerDelegate {
  public:
-  enum NotifyType {
-    NOTIFY_DELEGATE,
-    DONT_NOTIFY_DELEGATE
-  };
+  enum NotifyType { NOTIFY_DELEGATE, DONT_NOTIFY_DELEGATE };
 
   // Invoked when MenuController closes. unless the owner deletes the
   // MenuController during MenuDelegate::ExecuteCommand. |mouse_event_flags| are
@@ -33,11 +30,11 @@ class MenuControllerDelegate {
   virtual void SiblingMenuCreated(MenuItemView* menu) = 0;
 
  protected:
-  virtual ~MenuControllerDelegate() {}
+  virtual ~MenuControllerDelegate() = default;
 };
 
 }  // namespace internal
 
-}  // namespace view
+}  // namespace views
 
 #endif  // UI_VIEWS_CONTROLS_MENU_MENU_CONTROLLER_DELEGATE_H_

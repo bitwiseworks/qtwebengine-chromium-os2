@@ -17,6 +17,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "build/build_config.h"
 #include "components/metrics/client_info.h"
 #include "components/metrics/metrics_log.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -29,6 +30,23 @@
 
 namespace metrics {
 
+namespace {
+
+// Verifies that the client id follows the expected pattern.
+void VerifyClientId(const std::string& client_id) {
+  EXPECT_EQ(36U, client_id.length());
+
+  for (size_t i = 0; i < client_id.length(); ++i) {
+    char current = client_id[i];
+    if (i == 8 || i == 13 || i == 18 || i == 23)
+      EXPECT_EQ('-', current);
+    else
+      EXPECT_TRUE(isxdigit(current));
+  }
+}
+
+}  // namespace
+
 class MetricsStateManagerTest : public testing::Test {
  public:
   MetricsStateManagerTest()
@@ -40,10 +58,10 @@ class MetricsStateManagerTest : public testing::Test {
   std::unique_ptr<MetricsStateManager> CreateStateManager() {
     return MetricsStateManager::Create(
         &prefs_, enabled_state_provider_.get(), base::string16(),
-        base::Bind(&MetricsStateManagerTest::MockStoreClientInfoBackup,
-                   base::Unretained(this)),
-        base::Bind(&MetricsStateManagerTest::LoadFakeClientInfoBackup,
-                   base::Unretained(this)));
+        base::BindRepeating(&MetricsStateManagerTest::MockStoreClientInfoBackup,
+                            base::Unretained(this)),
+        base::BindRepeating(&MetricsStateManagerTest::LoadFakeClientInfoBackup,
+                            base::Unretained(this)));
   }
 
   // Sets metrics reporting as enabled for testing.
@@ -101,7 +119,7 @@ class MetricsStateManagerTest : public testing::Test {
   // Hands out a copy of |fake_client_info_backup_| if it is set.
   std::unique_ptr<ClientInfo> LoadFakeClientInfoBackup() {
     if (!fake_client_info_backup_)
-      return std::unique_ptr<ClientInfo>();
+      return nullptr;
 
     std::unique_ptr<ClientInfo> backup_copy(new ClientInfo);
     backup_copy->client_id = fake_client_info_backup_->client_id;
@@ -117,28 +135,37 @@ class MetricsStateManagerTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(MetricsStateManagerTest);
 };
 
-// Ensure the ClientId is formatted as expected.
-TEST_F(MetricsStateManagerTest, ClientIdCorrectlyFormatted) {
+TEST_F(MetricsStateManagerTest, ClientIdCorrectlyFormatted_ConsentInitially) {
+  // With consent set initially, client id should be created in the constructor.
+  EnableMetricsReporting();
   std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  state_manager->ForceClientIdCreation();
 
   const std::string client_id = state_manager->client_id();
-  EXPECT_EQ(36U, client_id.length());
+  VerifyClientId(client_id);
+}
 
-  for (size_t i = 0; i < client_id.length(); ++i) {
-    char current = client_id[i];
-    if (i == 8 || i == 13 || i == 18 || i == 23)
-      EXPECT_EQ('-', current);
-    else
-      EXPECT_TRUE(isxdigit(current));
-  }
+TEST_F(MetricsStateManagerTest, ClientIdCorrectlyFormatted_ConsentLater) {
+  // With consent set initially, client id should be created on consent grant.
+  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+  EXPECT_EQ(std::string(), state_manager->client_id());
+
+  EnableMetricsReporting();
+  state_manager->ForceClientIdCreation();
+  const std::string client_id = state_manager->client_id();
+  VerifyClientId(client_id);
 }
 
 TEST_F(MetricsStateManagerTest, EntropySourceUsed_Low) {
+  // Set the install date pref, which makes sure we don't trigger the first run
+  // behavior where a provisional client id is generated and used to return a
+  // high entropy source.
+  prefs_.SetInt64(prefs::kInstallDate, base::Time::Now().ToTimeT());
+
   std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
   state_manager->CreateDefaultEntropyProvider();
   EXPECT_EQ(MetricsStateManager::ENTROPY_SOURCE_LOW,
             state_manager->entropy_source_returned());
+  EXPECT_EQ("", state_manager->initial_client_id_for_testing());
 }
 
 TEST_F(MetricsStateManagerTest, EntropySourceUsed_High) {
@@ -147,121 +174,8 @@ TEST_F(MetricsStateManagerTest, EntropySourceUsed_High) {
   state_manager->CreateDefaultEntropyProvider();
   EXPECT_EQ(MetricsStateManager::ENTROPY_SOURCE_HIGH,
             state_manager->entropy_source_returned());
-}
-
-TEST_F(MetricsStateManagerTest, LowEntropySource0NotReset) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-
-  // Get the low entropy source once, to initialize it.
-  state_manager->GetLowEntropySource();
-
-  // Now, set it to 0 and ensure it doesn't get reset.
-  state_manager->low_entropy_source_ = 0;
-  EXPECT_EQ(0, state_manager->GetLowEntropySource());
-  // Call it another time, just to make sure.
-  EXPECT_EQ(0, state_manager->GetLowEntropySource());
-}
-
-TEST_F(MetricsStateManagerTest, HaveNoLowEntropySource) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  state_manager->client_id_ = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEF";
-  // If we have neither the new nor old low entropy sources in prefs, then the
-  // new source should be created...
-  int new_low_source = state_manager->GetLowEntropySource();
-  EXPECT_TRUE(MetricsStateManager::IsValidLowEntropySource(new_low_source))
-      << new_low_source;
-  // ...but the old source should not...
-  EXPECT_EQ(MetricsStateManager::kLowEntropySourceNotSet,
-            state_manager->GetOldLowEntropySource());
-  // ...and the high entropy source should include the *new* low entropy source.
-  std::string high_source = state_manager->GetHighEntropySource();
-  EXPECT_TRUE(base::EndsWith(high_source, base::IntToString(new_low_source),
-                             base::CompareCase::SENSITIVE))
-      << high_source;
-}
-
-TEST_F(MetricsStateManagerTest, HaveOnlyNewLowEntropySource) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  state_manager->client_id_ = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEF";
-  // If we have the new low entropy sources in prefs, but not the old one...
-  const int new_low_source = 1234;
-  prefs_.SetInteger(prefs::kMetricsLowEntropySource, new_low_source);
-  // ...then the new source should be loaded...
-  EXPECT_EQ(new_low_source, state_manager->GetLowEntropySource());
-  // ...but the old source should not be created...
-  EXPECT_EQ(MetricsStateManager::kLowEntropySourceNotSet,
-            state_manager->GetOldLowEntropySource());
-  // ...and the high entropy source should include the *new* low entropy source.
-  std::string high_source = state_manager->GetHighEntropySource();
-  EXPECT_TRUE(base::EndsWith(high_source, base::IntToString(new_low_source),
-                             base::CompareCase::SENSITIVE))
-      << high_source;
-}
-
-TEST_F(MetricsStateManagerTest, HaveOnlyOldLowEntropySource) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  state_manager->client_id_ = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEF";
-  // If we have the old low entropy sources in prefs, but not the new one...
-  const int old_low_source = 5678;
-  prefs_.SetInteger(prefs::kMetricsOldLowEntropySource, old_low_source);
-  // ...then the new source should be created...
-  int new_low_source = state_manager->GetLowEntropySource();
-  EXPECT_TRUE(MetricsStateManager::IsValidLowEntropySource(new_low_source))
-      << new_low_source;
-  // ...and the old source should be loaded...
-  EXPECT_EQ(old_low_source, state_manager->GetOldLowEntropySource());
-  // ...and the high entropy source should include the *old* low entropy source.
-  std::string high_source = state_manager->GetHighEntropySource();
-  EXPECT_TRUE(base::EndsWith(high_source, base::IntToString(old_low_source),
-                             base::CompareCase::SENSITIVE))
-      << high_source;
-}
-
-TEST_F(MetricsStateManagerTest, HaveBothLowEntropySources) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  state_manager->client_id_ = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEF";
-  // If we have the new and old low entropy sources in prefs...
-  const int new_low_source = 1234;
-  const int old_low_source = 5678;
-  prefs_.SetInteger(prefs::kMetricsLowEntropySource, new_low_source);
-  prefs_.SetInteger(prefs::kMetricsOldLowEntropySource, old_low_source);
-  // ...then both should be loaded...
-  EXPECT_EQ(new_low_source, state_manager->GetLowEntropySource());
-  EXPECT_EQ(old_low_source, state_manager->GetOldLowEntropySource());
-  // ...and the high entropy source should include the *old* low entropy source.
-  std::string high_source = state_manager->GetHighEntropySource();
-  EXPECT_TRUE(base::EndsWith(high_source, base::IntToString(old_low_source),
-                             base::CompareCase::SENSITIVE))
-      << high_source;
-}
-
-TEST_F(MetricsStateManagerTest, CorruptNewLowEntropySources) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  const int corrupt_sources[] = {-12345, -1, 8000, 12345};
-  for (int corrupt_source : corrupt_sources) {
-    // If the new low entropy source has been corrupted...
-    EXPECT_FALSE(MetricsStateManager::IsValidLowEntropySource(corrupt_source))
-        << corrupt_source;
-    prefs_.SetInteger(prefs::kMetricsLowEntropySource, corrupt_source);
-    // ...then a new source should be created.
-    int loaded_source = state_manager->GetLowEntropySource();
-    EXPECT_TRUE(MetricsStateManager::IsValidLowEntropySource(loaded_source))
-        << loaded_source;
-  }
-}
-
-TEST_F(MetricsStateManagerTest, CorruptOldLowEntropySources) {
-  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
-  const int corrupt_sources[] = {-12345, -1, 8000, 12345};
-  for (int corrupt_source : corrupt_sources) {
-    // If the old low entropy source has been corrupted...
-    EXPECT_FALSE(MetricsStateManager::IsValidLowEntropySource(corrupt_source))
-        << corrupt_source;
-    prefs_.SetInteger(prefs::kMetricsOldLowEntropySource, corrupt_source);
-    // ...then it should be ignored.
-    EXPECT_EQ(MetricsStateManager::kLowEntropySourceNotSet,
-              state_manager->GetOldLowEntropySource());
-  }
+  EXPECT_EQ(state_manager->initial_client_id_for_testing(),
+            state_manager->client_id());
 }
 
 // Check that setting the kMetricsResetIds pref to true causes the client id to
@@ -272,6 +186,8 @@ TEST_F(MetricsStateManagerTest, ResetMetricsIDs) {
   // metrics state manager to generate this id randomly.
   const std::string kInitialClientId = "initial client id";
   prefs_.SetString(prefs::kMetricsClientID, kInitialClientId);
+
+  EnableMetricsReporting();
 
   // Make sure the initial client id isn't reset by the metrics state manager.
   {
@@ -315,6 +231,7 @@ TEST_F(MetricsStateManagerTest, ForceClientIdCreation) {
     // Confirm that the initial ForceClientIdCreation call creates the client id
     // and backs it up via MockStoreClientInfoBackup.
     EXPECT_FALSE(stored_client_info_backup_);
+    EnableMetricsReporting();
     state_manager->ForceClientIdCreation();
     EXPECT_NE(std::string(), state_manager->client_id());
     EXPECT_GE(prefs_.GetInt64(prefs::kMetricsReportingEnabledTimestamp),
@@ -329,6 +246,82 @@ TEST_F(MetricsStateManagerTest, ForceClientIdCreation) {
               stored_client_info_backup_->reporting_enabled_date);
   }
 }
+
+TEST_F(MetricsStateManagerTest,
+       ForceClientIdCreation_ConsentIntitially_NoInstallDate) {
+  // Confirm that the initial ForceClientIdCreation call creates the install
+  // date and then backs it up via MockStoreClientInfoBackup.
+  EXPECT_FALSE(stored_client_info_backup_);
+  EnableMetricsReporting();
+  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+
+  ASSERT_TRUE(stored_client_info_backup_);
+  EXPECT_NE(0, stored_client_info_backup_->installation_date);
+}
+
+#if !defined(OS_WIN)
+TEST_F(MetricsStateManagerTest, ProvisionalClientId_PromotedToClientId) {
+  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+
+  // Verify that there was a provisional client id created.
+  std::string provisional_client_id = state_manager->provisional_client_id_;
+  VerifyClientId(provisional_client_id);
+  // No client id should have been stored.
+  EXPECT_TRUE(prefs_.FindPreference(prefs::kMetricsClientID)->IsDefaultValue());
+  int low_entropy_source = state_manager->GetLowEntropySource();
+  // The default entropy provider should be the high entropy one.
+  state_manager->CreateDefaultEntropyProvider();
+  EXPECT_EQ(MetricsStateManager::ENTROPY_SOURCE_HIGH,
+            state_manager->entropy_source_returned());
+
+  // Forcing client id creation should promote the provisional client id to
+  // become the real client id and keep the low entropy source.
+  EnableMetricsReporting();
+  state_manager->ForceClientIdCreation();
+  std::string client_id = state_manager->client_id();
+  EXPECT_EQ(provisional_client_id, client_id);
+  EXPECT_EQ(client_id, prefs_.GetString(prefs::kMetricsClientID));
+  EXPECT_TRUE(state_manager->provisional_client_id_.empty());
+  EXPECT_EQ(low_entropy_source, state_manager->GetLowEntropySource());
+}
+
+TEST_F(MetricsStateManagerTest, ProvisionalClientId_NotPersisted) {
+  std::string provisional_client_id;
+  int low_entropy_source;
+
+  // First run, with a provisional client id.
+  {
+    std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+    // Verify that there was a provisional client id created.
+    std::string provisional_client_id = state_manager->provisional_client_id_;
+    VerifyClientId(provisional_client_id);
+    // No client id should have been stored.
+    EXPECT_TRUE(
+        prefs_.FindPreference(prefs::kMetricsClientID)->IsDefaultValue());
+    low_entropy_source = state_manager->GetLowEntropySource();
+    // The default entropy provider should be the high entropy one.
+    state_manager->CreateDefaultEntropyProvider();
+    EXPECT_EQ(MetricsStateManager::ENTROPY_SOURCE_HIGH,
+              state_manager->entropy_source_returned());
+  }
+
+  // Now, simulate a second run, such that UMA was not turned on during the
+  // first run. This should not result in any client id existing nor any
+  // provisional client id.
+  {
+    std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+    EXPECT_TRUE(state_manager->provisional_client_id_.empty());
+    EXPECT_TRUE(state_manager->client_id().empty());
+    EXPECT_EQ(low_entropy_source, state_manager->GetLowEntropySource());
+    EXPECT_TRUE(
+        prefs_.FindPreference(prefs::kMetricsClientID)->IsDefaultValue());
+    // The default entropy provider should be the low entropy one.
+    state_manager->CreateDefaultEntropyProvider();
+    EXPECT_EQ(MetricsStateManager::ENTROPY_SOURCE_LOW,
+              state_manager->entropy_source_returned());
+  }
+}
+#endif  // !defined(OS_WIN)
 
 TEST_F(MetricsStateManagerTest, LoadPrefs) {
   ClientInfo client_info;
@@ -485,6 +478,44 @@ TEST_F(MetricsStateManagerTest, CheckProvider) {
   histogram_tester.ExpectTotalCount("UMA.IsClonedInstall", 0);
 }
 
+TEST_F(MetricsStateManagerTest, CheckClientIdWasNotUsedToAssignFieldTrial) {
+  EnableMetricsReporting();
+  ClientInfo client_info;
+  client_info.client_id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+  client_info.installation_date = 1373051956;
+  client_info.reporting_enabled_date = 1373001211;
+
+  SetFakeClientInfoBackup(client_info);
+  SetClientInfoPrefs(client_info);
+
+  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+  std::unique_ptr<MetricsProvider> provider = state_manager->GetProvider();
+  // The client_id in the new log doesn't match the initial_client_id we used to
+  // assign field trials.
+  prefs_.SetString(prefs::kMetricsClientID, "New client id");
+  SystemProfileProto system_profile;
+  provider->ProvideSystemProfileMetrics(&system_profile);
+  EXPECT_TRUE(system_profile.has_client_id_was_used_for_trial_assignment());
+  EXPECT_FALSE(system_profile.client_id_was_used_for_trial_assignment());
+}
+
+TEST_F(MetricsStateManagerTest, CheckClientIdWasUsedToAssignFieldTrial) {
+  EnableMetricsReporting();
+  ClientInfo client_info;
+  client_info.client_id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+  client_info.installation_date = 1373051956;
+  client_info.reporting_enabled_date = 1373001211;
+
+  SetFakeClientInfoBackup(client_info);
+  SetClientInfoPrefs(client_info);
+
+  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+  std::unique_ptr<MetricsProvider> provider = state_manager->GetProvider();
+  SystemProfileProto system_profile;
+  provider->ProvideSystemProfileMetrics(&system_profile);
+  EXPECT_TRUE(system_profile.client_id_was_used_for_trial_assignment());
+}
+
 TEST_F(MetricsStateManagerTest, CheckProviderResetIds) {
   int64_t kInstallDate = 1373051956;
   int64_t kInstallDateExpected = 1373050800;  // Computed from kInstallDate.
@@ -518,6 +549,18 @@ TEST_F(MetricsStateManagerTest, CheckProviderResetIds) {
   EXPECT_EQ(MetricsLog::Hash(state_manager->previous_client_id_),
             uma_proto.client_id());
   histogram_tester.ExpectUniqueSample("UMA.IsClonedInstall", 1, 1);
+
+  // Since we set the pref and didn't call SaveMachineId(), this should do
+  // nothing
+  provider->ProvideCurrentSessionData(&uma_proto);
+  histogram_tester.ExpectUniqueSample("UMA.IsClonedInstall", 1, 1);
+
+  // Set the pref through SaveMachineId and expect previous to do nothing and
+  // current to log the histogram
+  prefs_.SetInteger(prefs::kMetricsMachineId, 2216820);
+  state_manager->cloned_install_detector_.SaveMachineId(&prefs_, "test");
+  provider->ProvideCurrentSessionData(&uma_proto);
+  histogram_tester.ExpectUniqueSample("UMA.IsClonedInstall", 1, 2);
 }
 
 }  // namespace metrics

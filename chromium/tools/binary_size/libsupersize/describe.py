@@ -4,7 +4,7 @@
 """Methods for converting model objects to human-readable formats."""
 
 import abc
-import cStringIO
+import io
 import collections
 import csv
 import datetime
@@ -52,26 +52,25 @@ def _Divide(a, b):
 
 
 def _IncludeInTotals(section_name):
-  return section_name != models.SECTION_BSS and '(' not in section_name
+  return section_name not in models.BSS_SECTIONS and '(' not in section_name
 
 
 def _GetSectionSizeInfo(section_sizes):
-  total_bytes = sum(v for k, v in section_sizes.iteritems()
-                    if _IncludeInTotals(k))
-  max_bytes = max(abs(v) for k, v in section_sizes.iteritems()
-                  if _IncludeInTotals(k))
+  total_bytes = sum(v for k, v in section_sizes.items() if _IncludeInTotals(k))
+  max_bytes = max(
+      abs(v) for k, v in section_sizes.items() if _IncludeInTotals(k))
 
   def is_significant_section(name, size):
     # Show all sections containing symbols, plus relocations.
     # As a catch-all, also include any section that comprises > 4% of the
     # largest section. Use largest section rather than total so that it still
     # works out when showing a diff containing +100, -100 (total=0).
-    return (name in models.SECTION_TO_SECTION_NAME.values() or
-            name in ('.rela.dyn', '.rel.dyn') or
-            _IncludeInTotals(name) and abs(_Divide(size, max_bytes)) > .04)
+    return (name in list(models.SECTION_TO_SECTION_NAME.values())
+            or name in ('.rela.dyn', '.rel.dyn')
+            or _IncludeInTotals(name) and abs(_Divide(size, max_bytes)) > .04)
 
-  section_names = sorted(k for k, v  in section_sizes.iteritems()
-                         if is_significant_section(k, v))
+  section_names = sorted(
+      k for k, v in section_sizes.items() if is_significant_section(k, v))
 
   return (total_bytes, section_names)
 
@@ -109,21 +108,22 @@ class Histogram(object):
     bucket_values = [str(self.data[k]) for k in keys]
     num_items = len(keys)
     num_cols = 6
-    num_rows = (num_items + num_cols - 1) / num_cols  # Divide and round up.
-    # Needed for xrange to not throw due to step by 0.
+    num_rows = (num_items + num_cols - 1) // num_cols  # Divide and round up.
+    # Needed for range() to not throw due to step by 0.
     if num_rows == 0:
       return
     # Spaces needed by items in each column, to align on ':'.
     name_col_widths = []
     value_col_widths = []
-    for i in xrange(0, num_items, num_rows):
+    for i in range(0, num_items, num_rows):
       name_col_widths.append(max(len(s) for s in bucket_names[i:][:num_rows]))
       value_col_widths.append(max(len(s) for s in bucket_values[i:][:num_rows]))
 
     yield 'Histogram of symbols based on PSS:'
-    for r in xrange(num_rows):
-      row = zip(bucket_names[r::num_rows], name_col_widths,
-                bucket_values[r::num_rows], value_col_widths)
+    for r in range(num_rows):
+      row = list(
+          zip(bucket_names[r::num_rows], name_col_widths,
+              bucket_values[r::num_rows], value_col_widths))
       line = '    ' + '   '.join('{:>{}}: {:<{}}'.format(*t) for t in row)
       yield line.rstrip()
 
@@ -197,8 +197,8 @@ class DescriberText(Describer):
     if self.verbose:
       yield ''
       yield 'Other section sizes:'
-      section_names = sorted(k for k in section_sizes.iterkeys()
-                             if k not in section_names)
+      section_names = sorted(
+          k for k in section_sizes.keys() if k not in section_names)
       for name in section_names:
         not_included_part = ''
         if not _IncludeInTotals(name):
@@ -261,9 +261,11 @@ class DescriberText(Describer):
         yield '{}@{:<9s}  {}  {}{}'.format(
             sym.section, address, pss_field, sym.name, last_field)
       else:
-        path = sym.source_path or sym.object_path or '{no path}'
-        if sym.generated_source:
+        path = sym.source_path or sym.object_path
+        if path and sym.generated_source:
           path = '$root_gen_dir/' + path
+        path = path or '{no path}'
+
         yield '{}@{:<9s}  {} {}'.format(
             sym.section, address, pss_field, path)
         if sym.name:
@@ -285,7 +287,7 @@ class DescriberText(Describer):
       #   * Accounts for < .5% of PSS
       #   * Symbols are smaller than 1.0 byte (by PSS)
       #   * Always show at least 50 symbols.
-      min_remaining_pss_to_show = max(1024, total / 1000 * 5)
+      min_remaining_pss_to_show = max(1024.0, total / 1000.0 * 5)
       min_symbol_pss_to_show = 1.0
       min_symbols_to_show = 50
 
@@ -321,8 +323,8 @@ class DescriberText(Describer):
   @staticmethod
   def _RelevantSections(section_names):
     relevant_sections = [
-        s for s in models.SECTION_TO_SECTION_NAME.itervalues()
-        if s in section_names]
+        s for s in models.SECTION_TO_SECTION_NAME.values() if s in section_names
+    ]
     if models.SECTION_MULTIPLE in relevant_sections:
       relevant_sections.remove(models.SECTION_MULTIPLE)
     return relevant_sections
@@ -389,7 +391,7 @@ class DescriberText(Describer):
       titles = 'Index | Running Total | Section@Address | ...'
     elif group.IsDelta():
       titles = (u'Index | Running Total | Section@Address | \u0394 PSS '
-                u'(\u0394 size_without_padding) | Path').encode('utf-8')
+                u'(\u0394 size_without_padding) | Path')
     else:
       titles = ('Index | Running Total | Section@Address | PSS | Path')
 
@@ -482,12 +484,19 @@ class DescriberText(Describer):
     return itertools.chain(diff_summary_desc, path_delta_desc, group_desc)
 
   def _DescribeDeltaSizeInfo(self, diff):
-    common_metadata = {k: v for k, v in diff.before.metadata.iteritems()
-                       if diff.after.metadata[k] == v}
-    before_metadata = {k: v for k, v in diff.before.metadata.iteritems()
-                       if k not in common_metadata}
-    after_metadata = {k: v for k, v in diff.after.metadata.iteritems()
-                      if k not in common_metadata}
+    common_metadata = {
+        k: v
+        for k, v in diff.before.metadata.items()
+        if diff.after.metadata.get(k) == v
+    }
+    before_metadata = {
+        k: v
+        for k, v in diff.before.metadata.items() if k not in common_metadata
+    }
+    after_metadata = {
+        k: v
+        for k, v in diff.after.metadata.items() if k not in common_metadata
+    }
     metadata_desc = itertools.chain(
         ('Common Metadata:',),
         ('    %s' % line for line in DescribeMetadata(common_metadata)),
@@ -512,75 +521,110 @@ class DescriberText(Describer):
     return itertools.chain(metadata_desc, section_desc, coverage_desc, ('',),
                            group_desc)
 
+
 def DescribeSizeInfoCoverage(size_info):
   """Yields lines describing how accurate |size_info| is."""
-  for section, section_name in models.SECTION_TO_SECTION_NAME.iteritems():
-    if section_name not in size_info.section_sizes:
-      continue
-    expected_size = size_info.section_sizes[section_name]
-
+  for section, section_name in models.SECTION_TO_SECTION_NAME.items():
+    expected_size = size_info.section_sizes.get(section_name)
     in_section = size_info.raw_symbols.WhereInSection(section_name)
     actual_size = in_section.size
-    size_percent = _Divide(actual_size, expected_size)
-    yield ('Section {}: has {:.1%} of {} bytes accounted for from '
-           '{} symbols. {} bytes are unaccounted for.').format(
-               section_name, size_percent, actual_size, len(in_section),
-               expected_size - actual_size)
 
-    sources_count = sum(1 for s in in_section if s.source_path)
-    sources_fraction = _Divide(sources_count, len(in_section))
-    yield '* {} have source paths assigned ({:.1%})'.format(
-        sources_count, sources_fraction)
+    if expected_size is None:
+      yield 'Section {}: {} bytes from {} symbols.'.format(
+          section_name, actual_size, len(in_section))
+    else:
+      size_percent = _Divide(actual_size, expected_size)
+      yield ('Section {}: has {:.1%} of {} bytes accounted for from '
+             '{} symbols. {} bytes are unaccounted for.').format(
+                 section_name, size_percent, actual_size, len(in_section),
+                 expected_size - actual_size)
 
-    star_syms = in_section.WhereNameMatches(r'^\*')
-    padding = in_section.padding - star_syms.padding
-    anonymous_syms = star_syms.Inverted().WhereHasAnyAttribution().Inverted()
+    padding = in_section.padding
     yield '* Padding accounts for {} bytes ({:.1%})'.format(
-        padding, _Divide(padding, in_section.size))
-    if len(star_syms):
-      yield ('* {} placeholders (symbols that start with **) account for '
-             '{} bytes ({:.1%})').format(
-                 len(star_syms), star_syms.size,
-                 _Divide(star_syms.size,  in_section.size))
-    if anonymous_syms:
-      yield '* {} anonymous symbols account for {} bytes ({:.1%})'.format(
-          len(anonymous_syms), int(anonymous_syms.pss),
-          _Divide(star_syms.size, in_section.size))
+        padding, _Divide(padding, actual_size))
+
+    def size_msg(syms, padding=False):
+      size = syms.size if not padding else syms.size_without_padding
+      size_msg = 'Accounts for {} bytes ({:.1%}).'.format(
+          size, _Divide(size, actual_size))
+      if padding:
+        size_msg = size_msg[:-1] + ' padding is {} bytes.'.format(syms.padding)
+      return size_msg
+
+    syms = in_section.Filter(lambda s: s.source_path)
+    yield '* {} have source paths. {}'.format(len(syms), size_msg(syms))
+    syms = in_section.WhereHasComponent()
+    yield '* {} have a component assigned. {}'.format(len(syms), size_msg(syms))
+
+    syms = in_section.WhereNameMatches(r'^\*')
+    if len(syms):
+      yield '* {} placeholders exist (symbols that start with **). {}'.format(
+          len(syms), size_msg(syms))
+
+    syms = syms.Inverted().WhereHasAnyAttribution().Inverted()
+    if syms:
+      yield '* {} symbols have no name or path. {}'.format(
+          len(syms), size_msg(syms))
 
     if section == 'r':
-      string_literals = in_section.Filter(lambda s: s.IsStringLiteral())
-      yield '* Contains {} string literals. Total size={}, padding={}'.format(
-          len(string_literals), string_literals.size_without_padding,
-          string_literals.padding)
+      syms = in_section.Filter(lambda s: s.IsStringLiteral())
+      yield '* {} string literals exist. {}'.format(
+          len(syms), size_msg(syms, padding=True))
 
-    aliased_symbols = in_section.Filter(lambda s: s.aliases)
-    if len(aliased_symbols):
-      uniques = sum(1 for s in aliased_symbols.IterUniqueSymbols())
+    syms = in_section.Filter(lambda s: s.aliases)
+    if len(syms):
+      uniques = sum(1 for s in syms.IterUniqueSymbols())
       saved = sum(s.size_without_padding * (s.num_aliases - 1)
-                  for s in aliased_symbols.IterUniqueSymbols())
-      yield ('* Contains {} aliases, mapped to {} unique addresses '
-             '({} bytes saved)').format(
-                 len(aliased_symbols), uniques, saved)
-    else:
-      yield '* Contains 0 aliases'
+                  for s in syms.IterUniqueSymbols())
+      yield ('* {} aliases exist, mapped to {} unique addresses '
+             '({} bytes saved)').format(len(syms), uniques, saved)
 
-    inlined_symbols = in_section.WhereObjectPathMatches('{shared}')
-    if len(inlined_symbols):
-      yield '* {} symbols have shared ownership ({} bytes)'.format(
-          len(inlined_symbols), inlined_symbols.size)
+    syms = in_section.WhereObjectPathMatches('{shared}')
+    if len(syms):
+      yield '* {} symbols have shared ownership. {}'.format(
+          len(syms), size_msg(syms))
     else:
-      yield '* 0 symbols have shared ownership'
+      yield '* 0 symbols have shared ownership.'
+
+    for flag, desc in (
+        (models.FLAG_HOT, 'marked as "hot"'),
+        (models.FLAG_UNLIKELY, 'marked as "unlikely"'),
+        (models.FLAG_STARTUP, 'marked as "startup"'),
+        (models.FLAG_CLONE, 'clones'),
+        (models.FLAG_GENERATED_SOURCE, 'from generated sources')):
+      syms = in_section.WhereHasFlag(flag)
+      if len(syms):
+        yield '* {} symbols are {}. {}'.format(len(syms), desc, size_msg(syms))
+
+    # These thresholds were found by experimenting with arm32 Chrome.
+    # E.g.: Set them to 0 and see what warnings get logged, then take max value.
+    spam_counter = 0
+    for i in range(len(in_section) - 1):
+      sym = in_section[i + 1]
+      if (not sym.full_name.startswith('*')
+          and not sym.source_path.endswith('.S')  # Assembly symbol are iffy.
+          and not sym.IsStringLiteral()
+          and ((sym.section in 'rd' and sym.padding >= 256) or
+               (sym.section in 't' and sym.padding >= 64))):
+        # TODO(crbug.com/959906): We should synthesize symbols for these gaps
+        #     rather than attribute them as padding.
+        spam_counter += 1
+        if spam_counter <= 5:
+          yield 'Large padding of {} between:'.format(sym.padding)
+          yield '  A) ' + repr(in_section[i])
+          yield '  B) ' + repr(sym)
 
 
 class DescriberCsv(Describer):
   def __init__(self, verbose=False):
     super(DescriberCsv, self).__init__()
     self.verbose = verbose
-    self.stringio = cStringIO.StringIO()
+    self.stringio = io.StringIO()
     self.csv_writer = csv.writer(self.stringio)
 
   def _RenderCsv(self, data):
     self.stringio.truncate(0)
+    self.stringio.seek(0)
     self.csv_writer.writerow(data)
     return self.stringio.getvalue().rstrip()
 
@@ -589,7 +633,7 @@ class DescriberCsv(Describer):
 
     if self.verbose:
       significant_set = set(significant_section_names)
-      section_names = sorted(section_sizes.iterkeys())
+      section_names = sorted(section_sizes.keys())
       yield self._RenderCsv(['Name', 'Size', 'IsSignificant'])
       for name in section_names:
         size = section_sizes[name]
@@ -690,7 +734,7 @@ def DescribeMetadata(metadata):
   gn_args = display_dict.get(models.METADATA_GN_ARGS)
   if gn_args:
     display_dict[models.METADATA_GN_ARGS] = ' '.join(gn_args)
-  return sorted('%s=%s' % t for t in display_dict.iteritems())
+  return sorted('%s=%s' % t for t in display_dict.items())
 
 
 def GenerateLines(obj, verbose=False, recursive=False, summarize=True,

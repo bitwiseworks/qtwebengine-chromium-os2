@@ -11,12 +11,11 @@
 
 namespace extensions {
 
-class MediaPerceptionPrivateGetStateFunction
-    : public UIThreadExtensionFunction {
+class MediaPerceptionPrivateGetStateFunction : public ExtensionFunction {
  public:
   MediaPerceptionPrivateGetStateFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.getState",
-                             MEDIAPERCEPTIONPRIVATE_GETSTATE);
+                             MEDIAPERCEPTIONPRIVATE_GETSTATE)
 
  private:
   ~MediaPerceptionPrivateGetStateFunction() override;
@@ -29,12 +28,11 @@ class MediaPerceptionPrivateGetStateFunction
   DISALLOW_COPY_AND_ASSIGN(MediaPerceptionPrivateGetStateFunction);
 };
 
-class MediaPerceptionPrivateSetStateFunction
-    : public UIThreadExtensionFunction {
+class MediaPerceptionPrivateSetStateFunction : public ExtensionFunction {
  public:
   MediaPerceptionPrivateSetStateFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.setState",
-                             MEDIAPERCEPTIONPRIVATE_SETSTATE);
+                             MEDIAPERCEPTIONPRIVATE_SETSTATE)
 
  private:
   ~MediaPerceptionPrivateSetStateFunction() override;
@@ -47,12 +45,11 @@ class MediaPerceptionPrivateSetStateFunction
   DISALLOW_COPY_AND_ASSIGN(MediaPerceptionPrivateSetStateFunction);
 };
 
-class MediaPerceptionPrivateGetDiagnosticsFunction
-    : public UIThreadExtensionFunction {
+class MediaPerceptionPrivateGetDiagnosticsFunction : public ExtensionFunction {
  public:
   MediaPerceptionPrivateGetDiagnosticsFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.getDiagnostics",
-                             MEDIAPERCEPTIONPRIVATE_GETDIAGNOSTICS);
+                             MEDIAPERCEPTIONPRIVATE_GETDIAGNOSTICS)
 
  private:
   ~MediaPerceptionPrivateGetDiagnosticsFunction() override;
@@ -67,11 +64,11 @@ class MediaPerceptionPrivateGetDiagnosticsFunction
 };
 
 class MediaPerceptionPrivateSetAnalyticsComponentFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   MediaPerceptionPrivateSetAnalyticsComponentFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.setAnalyticsComponent",
-                             MEDIAPERCEPTIONPRIVATE_SETANALYTICSCOMPONENT);
+                             MEDIAPERCEPTIONPRIVATE_SETANALYTICSCOMPONENT)
 
  private:
   ~MediaPerceptionPrivateSetAnalyticsComponentFunction() override;
@@ -87,11 +84,11 @@ class MediaPerceptionPrivateSetAnalyticsComponentFunction
 };
 
 class MediaPerceptionPrivateSetComponentProcessStateFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   MediaPerceptionPrivateSetComponentProcessStateFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.setComponentProcessState",
-                             MEDIAPERCEPTIONPRIVATE_SETCOMPONENTPROCESSSTATE);
+                             MEDIAPERCEPTIONPRIVATE_SETCOMPONENTPROCESSSTATE)
 
  private:
   ~MediaPerceptionPrivateSetComponentProcessStateFunction() override;

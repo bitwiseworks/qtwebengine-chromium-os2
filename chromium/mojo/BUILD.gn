@@ -8,9 +8,7 @@ import("//testing/test.gni")
 group("mojo") {
   # Meta-target, don't link into production code.
   testonly = true
-  deps = [
-    ":tests",
-  ]
+  deps = [ ":tests" ]
 
   if (!(is_linux && current_cpu == "x86")) {
     deps += [ "//mojo/public" ]
@@ -29,6 +27,7 @@ group("tests") {
     ":mojo_perftests",
     ":mojo_unittests",
     "//ipc:ipc_tests",
+    "//mojo/public/tools:mojo_python_unittests",
     "//services/service_manager/tests",
   ]
 }
@@ -41,6 +40,7 @@ test("mojo_unittests") {
     "//mojo/public/cpp/bindings/tests",
     "//mojo/public/cpp/platform/tests",
     "//mojo/public/cpp/system/tests",
+    "//mojo/public/js/ts/bindings/tests",
   ]
 }
 
@@ -53,9 +53,7 @@ test("mojo_perftests") {
   ]
 
   if (!is_ios) {
-    sources = [
-      "//mojo/core/message_pipe_perftest.cc",
-    ]
+    sources = [ "//mojo/core/message_pipe_perftest.cc" ]
 
     deps += [
       "//base",

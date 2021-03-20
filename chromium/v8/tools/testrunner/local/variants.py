@@ -4,26 +4,38 @@
 
 # Use this to run several variants of the tests.
 ALL_VARIANT_FLAGS = {
+  "assert_types": [["--assert-types"]],
   "code_serializer": [["--cache=code"]],
   "default": [[]],
   "future": [["--future"]],
-  "gc_stats": [["--gc_stats=1"]],
+  "gc_stats": [["--gc-stats=1"]],
   # Alias of exhaustive variants, but triggering new test framework features.
   "infra_staging": [[]],
-  "no_liftoff": [["--no-wasm-tier-up"]],
+  "interpreted_regexp": [["--regexp-interpret-all"]],
+  "jitless": [["--jitless"]],
   "minor_mc": [["--minor-mc"]],
+  "no_lfa": [["--no-lazy-feedback-allocation"]],
   # No optimization means disable all optimizations. OptimizeFunctionOnNextCall
   # would not force optimization too. It turns into a Nop. Please see
   # https://chromium-review.googlesource.com/c/452620/ for more discussion.
-  "nooptimization": [["--noopt"]],
+  # For WebAssembly, we test "Liftoff-only" in the nooptimization variant and
+  # "TurboFan-only" in the stress variant. The WebAssembly configuration is
+  # independent of JS optimizations, so we can combine those configs.
+  "nooptimization": [["--no-opt", "--liftoff", "--no-wasm-tier-up"]],
   "slow_path": [["--force-slow-path"]],
-  "stress": [["--stress-opt", "--always-opt"]],
-  "stress_background_compile": [["--stress-background-compile"]],
-  "stress_incremental_marking":  [["--stress-incremental-marking"]],
+  "stress": [["--stress-opt", "--always-opt", "--no-liftoff",
+              "--stress-lazy-source-positions"]],
+  "stress_js_bg_compile_wasm_code_gc": [["--stress-background-compile",
+                                         "--stress-wasm-code-gc"]],
+  "stress_incremental_marking": [["--stress-incremental-marking"]],
   # Trigger stress sampling allocation profiler with sample interval = 2^14
   "stress_sampling": [["--stress-sampling-allocation-profiler=16384"]],
   "trusted": [["--no-untrusted-code-mitigations"]],
   "no_wasm_traps": [["--no-wasm-trap-handler"]],
+  "turboprop": [["--turboprop"]],
+  "instruction_scheduling": [["--turbo-instruction-scheduling"]],
+  "stress_instruction_scheduling": [["--turbo-stress-instruction-scheduling"]],
+  "top_level_await": [["--harmony-top-level-await"]],
 }
 
 SLOW_VARIANTS = set([

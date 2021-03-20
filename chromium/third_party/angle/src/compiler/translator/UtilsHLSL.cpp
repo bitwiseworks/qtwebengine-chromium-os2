@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -11,6 +11,7 @@
 #include "compiler/translator/IntermNode.h"
 #include "compiler/translator/StructureHLSL.h"
 #include "compiler/translator/SymbolTable.h"
+#include "compiler/translator/util.h"
 
 namespace sh
 {
@@ -72,6 +73,7 @@ HLSLTextureGroup TextureGroup(const TBasicType type, TLayoutImageInternalFormat 
     switch (type)
     {
         case EbtSampler2D:
+        case EbtSamplerVideoWEBGL:
             return HLSL_TEXTURE_2D;
         case EbtSamplerCube:
             return HLSL_TEXTURE_CUBE;
@@ -857,6 +859,13 @@ TString DecorateVariableIfNeeded(const TVariable &variable)
         ASSERT(!name.beginsWith("_"));
         return TString(name.data());
     }
+    // For user defined variables, combine variable name with unique id
+    // so variables of the same name in different scopes do not get overwritten.
+    else if (variable.symbolType() == SymbolType::UserDefined &&
+             variable.getType().getQualifier() == EvqTemporary)
+    {
+        return Decorate(variable.name()) + str(variable.uniqueId().get());
+    }
     else
     {
         return Decorate(variable.name());
@@ -966,6 +975,8 @@ TString TypeString(const TType &type)
                 return "samplerCUBE";
             case EbtSamplerExternalOES:
                 return "sampler2D";
+            case EbtSamplerVideoWEBGL:
+                return "sampler2D";
             case EbtAtomicCounter:
                 // Multiple atomic_uints will be implemented as a single RWByteAddressBuffer
                 return "RWByteAddressBuffer";
@@ -997,7 +1008,8 @@ TString StructNameString(const TStructure &structure)
 
 TString QualifiedStructNameString(const TStructure &structure,
                                   bool useHLSLRowMajorPacking,
-                                  bool useStd140Packing)
+                                  bool useStd140Packing,
+                                  bool forcePackingEnd)
 {
     if (structure.symbolType() == SymbolType::Empty)
     {
@@ -1017,6 +1029,11 @@ TString QualifiedStructNameString(const TStructure &structure,
     if (useHLSLRowMajorPacking)
     {
         prefix += "rm_";
+    }
+
+    if (forcePackingEnd)
+    {
+        prefix += "pe_";
     }
 
     return prefix + StructNameString(structure);

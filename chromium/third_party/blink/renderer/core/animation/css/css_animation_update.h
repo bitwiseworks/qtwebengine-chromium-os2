@@ -6,14 +6,13 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_ANIMATION_CSS_CSS_ANIMATION_UPDATE_H_
 
 #include "base/macros.h"
-#include "third_party/blink/renderer/core/animation/css/css_animatable_value_factory.h"
 #include "third_party/blink/renderer/core/animation/effect_stack.h"
 #include "third_party/blink/renderer/core/animation/inert_effect.h"
 #include "third_party/blink/renderer/core/animation/interpolation.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect_model.h"
 #include "third_party/blink/renderer/core/css/css_keyframes_rule.h"
 #include "third_party/blink/renderer/core/css/css_property_equality.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -41,7 +40,7 @@ class NewCSSAnimation {
         style_rule_version(this->style_rule->Version()),
         play_state_list(play_state_list) {}
 
-  void Trace(blink::Visitor* visitor) {
+  void Trace(Visitor* visitor) {
     visitor->Trace(effect);
     visitor->Trace(style_rule);
   }
@@ -73,7 +72,7 @@ class UpdatedCSSAnimation {
         style_rule_version(this->style_rule->Version()),
         play_state_list(play_state_list) {}
 
-  void Trace(blink::Visitor* visitor) {
+  void Trace(Visitor* visitor) {
     visitor->Trace(animation);
     visitor->Trace(effect);
     visitor->Trace(style_rule);
@@ -90,15 +89,15 @@ class UpdatedCSSAnimation {
 
 }  // namespace blink
 
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::NewCSSAnimation);
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::UpdatedCSSAnimation);
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::NewCSSAnimation)
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::UpdatedCSSAnimation)
 
 namespace blink {
 
 // This class stores the CSS Animations/Transitions information we use during a
 // style recalc. This includes updates to animations/transitions as well as the
 // Interpolations to be applied.
-class CSSAnimationUpdate final {
+class CORE_EXPORT CSSAnimationUpdate final {
   DISALLOW_NEW();
 
  public:
@@ -180,7 +179,7 @@ class CSSAnimationUpdate final {
    public:
     NewTransition();
     ~NewTransition();
-    void Trace(blink::Visitor* visitor) { visitor->Trace(effect); }
+    void Trace(Visitor* visitor) { visitor->Trace(effect); }
 
     PropertyHandle property = HashTraits<blink::PropertyHandle>::EmptyValue();
     scoped_refptr<const ComputedStyle> from;
@@ -252,7 +251,7 @@ class CSSAnimationUpdate final {
            updated_compositor_keyframes_.IsEmpty();
   }
 
-  void Trace(blink::Visitor* visitor) {
+  void Trace(Visitor* visitor) {
     visitor->Trace(new_transitions_);
     visitor->Trace(new_animations_);
     visitor->Trace(suppressed_animations_);

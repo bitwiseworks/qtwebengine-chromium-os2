@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -23,18 +24,22 @@ class AXObject;
 // new public API methods or similar) and remove this class.
 class CORE_EXPORT AXObjectCacheBase : public AXObjectCache {
  public:
-  ~AXObjectCacheBase() override;
+  ~AXObjectCacheBase() override = default;
 
   virtual AXObject* Get(const Node*) = 0;
   virtual AXObject* GetOrCreate(LayoutObject*) = 0;
 
  protected:
-  AXObjectCacheBase(Document&);
+  AXObjectCacheBase() = default;
   DISALLOW_COPY_AND_ASSIGN(AXObjectCacheBase);
 };
 
-// This is the only subclass of AXObjectCache.
-DEFINE_TYPE_CASTS(AXObjectCacheBase, AXObjectCache, cache, true, true);
+template <>
+struct DowncastTraits<AXObjectCacheBase> {
+  // All concrete implementations of AXObjectCache are derived from
+  // AXObjectCacheBase.
+  static bool AllowFrom(const AXObjectCache& cache) { return true; }
+};
 
 }  // namespace blink
 

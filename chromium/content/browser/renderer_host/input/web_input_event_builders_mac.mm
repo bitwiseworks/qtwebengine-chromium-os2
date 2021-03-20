@@ -35,14 +35,15 @@
 
 #include <stdint.h>
 
-#include "base/mac/sdk_forward_declarations.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/blink/blink_event_util.h"
 #import "ui/events/cocoa/cocoa_event_utils.h"
+#include "ui/events/event_utils.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 
@@ -108,6 +109,10 @@ int ModifiersFromEvent(NSEvent* event) {
     modifiers |= blink::WebInputEvent::kRightButtonDown;
   if (pressed_buttons & (1 << 2))
     modifiers |= blink::WebInputEvent::kMiddleButtonDown;
+  if (pressed_buttons & (1 << 3))
+    modifiers |= blink::WebInputEvent::kBackButtonDown;
+  if (pressed_buttons & (1 << 4))
+    modifiers |= blink::WebInputEvent::kForwardButtonDown;
 
   return modifiers;
 }
@@ -206,12 +211,45 @@ blink::WebMouseEvent::Button ButtonFromPressedMouseButtons() {
     return blink::WebMouseEvent::Button::kRight;
   if (pressed_buttons & (1 << 2))
     return blink::WebMouseEvent::Button::kMiddle;
+  if (pressed_buttons & (1 << 3))
+    return blink::WebMouseEvent::Button::kBack;
+  if (pressed_buttons & (1 << 4))
+    return blink::WebMouseEvent::Button::kForward;
+  return blink::WebMouseEvent::Button::kNoButton;
+}
+blink::WebMouseEvent::Button ButtonFromButtonNumber(NSEvent* event) {
+  NSUInteger button_number = [event buttonNumber];
+
+  if (button_number == 1)
+    return blink::WebMouseEvent::Button::kRight;
+  if (button_number == 2)
+    return blink::WebMouseEvent::Button::kMiddle;
+  if (button_number == 3)
+    return blink::WebMouseEvent::Button::kBack;
+  if (button_number == 4)
+    return blink::WebMouseEvent::Button::kForward;
   return blink::WebMouseEvent::Button::kNoButton;
 }
 
 }  // namespace
 
-blink::WebKeyboardEvent WebKeyboardEventBuilder::Build(NSEvent* event) {
+blink::WebKeyboardEvent WebKeyboardEventBuilder::Build(NSEvent* event,
+                                                       bool record_debug_uma) {
+  ui::ComputeEventLatencyOS(event);
+  base::TimeTicks now = ui::EventTimeForNow();
+  base::TimeTicks hardware_timestamp =
+      ui::EventTimeStampFromSeconds([event timestamp]);
+  if (record_debug_uma) {
+    if (ui::EventTypeFromNative(event) == ui::ET_KEY_PRESSED) {
+      UMA_HISTOGRAM_CUSTOM_TIMES(
+          now > hardware_timestamp
+              ? "Event.Latency.OS_NO_VALIDATION.POSITIVE.KEY_PRESSED"
+              : "Event.Latency.OS_NO_VALIDATION.NEGATIVE.KEY_PRESSED",
+          (now - hardware_timestamp).magnitude(),
+          base::TimeDelta::FromMilliseconds(1),
+          base::TimeDelta::FromSeconds(60), 50);
+    }
+  }
   ui::DomCode dom_code = ui::DomCodeFromNSEvent(event);
   int modifiers =
       ModifiersFromEvent(event) | ui::DomCodeToWebInputEventModifiers(dom_code);
@@ -267,6 +305,19 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
     NSEvent* event,
     NSView* view,
     blink::WebPointerProperties::PointerType pointerType) {
+  ui::ComputeEventLatencyOS(event);
+  base::TimeTicks now = ui::EventTimeForNow();
+  base::TimeTicks hardware_timestamp =
+      ui::EventTimeStampFromSeconds([event timestamp]);
+  if (ui::EventTypeFromNative(event) == ui::ET_MOUSE_PRESSED) {
+    UMA_HISTOGRAM_CUSTOM_TIMES(
+        now > hardware_timestamp
+            ? "Event.Latency.OS_NO_VALIDATION.POSITIVE.MOUSE_PRESSED"
+            : "Event.Latency.OS_NO_VALIDATION.NEGATIVE.MOUSE_PRESSED",
+        (now - hardware_timestamp).magnitude(),
+        base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
+        50);
+  }
   blink::WebInputEvent::Type event_type =
       blink::WebInputEvent::Type::kUndefined;
   int click_count = 0;
@@ -285,7 +336,7 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
     case NSOtherMouseDown:
       event_type = blink::WebInputEvent::kMouseDown;
       click_count = [event clickCount];
-      button = blink::WebMouseEvent::Button::kMiddle;
+      button = ButtonFromButtonNumber(event);
       break;
     case NSRightMouseDown:
       event_type = blink::WebInputEvent::kMouseDown;
@@ -300,7 +351,7 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
     case NSOtherMouseUp:
       event_type = blink::WebInputEvent::kMouseUp;
       click_count = [event clickCount];
-      button = blink::WebMouseEvent::Button::kMiddle;
+      button = ButtonFromButtonNumber(event);
       break;
     case NSRightMouseUp:
       event_type = blink::WebInputEvent::kMouseUp;
@@ -375,6 +426,17 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
 blink::WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
     NSEvent* event,
     NSView* view) {
+  ui::ComputeEventLatencyOS(event);
+  base::TimeTicks now = ui::EventTimeForNow();
+  base::TimeTicks hardware_timestamp =
+      ui::EventTimeStampFromSeconds([event timestamp]);
+  UMA_HISTOGRAM_CUSTOM_TIMES(
+      now > hardware_timestamp
+          ? "Event.Latency.OS_NO_VALIDATION.POSITIVE.MOUSE_WHEEL"
+          : "Event.Latency.OS_NO_VALIDATION.NEGATIVE.MOUSE_WHEEL",
+      (now - hardware_timestamp).magnitude(),
+      base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
+      50);
   blink::WebMouseWheelEvent result(
       blink::WebInputEvent::kMouseWheel, ModifiersFromEvent(event),
       ui::EventTimeStampFromSeconds([event timestamp]));
@@ -496,13 +558,13 @@ blink::WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
   // from data from any other continuous device.
 
   if (CGEventGetIntegerValueField(cg_event, kCGScrollWheelEventIsContinuous)) {
+    result.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
     result.delta_x = CGEventGetIntegerValueField(
         cg_event, kCGScrollWheelEventPointDeltaAxis2);
     result.delta_y = CGEventGetIntegerValueField(
         cg_event, kCGScrollWheelEventPointDeltaAxis1);
     result.wheel_ticks_x = result.delta_x / ui::kScrollbarPixelsPerCocoaTick;
     result.wheel_ticks_y = result.delta_y / ui::kScrollbarPixelsPerCocoaTick;
-    result.has_precise_scrolling_deltas = true;
   } else {
     result.delta_x = [event deltaX] * ui::kScrollbarPixelsPerCocoaTick;
     result.delta_y = [event deltaY] * ui::kScrollbarPixelsPerCocoaTick;
@@ -532,7 +594,7 @@ blink::WebGestureEvent WebGestureEventBuilder::Build(NSEvent* event,
   result.SetModifiers(ModifiersFromEvent(event));
   result.SetTimeStamp(ui::EventTimeStampFromSeconds([event timestamp]));
 
-  result.SetSourceDevice(blink::kWebGestureDeviceTouchpad);
+  result.SetSourceDevice(blink::WebGestureDevice::kTouchpad);
 
   switch ([event type]) {
     case NSEventTypeMagnify:
@@ -605,6 +667,19 @@ blink::WebTouchEvent WebTouchEventBuilder::Build(NSEvent* event, NSView* view) {
 
   blink::WebTouchEvent result(event_type, ModifiersFromEvent(event),
                               ui::EventTimeStampFromSeconds([event timestamp]));
+  if (ui::EventTypeFromNative(event) == ui::ET_TOUCH_PRESSED) {
+    base::TimeTicks now = ui::EventTimeForNow();
+    base::TimeTicks hardware_timestamp =
+        ui::EventTimeStampFromSeconds([event timestamp]);
+    UMA_HISTOGRAM_CUSTOM_TIMES(
+        now > hardware_timestamp
+            ? "Event.Latency.OS.NO_VALIDATION.POSITIVE.TOUCH_PRESSED"
+            : "Event.Latency.OS.NO_VALIDATION.NEGATIVE.TOUCH_PRESSED",
+        (now - hardware_timestamp).magnitude(),
+        base::TimeDelta::FromMilliseconds(1), base::TimeDelta::FromSeconds(60),
+        50);
+  }
+  ui::ComputeEventLatencyOS(event);
   result.hovering = event_type == blink::WebInputEvent::kTouchEnd;
   result.unique_touch_event_id = ui::GetNextTouchEventId();
   result.touches_length = 1;

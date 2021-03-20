@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#include <string>
+#include <utility>
+
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,6 +21,7 @@
 #include "ui/gfx/text_utils.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/table/table_grouper.h"
 #include "ui/views/controls/table/table_header.h"
 #include "ui/views/controls/table/table_view_observer.h"
@@ -38,15 +42,13 @@ class TableViewTestHelper {
 
   std::string GetPaintRegion(const gfx::Rect& bounds) {
     TableView::PaintRegion region(table_->GetPaintRegion(bounds));
-    return "rows=" + base::IntToString(region.min_row) + " " +
-        base::IntToString(region.max_row) + " cols=" +
-        base::IntToString(region.min_column) + " " +
-        base::IntToString(region.max_column);
+    return "rows=" + base::NumberToString(region.min_row) + " " +
+           base::NumberToString(region.max_row) +
+           " cols=" + base::NumberToString(region.min_column) + " " +
+           base::NumberToString(region.max_column);
   }
 
-  size_t visible_col_count() {
-    return table_->visible_columns().size();
-  }
+  size_t visible_col_count() { return table_->visible_columns().size(); }
 
   int GetActiveVisibleColumnIndex() {
     return table_->GetActiveVisibleColumnIndex();
@@ -67,6 +69,39 @@ class TableViewTestHelper {
   AXVirtualView* GetVirtualAccessibilityCell(int row,
                                              int visible_column_index) {
     return table_->GetVirtualAccessibilityCell(row, visible_column_index);
+  }
+
+  std::vector<std::vector<gfx::Rect>> GenerateExpectedBounds() {
+    // Generates the expected bounds for |table_|'s rows and cells. Each vector
+    // represents a row. The first entry in each child vector is the bounds for
+    // the entire row. The following entries in that vector are the bounds for
+    // each individual cell contained in that row.
+    auto expected_bounds = std::vector<std::vector<gfx::Rect>>();
+
+    // Generate the bounds for the header row and cells.
+    auto header_row = std::vector<gfx::Rect>();
+    header_row.push_back(table_->CalculateHeaderRowAccessibilityBounds());
+    for (size_t column_index = 0; column_index < visible_col_count();
+         column_index++) {
+      header_row.push_back(
+          table_->CalculateHeaderCellAccessibilityBounds(column_index));
+    }
+    expected_bounds.push_back(header_row);
+
+    // Generate the bounds for the table rows and cells.
+    for (int row_index = 0; row_index < table_->GetRowCount(); row_index++) {
+      auto table_row = std::vector<gfx::Rect>();
+      table_row.push_back(
+          table_->CalculateTableRowAccessibilityBounds(row_index));
+      for (size_t column_index = 0; column_index < visible_col_count();
+           column_index++) {
+        table_row.push_back(table_->CalculateTableCellAccessibilityBounds(
+            row_index, column_index));
+      }
+      expected_bounds.push_back(table_row);
+    }
+
+    return expected_bounds;
   }
 
  private:
@@ -113,19 +148,20 @@ class TestTableModel2 : public ui::TableModel {
   // ui::TableModel:
   int RowCount() override;
   base::string16 GetText(int row, int column_id) override;
+  base::string16 GetTooltip(int row) override;
   void SetObserver(ui::TableModelObserver* observer) override;
   int CompareValues(int row1, int row2, int column_id) override;
 
  private:
-  ui::TableModelObserver* observer_;
+  ui::TableModelObserver* observer_ = nullptr;
 
   // The data.
-  std::vector<std::vector<int> > rows_;
+  std::vector<std::vector<int>> rows_;
 
   DISALLOW_COPY_AND_ASSIGN(TestTableModel2);
 };
 
-TestTableModel2::TestTableModel2() : observer_(NULL) {
+TestTableModel2::TestTableModel2() {
   AddRow(0, 0, 1);
   AddRow(1, 1, 1);
   AddRow(2, 2, 2);
@@ -176,7 +212,11 @@ int TestTableModel2::RowCount() {
 }
 
 base::string16 TestTableModel2::GetText(int row, int column_id) {
-  return base::IntToString16(rows_[row][column_id]);
+  return base::NumberToString16(rows_[row][column_id]);
+}
+
+base::string16 TestTableModel2::GetTooltip(int row) {
+  return base::ASCIIToUTF16("Tooltip") + base::NumberToString16(row);
 }
 
 void TestTableModel2::SetObserver(ui::TableModelObserver* observer) {
@@ -190,10 +230,10 @@ int TestTableModel2::CompareValues(int row1, int row2, int column_id) {
 // Returns the view to model mapping as a string.
 std::string GetViewToModelAsString(TableView* table) {
   std::string result;
-  for (int i = 0; i < table->RowCount(); ++i) {
+  for (int i = 0; i < table->GetRowCount(); ++i) {
     if (i != 0)
       result += " ";
-    result += base::IntToString(table->ViewToModel(i));
+    result += base::NumberToString(table->ViewToModel(i));
   }
   return result;
 }
@@ -201,10 +241,10 @@ std::string GetViewToModelAsString(TableView* table) {
 // Returns the model to view mapping as a string.
 std::string GetModelToViewAsString(TableView* table) {
   std::string result;
-  for (int i = 0; i < table->RowCount(); ++i) {
+  for (int i = 0; i < table->GetRowCount(); ++i) {
     if (i != 0)
       result += " ";
-    result += base::IntToString(table->ModelToView(i));
+    result += base::NumberToString(table->ModelToView(i));
   }
   return result;
 }
@@ -213,7 +253,7 @@ std::string GetModelToViewAsString(TableView* table) {
 // scrolled out of view are included; hidden columns are excluded.
 std::string GetRowsInViewOrderAsString(TableView* table) {
   std::string result;
-  for (int i = 0; i < table->RowCount(); ++i) {
+  for (int i = 0; i < table->GetRowCount(); ++i) {
     if (i != 0)
       result += ", ";  // Comma between each row.
 
@@ -257,31 +297,33 @@ bool DragLeftMouseTo(views::View* target, const gfx::Point& point) {
 
 class TableViewTest : public ViewsTestBase {
  public:
-  TableViewTest() : table_(NULL) {}
+  TableViewTest() = default;
 
   void SetUp() override {
     ViewsTestBase::SetUp();
 
-    model_.reset(new TestTableModel2);
+    model_ = std::make_unique<TestTableModel2>();
     std::vector<ui::TableColumn> columns(2);
     columns[0].title = base::ASCIIToUTF16("Title Column 0");
     columns[0].sortable = true;
     columns[1].title = base::ASCIIToUTF16("Title Column 1");
     columns[1].id = 1;
     columns[1].sortable = true;
-    table_ = new TableView(model_.get(), columns, TEXT_ONLY, false);
-    View* parent = table_->CreateParentIfNecessary();
-    parent->SetBounds(0, 0, 10000, 10000);
-    parent->Layout();
-    helper_.reset(new TableViewTestHelper(table_));
+    auto table =
+        std::make_unique<TableView>(model_.get(), columns, TEXT_ONLY, false);
+    table_ = table.get();
+    auto scroll_view = TableView::CreateScrollViewWithTable(std::move(table));
+    scroll_view->SetBounds(0, 0, 10000, 10000);
+    scroll_view->Layout();
+    helper_ = std::make_unique<TableViewTestHelper>(table_);
 
     widget_ = std::make_unique<Widget>();
     Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
     params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.bounds = gfx::Rect(0, 0, 650, 650);
     params.delegate = GetWidgetDelegate(widget_.get());
-    widget_->Init(params);
-    widget_->GetContentsView()->AddChildView(parent);
+    widget_->Init(std::move(params));
+    widget_->GetContentsView()->AddChildView(std::move(scroll_view));
     widget_->Show();
   }
 
@@ -307,15 +349,15 @@ class TableViewTest : public ViewsTestBase {
   // 'active=X anchor=X selection=X X X...'.
   std::string SelectionStateAsString() const {
     const ui::ListSelectionModel& model(table_->selection_model());
-    std::string result = "active=" + base::IntToString(model.active()) +
-        " anchor=" + base::IntToString(model.anchor()) +
-        " selection=";
+    std::string result = "active=" + base::NumberToString(model.active()) +
+                         " anchor=" + base::NumberToString(model.anchor()) +
+                         " selection=";
     const ui::ListSelectionModel::SelectedIndices& selection(
         model.selected_indices());
     for (size_t i = 0; i < selection.size(); ++i) {
       if (i != 0)
         result += " ";
-      result += base::IntToString(selection[i]);
+      result += base::NumberToString(selection[i]);
     }
     return result;
   }
@@ -327,13 +369,60 @@ class TableViewTest : public ViewsTestBase {
     generator.PressKey(code, flags);
   }
 
+  // Helper function for comparing the bounds of |table_|'s virtual
+  // accessibility child rows and cells with a set of expected bounds.
+  void VerifyTableAccChildrenBounds(
+      const ViewAccessibility& view_accessibility,
+      const std::vector<std::vector<gfx::Rect>>& expected_bounds) {
+    auto& virtual_children = view_accessibility.virtual_children();
+    EXPECT_EQ(virtual_children.size(), expected_bounds.size());
+    EXPECT_EQ((size_t)(table_->GetRowCount()) + 1U, expected_bounds.size());
+
+    for (size_t row_index = 0; row_index < virtual_children.size();
+         row_index++) {
+      const auto& row = virtual_children[row_index];
+      ASSERT_TRUE(row);
+      const ui::AXNodeData& row_data = row->GetData();
+      EXPECT_EQ(ax::mojom::Role::kRow, row_data.role);
+
+      ui::AXOffscreenResult offscreen_result = ui::AXOffscreenResult();
+      gfx::Rect row_custom_bounds = row->GetBoundsRect(
+          ui::AXCoordinateSystem::kScreenDIPs,
+          ui::AXClippingBehavior::kUnclipped, &offscreen_result);
+      EXPECT_EQ(row_custom_bounds, expected_bounds[row_index][0]);
+
+      EXPECT_EQ(row->children().size(), expected_bounds[row_index].size() - 1U);
+      EXPECT_EQ(row->children().size(), helper_->visible_col_count());
+      for (size_t cell_index = 0; cell_index < row->children().size();
+           cell_index++) {
+        const auto& cell = row->children()[cell_index];
+        ASSERT_TRUE(cell);
+        const ui::AXNodeData& cell_data = cell->GetData();
+
+        if (row_index == 0)
+          EXPECT_EQ(ax::mojom::Role::kColumnHeader, cell_data.role);
+        else
+          EXPECT_EQ(ax::mojom::Role::kCell, cell_data.role);
+
+        // Add 1 to get the cell's index into |expected_bounds| since the first
+        // entry is the row's bounds.
+        const int expected_bounds_index = cell_index + 1;
+        gfx::Rect cell_custom_bounds = cell->GetBoundsRect(
+            ui::AXCoordinateSystem::kScreenDIPs,
+            ui::AXClippingBehavior::kUnclipped, &offscreen_result);
+        EXPECT_EQ(cell_custom_bounds,
+                  expected_bounds[row_index][expected_bounds_index]);
+      }
+    }
+  }
+
  protected:
   virtual WidgetDelegate* GetWidgetDelegate(Widget* widget) { return nullptr; }
 
   std::unique_ptr<TestTableModel2> model_;
 
   // Owned by |parent_|.
-  TableView* table_;
+  TableView* table_ = nullptr;
 
   std::unique_ptr<TableViewTestHelper> helper_;
 
@@ -341,7 +430,7 @@ class TableViewTest : public ViewsTestBase {
 
  private:
   gfx::Point GetPointForRow(int row) {
-    const int y = (row + 0.5) * table_->row_height();
+    const int y = (row + 0.5) * table_->GetRowHeight();
     return table_->GetBoundsInScreen().origin() + gfx::Vector2d(5, y);
   }
 
@@ -365,56 +454,90 @@ TEST_F(TableViewTest, UpdateVirtualAccessibilityChildren) {
   EXPECT_EQ(ax::mojom::Role::kListGrid, data.role);
   EXPECT_TRUE(data.HasState(ax::mojom::State::kFocusable));
   EXPECT_EQ(ax::mojom::Restriction::kReadOnly, data.GetRestriction());
-  EXPECT_EQ(table_->RowCount(), static_cast<int>(data.GetIntAttribute(
-                                    ax::mojom::IntAttribute::kTableRowCount)));
+  EXPECT_EQ(table_->GetRowCount(),
+            static_cast<int>(
+                data.GetIntAttribute(ax::mojom::IntAttribute::kTableRowCount)));
   EXPECT_EQ(helper_->visible_col_count(),
             static_cast<size_t>(data.GetIntAttribute(
                 ax::mojom::IntAttribute::kTableColumnCount)));
 
   // The header takes up another row.
-  ASSERT_EQ(table_->RowCount() + 1, view_accessibility.virtual_child_count());
-  const AXVirtualView* header = view_accessibility.virtual_child_at(0);
+  ASSERT_EQ(size_t{table_->GetRowCount() + 1},
+            view_accessibility.virtual_children().size());
+  const auto& header = view_accessibility.virtual_children().front();
   ASSERT_TRUE(header);
   EXPECT_EQ(ax::mojom::Role::kRow, header->GetData().role);
 
-  ASSERT_EQ(
-      helper_->visible_col_count(),
-      static_cast<size_t>(const_cast<AXVirtualView*>(header)->GetChildCount()));
-  for (int j = 0; j < static_cast<int>(helper_->visible_col_count()); ++j) {
-    const AXVirtualView* header_cell = header->child_at(j);
+  ASSERT_EQ(helper_->visible_col_count(), header->children().size());
+  int j = 0;
+  for (const auto& header_cell : header->children()) {
     ASSERT_TRUE(header_cell);
     const ui::AXNodeData& header_cell_data = header_cell->GetData();
     EXPECT_EQ(ax::mojom::Role::kColumnHeader, header_cell_data.role);
-    EXPECT_EQ(j, static_cast<int>(header_cell_data.GetIntAttribute(
-                     ax::mojom::IntAttribute::kTableCellColumnIndex)));
+    EXPECT_EQ(j++, header_cell_data.GetIntAttribute(
+                       ax::mojom::IntAttribute::kTableCellColumnIndex));
   }
 
-  for (int i = 1; i < table_->RowCount() + 1; ++i) {
-    const AXVirtualView* row = view_accessibility.virtual_child_at(i);
+  int i = 0;
+  for (auto child_iter = view_accessibility.virtual_children().begin() + 1;
+       i < table_->GetRowCount(); ++child_iter, ++i) {
+    const auto& row = *child_iter;
     ASSERT_TRUE(row);
     const ui::AXNodeData& row_data = row->GetData();
     EXPECT_EQ(ax::mojom::Role::kRow, row_data.role);
-    EXPECT_EQ(i - 1, static_cast<int>(row_data.GetIntAttribute(
-                         ax::mojom::IntAttribute::kTableRowIndex)));
+    EXPECT_EQ(
+        i, row_data.GetIntAttribute(ax::mojom::IntAttribute::kTableRowIndex));
+    ASSERT_FALSE(row_data.HasState(ax::mojom::State::kInvisible));
 
-    ASSERT_EQ(
-        helper_->visible_col_count(),
-        static_cast<size_t>(const_cast<AXVirtualView*>(row)->GetChildCount()));
-    for (int j = 0; j < static_cast<int>(helper_->visible_col_count()); ++j) {
-      const AXVirtualView* cell = row->child_at(j);
+    ASSERT_EQ(helper_->visible_col_count(), row->children().size());
+    j = 0;
+    for (const auto& cell : row->children()) {
       ASSERT_TRUE(cell);
       const ui::AXNodeData& cell_data = cell->GetData();
       EXPECT_EQ(ax::mojom::Role::kCell, cell_data.role);
-      EXPECT_EQ(i - 1, static_cast<int>(cell_data.GetIntAttribute(
-                           ax::mojom::IntAttribute::kTableCellRowIndex)));
-      EXPECT_EQ(j, static_cast<int>(cell_data.GetIntAttribute(
-                       ax::mojom::IntAttribute::kTableCellColumnIndex)));
+      EXPECT_EQ(i, cell_data.GetIntAttribute(
+                       ax::mojom::IntAttribute::kTableCellRowIndex));
+      EXPECT_EQ(j++, cell_data.GetIntAttribute(
+                         ax::mojom::IntAttribute::kTableCellColumnIndex));
+      ASSERT_FALSE(cell_data.HasState(ax::mojom::State::kInvisible));
     }
   }
 }
 
+// Verifies the bounding rect of each virtual accessibility child of the
+// TableView (rows and cells) is updated appropriately as the table changes. For
+// example, verifies that if a column is resized or hidden, the bounds are
+// updated.
+TEST_F(TableViewTest, UpdateVirtualAccessibilityChildrenBounds) {
+  // Verify the bounds are updated correctly when the TableView and its widget
+  // have been shown. Initially some widths would be 0 until the TableView's
+  // bounds are fully set up, so make sure the virtual children bounds have been
+  // updated and now match the expected bounds.
+  auto expected_bounds = helper_->GenerateExpectedBounds();
+  VerifyTableAccChildrenBounds(table_->GetViewAccessibility(), expected_bounds);
+}
+
+TEST_F(TableViewTest, UpdateVirtualAccessibilityChildrenBoundsWithResize) {
+  // Resize the first column 10 pixels smaller and check the bounds are updated.
+  int x = table_->GetVisibleColumn(0).width;
+  PressLeftMouseAt(helper_->header(), gfx::Point(x, 0));
+  DragLeftMouseTo(helper_->header(), gfx::Point(x - 10, 0));
+
+  auto expected_bounds_after_resize = helper_->GenerateExpectedBounds();
+  VerifyTableAccChildrenBounds(table_->GetViewAccessibility(),
+                               expected_bounds_after_resize);
+}
+
+TEST_F(TableViewTest, UpdateVirtualAccessibilityChildrenBoundsHideColumn) {
+  // Hide 1 column and check the bounds are updated.
+  table_->SetColumnVisibility(1, false);
+  auto expected_bounds_after_hiding = helper_->GenerateExpectedBounds();
+  VerifyTableAccChildrenBounds(table_->GetViewAccessibility(),
+                               expected_bounds_after_hiding);
+}
+
 TEST_F(TableViewTest, GetVirtualAccessibilityRow) {
-  for (int i = 0; i < table_->RowCount(); ++i) {
+  for (int i = 0; i < table_->GetRowCount(); ++i) {
     const AXVirtualView* row = helper_->GetVirtualAccessibilityRow(i);
     ASSERT_TRUE(row);
     const ui::AXNodeData& row_data = row->GetData();
@@ -425,7 +548,7 @@ TEST_F(TableViewTest, GetVirtualAccessibilityRow) {
 }
 
 TEST_F(TableViewTest, GetVirtualAccessibilityCell) {
-  for (int i = 0; i < table_->RowCount(); ++i) {
+  for (int i = 0; i < table_->GetRowCount(); ++i) {
     for (int j = 0; j < static_cast<int>(helper_->visible_col_count()); ++j) {
       const AXVirtualView* cell = helper_->GetVirtualAccessibilityCell(i, j);
       ASSERT_TRUE(cell);
@@ -741,15 +864,31 @@ TEST_F(TableViewTest, SortOnSpaceBar) {
   EXPECT_FALSE(table_->sort_descriptors()[1].ascending);
 }
 
+TEST_F(TableViewTest, Tooltip) {
+  // Column 0 uses the TableModel's GetTooltipText override for tooltips.
+  table_->SetVisibleColumnWidth(0, 10);
+  auto local_point_for_row = [&](int row) {
+    return gfx::Point(5, (row + 0.5) * table_->GetRowHeight());
+  };
+  auto expected = [](int row) {
+    return base::ASCIIToUTF16("Tooltip") + base::NumberToString16(row);
+  };
+  EXPECT_EQ(expected(0), table_->GetTooltipText(local_point_for_row(0)));
+  EXPECT_EQ(expected(1), table_->GetTooltipText(local_point_for_row(1)));
+  EXPECT_EQ(expected(2), table_->GetTooltipText(local_point_for_row(2)));
+
+  // Hovering another column will return that cell's text instead.
+  const gfx::Point point(15, local_point_for_row(0).y());
+  EXPECT_EQ(model_->GetText(0, 1), table_->GetTooltipText(point));
+}
+
 namespace {
 
 class TableGrouperImpl : public TableGrouper {
  public:
-  TableGrouperImpl() {}
+  TableGrouperImpl() = default;
 
-  void SetRanges(const std::vector<int>& ranges) {
-    ranges_ = ranges;
-  }
+  void SetRanges(const std::vector<int>& ranges) { ranges_ = ranges; }
 
   // TableGrouper overrides:
   void GetGroupRange(int model_index, GroupRange* range) override {
@@ -853,7 +992,7 @@ namespace {
 
 class TableViewObserverImpl : public TableViewObserver {
  public:
-  TableViewObserverImpl() : selection_changed_count_(0) {}
+  TableViewObserverImpl() = default;
 
   int GetChangedCountAndClear() {
     const int count = selection_changed_count_;
@@ -865,7 +1004,7 @@ class TableViewObserverImpl : public TableViewObserver {
   void OnSelectionChanged() override { selection_changed_count_++; }
 
  private:
-  int selection_changed_count_;
+  int selection_changed_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(TableViewObserverImpl);
 };
@@ -956,7 +1095,7 @@ TEST_F(TableViewTest, Selection) {
   EXPECT_EQ(0, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=3 anchor=3 selection=3", SelectionStateAsString());
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 TEST_F(TableViewTest, RemoveUnselectedRows) {
@@ -989,7 +1128,7 @@ TEST_F(TableViewTest, RemoveUnselectedRows) {
 TEST_F(TableViewTest, SelectionNoSelectOnRemove) {
   TableViewObserverImpl observer;
   table_->set_observer(&observer);
-  table_->set_select_on_remove(false);
+  table_->SetSelectOnRemove(false);
 
   // Initially no selection.
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
@@ -1046,7 +1185,7 @@ TEST_F(TableViewTest, SelectOnTap) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=0 anchor=0 selection=0", SelectionStateAsString());
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 #endif
 
@@ -1178,7 +1317,7 @@ TEST_F(TableViewTest, KeyUpDown) {
   EXPECT_EQ(0, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=2 anchor=2 selection=2", SelectionStateAsString());
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 // Verifies left/right correctly navigate through visible columns.
@@ -1277,7 +1416,7 @@ TEST_F(TableViewTest, KeyLeftRight) {
   EXPECT_EQ(0, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=1 anchor=1 selection=1", SelectionStateAsString());
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 // Verifies home/end do the right thing.
@@ -1313,7 +1452,7 @@ TEST_F(TableViewTest, HomeEnd) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=0 anchor=0 selection=0 1", SelectionStateAsString());
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 // Verifies multiple selection gestures work (control-click, shift-click ...).
@@ -1369,7 +1508,7 @@ TEST_F(TableViewTest, Multiselection) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=4 anchor=4 selection=3 4", SelectionStateAsString());
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 // Verifies multiple selection gestures work when sorted.
@@ -1468,7 +1607,7 @@ TEST_F(TableViewTest, MoveRowsWithMultipleSelection) {
   EXPECT_EQ("active=4 anchor=3 selection=1 3 4", SelectionStateAsString());
   EXPECT_EQ("[1], [77], [0], [2], [3]", GetRowsInViewOrderAsString(table_));
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 TEST_F(TableViewTest, MoveRowsWithMultipleSelectionAndSort) {
@@ -1527,7 +1666,7 @@ TEST_F(TableViewTest, MoveRowsWithMultipleSelectionAndSort) {
   EXPECT_EQ("active=3 anchor=2 selection=2 3 4", SelectionStateAsString());
   EXPECT_EQ(kViewOrder, GetRowsInViewOrderAsString(table_));
 
-  table_->set_observer(NULL);
+  table_->set_observer(nullptr);
 }
 
 // Verifies we don't crash after removing the selected row when there is
@@ -1560,9 +1699,9 @@ class RemoveFocusChangeListenerDelegate : public WidgetDelegate {
  public:
   explicit RemoveFocusChangeListenerDelegate(Widget* widget)
       : widget_(widget), listener_(nullptr) {}
-  ~RemoveFocusChangeListenerDelegate() override {}
+  ~RemoveFocusChangeListenerDelegate() override = default;
 
-  // WidgetDelegate overrides:
+  // WidgetDelegate:
   void DeleteDelegate() override;
   Widget* GetWidget() override { return widget_; }
   const Widget* GetWidget() const override { return widget_; }

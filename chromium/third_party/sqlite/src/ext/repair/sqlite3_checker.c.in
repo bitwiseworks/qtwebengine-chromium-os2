@@ -73,7 +73,7 @@ static int sqlite3_imposter(
 #include <stdio.h>
 
 const char *sqlite3_checker_init_proc(Tcl_Interp *interp){
-  Tcl_CreateObjCommand(interp, "sqlite3_imposter",
+  Tcl_CreateObjCommand(interp, "sqlite3_imposter", 
                        (Tcl_ObjCmdProc*)sqlite3_imposter, 0, 0);
   sqlite3_auto_extension((void(*)(void))sqlite3_btreeinfo_init);
   sqlite3_auto_extension((void(*)(void))sqlite3_checkindex_init);

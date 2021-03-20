@@ -36,11 +36,6 @@ class ShellPermissionMessageProvider : public PermissionMessageProvider {
     return PermissionMessages();
   }
 
-  PermissionMessages GetPowerfulPermissionMessages(
-      const PermissionIDSet& permissions) const override {
-    return PermissionMessages();
-  }
-
   bool IsPrivilegeIncrease(const PermissionSet& granted_permissions,
                            const PermissionSet& requested_permissions,
                            Manifest::Type extension_type) const override {
@@ -120,13 +115,6 @@ bool ShellExtensionsClient::IsScriptableURL(const GURL& url,
                                             std::string* error) const {
   // No restrictions on URLs.
   return true;
-}
-
-bool ShellExtensionsClient::ShouldSuppressFatalErrors() const {
-  return true;
-}
-
-void ShellExtensionsClient::RecordDidSuppressFatalError() {
 }
 
 const GURL& ShellExtensionsClient::GetWebstoreBaseURL() const {

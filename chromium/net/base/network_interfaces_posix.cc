@@ -9,7 +9,6 @@
 #if defined(OS_OS2)
 #include <sys/socket.h>
 #endif
-#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 

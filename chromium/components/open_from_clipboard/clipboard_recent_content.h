@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/gfx/image/image.h"
@@ -37,9 +38,15 @@ class ClipboardRecentContent {
   // is recent enough and has not been suppressed.
   virtual base::Optional<base::string16> GetRecentTextFromClipboard() = 0;
 
-  // Returns clipboard content as image, if it has a compatible type,
-  // is recent enough and has not been suppressed.
-  virtual base::Optional<gfx::Image> GetRecentImageFromClipboard() = 0;
+  using GetRecentImageCallback =
+      base::OnceCallback<void(base::Optional<gfx::Image>)>;
+
+  // Returns clipboard content as image to |GetRecentImageCallback|, if it has a
+  // compatible type, is recent enough and has not been suppressed.
+  virtual void GetRecentImageFromClipboard(GetRecentImageCallback callback) = 0;
+
+  // Return if system's clipboard contains an image.
+  virtual bool HasRecentImageFromClipboard() = 0;
 
   // Returns how old the content of the clipboard is.
   virtual base::TimeDelta GetClipboardContentAge() const = 0;
@@ -47,6 +54,10 @@ class ClipboardRecentContent {
   // Prevent GetRecentURLFromClipboard from returning anything until the
   // clipboard's content changed.
   virtual void SuppressClipboardContent() = 0;
+
+  // Clear clipboard content. Different with |SuppressClipboardContent|, this
+  // function will clear content in the clipboard.
+  virtual void ClearClipboardContent() = 0;
 
  protected:
   // GetRecentURLFromClipboard() should never return a URL from a clipboard

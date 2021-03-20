@@ -33,17 +33,18 @@ extern const base::FilePath::CharType kFrameworkExecutableName[];
 #endif  // OS_MACOSX
 #if defined(OS_WIN)
 extern const base::FilePath::CharType kBrowserResourcesDll[];
+extern const base::FilePath::CharType kChildDll[];
+extern const base::FilePath::CharType kElfDll[];
 extern const base::FilePath::CharType kStatusTrayWindowClass[];
 #endif  // defined(OS_WIN)
 
-extern const char    kInitialProfile[];
-extern const char    kMultiProfileDirPrefix[];
+extern const char kInitialProfile[];
+extern const char kMultiProfileDirPrefix[];
 extern const base::FilePath::CharType kGuestProfileDir[];
 extern const base::FilePath::CharType kSystemProfileDir[];
 
 // filenames
 extern const base::FilePath::CharType kCacheDirname[];
-extern const base::FilePath::CharType kChannelIDFilename[];
 extern const base::FilePath::CharType kCookieFilename[];
 extern const base::FilePath::CharType kCRLSetFilename[];
 extern const base::FilePath::CharType kCustomDictionaryFileName[];
@@ -53,14 +54,15 @@ extern const base::FilePath::CharType kExtensionsCookieFilename[];
 extern const base::FilePath::CharType kFeatureEngagementTrackerStorageDirname[];
 extern const base::FilePath::CharType kFirstRunSentinel[];
 extern const base::FilePath::CharType kGCMStoreDirname[];
+extern const base::FilePath::CharType kHeavyAdInterventionOptOutDBFilename[];
 extern const base::FilePath::CharType kLocalStateFilename[];
 extern const base::FilePath::CharType kMediaCacheDirname[];
 extern const base::FilePath::CharType kNetworkPersistentStateFilename[];
+extern const base::FilePath::CharType kNotificationSchedulerStorageDirname[];
 extern const base::FilePath::CharType kOfflinePageArchivesDirname[];
 extern const base::FilePath::CharType kOfflinePageMetadataDirname[];
 extern const base::FilePath::CharType kOfflinePagePrefetchStoreDirname[];
 extern const base::FilePath::CharType kOfflinePageRequestQueueDirname[];
-extern const base::FilePath::CharType kPageLoadCappingOptOutDBFilename[];
 extern const base::FilePath::CharType kPreferencesFilename[];
 extern const base::FilePath::CharType kPreviewsOptOutDBFilename[];
 extern const base::FilePath::CharType kReadmeFilename[];
@@ -71,7 +73,9 @@ extern const base::FilePath::CharType kSingletonLockFilename[];
 extern const base::FilePath::CharType kSingletonSocketFilename[];
 extern const base::FilePath::CharType kSupervisedUserSettingsFilename[];
 extern const base::FilePath::CharType kThemePackFilename[];
+extern const base::FilePath::CharType kTrustTokenFilename[];
 extern const base::FilePath::CharType kWebAppDirname[];
+extern const base::FilePath::CharType kReportingAndNelStoreFilename[];
 
 #if defined(OS_WIN)
 extern const base::FilePath::CharType kJumpListIconDirname[];
@@ -92,13 +96,6 @@ extern const wchar_t kUserDataDirname[];
 // installed.
 extern const float kMaxShareOfExtensionProcesses;
 
-#if defined(OS_LINUX)
-// The highest and lowest assigned OOM score adjustment
-// (oom_score_adj) used by the OomPriority Manager.
-extern const int kLowestRendererOomScore;
-extern const int kHighestRendererOomScore;
-#endif
-
 #if defined(OS_CHROMEOS)
 // Chrome OS profile directories have custom prefix.
 // Profile path format: [user_data_dir]/u-[$hash]
@@ -110,6 +107,8 @@ extern const char kLegacyProfileDir[];
 
 // This must be kept in sync with TestingProfile::kTestUserProfileDir.
 extern const char kTestUserProfileDir[];
+
+extern const char kLockScreenAppProfile[];
 #endif
 
 // Used to identify the application to the system AV function in Windows.

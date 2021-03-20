@@ -22,8 +22,7 @@ ScreenScreenOrientation& ScreenScreenOrientation::From(Screen& screen) {
 }
 
 // static
-ScreenOrientation* ScreenScreenOrientation::orientation(ScriptState* state,
-                                                        Screen& screen) {
+ScreenOrientation* ScreenScreenOrientation::orientation(Screen& screen) {
   ScreenScreenOrientation& self = ScreenScreenOrientation::From(screen);
   if (!screen.GetFrame())
     return nullptr;
@@ -37,7 +36,7 @@ ScreenOrientation* ScreenScreenOrientation::orientation(ScriptState* state,
 const char ScreenScreenOrientation::kSupplementName[] =
     "ScreenScreenOrientation";
 
-void ScreenScreenOrientation::Trace(blink::Visitor* visitor) {
+void ScreenScreenOrientation::Trace(Visitor* visitor) {
   visitor->Trace(orientation_);
   Supplement<Screen>::Trace(visitor);
 }

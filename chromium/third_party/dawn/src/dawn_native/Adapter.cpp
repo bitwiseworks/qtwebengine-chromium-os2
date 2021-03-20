@@ -18,12 +18,16 @@
 
 namespace dawn_native {
 
-    AdapterBase::AdapterBase(InstanceBase* instance, BackendType backend)
+    AdapterBase::AdapterBase(InstanceBase* instance, wgpu::BackendType backend)
         : mInstance(instance), mBackend(backend) {
     }
 
-    BackendType AdapterBase::GetBackendType() const {
+    wgpu::BackendType AdapterBase::GetBackendType() const {
         return mBackend;
+    }
+
+    wgpu::AdapterType AdapterBase::GetAdapterType() const {
+        return mAdapterType;
     }
 
     const PCIInfo& AdapterBase::GetPCIInfo() const {
@@ -34,20 +38,52 @@ namespace dawn_native {
         return mInstance;
     }
 
-    DeviceBase* AdapterBase::CreateDevice() {
+    ExtensionsSet AdapterBase::GetSupportedExtensions() const {
+        return mSupportedExtensions;
+    }
+
+    bool AdapterBase::SupportsAllRequestedExtensions(
+        const std::vector<const char*>& requestedExtensions) const {
+        for (const char* extensionStr : requestedExtensions) {
+            Extension extensionEnum = mInstance->ExtensionNameToEnum(extensionStr);
+            if (extensionEnum == Extension::InvalidEnum) {
+                return false;
+            }
+            if (!mSupportedExtensions.IsEnabled(extensionEnum)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    WGPUDeviceProperties AdapterBase::GetAdapterProperties() const {
+        WGPUDeviceProperties adapterProperties = {};
+
+        mSupportedExtensions.InitializeDeviceProperties(&adapterProperties);
+        return adapterProperties;
+    }
+
+    DeviceBase* AdapterBase::CreateDevice(const DeviceDescriptor* descriptor) {
         DeviceBase* result = nullptr;
 
-        if (mInstance->ConsumedError(CreateDeviceInternal(&result))) {
+        if (mInstance->ConsumedError(CreateDeviceInternal(&result, descriptor))) {
             return nullptr;
         }
 
         return result;
     }
 
-    MaybeError AdapterBase::CreateDeviceInternal(DeviceBase** result) {
+    MaybeError AdapterBase::CreateDeviceInternal(DeviceBase** result,
+                                                 const DeviceDescriptor* descriptor) {
+        if (descriptor != nullptr) {
+            if (!SupportsAllRequestedExtensions(descriptor->requiredExtensions)) {
+                return DAWN_VALIDATION_ERROR("One or more requested extensions are not supported");
+            }
+        }
+
         // TODO(cwallez@chromium.org): This will eventually have validation that the device
         // descriptor is valid and is a subset what's allowed on this adapter.
-        DAWN_TRY_ASSIGN(*result, CreateDeviceImpl());
+        DAWN_TRY_ASSIGN(*result, CreateDeviceImpl(descriptor));
         return {};
     }
 

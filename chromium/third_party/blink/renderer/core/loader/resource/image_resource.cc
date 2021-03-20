@@ -28,12 +28,13 @@
 #include <memory>
 #include <utility>
 
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_info.h"
-#include "third_party/blink/renderer/platform/histogram.h"
-#include "third_party/blink/renderer/platform/instance_counters.h"
+#include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
@@ -43,14 +44,17 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loading_log.h"
+#include "third_party/blink/renderer/platform/loader/fetch/unique_identifier.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/weborigin/security_violation_reporting_policy.h"
+#include "third_party/blink/renderer/platform/weborigin/reporting_disposition.h"
+#include "third_party/blink/renderer/platform/weborigin/security_policy.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
+
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -60,20 +64,12 @@ namespace {
 // The amount of time to wait before informing the clients that the image has
 // been updated (in seconds). This effectively throttles invalidations that
 // result from new data arriving for this image.
-constexpr auto kFlushDelay = TimeDelta::FromSeconds(1);
-
-bool HasServerLoFiResponseHeaders(const ResourceResponse& response) {
-  return response.HttpHeaderField("chrome-proxy-content-transform")
-             .Contains("empty-image") ||
-         // Check for the legacy Server Lo-Fi response headers, since it's
-         // possible that an old Lo-Fi image could be served from the cache.
-         response.HttpHeaderField("chrome-proxy").Contains("q=low");
-}
+constexpr auto kFlushDelay = base::TimeDelta::FromSeconds(1);
 
 }  // namespace
 
 class ImageResource::ImageResourceInfoImpl final
-    : public GarbageCollectedFinalized<ImageResourceInfoImpl>,
+    : public GarbageCollected<ImageResourceInfoImpl>,
       public ImageResourceInfo {
   USING_GARBAGE_COLLECTED_MIXIN(ImageResourceInfoImpl);
 
@@ -82,13 +78,16 @@ class ImageResource::ImageResourceInfoImpl final
       : resource_(resource) {
     DCHECK(resource_);
   }
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(resource_);
     ImageResourceInfo::Trace(visitor);
   }
 
  private:
   const KURL& Url() const override { return resource_->Url(); }
+  base::TimeTicks LoadResponseEnd() const override {
+    return resource_->LoadResponseEnd();
+  }
   bool IsSchedulingReload() const override {
     return resource_->is_scheduling_reload_;
   }
@@ -135,7 +134,8 @@ class ImageResource::ImageResourceInfoImpl final
       const KURL& url,
       const AtomicString& initiator_name) override {
     fetcher->EmulateLoadStartedForInspector(
-        resource_.Get(), url, mojom::RequestContextType::IMAGE, initiator_name);
+        resource_.Get(), url, mojom::RequestContextType::IMAGE,
+        network::mojom::RequestDestination::kImage, initiator_name);
   }
 
   void LoadDeferredImage(ResourceFetcher* fetcher) override {
@@ -144,6 +144,10 @@ class ImageResource::ImageResourceInfoImpl final
         !fetcher->ShouldDeferImageLoad(resource_->Url())) {
       fetcher->StartLoad(resource_);
     }
+  }
+
+  bool IsAdResource() const override {
+    return resource_->GetResourceRequest().IsAdResource();
   }
 
   const Member<ImageResource> resource_;
@@ -175,6 +179,7 @@ ImageResource* ImageResource::Fetch(FetchParameters& params,
   if (params.GetResourceRequest().GetRequestContext() ==
       mojom::RequestContextType::UNSPECIFIED) {
     params.SetRequestContext(mojom::RequestContextType::IMAGE);
+    params.SetRequestDestination(network::mojom::RequestDestination::kImage);
   }
 
   ImageResource* resource = ToImageResource(
@@ -219,6 +224,14 @@ ImageResource* ImageResource::Create(const ResourceRequest& request) {
 
 ImageResource* ImageResource::CreateForTest(const KURL& url) {
   ResourceRequest request(url);
+  request.SetInspectorId(CreateUniqueIdentifier());
+  // These are needed because some unittests don't go through the usual
+  // request setting path in ResourceFetcher.
+  request.SetRequestorOrigin(SecurityOrigin::CreateUniqueOpaque());
+  request.SetReferrerPolicy(
+      ReferrerPolicyResolveDefault(request.GetReferrerPolicy()));
+  request.SetPriority(WebURLRequest::Priority::kLow);
+
   return Create(request);
 }
 
@@ -255,7 +268,7 @@ void ImageResource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
     dump->AddScalar("size", "bytes", content_->GetImage()->Data()->size());
 }
 
-void ImageResource::Trace(blink::Visitor* visitor) {
+void ImageResource::Trace(Visitor* visitor) {
   visitor->Trace(multipart_parser_);
   visitor->Trace(content_);
   Resource::Trace(visitor);
@@ -353,13 +366,13 @@ void ImageResource::AppendData(const char* data, size_t length) {
     if (!is_pending_flushing_) {
       scoped_refptr<base::SingleThreadTaskRunner> task_runner =
           Loader()->GetLoadingTaskRunner();
-      TimeTicks now = CurrentTimeTicks();
+      base::TimeTicks now = base::TimeTicks::Now();
       if (last_flush_time_.is_null())
         last_flush_time_ = now;
 
       DCHECK_LE(last_flush_time_, now);
-      TimeDelta flush_delay =
-          std::max(TimeDelta(), last_flush_time_ - now + kFlushDelay);
+      base::TimeDelta flush_delay =
+          std::max(base::TimeDelta(), last_flush_time_ - now + kFlushDelay);
       task_runner->PostDelayedTask(FROM_HERE,
                                    WTF::Bind(&ImageResource::FlushImageIfNeeded,
                                              WrapWeakPersistent(this)),
@@ -373,7 +386,7 @@ void ImageResource::FlushImageIfNeeded() {
   // We might have already loaded the image fully, in which case we don't need
   // to call |updateImage()|.
   if (IsLoading()) {
-    last_flush_time_ = CurrentTimeTicks();
+    last_flush_time_ = base::TimeTicks::Now();
     UpdateImage(Data(), ImageResourceContent::kUpdateImage, false);
   }
   is_pending_flushing_ = false;
@@ -395,9 +408,8 @@ void ImageResource::DecodeError(bool all_data_received) {
   if (!all_data_received && Loader()) {
     // Observers are notified via ImageResource::finish().
     // TODO(hiroshige): Do not call didFinishLoading() directly.
-    Loader()->DidFinishLoading(
-        CurrentTimeTicks(), size, size, size, false,
-        std::vector<network::cors::PreflightTimingInfo>());
+    Loader()->AbortResponseBodyLoading();
+    Loader()->DidFinishLoading(base::TimeTicks::Now(), size, size, size, false);
   } else {
     auto result = GetContent()->UpdateImage(
         nullptr, GetStatus(),
@@ -420,7 +432,7 @@ void ImageResource::NotifyStartLoad() {
   GetContent()->NotifyStartLoad();
 }
 
-void ImageResource::Finish(TimeTicks load_finish_time,
+void ImageResource::Finish(base::TimeTicks load_finish_time,
                            base::SingleThreadTaskRunner* task_runner) {
   if (multipart_parser_) {
     if (!ErrorOccurred())
@@ -469,10 +481,7 @@ static bool IsEntireResource(const ResourceResponse& response) {
          first_byte_position == 0 && last_byte_position + 1 == instance_length;
 }
 
-void ImageResource::ResponseReceived(
-    const ResourceResponse& response,
-    std::unique_ptr<WebDataConsumerHandle> handle) {
-  DCHECK(!handle);
+void ImageResource::ResponseReceived(const ResourceResponse& response) {
   DCHECK(!multipart_parser_);
   if (response.MimeType() == "multipart/x-mixed-replace") {
     Vector<char> boundary = network_utils::ParseMultipartBoundary(
@@ -489,7 +498,7 @@ void ImageResource::ResponseReceived(
   // ResourceResponse, while |response| might just be a revalidation response
   // (e.g. a 304) with a partial set of updated headers that were folded into
   // the cached response.
-  Resource::ResponseReceived(response, std::move(handle));
+  Resource::ResponseReceived(response);
 
   if (placeholder_option_ ==
           PlaceholderOption::kShowAndReloadPlaceholderAlways &&
@@ -506,44 +515,9 @@ void ImageResource::ResponseReceived(
       placeholder_option_ = PlaceholderOption::kReloadPlaceholderOnDecodeError;
     }
   }
-
-  if (HasServerLoFiResponseHeaders(GetResponse())) {
-    // Ensure that the PreviewsState bit for Server Lo-Fi is set iff Chrome
-    // received the appropriate Server Lo-Fi response headers for this image.
-    //
-    // Normally, the |kServerLoFiOn| bit should already be set if Server Lo-Fi
-    // response headers are coming back, but it's possible for legacy Lo-Fi
-    // images to be served from the cache even if Chrome isn't in Lo-Fi mode.
-    // This also serves as a nice last line of defence to ensure that Server
-    // Lo-Fi images can be reloaded to show the original even if e.g. a server
-    // bug causes Lo-Fi images to be sent when they aren't expected.
-    SetPreviewsState(GetResourceRequest().GetPreviewsState() |
-                     WebURLRequest::kServerLoFiOn);
-  } else if (GetResourceRequest().GetPreviewsState() &
-             WebURLRequest::kServerLoFiOn) {
-    // If Chrome expects a Lo-Fi response, but the server decided to send the
-    // full image, then clear the Server Lo-Fi Previews state bit.
-    WebURLRequest::PreviewsState new_previews_state =
-        GetResourceRequest().GetPreviewsState();
-
-    new_previews_state &= ~WebURLRequest::kServerLoFiOn;
-    if (new_previews_state == WebURLRequest::kPreviewsUnspecified)
-      new_previews_state = WebURLRequest::kPreviewsOff;
-
-    SetPreviewsState(new_previews_state);
-  }
 }
 
 bool ImageResource::ShouldShowPlaceholder() const {
-  if (RuntimeEnabledFeatures::ClientPlaceholdersForServerLoFiEnabled() &&
-      (GetResourceRequest().GetPreviewsState() &
-       WebURLRequest::kServerLoFiOn)) {
-    // If the runtime feature is enabled, show Client Lo-Fi placeholder images
-    // in place of Server Lo-Fi responses. This is done so that all Lo-Fi images
-    // have a consistent appearance.
-    return true;
-  }
-
   switch (placeholder_option_) {
     case PlaceholderOption::kShowAndReloadPlaceholderAlways:
     case PlaceholderOption::kShowAndDoNotReloadPlaceholder:
@@ -591,17 +565,6 @@ void ImageResource::ReloadIfLoFiOrPlaceholderImage(
   if (policy == kReloadIfNeeded && !ShouldReloadBrokenPlaceholder())
     return;
 
-  // If the image is loaded, then the |PreviewsState::kServerLoFiOn| bit should
-  // be set iff the image has Server Lo-Fi response headers.
-  DCHECK(!IsLoaded() ||
-         HasServerLoFiResponseHeaders(GetResponse()) ==
-             static_cast<bool>(GetResourceRequest().GetPreviewsState() &
-                               WebURLRequest::kServerLoFiOn));
-
-  if (placeholder_option_ == PlaceholderOption::kDoNotReloadPlaceholder &&
-      !(GetResourceRequest().GetPreviewsState() & WebURLRequest::kServerLoFiOn))
-    return;
-
   // Prevent clients and observers from being notified of completion while the
   // reload is being scheduled, so that e.g. canceling an existing load in
   // progress doesn't cause clients and observers to be notified of completion
@@ -609,35 +572,14 @@ void ImageResource::ReloadIfLoFiOrPlaceholderImage(
   DCHECK(!is_scheduling_reload_);
   is_scheduling_reload_ = true;
 
-  if (GetResourceRequest().GetPreviewsState() &
-      (WebURLRequest::kClientLoFiOn | WebURLRequest::kServerLoFiOn)) {
-    SetCachePolicyBypassingCache();
-  }
-
   // The reloaded image should not use any previews transformations.
   WebURLRequest::PreviewsState previews_state_for_reload =
       WebURLRequest::kPreviewsNoTransform;
-  WebURLRequest::PreviewsState old_previews_state =
-      GetResourceRequest().GetPreviewsState();
 
-  if (policy == kReloadIfNeeded && (GetResourceRequest().GetPreviewsState() &
-                                    WebURLRequest::kClientLoFiOn)) {
-    // If the image attempted to use Client LoFi, but encountered a decoding
-    // error and is being automatically reloaded, then also set the appropriate
-    // PreviewsState bit for that. This allows the embedder to count the
-    // bandwidth used for this reload against the data savings of the initial
-    // response.
-    previews_state_for_reload |= WebURLRequest::kClientLoFiAutoReload;
-  }
   SetPreviewsState(previews_state_for_reload);
 
-  if (placeholder_option_ != PlaceholderOption::kDoNotReloadPlaceholder)
+  if (placeholder_option_ != PlaceholderOption::kDoNotReloadPlaceholder) {
     ClearRangeRequestHeader();
-
-  if (old_previews_state & WebURLRequest::kClientLoFiOn &&
-      policy != kReloadAlways) {
-    placeholder_option_ = PlaceholderOption::kShowAndDoNotReloadPlaceholder;
-  } else {
     placeholder_option_ = PlaceholderOption::kDoNotReloadPlaceholder;
   }
 

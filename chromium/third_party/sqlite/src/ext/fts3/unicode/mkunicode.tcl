@@ -126,7 +126,7 @@ proc print_isdiacritic {zFunc map} {
   }
 
   puts "/*"
-  puts "** Return true if the argument interpreted as a unicode codepoint"
+  puts "** Return true if the argument interpreted as a unicode codepoint" 
   puts "** is a diacritical modifier character."
   puts "*/"
   puts "int ${zFunc}\(int c)\{"
@@ -146,8 +146,8 @@ proc print_isdiacritic {zFunc map} {
 proc an_load_separator_ranges {} {
   global unicodedata.txt
   set lSep [an_load_unicodedata_text ${unicodedata.txt}]
-  unset -nocomplain iFirst
-  unset -nocomplain nRange
+  unset -nocomplain iFirst 
+  unset -nocomplain nRange 
   set lRange [list]
   foreach sep $lSep {
     if {0==[info exists iFirst]} {
@@ -160,7 +160,7 @@ proc an_load_separator_ranges {} {
       set iFirst $sep
       set nRange 1
     }
-  }
+  } 
   lappend lRange [list $iFirst $nRange]
   set lRange
 }
@@ -182,11 +182,11 @@ proc an_print_range_array {lRange} {
   ** range of unicode codepoints that are not either letters or numbers (i.e.
   ** codepoints for which this function should return 0).
   **
-  ** The most significant 22 bits in each 32-bit value contain the first
+  ** The most significant 22 bits in each 32-bit value contain the first 
   ** codepoint in the range. The least significant 10 bits are used to store
-  ** the size of the range (always at least 1). In other words, the value
-  ** ((C<<22) + N) represents a range of N codepoints starting with codepoint
-  ** C. It is not possible to represent a range larger than 1023 codepoints
+  ** the size of the range (always at least 1). In other words, the value 
+  ** ((C<<22) + N) represents a range of N codepoints starting with codepoint 
+  ** C. It is not possible to represent a range larger than 1023 codepoints 
   ** using this format.
   */
   }]
@@ -487,10 +487,10 @@ proc print_fold {zFunc} {
 
   set liOff [tl_generate_ioff_table $lRecord]
   tl_print_table_header
-  foreach entry $lRecord {
-    if {[tl_print_table_entry toggle $entry $liOff]} {
-      lappend lHigh $entry
-    }
+  foreach entry $lRecord { 
+    if {[tl_print_table_entry toggle $entry $liOff]} { 
+      lappend lHigh $entry 
+    } 
   }
   tl_print_table_footer toggle
   tl_print_ioff_table $liOff
@@ -618,7 +618,7 @@ proc print_categories {lMap} {
 
   set nCat [expr [llength [array names C]] + 1]
   puts [code {
-    int sqlite3Fts5UnicodeCatParse(const char *zCat, u8 *aArray){
+    int sqlite3Fts5UnicodeCatParse(const char *zCat, u8 *aArray){ 
       aArray[0] = 1;
       switch( zCat[0] ){
         $caseC
@@ -700,7 +700,7 @@ proc print_categories {lMap} {
     static u16 aFts5UnicodeMap[] = {$aMapArray};
     static u16 aFts5UnicodeData[] = {$aDataArray};
 
-    int sqlite3Fts5UnicodeCategory(u32 iCode) {
+    int sqlite3Fts5UnicodeCategory(u32 iCode) { 
       int iRes = -1;
       int iHi;
       int iLo;
@@ -738,7 +738,7 @@ proc print_categories {lMap} {
         int bToken = aArray[ aFts5UnicodeData[iTbl] & 0x1F ];
         int n = (aFts5UnicodeData[iTbl] >> 5) + i;
         for(; i<128 && i<n; i++){
-          aAscii[i] = bToken;
+          aAscii[i] = (u8)bToken;
         }
         iTbl++;
       }
@@ -963,7 +963,7 @@ if {$generate_fts5_code} {
   print_categories [cc_load_unicodedata_text ${unicodedata.txt}]
 }
 
-# Print the test routines and main() function to stdout, if -test
+# Print the test routines and main() function to stdout, if -test 
 # was specified.
 #
 if {$::generate_test_code} {
@@ -972,7 +972,7 @@ if {$::generate_test_code} {
   }
   print_fold_test ${function_prefix}UnicodeFold $mappings
   print_test_categories [cc_load_unicodedata_text ${unicodedata.txt}]
-  print_test_main
+  print_test_main 
 }
 
 if {$generate_fts5_code} {

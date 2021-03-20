@@ -17,6 +17,7 @@
 #include "content/renderer/pepper/plugin_module.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/http/http_util.h"
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_var.h"
@@ -24,11 +25,10 @@
 #include "ppapi/shared_impl/url_request_info_data.h"
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/thunk/enter.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "third_party/blink/public/mojom/filesystem/file_system.mojom.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/public/platform/web_data.h"
-#include "third_party/blink/public/platform/web_feature.mojom.h"
 #include "third_party/blink/public/platform/web_http_body.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_request.h"
@@ -51,11 +51,11 @@ namespace content {
 
 namespace {
 
-blink::mojom::FileSystemManagerPtr GetFileSystemManager() {
-  blink::mojom::FileSystemManagerPtr file_system_manager_ptr;
-  ChildThreadImpl::current()->GetConnector()->BindInterface(
-      mojom::kBrowserServiceName, mojo::MakeRequest(&file_system_manager_ptr));
-  return file_system_manager_ptr;
+mojo::Remote<blink::mojom::FileSystemManager> GetFileSystemManager() {
+  mojo::Remote<blink::mojom::FileSystemManager> file_system_manager;
+  ChildThreadImpl::current()->BindHostReceiver(
+      file_system_manager.BindNewPipeAndPassReceiver());
+  return file_system_manager;
 }
 
 // Appends the file ref given the Resource pointer associated with it to the
@@ -96,9 +96,13 @@ bool AppendFileRefToBody(PP_Instance instance,
     default:
       NOTREACHED();
   }
+  base::Optional<base::Time> optional_modified_time;
+  if (expected_last_modified_time != 0)
+    optional_modified_time =
+        base::Time::FromDoubleT(expected_last_modified_time);
   http_body->AppendFileRange(blink::FilePathToWebString(platform_path),
                              start_offset, number_of_bytes,
-                             expected_last_modified_time);
+                             optional_modified_time);
   return true;
 }
 
@@ -177,12 +181,12 @@ bool CreateWebURLRequest(PP_Instance instance,
     name_version = "internal_testing_only";
   }
 
-  dest->SetURL(
+  dest->SetUrl(
       frame->GetDocument().CompleteURL(WebString::FromUTF8(data->url)));
   dest->SetReportUploadProgress(data->record_upload_progress);
 
   if (!data->method.empty())
-    dest->SetHTTPMethod(WebString::FromUTF8(data->method));
+    dest->SetHttpMethod(WebString::FromUTF8(data->method));
 
   dest->SetSiteForCookies(frame->GetDocument().SiteForCookies());
 
@@ -196,7 +200,7 @@ bool CreateWebURLRequest(PP_Instance instance,
   if (!headers.empty()) {
     net::HttpUtil::HeadersIterator it(headers.begin(), headers.end(), "\n\r");
     while (it.GetNext()) {
-      dest->AddHTTPHeaderField(WebString::FromUTF8(it.name()),
+      dest->AddHttpHeaderField(WebString::FromUTF8(it.name()),
                                WebString::FromUTF8(it.values()));
     }
   }
@@ -222,7 +226,7 @@ bool CreateWebURLRequest(PP_Instance instance,
         http_body.AppendData(WebData(item.data));
       }
     }
-    dest->SetHTTPBody(http_body);
+    dest->SetHttpBody(http_body);
   }
 
   // Add the "Referer" header if there is a custom referrer. Such requests
@@ -233,7 +237,7 @@ bool CreateWebURLRequest(PP_Instance instance,
 
   if (data->has_custom_content_transfer_encoding &&
       !data->custom_content_transfer_encoding.empty()) {
-    dest->AddHTTPHeaderField(
+    dest->AddHttpHeaderField(
         WebString::FromUTF8("Content-Transfer-Encoding"),
         WebString::FromUTF8(data->custom_content_transfer_encoding));
   }
@@ -242,11 +246,13 @@ bool CreateWebURLRequest(PP_Instance instance,
     dest->SetRequestedWithHeader(WebString::FromUTF8(name_version));
 
   if (data->has_custom_user_agent) {
-    auto extra_data = std::make_unique<RequestExtraData>();
+    auto extra_data = base::MakeRefCounted<RequestExtraData>();
     extra_data->set_custom_user_agent(
         WebString::FromUTF8(data->custom_user_agent));
     dest->SetExtraData(std::move(extra_data));
   }
+
+  dest->SetRequestContext(blink::mojom::RequestContextType::PLUGIN);
 
   return true;
 }

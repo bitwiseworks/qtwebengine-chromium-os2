@@ -11,8 +11,8 @@
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "v8/include/v8.h"
@@ -26,7 +26,6 @@ class IDBValue;
 class ScriptState;
 class ScriptValue;
 class SerializedScriptValue;
-class SharedBuffer;
 
 const base::Feature kIndexedDBLargeValueWrapping{
     "IndexedDBLargeValueWrapping", base::FEATURE_DISABLED_BY_DEFAULT};
@@ -158,6 +157,16 @@ class MODULES_EXPORT IDBValueWrapper {
     return std::move(blob_info_);
   }
 
+  Vector<mojo::PendingRemote<mojom::blink::NativeFileSystemTransferToken>>
+  TakeNativeFileSystemTransferTokens() {
+#if DCHECK_IS_ON()
+    DCHECK(done_cloning_) << __func__ << " called before DoneCloning()";
+    DCHECK(owns_file_system_handles_) << __func__ << " called twice";
+    owns_file_system_handles_ = false;
+#endif  // DCHECK_IS_ON()
+    return std::move(serialized_value_->NativeFileSystemTokens());
+  }
+
   size_t DataLengthBeforeWrapInBytes() { return original_data_length_; }
 
   // Default threshold for WrapIfBiggerThan().
@@ -200,6 +209,7 @@ class MODULES_EXPORT IDBValueWrapper {
   bool owns_blob_handles_ = true;
   bool owns_blob_info_ = true;
   bool owns_wire_bytes_ = true;
+  bool owns_file_system_handles_ = true;
 #endif  // DCHECK_IS_ON()
 };
 

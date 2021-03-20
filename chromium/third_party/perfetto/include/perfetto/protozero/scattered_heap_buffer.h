@@ -18,6 +18,7 @@
 #define INCLUDE_PERFETTO_PROTOZERO_SCATTERED_HEAP_BUFFER_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "perfetto/base/export.h"
@@ -26,14 +27,18 @@
 
 namespace protozero {
 
+class Message;
+
 class PERFETTO_EXPORT ScatteredHeapBuffer
     : public protozero::ScatteredStreamWriter::Delegate {
  public:
   class PERFETTO_EXPORT Slice {
    public:
+    Slice();
     explicit Slice(size_t size);
     Slice(Slice&& slice) noexcept;
     ~Slice();
+    Slice& operator=(Slice&&);
 
     inline protozero::ContiguousMemoryRange GetTotalRange() const {
       return {buffer_.get(), buffer_.get() + size_};
@@ -51,9 +56,11 @@ class PERFETTO_EXPORT ScatteredHeapBuffer
       unused_bytes_ = unused_bytes;
     }
 
+    void Clear();
+
    private:
     std::unique_ptr<uint8_t[]> buffer_;
-    const size_t size_;
+    size_t size_;
     size_t unused_bytes_;
   };
 
@@ -67,6 +74,10 @@ class PERFETTO_EXPORT ScatteredHeapBuffer
   // Stitch all the slices into a single contiguous buffer.
   std::vector<uint8_t> StitchSlices();
 
+  // Note that the returned ranges point back to this buffer and thus cannot
+  // outlive it.
+  std::vector<protozero::ContiguousMemoryRange> GetRanges();
+
   const std::vector<Slice>& slices() const { return slices_; }
 
   void set_writer(protozero::ScatteredStreamWriter* writer) {
@@ -79,11 +90,82 @@ class PERFETTO_EXPORT ScatteredHeapBuffer
   // Returns the total size the slices occupy in heap memory (including unused).
   size_t GetTotalSize();
 
+  // Reset the contents of this buffer but retain one slice allocation (if it
+  // exists) to be reused for future writes.
+  void Reset();
+
  private:
   size_t next_slice_size_;
   const size_t maximum_slice_size_;
   protozero::ScatteredStreamWriter* writer_ = nullptr;
   std::vector<Slice> slices_;
+
+  // Used to keep an allocated slice around after this buffer is reset.
+  Slice cached_slice_;
+};
+
+// Helper function to create heap-based protozero messages in one line.
+// Useful when manually serializing a protozero message (primarily in
+// tests/utilities). So instead of the following:
+//   protozero::MyMessage msg;
+//   protozero::ScatteredHeapBuffer shb;
+//   protozero::ScatteredStreamWriter writer(&shb);
+//   shb.set_writer(&writer);
+//   msg.Reset(&writer);
+//   ...
+// You can write:
+//   protozero::HeapBuffered<protozero::MyMessage> msg;
+//   msg->set_stuff(...);
+//   msg.SerializeAsString();
+template <typename T = ::protozero::Message>
+class HeapBuffered {
+ public:
+  HeapBuffered() : HeapBuffered(4096, 4096) {}
+  HeapBuffered(size_t initial_slice_size_bytes, size_t maximum_slice_size_bytes)
+      : shb_(initial_slice_size_bytes, maximum_slice_size_bytes),
+        writer_(&shb_) {
+    shb_.set_writer(&writer_);
+    msg_.Reset(&writer_);
+  }
+
+  // This can't be neither copied nor moved because Message hands out pointers
+  // to itself when creating submessages.
+  HeapBuffered(const HeapBuffered&) = delete;
+  HeapBuffered& operator=(const HeapBuffered&) = delete;
+  HeapBuffered(HeapBuffered&&) = delete;
+  HeapBuffered& operator=(HeapBuffered&&) = delete;
+
+  T* get() { return &msg_; }
+  T* operator->() { return &msg_; }
+
+  bool empty() const { return shb_.slices().empty(); }
+
+  std::vector<uint8_t> SerializeAsArray() {
+    msg_.Finalize();
+    return shb_.StitchSlices();
+  }
+
+  std::string SerializeAsString() {
+    auto vec = SerializeAsArray();
+    return std::string(reinterpret_cast<const char*>(vec.data()), vec.size());
+  }
+
+  std::vector<protozero::ContiguousMemoryRange> GetRanges() {
+    msg_.Finalize();
+    return shb_.GetRanges();
+  }
+
+  void Reset() {
+    shb_.Reset();
+    writer_.Reset(protozero::ContiguousMemoryRange{});
+    msg_.Reset(&writer_);
+    PERFETTO_DCHECK(empty());
+  }
+
+ private:
+  ScatteredHeapBuffer shb_;
+  ScatteredStreamWriter writer_;
+  T msg_;
 };
 
 }  // namespace protozero

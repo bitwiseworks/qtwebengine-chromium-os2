@@ -12,7 +12,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/spellcheck/common/spellcheck_result.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -49,8 +49,8 @@ class SpellcheckPlatformMacTest: public testing::Test {
                                   base::Unretained(this)));
   }
 
-  base::test::ScopedTaskEnvironment task_environment_{
-      base::test::ScopedTaskEnvironment::MainThreadType::UI};
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI};
   spellcheck_platform::ScopedEnglishLanguageForTest scoped_language_;
 };
 
@@ -74,7 +74,7 @@ TEST_F(SpellcheckPlatformMacTest, IgnoreWords_EN_US) {
     EXPECT_FALSE(spellcheck_platform::CheckSpelling(word, doc_tag)) << word;
 
     // Ignore the word.
-    spellcheck_platform::IgnoreWord(word);
+    spellcheck_platform::IgnoreWord(nullptr, word);
 
     // The word should now show up as correctly spelled.
     EXPECT_TRUE(spellcheck_platform::CheckSpelling(word, doc_tag)) << word;
@@ -390,7 +390,8 @@ TEST_F(SpellcheckPlatformMacTest, SpellCheckSuggestions_EN_US) {
 // RequestTextCheck results.
 TEST_F(SpellcheckPlatformMacTest, SpellCheckIgnoresOrthography)  {
   base::string16 test_string(base::ASCIIToUTF16("Icland is awesome."));
-  spellcheck_platform::RequestTextCheck(0, test_string, std::move(callback_));
+  spellcheck_platform::RequestTextCheck(nullptr, 0, test_string,
+                                        std::move(callback_));
   WaitForCallback();
   EXPECT_TRUE(callback_finished_);
   EXPECT_EQ(1U, results_.size());

@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
@@ -69,7 +68,7 @@ PerformanceEntryVector PerformanceObserverEntryList::getEntriesByName(
   return entries;
 }
 
-void PerformanceObserverEntryList::Trace(blink::Visitor* visitor) {
+void PerformanceObserverEntryList::Trace(Visitor* visitor) {
   visitor->Trace(performance_entries_);
   ScriptWrappable::Trace(visitor);
 }

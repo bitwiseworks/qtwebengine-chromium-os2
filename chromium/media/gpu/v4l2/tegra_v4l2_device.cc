@@ -5,11 +5,15 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <linux/videodev2.h>
+#include <unistd.h>
+#include <iterator>
 
+#include "base/files/file_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/trace_event/trace_event.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/tegra_v4l2_device.h"
+#include "ui/gfx/native_pixmap_handle.h"
 #include "ui/gl/gl_bindings.h"
 
 namespace media {
@@ -64,15 +68,26 @@ int TegraV4L2Device::Ioctl(int flags, void* arg) {
     return ret;
 
   // Workarounds for Tegra's broken closed-source V4L2 interface.
-  struct v4l2_format* format;
   switch (flags) {
-    // VIDIOC_G_FMT returns 0 planes for multiplanar formats with 1 plane.
-    case static_cast<int>(VIDIOC_G_FMT):
-      format = static_cast<struct v4l2_format*>(arg);
-      if (V4L2_TYPE_IS_MULTIPLANAR(format->type) &&
-          format->fmt.pix_mp.num_planes == 0)
-        format->fmt.pix_mp.num_planes = 1;
+    case static_cast<int>(VIDIOC_S_FMT): {
+      struct v4l2_format format;
+      memcpy(&format, arg, sizeof(struct v4l2_format));
+      v4l2_format_cache_[static_cast<enum v4l2_buf_type>(format.type)] = format;
       break;
+    }
+    case static_cast<int>(VIDIOC_G_FMT): {
+      // The driver doesn't fill values of returned v4l2_format correctly. Set
+      // the value that is previously passed to driver via VIDIOC_S_FMT.
+      struct v4l2_format* format = static_cast<struct v4l2_format*>(arg);
+      const auto it = v4l2_format_cache_.find(
+          static_cast<enum v4l2_buf_type>(format->type));
+      if (it != v4l2_format_cache_.end()) {
+        format->fmt.pix_mp.pixelformat = it->second.fmt.pix_mp.pixelformat;
+        if (format->fmt.pix_mp.num_planes == 0)
+          format->fmt.pix_mp.num_planes = it->second.fmt.pix_mp.num_planes;
+      }
+      break;
+    }
     default:
       break;
   }
@@ -120,7 +135,7 @@ bool TegraV4L2Device::ClearDevicePollInterrupt() {
 }
 
 bool TegraV4L2Device::Initialize() {
-  VLOGF(2);
+  DVLOGF(3);
   static bool initialized = []() {
     if (!dlopen("/usr/lib/libtegrav4l2.so",
                 RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE)) {
@@ -153,12 +168,22 @@ bool TegraV4L2Device::Initialize() {
 }
 
 bool TegraV4L2Device::Open(Type type, uint32_t /* v4l2_pixfmt */) {
-  VLOGF(2);
+  DVLOGF(3);
   return OpenInternal(type);
 }
 
 bool TegraV4L2Device::OpenInternal(Type type) {
   const char* device_path = nullptr;
+
+  // Create the dummy FD upon first open.
+  if (!dummy_fd_.is_valid()) {
+    base::ScopedFD dummy_write_fd_;
+
+    if (!base::CreatePipe(&dummy_fd_, &dummy_write_fd_, false)) {
+      VPLOGF(1) << "Error creating dummy file descriptors";
+      return false;
+    }
+  }
 
   switch (type) {
     case Type::kDecoder:
@@ -184,7 +209,7 @@ bool TegraV4L2Device::OpenInternal(Type type) {
 }
 
 void TegraV4L2Device::Close() {
-  VLOGF(2) << "device_fd= " << device_fd_;
+  DVLOGF(3) << "device_fd= " << device_fd_;
   if (device_fd_ != -1) {
     TegraV4L2_Close(device_fd_);
     device_fd_ = -1;
@@ -195,18 +220,24 @@ std::vector<base::ScopedFD> TegraV4L2Device::GetDmabufsForV4L2Buffer(
     int /* index */,
     size_t num_planes,
     enum v4l2_buf_type /* buf_type */) {
-  VLOGF(2);
+  DVLOGF(3);
+  DCHECK(dummy_fd_.is_valid());
   std::vector<base::ScopedFD> dmabuf_fds;
   // Tegra does not actually provide dmabuf fds currently. Fill the vector with
-  // invalid descriptors to prevent the caller from failing on an empty vector
+  // dummy descriptors to prevent the caller from failing on an empty vector
   // being returned. TegraV4L2Device::CreateEGLImage() will ignore the invalid
   // descriptors and create images based on V4L2 index passed to it.
-  dmabuf_fds.resize(num_planes);
+  std::generate_n(std::back_inserter(dmabuf_fds), num_planes, [this]() {
+    int fd = HANDLE_EINTR(dup(dummy_fd_.get()));
+    DPLOG_IF(ERROR, fd < 0) << "Error duplicating fake DMAbuf FD";
+    return base::ScopedFD(fd);
+  });
+
   return dmabuf_fds;
 }
 
-bool TegraV4L2Device::CanCreateEGLImageFrom(uint32_t v4l2_pixfmt) {
-  return v4l2_pixfmt == V4L2_PIX_FMT_NV12M;
+bool TegraV4L2Device::CanCreateEGLImageFrom(const Fourcc fourcc) const {
+  return fourcc.ToV4L2PixFmt() == V4L2_PIX_FMT_NV12M;
 }
 
 EGLImageKHR TegraV4L2Device::CreateEGLImage(
@@ -215,10 +246,11 @@ EGLImageKHR TegraV4L2Device::CreateEGLImage(
     GLuint texture_id,
     const gfx::Size& /* size */,
     unsigned int buffer_index,
-    uint32_t v4l2_pixfmt,
-    const std::vector<base::ScopedFD>& /* dmabuf_fds */) {
+    const Fourcc fourcc,
+    gfx::NativePixmapHandle /* handle */) const {
   DVLOGF(3);
-  if (!CanCreateEGLImageFrom(v4l2_pixfmt)) {
+
+  if (!CanCreateEGLImageFrom(fourcc)) {
     LOG(ERROR) << "Unsupported V4L2 pixel format";
     return EGL_NO_IMAGE_KHR;
   }
@@ -240,23 +272,23 @@ EGLImageKHR TegraV4L2Device::CreateEGLImage(
 }
 scoped_refptr<gl::GLImage> TegraV4L2Device::CreateGLImage(
     const gfx::Size& size,
-    uint32_t fourcc,
-    const std::vector<base::ScopedFD>& dmabuf_fds) {
+    const Fourcc fourcc,
+    gfx::NativePixmapHandle /* handle */) const {
   NOTREACHED();
   return nullptr;
 }
 
 EGLBoolean TegraV4L2Device::DestroyEGLImage(EGLDisplay egl_display,
-                                            EGLImageKHR egl_image) {
+                                            EGLImageKHR egl_image) const {
   DVLOGF(3);
   return eglDestroyImageKHR(egl_display, egl_image);
 }
 
-GLenum TegraV4L2Device::GetTextureTarget() {
+GLenum TegraV4L2Device::GetTextureTarget() const {
   return GL_TEXTURE_2D;
 }
 
-std::vector<uint32_t> TegraV4L2Device::PreferredInputFormat(Type type) {
+std::vector<uint32_t> TegraV4L2Device::PreferredInputFormat(Type type) const {
   if (type == Type::kEncoder) {
     return {V4L2_PIX_FMT_YUV420M};
   }

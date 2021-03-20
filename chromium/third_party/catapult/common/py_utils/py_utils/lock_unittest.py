@@ -2,12 +2,17 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import multiprocessing
 import os
+import tempfile
 import time
 import unittest
-import tempfile
 
+from six.moves import range  # pylint: disable=redefined-builtin
 
 from py_utils import lock
 

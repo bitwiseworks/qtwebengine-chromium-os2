@@ -34,13 +34,13 @@ struct BtFile {
 /*
 ** nCrashSync:
 **   If this value is non-zero, then a "crash-test" is running. If
-**   nCrashSync==1, then the crash is simulated during the very next
+**   nCrashSync==1, then the crash is simulated during the very next 
 **   call to the xSync() VFS method (on either the db or log file).
 **   If nCrashSync==2, the following call to xSync(), and so on.
 **
 ** bCrash:
 **   After a crash is simulated, this variable is set. Any subsequent
-**   attempts to write to a file or modify the file system in any way
+**   attempts to write to a file or modify the file system in any way 
 **   fail once this is set. All the caller can do is close the connection.
 **
 ** bFastInsert:
@@ -70,9 +70,9 @@ struct BtDb {
 };
 
 static int btVfsFullpath(
-  sqlite4_env *pEnv,
-  bt_env *pVfs,
-  const char *z,
+  sqlite4_env *pEnv, 
+  bt_env *pVfs, 
+  const char *z, 
   char **pzOut
 ){
   BtDb *pBt = (BtDb*)pVfs->pVfsCtx;
@@ -81,9 +81,9 @@ static int btVfsFullpath(
 }
 
 static int btVfsOpen(
-  sqlite4_env *pEnv,
-  bt_env *pVfs,
-  const char *zFile,
+  sqlite4_env *pEnv, 
+  bt_env *pVfs, 
+  const char *zFile, 
   int flags, bt_file **ppFile
 ){
   BtFile *p;
@@ -100,9 +100,9 @@ static int btVfsOpen(
     pBt->apFile[1] = p;
   }
   if( (flags & BT_OPEN_SHARED)==0 ){
-    p->pBt = pBt;
+    p->pBt = pBt; 
   }
-  p->pVfs = pBt->pVfs;
+  p->pVfs = pBt->pVfs; 
 
   rc = pBt->pVfs->xOpen(pEnv, pVfs, zFile, flags, &p->pFile);
   if( rc!=SQLITE4_OK ){
@@ -160,7 +160,7 @@ static int btFlushSectors(BtFile *p, int iFile){
         }
 
 #if 0
-fprintf(stderr, "handle sector %d of %s with %s\n", i,
+fprintf(stderr, "handle sector %d of %s with %s\n", i, 
     iFile==0 ? "db" : "log",
     iOpt==1 ? "rollback" : iOpt==2 ? "write" : "omit"
 );
@@ -340,8 +340,8 @@ static int btMinTransaction(BtDb *p, int iMin, int *piLevel){
   int rc = SQLITE4_OK;
 
   iLevel = sqlite4BtTransactionLevel(p->pBt);
-  if( iLevel<iMin ){
-    rc = sqlite4BtBegin(p->pBt, iMin);
+  if( iLevel<iMin ){ 
+    rc = sqlite4BtBegin(p->pBt, iMin); 
     *piLevel = iLevel;
   }else{
     *piLevel = -1;
@@ -381,7 +381,7 @@ static int bt_delete(TestDb *pTestDb, void *pK, int nK){
 }
 
 static int bt_delete_range(
-  TestDb *pTestDb,
+  TestDb *pTestDb, 
   void *pKey1, int nKey1,
   void *pKey2, int nKey2
 ){
@@ -421,7 +421,7 @@ static int bt_delete_range(
     nCmp = MIN(n, nKey2);
     res = memcmp(pKey2, pK, nCmp);
     if( res<0 || (res==0 && nKey2<=n) ) break;
-
+    
     rc = sqlite4BtDelete(pCsr);
   }
   if( rc==SQLITE4_NOTFOUND ) rc = SQLITE4_OK;
@@ -433,8 +433,8 @@ static int bt_delete_range(
 }
 
 static int bt_fetch(
-  TestDb *pTestDb,
-  void *pK, int nK,
+  TestDb *pTestDb, 
+  void *pK, int nK, 
   void **ppVal, int *pnVal
 ){
   BtDb *p = (BtDb*)pTestDb;
@@ -443,8 +443,8 @@ static int bt_fetch(
   int rc = SQLITE4_OK;
 
   iLevel = sqlite4BtTransactionLevel(p->pBt);
-  if( iLevel==0 ){
-    rc = sqlite4BtBegin(p->pBt, 1);
+  if( iLevel==0 ){ 
+    rc = sqlite4BtBegin(p->pBt, 1); 
     if( rc!=SQLITE4_OK ) return rc;
   }
 
@@ -475,7 +475,7 @@ static int bt_fetch(
     sqlite4BtCsrClose(pCsr);
   }
 
-  if( iLevel==0 ) sqlite4BtCommit(p->pBt, 0);
+  if( iLevel==0 ) sqlite4BtCommit(p->pBt, 0); 
   return rc;
 }
 
@@ -681,9 +681,9 @@ static int testBtConfigure(BtDb *pDb, const char *zCfg, int *pbMt){
 
 
 int test_bt_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
 
@@ -709,7 +709,7 @@ int test_bt_open(
     unlink(zLog);
     sqlite3_free(zLog);
   }
-
+  
   rc = sqlite4BtNew(pEnv, 0, &pBt);
   if( rc==SQLITE4_OK ){
     int mt = 0;                   /* True for multi-threaded connection */
@@ -761,18 +761,18 @@ int test_bt_open(
 }
 
 int test_fbt_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   return test_bt_open("fast=1", zFilename, bClear, ppDb);
 }
 
 int test_fbts_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   return test_bt_open("fast=1 blksz=32K pagesz=512", zFilename, bClear, ppDb);
@@ -923,7 +923,7 @@ static int bgc_attach(BtDb *pDb, const char *zSpec){
     pCkpter->nRef++;
   }
 
-  /* Assuming a checkpointer was encountered or effected, attach the
+  /* Assuming a checkpointer was encountered or effected, attach the 
   ** connection to it.  */
   if( pCkpter ){
     pDb->pCkpter = pCkpter;

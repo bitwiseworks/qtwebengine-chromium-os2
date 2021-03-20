@@ -10,7 +10,6 @@
 #include "base/logging.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/memory_pressure_monitor.h"
-#include "base/memory/shared_memory.h"
 #include "base/stl_util.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
@@ -23,11 +22,19 @@ const int kCriticalPressurePercentage = 10;
 
 }  // namespace
 
+FrameEvictionManager::ScopedPause::ScopedPause() {
+  FrameEvictionManager::GetInstance()->Pause();
+}
+
+FrameEvictionManager::ScopedPause::~ScopedPause() {
+  FrameEvictionManager::GetInstance()->Unpause();
+}
+
 FrameEvictionManager* FrameEvictionManager::GetInstance() {
   return base::Singleton<FrameEvictionManager>::get();
 }
 
-FrameEvictionManager::~FrameEvictionManager() {}
+FrameEvictionManager::~FrameEvictionManager() = default;
 
 void FrameEvictionManager::AddFrame(FrameEvictionManagerClient* frame,
                                     bool locked) {
@@ -47,7 +54,7 @@ void FrameEvictionManager::RemoveFrame(FrameEvictionManagerClient* frame) {
 }
 
 void FrameEvictionManager::LockFrame(FrameEvictionManagerClient* frame) {
-  if (base::ContainsValue(unlocked_frames_, frame)) {
+  if (base::Contains(unlocked_frames_, frame)) {
     DCHECK(locked_frames_.find(frame) == locked_frames_.end());
     unlocked_frames_.remove(frame);
     locked_frames_[frame] = 1;
@@ -109,6 +116,11 @@ FrameEvictionManager::FrameEvictionManager()
 }
 
 void FrameEvictionManager::CullUnlockedFrames(size_t saved_frame_limit) {
+  if (pause_count_) {
+    pending_unlocked_frame_limit_ = saved_frame_limit;
+    return;
+  }
+
   while (!unlocked_frames_.empty() &&
          unlocked_frames_.size() + locked_frames_.size() > saved_frame_limit) {
     size_t old_size = unlocked_frames_.size();
@@ -142,6 +154,20 @@ void FrameEvictionManager::PurgeMemory(int percentage) {
 
 void FrameEvictionManager::PurgeAllUnlockedFrames() {
   CullUnlockedFrames(0);
+}
+
+void FrameEvictionManager::Pause() {
+  ++pause_count_;
+}
+
+void FrameEvictionManager::Unpause() {
+  --pause_count_;
+  DCHECK_GE(pause_count_, 0);
+
+  if (pause_count_ == 0 && pending_unlocked_frame_limit_) {
+    CullUnlockedFrames(pending_unlocked_frame_limit_.value());
+    pending_unlocked_frame_limit_.reset();
+  }
 }
 
 }  // namespace viz

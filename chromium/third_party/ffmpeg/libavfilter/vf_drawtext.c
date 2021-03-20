@@ -88,6 +88,9 @@ static const char *const var_names[] = {
     "x",
     "y",
     "pict_type",
+    "pkt_pos",
+    "pkt_duration",
+    "pkt_size",
     NULL
 };
 
@@ -125,6 +128,9 @@ enum var_name {
     VAR_X,
     VAR_Y,
     VAR_PICT_TYPE,
+    VAR_PKT_POS,
+    VAR_PKT_DURATION,
+    VAR_PKT_SIZE,
     VAR_VARS_NB
 };
 
@@ -823,6 +829,7 @@ static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     DrawTextContext *s = ctx->priv;
+    char *expr;
     int ret;
 
     ff_draw_init(&s->dc, inlink->format, FF_DRAW_PROCESS_ALPHA);
@@ -848,34 +855,64 @@ static int config_input(AVFilterLink *inlink)
     av_expr_free(s->a_pexpr);
     s->x_pexpr = s->y_pexpr = s->a_pexpr = NULL;
 
-    if ((ret = av_expr_parse(&s->x_pexpr, s->x_expr, var_names,
+    if ((ret = av_expr_parse(&s->x_pexpr, expr = s->x_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
-        (ret = av_expr_parse(&s->y_pexpr, s->y_expr, var_names,
+        (ret = av_expr_parse(&s->y_pexpr, expr = s->y_expr, var_names,
                              NULL, NULL, fun2_names, fun2, 0, ctx)) < 0 ||
-        (ret = av_expr_parse(&s->a_pexpr, s->a_expr, var_names,
-                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0)
-
+        (ret = av_expr_parse(&s->a_pexpr, expr = s->a_expr, var_names,
+                             NULL, NULL, fun2_names, fun2, 0, ctx)) < 0) {
+        av_log(ctx, AV_LOG_ERROR, "Failed to parse expression: %s \n", expr);
         return AVERROR(EINVAL);
+    }
 
     return 0;
 }
 
 static int command(AVFilterContext *ctx, const char *cmd, const char *arg, char *res, int res_len, int flags)
 {
-    DrawTextContext *s = ctx->priv;
+    DrawTextContext *old = ctx->priv;
+    DrawTextContext *new = NULL;
+    int ret;
 
     if (!strcmp(cmd, "reinit")) {
-        int ret;
-        uninit(ctx);
-        s->reinit = 1;
-        if ((ret = av_set_options_string(ctx, arg, "=", ":")) < 0)
-            return ret;
-        if ((ret = init(ctx)) < 0)
-            return ret;
-        return config_input(ctx->inputs[0]);
-    }
+        new = av_mallocz(sizeof(DrawTextContext));
+        if (!new)
+            return AVERROR(ENOMEM);
 
-    return AVERROR(ENOSYS);
+        new->class = &drawtext_class;
+        ret = av_opt_copy(new, old);
+        if (ret < 0)
+            goto fail;
+
+        ctx->priv = new;
+        ret = av_set_options_string(ctx, arg, "=", ":");
+        if (ret < 0) {
+            ctx->priv = old;
+            goto fail;
+        }
+
+        ret = init(ctx);
+        if (ret < 0) {
+            uninit(ctx);
+            ctx->priv = old;
+            goto fail;
+        }
+
+        new->reinit = 1;
+
+        ctx->priv = old;
+        uninit(ctx);
+        av_freep(&old);
+
+        ctx->priv = new;
+        return config_input(ctx->inputs[0]);
+    } else
+        return AVERROR(ENOSYS);
+
+fail:
+    av_log(ctx, AV_LOG_ERROR, "Failed to process command. Continuing with existing parameters.\n");
+    av_freep(&new);
+    return ret;
 }
 
 static int func_pict_type(AVFilterContext *ctx, AVBPrint *bp,
@@ -1188,7 +1225,8 @@ static int draw_glyphs(DrawTextContext *s, AVFrame *frame,
     for (i = 0, p = text; *p; i++) {
         FT_Bitmap bitmap;
         Glyph dummy = { 0 };
-        GET_UTF8(code, *p++, continue;);
+        GET_UTF8(code, *p ? *p++ : 0, code = 0xfffd; goto continue_on_invalid;);
+continue_on_invalid:
 
         /* skip new line chars, just go to new line */
         if (code == '\n' || code == '\r' || code == '\t')
@@ -1326,7 +1364,8 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
 
     /* load and cache glyphs */
     for (i = 0, p = text; *p; i++) {
-        GET_UTF8(code, *p++, continue;);
+        GET_UTF8(code, *p ? *p++ : 0, code = 0xfffd; goto continue_on_invalid;);
+continue_on_invalid:
 
         /* get glyph */
         dummy.code = code;
@@ -1349,7 +1388,8 @@ static int draw_text(AVFilterContext *ctx, AVFrame *frame,
     /* compute and save position for each glyph */
     glyph = NULL;
     for (i = 0, p = text; *p; i++) {
-        GET_UTF8(code, *p++, continue;);
+        GET_UTF8(code, *p ? *p++ : 0, code = 0xfffd; goto continue_on_invalid2;);
+continue_on_invalid2:
 
         /* skip the \n in the sequence \r\n */
         if (prev_code == '\r' && code == '\n')
@@ -1487,6 +1527,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
         NAN : frame->pts * av_q2d(inlink->time_base);
 
     s->var_values[VAR_PICT_TYPE] = frame->pict_type;
+    s->var_values[VAR_PKT_POS] = frame->pkt_pos;
+    s->var_values[VAR_PKT_DURATION] = frame->pkt_duration * av_q2d(inlink->time_base);
+    s->var_values[VAR_PKT_SIZE] = frame->pkt_size;
     s->metadata = frame->metadata;
 
     draw_text(ctx, frame, frame->width, frame->height);

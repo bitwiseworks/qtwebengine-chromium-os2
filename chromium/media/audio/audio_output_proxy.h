@@ -16,7 +16,7 @@ namespace media {
 
 class AudioOutputDispatcher;
 
-// AudioOutputProxy is an audio otput stream that uses resources more
+// AudioOutputProxy is an audio output stream that uses resources more
 // efficiently than a regular audio output stream: it opens audio
 // device only when sound is playing, i.e. between Start() and Stop()
 // (there is still one physical stream per each audio output proxy in
@@ -36,6 +36,7 @@ class MEDIA_EXPORT AudioOutputProxy : public AudioOutputStream {
   void SetVolume(double volume) override;
   void GetVolume(double* volume) override;
   void Close() override;
+  void Flush() override;
 
   AudioOutputDispatcher* get_dispatcher_for_testing() const {
     return dispatcher_.get();

@@ -125,6 +125,7 @@ static INLINE void compute_stats_win7_opt_sse4_1(
   }
 }
 
+#if CONFIG_AV1_HIGHBITDEPTH
 static INLINE void acc_stat_highbd_sse41(int64_t *dst, const uint16_t *dgd,
                                          const __m128i *shuffle,
                                          const __m128i *dgd_ijkl) {
@@ -386,6 +387,7 @@ void av1_compute_stats_highbd_sse4_1(int wiener_win, const uint8_t *dgd8,
                                v_end, dgd_stride, src_stride, M, H, bit_depth);
   }
 }
+#endif  // CONFIG_AV1_HIGHBITDEPTH
 
 static INLINE void acc_stat_win5_one_line_sse4_1(
     const uint8_t *dgd, const uint8_t *src, int h_start, int h_end,
@@ -495,7 +497,7 @@ void av1_compute_stats_sse4_1(int wiener_win, const uint8_t *dgd,
   }
 }
 
-static INLINE __m128i pair_set_epi16(uint16_t a, uint16_t b) {
+static INLINE __m128i pair_set_epi16(int a, int b) {
   return _mm_set1_epi32((int32_t)(((uint16_t)(a)) | (((uint32_t)(b)) << 16)));
 }
 
@@ -539,7 +541,7 @@ int64_t av1_lowbd_pixel_proj_error_sse4_1(
         const int32_t u = (int32_t)(dat[k] << SGRPROJ_RST_BITS);
         int32_t v = xq[0] * (flt0[k] - u) + xq[1] * (flt1[k] - u);
         const int32_t e = ROUND_POWER_OF_TWO(v, shift) + dat[k] - src[k];
-        err += e * e;
+        err += ((int64_t)e * e);
       }
       dat += dat_stride;
       src += src_stride;
@@ -578,7 +580,7 @@ int64_t av1_lowbd_pixel_proj_error_sse4_1(
         const int32_t u = (int32_t)(dat[k] << SGRPROJ_RST_BITS);
         int32_t v = xq_active * (flt[k] - u);
         const int32_t e = ROUND_POWER_OF_TWO(v, shift) + dat[k] - src[k];
-        err += e * e;
+        err += ((int64_t)e * e);
       }
       dat += dat_stride;
       src += src_stride;
@@ -607,7 +609,7 @@ int64_t av1_lowbd_pixel_proj_error_sse4_1(
       }
       for (k = j; k < width; ++k) {
         const int32_t e = (int32_t)(dat[k]) - src[k];
-        err += e * e;
+        err += ((int64_t)e * e);
       }
       dat += dat_stride;
       src += src_stride;
@@ -622,6 +624,7 @@ int64_t av1_lowbd_pixel_proj_error_sse4_1(
   return err;
 }
 
+#if CONFIG_AV1_HIGHBITDEPTH
 int64_t av1_highbd_pixel_proj_error_sse4_1(
     const uint8_t *src8, int width, int height, int src_stride,
     const uint8_t *dat8, int dat_stride, int32_t *flt0, int flt0_stride,
@@ -709,7 +712,7 @@ int64_t av1_highbd_pixel_proj_error_sse4_1(
         const int32_t u = (int32_t)(dat[k] << SGRPROJ_RST_BITS);
         int32_t v = xq[0] * (flt0[k] - u) + xq[1] * (flt1[k] - u);
         const int32_t e = ROUND_POWER_OF_TWO(v, shift) + dat[k] - src[k];
-        err += e * e;
+        err += ((int64_t)e * e);
       }
       dat += dat_stride;
       src += src_stride;
@@ -777,7 +780,7 @@ int64_t av1_highbd_pixel_proj_error_sse4_1(
         const int32_t u = (int32_t)(dat[k] << SGRPROJ_RST_BITS);
         int32_t v = xq_on * (flt[k] - u);
         const int32_t e = ROUND_POWER_OF_TWO(v, shift) + dat[k] - src[k];
-        err += e * e;
+        err += ((int64_t)e * e);
       }
       dat += dat_stride;
       src += src_stride;
@@ -814,7 +817,7 @@ int64_t av1_highbd_pixel_proj_error_sse4_1(
       // Process remaining pixels (modulu 8)
       for (k = j; k < width; ++k) {
         const int32_t e = (int32_t)(dat[k]) - src[k];
-        err += e * e;
+        err += ((int64_t)e * e);
       }
       dat += dat_stride;
       src += src_stride;
@@ -827,3 +830,4 @@ int64_t av1_highbd_pixel_proj_error_sse4_1(
   err += sum[0] + sum[1];
   return err;
 }
+#endif  // CONFIG_AV1_HIGHBITDEPTH

@@ -7,46 +7,45 @@
 
 #include <map>
 
-#include "base/memory/ref_counted.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/common/content_export.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "third_party/blink/public/platform/modules/broadcastchannel/broadcast_channel.mojom.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "third_party/blink/public/mojom/broadcastchannel/broadcast_channel.mojom.h"
 #include "url/origin.h"
 
 namespace content {
 
 class CONTENT_EXPORT BroadcastChannelProvider
-    : public base::RefCountedThreadSafe<BroadcastChannelProvider>,
-      public blink::mojom::BroadcastChannelProvider {
+    : public blink::mojom::BroadcastChannelProvider {
  public:
   BroadcastChannelProvider();
+  ~BroadcastChannelProvider() override;
 
-  using RenderProcessHostId = int;
-  mojo::BindingId Connect(
-      RenderProcessHostId render_process_host_id,
-      blink::mojom::BroadcastChannelProviderRequest request);
+  using SecurityPolicyHandle = ChildProcessSecurityPolicyImpl::Handle;
+  mojo::ReceiverId Connect(
+      SecurityPolicyHandle security_policy_handle,
+      mojo::PendingReceiver<blink::mojom::BroadcastChannelProvider> receiver);
 
   void ConnectToChannel(
       const url::Origin& origin,
       const std::string& name,
-      blink::mojom::BroadcastChannelClientAssociatedPtrInfo client,
-      blink::mojom::BroadcastChannelClientAssociatedRequest connection)
-      override;
+      mojo::PendingAssociatedRemote<blink::mojom::BroadcastChannelClient>
+          client,
+      mojo::PendingAssociatedReceiver<blink::mojom::BroadcastChannelClient>
+          connection) override;
 
-  auto& bindings_for_testing() { return bindings_; }
+  auto& receivers_for_testing() { return receivers_; }
 
  private:
-  friend class base::RefCountedThreadSafe<BroadcastChannelProvider>;
   class Connection;
-
-  ~BroadcastChannelProvider() override;
 
   void UnregisterConnection(Connection*);
   void ReceivedMessageOnConnection(Connection*,
                                    const blink::CloneableMessage& message);
 
-  mojo::BindingSet<blink::mojom::BroadcastChannelProvider, RenderProcessHostId>
-      bindings_;
+  mojo::ReceiverSet<blink::mojom::BroadcastChannelProvider,
+                    std::unique_ptr<SecurityPolicyHandle>>
+      receivers_;
   std::map<url::Origin, std::multimap<std::string, std::unique_ptr<Connection>>>
       connections_;
 };

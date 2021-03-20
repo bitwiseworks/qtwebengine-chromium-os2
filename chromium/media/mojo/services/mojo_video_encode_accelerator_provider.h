@@ -7,9 +7,10 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "media/mojo/interfaces/video_encode_accelerator.mojom.h"
+#include "media/mojo/mojom/video_encode_accelerator.mojom.h"
 #include "media/mojo/services/media_mojo_export.h"
 #include "media/mojo/services/mojo_video_encode_accelerator_service.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 
 namespace gpu {
 struct GpuPreferences;
@@ -23,23 +24,26 @@ class MEDIA_MOJO_EXPORT MojoVideoEncodeAcceleratorProvider
     : public mojom::VideoEncodeAcceleratorProvider {
  public:
   using CreateAndInitializeVideoEncodeAcceleratorCallback =
-      MojoVideoEncodeAcceleratorService::
-          CreateAndInitializeVideoEncodeAcceleratorCallback;
+      base::RepeatingCallback<std::unique_ptr<::media::VideoEncodeAccelerator>(
+          const ::media::VideoEncodeAccelerator::Config& config,
+          VideoEncodeAccelerator::Client* client,
+          const gpu::GpuPreferences& gpu_preferences)>;
 
-  static void Create(mojom::VideoEncodeAcceleratorProviderRequest request,
-                     const CreateAndInitializeVideoEncodeAcceleratorCallback&
-                         create_vea_callback,
-                     const gpu::GpuPreferences& gpu_preferences);
+  static void Create(
+      mojo::PendingReceiver<mojom::VideoEncodeAcceleratorProvider> receiver,
+      CreateAndInitializeVideoEncodeAcceleratorCallback create_vea_callback,
+      const gpu::GpuPreferences& gpu_preferences);
 
   MojoVideoEncodeAcceleratorProvider(
-      const CreateAndInitializeVideoEncodeAcceleratorCallback&
-          create_vea_callback,
+      CreateAndInitializeVideoEncodeAcceleratorCallback create_vea_callback,
       const gpu::GpuPreferences& gpu_preferences);
   ~MojoVideoEncodeAcceleratorProvider() override;
 
   // mojom::VideoEncodeAcceleratorProvider impl.
   void CreateVideoEncodeAccelerator(
-      mojom::VideoEncodeAcceleratorRequest request) override;
+      mojo::PendingReceiver<mojom::VideoEncodeAccelerator> receiver) override;
+  void GetVideoEncodeAcceleratorSupportedProfiles(
+      GetVideoEncodeAcceleratorSupportedProfilesCallback callback) override;
 
  private:
   const CreateAndInitializeVideoEncodeAcceleratorCallback create_vea_callback_;

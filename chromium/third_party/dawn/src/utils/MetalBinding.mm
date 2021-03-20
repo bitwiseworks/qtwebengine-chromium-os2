@@ -22,10 +22,12 @@
 #include "GLFW/glfw3.h"
 #include "GLFW/glfw3native.h"
 
+#import <QuartzCore/CAMetalLayer.h>
+
 namespace utils {
     class SwapChainImplMTL {
       public:
-        using WSIContext = dawnWSIContextMetal;
+        using WSIContext = DawnWSIContextMetal;
 
         SwapChainImplMTL(id nsWindow) : mNsWindow(nsWindow) {
         }
@@ -35,16 +37,16 @@ namespace utils {
             [mCurrentDrawable release];
         }
 
-        void Init(dawnWSIContextMetal* ctx) {
+        void Init(DawnWSIContextMetal* ctx) {
             mMtlDevice = ctx->device;
-            mCommandQueue = [mMtlDevice newCommandQueue];
+            mCommandQueue = ctx->queue;
         }
 
-        dawnSwapChainError Configure(dawnTextureFormat format,
-                                     dawnTextureUsageBit usage,
+        DawnSwapChainError Configure(WGPUTextureFormat format,
+                                     WGPUTextureUsage usage,
                                      uint32_t width,
                                      uint32_t height) {
-            if (format != DAWN_TEXTURE_FORMAT_B8_G8_R8_A8_UNORM) {
+            if (format != WGPUTextureFormat_BGRA8Unorm) {
                 return "unsupported format";
             }
             ASSERT(width > 0);
@@ -63,7 +65,7 @@ namespace utils {
             [mLayer setDrawableSize:size];
 
             constexpr uint32_t kFramebufferOnlyTextureUsages =
-                DAWN_TEXTURE_USAGE_BIT_OUTPUT_ATTACHMENT | DAWN_TEXTURE_USAGE_BIT_PRESENT;
+                WGPUTextureUsage_OutputAttachment | WGPUTextureUsage_Present;
             bool hasOnlyFramebufferUsages = !(usage & (~kFramebufferOnlyTextureUsages));
             if (hasOnlyFramebufferUsages) {
                 [mLayer setFramebufferOnly:YES];
@@ -74,7 +76,7 @@ namespace utils {
             return DAWN_SWAP_CHAIN_NO_ERROR;
         }
 
-        dawnSwapChainError GetNextTexture(dawnSwapChainNextTexture* nextTexture) {
+        DawnSwapChainError GetNextTexture(DawnSwapChainNextTexture* nextTexture) {
             [mCurrentDrawable release];
             mCurrentDrawable = [mLayer nextDrawable];
             [mCurrentDrawable retain];
@@ -88,7 +90,7 @@ namespace utils {
             return DAWN_SWAP_CHAIN_NO_ERROR;
         }
 
-        dawnSwapChainError Present() {
+        DawnSwapChainError Present() {
             id<MTLCommandBuffer> commandBuffer = [mCommandQueue commandBuffer];
             [commandBuffer presentDrawable:mCurrentDrawable];
             [commandBuffer commit];
@@ -108,14 +110,7 @@ namespace utils {
 
     class MetalBinding : public BackendBinding {
       public:
-        void SetupGLFWWindowHints() override {
-            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        }
-
-        dawnDevice CreateDevice() override {
-            dawnDevice device = dawn_native::metal::CreateDevice();
-            mMetalDevice = dawn_native::metal::GetMetalDevice(device);
-            return device;
+        MetalBinding(GLFWwindow* window, WGPUDevice device) : BackendBinding(window, device) {
         }
 
         uint64_t GetSwapChainImplementation() override {
@@ -126,16 +121,15 @@ namespace utils {
             return reinterpret_cast<uint64_t>(&mSwapchainImpl);
         }
 
-        dawnTextureFormat GetPreferredSwapChainTextureFormat() override {
-            return DAWN_TEXTURE_FORMAT_B8_G8_R8_A8_UNORM;
+        WGPUTextureFormat GetPreferredSwapChainTextureFormat() override {
+            return WGPUTextureFormat_BGRA8Unorm;
         }
 
       private:
-        id<MTLDevice> mMetalDevice = nil;
-        dawnSwapChainImplementation mSwapchainImpl = {};
+        DawnSwapChainImplementation mSwapchainImpl = {};
     };
 
-    BackendBinding* CreateMetalBinding() {
-        return new MetalBinding;
+    BackendBinding* CreateMetalBinding(GLFWwindow* window, WGPUDevice device) {
+        return new MetalBinding(window, device);
     }
 }

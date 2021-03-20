@@ -7,12 +7,13 @@
 
 #include <vector>
 
+#include "base/component_export.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/native_pixmap.h"
 #include "ui/gfx/overlay_transform.h"
-#include "ui/ozone/ozone_base_export.h"
 
 namespace ui {
 
@@ -23,18 +24,24 @@ enum OverlayStatus {
   OVERLAY_STATUS_LAST = OVERLAY_STATUS_NOT
 };
 
-class OZONE_BASE_EXPORT OverlaySurfaceCandidate {
+class COMPONENT_EXPORT(OZONE_BASE) OverlaySurfaceCandidate {
  public:
   OverlaySurfaceCandidate();
   OverlaySurfaceCandidate(const OverlaySurfaceCandidate& other);
   ~OverlaySurfaceCandidate();
+  OverlaySurfaceCandidate& operator=(const OverlaySurfaceCandidate& other);
 
-  bool operator<(const OverlaySurfaceCandidate& plane) const;
+  // Note that |clip_rect|, |is_clipped|, |overlay_handled| and |native_pixmap|
+  // are *not* used as part of the comparison.
+  bool operator<(const OverlaySurfaceCandidate& other) const;
 
   // Transformation to apply to layer during composition.
   gfx::OverlayTransform transform = gfx::OVERLAY_TRANSFORM_NONE;
   // Format of the buffer to composite.
   gfx::BufferFormat format = gfx::BufferFormat::BGRA_8888;
+  // Stacking order of the overlay plane relative to the main surface,
+  // which is 0. Signed to allow for "underlays".
+  int plane_z_order = 0;
   // Size of the buffer, in pixels.
   gfx::Size buffer_size;
   // Rect on the display to position the overlay to. Input rectangle may
@@ -46,11 +53,17 @@ class OZONE_BASE_EXPORT OverlaySurfaceCandidate {
   // Clip rect in the target content space after composition.
   gfx::Rect clip_rect;
   // If the quad is clipped after composition.
-  bool is_clipped;
-  // Stacking order of the overlay plane relative to the main surface,
-  // which is 0. Signed to allow for "underlays".
-  int plane_z_order = 0;
-
+  bool is_clipped = false;
+  // If the quad doesn't require blending.
+  bool is_opaque = false;
+  // Optionally contains a pointer to the NativePixmap corresponding to this
+  // candidate.
+  scoped_refptr<gfx::NativePixmap> native_pixmap = nullptr;
+  // A unique ID corresponding to |native_pixmap|. The ID is not reused even if
+  // |native_pixmap| is destroyed. Zero if |native_pixmap| is null.
+  // TODO(samans): This will not be necessary once Ozone/DRM not longer uses a
+  // cache for overlay testing. https://crbug.com/1034559
+  uint32_t native_pixmap_unique_id = 0;
   // To be modified by the implementer if this candidate can go into
   // an overlay.
   bool overlay_handled = false;

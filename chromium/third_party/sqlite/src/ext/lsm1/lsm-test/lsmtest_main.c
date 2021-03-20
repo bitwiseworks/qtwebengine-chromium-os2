@@ -2,9 +2,9 @@
 #include "lsmtest.h"
 #include <sqlite3.h>
 
-void test_failed(){
+void test_failed(){ 
   assert( 0 );
-  return;
+  return; 
 }
 
 #define testSetError(rc) testSetErrorFunc(rc, pRc, __FILE__, __LINE__)
@@ -136,9 +136,9 @@ void testFetchStr(
 }
 
 void testFetchCompare(
-  TestDb *pControl,
-  TestDb *pDb,
-  void *pKey, int nKey,
+  TestDb *pControl, 
+  TestDb *pDb, 
+  void *pKey, int nKey, 
   int *pRc
 ){
   int rc;
@@ -156,7 +156,7 @@ void testFetchCompare(
   rc = tdb_fetch(pDb, pKey, nKey, &pDbVal2, &nDbVal2);
   testSetError(rc);
 
-  if( *pRc==0
+  if( *pRc==0 
    && (nDbVal1!=nDbVal2 || (nDbVal1>0 && memcmp(pDbVal1, pDbVal2, nDbVal1)))
   ){
     testSetError(1);
@@ -190,7 +190,7 @@ static int keyCompare(void *pKey1, int nKey1, void *pKey2, int nKey2){
 int test_scan_debug = 0;
 
 static void scanCompareCb(
-  void *pCtx,
+  void *pCtx, 
   void *pKey, int nKey,
   void *pVal, int nVal
 ){
@@ -230,7 +230,7 @@ static void scanCompareCb(
     if( p->nPrevKey ){
       int res = keyCompare(p->aPrevKey, p->nPrevKey, pKey, nKey);
       if( (res<0 && p->bReverse) || (res>0 && p->bReverse==0) ){
-        testPrintError("Returned key out of order at %s:%d\n",
+        testPrintError("Returned key out of order at %s:%d\n", 
             __FILE__, __LINE__
         );
       }
@@ -263,8 +263,8 @@ void testScanCompare(
   TestDb *pDb1,                   /* Control (trusted) database */
   TestDb *pDb2,                   /* Database being tested */
   int bReverse,
-  void *pKey1, int nKey1,
-  void *pKey2, int nKey2,
+  void *pKey1, int nKey1, 
+  void *pKey2, int nKey2, 
   int *pRc
 ){
   static int nCall = 0; nCall++;
@@ -291,8 +291,8 @@ if( test_scan_debug ) printf("\n\n\n");
     tdb_scan(pDb2, pRes2, bReverse, pKey1, nKey1, pKey2, nKey2, scanCompareCb);
 if( test_scan_debug ) printf("\n\n\n");
 
-    if( res1.nRow!=res2.nRow
-     || res1.cksum1!=res2.cksum1
+    if( res1.nRow!=res2.nRow 
+     || res1.cksum1!=res2.cksum1 
      || res1.cksum2!=res2.cksum2
     ){
       printf("expected: %d %X %X\n", res1.nRow, res1.cksum1, res1.cksum2);
@@ -427,7 +427,7 @@ void testFree(void *ptr){
 }
 
 /*
-** String zPattern contains a glob pattern. Return true if zStr matches
+** String zPattern contains a glob pattern. Return true if zStr matches 
 ** the pattern, or false if it does not.
 */
 int testGlobMatch(const char *zPattern, const char *zStr){
@@ -456,8 +456,8 @@ int testGlobMatch(const char *zPattern, const char *zStr){
   return (zPattern[i]==0 && zStr[j]==0);
 }
 
-/*
-** End of test utilities
+/* 
+** End of test utilities 
 **************************************************************************/
 
 int do_test(int nArg, char **azArg){
@@ -663,7 +663,7 @@ int do_speed_test2(int nArg, char **azArg){
 #endif
     }
   }
-
+  
   printf("#");
   for(i=0; i<ArraySize(aOpt); i++){
     if( aOpt[i].zOpt ){
@@ -805,8 +805,8 @@ int do_speed_tests(int nArg, char **azArg){
   testMallocUninstall(tdb_lsm_env());
 
   for(i=0; i<nArg; i++){
-    struct Opt {
-      const char *zOpt;
+    struct Opt { 
+      const char *zOpt; 
       int isSwitch;
     } aOpt[] = {
       { "sqlite3" , 0},
@@ -883,7 +883,7 @@ int do_speed_tests(int nArg, char **azArg){
       TestDb *pDb;                  /* Database being tested */
       lsm_db *pLsm;
       int iDot = 0;
-
+  
       if( ((1<<j)&sys_mask)==0 ) continue;
       if( bSleep && nSleep ) sqlite3_sleep(nSleep);
       bSleep = 1;
@@ -898,7 +898,7 @@ int do_speed_tests(int nArg, char **azArg){
       pLog = fopen("/tmp/speed.log", "w");
       tdb_lsm_write_hook(pDb, do_speed_write_hook2, (void *)pLog);
 #endif
-
+  
       testTimeInit();
       for(i=0; i<nRow; i+=nStep){
         int iStep;
@@ -951,14 +951,14 @@ int do_speed_tests(int nArg, char **azArg){
             testPrngArray(i+iStep, aVal, ArraySize(aVal));
             rc = tdb_write(pDb, aKey, sizeof(aKey), aVal, sizeof(aVal));
           }
-
+    
           testTimeInit();
           for(iSel=0; iSel<nSelTest; iSel++){
             void *pDummy;
             int nDummy;
             u32 iKey;
             u32 aKey[4];                  /* 16-byte key */
-
+    
             iKey = testPrngValue(iSel) % (i+nSelStep);
             testPrngArray(iKey, aKey, ArraySize(aKey));
             rc = tdb_fetch(pDb, aKey, sizeof(aKey), &pDummy, &nDummy);
@@ -984,7 +984,7 @@ int do_speed_tests(int nArg, char **azArg){
 #endif
 
           testCaseProgress(iSel, nSelTest, testCaseNDot(), &iDot);
-
+    
           iKey = testPrngValue(iSel) % nRow;
           testPrngArray(iKey, aKey, ArraySize(aKey));
           rc = tdb_fetch(pDb, aKey, sizeof(aKey), &pDummy, &nDummy);
@@ -999,7 +999,7 @@ int do_speed_tests(int nArg, char **azArg){
         t = testTimeGet();
         tdb_fetch(pDb, 0, 0, 0, 0);
 
-        printf("%s: %d selects/second\n",
+        printf("%s: %d selects/second\n", 
             aSys[j].zLibrary, (int)((double)nSelTest*1000.0/t)
         );
       }
@@ -1031,11 +1031,11 @@ int do_speed_tests(int nArg, char **azArg){
     fprintf(pOut, "set y2tics nomirror\n");
     fprintf(pOut, "set key box lw 0.01\n");
     fprintf(pOut, "plot ");
-
+  
     for(j=0; aSys[j].zLibrary; j++){
       if( (1<<j)&sys_mask ){
         const char *zLib = aSys[j].zLibrary;
-        fprintf(pOut, "%s\"-\" ti \"%s INSERT\" with lines lc rgb \"%s\" ",
+        fprintf(pOut, "%s\"-\" ti \"%s INSERT\" with lines lc rgb \"%s\" ", 
             (isFirst?"":", "), zLib, aSys[j].zColor
         );
         if( doReadTest ){
@@ -1054,9 +1054,9 @@ int do_speed_tests(int nArg, char **azArg){
         "axis x1y2 with boxes lw 1 lc rgb \"grey\""
       );
     }
-
+  
     fprintf(pOut, "\n");
-
+  
     for(j=0; aSys[j].zLibrary; j++){
       if( ((1<<j)&sys_mask)==0 ) continue;
       fprintf(pOut, "# Rows    Inserts per second\n");
@@ -1066,7 +1066,7 @@ int do_speed_tests(int nArg, char **azArg){
         fprintf(pOut, "%d %d\n", i+nStep, ips);
       }
       fprintf(pOut, "end\n");
-
+  
       if( doReadTest ){
         fprintf(pOut, "# Rows    Selects per second\n");
         for(i=0; i<nRow; i+=nSelStep){
@@ -1081,7 +1081,7 @@ int do_speed_tests(int nArg, char **azArg){
         fprintf(pOut, "end\n");
       }
     }
-
+  
     fprintf(pOut, "pause -1\n");
     fclose(pOut);
   }
@@ -1155,7 +1155,7 @@ static i64 testReadSize(char *z){
   }
 
   return nMul * (i64)atoi(z);
-}
+} 
 
 /*
 ** Usage: lsmtest writespeed FILESIZE BLOCKSIZE SYNCSIZE
@@ -1308,7 +1308,7 @@ struct InsertWriteHook {
 
 static void flushHook(InsertWriteHook *pHook){
   if( pHook->nData ){
-    fprintf(pHook->pOut, "write %s %d %d\n",
+    fprintf(pHook->pOut, "write %s %d %d\n", 
         (pHook->bLog ? "log" : "db"), (int)pHook->iOff, pHook->nData
     );
     pHook->nData = 0;
@@ -1329,9 +1329,9 @@ static void do_insert_write_hook(
   if( nData==0 ){
     flushHook(pHook);
     fprintf(pHook->pOut, "sync %s\n", (bLog ? "log" : "db"));
-  }else if( pHook->nData
-         && bLog==pHook->bLog
-         && iOff==(pHook->iOff+pHook->nData)
+  }else if( pHook->nData 
+         && bLog==pHook->bLog 
+         && iOff==(pHook->iOff+pHook->nData) 
   ){
     pHook->nData += nData;
   }else{
@@ -1463,7 +1463,7 @@ static void lsmtest_rusage_report(void){
   memset(&r, 0, sizeof(r));
 
   getrusage(RUSAGE_SELF, &r);
-  printf("# getrusage: { ru_maxrss %d ru_oublock %d ru_inblock %d }\n",
+  printf("# getrusage: { ru_maxrss %d ru_oublock %d ru_inblock %d }\n", 
       (int)r.ru_maxrss, (int)r.ru_oublock, (int)r.ru_inblock
   );
 }
@@ -1534,7 +1534,7 @@ int main(int argc, char **argv){
 #endif
 
   if( nLeakAlloc ){
-    testPrintError("Leaked %d bytes in %d allocations (%s)\n",
+    testPrintError("Leaked %d bytes in %d allocations (%s)\n", 
         nLeakByte, nLeakAlloc, zReport
     );
     if( rc==0 ) rc = -1;

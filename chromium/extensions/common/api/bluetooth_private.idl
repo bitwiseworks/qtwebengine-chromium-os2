@@ -151,11 +151,29 @@ namespace bluetoothPrivate {
 
     // Pairs the given device.
     static void pair(DOMString deviceAddress, optional VoidCallback callback);
+
+    // Record that a pairing attempt finished. Ignores cancellations.
+    static void recordPairing(bluetooth.Transport transport,
+                              long pairingDurationMs,
+                              optional ConnectResultType result);
+
+    // Record that a user-initiated reconnection attempt to an already paired
+    // device finished. Ignores cancellations.
+    static void recordReconnection(optional ConnectResultType result);
+
+    // Record that a user selected a device to connect to.
+    static void recordDeviceSelection(long selectionDurationMs,
+                                      boolean wasPaired,
+                                      bluetooth.Transport transport);
   };
 
   interface Events {
     // Fired when a pairing event occurs.
     // |pairingEvent|: A pairing event.
     [maxListeners=1] static void onPairing(PairingEvent pairingEvent);
+
+    // Fired when a Bluetooth device changed its address.
+    static void onDeviceAddressChanged(bluetooth.Device device,
+                                       DOMString oldAddress);
   };
 };

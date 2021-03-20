@@ -26,12 +26,14 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_KEYBOARD_EVENT_H_
 
 #include <memory>
-#include "third_party/blink/public/platform/web_keyboard_event.h"
+#include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/events/keyboard_event_init.h"
 #include "third_party/blink/renderer/core/events/ui_event_with_key_state.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
+
+class KeyboardEventInit;
 
 class CORE_EXPORT KeyboardEvent final : public UIEventWithKeyState {
   DEFINE_WRAPPERTYPEINFO();
@@ -49,8 +51,10 @@ class CORE_EXPORT KeyboardEvent final : public UIEventWithKeyState {
   }
 
   static KeyboardEvent* Create(const WebKeyboardEvent& web_event,
-                               LocalDOMWindow* dom_window) {
-    return MakeGarbageCollected<KeyboardEvent>(web_event, dom_window);
+                               LocalDOMWindow* dom_window,
+                               bool cancellable = true) {
+    return MakeGarbageCollected<KeyboardEvent>(web_event, dom_window,
+                                               cancellable);
   }
 
   static KeyboardEvent* Create(ScriptState*,
@@ -58,7 +62,9 @@ class CORE_EXPORT KeyboardEvent final : public UIEventWithKeyState {
                                const KeyboardEventInit*);
 
   KeyboardEvent();
-  KeyboardEvent(const WebKeyboardEvent&, LocalDOMWindow*);
+  KeyboardEvent(const WebKeyboardEvent&,
+                LocalDOMWindow*,
+                bool cancellable = true);
   KeyboardEvent(const AtomicString&, const KeyboardEventInit*);
   ~KeyboardEvent() override;
 
@@ -91,7 +97,7 @@ class CORE_EXPORT KeyboardEvent final : public UIEventWithKeyState {
   unsigned which() const override;
   bool isComposing() const { return is_composing_; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void InitLocationModifiers(unsigned location);
@@ -105,7 +111,10 @@ class CORE_EXPORT KeyboardEvent final : public UIEventWithKeyState {
   unsigned key_code_ = 0;
 };
 
-DEFINE_EVENT_TYPE_CASTS(KeyboardEvent);
+template <>
+struct DowncastTraits<KeyboardEvent> {
+  static bool AllowFrom(const Event& event) { return event.IsKeyboardEvent(); }
+};
 
 }  // namespace blink
 

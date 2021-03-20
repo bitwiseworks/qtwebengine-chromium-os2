@@ -36,27 +36,29 @@
 
 namespace blink {
 
-RadioNodeList::RadioNodeList(ContainerNode& root_node,
-                             const AtomicString& name,
-                             CollectionType type)
-    : LiveNodeList(root_node,
+RadioNodeList::RadioNodeList(ContainerNode& owner_node,
+                             CollectionType type,
+                             const AtomicString& name)
+    : LiveNodeList(owner_node,
                    type,
                    kInvalidateForFormControls,
-                   IsHTMLFormElement(root_node)
+                   IsA<HTMLFormElement>(owner_node)
                        ? NodeListSearchRoot::kTreeScope
                        : NodeListSearchRoot::kOwnerNode),
-      name_(name) {}
+      name_(name) {
+  DCHECK(type == kRadioNodeListType || type == kRadioImgNodeListType);
+}
 
 RadioNodeList::~RadioNodeList() = default;
 
 static inline HTMLInputElement* ToRadioButtonInputElement(Element& element) {
-  if (!IsHTMLInputElement(element))
+  auto* input_element = DynamicTo<HTMLInputElement>(&element);
+  if (!input_element)
     return nullptr;
-  HTMLInputElement& input_element = ToHTMLInputElement(element);
-  if (input_element.type() != input_type_names::kRadio ||
-      input_element.value().IsEmpty())
+  if (input_element->type() != input_type_names::kRadio ||
+      input_element->value().IsEmpty())
     return nullptr;
-  return &input_element;
+  return input_element;
 }
 
 String RadioNodeList::value() const {
@@ -93,10 +95,10 @@ bool RadioNodeList::MatchesByIdOrName(const Element& test_element) const {
 bool RadioNodeList::CheckElementMatchesRadioNodeListFilter(
     const Element& test_element) const {
   DCHECK(!ShouldOnlyMatchImgElements());
-  DCHECK(IsHTMLObjectElement(test_element) ||
+  DCHECK(IsA<HTMLObjectElement>(test_element) ||
          test_element.IsFormControlElement());
-  if (IsHTMLFormElement(ownerNode())) {
-    HTMLFormElement* form_element = ToHTMLElement(test_element).formOwner();
+  if (IsA<HTMLFormElement>(ownerNode())) {
+    auto* form_element = To<HTMLElement>(test_element).formOwner();
     if (!form_element || form_element != ownerNode())
       return false;
   }
@@ -106,20 +108,22 @@ bool RadioNodeList::CheckElementMatchesRadioNodeListFilter(
 
 bool RadioNodeList::ElementMatches(const Element& element) const {
   if (ShouldOnlyMatchImgElements()) {
-    if (!IsHTMLImageElement(element))
+    auto* html_image_element = DynamicTo<HTMLImageElement>(element);
+    if (!html_image_element)
       return false;
 
-    if (ToHTMLImageElement(element).formOwner() != ownerNode())
+    if (html_image_element->formOwner() != ownerNode())
       return false;
 
     return MatchesByIdOrName(element);
   }
 
-  if (!IsHTMLObjectElement(element) && !element.IsFormControlElement())
+  if (!IsA<HTMLObjectElement>(element) && !element.IsFormControlElement())
     return false;
 
-  if (IsHTMLInputElement(element) &&
-      ToHTMLInputElement(element).type() == input_type_names::kImage)
+  auto* html_input_element = DynamicTo<HTMLInputElement>(&element);
+  if (html_input_element &&
+      html_input_element->type() == input_type_names::kImage)
     return false;
 
   return CheckElementMatchesRadioNodeListFilter(element);

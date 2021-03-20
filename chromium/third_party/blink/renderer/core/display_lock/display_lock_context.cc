@@ -4,346 +4,457 @@
 
 #include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
 
+#include <string>
+
 #include "base/memory/ptr_util.h"
-#include "third_party/blink/renderer/core/display_lock/display_lock_options.h"
-#include "third_party/blink/renderer/core/display_lock/strict_yielding_display_lock_budget.h"
-#include "third_party/blink/renderer/core/display_lock/unyielding_display_lock_budget.h"
-#include "third_party/blink/renderer/core/display_lock/yielding_display_lock_budget.h"
+#include "base/metrics/histogram_macros.h"
+#include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
+#include "third_party/blink/renderer/core/css/style_change_reason.h"
+#include "third_party/blink/renderer/core/css/style_recalc.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
+#include "third_party/blink/renderer/core/display_lock/render_subtree_activation_event.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
+#include "third_party/blink/renderer/core/editing/frame_selection.h"
+#include "third_party/blink/renderer/core/editing/selection_template.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/html_element_type_helpers.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/paint/pre_paint_tree_walk.h"
 #include "third_party/blink/renderer/platform/bindings/microtask.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
 namespace {
-// The default timeout for the lock if a timeout is not specified. Defaults to 1
-// sec.
-double kDefaultLockTimeoutMs = 1000.;
+namespace rejection_names {
+const char* kContainmentNotSatisfied =
+    "Containment requirement is not satisfied.";
+const char* kUnsupportedDisplay =
+    "Element has unsupported display type (display: contents).";
+}  // namespace rejection_names
 
-// Helper function that returns an immediately rejected promise.
-ScriptPromise GetRejectedPromise(ScriptState* script_state) {
-  auto* resolver = ScriptPromiseResolver::Create(script_state);
-  auto promise = resolver->Promise();
-  resolver->Reject();
-  return promise;
+void RecordActivationReason(Document* document,
+                            DisplayLockActivationReason reason) {
+  int ordered_reason = -1;
+
+  // IMPORTANT: This number needs to be bumped up when adding
+  // new reasons.
+  static const int number_of_reasons = 9;
+
+  switch (reason) {
+    case DisplayLockActivationReason::kAccessibility:
+      ordered_reason = 0;
+      break;
+    case DisplayLockActivationReason::kFindInPage:
+      ordered_reason = 1;
+      break;
+    case DisplayLockActivationReason::kFragmentNavigation:
+      ordered_reason = 2;
+      break;
+    case DisplayLockActivationReason::kScriptFocus:
+      ordered_reason = 3;
+      break;
+    case DisplayLockActivationReason::kScrollIntoView:
+      ordered_reason = 4;
+      break;
+    case DisplayLockActivationReason::kSelection:
+      ordered_reason = 5;
+      break;
+    case DisplayLockActivationReason::kSimulatedClick:
+      ordered_reason = 6;
+      break;
+    case DisplayLockActivationReason::kUserFocus:
+      ordered_reason = 7;
+      break;
+    case DisplayLockActivationReason::kViewportIntersection:
+      ordered_reason = 8;
+      break;
+    case DisplayLockActivationReason::kViewport:
+    case DisplayLockActivationReason::kAny:
+      NOTREACHED();
+      break;
+  }
+  UMA_HISTOGRAM_ENUMERATION("Blink.Render.DisplayLockActivationReason",
+                            ordered_reason, number_of_reasons);
+
+  if (document && reason == DisplayLockActivationReason::kFindInPage)
+    document->MarkHasFindInPageSubtreeVisibilityActiveMatch();
 }
-
-// Helper function that returns an immediately resolved promise.
-ScriptPromise GetResolvedPromise(ScriptState* script_state) {
-  auto* resolver = ScriptPromiseResolver::Create(script_state);
-  auto promise = resolver->Promise();
-  resolver->Resolve();
-  return promise;
-}
-
 }  // namespace
 
-DisplayLockContext::DisplayLockContext(Element* element,
-                                       ExecutionContext* context)
-    : ContextLifecycleObserver(context),
-      element_(element),
-      weak_factory_(this) {
-  DCHECK(element_->GetDocument().View());
-  element_->GetDocument().View()->RegisterForLifecycleNotifications(this);
+DisplayLockContext::DisplayLockContext(Element* element)
+    : element_(element), document_(&element_->GetDocument()) {
+  document_->AddDisplayLockContext(this);
+  DetermineIfSubtreeHasFocus();
+  DetermineIfSubtreeHasSelection();
 }
 
-DisplayLockContext::~DisplayLockContext() {
-  DCHECK_EQ(state_, kUnlocked);
-}
-
-void DisplayLockContext::Trace(blink::Visitor* visitor) {
-  visitor->Trace(update_resolver_);
-  visitor->Trace(commit_resolver_);
-  visitor->Trace(acquire_resolver_);
-  visitor->Trace(element_);
-  ScriptWrappable::Trace(visitor);
-  ActiveScriptWrappable::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
-}
-
-void DisplayLockContext::Dispose() {
-  // Note that if we have any resolvers at dispose time, then it's too late to
-  // reject the promise, since we are not allowed to create new strong
-  // references to objects already set for destruction (and rejecting would do
-  // this since the rejection has to be deferred). We need to detach instead.
-  // TODO(vmpstr): See if there is another earlier time we can detect that we're
-  // going to be disposed.
-  FinishUpdateResolver(kDetach);
-  FinishCommitResolver(kDetach);
-  FinishAcquireResolver(kDetach);
-  CancelTimeoutTask();
-  state_ = kUnlocked;
-
-  if (element_ && element_->GetDocument().View())
-    element_->GetDocument().View()->UnregisterFromLifecycleNotifications(this);
-  weak_factory_.InvalidateWeakPtrs();
-}
-
-void DisplayLockContext::ContextDestroyed(ExecutionContext*) {
-  FinishUpdateResolver(kReject);
-  FinishCommitResolver(kReject);
-  FinishAcquireResolver(kReject);
-  state_ = kUnlocked;
-}
-
-bool DisplayLockContext::HasPendingActivity() const {
-  // If we're locked or doing any work and have an element, then we should stay
-  // alive. If the element is gone, then there is no reason for the context to
-  // remain. Also, if we're unlocked we're essentially "idle" so GC can clean us
-  // up. If the script needs the context, the element would create a new one.
-  return element_ && state_ != kUnlocked;
-}
-
-ScriptPromise DisplayLockContext::acquire(ScriptState* script_state,
-                                          DisplayLockOptions* options) {
-  double timeout_ms = (options && options->hasTimeout())
-                          ? options->timeout()
-                          : kDefaultLockTimeoutMs;
-  // We always reschedule a timeout task even if we're not starting a new
-  // acquire. The reason for this is that the last acquire dictates the timeout
-  // interval. Note that the following call cancels any existing timeout tasks.
-  RescheduleTimeoutTask(timeout_ms);
-
-  if (state_ == kPendingAcquire) {
-    DCHECK(acquire_resolver_);
-    return acquire_resolver_->Promise();
-  }
-  DCHECK(!acquire_resolver_);
-
-  // At this point, if we're not unlocked, then we must already be locked.
-  if (state_ != kUnlocked)
-    return GetResolvedPromise(script_state);
-
-  update_budget_.reset();
-
-  // If we're already connected then we need to ensure that 1. layout is clean
-  // and 2. we have removed the current painted output.
-  if (element_->isConnected()) {
-    acquire_resolver_ = ScriptPromiseResolver::Create(script_state);
-    state_ = kPendingAcquire;
-    MarkPaintLayerNeedsRepaint();
-    ScheduleAnimation();
-    return acquire_resolver_->Promise();
-  }
-
-  // Otherwise (if we're not connected), we can acquire the lock immediately.
-  locked_frame_rect_ = LayoutRect();
-  state_ = kLocked;
-  return GetResolvedPromise(script_state);
-}
-
-ScriptPromise DisplayLockContext::update(ScriptState* script_state) {
-  // Reject if we're unlocked or disconnected.
-  if (state_ == kUnlocked || state_ == kPendingAcquire ||
-      !element_->isConnected()) {
-    return GetRejectedPromise(script_state);
-  }
-
-  // If we have a resolver, then we're at least updating already, just return
-  // the same promise.
-  if (update_resolver_) {
-    DCHECK(state_ == kUpdating || state_ == kCommitting) << state_;
-    return update_resolver_->Promise();
-  }
-
-  update_resolver_ = ScriptPromiseResolver::Create(script_state);
-  StartUpdateIfNeeded();
-  return update_resolver_->Promise();
-}
-
-ScriptPromise DisplayLockContext::commit(ScriptState* script_state) {
-  // Reject if we're unlocked.
-  if (state_ == kUnlocked)
-    return GetRejectedPromise(script_state);
-
-  // If we have a resolver, we must be committing already, just return the same
-  // promise.
-  if (commit_resolver_) {
-    DCHECK(state_ == kCommitting) << state_;
-    return commit_resolver_->Promise();
-  }
-
-  // Now that we've explicitly been requested to commit, we have cancel the
-  // timeout task.
-  CancelTimeoutTask();
-
-  // Note that we don't resolve the update promise here, since it should still
-  // finish updating before resolution. That is, calling update() and commit()
-  // together will still wait until the lifecycle is clean before resolving any
-  // of the promises.
-  DCHECK_NE(state_, kCommitting);
-  commit_resolver_ = ScriptPromiseResolver::Create(script_state);
-  auto promise = commit_resolver_->Promise();
-  StartCommit();
-  return promise;
-}
-
-void DisplayLockContext::FinishUpdateResolver(ResolverState state) {
-  FinishResolver(&update_resolver_, state);
-}
-
-void DisplayLockContext::FinishCommitResolver(ResolverState state) {
-  FinishResolver(&commit_resolver_, state);
-}
-
-void DisplayLockContext::FinishAcquireResolver(ResolverState state) {
-  FinishResolver(&acquire_resolver_, state);
-}
-
-void DisplayLockContext::FinishResolver(Member<ScriptPromiseResolver>* resolver,
-                                        ResolverState state) {
-  if (!*resolver)
+void DisplayLockContext::SetRequestedState(ESubtreeVisibility state) {
+  if (state_ == state)
     return;
-  switch (state) {
-    case kResolve:
-      // In order to avoid script doing work as a part of the lifecycle update,
-      // we delay the resolution to be in a task.
-      GetExecutionContext()
-          ->GetTaskRunner(TaskType::kMiscPlatformAPI)
-          ->PostTask(FROM_HERE, WTF::Bind(
-                                    +[](ScriptPromiseResolver* resolver) {
-                                      resolver->Resolve();
-                                    },
-                                    WrapPersistent(resolver->Get())));
+  state_ = state;
+  switch (state_) {
+    case ESubtreeVisibility::kVisible:
+      RequestUnlock();
       break;
-    case kReject:
-      (*resolver)->Reject();
+    case ESubtreeVisibility::kAuto:
+      RequestLock(static_cast<uint16_t>(DisplayLockActivationReason::kAny));
       break;
-    case kDetach:
-      (*resolver)->Detach();
+    case ESubtreeVisibility::kHidden:
+      RequestLock(0u);
+      break;
+    case ESubtreeVisibility::kHiddenMatchable:
+      RequestLock(
+          static_cast<uint16_t>(DisplayLockActivationReason::kAny) &
+          ~static_cast<uint16_t>(DisplayLockActivationReason::kViewport));
+      break;
   }
-  *resolver = nullptr;
+  // In a new state, we might need to either start or stop observing viewport
+  // intersections.
+  UpdateActivationObservationIfNeeded();
+
+  // If we needed a deferred not intersecting signal from 'auto' mode, we can
+  // set that to false, since the mode has switched to something else. If we're
+  // switching _to_ 'auto' mode, this should already be false and will be a
+  // no-op.
+  DCHECK(state_ != ESubtreeVisibility::kAuto ||
+         !needs_deferred_not_intersecting_signal_);
+  needs_deferred_not_intersecting_signal_ = false;
+  UpdateLifecycleNotificationRegistration();
+
+  // Note that we call this here since the |state_| change is a render affecting
+  // state, but is tracked independently.
+  NotifyRenderAffectingStateChanged();
 }
 
-bool DisplayLockContext::ShouldStyle() const {
-  return update_forced_ || state_ > kUpdating ||
-         (state_ == kUpdating &&
-          update_budget_->ShouldPerformPhase(DisplayLockBudget::Phase::kStyle));
+void DisplayLockContext::AdjustElementStyle(ComputedStyle* style) const {
+  if (state_ == ESubtreeVisibility::kVisible)
+    return;
+  // If not visible, element gains style and layout containment. If skipped, it
+  // also gains size containment.
+  // https://wicg.github.io/display-locking/#subtree-visibility
+  auto contain = style->Contain() | kContainsStyle | kContainsLayout;
+  if (IsLocked())
+    contain |= kContainsSize;
+  style->SetContain(contain);
 }
 
-void DisplayLockContext::DidStyle() {
-  if (state_ != kCommitting && state_ != kUpdating &&
-      state_ != kPendingAcquire && !update_forced_) {
+void DisplayLockContext::RequestLock(uint16_t activation_mask) {
+  UpdateActivationMask(activation_mask);
+  SetRenderAffectingState(RenderAffectingState::kLockRequested, true);
+}
+
+void DisplayLockContext::RequestUnlock() {
+  SetRenderAffectingState(RenderAffectingState::kLockRequested, false);
+}
+
+void DisplayLockContext::UpdateActivationMask(uint16_t activatable_mask) {
+  if (activatable_mask == activatable_mask_)
+    return;
+
+  bool all_activation_was_blocked = !activatable_mask_;
+  bool all_activation_is_blocked = !activatable_mask;
+  UpdateDocumentBookkeeping(IsLocked(), all_activation_was_blocked, IsLocked(),
+                            all_activation_is_blocked);
+
+  activatable_mask_ = activatable_mask;
+}
+
+void DisplayLockContext::UpdateDocumentBookkeeping(
+    bool was_locked,
+    bool all_activation_was_blocked,
+    bool is_locked,
+    bool all_activation_is_blocked) {
+  if (!document_)
+    return;
+
+  if (was_locked != is_locked) {
+    if (is_locked)
+      document_->AddLockedDisplayLock();
+    else
+      document_->RemoveLockedDisplayLock();
+  }
+
+  bool was_locked_and_blocking = was_locked && all_activation_was_blocked;
+  bool is_locked_and_blocking = is_locked && all_activation_is_blocked;
+  if (was_locked_and_blocking != is_locked_and_blocking) {
+    if (is_locked_and_blocking)
+      document_->IncrementDisplayLockBlockingAllActivation();
+    else
+      document_->DecrementDisplayLockBlockingAllActivation();
+  }
+}
+
+void DisplayLockContext::UpdateActivationObservationIfNeeded() {
+  // If we don't have a document, then we don't have an observer so just make
+  // sure we're marked as not observing anything and early out.
+  if (!document_) {
+    is_observed_ = false;
     return;
   }
 
-  // We must have "contain: style layout" for display locking.
-  // Note that we should also have this containment even if we're forcing
-  // this update to happen. Otherwise, proceeding with layout may cause
-  // unexpected behavior. By rejecting the promise, the behavior can be detected
-  // by script.
-  if (!ElementSupportsDisplayLocking()) {
-    FinishUpdateResolver(kReject);
-    FinishCommitResolver(kReject);
-    FinishAcquireResolver(kReject);
-    state_ = state_ == kUpdating ? kLocked : kUnlocked;
+  // We require observation if we are in 'auto' mode and we're connected to a
+  // view.
+  bool should_observe =
+      state_ == ESubtreeVisibility::kAuto && ConnectedToView();
+  if (is_observed_ == should_observe)
+    return;
+  is_observed_ = should_observe;
+
+  if (should_observe) {
+    document_->RegisterDisplayLockActivationObservation(element_);
+  } else {
+    document_->UnregisterDisplayLockActivationObservation(element_);
+    // If we're not listening to viewport intersections, then we can assume
+    // we're not intersecting:
+    // 1. We might not be connected, in which case we're not intersecting.
+    // 2. We might not be in 'auto' mode. which means that this doesn't affect
+    //    anything consequential but acts as a reset should we switch back to
+    //    the 'auto' mode.
+    SetRenderAffectingState(RenderAffectingState::kIntersectsViewport, false);
+  }
+}
+
+bool DisplayLockContext::NeedsLifecycleNotifications() const {
+  return needs_deferred_not_intersecting_signal_;
+}
+
+void DisplayLockContext::UpdateLifecycleNotificationRegistration() {
+  if (!document_ || !document_->View()) {
+    is_registered_for_lifecycle_notifications_ = false;
     return;
   }
 
-  if (state_ == kUpdating)
-    update_budget_->DidPerformPhase(DisplayLockBudget::Phase::kStyle);
-}
+  bool needs_notifications = NeedsLifecycleNotifications();
+  if (needs_notifications == is_registered_for_lifecycle_notifications_)
+    return;
 
-bool DisplayLockContext::ShouldLayout() const {
-  return update_forced_ || state_ > kUpdating ||
-         (state_ == kUpdating && update_budget_->ShouldPerformPhase(
-                                     DisplayLockBudget::Phase::kLayout));
-}
-
-void DisplayLockContext::DidLayout() {
-  if (state_ == kUpdating)
-    update_budget_->DidPerformPhase(DisplayLockBudget::Phase::kLayout);
-}
-
-bool DisplayLockContext::ShouldPrePaint() const {
-  return update_forced_ || state_ > kUpdating ||
-         (state_ == kUpdating && update_budget_->ShouldPerformPhase(
-                                     DisplayLockBudget::Phase::kPrePaint));
-}
-
-void DisplayLockContext::DidPrePaint() {
-  if (state_ == kUpdating)
-    update_budget_->DidPerformPhase(DisplayLockBudget::Phase::kPrePaint);
-
-#if DCHECK_IS_ON()
-  if (state_ == kUpdating || state_ == kCommitting) {
-    // Since we should be under containment, we should have a layer. If we
-    // don't, then paint might not happen and we'll never resolve.
-    DCHECK(element_->GetLayoutObject()->HasLayer());
+  is_registered_for_lifecycle_notifications_ = needs_notifications;
+  if (needs_notifications) {
+    document_->View()->RegisterForLifecycleNotifications(this);
+  } else {
+    document_->View()->UnregisterFromLifecycleNotifications(this);
   }
-#endif
 }
 
-bool DisplayLockContext::ShouldPaint() const {
+void DisplayLockContext::Lock() {
+  DCHECK(!IsLocked());
+  is_locked_ = true;
+  UpdateDocumentBookkeeping(false, !activatable_mask_, true,
+                            !activatable_mask_);
+
+  // If we're not connected, then we don't have to do anything else. Otherwise,
+  // we need to ensure that we update our style to check for containment later,
+  // layout size based on the options, and also clear the painted output.
+  if (!ConnectedToView())
+    return;
+
+  // There are two ways we can get locked:
+  // 1. A new subtree-visibility property needs us to be locked.
+  // 2. We're in 'auto' mode and we are not intersecting the viewport.
+  // In the first case, we are already in style processing, so we don't need to
+  // invalidate style. However, in the second case we invalidate style so that
+  // `AdjustElementStyle()` can be called.
+  if (!document_->InStyleRecalc()) {
+    element_->SetNeedsStyleRecalc(
+        kLocalStyleChange,
+        StyleChangeReasonForTracing::Create(style_change_reason::kDisplayLock));
+  }
+
+  // In either case, we schedule an animation. If we're already inside a
+  // lifecycle update, this will be a no-op.
+  ScheduleAnimation();
+
+  // We need to notify the AX cache (if it exists) to update |element_|'s
+  // children in the AX cache.
+  if (AXObjectCache* cache = element_->GetDocument().ExistingAXObjectCache())
+    cache->ChildrenChanged(element_);
+
+  if (!element_->GetLayoutObject())
+    return;
+
+  // GraphicsLayer collection would normally skip layers if paint is blocked
+  // by display-locking (see: CollectDrawableLayersForLayerListRecursively
+  // in LocalFrameView). However, if we don't trigger this collection, then
+  // we might use the cached result instead. In order to ensure we skip the
+  // newly locked layers, we need to set |need_graphics_layer_collection_|
+  // before marking the layer for repaint.
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+    needs_graphics_layer_collection_ = true;
+  MarkPaintLayerNeedsRepaint();
+}
+
+// Should* and Did* function for the lifecycle phases. These functions control
+// whether or not to process the lifecycle for self or for children.
+// =============================================================================
+bool DisplayLockContext::ShouldStyle(DisplayLockLifecycleTarget target) const {
+  return !is_locked_ || target == DisplayLockLifecycleTarget::kSelf ||
+         update_forced_ ||
+         (document_->ActivatableDisplayLocksForced() &&
+          IsActivatable(DisplayLockActivationReason::kAny));
+}
+
+void DisplayLockContext::DidStyle(DisplayLockLifecycleTarget target) {
+  if (target == DisplayLockLifecycleTarget::kSelf) {
+    // TODO(vmpstr): This needs to be in the spec.
+    if (ForceUnlockIfNeeded())
+      return;
+
+    if (blocked_style_traversal_type_ == kStyleUpdateSelf)
+      blocked_style_traversal_type_ = kStyleUpdateNotRequired;
+  } else {
+    if (element_->ChildNeedsReattachLayoutTree())
+      element_->MarkAncestorsWithChildNeedsReattachLayoutTree();
+    blocked_style_traversal_type_ = kStyleUpdateNotRequired;
+    MarkElementsForWhitespaceReattachment();
+  }
+}
+
+bool DisplayLockContext::ShouldLayout(DisplayLockLifecycleTarget target) const {
+  return !is_locked_ || target == DisplayLockLifecycleTarget::kSelf ||
+         update_forced_ ||
+         (document_->ActivatableDisplayLocksForced() &&
+          IsActivatable(DisplayLockActivationReason::kAny));
+}
+
+void DisplayLockContext::DidLayout(DisplayLockLifecycleTarget target) {
+  if (target == DisplayLockLifecycleTarget::kSelf)
+    return;
+  // Since we did layout on children already, we'll clear this.
+  child_layout_was_blocked_ = false;
+}
+
+bool DisplayLockContext::ShouldPrePaint(
+    DisplayLockLifecycleTarget target) const {
+  return !is_locked_ || target == DisplayLockLifecycleTarget::kSelf ||
+         update_forced_;
+}
+
+void DisplayLockContext::DidPrePaint(DisplayLockLifecycleTarget target) {
+  // This is here for symmetry, but could be removed if necessary.
+}
+
+bool DisplayLockContext::ShouldPaint(DisplayLockLifecycleTarget target) const {
   // Note that forced updates should never require us to paint, so we don't
   // check |update_forced_| here. In other words, although |update_forced_|
   // could be true here, we still should not paint. This also holds for
   // kUpdating state, since updates should not paint.
-  return state_ == kCommitting || state_ == kUnlocked;
+  return !is_locked_ || target == DisplayLockLifecycleTarget::kSelf;
 }
 
-void DisplayLockContext::DidPaint() {
+void DisplayLockContext::DidPaint(DisplayLockLifecycleTarget) {
   // This is here for symmetry, but could be removed if necessary.
 }
+// End Should* and Did* functions ==============================================
 
-bool DisplayLockContext::IsSearchable() const {
-  // TODO(vmpstr): Support "searchable: true" option, which allows locked
-  // elements to be searched.
-  return state_ == kUnlocked;
+bool DisplayLockContext::IsActivatable(
+    DisplayLockActivationReason reason) const {
+  return activatable_mask_ & static_cast<uint16_t>(reason);
 }
 
-void DisplayLockContext::DidAttachLayoutTree() {
-  if (state_ == kUnlocked)
-    return;
+void DisplayLockContext::FireActivationEvent(Element* activated_element) {
+  DCHECK(RuntimeEnabledFeatures::CSSSubtreeVisibilityActivationEventEnabled());
+  element_->DispatchEvent(
+      *MakeGarbageCollected<RenderSubtreeActivationEvent>(*activated_element));
+}
 
-  // Note that although we checked at style recalc time that the element has
-  // "contain: style layout", it might not actually apply the containment at the
-  // layout object level. This confirms that containment should apply.
-  if (!ElementSupportsDisplayLocking()) {
-    FinishUpdateResolver(kReject);
-    FinishCommitResolver(kReject);
-    state_ = state_ == kUpdating ? kLocked : kUnlocked;
+void DisplayLockContext::CommitForActivationWithSignal(
+    Element* activated_element,
+    DisplayLockActivationReason reason) {
+  DCHECK(activated_element);
+  DCHECK(element_);
+  DCHECK(ConnectedToView());
+  DCHECK(IsLocked());
+  DCHECK(ShouldCommitForActivation(DisplayLockActivationReason::kAny));
+
+  // TODO(vmpstr): Remove this when we have a beforematch event.
+  if (RuntimeEnabledFeatures::CSSSubtreeVisibilityActivationEventEnabled()) {
+    document_->EnqueueDisplayLockActivationTask(
+        WTF::Bind(&DisplayLockContext::FireActivationEvent,
+                  weak_factory_.GetWeakPtr(), WrapPersistent(activated_element)));
   }
+
+  RecordActivationReason(document_, reason);
 }
 
-DisplayLockContext::ScopedPendingFrameRect
-DisplayLockContext::GetScopedPendingFrameRect() {
-  if (state_ >= kCommitting)
-    return ScopedPendingFrameRect(nullptr);
-
-  DCHECK(element_->GetLayoutObject() && element_->GetLayoutBox());
-  element_->GetLayoutBox()->SetFrameRectForDisplayLock(pending_frame_rect_);
-  return ScopedPendingFrameRect(this);
+void DisplayLockContext::NotifyIsIntersectingViewport() {
+  // If we are now intersecting, then we are definitely not nested in a locked
+  // subtree and we don't need to lock as a result.
+  needs_deferred_not_intersecting_signal_ = false;
+  UpdateLifecycleNotificationRegistration();
+  // If we're not connected, then there is no need to change any state.
+  // This could be the case if we were disconnected while a viewport
+  // intersection notification was pending.
+  if (ConnectedToView())
+    SetRenderAffectingState(RenderAffectingState::kIntersectsViewport, true);
 }
 
-void DisplayLockContext::NotifyPendingFrameRectScopeEnded() {
-  DCHECK(element_->GetLayoutObject() && element_->GetLayoutBox());
-  DCHECK(locked_frame_rect_);
-  pending_frame_rect_ = element_->GetLayoutBox()->FrameRect();
-  element_->GetLayoutBox()->SetFrameRectForDisplayLock(*locked_frame_rect_);
+void DisplayLockContext::NotifyIsNotIntersectingViewport() {
+  if (IsLocked()) {
+    DCHECK(!needs_deferred_not_intersecting_signal_);
+    return;
+  }
+
+  // We might have been disconnected while the intersection observation
+  // notification was pending. Ensure to unregister from lifecycle
+  // notifications if we're doing that, and early out.
+  if (!ConnectedToView()) {
+    needs_deferred_not_intersecting_signal_ = false;
+    UpdateLifecycleNotificationRegistration();
+    return;
+  }
+
+  // There are two situations we need to consider here:
+  // 1. We are off-screen but not nested in any other lock. This means we should
+  //    re-lock (also verify that the reason we're in this state is that we're
+  //    activated).
+  // 2. We are in a nested locked context. This means we don't actually know
+  //    whether we should lock or not. In order to avoid needless dirty of the
+  //    layout and style trees up to the nested context, we remain unlocked.
+  //    However, we also need to ensure that we relock if we become unnested.
+  //    So, we simply delay this check to the next frame (via LocalFrameView),
+  //    which will call this function again and so we can perform the check
+  //    again.
+  auto* locked_ancestor =
+      DisplayLockUtilities::NearestLockedExclusiveAncestor(*element_);
+  if (locked_ancestor) {
+    needs_deferred_not_intersecting_signal_ = true;
+  } else {
+    needs_deferred_not_intersecting_signal_ = false;
+    SetRenderAffectingState(RenderAffectingState::kIntersectsViewport, false);
+  }
+  UpdateLifecycleNotificationRegistration();
+}
+
+bool DisplayLockContext::ShouldCommitForActivation(
+    DisplayLockActivationReason reason) const {
+  return IsActivatable(reason) && IsLocked();
 }
 
 DisplayLockContext::ScopedForcedUpdate
 DisplayLockContext::GetScopedForcedUpdate() {
-  if (state_ >= kCommitting)
+  if (!is_locked_)
     return ScopedForcedUpdate(nullptr);
 
   DCHECK(!update_forced_);
   update_forced_ = true;
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
+      TRACE_DISABLED_BY_DEFAULT("blink.debug.display_lock"), "LockForced",
+      TRACE_ID_LOCAL(this));
 
   // Now that the update is forced, we should ensure that style layout, and
   // prepaint code can reach it via dirty bits. Note that paint isn't a part of
   // this, since |update_forced_| doesn't force paint to happen. See
   // ShouldPaint().
-  MarkAncestorsForStyleRecalcIfNeeded();
-  MarkAncestorsForLayoutIfNeeded();
+  MarkForStyleRecalcIfNeeded();
+  MarkForLayoutIfNeeded();
   MarkAncestorsForPrePaintIfNeeded();
   return ScopedForcedUpdate(this);
 }
@@ -351,40 +462,49 @@ DisplayLockContext::GetScopedForcedUpdate() {
 void DisplayLockContext::NotifyForcedUpdateScopeEnded() {
   DCHECK(update_forced_);
   update_forced_ = false;
+  TRACE_EVENT_NESTABLE_ASYNC_END0(
+      TRACE_DISABLED_BY_DEFAULT("blink.debug.display_lock"), "LockForced",
+      TRACE_ID_LOCAL(this));
 }
 
-void DisplayLockContext::StartCommit() {
-  // If we don't have an element or we're not connected, then the process of
-  // committing is the same as just unlocking the element.
-  if (!element_ || !element_->isConnected()) {
-    state_ = kUnlocked;
-    update_budget_.reset();
-    FinishUpdateResolver(kReject);
-    // TODO(vmpstr): Should we resolve here? What's the path to unlocking an
-    // element without connecting it (i.e. acquire the lock, then change your
-    // mind).
-    FinishCommitResolver(kReject);
+void DisplayLockContext::Unlock() {
+  DCHECK(IsLocked());
+  is_locked_ = false;
+  UpdateDocumentBookkeeping(true, !activatable_mask_, false,
+                            !activatable_mask_);
+
+  if (!ConnectedToView())
     return;
+
+  ScheduleAnimation();
+
+  // There are a few ways we can get unlocked:
+  // 1. A new subtree-visibility property needs us to be ulocked.
+  // 2. We're in 'auto' mode and we are intersecting the viewport.
+  // 3. We're activating in hidden-matchable or auto mode
+  // In the first case, we are already in style processing, so we don't need to
+  // invalidate style. However, in the second and third cases we invalidate
+  // style so that `AdjustElementStyle()` can be called.
+  // TODO(vmpstr): Case 3 needs to be reworked, since the spec no longer has a
+  // notion of activation.
+  if (!document_->InStyleRecalc()) {
+    // Since size containment depends on the activatability state, we should
+    // invalidate the style for this element, so that the style adjuster can
+    // properly remove the containment.
+    element_->SetNeedsStyleRecalc(
+        kLocalStyleChange,
+        StyleChangeReasonForTracing::Create(style_change_reason::kDisplayLock));
+
+    // Also propagate any dirty bits that we have previously blocked.
+    // If we're in style recalc, this will be handled by
+    // `AdjustStyleRecalcChangeForChildren()`.
+    MarkForStyleRecalcIfNeeded();
   }
 
-  // If we have just started to acquire, we can unlock immediately since we
-  // didn't have a chance to lock yet.
-  if (state_ == kPendingAcquire) {
-    FinishAcquireResolver(kReject);
-    FinishCommitResolver(kResolve);
-    state_ = kUnlocked;
-    return;
-  }
-
-  if (state_ != kUpdating)
-    ScheduleAnimation();
-
-  DCHECK_LT(state_, kCommitting);
-  state_ = kCommitting;
-  update_budget_.reset();
-
-  // We're committing without a budget, so ensure we can reach style.
-  MarkAncestorsForStyleRecalcIfNeeded();
+  // We also need to notify the AX cache (if it exists) to update the childrens
+  // of |element_| in the AX cache.
+  if (AXObjectCache* cache = element_->GetDocument().ExistingAXObjectCache())
+    cache->ChildrenChanged(element_);
 
   auto* layout_object = element_->GetLayoutObject();
   // We might commit without connecting, so there is no layout object yet.
@@ -393,247 +513,472 @@ void DisplayLockContext::StartCommit() {
 
   // Now that we know we have a layout object, we should ensure that we can
   // reach the rest of the phases as well.
-  MarkAncestorsForLayoutIfNeeded();
+  MarkForLayoutIfNeeded();
   MarkAncestorsForPrePaintIfNeeded();
   MarkPaintLayerNeedsRepaint();
-
-  // We also need to commit the pending frame rect at this point.
-  bool frame_rect_changed =
-      ToLayoutBox(layout_object)->FrameRect() != pending_frame_rect_;
-
-  // If the frame rect hasn't actually changed then we don't need to do
-  // anything. Other than wait for commit to happen
-  if (!frame_rect_changed)
-    return;
-
-  // Set the pending frame rect as the new one, and ensure to schedule a layout
-  // for just the box itself. Note that we use the non-display locked version to
-  // ensure all the hooks are property invoked.
-  ToLayoutBox(layout_object)->SetFrameRect(pending_frame_rect_);
-  layout_object->SetNeedsLayout(
-      layout_invalidation_reason::kDisplayLockCommitting);
 }
 
-void DisplayLockContext::StartUpdateIfNeeded() {
-  // We should not be calling this if we're unlocked.
-  DCHECK_NE(state_, kUnlocked);
-  // Any state other than kLocked means that we are already in the process of
-  // updating/committing, so we can piggy back on that process without kicking
-  // off any new updates.
-  if (state_ != kLocked)
-    return;
-
-  // We don't need to mark anything dirty since the budget will take care of
-  // that for us.
-  update_budget_ = CreateNewBudget();
-  state_ = kUpdating;
-  ScheduleAnimation();
+void DisplayLockContext::AddToWhitespaceReattachSet(Element& element) {
+  whitespace_reattach_set_.insert(&element);
 }
 
-std::unique_ptr<DisplayLockBudget> DisplayLockContext::CreateNewBudget() {
-  switch (BudgetType::kDefault) {
-    case BudgetType::kDoNotYield:
-      return base::WrapUnique(new UnyieldingDisplayLockBudget(this));
-    case BudgetType::kStrictYieldBetweenLifecyclePhases:
-      return base::WrapUnique(new StrictYieldingDisplayLockBudget(this));
-    case BudgetType::kYieldBetweenLifecyclePhases:
-      return base::WrapUnique(new YieldingDisplayLockBudget(this));
+void DisplayLockContext::MarkElementsForWhitespaceReattachment() {
+  for (auto element : whitespace_reattach_set_) {
+    if (!element || element->NeedsReattachLayoutTree() ||
+        !element->GetLayoutObject())
+      continue;
+
+    if (Node* first_child = LayoutTreeBuilderTraversal::FirstChild(*element))
+      first_child->MarkAncestorsWithChildNeedsReattachLayoutTree();
   }
-  NOTREACHED();
-  return nullptr;
+  whitespace_reattach_set_.clear();
 }
 
-bool DisplayLockContext::MarkAncestorsForStyleRecalcIfNeeded() {
+StyleRecalcChange DisplayLockContext::AdjustStyleRecalcChangeForChildren(
+    StyleRecalcChange change) {
+  // This code is similar to MarkForStyleRecalcIfNeeded, except that it acts on
+  // |change| and not on |element_|. This is only called during style recalc.
+  // Note that since we're already in self style recalc, this code is shorter
+  // since it doesn't have to deal with dirtying self-style.
+  DCHECK(document_->InStyleRecalc());
+
+  if (reattach_layout_tree_was_blocked_) {
+    change = change.ForceReattachLayoutTree();
+    reattach_layout_tree_was_blocked_ = false;
+  }
+
+  if (blocked_style_traversal_type_ == kStyleUpdateDescendants)
+    change = change.ForceRecalcDescendants();
+  else if (blocked_style_traversal_type_ == kStyleUpdateChildren)
+    change = change.EnsureAtLeast(StyleRecalcChange::kRecalcChildren);
+  blocked_style_traversal_type_ = kStyleUpdateNotRequired;
+  return change;
+}
+
+bool DisplayLockContext::MarkForStyleRecalcIfNeeded() {
+  if (reattach_layout_tree_was_blocked_) {
+    // We previously blocked a layout tree reattachment on |element_|'s
+    // descendants, so we should mark it for layout tree reattachment now.
+    element_->SetForceReattachLayoutTree();
+    reattach_layout_tree_was_blocked_ = false;
+  }
   if (IsElementDirtyForStyleRecalc()) {
+    if (blocked_style_traversal_type_ > kStyleUpdateNotRequired) {
+      // We blocked a traversal going to the element previously.
+      // Make sure we will traverse this element and maybe its subtree if we
+      // previously blocked a style traversal that should've done that.
+      element_->SetNeedsStyleRecalc(
+          blocked_style_traversal_type_ == kStyleUpdateDescendants
+              ? kSubtreeStyleChange
+              : kLocalStyleChange,
+          StyleChangeReasonForTracing::Create(
+              style_change_reason::kDisplayLock));
+      if (blocked_style_traversal_type_ == kStyleUpdateChildren)
+        element_->SetChildNeedsStyleRecalc();
+      blocked_style_traversal_type_ = kStyleUpdateNotRequired;
+    } else if (element_->ChildNeedsReattachLayoutTree()) {
+      // Mark |element_| as style dirty, as we can't mark for child reattachment
+      // before style.
+      element_->SetNeedsStyleRecalc(kLocalStyleChange,
+                                    StyleChangeReasonForTracing::Create(
+                                        style_change_reason::kDisplayLock));
+    }
+    // Propagate to the ancestors, since the dirty bit in a locked subtree is
+    // stopped at the locked ancestor.
+    // See comment in IsElementDirtyForStyleRecalc.
     element_->MarkAncestorsWithChildNeedsStyleRecalc();
     return true;
   }
   return false;
 }
 
-bool DisplayLockContext::MarkAncestorsForLayoutIfNeeded() {
+bool DisplayLockContext::MarkForLayoutIfNeeded() {
   if (IsElementDirtyForLayout()) {
-    element_->GetLayoutObject()->MarkContainerChainForLayout();
+    // Forces the marking of ancestors to happen, even if
+    // |DisplayLockContext::ShouldLayout()| returns false.
+    base::AutoReset<bool> scoped_force(&update_forced_, true);
+    if (child_layout_was_blocked_) {
+      // We've previously blocked a child traversal when doing self-layout for
+      // the locked element, so we're marking it with child-needs-layout so that
+      // it will traverse to the locked element and do the child traversal
+      // again. We don't need to mark it for self-layout (by calling
+      // |LayoutObject::SetNeedsLayout()|) because the locked element itself
+      // doesn't need to relayout.
+      element_->GetLayoutObject()->SetChildNeedsLayout();
+      child_layout_was_blocked_ = false;
+    } else {
+      // Since the dirty layout propagation stops at the locked element, we need
+      // to mark its ancestors as dirty here so that it will be traversed to on
+      // the next layout.
+      element_->GetLayoutObject()->MarkContainerChainForLayout();
+    }
     return true;
   }
   return false;
 }
 
 bool DisplayLockContext::MarkAncestorsForPrePaintIfNeeded() {
+  // TODO(vmpstr): We should add a compositing phase for proper bookkeeping.
+  bool compositing_dirtied = MarkForCompositingUpdatesIfNeeded();
+
   if (IsElementDirtyForPrePaint()) {
     auto* layout_object = element_->GetLayoutObject();
     if (auto* parent = layout_object->Parent())
       parent->SetSubtreeShouldCheckForPaintInvalidation();
+
+    // Note that if either we or our descendants are marked as needing this
+    // update, then ensure to mark self as needing the update. This sets up the
+    // correct flags for PrePaint to recompute the necessary values and
+    // propagate the information into the subtree.
+    if (needs_effective_allowed_touch_action_update_ ||
+        layout_object->EffectiveAllowedTouchActionChanged() ||
+        layout_object->DescendantEffectiveAllowedTouchActionChanged()) {
+      // Note that although the object itself should have up to date value, in
+      // order to force recalc of the whole subtree, we mark it as needing an
+      // update.
+      layout_object->MarkEffectiveAllowedTouchActionChanged();
+    }
+    return true;
+  }
+  return compositing_dirtied;
+}
+
+bool DisplayLockContext::MarkPaintLayerNeedsRepaint() {
+  DCHECK(ConnectedToView());
+  if (auto* layout_object = element_->GetLayoutObject()) {
+    layout_object->PaintingLayer()->SetNeedsRepaint();
+    if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
+        needs_graphics_layer_collection_) {
+      document_->View()->SetForeignLayerListNeedsUpdate();
+      needs_graphics_layer_collection_ = false;
+    }
     return true;
   }
   return false;
 }
 
-bool DisplayLockContext::MarkPaintLayerNeedsRepaint() {
-  if (auto* layout_object = element_->GetLayoutObject()) {
-    layout_object->PaintingLayer()->SetNeedsRepaint();
+bool DisplayLockContext::MarkForCompositingUpdatesIfNeeded() {
+  if (!ConnectedToView())
+    return false;
+
+  auto* layout_object = element_->GetLayoutObject();
+  if (!layout_object)
+    return false;
+
+  auto* layout_box = DynamicTo<LayoutBoxModelObject>(layout_object);
+  if (layout_box && layout_box->HasSelfPaintingLayer()) {
+    if (layout_box->Layer()->ChildNeedsCompositingInputsUpdate() &&
+        layout_box->Layer()->Parent()) {
+      // Note that if the layer's child needs compositing inputs update, then
+      // that layer itself also needs compositing inputs update. In order to
+      // propagate the dirty bit, we need to mark this layer's _parent_ as a
+      // needing an update.
+      layout_box->Layer()->Parent()->SetNeedsCompositingInputsUpdate();
+    }
+    if (needs_compositing_requirements_update_)
+      layout_box->Layer()->SetNeedsCompositingRequirementsUpdate();
+    needs_compositing_requirements_update_ = false;
     return true;
   }
   return false;
 }
 
 bool DisplayLockContext::IsElementDirtyForStyleRecalc() const {
-  return element_->NeedsStyleRecalc() || element_->ChildNeedsStyleRecalc();
+  // The |element_| checks could be true even if |blocked_style_traversal_type_|
+  // is not required. The reason for this is that the
+  // blocked_style_traversal_type_ is set during the style walk that this
+  // display lock blocked. However, we could dirty element style and commit
+  // before ever having gone through the style calc that would have been
+  // blocked, meaning we never blocked style during a walk. Instead we might
+  // have not propagated the dirty bits up the tree.
+  return element_->NeedsStyleRecalc() || element_->ChildNeedsStyleRecalc() ||
+         element_->ChildNeedsReattachLayoutTree() ||
+         blocked_style_traversal_type_ > kStyleUpdateNotRequired;
 }
 
 bool DisplayLockContext::IsElementDirtyForLayout() const {
   if (auto* layout_object = element_->GetLayoutObject())
-    return layout_object->NeedsLayout();
+    return layout_object->NeedsLayout() || child_layout_was_blocked_;
   return false;
 }
 
 bool DisplayLockContext::IsElementDirtyForPrePaint() const {
   if (auto* layout_object = element_->GetLayoutObject()) {
-    return layout_object->ShouldCheckForPaintInvalidation() ||
-           layout_object->SubtreeShouldCheckForPaintInvalidation() ||
-           layout_object->NeedsPaintPropertyUpdate() ||
-           layout_object->DescendantNeedsPaintPropertyUpdate();
+    auto* layout_box = DynamicTo<LayoutBoxModelObject>(layout_object);
+    return PrePaintTreeWalk::ObjectRequiresPrePaint(*layout_object) ||
+           PrePaintTreeWalk::ObjectRequiresTreeBuilderContext(*layout_object) ||
+           needs_prepaint_subtree_walk_ ||
+           needs_effective_allowed_touch_action_update_ ||
+           needs_compositing_requirements_update_ ||
+           (layout_box && layout_box->HasSelfPaintingLayer() &&
+            layout_box->Layer()->ChildNeedsCompositingInputsUpdate());
   }
   return false;
 }
 
 void DisplayLockContext::DidMoveToNewDocument(Document& old_document) {
+  DCHECK(element_);
+  document_ = &element_->GetDocument();
+
+  old_document.RemoveDisplayLockContext(this);
+  document_->AddDisplayLockContext(this);
+
+  if (is_observed_) {
+    old_document.UnregisterDisplayLockActivationObservation(element_);
+    document_->RegisterDisplayLockActivationObservation(element_);
+  }
+
   // Since we're observing the lifecycle updates, ensure that we listen to the
   // right document's view.
-  if (old_document.View())
-    old_document.View()->UnregisterFromLifecycleNotifications(this);
-  if (element_ && element_->GetDocument().View())
-    element_->GetDocument().View()->RegisterForLifecycleNotifications(this);
+  if (is_registered_for_lifecycle_notifications_) {
+    if (old_document.View())
+      old_document.View()->UnregisterFromLifecycleNotifications(this);
+
+    if (document_->View())
+      document_->View()->RegisterForLifecycleNotifications(this);
+    else
+      is_registered_for_lifecycle_notifications_ = false;
+  }
+
+  if (IsLocked()) {
+    old_document.RemoveLockedDisplayLock();
+    document_->AddLockedDisplayLock();
+    if (!IsActivatable(DisplayLockActivationReason::kAny)) {
+      old_document.DecrementDisplayLockBlockingAllActivation();
+      document_->IncrementDisplayLockBlockingAllActivation();
+    }
+  }
+
+  DetermineIfSubtreeHasFocus();
+  DetermineIfSubtreeHasSelection();
 }
 
-void DisplayLockContext::WillStartLifecycleUpdate() {
-  if (state_ == kUpdating)
-    update_budget_->WillStartLifecycleUpdate();
+void DisplayLockContext::WillStartLifecycleUpdate(const LocalFrameView& view) {
+  DCHECK(NeedsLifecycleNotifications());
+  // We might have delayed processing intersection observation update (signal
+  // that we were not intersecting) because this context was nested in another
+  // locked context. At the start of the lifecycle, we should check whether
+  // that is still true. In other words, this call will check if we're still
+  // nested. If we are, we won't do anything. If we're not, then we will lock
+  // this context.
+  //
+  // Note that when we are no longer nested and and we have not received any
+  // notifications from the intersection observer, it means that we are not
+  // visible.
+  if (needs_deferred_not_intersecting_signal_)
+    NotifyIsNotIntersectingViewport();
 }
 
-void DisplayLockContext::DidFinishLifecycleUpdate() {
-  if (state_ == kPendingAcquire) {
-    if (!ElementSupportsDisplayLocking()) {
-      FinishAcquireResolver(kReject);
-      state_ = kUnlocked;
-      return;
-    }
-
-    FinishAcquireResolver(kResolve);
-    state_ = kLocked;
-    auto* layout_object = element_->GetLayoutObject();
-    if (layout_object && layout_object->IsBox()) {
-      locked_frame_rect_ = ToLayoutBox(layout_object)->FrameRect();
-    } else {
-      locked_frame_rect_ = LayoutRect();
-    }
+void DisplayLockContext::NotifyWillDisconnect() {
+  if (!IsLocked() || !element_ || !element_->GetLayoutObject())
     return;
-  }
+  // If we're locked while being disconnected, we need to layout the parent.
+  // The reason for this is that we might skip the layout if we're empty while
+  // locked, but it's important to update IsSelfCollapsingBlock property on
+  // the parent so that it's up to date. This property is updated during
+  // layout.
+  if (auto* parent = element_->GetLayoutObject()->Parent())
+    parent->SetNeedsLayout(layout_invalidation_reason::kDisplayLock);
+}
 
-  if (state_ == kCommitting) {
-    FinishUpdateResolver(kResolve);
-    FinishCommitResolver(kResolve);
-    CancelTimeoutTask();
-    state_ = kUnlocked;
-    return;
-  }
+void DisplayLockContext::ElementDisconnected() {
+  UpdateActivationObservationIfNeeded();
+}
 
-  if (state_ != kUpdating)
-    return;
-
-  // If we became disconnected for any reason, then we should reject the
-  // update promise and go back to the locked state.
-  if (!element_ || !element_->isConnected()) {
-    FinishUpdateResolver(kReject);
-    update_budget_.reset();
-    state_ = kLocked;
-    return;
-  }
-
-  if (update_budget_->NeedsLifecycleUpdates()) {
-    // Note that we post a task to schedule an animation, since rAF requests can
-    // be ignored if they happen from within a lifecycle update.
-    GetExecutionContext()
-        ->GetTaskRunner(TaskType::kMiscPlatformAPI)
-        ->PostTask(FROM_HERE, WTF::Bind(&DisplayLockContext::ScheduleAnimation,
-                                        WrapWeakPersistent(this)));
-    return;
-  }
-
-  FinishUpdateResolver(kResolve);
-  update_budget_.reset();
-  state_ = kLocked;
+void DisplayLockContext::ElementConnected() {
+  UpdateActivationObservationIfNeeded();
+  DetermineIfSubtreeHasFocus();
+  DetermineIfSubtreeHasSelection();
 }
 
 void DisplayLockContext::ScheduleAnimation() {
-  DCHECK(element_->isConnected());
+  DCHECK(element_);
+  if (!ConnectedToView() || !document_ || !document_->GetPage())
+    return;
 
   // Schedule an animation to perform the lifecycle phases.
-  element_->GetDocument().GetPage()->Animator().ScheduleVisualUpdate(
-      element_->GetDocument().GetFrame());
+  document_->GetPage()->Animator().ScheduleVisualUpdate(document_->GetFrame());
 }
 
-void DisplayLockContext::RescheduleTimeoutTask(double delay) {
-  CancelTimeoutTask();
-
-  if (!std::isfinite(delay))
-    return;
-
-  // Make sure the delay is at least 1ms.
-  delay = std::max(delay, 1.);
-  GetExecutionContext()
-      ->GetTaskRunner(TaskType::kMiscPlatformAPI)
-      ->PostDelayedTask(FROM_HERE,
-                        WTF::Bind(&DisplayLockContext::TriggerTimeout,
-                                  weak_factory_.GetWeakPtr()),
-                        TimeDelta::FromMillisecondsD(delay));
-  timeout_task_is_scheduled_ = true;
-}
-
-void DisplayLockContext::CancelTimeoutTask() {
-  if (!timeout_task_is_scheduled_)
-    return;
-  weak_factory_.InvalidateWeakPtrs();
-  timeout_task_is_scheduled_ = false;
-}
-
-void DisplayLockContext::TriggerTimeout() {
-  StartCommit();
-  timeout_task_is_scheduled_ = false;
-}
-
-bool DisplayLockContext::ElementSupportsDisplayLocking() const {
-  DCHECK(element_ && !IsElementDirtyForStyleRecalc());
-  // If we have a layout object, check that since it's a more authoritative
-  // source of containment information.
-  if (auto* layout_object = element_->GetLayoutObject()) {
-    return layout_object->ShouldApplyStyleContainment() &&
-           layout_object->ShouldApplyLayoutContainment();
+const char* DisplayLockContext::ShouldForceUnlock() const {
+  DCHECK(element_);
+  // This function is only called after style, layout tree, or lifecycle
+  // updates, so the style should be up-to-date, except in the case of nested
+  // locks, where the style recalc will never actually get to |element_|.
+  // TODO(vmpstr): We need to figure out what to do here, since we don't know
+  // what the style is and whether this element has proper containment. However,
+  // forcing an update from the ancestor locks seems inefficient. For now, we
+  // just optimistically assume that we have all of the right containment in
+  // place. See crbug.com/926276 for more information.
+  if (element_->NeedsStyleRecalc()) {
+    DCHECK(DisplayLockUtilities::NearestLockedExclusiveAncestor(*element_));
+    return nullptr;
   }
 
-  // Otherwise, fallback on just checking style.
+  if (element_->HasDisplayContentsStyle())
+    return rejection_names::kUnsupportedDisplay;
+
   auto* style = element_->GetComputedStyle();
-  return style && style->ContainsStyle() && style->ContainsLayout();
+  // Note that if for whatever reason we don't have computed style, then
+  // optimistically assume that we have containment.
+  if (!style)
+    return nullptr;
+  if (!style->ContainsStyle() || !style->ContainsLayout())
+    return rejection_names::kContainmentNotSatisfied;
+
+  // We allow replaced elements to be locked. This check is similar to the check
+  // in DefinitelyNewFormattingContext() in element.cc, but in this case we
+  // allow object element to get locked.
+  if (IsA<HTMLObjectElement>(*element_) || IsA<HTMLImageElement>(*element_) ||
+      element_->IsFormControlElement() || element_->IsMediaElement() ||
+      element_->IsFrameOwnerElement() || element_->IsSVGElement()) {
+    return nullptr;
+  }
+
+  // From https://www.w3.org/TR/css-contain-1/#containment-layout
+  // If the element does not generate a principal box (as is the case with
+  // display: contents or display: none), or if the element is an internal
+  // table element other than display: table-cell, if the element is an
+  // internal ruby element, or if the element’s principal box is a
+  // non-atomic inline-level box, layout containment has no effect.
+  // (Note we're allowing display:none for display locked elements, and a bit
+  // more restrictive on ruby - banning <ruby> elements entirely).
+  auto* html_element = DynamicTo<HTMLElement>(element_.Get());
+  if ((style->IsDisplayTableType() &&
+       style->Display() != EDisplay::kTableCell) ||
+      (!html_element || IsA<HTMLRubyElement>(html_element)) ||
+      (style->IsDisplayInlineType() && !style->IsDisplayReplacedType())) {
+    return rejection_names::kContainmentNotSatisfied;
+  }
+  return nullptr;
+}
+
+bool DisplayLockContext::ForceUnlockIfNeeded() {
+  // We must have "contain: style layout", and disallow display:contents
+  // for display locking. Note that we should always guarantee this after
+  // every style or layout tree update. Otherwise, proceeding with layout may
+  // cause unexpected behavior. By rejecting the promise, the behavior can be
+  // detected by script.
+  // TODO(rakina): If this is after acquire's promise is resolved and update()
+  // commit() isn't in progress, the web author won't know that the element
+  // got unlocked. Figure out how to notify the author.
+  if (auto* reason = ShouldForceUnlock()) {
+    is_locked_ = false;
+    return true;
+  }
+  return false;
+}
+
+bool DisplayLockContext::ConnectedToView() const {
+  return element_ && document_ && element_->isConnected() && document_->View();
+}
+
+void DisplayLockContext::NotifySubtreeLostFocus() {
+  SetRenderAffectingState(RenderAffectingState::kSubtreeHasFocus, false);
+}
+
+void DisplayLockContext::NotifySubtreeGainedFocus() {
+  SetRenderAffectingState(RenderAffectingState::kSubtreeHasFocus, true);
+}
+
+void DisplayLockContext::DetermineIfSubtreeHasFocus() {
+  if (!ConnectedToView()) {
+    SetRenderAffectingState(RenderAffectingState::kSubtreeHasFocus, false);
+    return;
+  }
+
+  bool subtree_has_focus = false;
+  // Iterate up the ancestor chain from the currently focused element. If at any
+  // time we find our element, then our subtree is focused.
+  for (auto* focused = document_->FocusedElement(); focused;
+       focused = FlatTreeTraversal::ParentElement(*focused)) {
+    if (focused == element_.Get()) {
+      subtree_has_focus = true;
+      break;
+    }
+  }
+  SetRenderAffectingState(RenderAffectingState::kSubtreeHasFocus,
+                          subtree_has_focus);
+}
+
+void DisplayLockContext::NotifySubtreeGainedSelection() {
+  SetRenderAffectingState(RenderAffectingState::kSubtreeHasSelection, true);
+}
+
+void DisplayLockContext::NotifySubtreeLostSelection() {
+  SetRenderAffectingState(RenderAffectingState::kSubtreeHasSelection, false);
+}
+
+void DisplayLockContext::DetermineIfSubtreeHasSelection() {
+  if (!ConnectedToView() || !document_->GetFrame()) {
+    SetRenderAffectingState(RenderAffectingState::kSubtreeHasSelection, false);
+    return;
+  }
+
+  auto range = ToEphemeralRangeInFlatTree(document_->GetFrame()
+                                              ->Selection()
+                                              .GetSelectionInDOMTree()
+                                              .ComputeRange());
+  bool subtree_has_selection = false;
+  for (auto& node : range.Nodes()) {
+    for (auto& ancestor : FlatTreeTraversal::InclusiveAncestorsOf(node)) {
+      if (&ancestor == element_.Get()) {
+        subtree_has_selection = true;
+        break;
+      }
+    }
+    if (subtree_has_selection)
+      break;
+  }
+  SetRenderAffectingState(RenderAffectingState::kSubtreeHasSelection,
+                          subtree_has_selection);
+}
+
+void DisplayLockContext::SetRenderAffectingState(RenderAffectingState state,
+                                                 bool new_flag) {
+  render_affecting_state_[static_cast<int>(state)] = new_flag;
+  NotifyRenderAffectingStateChanged();
+}
+
+void DisplayLockContext::NotifyRenderAffectingStateChanged() {
+  auto state = [this](RenderAffectingState state) {
+    return render_affecting_state_[static_cast<int>(state)];
+  };
+
+  // Check that we're visible if and only if lock has not been requested.
+  DCHECK(state_ == ESubtreeVisibility::kVisible ||
+         state(RenderAffectingState::kLockRequested));
+  DCHECK(state_ != ESubtreeVisibility::kVisible ||
+         !state(RenderAffectingState::kLockRequested));
+
+  // We should be locked if the lock has been requested (the above DCHECKs
+  // verify that this means that we are not 'visible'), and any of the
+  // following is true:
+  // - We are not in 'auto' mode (meaning 'hidden') or
+  // - We are in 'auto' mode and nothing blocks locking: viewport is
+  //   not intersecting, subtree doesn't have focus, and subtree doesn't have
+  //   selection.
+  bool should_be_locked =
+      state(RenderAffectingState::kLockRequested) &&
+      (state_ != ESubtreeVisibility::kAuto ||
+       (!state(RenderAffectingState::kIntersectsViewport) &&
+        !state(RenderAffectingState::kSubtreeHasFocus) &&
+        !state(RenderAffectingState::kSubtreeHasSelection)));
+
+  if (should_be_locked && !IsLocked())
+    Lock();
+  else if (!should_be_locked && IsLocked())
+    Unlock();
+}
+
+void DisplayLockContext::Trace(Visitor* visitor) {
+  visitor->Trace(element_);
+  visitor->Trace(document_);
+  visitor->Trace(whitespace_reattach_set_);
 }
 
 // Scoped objects implementation
 // -----------------------------------------------
-
-DisplayLockContext::ScopedPendingFrameRect::ScopedPendingFrameRect(
-    DisplayLockContext* context)
-    : context_(context) {}
-
-DisplayLockContext::ScopedPendingFrameRect::ScopedPendingFrameRect(
-    ScopedPendingFrameRect&& other)
-    : context_(other.context_) {
-  other.context_ = nullptr;
-}
-
-DisplayLockContext::ScopedPendingFrameRect::~ScopedPendingFrameRect() {
-  if (context_)
-    context_->NotifyPendingFrameRectScopeEnded();
-}
-
 DisplayLockContext::ScopedForcedUpdate::ScopedForcedUpdate(
     DisplayLockContext* context)
     : context_(context) {}

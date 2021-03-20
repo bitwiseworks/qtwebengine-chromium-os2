@@ -10,11 +10,10 @@
 
 namespace extensions {
 
-class AppViewGuestInternalAttachFrameFunction
-    : public UIThreadExtensionFunction {
+class AppViewGuestInternalAttachFrameFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("appViewGuestInternal.attachFrame",
-                             APPVIEWINTERNAL_ATTACHFRAME);
+                             APPVIEWINTERNAL_ATTACHFRAME)
   AppViewGuestInternalAttachFrameFunction();
 
  protected:
@@ -25,11 +24,10 @@ class AppViewGuestInternalAttachFrameFunction
   DISALLOW_COPY_AND_ASSIGN(AppViewGuestInternalAttachFrameFunction);
 };
 
-class AppViewGuestInternalDenyRequestFunction
-    : public UIThreadExtensionFunction {
+class AppViewGuestInternalDenyRequestFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("appViewGuestInternal.denyRequest",
-                             APPVIEWINTERNAL_DENYREQUEST);
+                             APPVIEWINTERNAL_DENYREQUEST)
   AppViewGuestInternalDenyRequestFunction();
 
  protected:

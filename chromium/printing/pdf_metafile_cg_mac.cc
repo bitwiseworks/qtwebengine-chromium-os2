@@ -22,7 +22,7 @@ using base::ScopedCFTypeRef;
 namespace {
 
 // Rotate a page by |num_rotations| * 90 degrees, counter-clockwise.
-void RotatePage(CGContextRef context, const CGRect rect, int num_rotations) {
+void RotatePage(CGContextRef context, const CGRect& rect, int num_rotations) {
   switch (num_rotations) {
     case 0:
       break;
@@ -58,9 +58,9 @@ void RotatePage(CGContextRef context, const CGRect rect, int num_rotations) {
 
 namespace printing {
 
-PdfMetafileCg::PdfMetafileCg() : page_is_open_(false) {}
+PdfMetafileCg::PdfMetafileCg() = default;
 
-PdfMetafileCg::~PdfMetafileCg() {}
+PdfMetafileCg::~PdfMetafileCg() = default;
 
 bool PdfMetafileCg::Init() {
   // Ensure that Init hasn't already been called.
@@ -88,35 +88,33 @@ bool PdfMetafileCg::Init() {
   return true;
 }
 
-bool PdfMetafileCg::InitFromData(const void* src_buffer,
-                                 size_t src_buffer_size) {
+bool PdfMetafileCg::InitFromData(base::span<const uint8_t> data) {
   DCHECK(!context_.get());
   DCHECK(!pdf_data_.get());
 
-  if (!src_buffer || !src_buffer_size)
+  if (data.empty())
     return false;
 
-  if (!base::IsValueInRangeForNumericType<CFIndex>(src_buffer_size))
+  if (!base::IsValueInRangeForNumericType<CFIndex>(data.size()))
     return false;
 
-  pdf_data_.reset(CFDataCreateMutable(kCFAllocatorDefault, src_buffer_size));
-  CFDataAppendBytes(pdf_data_, static_cast<const UInt8*>(src_buffer),
-                    src_buffer_size);
+  pdf_data_.reset(CFDataCreateMutable(kCFAllocatorDefault, data.size()));
+  CFDataAppendBytes(pdf_data_, data.data(), data.size());
   return true;
 }
 
 void PdfMetafileCg::StartPage(const gfx::Size& page_size,
                               const gfx::Rect& content_area,
-                              const float& scale_factor) {
+                              float scale_factor) {
   DCHECK(context_.get());
   DCHECK(!page_is_open_);
 
-  double height = page_size.height();
-  double width = page_size.width();
+  page_is_open_ = true;
+  float height = page_size.height();
+  float width = page_size.width();
 
   CGRect bounds = CGRectMake(0, 0, width, height);
   CGContextBeginPage(context_, &bounds);
-  page_is_open_ = true;
   CGContextSaveGState(context_);
 
   // Move to the context origin.
@@ -159,7 +157,7 @@ bool PdfMetafileCg::FinishDocument() {
 
 bool PdfMetafileCg::RenderPage(unsigned int page_number,
                                CGContextRef context,
-                               const CGRect rect,
+                               const CGRect& rect,
                                const MacRenderPageParams& params) const {
   CGPDFDocumentRef pdf_doc = GetPDFDocument();
   if (!pdf_doc) {
@@ -176,7 +174,7 @@ bool PdfMetafileCg::RenderPage(unsigned int page_number,
   CGRect source_rect = CGPDFPageGetBoxRect(pdf_page, kCGPDFCropBox);
   int pdf_src_rotation = CGPDFPageGetRotationAngle(pdf_page);
   const bool source_is_landscape =
-        (source_rect.size.width > source_rect.size.height);
+      (source_rect.size.width > source_rect.size.height);
   const bool dest_is_landscape = (rect.size.width > rect.size.height);
   const bool rotate =
       params.autorotate ? (source_is_landscape != dest_is_landscape) : false;
@@ -203,13 +201,17 @@ bool PdfMetafileCg::RenderPage(unsigned int page_number,
   const float y_origin_offset = -1 * source_rect.origin.y;
 
   // If the PDF needs to be centered, calculate the offsets here.
-  float x_offset = params.center_horizontally ?
-      ((rect.size.width - (source_width * scaling_factor)) / 2) : 0;
+  float x_offset =
+      params.center_horizontally
+          ? ((rect.size.width - (source_width * scaling_factor)) / 2)
+          : 0;
   if (rotate)
     x_offset = -x_offset;
 
-  float y_offset = params.center_vertically ?
-      ((rect.size.height - (source_height * scaling_factor)) / 2) : 0;
+  float y_offset =
+      params.center_vertically
+          ? ((rect.size.height - (source_height * scaling_factor)) / 2)
+          : 0;
 
   CGContextSaveGState(context);
 
@@ -252,7 +254,7 @@ gfx::Rect PdfMetafileCg::GetPageBounds(unsigned int page_number) const {
     LOG(ERROR) << "Unable to create PDF document from data";
     return gfx::Rect();
   }
-  if (page_number > GetPageCount()) {
+  if (page_number == 0 || page_number > GetPageCount()) {
     LOG(ERROR) << "Invalid page number: " << page_number;
     return gfx::Rect();
   }

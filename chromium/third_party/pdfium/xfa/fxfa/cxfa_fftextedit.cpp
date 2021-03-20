@@ -19,6 +19,7 @@
 #include "xfa/fxfa/cxfa_eventparam.h"
 #include "xfa/fxfa/cxfa_ffapp.h"
 #include "xfa/fxfa/cxfa_ffdoc.h"
+#include "xfa/fxfa/cxfa_ffdocview.h"
 #include "xfa/fxfa/parser/cxfa_barcode.h"
 #include "xfa/fxfa/parser/cxfa_node.h"
 #include "xfa/fxfa/parser/cxfa_para.h"
@@ -31,40 +32,44 @@ CFWL_Edit* ToEdit(CFWL_Widget* widget) {
 
 }  // namespace
 
-CXFA_FFTextEdit::CXFA_FFTextEdit(CXFA_Node* pNode)
-    : CXFA_FFField(pNode), m_pOldDelegate(nullptr) {}
+CXFA_FFTextEdit::CXFA_FFTextEdit(CXFA_Node* pNode) : CXFA_FFField(pNode) {}
 
 CXFA_FFTextEdit::~CXFA_FFTextEdit() {
-  if (m_pNormalWidget) {
+  if (GetNormalWidget()) {
     CFWL_NoteDriver* pNoteDriver =
-        m_pNormalWidget->GetOwnerApp()->GetNoteDriver();
-    pNoteDriver->UnregisterEventTarget(m_pNormalWidget.get());
+        GetNormalWidget()->GetOwnerApp()->GetNoteDriver();
+    pNoteDriver->UnregisterEventTarget(GetNormalWidget());
   }
 }
 
 bool CXFA_FFTextEdit::LoadWidget() {
+  ASSERT(!IsLoaded());
+
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   auto pNewWidget = pdfium::MakeUnique<CFWL_Edit>(
       GetFWLApp(), pdfium::MakeUnique<CFWL_WidgetProperties>(), nullptr);
   CFWL_Edit* pFWLEdit = pNewWidget.get();
-  m_pNormalWidget = std::move(pNewWidget);
-  m_pNormalWidget->SetLayoutItem(this);
+  SetNormalWidget(std::move(pNewWidget));
+  pFWLEdit->SetAdapterIface(this);
 
-  CFWL_NoteDriver* pNoteDriver =
-      m_pNormalWidget->GetOwnerApp()->GetNoteDriver();
-  pNoteDriver->RegisterEventTarget(m_pNormalWidget.get(),
-                                   m_pNormalWidget.get());
-  m_pOldDelegate = m_pNormalWidget->GetDelegate();
-  m_pNormalWidget->SetDelegate(this);
-  m_pNormalWidget->LockUpdate();
-  UpdateWidgetProperty();
+  CFWL_NoteDriver* pNoteDriver = pFWLEdit->GetOwnerApp()->GetNoteDriver();
+  pNoteDriver->RegisterEventTarget(pFWLEdit, pFWLEdit);
+  m_pOldDelegate = pFWLEdit->GetDelegate();
+  pFWLEdit->SetDelegate(this);
 
-  pFWLEdit->SetText(m_pNode->GetValue(XFA_VALUEPICTURE_Display));
-  m_pNormalWidget->UnlockUpdate();
+  {
+    CFWL_Widget::ScopedUpdateLock update_lock(pFWLEdit);
+    UpdateWidgetProperty();
+    pFWLEdit->SetText(m_pNode->GetValue(XFA_VALUEPICTURE_Display));
+  }
+
   return CXFA_FFField::LoadWidget();
 }
 
 void CXFA_FFTextEdit::UpdateWidgetProperty() {
-  CFWL_Edit* pWidget = ToEdit(m_pNormalWidget.get());
+  CFWL_Edit* pWidget = ToEdit(GetNormalWidget());
   if (!pWidget)
     return;
 
@@ -104,8 +109,8 @@ void CXFA_FFTextEdit::UpdateWidgetProperty() {
   }
 
   dwExtendedStyle |= GetAlignment();
-  m_pNormalWidget->ModifyStyles(dwStyle, 0xFFFFFFFF);
-  m_pNormalWidget->ModifyStylesEx(dwExtendedStyle, 0xFFFFFFFF);
+  GetNormalWidget()->ModifyStyles(dwStyle, 0xFFFFFFFF);
+  GetNormalWidget()->ModifyStylesEx(dwExtendedStyle, 0xFFFFFFFF);
 }
 
 bool CXFA_FFTextEdit::AcceptsFocusOnButtonDown(uint32_t dwFlags,
@@ -119,37 +124,43 @@ bool CXFA_FFTextEdit::AcceptsFocusOnButtonDown(uint32_t dwFlags,
   return true;
 }
 
-void CXFA_FFTextEdit::OnLButtonDown(uint32_t dwFlags, const CFX_PointF& point) {
+bool CXFA_FFTextEdit::OnLButtonDown(uint32_t dwFlags, const CFX_PointF& point) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   if (!IsFocused()) {
-    m_dwStatus |= XFA_WidgetStatus_Focused;
+    GetLayoutItem()->SetStatusBits(XFA_WidgetStatus_Focused);
     UpdateFWLData();
     InvalidateRect();
   }
-
   SetButtonDown(true);
-  CFWL_MessageMouse ms(nullptr, m_pNormalWidget.get());
-  ms.m_dwCmd = FWL_MouseCommand::LeftButtonDown;
-  ms.m_dwFlags = dwFlags;
-  ms.m_pos = FWLToClient(point);
-  TranslateFWLMessage(&ms);
+  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
+      GetNormalWidget(), FWL_MouseCommand::LeftButtonDown, dwFlags,
+      FWLToClient(point)));
+
+  return true;
 }
 
-void CXFA_FFTextEdit::OnRButtonDown(uint32_t dwFlags, const CFX_PointF& point) {
+bool CXFA_FFTextEdit::OnRButtonDown(uint32_t dwFlags, const CFX_PointF& point) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   if (!IsFocused()) {
-    m_dwStatus |= XFA_WidgetStatus_Focused;
+    GetLayoutItem()->SetStatusBits(XFA_WidgetStatus_Focused);
     UpdateFWLData();
     InvalidateRect();
   }
-
   SetButtonDown(true);
-  CFWL_MessageMouse ms(nullptr, nullptr);
-  ms.m_dwCmd = FWL_MouseCommand::RightButtonDown;
-  ms.m_dwFlags = dwFlags;
-  ms.m_pos = FWLToClient(point);
-  TranslateFWLMessage(&ms);
+  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
+      nullptr, FWL_MouseCommand::RightButtonDown, dwFlags, FWLToClient(point)));
+
+  return true;
 }
 
 bool CXFA_FFTextEdit::OnRButtonUp(uint32_t dwFlags, const CFX_PointF& point) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   if (!CXFA_FFField::OnRButtonUp(dwFlags, point))
     return false;
 
@@ -158,37 +169,50 @@ bool CXFA_FFTextEdit::OnRButtonUp(uint32_t dwFlags, const CFX_PointF& point) {
 }
 
 bool CXFA_FFTextEdit::OnSetFocus(CXFA_FFWidget* pOldWidget) {
-  m_dwStatus &= ~XFA_WidgetStatus_TextEditValueChanged;
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
+  ObservedPtr<CXFA_FFWidget> pOldWatched(pOldWidget);
+  GetLayoutItem()->ClearStatusBits(XFA_WidgetStatus_TextEditValueChanged);
   if (!IsFocused()) {
-    m_dwStatus |= XFA_WidgetStatus_Focused;
+    GetLayoutItem()->SetStatusBits(XFA_WidgetStatus_Focused);
     UpdateFWLData();
     InvalidateRect();
   }
-  CXFA_FFWidget::OnSetFocus(pOldWidget);
-  CFWL_MessageSetFocus ms(nullptr, m_pNormalWidget.get());
-  TranslateFWLMessage(&ms);
+  if (!CXFA_FFWidget::OnSetFocus(pOldWatched.Get()))
+    return false;
+
+  SendMessageToFWLWidget(
+      pdfium::MakeUnique<CFWL_MessageSetFocus>(nullptr, GetNormalWidget()));
+
   return true;
 }
 
 bool CXFA_FFTextEdit::OnKillFocus(CXFA_FFWidget* pNewWidget) {
-  CFWL_MessageKillFocus ms(nullptr, m_pNormalWidget.get());
-  TranslateFWLMessage(&ms);
-  m_dwStatus &= ~XFA_WidgetStatus_Focused;
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
 
+  ObservedPtr<CXFA_FFWidget> pNewWatched(pNewWidget);
+  SendMessageToFWLWidget(
+      pdfium::MakeUnique<CFWL_MessageKillFocus>(nullptr, GetNormalWidget()));
+
+  GetLayoutItem()->ClearStatusBits(XFA_WidgetStatus_Focused);
   SetEditScrollOffset();
   ProcessCommittedData();
   UpdateFWLData();
   InvalidateRect();
-  CXFA_FFWidget::OnKillFocus(pNewWidget);
 
-  m_dwStatus &= ~XFA_WidgetStatus_TextEditValueChanged;
+  if (!CXFA_FFWidget::OnKillFocus(pNewWatched.Get()))
+    return false;
+
+  GetLayoutItem()->ClearStatusBits(XFA_WidgetStatus_TextEditValueChanged);
   return true;
 }
 
 bool CXFA_FFTextEdit::CommitData() {
-  WideString wsText = ToEdit(m_pNormalWidget.get())->GetText();
+  WideString wsText = ToEdit(GetNormalWidget())->GetText();
   if (m_pNode->SetValue(XFA_VALUEPICTURE_Edit, wsText)) {
-    m_pNode->UpdateUIDisplay(GetDoc()->GetDocView(), this);
+    GetDoc()->GetDocView()->UpdateUIDisplay(m_pNode.Get(), this);
     return true;
   }
   ValidateNumberField(wsText);
@@ -199,7 +223,7 @@ void CXFA_FFTextEdit::ValidateNumberField(const WideString& wsText) {
   if (GetNode()->GetFFWidgetType() != XFA_FFWidgetType::kNumericEdit)
     return;
 
-  IXFA_AppProvider* pAppProvider = GetApp()->GetAppProvider();
+  IXFA_AppProvider* pAppProvider = GetAppProvider();
   if (!pAppProvider)
     return;
 
@@ -211,7 +235,7 @@ void CXFA_FFTextEdit::ValidateNumberField(const WideString& wsText) {
 }
 
 bool CXFA_FFTextEdit::IsDataChanged() {
-  return (m_dwStatus & XFA_WidgetStatus_TextEditValueChanged) != 0;
+  return GetLayoutItem()->TestStatusBits(XFA_WidgetStatus_TextEditValueChanged);
 }
 
 uint32_t CXFA_FFTextEdit::GetAlignment() {
@@ -253,10 +277,12 @@ uint32_t CXFA_FFTextEdit::GetAlignment() {
 }
 
 bool CXFA_FFTextEdit::UpdateFWLData() {
-  if (!m_pNormalWidget)
+  CFWL_Edit* pEdit = ToEdit(GetNormalWidget());
+  if (!pEdit)
     return false;
 
-  CFWL_Edit* pEdit = ToEdit(m_pNormalWidget.get());
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
   XFA_VALUEPICTURE eType = XFA_VALUEPICTURE_Display;
   if (IsFocused())
     eType = XFA_VALUEPICTURE_Edit;
@@ -276,7 +302,7 @@ bool CXFA_FFTextEdit::UpdateFWLData() {
   } else if (m_pNode->GetFFWidgetType() == XFA_FFWidgetType::kBarcode) {
     int32_t nDataLen = 0;
     if (eType == XFA_VALUEPICTURE_Edit) {
-      nDataLen = static_cast<CXFA_Barcode*>(m_pNode.Get())
+      nDataLen = static_cast<CXFA_Barcode*>(m_pNode->GetUIChildNode())
                      ->GetDataLength()
                      .value_or(0);
     }
@@ -284,22 +310,24 @@ bool CXFA_FFTextEdit::UpdateFWLData() {
     pEdit->SetLimit(nDataLen);
     bUpdate = true;
   }
-
   WideString wsText = m_pNode->GetValue(eType);
   WideString wsOldText = pEdit->GetText();
   if (wsText != wsOldText || (eType == XFA_VALUEPICTURE_Edit && bUpdate)) {
-    pEdit->SetText(wsText, CFDE_TextEditEngine::RecordOperation::kSkipNotify);
+    pEdit->SetTextSkipNotify(wsText);
     bUpdate = true;
   }
   if (bUpdate)
-    m_pNormalWidget->Update();
+    GetNormalWidget()->Update();
 
   return true;
 }
 
 void CXFA_FFTextEdit::OnTextWillChange(CFWL_Widget* pWidget,
                                        CFWL_EventTextWillChange* event) {
-  m_dwStatus |= XFA_WidgetStatus_TextEditValueChanged;
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
+  GetLayoutItem()->SetStatusBits(XFA_WidgetStatus_TextEditValueChanged);
 
   CXFA_EventParam eParam;
   eParam.m_eType = XFA_EVENT_Change;
@@ -320,6 +348,9 @@ void CXFA_FFTextEdit::OnTextWillChange(CFWL_Widget* pWidget,
 }
 
 void CXFA_FFTextEdit::OnTextFull(CFWL_Widget* pWidget) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   CXFA_EventParam eParam;
   eParam.m_eType = XFA_EVENT_Full;
   eParam.m_pTarget = m_pNode.Get();
@@ -327,18 +358,24 @@ void CXFA_FFTextEdit::OnTextFull(CFWL_Widget* pWidget) {
 }
 
 void CXFA_FFTextEdit::OnProcessMessage(CFWL_Message* pMessage) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   m_pOldDelegate->OnProcessMessage(pMessage);
 }
 
 void CXFA_FFTextEdit::OnProcessEvent(CFWL_Event* pEvent) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   CXFA_FFField::OnProcessEvent(pEvent);
   switch (pEvent->GetType()) {
     case CFWL_Event::Type::TextWillChange:
-      OnTextWillChange(m_pNormalWidget.get(),
+      OnTextWillChange(GetNormalWidget(),
                        static_cast<CFWL_EventTextWillChange*>(pEvent));
       break;
     case CFWL_Event::Type::TextFull:
-      OnTextFull(m_pNormalWidget.get());
+      OnTextFull(GetNormalWidget());
       break;
     default:
       break;
@@ -348,70 +385,97 @@ void CXFA_FFTextEdit::OnProcessEvent(CFWL_Event* pEvent) {
 
 void CXFA_FFTextEdit::OnDrawWidget(CXFA_Graphics* pGraphics,
                                    const CFX_Matrix& matrix) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   m_pOldDelegate->OnDrawWidget(pGraphics, matrix);
 }
 
 bool CXFA_FFTextEdit::CanUndo() {
-  return ToEdit(m_pNormalWidget.get())->CanUndo();
+  return ToEdit(GetNormalWidget())->CanUndo();
 }
 
 bool CXFA_FFTextEdit::CanRedo() {
-  return ToEdit(m_pNormalWidget.get())->CanRedo();
-}
-
-bool CXFA_FFTextEdit::Undo() {
-  return ToEdit(m_pNormalWidget.get())->Undo();
-}
-
-bool CXFA_FFTextEdit::Redo() {
-  return ToEdit(m_pNormalWidget.get())->Redo();
+  return ToEdit(GetNormalWidget())->CanRedo();
 }
 
 bool CXFA_FFTextEdit::CanCopy() {
-  return ToEdit(m_pNormalWidget.get())->HasSelection();
+  return ToEdit(GetNormalWidget())->HasSelection();
 }
 
 bool CXFA_FFTextEdit::CanCut() {
-  if (ToEdit(m_pNormalWidget.get())->GetStylesEx() & FWL_STYLEEXT_EDT_ReadOnly)
+  if (ToEdit(GetNormalWidget())->GetStylesEx() & FWL_STYLEEXT_EDT_ReadOnly)
     return false;
-  return ToEdit(m_pNormalWidget.get())->HasSelection();
+  return ToEdit(GetNormalWidget())->HasSelection();
 }
 
 bool CXFA_FFTextEdit::CanPaste() {
-  return !(ToEdit(m_pNormalWidget.get())->GetStylesEx() &
+  return !(ToEdit(GetNormalWidget())->GetStylesEx() &
            FWL_STYLEEXT_EDT_ReadOnly);
 }
 
 bool CXFA_FFTextEdit::CanSelectAll() {
-  return ToEdit(m_pNormalWidget.get())->GetTextLength() > 0;
+  return ToEdit(GetNormalWidget())->GetTextLength() > 0;
+}
+
+bool CXFA_FFTextEdit::Undo() {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return ToEdit(GetNormalWidget())->Undo();
+}
+
+bool CXFA_FFTextEdit::Redo() {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return ToEdit(GetNormalWidget())->Redo();
 }
 
 Optional<WideString> CXFA_FFTextEdit::Copy() {
-  return ToEdit(m_pNormalWidget.get())->Copy();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return ToEdit(GetNormalWidget())->Copy();
 }
 
 Optional<WideString> CXFA_FFTextEdit::Cut() {
-  return ToEdit(m_pNormalWidget.get())->Cut();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return ToEdit(GetNormalWidget())->Cut();
 }
 
 bool CXFA_FFTextEdit::Paste(const WideString& wsPaste) {
-  return ToEdit(m_pNormalWidget.get())->Paste(wsPaste);
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  return ToEdit(GetNormalWidget())->Paste(wsPaste);
 }
 
 void CXFA_FFTextEdit::SelectAll() {
-  ToEdit(m_pNormalWidget.get())->SelectAll();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  ToEdit(GetNormalWidget())->SelectAll();
 }
 
 void CXFA_FFTextEdit::Delete() {
-  ToEdit(m_pNormalWidget.get())->ClearText();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  ToEdit(GetNormalWidget())->ClearText();
 }
 
 void CXFA_FFTextEdit::DeSelect() {
-  ToEdit(m_pNormalWidget.get())->ClearSelection();
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
+  ToEdit(GetNormalWidget())->ClearSelection();
 }
 
 WideString CXFA_FFTextEdit::GetText() {
-  return ToEdit(m_pNormalWidget.get())->GetText();
+  return ToEdit(GetNormalWidget())->GetText();
 }
 
 FormFieldType CXFA_FFTextEdit::GetFormFieldType() {

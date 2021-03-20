@@ -30,15 +30,16 @@ class AX_EXPORT AXSystemCaretWin : private AXPlatformNodeDelegateBase {
   ~AXSystemCaretWin() override;
 
   Microsoft::WRL::ComPtr<IAccessible> GetCaret() const;
-  void MoveCaretTo(const gfx::Rect& bounds);
+  void MoveCaretTo(const gfx::Rect& bounds_physical_pixels);
   void Hide();
 
  private:
   // |AXPlatformNodeDelegate| members.
   const AXNodeData& GetData() const override;
   gfx::NativeViewAccessible GetParent() override;
-  gfx::Rect GetClippedScreenBoundsRect() const override;
-  gfx::Rect GetUnclippedScreenBoundsRect() const override;
+  gfx::Rect GetBoundsRect(const AXCoordinateSystem coordinate_system,
+                          const AXClippingBehavior clipping_behavior,
+                          AXOffscreenResult* offscreen_result) const override;
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override;
   bool ShouldIgnoreHoveredStateForTesting() override;
   const ui::AXUniqueId& GetUniqueId() const override;
@@ -46,12 +47,11 @@ class AX_EXPORT AXSystemCaretWin : private AXPlatformNodeDelegateBase {
   AXPlatformNodeWin* caret_;
   gfx::AcceleratedWidget event_target_;
   AXNodeData data_;
+  ui::AXUniqueId unique_id_;
 
   friend class AXPlatformNodeWin;
-  DISALLOW_COPY_AND_ASSIGN(AXSystemCaretWin);
 
- private:
-  ui::AXUniqueId unique_id_;
+  DISALLOW_COPY_AND_ASSIGN(AXSystemCaretWin);
 };
 
 }  // namespace ui

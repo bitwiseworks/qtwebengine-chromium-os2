@@ -10,7 +10,7 @@
 #include "base/component_export.h"
 #include "base/macros.h"
 #include "mojo/public/cpp/system/platform_handle.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/shared_memory.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/shared_memory.h"
 
 namespace tracing {
 
@@ -42,6 +42,7 @@ class COMPONENT_EXPORT(TRACING_CPP) MojoSharedMemory
   // classes.
   void* start() const override;
   size_t size() const override;
+  int fd() const override;
 
  private:
   mojo::ScopedSharedBufferHandle shared_buffer_;

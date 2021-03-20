@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/i18n/rtl.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/common/drop_data.h"
@@ -18,10 +20,9 @@
 #include "content/public/common/input_event_ack_state.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_sender.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/web_drag_operation.h"
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_input_event.h"
-#include "third_party/blink/public/web/web_text_direction.h"
 #include "ui/surface/transport_dib.h"
 
 namespace blink {
@@ -34,12 +35,15 @@ class Point;
 }
 
 namespace ui {
+class Cursor;
 class LatencyInfo;
 }
 
-namespace content {
+namespace viz {
+class FrameSinkId;
+}
 
-struct CursorInfo;
+namespace content {
 class RenderProcessHost;
 class RenderWidgetHostIterator;
 class RenderWidgetHostObserver;
@@ -124,6 +128,12 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
 
   ~RenderWidgetHost() override {}
 
+  // Returns the viz::FrameSinkId that this object uses to put things on screen.
+  // This value is constant throughout the lifetime of this object. Note that
+  // until a RenderWidgetHostView is created, initialized, and assigned to this
+  // object, viz may not be aware of this FrameSinkId.
+  virtual const viz::FrameSinkId& GetFrameSinkId() = 0;
+
   // Update the text direction of the focused input element and notify it to a
   // renderer process.
   // These functions have two usage scenarios: changing the text direction
@@ -133,7 +143,8 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   // In this scenario, we receive a menu event only once and we should update
   // the text direction immediately when a user chooses a menu item. So, we
   // should call both functions at once as listed in the following snippet.
-  //   void RenderViewHost::SetTextDirection(WebTextDirection direction) {
+  //   void RenderViewHost::SetTextDirection(
+  //       base::i18n::TextDirection direction) {
   //     UpdateTextDirection(direction);
   //     NotifyTextDirection();
   //   }
@@ -159,7 +170,7 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   // NotifyTextDirection(). (We may receive keydown events even after we
   // canceled updating the text direction because of auto-repeat.)
   // Note: we cannot undo this change for compatibility with Firefox and IE.
-  virtual void UpdateTextDirection(blink::WebTextDirection direction) = 0;
+  virtual void UpdateTextDirection(base::i18n::TextDirection direction) = 0;
   virtual void NotifyTextDirection() = 0;
 
   virtual void Focus() = 0;
@@ -188,21 +199,18 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   virtual void ForwardGestureEvent(
       const blink::WebGestureEvent& gesture_event) = 0;
 
-  virtual RenderProcessHost* GetProcess() const = 0;
+  virtual RenderProcessHost* GetProcess() = 0;
 
-  virtual int GetRoutingID() const = 0;
+  virtual int GetRoutingID() = 0;
 
   // Gets the View of this RenderWidgetHost. Can be nullptr, e.g. if the
   // RenderWidget is being destroyed or the render process crashed. You should
   // never cache this pointer since it can become nullptr if the renderer
   // crashes, instead you should always ask for it using the accessor.
-  virtual RenderWidgetHostView* GetView() const = 0;
-
-  // Returns true if the renderer is loading, false if not.
-  virtual bool IsLoading() const = 0;
+  virtual RenderWidgetHostView* GetView() = 0;
 
   // Returns true if the renderer is considered unresponsive.
-  virtual bool IsCurrentlyUnresponsive() const = 0;
+  virtual bool IsCurrentlyUnresponsive() = 0;
 
   // Called to propagate updated visual properties to the renderer. Returns
   // whether the renderer has been informed of updated properties.
@@ -212,15 +220,16 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   // only for test code.
 
   // Add/remove a callback that can handle key presses without requiring focus.
-  typedef base::Callback<bool(const NativeWebKeyboardEvent&)>
-      KeyPressEventCallback;
+  using KeyPressEventCallback =
+      base::RepeatingCallback<bool(const NativeWebKeyboardEvent&)>;
   virtual void AddKeyPressEventCallback(
       const KeyPressEventCallback& callback) = 0;
   virtual void RemoveKeyPressEventCallback(
       const KeyPressEventCallback& callback) = 0;
 
   // Add/remove a callback that can handle all kinds of mouse events.
-  typedef base::Callback<bool(const blink::WebMouseEvent&)> MouseEventCallback;
+  using MouseEventCallback =
+      base::RepeatingCallback<bool(const blink::WebMouseEvent&)>;
   virtual void AddMouseEventCallback(const MouseEventCallback& callback) = 0;
   virtual void RemoveMouseEventCallback(const MouseEventCallback& callback) = 0;
 
@@ -233,11 +242,32 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
     virtual void OnInputEventAck(InputEventAckSource source,
                                  InputEventAckState state,
                                  const blink::WebInputEvent&) {}
+
+#if defined(OS_ANDROID)
+    // Not all key events are triggered through InputEvent on Android.
+    // InputEvents are only triggered when user typed in through number bar on
+    // Android keyboard. This function is triggered when text is committed in
+    // input form.
+    virtual void OnImeTextCommittedEvent(const base::string16& text_str) {}
+    // This function is triggered when composing text is updated. Note that
+    // text_str contains all text that is currently under composition rather
+    // than updated text only.
+    virtual void OnImeSetComposingTextEvent(const base::string16& text_str) {}
+    // This function is triggered when composing text is filled into the input
+    // form.
+    virtual void OnImeFinishComposingTextEvent() {}
+#endif
   };
 
   // Add/remove an input event observer.
   virtual void AddInputEventObserver(InputEventObserver* observer) = 0;
   virtual void RemoveInputEventObserver(InputEventObserver* observer) = 0;
+
+#if defined(OS_ANDROID)
+  // Add/remove an Ime input event observer.
+  virtual void AddImeInputEventObserver(InputEventObserver* observer) = 0;
+  virtual void RemoveImeInputEventObserver(InputEventObserver* observer) = 0;
+#endif
 
   // Add and remove observers for widget host events. The order in which
   // notifications are sent to observers is undefined. Observers must be sure to
@@ -287,7 +317,7 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   virtual void FilterDropData(DropData* drop_data) {}
 
   // Sets cursor to a specified one when it is over this widget.
-  virtual void SetCursor(const CursorInfo& cursor_info) {}
+  virtual void SetCursor(const ui::Cursor& cursor) {}
 };
 
 }  // namespace content

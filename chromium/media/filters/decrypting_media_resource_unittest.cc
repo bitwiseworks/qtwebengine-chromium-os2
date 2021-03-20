@@ -8,13 +8,13 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/test/gmock_callback_support.h"
 #include "base/test/mock_callback.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/decryptor.h"
 #include "media/base/demuxer_stream.h"
-#include "media/base/gmock_callback_support.h"
 #include "media/base/media_util.h"
 #include "media/base/mock_filters.h"
 #include "media/base/pipeline_status.h"
@@ -23,6 +23,8 @@
 #include "media/filters/decrypting_media_resource.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
+using ::base::test::RunCallback;
+using ::base::test::RunOnceCallback;
 using ::testing::_;
 using ::testing::AnyNumber;
 using ::testing::Invoke;
@@ -40,7 +42,8 @@ static constexpr uint8_t kFakeIv[DecryptConfig::kDecryptionKeySize] = {0};
 namespace {
 
 ACTION_P(ReturnBuffer, buffer) {
-  arg0.Run(buffer.get() ? DemuxerStream::kOk : DemuxerStream::kAborted, buffer);
+  std::move(arg0).Run(
+      buffer.get() ? DemuxerStream::kOk : DemuxerStream::kAborted, buffer);
 }
 
 }  // namespace
@@ -68,7 +71,7 @@ class DecryptingMediaResourceTest : public testing::Test {
 
     decrypting_media_resource_ = std::make_unique<DecryptingMediaResource>(
         &demuxer_, &cdm_context_, &null_media_log_,
-        scoped_task_environment_.GetMainThreadTaskRunner());
+        task_environment_.GetMainThreadTaskRunner());
   }
 
   ~DecryptingMediaResourceTest() {
@@ -107,7 +110,7 @@ class DecryptingMediaResourceTest : public testing::Test {
                void(DemuxerStream::Status, scoped_refptr<DecoderBuffer>));
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   base::MockCallback<DecryptingMediaResource::InitCB>
       decrypting_media_resource_init_cb_;
   base::MockCallback<WaitingCB> waiting_cb_;
@@ -131,7 +134,7 @@ TEST_F(DecryptingMediaResourceTest, ClearStreams) {
 
   decrypting_media_resource_->Initialize(
       decrypting_media_resource_init_cb_.Get(), waiting_cb_.Get());
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 
   EXPECT_EQ(
       decrypting_media_resource_->DecryptingDemuxerStreamCountForTesting(), 2);
@@ -146,7 +149,7 @@ TEST_F(DecryptingMediaResourceTest, EncryptedStreams) {
 
   decrypting_media_resource_->Initialize(
       decrypting_media_resource_init_cb_.Get(), waiting_cb_.Get());
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 
   // When using an AesDecryptor we preemptively wrap our streams with a
   // DecryptingDemuxerStream, regardless of encryption. With this in mind, we
@@ -167,7 +170,7 @@ TEST_F(DecryptingMediaResourceTest, MixedStreams) {
 
   decrypting_media_resource_->Initialize(
       decrypting_media_resource_init_cb_.Get(), waiting_cb_.Get());
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 
   EXPECT_EQ(
       decrypting_media_resource_->DecryptingDemuxerStreamCountForTesting(), 2);
@@ -189,7 +192,7 @@ TEST_F(DecryptingMediaResourceTest,
 
   decrypting_media_resource_->Initialize(
       decrypting_media_resource_init_cb_.Get(), waiting_cb_.Get());
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(DecryptingMediaResourceTest,
@@ -204,25 +207,25 @@ TEST_F(DecryptingMediaResourceTest,
 
   decrypting_media_resource_->Initialize(
       decrypting_media_resource_init_cb_.Get(), waiting_cb_.Get());
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 TEST_F(DecryptingMediaResourceTest, WaitingCallback) {
   AddStream(DemuxerStream::VIDEO, /* encrypted = */ true);
 
-  EXPECT_CALL(*streams_.front(), Read(_))
+  EXPECT_CALL(*streams_.front(), OnRead(_))
       .WillRepeatedly(ReturnBuffer(encrypted_buffer_));
   EXPECT_CALL(decryptor_, Decrypt(_, encrypted_buffer_, _))
-      .WillRepeatedly(
-          RunCallback<2>(Decryptor::kNoKey, scoped_refptr<DecoderBuffer>()));
+      .WillRepeatedly(RunOnceCallback<2>(Decryptor::kNoKey,
+                                         scoped_refptr<DecoderBuffer>()));
   EXPECT_CALL(decrypting_media_resource_init_cb_, Run(true));
   EXPECT_CALL(waiting_cb_, Run(WaitingReason::kNoDecryptionKey));
 
   decrypting_media_resource_->Initialize(
       decrypting_media_resource_init_cb_.Get(), waiting_cb_.Get());
-  decrypting_media_resource_->GetAllStreams().front()->Read(base::BindRepeating(
+  decrypting_media_resource_->GetAllStreams().front()->Read(base::BindOnce(
       &DecryptingMediaResourceTest::BufferReady, base::Unretained(this)));
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 }  // namespace media

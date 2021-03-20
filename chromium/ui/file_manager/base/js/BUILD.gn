@@ -4,6 +4,7 @@
 
 import("//third_party/closure_compiler/compile_js.gni")
 import("//third_party/closure_compiler/js_unit_tests.gni")
+import("//ui/file_manager/base/gn/js_test_gen_html.gni")
 
 visibility = [ "//ui/file_manager/*" ]
 
@@ -11,12 +12,14 @@ group("closure_compile") {
   testonly = true
   deps = [
     ":closure_compile_module",
+    ":js_test_gen_html_type_check_auto",
     ":test_support_type_check",
   ]
 }
 
 js_type_check("closure_compile_module") {
   deps = [
+    ":app_util",
     ":error_counter",
     ":filtered_volume_manager",
   ]
@@ -28,6 +31,10 @@ js_type_check("test_support_type_check") {
     ":mock_chrome",
     ":test_error_reporting",
   ]
+}
+
+js_library("app_util") {
+  externs_list = [ "//ui/file_manager/externs/app_window_common.js" ]
 }
 
 js_library("error_counter") {
@@ -62,6 +69,7 @@ js_library("test_error_reporting") {
 
 js_library("volume_manager_types") {
   deps = [
+    "//ui/file_manager/externs:file_manager_private",
     "//ui/webui/resources/js:assert",
   ]
 }
@@ -73,10 +81,8 @@ js_unittest("volume_manager_types_unittest") {
   ]
 }
 
-js_unit_tests("unit_tests") {
-  deps = [
-    ":volume_manager_types_unittest",
-  ]
+js_test_gen_html("js_test_gen_html") {
+  deps = [ ":volume_manager_types_unittest" ]
 }
 
 js_library("mediasession_types") {

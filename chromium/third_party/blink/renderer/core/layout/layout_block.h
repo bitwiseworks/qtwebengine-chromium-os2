@@ -27,13 +27,14 @@
 #include <memory>
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/list_hash_set.h"
 
 namespace blink {
 
 struct PaintInfo;
 class LineLayoutBox;
-class NGConstraintSpace;
+class NGBlockNode;
 class WordMeasurement;
 
 typedef WTF::ListHashSet<LayoutBox*, 16> TrackedLayoutBoxListHashSet;
@@ -139,9 +140,11 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   LayoutUnit MinLineHeightForReplacedObject(bool is_first_line,
                                             LayoutUnit replaced_height) const;
 
-  virtual bool CreatesNewFormattingContext() const { return true; }
-
   const char* GetName() const override;
+
+  virtual const NGPhysicalBoxFragment* CurrentFragment() const {
+    return nullptr;
+  }
 
  protected:
   // Insert a child correctly into the tree when |beforeDescendant| isn't a
@@ -164,7 +167,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
                                ContainingBlockState = kSameContainingBlock);
 
   TrackedLayoutBoxListHashSet* PositionedObjects() const {
-    return HasPositionedObjects() ? PositionedObjectsInternal() : nullptr;
+    return UNLIKELY(HasPositionedObjects()) ? PositionedObjectsInternal()
+                                            : nullptr;
   }
   bool HasPositionedObjects() const {
     DCHECK(has_positioned_objects_ ? (PositionedObjectsInternal() &&
@@ -218,7 +222,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   LayoutUnit TextIndentOffset() const;
 
-  PositionWithAffinity PositionForPoint(const LayoutPoint&) const override;
+  PositionWithAffinity PositionForPoint(const PhysicalOffset&) const override;
 
   static LayoutBlock* CreateAnonymousWithParentAndDisplay(
       const LayoutObject*,
@@ -320,12 +324,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   LayoutUnit AvailableLogicalHeightForPercentageComputation() const;
   bool HasDefiniteLogicalHeight() const;
 
-  const NGConstraintSpace* CachedConstraintSpace() const;
-  void SetCachedConstraintSpace(const NGConstraintSpace& space);
-
  protected:
   bool RecalcNormalFlowChildLayoutOverflowIfNeeded(LayoutObject*);
-  void RecalcNormalFlowChildVisualOverflowIfNeeded(LayoutObject*);
   bool RecalcPositionedDescendantsLayoutOverflow();
   void RecalcPositionedDescendantsVisualOverflow();
   bool RecalcSelfLayoutOverflow();
@@ -395,10 +395,11 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
  public:
   void Paint(const PaintInfo&) const override;
   virtual void PaintObject(const PaintInfo&,
-                           const LayoutPoint& paint_offset) const;
+                           const PhysicalOffset& paint_offset) const;
   virtual void PaintChildren(const PaintInfo&,
-                             const LayoutPoint& paint_offset) const;
+                             const PhysicalOffset& paint_offset) const;
   void UpdateAfterLayout() override;
+  MinMaxSizes PreferredLogicalWidths() const override;
 
  protected:
   virtual void AdjustInlineDirectionLineBounds(
@@ -406,10 +407,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
       LayoutUnit& /* logicalLeft */,
       LayoutUnit& /* logicalWidth */) const {}
 
-  void ComputeIntrinsicLogicalWidths(
-      LayoutUnit& min_logical_width,
-      LayoutUnit& max_logical_width) const override;
-  void ComputePreferredLogicalWidths() override;
+  MinMaxSizes ComputeIntrinsicLogicalWidths() const override;
   void ComputeChildPreferredLogicalWidths(
       LayoutObject& child,
       LayoutUnit& min_preferred_logical_width,
@@ -418,20 +416,13 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   LayoutUnit FirstLineBoxBaseline() const override;
   LayoutUnit InlineBlockBaseline(LineDirectionMode) const override;
 
-  // This function disables the 'overflow' check in inlineBlockBaseline.
-  // For 'inline-block', CSS says that the baseline is the bottom margin edge
-  // if 'overflow' is not visible. But some descendant classes want to ignore
-  // this condition.
-  virtual bool ShouldIgnoreOverflowPropertyForInlineBlockBaseline() const {
-    return false;
-  }
-
-  bool HitTestOverflowControl(HitTestResult&,
-                              const HitTestLocation&,
-                              const LayoutPoint& adjusted_location) override;
+  bool HitTestOverflowControl(
+      HitTestResult&,
+      const HitTestLocation&,
+      const PhysicalOffset& adjusted_location) const override;
   bool HitTestChildren(HitTestResult&,
-                       const HitTestLocation& location_in_container,
-                       const LayoutPoint& accumulated_offset,
+                       const HitTestLocation&,
+                       const PhysicalOffset& accumulated_offset,
                        HitTestAction) override;
 
   void StyleWillChange(StyleDifference,
@@ -464,8 +455,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   virtual void AddLayoutOverflowFromChildren();
   void AddVisualOverflowFromChildren();
 
-  void AddOutlineRects(Vector<LayoutRect>&,
-                       const LayoutPoint& additional_offset,
+  void AddOutlineRects(Vector<PhysicalRect>&,
+                       const PhysicalOffset& additional_offset,
                        NGOutlineType) const override;
 
   void UpdateBlockChildDirtyBitsBeforeLayout(bool relayout_children,
@@ -486,6 +477,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
            hit_test_action == kHitTestChildBlockBackground;
   }
 
+  LayoutUnit EmptyLineBaseline(LineDirectionMode line_direction) const;
+
  private:
   LayoutObjectChildList* VirtualChildren() final { return Children(); }
   const LayoutObjectChildList* VirtualChildren() const final {
@@ -503,8 +496,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   bool TryLayoutDoingPositionedMovementOnly();
 
   bool IsPointInOverflowControl(HitTestResult&,
-                                const LayoutPoint& location_in_container,
-                                const LayoutPoint& accumulated_offset) const;
+                                const PhysicalOffset&,
+                                const PhysicalOffset& accumulated_offset) const;
 
   void ComputeBlockPreferredLogicalWidths(LayoutUnit& min_logical_width,
                                           LayoutUnit& max_logical_width) const;
@@ -545,24 +538,23 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   // Adjust from painting offsets to the local coords of this layoutObject
   void OffsetForContents(LayoutPoint&) const;
+  void OffsetForContents(PhysicalOffset&) const;
 
   PositionWithAffinity PositionForPointRespectingEditingBoundaries(
       LineLayoutBox child,
-      const LayoutPoint& point_in_parent_coordinates) const;
+      const PhysicalOffset& point_in_parent_coordinates) const;
   PositionWithAffinity PositionForPointIfOutsideAtomicInlineLevel(
-      const LayoutPoint&) const;
+      const PhysicalOffset&) const;
 
   virtual bool UpdateLogicalWidthAndColumnWidth();
 
   LayoutObjectChildList children_;
-  std::unique_ptr<NGConstraintSpace> cached_constraint_space_;
 
   unsigned
       has_margin_before_quirk_ : 1;  // Note these quirk values can't be put
                                      // in LayoutBlockRareData since they are
                                      // set too frequently.
   unsigned has_margin_after_quirk_ : 1;
-  unsigned being_destroyed_ : 1;
   unsigned has_markup_truncation_ : 1;
   unsigned width_available_to_children_changed_ : 1;
   unsigned height_available_to_children_changed_ : 1;
@@ -592,14 +584,14 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   // This is necessary for now for interoperability between the old and new
   // layout code. Primarily for calling layoutPositionedObjects at the moment.
   friend class NGBlockNode;
-
- public:
-  // TODO(loonybear): Temporary in order to ensure compatibility with existing
-  // web test results.
-  virtual void AdjustChildDebugRect(LayoutRect&) const {}
 };
 
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutBlock, IsLayoutBlock());
+template <>
+struct DowncastTraits<LayoutBlock> {
+  static bool AllowFrom(const LayoutObject& object) {
+    return object.IsLayoutBlock();
+  }
+};
 
 }  // namespace blink
 

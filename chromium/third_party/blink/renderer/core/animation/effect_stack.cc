@@ -48,27 +48,29 @@ void CopyToActiveInterpolationsMap(
     PropertyHandle property = interpolation->GetProperty();
     if (property_handle_filter && !property_handle_filter(property))
       continue;
+
     ActiveInterpolationsMap::AddResult entry =
-        target.insert(property, ActiveInterpolations(1));
+        target.insert(property, ActiveInterpolations());
     ActiveInterpolations& active_interpolations = entry.stored_value->value;
-    if (!entry.is_new_entry &&
-        (RuntimeEnabledFeatures::StackedCSSPropertyAnimationsEnabled() ||
-         !property.IsCSSProperty() || property.IsPresentationAttribute()) &&
+
+    // Assuming stacked effects are enabled, interpolations that depend on
+    // underlying values (e.g. have a non-replace composite mode) should be
+    // added onto the 'stack' of active interpolations. However any 'replace'
+    // effect erases everything that came before it, so we must clear the stack
+    // when that happens.
+    const bool allow_stacked_effects =
+        RuntimeEnabledFeatures::WebAnimationsAPIEnabled() ||
+        !property.IsCSSProperty() || property.IsPresentationAttribute();
+    const bool effect_depends_on_underlying_value =
         interpolation->IsInvalidatableInterpolation() &&
-        ToInvalidatableInterpolation(*interpolation)
-            .DependsOnUnderlyingValue()) {
-      active_interpolations.push_back(interpolation);
-    } else {
-      active_interpolations.at(0) = interpolation;
-    }
+        To<InvalidatableInterpolation>(*interpolation.Get())
+            .DependsOnUnderlyingValue();
+    if (!allow_stacked_effects || !effect_depends_on_underlying_value)
+      active_interpolations.clear();
+    active_interpolations.push_back(interpolation);
   }
 }
 
-bool CompareSampledEffects(const Member<SampledEffect>& sampled_effect1,
-                           const Member<SampledEffect>& sampled_effect2) {
-  DCHECK(sampled_effect1 && sampled_effect2);
-  return sampled_effect1->SequenceNumber() < sampled_effect2->SequenceNumber();
-}
 
 void CopyNewAnimationsToActiveInterpolationsMap(
     const HeapVector<Member<const InertEffect>>& new_animations,
@@ -83,6 +85,21 @@ void CopyNewAnimationsToActiveInterpolationsMap(
 }
 
 }  // namespace
+
+bool EffectStack::CompareSampledEffects(
+    const Member<SampledEffect>& sampled_effect1,
+    const Member<SampledEffect>& sampled_effect2) {
+  if (sampled_effect1->Effect() && sampled_effect2->Effect()) {
+    Animation* animation1 = sampled_effect1->Effect()->GetAnimation();
+    Animation* animation2 = sampled_effect2->Effect()->GetAnimation();
+    if (animation1 && animation2) {
+      return Animation::HasLowerCompositeOrdering(
+          animation1, animation2,
+          Animation::CompareAnimationsOrdering::kPointerOrder);
+    }
+  }
+  return sampled_effect1->SequenceNumber() < sampled_effect2->SequenceNumber();
+}
 
 EffectStack::EffectStack() = default;
 
@@ -112,16 +129,24 @@ ActiveInterpolationsMap EffectStack::ActiveInterpolations(
     const HeapVector<Member<const InertEffect>>* new_animations,
     const HeapHashSet<Member<const Animation>>* suppressed_animations,
     KeyframeEffect::Priority priority,
-    PropertyHandleFilter property_handle_filter) {
+    PropertyHandleFilter property_handle_filter,
+    KeyframeEffect* partial_effect_stack_cutoff) {
   ActiveInterpolationsMap result;
 
   if (effect_stack) {
     HeapVector<Member<SampledEffect>>& sampled_effects =
         effect_stack->sampled_effects_;
+    effect_stack->RemoveRedundantSampledEffects();
     std::sort(sampled_effects.begin(), sampled_effects.end(),
               CompareSampledEffects);
-    effect_stack->RemoveRedundantSampledEffects();
+    bool reached_cuttoff = false;
     for (const auto& sampled_effect : sampled_effects) {
+      if (reached_cuttoff)
+        break;
+      if (partial_effect_stack_cutoff &&
+          sampled_effect->Effect() == partial_effect_stack_cutoff)
+        reached_cuttoff = true;
+
       if (sampled_effect->GetPriority() != priority ||
           // TODO(majidvp): Instead of accessing the effect's animation move the
           // check inside KeyframeEffect. http://crbug.com/812410
@@ -161,7 +186,7 @@ void EffectStack::RemoveRedundantSampledEffects() {
   sampled_effects_.Shrink(new_size);
 }
 
-void EffectStack::Trace(blink::Visitor* visitor) {
+void EffectStack::Trace(Visitor* visitor) {
   visitor->Trace(sampled_effects_);
 }
 

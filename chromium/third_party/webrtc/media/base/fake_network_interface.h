@@ -22,7 +22,6 @@
 #include "rtc_base/critical_section.h"
 #include "rtc_base/dscp.h"
 #include "rtc_base/message_handler.h"
-#include "rtc_base/message_queue.h"
 #include "rtc_base/thread.h"
 
 namespace cricket {
@@ -169,9 +168,10 @@ class FakeNetworkInterface : public MediaChannel::NetworkInterface,
         static_cast<rtc::TypedMessageData<rtc::CopyOnWriteBuffer>*>(msg->pdata);
     if (dest_) {
       if (msg->message_id == ST_RTP) {
-        dest_->OnPacketReceived(&msg_data->data(), rtc::TimeMicros());
+        dest_->OnPacketReceived(msg_data->data(), rtc::TimeMicros());
       } else {
-        dest_->OnRtcpReceived(&msg_data->data(), rtc::TimeMicros());
+        RTC_LOG(LS_VERBOSE) << "Dropping RTCP packet, they not handled by "
+                               "MediaChannel anymore.";
       }
     }
     delete msg_data;

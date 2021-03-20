@@ -30,8 +30,6 @@
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
-#include <unordered_map>
-
 namespace blink {
 
 class DOMException;
@@ -39,13 +37,11 @@ class IDBDatabase;
 class IDBObservation;
 
 class MODULES_EXPORT IDBDatabaseCallbacks
-    : public GarbageCollectedFinalized<IDBDatabaseCallbacks> {
+    : public GarbageCollected<IDBDatabaseCallbacks> {
  public:
-  static IDBDatabaseCallbacks* Create();
-
   IDBDatabaseCallbacks();
   virtual ~IDBDatabaseCallbacks();
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   // IDBDatabaseCallbacks
   virtual void OnForcedClose();

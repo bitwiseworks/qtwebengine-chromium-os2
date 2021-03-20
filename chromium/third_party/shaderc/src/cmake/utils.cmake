@@ -9,7 +9,11 @@ endfunction(shaderc_use_gmock)
 
 function(shaderc_default_c_compile_options TARGET)
   if (NOT "${MSVC}")
-    target_compile_options(${TARGET} PRIVATE -Wall -Werror -fvisibility=hidden)
+    if (SHADERC_ENABLE_WERROR_COMPILE)
+      target_compile_options(${TARGET} PRIVATE -Wall -Werror -fvisibility=hidden)
+    else()
+      target_compile_options(${TARGET} PRIVATE -Wall -fvisibility=hidden)
+    endif()
     if (NOT "${MINGW}")
       target_compile_options(${TARGET} PRIVATE -fPIC)
     endif()
@@ -67,18 +71,6 @@ function(shaderc_add_asciidoc TARGET FILE)
     # to detect those cases.  Generating HTML is not critical by default.
     add_custom_target(${TARGET} DEPENDS ${DEST})
   endif(ASCIIDOCTOR_EXE)
-endfunction()
-
-# Run nosetests on file ${PREFIX}_nosetest.py. Nosetests will look for classes
-# and functions whose names start with "nosetest". The test name will be
-# ${PREFIX}_nosetests.
-function(shaderc_add_nosetests PREFIX)
-  if("${SHADERC_ENABLE_TESTS}" AND NOSETESTS_EXE)
-    add_test(
-      NAME ${PREFIX}_nosetests
-      COMMAND ${NOSETESTS_EXE} -m "^[Nn]ose[Tt]est" -v
-        ${CMAKE_CURRENT_SOURCE_DIR}/${PREFIX}_nosetest.py)
-  endif()
 endfunction()
 
 # Adds a set of tests.
@@ -161,15 +153,7 @@ function(shaderc_combine_static_lib new_target target)
   shaderc_get_transitive_libs(${target} all_libs)
 
   set(libname
-      ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${new_target}${CMAKE_STATIC_LIBRARY_SUFFIX})
-
-  if (CMAKE_CONFIGURATION_TYPES)
-    list(LENGTH CMAKE_CONFIGURATION_TYPES num_configurations)
-    if (${num_configurations} GREATER 1)
-      set(libname
-          ${CMAKE_CFG_INTDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${new_target}${CMAKE_STATIC_LIBRARY_SUFFIX})
-    endif()
-  endif()
+      ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/${CMAKE_STATIC_LIBRARY_PREFIX}${new_target}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
   if (MSVC)
     string(REPLACE ";" ">;$<TARGET_FILE:" temp_string "${all_libs}")

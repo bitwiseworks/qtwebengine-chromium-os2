@@ -42,7 +42,6 @@ class HTMLFormattingElementList {
 
  public:
   HTMLFormattingElementList();
-  ~HTMLFormattingElementList();
 
   // Ideally Entry would be private, but HTMLTreeBuilder has to coordinate
   // between the HTMLFormattingElementList and HTMLElementStack and needs access
@@ -146,6 +145,6 @@ class HTMLFormattingElementList {
 }  // namespace blink
 
 WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(
-    blink::HTMLFormattingElementList::Entry);
+    blink::HTMLFormattingElementList::Entry)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_HTML_PARSER_HTML_FORMATTING_ELEMENT_LIST_H_

@@ -64,7 +64,7 @@ class SVGGradientElement : public SVGElement, public SVGURIReference {
   const SVGGradientElement* ReferencedElement() const;
   void CollectCommonAttributes(GradientAttributes&) const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   SVGGradientElement(const QualifiedName&, Document&);
@@ -99,7 +99,13 @@ inline bool IsSVGGradientElement(const SVGElement& element) {
          element.HasTagName(svg_names::kLinearGradientTag);
 }
 
-DEFINE_SVGELEMENT_TYPE_CASTS_WITH_FUNCTION(SVGGradientElement);
+template <>
+struct DowncastTraits<SVGGradientElement> {
+  static bool AllowFrom(const Node& node) {
+    auto* svg_element = DynamicTo<SVGElement>(node);
+    return svg_element && IsSVGGradientElement(*svg_element);
+  }
+};
 
 }  // namespace blink
 

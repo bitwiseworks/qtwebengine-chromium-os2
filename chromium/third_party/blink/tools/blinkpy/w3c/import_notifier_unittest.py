@@ -24,7 +24,7 @@ class ImportNotifierTest(unittest.TestCase):
         # Mock a virtual test suite at virtual/gpu/external/wpt/foo.
         self.host.filesystem = MockFileSystem({
             MOCK_WEB_TESTS + 'VirtualTestSuites':
-            '[{"prefix": "gpu", "base": "external/wpt/foo", "args": ["--foo"]}]'
+            '[{"prefix": "gpu", "bases": ["external/wpt/foo"], "args": ["--foo"]}]'
         })
         self.git = self.host.git()
         self.local_wpt = MockLocalWPT()
@@ -187,7 +187,7 @@ class ImportNotifierTest(unittest.TestCase):
         # Only one directory has WPT-NOTIFY enabled.
         self.assertEqual(len(bugs), 1)
         # The formatting of imported commits and new failures are already tested.
-        self.assertEqual(bugs[0].body['cc'], ['foolip@chromium.org', 'robertma@chromium.org'])
+        self.assertEqual(bugs[0].body['cc'], ['foolip@chromium.org'])
         self.assertEqual(bugs[0].body['components'], ['Blink>Infra>Ecosystem'])
         self.assertEqual(bugs[0].body['summary'],
                          '[WPT] New failures introduced in external/wpt/foo by import https://crrev.com/c/12345')

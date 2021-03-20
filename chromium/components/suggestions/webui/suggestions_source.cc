@@ -68,7 +68,7 @@ std::string RenderOutputHtml(const std::string& base_url,
     line += base::UTF16ToUTF8(remaining_time_formatted);
     std::vector<std::string> providers;
     for (int p = 0; p < suggestion.providers_size(); ++p)
-      providers.push_back(base::IntToString(suggestion.providers(p)));
+      providers.push_back(base::NumberToString(suggestion.providers(p)));
     line += ". Provider IDs: " + base::JoinString(providers, ", ");
     line += "</li>\n";
     out.push_back(line);
@@ -95,14 +95,12 @@ std::string RenderOutputHtmlNoSuggestions(const std::string& base_url,
 
 SuggestionsSource::SuggestionsSource(SuggestionsService* suggestions_service,
                                      const std::string& base_url)
-    : suggestions_service_(suggestions_service),
-      base_url_(base_url),
-      weak_ptr_factory_(this) {}
+    : suggestions_service_(suggestions_service), base_url_(base_url) {}
 
 SuggestionsSource::~SuggestionsSource() {}
 
 void SuggestionsSource::StartDataRequest(const std::string& path,
-                                         const GotDataCallback& callback) {
+                                         GotDataCallback callback) {
   // If this was called as "chrome://suggestions/refresh", we also trigger an
   // async update of the suggestions.
   bool is_refresh = (path == kRefreshPath);
@@ -110,7 +108,7 @@ void SuggestionsSource::StartDataRequest(const std::string& path,
   // |suggestions_service| is null for guest profiles.
   if (!suggestions_service_) {
     std::string output = RenderOutputHtmlNoSuggestions(base_url_, is_refresh);
-    callback.Run(base::RefCountedString::TakeString(&output));
+    std::move(callback).Run(base::RefCountedString::TakeString(&output));
     return;
   }
 
@@ -125,7 +123,7 @@ void SuggestionsSource::StartDataRequest(const std::string& path,
   std::string output =
       !size ? RenderOutputHtmlNoSuggestions(base_url_, is_refresh)
             : RenderOutputHtml(base_url_, is_refresh, suggestions_profile);
-  callback.Run(base::RefCountedString::TakeString(&output));
+  std::move(callback).Run(base::RefCountedString::TakeString(&output));
 }
 
 std::string SuggestionsSource::GetMimeType(const std::string& path) const {

@@ -39,15 +39,12 @@ if (is_android) {
       "android/java/src/org/chromium/components/navigation_interception/InterceptNavigationDelegate.java",
       "android/java/src/org/chromium/components/navigation_interception/NavigationParams.java",
     ]
-    jni_package = "navigation_interception"
   }
 }
 
 source_set("unit_tests") {
   testonly = true
-  sources = [
-    "intercept_navigation_throttle_unittest.cc",
-  ]
+  sources = [ "intercept_navigation_throttle_unittest.cc" ]
   deps = [
     ":navigation_interception",
     "//base",

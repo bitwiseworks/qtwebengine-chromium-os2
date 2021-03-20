@@ -4,10 +4,10 @@
 
 #include "src/snapshot/startup-deserializer.h"
 
-#include "src/api.h"
-#include "src/assembler-inl.h"
+#include "src/api/api.h"
+#include "src/codegen/assembler-inl.h"
+#include "src/execution/v8threads.h"
 #include "src/heap/heap-inl.h"
-#include "src/snapshot/read-only-deserializer.h"
 #include "src/snapshot/snapshot.h"
 
 namespace v8 {
@@ -15,10 +15,6 @@ namespace internal {
 
 void StartupDeserializer::DeserializeInto(Isolate* isolate) {
   Initialize(isolate);
-
-  ReadOnlyDeserializer read_only_deserializer(read_only_data_);
-  read_only_deserializer.SetRehashability(can_rehash());
-  read_only_deserializer.DeserializeInto(isolate);
 
   if (!allocator()->ReserveSpace()) {
     V8::FatalProcessOutOfMemory(isolate, "StartupDeserializer");
@@ -48,23 +44,27 @@ void StartupDeserializer::DeserializeInto(Isolate* isolate) {
     FlushICache();
   }
 
+  CheckNoArrayBufferBackingStores();
+
   isolate->heap()->set_native_contexts_list(
       ReadOnlyRoots(isolate).undefined_value());
   // The allocation site list is build during root iteration, but if no sites
   // were encountered then it needs to be initialized to undefined.
-  if (isolate->heap()->allocation_sites_list() == Smi::kZero) {
+  if (isolate->heap()->allocation_sites_list() == Smi::zero()) {
     isolate->heap()->set_allocation_sites_list(
         ReadOnlyRoots(isolate).undefined_value());
   }
-
+  isolate->heap()->set_dirty_js_finalization_registries_list(
+      ReadOnlyRoots(isolate).undefined_value());
+  isolate->heap()->set_dirty_js_finalization_registries_list_tail(
+      ReadOnlyRoots(isolate).undefined_value());
 
   isolate->builtins()->MarkInitialized();
 
   LogNewMapEvents();
 
   if (FLAG_rehash_snapshot && can_rehash()) {
-    isolate->heap()->InitializeHashSeed();
-    read_only_deserializer.RehashHeap();
+    // Hash seed was initalized in ReadOnlyDeserializer.
     Rehash();
   }
 }
@@ -77,7 +77,7 @@ void StartupDeserializer::FlushICache() {
   DCHECK(!deserializing_user_code());
   // The entire isolate is newly deserialized. Simply flush all code pages.
   for (Page* p : *isolate()->heap()->code_space()) {
-    Assembler::FlushICache(p->area_start(), p->area_end() - p->area_start());
+    FlushInstructionCache(p->area_start(), p->area_end() - p->area_start());
   }
 }
 

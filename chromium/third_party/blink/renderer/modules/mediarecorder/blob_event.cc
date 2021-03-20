@@ -4,8 +4,9 @@
 
 #include "third_party/blink/renderer/modules/mediarecorder/blob_event.h"
 
-#include "third_party/blink/renderer/modules/mediarecorder/blob_event_init.h"
-#include "third_party/blink/renderer/platform/wtf/dtoa/double.h"
+#include <cmath>
+
+#include "third_party/blink/renderer/bindings/modules/v8/v8_blob_event_init.h"
 
 namespace blink {
 
@@ -15,18 +16,11 @@ BlobEvent* BlobEvent::Create(const AtomicString& type,
   return MakeGarbageCollected<BlobEvent>(type, initializer);
 }
 
-// static
-BlobEvent* BlobEvent::Create(const AtomicString& type,
-                             Blob* blob,
-                             double timecode) {
-  return MakeGarbageCollected<BlobEvent>(type, blob, timecode);
-}
-
 const AtomicString& BlobEvent::InterfaceName() const {
   return event_interface_names::kBlobEvent;
 }
 
-void BlobEvent::Trace(blink::Visitor* visitor) {
+void BlobEvent::Trace(Visitor* visitor) {
   visitor->Trace(blob_);
   Event::Trace(visitor);
 }
@@ -34,9 +28,7 @@ void BlobEvent::Trace(blink::Visitor* visitor) {
 BlobEvent::BlobEvent(const AtomicString& type, const BlobEventInit* initializer)
     : Event(type, initializer),
       blob_(initializer->data()),
-      timecode_(initializer->hasTimecode()
-                    ? initializer->timecode()
-                    : WTF::double_conversion::Double::NaN()) {}
+      timecode_(initializer->hasTimecode() ? initializer->timecode() : NAN) {}
 
 BlobEvent::BlobEvent(const AtomicString& type, Blob* blob, double timecode)
     : Event(type, Bubbles::kNo, Cancelable::kNo),

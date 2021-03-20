@@ -5,14 +5,23 @@
 /**
  * @fileoverview
  * 'I18nBehavior' is a behavior to mix in loading of internationalization
- * strings.
+ * strings. Typically it is used as [[i18n('someString')]] computed bindings or
+ * for this.i18n('foo'). It is not needed for HTML $i18n{otherString}, which is
+ * handled by a C++ templatizer.
  */
 
+// #import {parseHtmlSubset} from './parse_html_subset.m.js';
+// #import {loadTimeData, SanitizeInnerHtmlOpts} from './load_time_data.m.js';
+
 /** @polymerBehavior */
-const I18nBehavior = {
+/* #export */ const I18nBehavior = {
+  // <if expr="chromeos">
+  // Dynamic locale changes are only relevant in ChromeOS OOBE/Login flows.
+  // On other platforms Chrome process is restarted upon locale changes.
+  // TODO(crbug.com/955194): move it to OobeI18nBehavior.
   properties: {
     /**
-     * The language the UI is presented in. Used to signal dynamic language
+     * The locale the UI is presented in. Used to signal dynamic locale
      * change.
      */
     locale: {
@@ -20,6 +29,16 @@ const I18nBehavior = {
       value: '',
     },
   },
+
+  /**
+   * Call this when UI strings may have changed. This will send an update to
+   * any data bindings to i18nDynamic(locale, ...).
+   * @suppress {checkTypes}
+   */
+  i18nUpdateLocale() {
+    this.locale = loadTimeData.getString('app_locale');
+  },
+  // </if>
 
   /**
    * Returns a translated string where $1 to $9 are replaced by the given
@@ -30,8 +49,8 @@ const I18nBehavior = {
    * @return {string} A translated, substituted string.
    * @private
    */
-  i18nRaw_: function(id, var_args) {
-    return arguments.length == 1 ?
+  i18nRaw_(id, var_args) {
+    return arguments.length === 1 ?
         loadTimeData.getString(id) :
         loadTimeData.getStringF.apply(loadTimeData, arguments);
   },
@@ -40,12 +59,13 @@ const I18nBehavior = {
    * Returns a translated string where $1 to $9 are replaced by the given
    * values. Also sanitizes the output to filter out dangerous HTML/JS.
    * Use with Polymer bindings that are *not* inner-h-t-m-l.
+   * NOTE: This is not related to $i18n{foo} in HTML, see file overview.
    * @param {string} id The ID of the string to translate.
-   * @param {...string} var_args Values to replace the placeholders $1 to $9
-   *     in the string.
+   * @param {...string|number} var_args Values to replace the placeholders $1
+   *     to $9 in the string.
    * @return {string} A translated, sanitized, substituted string.
    */
-  i18n: function(id, var_args) {
+  i18n(id, var_args) {
     const rawString = this.i18nRaw_.apply(this, arguments);
     return parseHtmlSubset('<b>' + rawString + '</b>').firstChild.textContent;
   },
@@ -59,7 +79,7 @@ const I18nBehavior = {
    * @param {SanitizeInnerHtmlOpts=} opts
    * @return {string}
    */
-  i18nAdvanced: function(id, opts) {
+  i18nAdvanced(id, opts) {
     opts = opts || {};
     const args = [id].concat(opts.substitutions || []);
     const rawString = this.i18nRaw_.apply(this, args);
@@ -75,7 +95,7 @@ const I18nBehavior = {
    *     in the string.
    * @return {string} A translated, sanitized, substituted string.
    */
-  i18nDynamic: function(locale, id, var_args) {
+  i18nDynamic(locale, id, var_args) {
     return this.i18n.apply(this, Array.prototype.slice.call(arguments, 1));
   },
 
@@ -90,7 +110,7 @@ const I18nBehavior = {
    *     list of localized strings.
    * @return {string} A translated, sanitized, substituted string.
    */
-  i18nRecursive: function(locale, id, var_args) {
+  i18nRecursive(locale, id, var_args) {
     let args = Array.prototype.slice.call(arguments, 2);
     if (args.length > 0) {
       // Try to replace IDs with localized values.
@@ -107,19 +127,8 @@ const I18nBehavior = {
    * @param {string} id
    * @return {boolean}
    */
-  i18nExists: function(id) {
+  i18nExists(id) {
     return loadTimeData.valueExists(id);
-  },
-
-  /**
-   * Call this when UI strings may have changed. This will send an update to
-   * any data bindings to i18nDynamic(locale, ...).
-   * @suppress {checkTypes}
-   */
-  i18nUpdateLocale: function() {
-    // Force reload.
-    this.locale = undefined;
-    this.locale = loadTimeData.getString('language');
   },
 };
 

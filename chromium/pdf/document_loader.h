@@ -37,8 +37,6 @@ class DocumentLoader {
     virtual void OnDocumentComplete() = 0;
     // Notification called when document loading is canceled.
     virtual void OnDocumentCanceled() = 0;
-    // Called when initial loader was closed.
-    virtual void CancelBrowserDownload() = 0;
   };
 
   virtual ~DocumentLoader() = default;
@@ -53,15 +51,14 @@ class DocumentLoader {
   virtual bool IsDataAvailable(uint32_t position, uint32_t size) const = 0;
 
   // Data request interface.
-  virtual void RequestData(uint32_t position, uint32_t size) {}
+  virtual void RequestData(uint32_t position, uint32_t size) = 0;
 
   virtual bool IsDocumentComplete() const = 0;
-  virtual void SetDocumentSize(uint32_t size) {}
   virtual uint32_t GetDocumentSize() const = 0;
   virtual uint32_t BytesReceived() const = 0;
 
   // Clear pending requests from the queue.
-  virtual void ClearPendingRequests() {}
+  virtual void ClearPendingRequests() = 0;
 };
 
 }  // namespace chrome_pdf

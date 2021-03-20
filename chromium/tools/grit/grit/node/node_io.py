@@ -5,6 +5,8 @@
 '''The <output> and <file> elements.
 '''
 
+from __future__ import print_function
+
 import os
 
 from grit import xtb_reader
@@ -39,7 +41,7 @@ class FileNode(base.Node):
     defs = getattr(root, 'defines', {})
     target_platform = getattr(root, 'target_platform', '')
 
-    xtb_file = open(self.ToRealPath(self.GetInputPath()))
+    xtb_file = open(self.ToRealPath(self.GetInputPath()), 'rb')
     try:
       lang = xtb_reader.Parse(xtb_file,
                               self.UberClique().GenerateXtbParserCallback(
@@ -47,7 +49,7 @@ class FileNode(base.Node):
                               defs=defs,
                               target_platform=target_platform)
     except:
-      print "Exception during parsing of %s" % self.GetInputPath()
+      print("Exception during parsing of %s" % self.GetInputPath())
       raise
     # Translation console uses non-standard language codes 'iw' and 'no' for
     # Hebrew and Norwegian Bokmal instead of 'he' and 'nb' used in Chrome.

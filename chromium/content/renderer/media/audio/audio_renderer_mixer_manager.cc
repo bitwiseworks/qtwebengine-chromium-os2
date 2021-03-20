@@ -116,9 +116,6 @@ void LogMixerUmaHistogram(media::AudioLatency::LatencyType latency, int value) {
           21);
       return;
     case media::AudioLatency::LATENCY_PLAYBACK:
-      UMA_HISTOGRAM_CUSTOM_COUNTS(
-          "Media.Audio.Render.AudioInputsPerMixer.LatencyPlayback", value, 1,
-          20, 21);
       return;
     default:
       NOTREACHED();
@@ -150,16 +147,16 @@ std::unique_ptr<AudioRendererMixerManager> AudioRendererMixerManager::Create() {
 scoped_refptr<media::AudioRendererMixerInput>
 AudioRendererMixerManager::CreateInput(
     int source_render_frame_id,
-    int session_id,
+    const base::UnguessableToken& session_id,
     const std::string& device_id,
     media::AudioLatency::LatencyType latency) {
   // AudioRendererMixerManager lives on the renderer thread and is destroyed on
   // renderer thread destruction, so it's safe to pass its pointer to a mixer
   // input.
   //
-  // TODO(olka, grunell): |session_id| is always zero, delete since
+  // TODO(olka, grunell): |session_id| is always empty, delete since
   // NewAudioRenderingMixingStrategy didn't ship, https://crbug.com/870836.
-  DCHECK_EQ(session_id, 0);
+  DCHECK(session_id.is_empty());
   return base::MakeRefCounted<media::AudioRendererMixerInput>(
       this, source_render_frame_id, device_id, latency);
 }
@@ -177,19 +174,6 @@ media::AudioRendererMixer* AudioRendererMixerManager::GetMixer(
   const MixerKey key(source_render_frame_id, input_params, latency,
                      sink_info.device_id());
   base::AutoLock auto_lock(mixers_lock_);
-
-  // Update latency map when the mixer is requested, i.e. there is an attempt to
-  // mix and output audio with a given latency. This is opposite to
-  // CreateInput() which creates a sink which is probably never used for output.
-  if (!latency_map_[latency]) {
-    latency_map_[latency] = 1;
-    // Log the updated latency map. This can't be done once in the end of the
-    // renderer lifetime, because the destructor is usually not called. So,
-    // we'll have a sort of exponential scale here, with a smaller subset
-    // logged both on its own and as a part of any larger subset.
-    base::UmaHistogramSparse("Media.Audio.Render.AudioMixing.LatencyMap",
-                             latency_map_.to_ulong());
-  }
 
   auto it = mixers_.find(key);
   if (it != mixers_.end()) {
@@ -239,8 +223,9 @@ void AudioRendererMixerManager::ReturnMixer(media::AudioRendererMixer* mixer) {
 scoped_refptr<media::AudioRendererSink> AudioRendererMixerManager::GetSink(
     int source_render_frame_id,
     const std::string& device_id) {
-  return create_sink_cb_.Run(source_render_frame_id,
-                             media::AudioSinkParameters(0, device_id));
+  return create_sink_cb_.Run(
+      source_render_frame_id,
+      media::AudioSinkParameters(base::UnguessableToken(), device_id));
 }
 
 AudioRendererMixerManager::MixerKey::MixerKey(

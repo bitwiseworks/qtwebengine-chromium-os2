@@ -13,7 +13,6 @@ namespace blink {
 class Document;
 class Element;
 class HTMLFrameOwnerElement;
-class PaintLayer;
 
 // Manages the root scroller associated with a given document. The root
 // scroller causes browser controls movement, overscroll effects and prevents
@@ -38,13 +37,9 @@ class PaintLayer;
 class CORE_EXPORT RootScrollerController
     : public GarbageCollected<RootScrollerController> {
  public:
-  // Creates a RootScrollerController for the given document. Note: instances
-  // of this class need to be made aware of layout updates.
-  static RootScrollerController* Create(Document&);
+  explicit RootScrollerController(Document&);
 
-  RootScrollerController(Document&);
-
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   // Sets the element that will be used as the root scroller. This can be
   // nullptr, in which case we'll use the default element (documentElement) as
@@ -75,10 +70,6 @@ class CORE_EXPORT RootScrollerController
   // FrameView removed, swapped, etc.) so that we can recompute the effective
   // root scroller and set the appropriate properties on the view.
   void DidUpdateIFrameFrameView(HTMLFrameOwnerElement&);
-
-  // Returns the PaintLayer associated with the currently effective root
-  // scroller.
-  PaintLayer* RootScrollerPaintLayer() const;
 
   void ElementRemoved(const Element&);
 

@@ -15,17 +15,18 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "printing/backend/cups_connection.h"
-#include "printing/backend/cups_ipp_util.h"
+#include "printing/backend/cups_ipp_helper.h"
 #include "printing/backend/print_backend_consts.h"
 #include "printing/units.h"
 
 namespace printing {
 
 PrintBackendCupsIpp::PrintBackendCupsIpp(
-    std::unique_ptr<CupsConnection> cups_connection)
-    : cups_connection_(std::move(cups_connection)) {}
+    std::unique_ptr<CupsConnection> cups_connection,
+    const std::string& locale)
+    : PrintBackend(locale), cups_connection_(std::move(cups_connection)) {}
 
-PrintBackendCupsIpp::~PrintBackendCupsIpp() {}
+PrintBackendCupsIpp::~PrintBackendCupsIpp() = default;
 
 bool PrintBackendCupsIpp::EnumeratePrinters(PrinterList* printer_list) {
   DCHECK(printer_list);
@@ -66,7 +67,7 @@ bool PrintBackendCupsIpp::GetPrinterBasicInfo(const std::string& printer_name,
                                               PrinterBasicInfo* printer_info) {
   std::unique_ptr<CupsPrinter> printer(
       cups_connection_->GetPrinter(printer_name));
-  if (!printer || !printer->IsAvailable())
+  if (!printer)
     return false;
 
   DCHECK_EQ(printer_name, printer->GetName());
@@ -74,12 +75,19 @@ bool PrintBackendCupsIpp::GetPrinterBasicInfo(const std::string& printer_name,
   return printer->ToPrinterInfo(printer_info);
 }
 
+bool PrintBackendCupsIpp::GetPrinterCapsAndDefaults(
+    const std::string& printer_name,
+    PrinterCapsAndDefaults* printer_info) {
+  NOTREACHED();
+  return false;
+}
+
 bool PrintBackendCupsIpp::GetPrinterSemanticCapsAndDefaults(
     const std::string& printer_name,
     PrinterSemanticCapsAndDefaults* printer_info) {
   std::unique_ptr<CupsPrinter> printer(
       cups_connection_->GetPrinter(printer_name));
-  if (!printer)
+  if (!printer || !printer->EnsureDestInfo())
     return false;
 
   CapsAndDefaultsFromPrinter(*printer, printer_info);
@@ -91,7 +99,7 @@ std::string PrintBackendCupsIpp::GetPrinterDriverInfo(
     const std::string& printer_name) {
   std::unique_ptr<CupsPrinter> printer(
       cups_connection_->GetPrinter(printer_name));
-  if (!printer || !printer->IsAvailable())
+  if (!printer)
     return std::string();
 
   DCHECK_EQ(printer_name, printer->GetName());
@@ -99,9 +107,7 @@ std::string PrintBackendCupsIpp::GetPrinterDriverInfo(
 }
 
 bool PrintBackendCupsIpp::IsValidPrinter(const std::string& printer_name) {
-  std::unique_ptr<CupsPrinter> printer(
-      cups_connection_->GetPrinter(printer_name));
-  return printer ? printer->IsAvailable() : false;
+  return !!cups_connection_->GetPrinter(printer_name);
 }
 
 }  // namespace printing

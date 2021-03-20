@@ -30,19 +30,33 @@ enum GLImplementation {
   kGLImplementationDesktopGLCoreProfile = 2,
   kGLImplementationSwiftShaderGL = 3,
   kGLImplementationAppleGL = 4,
-  kGLImplementationEGLGLES2 = 5,
+  kGLImplementationEGLGLES2 = 5,  // Native EGL/GLES2
   kGLImplementationMockGL = 6,
   kGLImplementationStubGL = 7,
   kGLImplementationDisabled = 8,
-  kMaxValue = kGLImplementationDisabled,
+  kGLImplementationEGLANGLE = 9,  // EGL/GL implemented using ANGLE
+  kMaxValue = kGLImplementationEGLANGLE,
+};
+
+enum class ANGLEImplementation {
+  kNone = 0,
+  kD3D9 = 1,
+  kD3D11 = 2,
+  kOpenGL = 3,
+  kOpenGLES = 4,
+  kNull = 5,
+  kVulkan = 6,
+  kSwiftShader = 7,
+  kMaxValue = kSwiftShader,
 };
 
 struct GL_EXPORT GLWindowSystemBindingInfo {
   GLWindowSystemBindingInfo();
+  ~GLWindowSystemBindingInfo();
   std::string vendor;
   std::string version;
   std::string extensions;
-  bool direct_rendering;
+  std::string direct_rendering_version;
 };
 
 using GLFunctionPointerType = void (*)();
@@ -82,6 +96,12 @@ GL_EXPORT void SetGLImplementation(GLImplementation implementation);
 
 // Get the current GL implementation.
 GL_EXPORT GLImplementation GetGLImplementation();
+
+// Set the current ANGLE implementation.
+GL_EXPORT void SetANGLEImplementation(ANGLEImplementation implementation);
+
+// Get the current ANGLE implementation.
+GL_EXPORT ANGLEImplementation GetANGLEImplementation();
 
 // Get the software GL implementation for the current platform.
 GL_EXPORT GLImplementation GetSoftwareGLImplementation();

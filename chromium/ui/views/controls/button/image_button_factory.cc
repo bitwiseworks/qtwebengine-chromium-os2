@@ -3,40 +3,71 @@
 // found in the LICENSE file.
 #include "ui/views/controls/button/image_button_factory.h"
 
+#include <memory>
+
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/painter.h"
 
+namespace {
+
+class ColorTrackingVectorImageButton : public views::ImageButton {
+ public:
+  ColorTrackingVectorImageButton(views::ButtonListener* listener,
+                                 const gfx::VectorIcon& icon)
+      : ImageButton(listener), icon_(icon) {}
+
+  // views::ImageButton:
+  void OnThemeChanged() override {
+    ImageButton::OnThemeChanged();
+    const SkColor color = GetNativeTheme()->GetSystemColor(
+        ui::NativeTheme::kColorId_DefaultIconColor);
+    views::SetImageFromVectorIconWithColor(this, icon_, color);
+  }
+
+ private:
+  const gfx::VectorIcon& icon_;
+};
+
+}  // namespace
+
 namespace views {
 
-namespace {
+std::unique_ptr<ImageButton> CreateVectorImageButtonWithNativeTheme(
+    ButtonListener* listener,
+    const gfx::VectorIcon& icon) {
+  auto button =
+      std::make_unique<ColorTrackingVectorImageButton>(listener, icon);
+  ConfigureVectorImageButton(button.get());
+  return button;
+}
+
+std::unique_ptr<ImageButton> CreateVectorImageButton(ButtonListener* listener) {
+  auto button = std::make_unique<ImageButton>(listener);
+  ConfigureVectorImageButton(button.get());
+  return button;
+}
+
+std::unique_ptr<ToggleImageButton> CreateVectorToggleImageButton(
+    ButtonListener* listener) {
+  auto button = std::make_unique<ToggleImageButton>(listener);
+  ConfigureVectorImageButton(button.get());
+  return button;
+}
 
 void ConfigureVectorImageButton(ImageButton* button) {
   button->SetInkDropMode(Button::InkDropMode::ON);
   button->set_has_ink_drop_action_on_click(true);
-  button->SetImageAlignment(ImageButton::ALIGN_CENTER,
-                            ImageButton::ALIGN_MIDDLE);
+  button->SetImageHorizontalAlignment(ImageButton::ALIGN_CENTER);
+  button->SetImageVerticalAlignment(ImageButton::ALIGN_MIDDLE);
   button->SetBorder(CreateEmptyBorder(
       LayoutProvider::Get()->GetInsetsMetric(INSETS_VECTOR_IMAGE_BUTTON)));
-}
-
-}  // namespace
-
-ImageButton* CreateVectorImageButton(ButtonListener* listener) {
-  ImageButton* button = new ImageButton(listener);
-  ConfigureVectorImageButton(button);
-  return button;
-}
-
-ToggleImageButton* CreateVectorToggleImageButton(ButtonListener* listener) {
-  ToggleImageButton* button = new ToggleImageButton(listener);
-  ConfigureVectorImageButton(button);
-  return button;
 }
 
 void SetImageFromVectorIcon(ImageButton* button,
@@ -84,6 +115,13 @@ void SetToggledImageFromVectorIcon(ToggleImageButton* button,
                                    SkColor related_text_color) {
   const SkColor icon_color =
       color_utils::DeriveDefaultIconColor(related_text_color);
+  SetToggledImageFromVectorIconWithColor(button, icon, dip_size, icon_color);
+}
+
+void SetToggledImageFromVectorIconWithColor(ToggleImageButton* button,
+                                            const gfx::VectorIcon& icon,
+                                            int dip_size,
+                                            SkColor icon_color) {
   const SkColor disabled_color =
       SkColorSetA(icon_color, gfx::kDisabledControlAlpha);
   const gfx::ImageSkia normal_image =
@@ -95,4 +133,4 @@ void SetToggledImageFromVectorIcon(ToggleImageButton* button,
   button->SetToggledImage(Button::STATE_DISABLED, &disabled_image);
 }
 
-}  // views
+}  // namespace views

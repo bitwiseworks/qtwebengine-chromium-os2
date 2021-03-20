@@ -4,6 +4,7 @@
 
 #include "chrome/common/extensions/permissions/chrome_permission_message_provider.h"
 
+#include <tuple>
 #include <vector>
 
 #include "base/metrics/field_trial.h"
@@ -27,11 +28,8 @@ class ComparablePermission {
   explicit ComparablePermission(const PermissionMessage& msg) : msg_(&msg) {}
 
   bool operator<(const ComparablePermission& rhs) const {
-    if (msg_->message() < rhs.msg_->message())
-      return true;
-    if (msg_->message() > rhs.msg_->message())
-      return false;
-    return msg_->submessages() < rhs.msg_->submessages();
+    return std::tie(msg_->message(), msg_->submessages()) <
+           std::tie(rhs.msg_->message(), rhs.msg_->submessages());
   }
 
   bool operator==(const ComparablePermission& rhs) const {
@@ -87,19 +85,33 @@ PermissionIDSet ChromePermissionMessageProvider::GetAllPermissionIDs(
   return permission_ids;
 }
 
-PermissionMessages
-ChromePermissionMessageProvider::GetPowerfulPermissionMessages(
-    const PermissionIDSet& permissions) const {
-  std::vector<ChromePermissionMessageRule> rules =
-      ChromePermissionMessageRule::GetAllRules();
+PermissionIDSet ChromePermissionMessageProvider::GetManagementUIPermissionIDs(
+    const PermissionSet& permissions,
+    Manifest::Type extension_type) const {
+  PermissionIDSet permission_ids;
+  AddAPIPermissionsForManagementUIWarning(permissions, &permission_ids);
+  AddManifestPermissionsForManagementUIWarning(permissions, &permission_ids);
+  AddHostPermissions(permissions, &permission_ids, extension_type);
+  return permission_ids;
+}
 
-  // TODO(crbug.com/888981): Find a better way to get wanted rules. Maybe add a
-  // bool to each one telling if we should consider it here or not.
-  constexpr size_t rules_considered = 15;
-  rules.erase(rules.begin() + std::min(rules_considered, rules.size()),
-              rules.end());
+void ChromePermissionMessageProvider::AddAPIPermissionsForManagementUIWarning(
+    const PermissionSet& permissions,
+    PermissionIDSet* permission_ids) const {
+  for (const APIPermission* permission : permissions.apis()) {
+    if (permission->info()->requires_management_ui_warning())
+      permission_ids->InsertAll(permission->GetPermissions());
+  }
+}
 
-  return GetPermissionMessagesHelper(permissions, rules);
+void ChromePermissionMessageProvider::
+    AddManifestPermissionsForManagementUIWarning(
+        const PermissionSet& permissions,
+        PermissionIDSet* permission_ids) const {
+  for (const ManifestPermission* p : permissions.manifest_permissions()) {
+    if (p->RequiresManagementUIWarning())
+      permission_ids->InsertAll(p->GetPermissions());
+  }
 }
 
 void ChromePermissionMessageProvider::AddAPIPermissions(
@@ -107,18 +119,6 @@ void ChromePermissionMessageProvider::AddAPIPermissions(
     PermissionIDSet* permission_ids) const {
   for (const APIPermission* permission : permissions.apis())
     permission_ids->InsertAll(permission->GetPermissions());
-
-  // A special hack: The warning message for declarativeWebRequest
-  // permissions speaks about blocking parts of pages, which is a
-  // subset of what the "<all_urls>" access allows. Therefore we
-  // display only the "<all_urls>" warning message if both permissions
-  // are required.
-  // TODO(treib): The same should apply to other permissions that are implied by
-  // "<all_urls>" (aka APIPermission::kHostsAll), such as kTab. This would
-  // happen automatically if we didn't differentiate between API/Manifest/Host
-  // permissions here.
-  if (permissions.ShouldWarnAllHosts())
-    permission_ids->erase(APIPermission::kDeclarativeWebRequest);
 }
 
 void ChromePermissionMessageProvider::AddManifestPermissions(
@@ -162,11 +162,19 @@ bool ChromePermissionMessageProvider::IsAPIOrManifestPrivilegeIncrease(
   AddAPIPermissions(granted_permissions, &granted_ids);
   AddManifestPermissions(granted_permissions, &granted_ids);
 
+  // <all_urls> is processed as APIPermission::kHostsAll and should be included
+  // when checking permission messages.
+  if (granted_permissions.ShouldWarnAllHosts())
+    granted_ids.insert(APIPermission::kHostsAll);
+
   // We compare |granted_ids| against the set of permissions that would be
   // granted if the requested permissions are allowed.
   PermissionIDSet potential_total_ids = granted_ids;
   AddAPIPermissions(requested_permissions, &potential_total_ids);
   AddManifestPermissions(requested_permissions, &potential_total_ids);
+
+  if (requested_permissions.ShouldWarnAllHosts())
+    potential_total_ids.insert(APIPermission::kHostsAll);
 
   // For M62, we added a new permission ID for new tab page overrides. Consider
   // the addition of this permission to not result in a privilege increase for

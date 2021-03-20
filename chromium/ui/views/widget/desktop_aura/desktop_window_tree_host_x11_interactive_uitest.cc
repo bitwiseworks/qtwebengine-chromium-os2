@@ -14,6 +14,7 @@
 #include "ui/base/x/x11_util.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/platform/x11/x11_event_source.h"
+#include "ui/events/x/x11_event_translation.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
@@ -31,14 +32,13 @@ class ActivationWaiter : public X11PropertyChangeWaiter {
  public:
   explicit ActivationWaiter(XID window)
       : X11PropertyChangeWaiter(ui::GetX11RootWindow(), "_NET_ACTIVE_WINDOW"),
-        window_(window) {
-  }
+        window_(window) {}
 
-  ~ActivationWaiter() override {}
+  ~ActivationWaiter() override = default;
 
  private:
   // X11PropertyChangeWaiter:
-  bool ShouldKeepOnWaiting(const ui::PlatformEvent& event) override {
+  bool ShouldKeepOnWaiting(XEvent* event) override {
     XID xid = 0;
     ui::GetXIDProperty(ui::GetX11RootWindow(), "_NET_ACTIVE_WINDOW", &xid);
     return xid != window_;
@@ -52,9 +52,8 @@ class ActivationWaiter : public X11PropertyChangeWaiter {
 // An event handler which counts the number of mouse moves it has seen.
 class MouseMoveCounterHandler : public ui::EventHandler {
  public:
-  MouseMoveCounterHandler() : count_(0) {
-  }
-  ~MouseMoveCounterHandler() override {}
+  MouseMoveCounterHandler() = default;
+  ~MouseMoveCounterHandler() override = default;
 
   // ui::EventHandler:
   void OnMouseEvent(ui::MouseEvent* event) override {
@@ -62,12 +61,10 @@ class MouseMoveCounterHandler : public ui::EventHandler {
       ++count_;
   }
 
-  int num_mouse_moves() const {
-    return count_;
-  }
+  int num_mouse_moves() const { return count_; }
 
  private:
-  int count_;
+  int count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(MouseMoveCounterHandler);
 };
@@ -80,22 +77,21 @@ std::unique_ptr<Widget> CreateWidget(const gfx::Rect& bounds) {
   params.remove_standard_frame = true;
   params.native_widget = new DesktopNativeWidgetAura(widget.get());
   params.bounds = bounds;
-  widget->Init(params);
+  widget->Init(std::move(params));
   return widget;
 }
 
-// Dispatches an XMotionEvent targeted at |host|'s X window with location
+// Dispatches a XMotionEvent targeted at |host|'s X window with location
 // |point_in_screen|.
 void DispatchMouseMotionEvent(DesktopWindowTreeHostX11* desktop_host,
                               const gfx::Point& point_in_screen) {
-  aura::WindowTreeHost* host = static_cast<aura::WindowTreeHost*>(desktop_host);
   gfx::Rect bounds_in_screen = desktop_host->window()->GetBoundsInScreen();
 
   Display* display = gfx::GetXDisplay();
   XEvent xev;
   xev.xmotion.type = MotionNotify;
   xev.xmotion.display = display;
-  xev.xmotion.window = host->GetAcceleratedWidget();
+  xev.xmotion.window = desktop_host->GetAcceleratedWidget();
   xev.xmotion.root = DefaultRootWindow(display);
   xev.xmotion.subwindow = 0;
   xev.xmotion.time = x11::CurrentTime;
@@ -107,16 +103,15 @@ void DispatchMouseMotionEvent(DesktopWindowTreeHostX11* desktop_host,
   xev.xmotion.is_hint = NotifyNormal;
   xev.xmotion.same_screen = x11::True;
 
-  static_cast<ui::PlatformEventDispatcher*>(desktop_host)->DispatchEvent(&xev);
+  ui::X11EventSource::GetInstance()->ProcessXEvent(&xev);
 }
 
 }  // namespace
 
 class DesktopWindowTreeHostX11Test : public ViewsInteractiveUITestBase {
  public:
-  DesktopWindowTreeHostX11Test() {
-  }
-  ~DesktopWindowTreeHostX11Test() override {}
+  DesktopWindowTreeHostX11Test() = default;
+  ~DesktopWindowTreeHostX11Test() override = default;
 
   // testing::Test
   void SetUp() override {
@@ -194,7 +189,7 @@ TEST_F(DesktopWindowTreeHostX11Test, CaptureEventForwarding) {
   // XGrabPointer() with owner == False, the X server sends events to |widget2|
   // as long as the mouse is hovered over |widget2|. Verify that Chrome
   // redirects mouse events to |widget1|.
-  widget1->SetCapture(NULL);
+  widget1->SetCapture(nullptr);
   point_in_screen += gfx::Vector2d(1, 0);
   DispatchMouseMotionEvent(host2, point_in_screen);
   EXPECT_EQ(1, recorder1.num_mouse_moves());
@@ -206,7 +201,7 @@ TEST_F(DesktopWindowTreeHostX11Test, CaptureEventForwarding) {
 
   // Set capture to |widget2|. Subsequent events sent to |widget2| should not be
   // forwarded.
-  widget2->SetCapture(NULL);
+  widget2->SetCapture(nullptr);
   point_in_screen += gfx::Vector2d(1, 0);
   DispatchMouseMotionEvent(host2, point_in_screen);
   EXPECT_EQ(1, recorder1.num_mouse_moves());
@@ -249,12 +244,15 @@ TEST_F(DesktopWindowTreeHostX11Test, InputMethodFocus) {
   EXPECT_FALSE(widget->IsActive());
   // TODO(shuchen): uncomment the below check once the
   // "default-focused-input-method" logic is removed in aura::WindowTreeHost.
-  //EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,
-  //          widget->GetInputMethod()->GetTextInputType());
+  // EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,
+  //           widget->GetInputMethod()->GetTextInputType());
 
-  widget->Activate();
+  // Waiter should be created before widget->Activate is called. Otherwise,
+  // there is a race, and waiter might not be able to set property changes mask
+  // on time and miss the events.
   ActivationWaiter waiter(
       widget->GetNativeWindow()->GetHost()->GetAcceleratedWidget());
+  widget->Activate();
   waiter.Wait();
 
   EXPECT_TRUE(widget->IsActive());

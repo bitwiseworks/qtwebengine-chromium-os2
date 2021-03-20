@@ -20,9 +20,10 @@
 
 #include "third_party/blink/renderer/core/svg/svg_point_list.h"
 
-#include "third_party/blink/renderer/core/svg/svg_animation_element.h"
+#include "third_party/blink/renderer/core/svg/svg_animate_element.h"
 #include "third_party/blink/renderer/core/svg/svg_parser_utilities.h"
 #include "third_party/blink/renderer/platform/geometry/float_point.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -49,7 +50,7 @@ SVGParsingError SVGPointList::Parse(const CharType*& ptr, const CharType* end) {
         !ParseNumber(ptr, end, y, kDisallowWhitespace))
       return SVGParsingError(SVGParseStatus::kExpectedNumber, ptr - list_start);
 
-    Append(SVGPoint::Create(FloatPoint(x, y)));
+    Append(MakeGarbageCollected<SVGPoint>(FloatPoint(x, y)));
 
     if (!SkipOptionalSVGSpaces(ptr, end))
       break;
@@ -82,7 +83,7 @@ SVGParsingError SVGPointList::SetValueAsString(const String& value) {
 }
 
 void SVGPointList::Add(SVGPropertyBase* other, SVGElement* context_element) {
-  SVGPointList* other_list = ToSVGPointList(other);
+  auto* other_list = To<SVGPointList>(other);
 
   if (length() != other_list->length())
     return;
@@ -92,25 +93,26 @@ void SVGPointList::Add(SVGPropertyBase* other, SVGElement* context_element) {
 }
 
 void SVGPointList::CalculateAnimatedValue(
-    SVGAnimationElement* animation_element,
+    const SVGAnimateElement& animation_element,
     float percentage,
     unsigned repeat_count,
     SVGPropertyBase* from_value,
     SVGPropertyBase* to_value,
     SVGPropertyBase* to_at_end_of_duration_value,
     SVGElement* context_element) {
-  SVGPointList* from_list = ToSVGPointList(from_value);
-  SVGPointList* to_list = ToSVGPointList(to_value);
-  SVGPointList* to_at_end_of_duration_list =
-      ToSVGPointList(to_at_end_of_duration_value);
+  auto* from_list = To<SVGPointList>(from_value);
+  auto* to_list = To<SVGPointList>(to_value);
+  auto* to_at_end_of_duration_list =
+      To<SVGPointList>(to_at_end_of_duration_value);
 
   uint32_t from_point_list_size = from_list->length();
   uint32_t to_point_list_size = to_list->length();
   uint32_t to_at_end_of_duration_list_size =
       to_at_end_of_duration_list->length();
 
-  if (!AdjustFromToListValues(from_list, to_list, percentage,
-                              animation_element->GetAnimationMode()))
+  const bool is_to_animation =
+      animation_element.GetAnimationMode() == kToAnimation;
+  if (!AdjustFromToListValues(from_list, to_list, percentage, is_to_animation))
     return;
 
   for (uint32_t i = 0; i < to_point_list_size; ++i) {
@@ -125,10 +127,10 @@ void SVGPointList::CalculateAnimatedValue(
     if (i < to_at_end_of_duration_list_size)
       effective_to_at_end = to_at_end_of_duration_list->at(i)->Value();
 
-    animation_element->AnimateAdditiveNumber(
+    animation_element.AnimateAdditiveNumber(
         percentage, repeat_count, effective_from.X(), effective_to.X(),
         effective_to_at_end.X(), animated_x);
-    animation_element->AnimateAdditiveNumber(
+    animation_element.AnimateAdditiveNumber(
         percentage, repeat_count, effective_from.Y(), effective_to.Y(),
         effective_to_at_end.Y(), animated_y);
     at(i)->SetValue(FloatPoint(animated_x, animated_y));

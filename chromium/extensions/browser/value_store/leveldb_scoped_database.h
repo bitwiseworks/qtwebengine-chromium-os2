@@ -5,7 +5,9 @@
 #ifndef EXTENSIONS_BROWSER_VALUE_STORE_LEVELDB_SCOPED_DATABASE_H_
 #define EXTENSIONS_BROWSER_VALUE_STORE_LEVELDB_SCOPED_DATABASE_H_
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -46,7 +48,7 @@ class LeveldbScopedDatabase
   // Reads a single |value| from the database for the specified |key|.
   ValueStore::Status Read(const std::string& scope,
                           const std::string& key,
-                          std::unique_ptr<base::Value>* value);
+                          base::Optional<base::Value>* value);
 
   // Reads all |values| from the database stored within the specified |scope|.
   ValueStore::Status Read(const std::string& scope,

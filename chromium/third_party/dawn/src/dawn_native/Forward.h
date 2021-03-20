@@ -21,34 +21,30 @@ namespace dawn_native {
 
     class AdapterBase;
     class BindGroupBase;
-    class BindGroupBuilder;
     class BindGroupLayoutBase;
-    class BindGroupLayoutBuilder;
     class BufferBase;
-    class BufferBuilder;
     class ComputePipelineBase;
     class CommandBufferBase;
-    class CommandBufferBuilder;
-    class ComputePassEncoderBase;
-    class FenceBase;
-    class InputStateBase;
-    class InputStateBuilder;
+    class CommandEncoder;
+    class ComputePassEncoder;
+    class Fence;
     class InstanceBase;
+    class PipelineBase;
     class PipelineLayoutBase;
-    class PipelineLayoutBuilder;
     class QueueBase;
-    class RenderPassDescriptorBase;
-    class RenderPassDescriptorBuilder;
-    class RenderPassEncoderBase;
+    class RenderBundleBase;
+    class RenderBundleEncoder;
+    class RenderPassEncoder;
     class RenderPipelineBase;
+    class ResourceHeapBase;
     class SamplerBase;
+    class Surface;
     class ShaderModuleBase;
-    class ShaderModuleBuilder;
+    class StagingBufferBase;
     class SwapChainBase;
-    class SwapChainBuilder;
+    class NewSwapChainBase;
     class TextureBase;
     class TextureViewBase;
-    class TextureViewBuilder;
 
     class DeviceBase;
 
@@ -58,7 +54,8 @@ namespace dawn_native {
     template <typename T>
     class PerStage;
 
-    enum PushConstantType : uint8_t;
+    struct Format;
+
 }  // namespace dawn_native
 
 #endif  // DAWNNATIVE_FORWARD_H_

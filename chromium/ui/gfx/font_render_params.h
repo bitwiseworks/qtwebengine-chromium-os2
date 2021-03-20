@@ -117,7 +117,8 @@ GFX_EXPORT FontRenderParams GetFontRenderParams(
 GFX_EXPORT void ClearFontRenderParamsCacheForTest();
 #endif
 
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_FUCHSIA) || defined(OS_OS2)
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_ANDROID) || \
+    defined(OS_FUCHSIA) || defined(OS_OS2)
 // Gets the device scale factor to query the FontRenderParams.
 GFX_EXPORT float GetFontRenderParamsDeviceScaleFactor();
 

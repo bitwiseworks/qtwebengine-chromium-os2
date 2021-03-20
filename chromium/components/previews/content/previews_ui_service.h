@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_PREVIEWS_CONTENT_PREVIEWS_UI_SERVICE_H_
 #define COMPONENTS_PREVIEWS_CONTENT_PREVIEWS_UI_SERVICE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -141,7 +142,7 @@ class PreviewsUIService
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<PreviewsUIService> weak_factory_;
+  base::WeakPtrFactory<PreviewsUIService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PreviewsUIService);
 };

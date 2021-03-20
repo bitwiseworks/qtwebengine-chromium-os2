@@ -9,8 +9,10 @@
 namespace blink {
 
 WorkletModuleScriptFetcher::WorkletModuleScriptFetcher(
-    WorkletModuleResponsesMap* module_responses_map)
-    : module_responses_map_(module_responses_map) {}
+    WorkletModuleResponsesMap* module_responses_map,
+    util::PassKey<ModuleScriptLoader> pass_key)
+    : ModuleScriptFetcher(pass_key),
+      module_responses_map_(module_responses_map) {}
 
 void WorkletModuleScriptFetcher::Fetch(
     FetchParameters& fetch_params,
@@ -44,11 +46,12 @@ void WorkletModuleScriptFetcher::NotifyFinished(Resource* resource) {
   base::Optional<ModuleScriptCreationParams> params;
   ScriptResource* script_resource = ToScriptResource(resource);
   HeapVector<Member<ConsoleMessage>> error_messages;
-  if (WasModuleLoadSuccessful(script_resource, &error_messages)) {
-    params.emplace(
-        script_resource->GetResponse().CurrentRequestUrl(),
-        script_resource->SourceText(),
-        script_resource->GetResourceRequest().GetFetchCredentialsMode());
+  ModuleScriptCreationParams::ModuleType module_type;
+  if (WasModuleLoadSuccessful(script_resource, &error_messages, &module_type)) {
+    params.emplace(script_resource->GetResponse().CurrentRequestUrl(),
+                   module_type, script_resource->SourceText(),
+                   script_resource->CacheHandler(),
+                   script_resource->GetResourceRequest().GetCredentialsMode());
   }
 
   // This will eventually notify |client| passed to

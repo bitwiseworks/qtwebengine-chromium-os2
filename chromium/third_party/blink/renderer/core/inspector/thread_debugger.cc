@@ -15,12 +15,12 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_event.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_event_listener.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_event_listener_info.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_event_target.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_html_all_collection.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_html_collection.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_node.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_node_list.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_script_runner.h"
-#include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_debugger_agent.h"
@@ -29,7 +29,6 @@
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -48,23 +47,23 @@ ThreadDebugger* ThreadDebugger::From(v8::Isolate* isolate) {
 }
 
 // static
-MessageLevel ThreadDebugger::V8MessageLevelToMessageLevel(
+mojom::ConsoleMessageLevel ThreadDebugger::V8MessageLevelToMessageLevel(
     v8::Isolate::MessageErrorLevel level) {
-  MessageLevel result = kInfoMessageLevel;
+  mojom::ConsoleMessageLevel result = mojom::ConsoleMessageLevel::kInfo;
   switch (level) {
     case v8::Isolate::kMessageDebug:
-      result = kVerboseMessageLevel;
+      result = mojom::ConsoleMessageLevel::kVerbose;
       break;
     case v8::Isolate::kMessageWarning:
-      result = kWarningMessageLevel;
+      result = mojom::ConsoleMessageLevel::kWarning;
       break;
     case v8::Isolate::kMessageError:
-      result = kErrorMessageLevel;
+      result = mojom::ConsoleMessageLevel::kError;
       break;
     case v8::Isolate::kMessageLog:
     case v8::Isolate::kMessageInfo:
     default:
-      result = kInfoMessageLevel;
+      result = mojom::ConsoleMessageLevel::kInfo;
       break;
   }
   return result;
@@ -135,8 +134,9 @@ unsigned ThreadDebugger::PromiseRejected(
   else if (message.StartsWith("Uncaught "))
     message = message.Substring(0, 8) + " (in promise)" + message.Substring(8);
 
-  ReportConsoleMessage(ToExecutionContext(context), kJSMessageSource,
-                       kErrorMessageLevel, message, location.get());
+  ReportConsoleMessage(
+      ToExecutionContext(context), mojom::ConsoleMessageSource::kJavaScript,
+      mojom::ConsoleMessageLevel::kError, message, location.get());
   String url = location->Url();
   return GetV8Inspector()->exceptionThrown(
       context, ToV8InspectorStringView(default_message), exception,
@@ -152,16 +152,14 @@ void ThreadDebugger::PromiseRejectionRevoked(v8::Local<v8::Context> context,
                                      ToV8InspectorStringView(message));
 }
 
+// TODO(mustaq): Fix the caller in v8/src.
 void ThreadDebugger::beginUserGesture() {
-  ExecutionContext* ec = CurrentExecutionContext(isolate_);
-  Document* document = DynamicTo<Document>(ec);
-  user_gesture_indicator_ = LocalFrame::NotifyUserActivation(
-      document ? document->GetFrame() : nullptr);
+  auto* window = CurrentDOMWindow(isolate_);
+  LocalFrame::NotifyUserActivation(window ? window->GetFrame() : nullptr);
 }
 
-void ThreadDebugger::endUserGesture() {
-  user_gesture_indicator_.reset();
-}
+// TODO(mustaq): Fix the caller in v8/src.
+void ThreadDebugger::endUserGesture() {}
 
 std::unique_ptr<v8_inspector::StringBuffer> ThreadDebugger::valueSubtype(
     v8::Local<v8::Value> value) {
@@ -189,7 +187,7 @@ bool ThreadDebugger::formatAccessorsAsProperties(v8::Local<v8::Value> value) {
 }
 
 double ThreadDebugger::currentTimeMS() {
-  return WTF::CurrentTimeMS();
+  return base::Time::Now().ToDoubleT() * 1000.0;
 }
 
 bool ThreadDebugger::isInspectableHeapObject(v8::Local<v8::Object> object) {
@@ -459,14 +457,14 @@ void ThreadDebugger::consoleTime(const v8_inspector::StringView& title) {
   // TODO(dgozman): we can save on a copy here if trace macro would take a
   // pointer with length.
   TRACE_EVENT_COPY_ASYNC_BEGIN0("blink.console",
-                                ToCoreString(title).Utf8().data(), this);
+                                ToCoreString(title).Utf8().c_str(), this);
 }
 
 void ThreadDebugger::consoleTimeEnd(const v8_inspector::StringView& title) {
   // TODO(dgozman): we can save on a copy here if trace macro would take a
   // pointer with length.
   TRACE_EVENT_COPY_ASYNC_END0("blink.console",
-                              ToCoreString(title).Utf8().data(), this);
+                              ToCoreString(title).Utf8().c_str(), this);
 }
 
 void ThreadDebugger::consoleTimeStamp(const v8_inspector::StringView& title) {
@@ -476,7 +474,7 @@ void ThreadDebugger::consoleTimeStamp(const v8_inspector::StringView& title) {
   TRACE_EVENT_INSTANT1(
       "devtools.timeline", "TimeStamp", TRACE_EVENT_SCOPE_THREAD, "data",
       inspector_time_stamp_event::Data(ec, ToCoreString(title)));
-  probe::consoleTimeStamp(ec, ToCoreString(title));
+  probe::ConsoleTimeStamp(ec, ToCoreString(title));
 }
 
 void ThreadDebugger::startRepeatingTimer(
@@ -492,7 +490,7 @@ void ThreadDebugger::startRepeatingTimer(
           &ThreadDebugger::OnTimer);
   TaskRunnerTimer<ThreadDebugger>* timer_ptr = timer.get();
   timers_.push_back(std::move(timer));
-  timer_ptr->StartRepeating(TimeDelta::FromSecondsD(interval), FROM_HERE);
+  timer_ptr->StartRepeating(base::TimeDelta::FromSecondsD(interval), FROM_HERE);
 }
 
 void ThreadDebugger::cancelTimer(void* data) {

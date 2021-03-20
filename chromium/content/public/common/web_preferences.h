@@ -14,6 +14,8 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "net/nqe/effective_connection_type.h"
+#include "third_party/blink/public/common/css/preferred_color_scheme.h"
+#include "third_party/blink/public/mojom/v8_cache_options.mojom.h"
 #include "ui/base/pointer/pointer_device.h"
 #include "url/gurl.h"
 
@@ -33,16 +35,6 @@ enum EditingBehavior {
   EDITING_BEHAVIOR_UNIX,
   EDITING_BEHAVIOR_ANDROID,
   EDITING_BEHAVIOR_LAST = EDITING_BEHAVIOR_ANDROID
-};
-
-// Cache options for V8. See V8CacheOptions.h for information on the options.
-enum V8CacheOptions {
-  V8_CACHE_OPTIONS_DEFAULT,
-  V8_CACHE_OPTIONS_NONE,
-  V8_CACHE_OPTIONS_CODE,
-  V8_CACHE_OPTIONS_CODE_WITHOUT_HEAT_CHECK,
-  V8_CACHE_OPTIONS_FULLCODE_WITHOUT_HEAT_CHECK,
-  V8_CACHE_OPTIONS_LAST = V8_CACHE_OPTIONS_FULLCODE_WITHOUT_HEAT_CHECK
 };
 
 // ImageAnimationPolicy is used for controlling image animation
@@ -102,7 +94,6 @@ struct CONTENT_EXPORT WebPreferences {
   bool remote_fonts_enabled;
   bool javascript_can_access_clipboard;
   bool xslt_enabled;
-  bool xss_auditor_enabled;
   // We don't use dns_prefetching_enabled to disable DNS prefetching.  Instead,
   // we disable the feature at a lower layer so that we catch non-WebKit uses
   // of DNS prefetch as well.
@@ -118,7 +109,6 @@ struct CONTENT_EXPORT WebPreferences {
   bool databases_enabled;
   bool application_cache_enabled;
   bool tabs_to_links;
-  bool history_entry_requires_user_gesture;
   bool disable_ipc_flooding_protection;
   bool hyperlink_auditing_enabled;
   bool allow_universal_access_from_file_urls;
@@ -131,10 +121,8 @@ struct CONTENT_EXPORT WebPreferences {
   bool flash_stage3d_baseline_enabled;
   bool privileged_webgl_extensions_enabled;
   bool webgl_errors_to_console_enabled;
-  bool mock_scrollbars_enabled;
   bool hide_scrollbars;
   bool accelerated_2d_canvas_enabled;
-  int minimum_accelerated_2d_canvas_size;
   bool antialiased_2d_canvas_disabled;
   bool antialiased_clips_2d_canvas_enabled;
   int accelerated_2d_canvas_msaa_sample_count;
@@ -170,6 +158,7 @@ struct CONTENT_EXPORT WebPreferences {
   ui::PointerType primary_pointer_type;
   int available_hover_types;
   ui::HoverType primary_hover_type;
+  bool dont_send_key_events_to_javascript;
   bool barrel_button_for_drag_enabled = false;
   bool sync_xhr_in_documents_enabled;
   bool should_respect_image_orientation;
@@ -191,9 +180,9 @@ struct CONTENT_EXPORT WebPreferences {
   bool initialize_at_minimum_page_scale;
   bool smart_insert_delete_enabled;
   bool spatial_navigation_enabled;
-  bool use_solid_color_scrollbars;
+  bool caret_browsing_enabled;
   bool navigate_on_drag_drop;
-  V8CacheOptions v8_cache_options;
+  blink::mojom::V8CacheOptions v8_cache_options;
   bool record_whole_document;
 
   // This flags corresponds to a Page's Settings' setCookieEnabled state. It
@@ -211,10 +200,31 @@ struct CONTENT_EXPORT WebPreferences {
 
   bool user_gesture_required_for_presentation;
 
+  bool text_tracks_enabled;
+
   // These fields specify the foreground and background color for WebVTT text
   // tracks. Their values can be any legal CSS color descriptor.
   std::string text_track_background_color;
   std::string text_track_text_color;
+
+  // These fields specify values for CSS properties used to style WebVTT text
+  // tracks.
+  // Specifies CSS font-size property in percentage.
+  std::string text_track_text_size;
+  std::string text_track_text_shadow;
+  std::string text_track_font_family;
+  std::string text_track_font_style;
+  // Specifies the value for CSS font-variant property.
+  std::string text_track_font_variant;
+
+  // These fields specify values for CSS properties used to style the window
+  // around WebVTT text tracks.
+  // Window color can be any legal CSS color descriptor.
+  std::string text_track_window_color;
+  // Window padding is in em.
+  std::string text_track_window_padding;
+  // Window radius is in pixels.
+  std::string text_track_window_radius;
 
   // Specifies the margin for WebVTT text tracks as a percentage of media
   // element height/width (for horizontal/vertical text respectively).
@@ -225,6 +235,8 @@ struct CONTENT_EXPORT WebPreferences {
 
   bool double_tap_to_zoom_enabled;
 
+  bool fullscreen_supported;
+
   bool text_autosizing_enabled;
 
   // Representation of the Web App Manifest scope if any.
@@ -234,14 +246,12 @@ struct CONTENT_EXPORT WebPreferences {
   float font_scale_factor;
   float device_scale_adjustment;
   bool force_enable_zoom;
-  bool fullscreen_supported;
   GURL default_video_poster_url;
   bool support_deprecated_target_density_dpi;
   bool use_legacy_background_size_shorthand_behavior;
   bool wide_viewport_quirk;
   bool use_wide_viewport;
   bool force_zero_layout_height;
-  bool viewport_meta_layout_size_quirk;
   bool viewport_meta_merge_content_quirk;
   bool viewport_meta_non_user_scalable_quirk;
   bool viewport_meta_zero_values_quirk;
@@ -259,20 +269,28 @@ struct CONTENT_EXPORT WebPreferences {
   // If enabled, fullscreen should be entered/exited when the device is rotated
   // to/from the orientation of the video.
   bool video_rotate_to_fullscreen_enabled;
-  // If enabled, video fullscreen detection will be enabled.
-  bool video_fullscreen_detection_enabled;
   bool embedded_media_experience_enabled;
   // Enable 8 (#RRGGBBAA) and 4 (#RGBA) value hex colors in CSS Android
   // WebView quirk (http://crbug.com/618472).
   bool css_hex_alpha_color_enabled;
-  bool enable_media_download_in_product_help;
   // Enable support for document.scrollingElement
   // WebView sets this to false to retain old documentElement behaviour
   // (http://crbug.com/761016).
   bool scroll_top_left_interop_enabled;
-#else  // defined(OS_ANDROID)
-  bool fullscreen_supported;
+  // Disable features such as offscreen canvas that depend on the viz
+  // architecture of surface embedding. Android WebView does not support this
+  // architecture yet.
+  bool disable_features_depending_on_viz;
+  // Don't accelerate small canvases to avoid crashes TODO(crbug.com/1004304)
+  bool disable_accelerated_small_canvases;
+  // Re-enable Web Components v0 on Webview, temporarily. This should get
+  // removed when crbug.com/1021631 gets fixed.
+  bool reenable_web_components_v0;
 #endif  // defined(OS_ANDROID)
+
+  // Enable forcibly modifying content rendering to result in a light on dark
+  // color scheme.
+  bool force_dark_mode_enabled = false;
 
   // Default (used if the page or UA doesn't override these) values for page
   // scale limits. These are set directly on the WebView so there's no analogue
@@ -297,6 +315,12 @@ struct CONTENT_EXPORT WebPreferences {
 
   // Defines the current autoplay policy.
   AutoplayPolicy autoplay_policy;
+
+  // The preferred color scheme for the web content. The scheme is used to
+  // evaluate the prefers-color-scheme media query and resolve UA color scheme
+  // to be used based on the supported-color-schemes META tag and CSS property.
+  blink::PreferredColorScheme preferred_color_scheme =
+      blink::PreferredColorScheme::kNoPreference;
 
   // Network quality threshold below which resources from iframes are assigned
   // either kVeryLow or kVeryLow Blink priority.
@@ -328,6 +352,11 @@ struct CONTENT_EXPORT WebPreferences {
       lazy_frame_loading_distance_thresholds_px;
   std::map<net::EffectiveConnectionType, int>
       lazy_image_loading_distance_thresholds_px;
+  std::map<net::EffectiveConnectionType, int> lazy_image_first_k_fully_load;
+
+  // Setting to false disables upgrades to HTTPS for HTTP resources in HTTPS
+  // sites.
+  bool allow_mixed_content_upgrades;
 
   // We try to keep the default values the same as the default values in
   // chrome, except for the cases where it would require lots of extra work for

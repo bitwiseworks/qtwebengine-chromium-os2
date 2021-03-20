@@ -32,7 +32,7 @@ class ChromeFileSystemDelegate : public FileSystemDelegate {
   // FileSystemDelegate:
   base::FilePath GetDefaultDirectory() override;
   bool ShowSelectFileDialog(
-      scoped_refptr<UIThreadExtensionFunction> extension_function,
+      scoped_refptr<ExtensionFunction> extension_function,
       ui::SelectFileDialog::Type type,
       const base::FilePath& default_path,
       const ui::SelectFileDialog::FileTypeInfo* file_types,
@@ -41,8 +41,8 @@ class ChromeFileSystemDelegate : public FileSystemDelegate {
   void ConfirmSensitiveDirectoryAccess(bool has_write_permission,
                                        const base::string16& app_name,
                                        content::WebContents* web_contents,
-                                       const base::Closure& on_accept,
-                                       const base::Closure& on_cancel) override;
+                                       base::OnceClosure on_accept,
+                                       base::OnceClosure on_cancel) override;
   int GetDescriptionIdForAcceptType(const std::string& accept_type) override;
 #if defined(OS_CHROMEOS)
   FileSystemDelegate::GrantVolumesMode GetGrantVolumesMode(
@@ -50,7 +50,7 @@ class ChromeFileSystemDelegate : public FileSystemDelegate {
       content::RenderFrameHost* render_frame_host,
       const Extension& extension) override;
   void RequestFileSystem(content::BrowserContext* browser_context,
-                         scoped_refptr<UIThreadExtensionFunction> requester,
+                         scoped_refptr<ExtensionFunction> requester,
                          const Extension& extension,
                          std::string volume_id,
                          bool writable,

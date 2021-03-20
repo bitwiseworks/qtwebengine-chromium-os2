@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string16.h"
@@ -18,19 +19,22 @@
 
 namespace content {
 
-WebSandboxSupportMac::WebSandboxSupportMac(
-    service_manager::Connector* connector) {
-  connector->BindInterface(content::mojom::kBrowserServiceName,
-                           mojo::MakeRequest(&sandbox_support_));
-  sandbox_support_->GetSystemColors(base::BindOnce(
-      &WebSandboxSupportMac::OnGotSystemColors, base::Unretained(this)));
+WebSandboxSupportMac::WebSandboxSupportMac() {
+  if (auto* thread = ChildThread::Get()) {
+    thread->BindHostReceiver(sandbox_support_.BindNewPipeAndPassReceiver());
+    sandbox_support_->GetSystemColors(base::BindOnce(
+        &WebSandboxSupportMac::OnGotSystemColors, base::Unretained(this)));
+  }
 }
 
 WebSandboxSupportMac::~WebSandboxSupportMac() = default;
 
-bool WebSandboxSupportMac::LoadFont(CTFontRef font,
-                                    CGFontRef* out,
-                                    uint32_t* font_id) {
+bool WebSandboxSupportMac::LoadFont(
+    CTFontRef font,
+    base::ScopedCFTypeRef<CTFontDescriptorRef>* out_descriptor,
+    uint32_t* font_id) {
+  if (!sandbox_support_)
+    return false;
   base::ScopedCFTypeRef<CFStringRef> name_ref(CTFontCopyPostScriptName(font));
   base::string16 font_name = SysCFStringRefToUTF16(name_ref);
   float font_point_size = CTFontGetSize(font);
@@ -40,7 +44,7 @@ bool WebSandboxSupportMac::LoadFont(CTFontRef font,
                  *font_id > 0 && font_data.is_valid();
   if (!success) {
     DLOG(ERROR) << "Bad response from LoadFont() for " << font_name;
-    *out = nullptr;
+    out_descriptor->reset();
     *font_id = 0;
     return false;
   }
@@ -52,18 +56,28 @@ bool WebSandboxSupportMac::LoadFont(CTFontRef font,
   // TODO(jeremy): Need to call back into the requesting process to make sure
   // that the font isn't already activated, based on the font id.  If it's
   // already activated, don't reactivate it here - https://crbug.com/72727 .
-  return FontLoader::CGFontRefFromBuffer(
-      std::move(font_data), static_cast<uint32_t>(font_data_size), out);
+  return FontLoader::CTFontDescriptorFromBuffer(
+      std::move(font_data), static_cast<uint32_t>(font_data_size),
+      out_descriptor);
 }
 
-SkColor WebSandboxSupportMac::GetSystemColor(blink::MacSystemColorID color_id) {
+SkColor WebSandboxSupportMac::GetSystemColor(
+    blink::MacSystemColorID color_id,
+    blink::WebColorScheme color_scheme) {
   if (!color_map_.IsValid()) {
     DLOG(ERROR) << "GetSystemColor does not have a valid color_map_";
     return SK_ColorMAGENTA;
   }
-  base::span<const SkColor> color_map =
-      color_map_.GetMemoryAsSpan<SkColor>(blink::kMacSystemColorIDCount);
-  return color_map[static_cast<size_t>(color_id)];
+  static_assert(blink::kMacSystemColorSchemeCount == 2,
+                "Light and dark color scheme system colors loaded.");
+  base::span<const SkColor> color_map = color_map_.GetMemoryAsSpan<SkColor>(
+      blink::kMacSystemColorIDCount * blink::kMacSystemColorSchemeCount);
+  base::span<const SkColor> color_map_for_scheme =
+      color_map.subspan(color_scheme == blink::WebColorScheme::kDark
+                            ? blink::kMacSystemColorIDCount
+                            : 0,
+                        blink::kMacSystemColorIDCount);
+  return color_map_for_scheme[static_cast<size_t>(color_id)];
 }
 
 void WebSandboxSupportMac::OnGotSystemColors(

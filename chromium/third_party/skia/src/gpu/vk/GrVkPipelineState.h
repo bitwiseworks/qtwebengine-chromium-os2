@@ -9,21 +9,19 @@
 #ifndef GrVkPipelineState_DEFINED
 #define GrVkPipelineState_DEFINED
 
-#include "GrVkDescriptorSetManager.h"
-#include "GrVkPipelineStateDataManager.h"
-#include "glsl/GrGLSLProgramBuilder.h"
-#include "vk/GrVkTypes.h"
+#include "include/gpu/vk/GrVkTypes.h"
+#include "src/gpu/glsl/GrGLSLProgramBuilder.h"
+#include "src/gpu/vk/GrVkDescriptorSetManager.h"
+#include "src/gpu/vk/GrVkPipelineStateDataManager.h"
 
 class GrPipeline;
 class GrStencilSettings;
-class GrVkBufferView;
 class GrVkCommandBuffer;
 class GrVkDescriptorPool;
 class GrVkDescriptorSet;
 class GrVkGpu;
 class GrVkImageView;
 class GrVkPipeline;
-class GrVkPipelineLayout;
 class GrVkSampler;
 class GrVkTexture;
 class GrVkUniformBuffer;
@@ -34,7 +32,7 @@ class GrVkUniformBuffer;
  * and other similar objects that are used along with the VkPipeline in the draw. This includes both
  * allocating and freeing these objects, as well as updating their values.
  */
-class GrVkPipelineState : public SkRefCnt {
+class GrVkPipelineState {
 public:
     using UniformInfoArray = GrVkPipelineStateDataManager::UniformInfoArray;
     using UniformHandle = GrGLSLProgramDataManager::UniformHandle;
@@ -42,12 +40,10 @@ public:
     GrVkPipelineState(
             GrVkGpu* gpu,
             GrVkPipeline* pipeline,
-            VkPipelineLayout layout,
             const GrVkDescriptorSetManager::Handle& samplerDSHandle,
             const GrGLSLBuiltinUniformHandles& builtinUniformHandles,
             const UniformInfoArray& uniforms,
-            uint32_t geometryUniformSize,
-            uint32_t fragmentUniformSize,
+            uint32_t uniformSize,
             const UniformInfoArray& samplers,
             std::unique_ptr<GrGLSLPrimitiveProcessor> geometryProcessor,
             std::unique_ptr<GrGLSLXferProcessor> xferProcessor,
@@ -56,27 +52,23 @@ public:
 
     ~GrVkPipelineState();
 
-    void setAndBindUniforms(GrVkGpu*, const GrPrimitiveProcessor&, const GrPipeline&,
+    bool setAndBindUniforms(GrVkGpu*, const GrRenderTarget*, const GrProgramInfo&,
                             GrVkCommandBuffer*);
     /**
      * This must be called after setAndBindUniforms() since that function invalidates texture
      * bindings.
      */
-    void setAndBindTextures(GrVkGpu*, const GrPrimitiveProcessor&, const GrPipeline&,
-                            const GrTextureProxy* const primitiveProcessorTextures[],
+    bool setAndBindTextures(GrVkGpu*, const GrPrimitiveProcessor&, const GrPipeline&,
+                            const GrSurfaceProxy* const primitiveProcessorTextures[],
                             GrVkCommandBuffer*);
 
     void bindPipeline(const GrVkGpu* gpu, GrVkCommandBuffer* commandBuffer);
 
     void addUniformResources(GrVkCommandBuffer&, GrVkSampler*[], GrVkTexture*[], int numTextures);
 
-    void freeGPUResources(GrVkGpu* gpu);
-
-    void abandonGPUResources();
+    void freeGPUResources();
 
 private:
-    void writeUniformBuffers(const GrVkGpu* gpu);
-
     /**
      * We use the RT's size and origin to adjust from Skia device space to vulkan normalized device
      * space and to make device space positions have the correct origin for processors that require
@@ -114,31 +106,16 @@ private:
     };
 
     // Helper for setData() that sets the view matrix and loads the render target height uniform
-    void setRenderTargetState(const GrRenderTargetProxy*);
+    void setRenderTargetState(const GrRenderTarget*, GrSurfaceOrigin);
 
-    // GrVkResources
+    // GrManagedResources
     GrVkPipeline* fPipeline;
-
-    // Used for binding DescriptorSets to the command buffer but does not need to survive during
-    // command buffer execution. Thus this is not need to be a GrVkResource.
-    GrVkPipelineLayout* fPipelineLayout;
-
-    // The DescriptorSets need to survive until the gpu has finished all draws that use them.
-    // However, they will only be freed by the descriptor pool. Thus by simply keeping the
-    // descriptor pool alive through the draw, the descritor sets will also stay alive. Thus we do
-    // not need a GrVkResource versions of VkDescriptorSet. We hold on to these in the
-    // GrVkPipelineState since we update the descriptor sets and bind them at separate times;
-    VkDescriptorSet fDescriptorSets[3];
-
-    const GrVkDescriptorSet* fUniformDescriptorSet;
-    const GrVkDescriptorSet* fSamplerDescriptorSet;
 
     const GrVkDescriptorSetManager::Handle fSamplerDSHandle;
 
-    SkSTArray<4, const GrVkSampler*>   fImmutableSamplers;
+    SkSTArray<4, const GrVkSampler*> fImmutableSamplers;
 
-    std::unique_ptr<GrVkUniformBuffer> fGeometryUniformBuffer;
-    std::unique_ptr<GrVkUniformBuffer> fFragmentUniformBuffer;
+    std::unique_ptr<GrVkUniformBuffer> fUniformBuffer;
 
     // Tracks the current render target uniforms stored in the vertex buffer.
     RenderTargetState fRenderTargetState;

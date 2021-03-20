@@ -11,6 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/scoped_observer.h"
 #include "base/version.h"
 #include "content/public/browser/browser_thread.h"
@@ -18,7 +19,9 @@
 #include "extensions/browser/content_verifier_delegate.h"
 #include "extensions/browser/content_verifier_io_data.h"
 #include "extensions/browser/content_verify_job.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace base {
@@ -32,24 +35,39 @@ class BrowserContext;
 namespace extensions {
 
 class Extension;
-class ManagementPolicy;
 
 // Used for managing overall content verification - both fetching content
 // hashes as needed, and supplying job objects to verify file contents as they
 // are read.
+//
+// Some notes about extension resource paths:
+// An extension resource path is a path relative to it's extension root
+// directory. For the purposes of content verification system, there can be
+// several transformations of the relative path:
+//   1. Relative path: Relative path as is. This is base::FilePath that simply
+//      is the relative path of the resource.
+//   2. Relative unix path: Some underlying parts of content-verification
+//      require uniform separator, we use '/' as separator so it is effectively
+//      unix style. Note that this is a reversible transformation.
+//   3. content_verifier_utils::CanonicalRelativePath:
+//      Canonicalized relative paths are used as keys of maps within
+//      VerifiedContents and ComputedHashes. This takes care of OS specific file
+//      access issues:
+//      - windows/mac is case insensitive while accessing files.
+//      - windows ignores (.| )+ suffixes in filename while accessing a file.
+//      Canonicalization consists of normalizing the separators, lower casing
+//      the filepath in case-insensitive systems and trimming ignored suffixes
+//      if appropriate.
+//      See content_verifier_utils::CanonicalizeRelativePath() for details.
 class ContentVerifier : public base::RefCountedThreadSafe<ContentVerifier>,
                         public ExtensionRegistryObserver {
  public:
   class TestObserver {
    public:
-    virtual void OnFetchComplete(const std::string& extension_id,
-                                 bool success) = 0;
+    virtual void OnFetchComplete(
+        const scoped_refptr<const ContentHash>& content_hash,
+        bool did_hash_mismatch) = 0;
   };
-  // Returns true if content verifier should repair the extension (|id|) if it
-  // became courrpted.
-  // Note that this method doesn't check whether |id| is corrupted or not.
-  static bool ShouldRepairIfCorrupted(const ManagementPolicy* management_policy,
-                                      const Extension* id);
 
   static void SetObserverForTests(TestObserver* observer);
 
@@ -58,16 +76,13 @@ class ContentVerifier : public base::RefCountedThreadSafe<ContentVerifier>,
   void Start();
   void Shutdown();
 
-  // Call this before reading a file within an extension. The caller owns the
-  // returned job.
-  ContentVerifyJob* CreateJobFor(const std::string& extension_id,
-                                 const base::FilePath& extension_root,
-                                 const base::FilePath& relative_path);
-
-  // Called (typically by a verification job) to indicate that verification
-  // failed while reading some file in |extension_id|.
-  void VerifyFailed(const ExtensionId& extension_id,
-                    ContentVerifyJob::FailureReason reason);
+  // Call this before reading a file within an extension. Returns and starts a
+  // content verify job if the specified resource requires content verification,
+  // otherwise returns nullptr.
+  scoped_refptr<ContentVerifyJob> CreateAndStartJobFor(
+      const std::string& extension_id,
+      const base::FilePath& extension_root,
+      const base::FilePath& relative_path);
 
   // ExtensionRegistryObserver interface
   void OnExtensionLoaded(content::BrowserContext* browser_context,
@@ -95,15 +110,37 @@ class ContentVerifier : public base::RefCountedThreadSafe<ContentVerifier>,
                       bool force_missing_computed_hashes_creation,
                       ContentHashCallback callback);
 
+  // Returns whether or not we should compute hashes during installation.
+  // Typically we don't need this when extension has verified (signed) resources
+  // hashes, as we can postpone hashes computing to the time we'll need them and
+  // check there. But without signed hashes we may not compute hashes at
+  // arbitrary time, we are only allowed to do it during installation.
+  bool ShouldComputeHashesOnInstall(const Extension& extension);
+
   GURL GetSignatureFetchUrlForTest(const ExtensionId& extension_id,
                                    const base::Version& extension_version);
+
+  // Exposes VerifyFailed for tests.
+  void VerifyFailedForTest(const ExtensionId& extension_id,
+                           ContentVerifyJob::FailureReason reason);
 
   // Test helper to recompute |io_data_| for |extension| without having to
   // call |OnExtensionLoaded|.
   void ResetIODataForTesting(const Extension* extension);
 
+  // Test helper to clear all cached ContentHash entries from |cache_|.
+  void ClearCacheForTesting();
+
+  // Test helper to normalize relative path of file.
+  static base::FilePath NormalizeRelativePathForTesting(
+      const base::FilePath& path);
+
+  bool ShouldVerifyAnyPathsForTesting(
+      const std::string& extension_id,
+      const base::FilePath& extension_root,
+      const std::set<base::FilePath>& relative_unix_paths);
+
  private:
-  friend class ContentVerifierTest;
   friend class base::RefCountedThreadSafe<ContentVerifier>;
   friend class HashHelper;
   ~ContentVerifier() override;
@@ -114,17 +151,18 @@ class ContentVerifier : public base::RefCountedThreadSafe<ContentVerifier>,
   class HashHelper;
 
   void OnFetchComplete(const scoped_refptr<const ContentHash>& content_hash);
-  ContentHash::FetchParams GetFetchParams(
-      const ExtensionId& extension_id,
-      const base::Version& extension_version);
+  ContentHash::FetchKey GetFetchKey(const ExtensionId& extension_id,
+                                    const base::FilePath& extension_root,
+                                    const base::Version& extension_version);
 
   void DidGetContentHash(const CacheKey& cache_key,
                          ContentHashCallback orig_callback,
                          scoped_refptr<const ContentHash> content_hash);
 
-  // Binds an URLLoaderFactoryRequest on the UI thread.
-  void BindURLLoaderFactoryRequestOnUIThread(
-      network::mojom::URLLoaderFactoryRequest url_loader_factory_request);
+  // Binds an URLLoaderFactoryReceiver on the UI thread.
+  void BindURLLoaderFactoryReceiverOnUIThread(
+      mojo::PendingReceiver<network::mojom::URLLoaderFactory>
+          url_loader_factory_receiver);
 
   // Performs IO thread operations after extension load.
   void OnExtensionLoadedOnIO(
@@ -144,6 +182,11 @@ class ContentVerifier : public base::RefCountedThreadSafe<ContentVerifier>,
       const std::string& extension_id,
       const base::FilePath& extension_root,
       const std::set<base::FilePath>& relative_unix_paths);
+
+  // Called (typically by a verification job) to indicate that verification
+  // failed while reading some file in |extension_id|.
+  void VerifyFailed(const ExtensionId& extension_id,
+                    ContentVerifyJob::FailureReason reason);
 
   // Returns the HashHelper instance, making sure we create it at most once.
   // Must *not* be called after |shutdown_on_io_| is set to true.
@@ -172,10 +215,10 @@ class ContentVerifier : public base::RefCountedThreadSafe<ContentVerifier>,
   std::unique_ptr<ContentVerifierDelegate> delegate_;
 
   // For observing the ExtensionRegistry.
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver> observer_;
+  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver> observer_{this};
 
   // Data that should only be used on the IO thread.
-  scoped_refptr<ContentVerifierIOData> io_data_;
+  ContentVerifierIOData io_data_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentVerifier);
 };

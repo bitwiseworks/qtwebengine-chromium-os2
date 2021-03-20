@@ -14,17 +14,17 @@ cr.define('snackbar', function() {
    *    action: (function()|undefined)
    *  }}
    */
-  var SnackbarOptions;
+  let SnackbarOptions;
 
-  /** @const {number} */ var SHOW_DURATION = 5000;
-  /** @const {number} */ var TRANSITION_DURATION = 225;
+  /** @type {number} */ const SHOW_DURATION = 5000;
+  /** @type {number} */ const TRANSITION_DURATION = 225;
 
   /**
    * Enum of Snackbar types. Used by Snackbar to determine the styling for the
    * Snackbar.
    * @enum {string}
    */
-  var SnackbarType = {
+  const SnackbarType = {
     INFO: 'info',
     SUCCESS: 'success',
     WARNING: 'warning',
@@ -39,7 +39,7 @@ cr.define('snackbar', function() {
    * @constructor
    * @extends {HTMLDivElement}
    */
-  var Snackbar = cr.ui.define('div');
+  const Snackbar = cr.ui.define('div');
 
   Snackbar.prototype = {
     __proto__: HTMLDivElement.prototype,
@@ -48,7 +48,7 @@ cr.define('snackbar', function() {
      * Decorates an element as a UI element class. Creates the message div and
      * action link for the new Snackbar.
      */
-    decorate: function() {
+    decorate() {
       this.classList.add('snackbar');
       this.messageDiv_ = document.createElement('div');
       this.appendChild(this.messageDiv_);
@@ -68,7 +68,7 @@ cr.define('snackbar', function() {
      * including the message, action link text, and click action of the link.
      * @param {!SnackbarOptions} options
      */
-    initialize: function(options) {
+    initialize(options) {
       this.messageDiv_.textContent = options.message;
       this.classList.add(options.type);
       this.actionLink_.textContent = options.actionText || 'Dismiss';
@@ -84,7 +84,7 @@ cr.define('snackbar', function() {
     /**
      * Shows the Snackbar and dispatches the 'showed' event.
      */
-    show: function() {
+    show() {
       this.classList.add('open');
       if (Snackbar.hasContentFocus_) {
         this.startTimeout_();
@@ -103,7 +103,7 @@ cr.define('snackbar', function() {
      * snackbar is already hidden, a resolved Promise is returned.
      * @return {!Promise}
      */
-    dismiss: function() {
+    dismiss() {
       this.stopTimeout_();
 
       if (!this.classList.contains('open')) {
@@ -128,7 +128,7 @@ cr.define('snackbar', function() {
      * Starts the timeout for dismissing the Snackbar.
      * @private
      */
-    startTimeout_: function() {
+    startTimeout_() {
       this.timeoutId_ = setTimeout(function() {
         this.dismiss();
       }.bind(this), SHOW_DURATION);
@@ -139,7 +139,7 @@ cr.define('snackbar', function() {
      * when the Snackbar is open.
      * @private
      */
-    stopTimeout_: function() {
+    stopTimeout_() {
       if (this.classList.contains('open')) {
         clearTimeout(this.timeoutId_);
         this.timeoutId_ = null;
@@ -179,14 +179,14 @@ cr.define('snackbar', function() {
    * @return {!snackbar.Snackbar}
    */
   Snackbar.show = function(message, opt_type, opt_actionText, opt_action) {
-    var options = {
+    const options = {
       message: message,
       type: opt_type || SnackbarType.INFO,
       actionText: opt_actionText,
       action: opt_action,
     };
 
-    var newSnackbar = new Snackbar();
+    const newSnackbar = new Snackbar();
     newSnackbar.initialize(options);
 
     if (Snackbar.current_) {
@@ -210,7 +210,7 @@ cr.define('snackbar', function() {
     newSnackbar.addEventListener('dismissed', function() {
       $('snackbar-container').removeChild(Snackbar.current_);
 
-      var newSnackbar = Snackbar.queue_.shift();
+      const newSnackbar = Snackbar.queue_.shift();
       if (newSnackbar) {
         Snackbar.show_(newSnackbar);
         return;

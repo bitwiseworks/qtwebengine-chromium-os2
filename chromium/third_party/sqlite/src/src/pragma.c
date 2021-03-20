@@ -26,13 +26,13 @@
 ** that includes the PragType_XXXX macro definitions and the aPragmaName[]
 ** object.  This ensures that the aPragmaName[] table is arranged in
 ** lexicographical order to facility a binary search of the pragma name.
-** Do not edit pragma.h directly.  Edit and rerun the script in at
+** Do not edit pragma.h directly.  Edit and rerun the script in at 
 ** ../tool/mkpragmatab.tcl. */
 #include "pragma.h"
 
 /*
 ** Interpret the given string as a safety level.  Return 0 for OFF,
-** 1 for ON or NORMAL, 2 for FULL, and 3 for EXTRA.  Return 1 for an empty or
+** 1 for ON or NORMAL, 2 for FULL, and 3 for EXTRA.  Return 1 for an empty or 
 ** unrecognized string argument.  The FULL and EXTRA option is disallowed
 ** if the omitFull parameter it 1.
 **
@@ -91,7 +91,7 @@ static int getLockingMode(const char *z){
 /*
 ** Interpret the given string as an auto-vacuum mode value.
 **
-** The following strings, "none", "full" and "incremental" are
+** The following strings, "none", "full" and "incremental" are 
 ** acceptable, as are their numeric equivalents: 0, 1 and 2 respectively.
 */
 static int getAutoVacuum(const char *z){
@@ -243,7 +243,7 @@ static const char *actionName(u8 action){
     case OE_SetDflt:  zName = "SET DEFAULT";     break;
     case OE_Cascade:  zName = "CASCADE";         break;
     case OE_Restrict: zName = "RESTRICT";        break;
-    default:          zName = "NO ACTION";
+    default:          zName = "NO ACTION";  
                       assert( action==OE_None ); break;
   }
   return zName;
@@ -296,6 +296,55 @@ static const PragmaName *pragmaLocate(const char *zName){
 }
 
 /*
+** Create zero or more entries in the output for the SQL functions
+** defined by FuncDef p.
+*/
+static void pragmaFunclistLine(
+  Vdbe *v,               /* The prepared statement being created */
+  FuncDef *p,            /* A particular function definition */
+  int isBuiltin,         /* True if this is a built-in function */
+  int showInternFuncs    /* True if showing internal functions */
+){
+  for(; p; p=p->pNext){
+    const char *zType;
+    static const u32 mask = 
+        SQLITE_DETERMINISTIC |
+        SQLITE_DIRECTONLY |
+        SQLITE_SUBTYPE |
+        SQLITE_INNOCUOUS |
+        SQLITE_FUNC_INTERNAL
+    ;
+    static const char *azEnc[] = { 0, "utf8", "utf16le", "utf16be" };
+
+    assert( SQLITE_FUNC_ENCMASK==0x3 );
+    assert( strcmp(azEnc[SQLITE_UTF8],"utf8")==0 );
+    assert( strcmp(azEnc[SQLITE_UTF16LE],"utf16le")==0 );
+    assert( strcmp(azEnc[SQLITE_UTF16BE],"utf16be")==0 );
+
+    if( p->xSFunc==0 ) continue;
+    if( (p->funcFlags & SQLITE_FUNC_INTERNAL)!=0
+     && showInternFuncs==0
+    ){
+      continue;
+    }    
+    if( p->xValue!=0 ){
+      zType = "w";
+    }else if( p->xFinalize!=0 ){
+      zType = "a";
+    }else{
+      zType = "s";
+    }
+    sqlite3VdbeMultiLoad(v, 1, "sissii",
+       p->zName, isBuiltin,
+       zType, azEnc[p->funcFlags&SQLITE_FUNC_ENCMASK],
+       p->nArg,
+       (p->funcFlags & mask) ^ SQLITE_INNOCUOUS
+    );
+  }
+}
+
+
+/*
 ** Helper subroutine for PRAGMA integrity_check:
 **
 ** Generate code to output a single-column result row with a value of the
@@ -312,7 +361,7 @@ static int integrityCheckResultRow(Vdbe *v){
 }
 
 /*
-** Process a pragma statement.
+** Process a pragma statement.  
 **
 ** Pragmas are of this form:
 **
@@ -327,7 +376,7 @@ static int integrityCheckResultRow(Vdbe *v){
 ** id and pId2 is any empty string.
 */
 void sqlite3Pragma(
-  Parse *pParse,
+  Parse *pParse, 
   Token *pId1,        /* First part of [schema.]id field */
   Token *pId2,        /* Second part of [schema.]id field, or NULL */
   Token *pValue,      /* Token for <value>, or NULL */
@@ -355,8 +404,8 @@ void sqlite3Pragma(
   if( iDb<0 ) return;
   pDb = &db->aDb[iDb];
 
-  /* If the temp database has been explicitly named as part of the
-  ** pragma, make sure it is open.
+  /* If the temp database has been explicitly named as part of the 
+  ** pragma, make sure it is open. 
   */
   if( iDb==1 && sqlite3OpenTempDatabase(pParse) ){
     return;
@@ -424,7 +473,7 @@ void sqlite3Pragma(
   }
 
   /* Register the result column names for pragmas that return results */
-  if( (pPragma->mPragFlg & PragFlg_NoColumns)==0
+  if( (pPragma->mPragFlg & PragFlg_NoColumns)==0 
    && ((pPragma->mPragFlg & PragFlg_NoColumns1)==0 || zRight==0)
   ){
     setPragmaResultColumnNames(v, pPragma);
@@ -432,7 +481,7 @@ void sqlite3Pragma(
 
   /* Jump to the appropriate pragma handler */
   switch( pPragma->ePragTyp ){
-
+  
 #if !defined(SQLITE_OMIT_PAGER_PRAGMAS) && !defined(SQLITE_OMIT_DEPRECATED)
   /*
   **  PRAGMA [schema.]default_cache_size
@@ -548,7 +597,7 @@ void sqlite3Pragma(
   **  PRAGMA [schema.]max_page_count=N
   **
   ** The first form reports the current setting for the
-  ** maximum number of pages in the database file.  The
+  ** maximum number of pages in the database file.  The 
   ** second form attempts to change this setting.  Both
   ** forms return the current setting.
   **
@@ -567,7 +616,7 @@ void sqlite3Pragma(
     if( sqlite3Tolower(zLeft[0])=='p' ){
       sqlite3VdbeAddOp2(v, OP_Pagecount, iDb, iReg);
     }else{
-      sqlite3VdbeAddOp3(v, OP_MaxPgcnt, iDb, iReg,
+      sqlite3VdbeAddOp3(v, OP_MaxPgcnt, iDb, iReg, 
                         sqlite3AbsInt32(sqlite3Atoi(zRight)));
     }
     sqlite3VdbeAddOp2(v, OP_ResultRow, iReg, 1);
@@ -644,6 +693,11 @@ void sqlite3Pragma(
         ** then do a query */
         eMode = PAGER_JOURNALMODE_QUERY;
       }
+      if( eMode==PAGER_JOURNALMODE_OFF && (db->flags & SQLITE_Defensive)!=0 ){
+        /* Do not allow journal-mode "OFF" in defensive since the database
+        ** can become corrupted using ordinary SQL when the journal is off */
+        eMode = PAGER_JOURNALMODE_QUERY;
+      }
     }
     if( eMode==PAGER_JOURNALMODE_QUERY && pId2->n==0 ){
       /* Convert "PRAGMA journal_mode" into "PRAGMA main.journal_mode" */
@@ -704,7 +758,7 @@ void sqlite3Pragma(
       */
       rc = sqlite3BtreeSetAutoVacuum(pBt, eAuto);
       if( rc==SQLITE_OK && (eAuto==1 || eAuto==2) ){
-        /* When setting the auto_vacuum mode to either "full" or
+        /* When setting the auto_vacuum mode to either "full" or 
         ** "incremental", write the value of meta[6] in the database
         ** file. Before writing to meta[6], check that meta[3] indicates
         ** that this really is an auto-vacuum capable database.
@@ -806,7 +860,7 @@ void sqlite3Pragma(
     assert( sqlite3SchemaMutexHeld(db, iDb, 0) );
     if( !zRight ){
       returnSingleInt(v,
-         (db->flags & SQLITE_CacheSpill)==0 ? 0 :
+         (db->flags & SQLITE_CacheSpill)==0 ? 0 : 
             sqlite3BtreeSetSpillSize(pDb->pBt,0));
     }else{
       int size = 1;
@@ -980,7 +1034,7 @@ void sqlite3Pragma(
       Pager *pPager = sqlite3BtreePager(pDb->pBt);
       char *proxy_file_path = NULL;
       sqlite3_file *pFile = sqlite3PagerFile(pPager);
-      sqlite3OsFileControlHint(pFile, SQLITE_GET_LOCKPROXYFILE,
+      sqlite3OsFileControlHint(pFile, SQLITE_GET_LOCKPROXYFILE, 
                            &proxy_file_path);
       returnSingleText(v, proxy_file_path);
     }else{
@@ -988,10 +1042,10 @@ void sqlite3Pragma(
       sqlite3_file *pFile = sqlite3PagerFile(pPager);
       int res;
       if( zRight[0] ){
-        res=sqlite3OsFileControl(pFile, SQLITE_SET_LOCKPROXYFILE,
+        res=sqlite3OsFileControl(pFile, SQLITE_SET_LOCKPROXYFILE, 
                                      zRight);
       } else {
-        res=sqlite3OsFileControl(pFile, SQLITE_SET_LOCKPROXYFILE,
+        res=sqlite3OsFileControl(pFile, SQLITE_SET_LOCKPROXYFILE, 
                                      NULL);
       }
       if( res!=SQLITE_OK ){
@@ -1001,8 +1055,8 @@ void sqlite3Pragma(
     }
     break;
   }
-#endif /* SQLITE_ENABLE_LOCKING_STYLE */
-
+#endif /* SQLITE_ENABLE_LOCKING_STYLE */      
+    
   /*
   **   PRAGMA [schema.]synchronous
   **   PRAGMA [schema.]synchronous=OFF|ON|NORMAL|FULL|EXTRA
@@ -1017,7 +1071,7 @@ void sqlite3Pragma(
       returnSingleInt(v, pDb->safety_level-1);
     }else{
       if( !db->autoCommit ){
-        sqlite3ErrorMsg(pParse,
+        sqlite3ErrorMsg(pParse, 
             "Safety level may not be changed inside a transaction");
       }else if( iDb!=1 ){
         int iLevel = (getSafetyLevel(zRight,0,1)+1) & PAGER_SYNCHRONOUS_MASK;
@@ -1057,7 +1111,7 @@ void sqlite3Pragma(
         if( mask==SQLITE_DeferFKs ) db->nDeferredImmCons = 0;
       }
 
-      /* Many of the flag-pragmas modify the code generated by the SQL
+      /* Many of the flag-pragmas modify the code generated by the SQL 
       ** compiler (eg. count_changes). So add an opcode to expire all
       ** compiled SQL statements after modifying a pragma value.
       */
@@ -1095,10 +1149,19 @@ void sqlite3Pragma(
       sqlite3CodeVerifySchema(pParse, iTabDb);
       sqlite3ViewGetColumnNames(pParse, pTab);
       for(i=0, pCol=pTab->aCol; i<pTab->nCol; i++, pCol++){
-        int isHidden = IsHiddenColumn(pCol);
-        if( isHidden && pPragma->iArg==0 ){
-          nHidden++;
-          continue;
+        int isHidden = 0;
+        if( pCol->colFlags & COLFLAG_NOINSERT ){
+          if( pPragma->iArg==0 ){
+            nHidden++;
+            continue;
+          }
+          if( pCol->colFlags & COLFLAG_VIRTUAL ){
+            isHidden = 2;  /* GENERATED ALWAYS AS ... VIRTUAL */
+          }else if( pCol->colFlags & COLFLAG_STORED ){
+            isHidden = 3;  /* GENERATED ALWAYS AS ... STORED */
+          }else{ assert( pCol->colFlags & COLFLAG_HIDDEN );
+            isHidden = 1;  /* HIDDEN */
+          }
         }
         if( (pCol->colFlags & COLFLAG_PRIMKEY)==0 ){
           k = 0;
@@ -1107,13 +1170,13 @@ void sqlite3Pragma(
         }else{
           for(k=1; k<=pTab->nCol && pPk->aiColumn[k-1]!=i; k++){}
         }
-        assert( pCol->pDflt==0 || pCol->pDflt->op==TK_SPAN );
+        assert( pCol->pDflt==0 || pCol->pDflt->op==TK_SPAN || isHidden>=2 );
         sqlite3VdbeMultiLoad(v, 1, pPragma->iArg ? "issisii" : "issisi",
                i-nHidden,
                pCol->zName,
                sqlite3ColumnType(pCol,""),
                pCol->notNull ? 1 : 0,
-               pCol->pDflt ? pCol->pDflt->u.zToken : 0,
+               pCol->pDflt && isHidden<2 ? pCol->pDflt->u.zToken : 0,
                k,
                isHidden);
       }
@@ -1152,6 +1215,15 @@ void sqlite3Pragma(
     Index *pIdx;
     Table *pTab;
     pIdx = sqlite3FindIndex(db, zRight, zDb);
+    if( pIdx==0 ){
+      /* If there is no index named zRight, check to see if there is a
+      ** WITHOUT ROWID table named zRight, and if there is, show the
+      ** structure of the PRIMARY KEY index for that table. */
+      pTab = sqlite3LocateTable(pParse, LOCATE_NOERR, zRight, zDb);
+      if( pTab && !HasRowid(pTab) ){
+        pIdx = sqlite3PrimaryKeyIndex(pTab);
+      }
+    }
     if( pIdx ){
       int iIdxDb = sqlite3SchemaToIndex(db, pIdx->pSchema);
       int i;
@@ -1231,21 +1303,21 @@ void sqlite3Pragma(
   }
   break;
 
-#ifdef SQLITE_INTROSPECTION_PRAGMAS
+#ifndef SQLITE_OMIT_INTROSPECTION_PRAGMAS
   case PragTyp_FUNCTION_LIST: {
     int i;
     HashElem *j;
     FuncDef *p;
-    pParse->nMem = 2;
+    int showInternFunc = (db->mDbFlags & DBFLAG_InternalFunc)!=0;
+    pParse->nMem = 6;
     for(i=0; i<SQLITE_FUNC_HASH_SZ; i++){
       for(p=sqlite3BuiltinFunctions.a[i]; p; p=p->u.pHash ){
-        if( p->funcFlags & SQLITE_FUNC_INTERNAL ) continue;
-        sqlite3VdbeMultiLoad(v, 1, "si", p->zName, 1);
+        pragmaFunclistLine(v, p, 1, showInternFunc);
       }
     }
     for(j=sqliteHashFirst(&db->aFunc); j; j=sqliteHashNext(j)){
       p = (FuncDef*)sqliteHashData(j);
-      sqlite3VdbeMultiLoad(v, 1, "si", p->zName, 0);
+      pragmaFunclistLine(v, p, 0, showInternFunc);
     }
   }
   break;
@@ -1282,7 +1354,7 @@ void sqlite3Pragma(
       pFK = pTab->pFKey;
       if( pFK ){
         int iTabDb = sqlite3SchemaToIndex(db, pTab->pSchema);
-        int i = 0;
+        int i = 0; 
         pParse->nMem = 8;
         sqlite3CodeVerifySchema(pParse, iTabDb);
         while(pFK){
@@ -1379,8 +1451,8 @@ void sqlite3Pragma(
         addrOk = sqlite3VdbeMakeLabel(pParse);
 
         /* Generate code to read the child key values into registers
-        ** regRow..regRow+n. If any of the child key values are NULL, this
-        ** row cannot cause an FK violation. Jump directly to addrOk in
+        ** regRow..regRow+n. If any of the child key values are NULL, this 
+        ** row cannot cause an FK violation. Jump directly to addrOk in 
         ** this case. */
         for(j=0; j<pFK->nCol; j++){
           int iCol = aiCols ? aiCols[j] : pFK->aCol[j].iFrom;
@@ -1421,6 +1493,7 @@ void sqlite3Pragma(
 #endif /* !defined(SQLITE_OMIT_TRIGGER) */
 #endif /* !defined(SQLITE_OMIT_FOREIGN_KEY) */
 
+#ifndef SQLITE_OMIT_CASE_SENSITIVE_LIKE_PRAGMA
   /* Reinstall the LIKE and GLOB functions.  The variant of LIKE
   ** used will be case sensitive or not depending on the RHS.
   */
@@ -1430,6 +1503,7 @@ void sqlite3Pragma(
     }
   }
   break;
+#endif /* SQLITE_OMIT_CASE_SENSITIVE_LIKE_PRAGMA */
 
 #ifndef SQLITE_INTEGRITY_CHECK_ERROR_MAX
 # define SQLITE_INTEGRITY_CHECK_ERROR_MAX 100
@@ -1443,7 +1517,7 @@ void sqlite3Pragma(
   **
   ** Verify the integrity of the database.
   **
-  ** The "quick_check" is reduced version of
+  ** The "quick_check" is reduced version of 
   ** integrity_check designed to detect most database corruption
   ** without the overhead of cross-checking indexes.  Quick_check
   ** is linear time wherease integrity_check is O(NlogN).
@@ -1549,7 +1623,7 @@ void sqlite3Pragma(
         sqlite3OpenTableAndIndices(pParse, pTab, OP_OpenRead, 0,
                                    1, 0, &iDataCur, &iIdxCur);
         /* reg[7] counts the number of entries in the table.
-        ** reg[8+i] counts the number of entries in the i-th index
+        ** reg[8+i] counts the number of entries in the i-th index 
         */
         sqlite3VdbeAddOp2(v, OP_Integer, 0, 7);
         for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
@@ -1561,7 +1635,7 @@ void sqlite3Pragma(
         loopTop = sqlite3VdbeAddOp2(v, OP_AddImm, 7, 1);
         if( !isQuick ){
           /* Sanity check on record header decoding */
-          sqlite3VdbeAddOp3(v, OP_Column, iDataCur, pTab->nCol-1, 3);
+          sqlite3VdbeAddOp3(v, OP_Column, iDataCur, pTab->nNVCol-1,3);
           sqlite3VdbeChangeP5(v, OPFLAG_TYPEOFARG);
         }
         /* Verify that all NOT NULL columns really are NOT NULL */
@@ -1571,7 +1645,9 @@ void sqlite3Pragma(
           if( j==pTab->iPKey ) continue;
           if( pTab->aCol[j].notNull==0 ) continue;
           sqlite3ExprCodeGetColumnOfTable(v, pTab, iDataCur, j, 3);
-          sqlite3VdbeChangeP5(v, OPFLAG_TYPEOFARG);
+          if( sqlite3VdbeGetOp(v,-1)->opcode==OP_Column ){
+            sqlite3VdbeChangeP5(v, OPFLAG_TYPEOFARG);
+          }
           jmp2 = sqlite3VdbeAddOp1(v, OP_NotNull, 3); VdbeCoverage(v);
           zErr = sqlite3MPrintf(db, "NULL value in %s.%s", pTab->zName,
                               pTab->aCol[j].zName);
@@ -1591,7 +1667,7 @@ void sqlite3Pragma(
             for(k=pCheck->nExpr-1; k>0; k--){
               sqlite3ExprIfFalse(pParse, pCheck->a[k].pExpr, addrCkFault, 0);
             }
-            sqlite3ExprIfTrue(pParse, pCheck->a[0].pExpr, addrCkOk,
+            sqlite3ExprIfTrue(pParse, pCheck->a[0].pExpr, addrCkOk, 
                 SQLITE_JUMPIFNULL);
             sqlite3VdbeResolveLabel(v, addrCkFault);
             pParse->iSelfTab = 0;
@@ -1668,7 +1744,7 @@ void sqlite3Pragma(
           }
         }
 #endif /* SQLITE_OMIT_BTREECOUNT */
-      }
+      } 
     }
     {
       static const int iLn = VDBE_OFFSET_LINENO(2);
@@ -1710,7 +1786,7 @@ void sqlite3Pragma(
   ** encoding that will be used for the main database file if a new file
   ** is created. If an existing main database file is opened, then the
   ** default text encoding for the existing database is used.
-  **
+  ** 
   ** In all cases new databases created using the ATTACH command are
   ** created to use the same default text encoding as the main database. If
   ** the main database has not been initialized and/or created when ATTACH
@@ -1748,10 +1824,17 @@ void sqlite3Pragma(
       ** will be overwritten when the schema is next loaded. If it does not
       ** already exists, it will be created to use the new encoding value.
       */
-      if(
-        !(DbHasProperty(db, 0, DB_SchemaLoaded)) ||
-        DbHasProperty(db, 0, DB_Empty)
-      ){
+      int canChangeEnc = 1;  /* True if allowed to change the encoding */
+      int i;                 /* For looping over all attached databases */
+      for(i=0; i<db->nDb; i++){
+        if( db->aDb[i].pBt!=0
+         && DbHasProperty(db,i,DB_SchemaLoaded)
+         && !DbHasProperty(db,i,DB_Empty)
+        ){
+          canChangeEnc = 0;
+        }
+      }
+      if( canChangeEnc ){
         for(pEnc=&encnames[0]; pEnc->zName; pEnc++){
           if( 0==sqlite3StrICmp(zRight, pEnc->zName) ){
             SCHEMA_ENC(db) = ENC(db) =
@@ -1894,8 +1977,8 @@ void sqlite3Pragma(
     if( zRight ){
       sqlite3_wal_autocheckpoint(db, sqlite3Atoi(zRight));
     }
-    returnSingleInt(v,
-       db->xWalCallback==sqlite3WalDefaultHook ?
+    returnSingleInt(v, 
+       db->xWalCallback==sqlite3WalDefaultHook ? 
            SQLITE_PTR_TO_INT(db->pWalArg) : 0);
   }
   break;
@@ -1935,7 +2018,7 @@ void sqlite3Pragma(
   **    0x0002    Run ANALYZE on tables that might benefit.  On by default.
   **              See below for additional information.
   **
-  **    0x0004    (Not yet implemented) Record usage and performance
+  **    0x0004    (Not yet implemented) Record usage and performance 
   **              information from the current session in the
   **              database file so that it will be available to "optimize"
   **              pragmas run by future database connections.
@@ -1946,7 +2029,7 @@ void sqlite3Pragma(
   ** The default MASK is and always shall be 0xfffe.  0xfffe means perform all
   ** of the optimizations listed above except Debug Mode, including new
   ** optimizations that have not yet been invented.  If new optimizations are
-  ** ever added that should be off by default, those off-by-default
+  ** ever added that should be off by default, those off-by-default 
   ** optimizations will have bitmasks of 0x10000 or larger.
   **
   ** DETERMINATION OF WHEN TO RUN ANALYZE
@@ -2007,7 +2090,7 @@ void sqlite3Pragma(
         }
         if( szThreshold ){
           sqlite3OpenTable(pParse, iTabCur, iDb, pTab, OP_OpenRead);
-          sqlite3VdbeAddOp3(v, OP_IfSmaller, iTabCur,
+          sqlite3VdbeAddOp3(v, OP_IfSmaller, iTabCur, 
                          sqlite3VdbeCurrentAddr(v)+2+(opMask&1), szThreshold);
           VdbeCoverage(v);
         }
@@ -2065,6 +2148,27 @@ void sqlite3Pragma(
   }
 
   /*
+  **   PRAGMA hard_heap_limit
+  **   PRAGMA hard_heap_limit = N
+  **
+  ** Invoke sqlite3_hard_heap_limit64() to query or set the hard heap
+  ** limit.  The hard heap limit can be activated or lowered by this
+  ** pragma, but not raised or deactivated.  Only the
+  ** sqlite3_hard_heap_limit64() C-language API can raise or deactivate
+  ** the hard heap limit.  This allows an application to set a heap limit
+  ** constraint that cannot be relaxed by an untrusted SQL script.
+  */
+  case PragTyp_HARD_HEAP_LIMIT: {
+    sqlite3_int64 N;
+    if( zRight && sqlite3DecOrHexToI64(zRight, &N)==SQLITE_OK ){
+      sqlite3_int64 iPrior = sqlite3_hard_heap_limit64(-1);
+      if( N>0 && (iPrior==0 || iPrior>N) ) sqlite3_hard_heap_limit64(N);
+    }
+    returnSingleInt(v, sqlite3_hard_heap_limit64(-1));
+    break;
+  }
+
+  /*
   **   PRAGMA threads
   **   PRAGMA threads = N
   **
@@ -2101,7 +2205,7 @@ void sqlite3Pragma(
       pBt = db->aDb[i].pBt;
       if( pBt==0 || sqlite3BtreePager(pBt)==0 ){
         zState = "closed";
-      }else if( sqlite3_file_control(db, i ? db->aDb[i].zDbSName : 0,
+      }else if( sqlite3_file_control(db, i ? db->aDb[i].zDbSName : 0, 
                                      SQLITE_FCNTL_LOCKSTATE, &j)==SQLITE_OK ){
          zState = azLockName[j];
       }
@@ -2123,28 +2227,30 @@ void sqlite3Pragma(
   */
   case PragTyp_KEY: {
     if( zRight ){
-      int n = pPragma->iArg<4 ? sqlite3Strlen30(zRight) : -1;
-      if( (pPragma->iArg & 1)==0 ){
-        sqlite3_key_v2(db, zDb, zRight, n);
+      char zBuf[40];
+      const char *zKey = zRight;
+      int n;
+      if( pPragma->iArg==2 || pPragma->iArg==3 ){
+        u8 iByte;
+        int i;
+        for(i=0, iByte=0; i<sizeof(zBuf)*2 && sqlite3Isxdigit(zRight[i]); i++){
+          iByte = (iByte<<4) + sqlite3HexToInt(zRight[i]);
+          if( (i&1)!=0 ) zBuf[i/2] = iByte;
+        }
+        zKey = zBuf;
+        n = i/2;
       }else{
-        sqlite3_rekey_v2(db, zDb, zRight, n);
-      }
-    }
-    break;
-  }
-  case PragTyp_HEXKEY: {
-    if( zRight ){
-      u8 iByte;
-      int i;
-      char zKey[40];
-      for(i=0, iByte=0; i<sizeof(zKey)*2 && sqlite3Isxdigit(zRight[i]); i++){
-        iByte = (iByte<<4) + sqlite3HexToInt(zRight[i]);
-        if( (i&1)!=0 ) zKey[i/2] = iByte;
+        n = pPragma->iArg<4 ? sqlite3Strlen30(zRight) : -1;
       }
       if( (pPragma->iArg & 1)==0 ){
-        sqlite3_key_v2(db, zDb, zKey, i/2);
+        rc = sqlite3_key_v2(db, zDb, zKey, n);
       }else{
-        sqlite3_rekey_v2(db, zDb, zKey, i/2);
+        rc = sqlite3_rekey_v2(db, zDb, zKey, n);
+      }
+      if( rc==SQLITE_OK && n!=0 ){
+        sqlite3VdbeSetNumCols(v, 1);
+        sqlite3VdbeSetColName(v, 0, COLNAME_NAME, "ok", SQLITE_STATIC);
+        returnSingleText(v, "ok");
       }
     }
     break;
@@ -2171,7 +2277,7 @@ void sqlite3Pragma(
   /* The following block is a no-op unless SQLITE_DEBUG is defined. Its only
   ** purpose is to execute assert() statements to verify that if the
   ** PragFlg_NoColumns1 flag is set and the caller specified an argument
-  ** to the PRAGMA, the implementation has not added any OP_ResultRow
+  ** to the PRAGMA, the implementation has not added any OP_ResultRow 
   ** instructions to the VM.  */
   if( (pPragma->mPragFlg & PragFlg_NoColumns1) && zRight ){
     sqlite3VdbeVerifyNoResultRow(v);
@@ -2202,7 +2308,7 @@ struct PragmaVtabCursor {
   char *azArg[2];           /* Value of the argument and schema */
 };
 
-/*
+/* 
 ** Pragma virtual table module xConnect method.
 */
 static int pragmaVtabConnect(
@@ -2264,7 +2370,7 @@ static int pragmaVtabConnect(
   return rc;
 }
 
-/*
+/* 
 ** Pragma virtual table module xDisconnect method.
 */
 static int pragmaVtabDisconnect(sqlite3_vtab *pVtab){
@@ -2362,11 +2468,11 @@ static int pragmaVtabNext(sqlite3_vtab_cursor *pVtabCursor){
   return rc;
 }
 
-/*
+/* 
 ** Pragma virtual table module xFilter method.
 */
 static int pragmaVtabFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -2421,11 +2527,11 @@ static int pragmaVtabEof(sqlite3_vtab_cursor *pVtabCursor){
 }
 
 /* The xColumn method simply returns the corresponding column from
-** the PRAGMA.
+** the PRAGMA.  
 */
 static int pragmaVtabColumn(
-  sqlite3_vtab_cursor *pVtabCursor,
-  sqlite3_context *ctx,
+  sqlite3_vtab_cursor *pVtabCursor, 
+  sqlite3_context *ctx, 
   int i
 ){
   PragmaVtabCursor *pCsr = (PragmaVtabCursor*)pVtabCursor;
@@ -2438,7 +2544,7 @@ static int pragmaVtabColumn(
   return SQLITE_OK;
 }
 
-/*
+/* 
 ** Pragma virtual table module xRowid method.
 */
 static int pragmaVtabRowid(sqlite3_vtab_cursor *pVtabCursor, sqlite_int64 *p){

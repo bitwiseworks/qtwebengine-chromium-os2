@@ -25,6 +25,8 @@ backslashes. All directories should be relative to the source root and all
 file paths should be only lowercase.
 """
 
+from __future__ import print_function
+
 import json
 import logging
 import optparse
@@ -143,10 +145,6 @@ NON_EXECUTABLE_PATHS = (
   'build/android/tests/symbolize/libb.so',
   'chrome/installer/mac/sign_app.sh.in',
   'chrome/installer/mac/sign_versioned_dir.sh.in',
-  'chrome/test/data/extensions/uitest/plugins/plugin32.so',
-  'chrome/test/data/extensions/uitest/plugins/plugin64.so',
-  'chrome/test/data/extensions/uitest/plugins_private/plugin32.so',
-  'chrome/test/data/extensions/uitest/plugins_private/plugin64.so',
   'courgette/testdata/elf-32-1',
   'courgette/testdata/elf-32-2',
   'courgette/testdata/elf-64',
@@ -177,22 +175,14 @@ IGNORED_PATHS = (
   'native_client_sdk/src/build_tools/sdk_tools/third_party/fancy_urllib/'
       '__init__.py',
   'out/',
+  'third_party/blink/web_tests/external/wpt/tools/third_party/',
   # TODO(maruel): Fix these.
   'third_party/devscripts/licensecheck.pl.vanilla',
-  'third_party/hyphen/',
-  'third_party/lcov-1.9/contrib/galaxy/conglomerate_functions.pl',
-  'third_party/lcov-1.9/contrib/galaxy/gen_makefile.sh',
-  'third_party/lcov/contrib/galaxy/conglomerate_functions.pl',
-  'third_party/lcov/contrib/galaxy/gen_makefile.sh',
   'third_party/libxml/linux/xml2-config',
-  'third_party/libxml/src/ltmain.sh',
   'third_party/protobuf/',
   'third_party/sqlite/',
-  'third_party/talloc/script/mksyms.sh',
   'third_party/tcmalloc/',
   'third_party/tlslite/setup.py',
-  # TODO(nednguyen): Remove this when telemetry is moved to catapult
-  'tools/telemetry/third_party/',
 )
 
 #### USER EDITABLE SECTION ENDS HERE ####
@@ -380,7 +370,7 @@ class ApiAllFilesAtOnceBase(ApiBase):
     if self._files is None:
       self._files = sorted(self._get_all_files())
       if not self.bare_output:
-        print 'Found %s files' % len(self._files)
+        print('Found %s files' % len(self._files))
     start_dir = start_dir[len(self.root_dir) + 1:]
     return [
       x[len(start_dir):] for x in self._files if x.startswith(start_dir)
@@ -476,13 +466,13 @@ Examples:
 
   if errors:
     if options.bare:
-      print '\n'.join(e['full_path'] for e in errors)
+      print('\n'.join(e['full_path'] for e in errors))
     else:
-      print '\nFAILED\n'
-      print '\n'.join('%s: %s' % (e['full_path'], e['error']) for e in errors)
+      print('\nFAILED\n')
+      print('\n'.join('%s: %s' % (e['full_path'], e['error']) for e in errors))
     return 1
   if not options.bare:
-    print '\nSUCCESS\n'
+    print('\nSUCCESS\n')
   return 0
 
 

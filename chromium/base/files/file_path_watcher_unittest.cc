@@ -26,7 +26,7 @@
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -143,8 +143,7 @@ class FilePathWatcherTest : public testing::Test {
  public:
   FilePathWatcherTest()
 #if defined(OS_POSIX)
-      : scoped_task_environment_(
-            test::ScopedTaskEnvironment::MainThreadType::IO)
+      : task_environment_(test::TaskEnvironment::MainThreadType::IO)
 #endif
   {
   }
@@ -205,7 +204,7 @@ class FilePathWatcherTest : public testing::Test {
 
   NotificationCollector* collector() { return collector_.get(); }
 
-  test::ScopedTaskEnvironment scoped_task_environment_;
+  test::TaskEnvironment task_environment_;
 
   ScopedTempDir temp_dir_;
   scoped_refptr<NotificationCollector> collector_;
@@ -218,9 +217,9 @@ bool FilePathWatcherTest::SetupWatch(const FilePath& target,
                                      FilePathWatcher* watcher,
                                      TestDelegateBase* delegate,
                                      bool recursive_watch) {
-  return watcher->Watch(
-      target, recursive_watch,
-      base::Bind(&TestDelegateBase::OnFileChanged, delegate->AsWeakPtr()));
+  return watcher->Watch(target, recursive_watch,
+                        base::BindRepeating(&TestDelegateBase::OnFileChanged,
+                                            delegate->AsWeakPtr()));
 }
 
 // Basic test: Create the file and verify that we notice.
@@ -311,8 +310,7 @@ TEST_F(FilePathWatcherTest, DeleteDuringNotify) {
 
 // Verify that deleting the watcher works even if there is a pending
 // notification.
-// Flaky on MacOS (and ARM linux): http://crbug.com/85930
-TEST_F(FilePathWatcherTest, DISABLED_DestroyWithPendingNotification) {
+TEST_F(FilePathWatcherTest, DestroyWithPendingNotification) {
   std::unique_ptr<TestDelegate> delegate(new TestDelegate(collector()));
   FilePathWatcher watcher;
   ASSERT_TRUE(SetupWatch(test_file(), &watcher, delegate.get(), false));
@@ -387,10 +385,6 @@ TEST_F(FilePathWatcherTest, DirectoryChain) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-#if defined(OS_MACOSX)
-// http://crbug.com/85930
-#define DisappearingDirectory DISABLED_DisappearingDirectory
-#endif
 TEST_F(FilePathWatcherTest, DisappearingDirectory) {
   FilePathWatcher watcher;
   FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
@@ -400,7 +394,7 @@ TEST_F(FilePathWatcherTest, DisappearingDirectory) {
   std::unique_ptr<TestDelegate> delegate(new TestDelegate(collector()));
   ASSERT_TRUE(SetupWatch(file, &watcher, delegate.get(), false));
 
-  ASSERT_TRUE(base::DeleteFile(dir, true));
+  ASSERT_TRUE(base::DeleteFileRecursively(dir));
   ASSERT_TRUE(WaitForEvents());
 }
 
@@ -501,6 +495,16 @@ TEST_F(FilePathWatcherTest, RecursiveWatch) {
   FilePath subdir(dir.AppendASCII("subdir"));
   ASSERT_TRUE(base::CreateDirectory(subdir));
   ASSERT_TRUE(WaitForEvents());
+
+// Mac and Win don't generate events for Touch.
+// Android TouchFile returns false.
+#if !(defined(OS_MACOSX) || defined(OS_WIN) || defined(OS_ANDROID))
+  // Touch "$dir".
+  Time access_time;
+  ASSERT_TRUE(Time::FromString("Wed, 16 Nov 1994, 00:00:00", &access_time));
+  ASSERT_TRUE(base::TouchFile(dir, access_time, access_time));
+  ASSERT_TRUE(WaitForEvents());
+#endif  // !(defined(OS_MACOSX) || defined(OS_WIN) || defined(OS_ANDROID))
 
   // Create "$dir/subdir/subdir_file1".
   FilePath subdir_file1(subdir.AppendASCII("subdir_file1"));

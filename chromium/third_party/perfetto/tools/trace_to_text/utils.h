@@ -17,16 +17,29 @@
 #ifndef TOOLS_TRACE_TO_TEXT_UTILS_H_
 #define TOOLS_TRACE_TO_TEXT_UTILS_H_
 
-#include <unistd.h>
-
 #include <stdio.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
+
 #include <functional>
 #include <iostream>
+#include <memory>
+#include <vector>
 
 #include "perfetto/base/build_config.h"
+#include "perfetto/ext/base/optional.h"
+#include "perfetto/ext/base/paged_memory.h"
+#include "perfetto/profiling/deobfuscator.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
+#include <zlib.h>
+#endif
 
 namespace perfetto {
+
+namespace trace_processor {
+class TraceProcessor;
+}
 
 namespace protos {
 class TracePacket;
@@ -42,26 +55,64 @@ constexpr char kProgressChar = '\n';
 constexpr char kProgressChar = '\r';
 #endif
 
-inline bool StdoutIsTty() {
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WASM)
-  return false;
-#else
-  static bool is_a_tty = isatty(STDOUT_FILENO);
-  return is_a_tty;
-#endif
-}
-
-inline size_t GetTerminalWidth() {
-  if (!StdoutIsTty())
-    return 80;
-  struct winsize win_size;
-  ioctl(STDOUT_FILENO, TIOCGWINSZ, &win_size);
-  return win_size.ws_col;
-}
-
-void ForEachPacketInTrace(
+void ForEachPacketBlobInTrace(
     std::istream* input,
-    const std::function<void(const protos::TracePacket&)>&);
+    const std::function<void(std::unique_ptr<char[]>, size_t)>&);
+
+base::Optional<std::string> GetPerfettoProguardMapPath();
+
+bool ReadTrace(trace_processor::TraceProcessor* tp, std::istream* input);
+
+void WriteTracePacket(const std::string& str, std::ostream* output);
+
+// Generate ObfuscationMapping protos for all obfuscated java names in the
+// database.
+// Wrap them in proto-encoded TracePackets messages and call callback.
+void DeobfuscateDatabase(
+    trace_processor::TraceProcessor* tp,
+    const std::map<std::string, profiling::ObfuscatedClass>& mapping,
+    std::function<void(const std::string&)> callback);
+
+class TraceWriter {
+ public:
+  TraceWriter(std::ostream* output);
+  virtual ~TraceWriter();
+
+  void Write(const std::string& s);
+  virtual void Write(const char* data, size_t sz);
+
+ private:
+  std::ostream* output_;
+};
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
+class DeflateTraceWriter : public TraceWriter {
+ public:
+  DeflateTraceWriter(std::ostream* output);
+  ~DeflateTraceWriter() override;
+
+  void Write(const char* data, size_t sz) override;
+
+ private:
+  void Flush();
+  void CheckEq(int actual_code, int expected_code);
+
+  z_stream stream_{};
+  base::PagedMemory buf_;
+  uint8_t* const start_;
+  uint8_t* const end_;
+};
+
+#else
+
+// Fallback implementation. Will print an error and write uncompressed.
+class DeflateTraceWriter : public TraceWriter {
+ public:
+  DeflateTraceWriter(std::ostream* output);
+  ~DeflateTraceWriter() override;
+};
+
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
 
 }  // namespace trace_to_text
 }  // namespace perfetto

@@ -23,6 +23,8 @@ static_library("core") {
     "counters/passwords_counter.h",
     "counters/sync_tracker.cc",
     "counters/sync_tracker.h",
+    "features.cc",
+    "features.h",
     "history_notice_utils.cc",
     "history_notice_utils.h",
     "pref_names.cc",
@@ -47,14 +49,10 @@ static_library("core") {
 
 if (is_android) {
   java_cpp_enum("browsing_data_utils_java") {
-    sources = [
-      "browsing_data_utils.h",
-    ]
+    sources = [ "browsing_data_utils.h" ]
   }
   java_cpp_enum("clear_browsing_data_tab_java") {
-    sources = [
-      "clear_browsing_data_tab.h",
-    ]
+    sources = [ "clear_browsing_data_tab.h" ]
   }
 }
 
@@ -74,7 +72,7 @@ source_set("unit_tests") {
     "//components/password_manager/core/browser:test_support",
     "//components/prefs:test_support",
     "//components/sync",
-    "//components/sync:test_support_driver",
+    "//components/sync:test_support",
     "//components/sync_preferences:test_support",
     "//components/version_info:version_info",
     "//net:test_support",

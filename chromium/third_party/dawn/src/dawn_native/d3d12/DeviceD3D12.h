@@ -19,8 +19,10 @@
 
 #include "common/SerialQueue.h"
 #include "dawn_native/Device.h"
+#include "dawn_native/d3d12/CommandRecordingContext.h"
+#include "dawn_native/d3d12/D3D12Info.h"
 #include "dawn_native/d3d12/Forward.h"
-#include "dawn_native/d3d12/d3d12_platform.h"
+#include "dawn_native/d3d12/ResourceHeapAllocationD3D12.h"
 
 #include <memory>
 
@@ -28,51 +30,86 @@ namespace dawn_native { namespace d3d12 {
 
     class CommandAllocatorManager;
     class DescriptorHeapAllocator;
+    class ShaderVisibleDescriptorAllocator;
     class MapRequestTracker;
     class PlatformFunctions;
-    class ResourceAllocator;
-    class ResourceUploader;
+    class ResourceAllocatorManager;
+    class ResidencyManager;
 
-    void ASSERT_SUCCESS(HRESULT hr);
+#define ASSERT_SUCCESS(hr)            \
+    {                                 \
+        HRESULT succeeded = hr;       \
+        ASSERT(SUCCEEDED(succeeded)); \
+    }
 
     // Definition of backend types
     class Device : public DeviceBase {
       public:
-        Device();
+        Device(Adapter* adapter, const DeviceDescriptor* descriptor);
         ~Device();
 
-        CommandBufferBase* CreateCommandBuffer(CommandBufferBuilder* builder) override;
-        InputStateBase* CreateInputState(InputStateBuilder* builder) override;
-        RenderPassDescriptorBase* CreateRenderPassDescriptor(
-            RenderPassDescriptorBuilder* builder) override;
-        SwapChainBase* CreateSwapChain(SwapChainBuilder* builder) override;
+        MaybeError Initialize();
+
+        CommandBufferBase* CreateCommandBuffer(CommandEncoder* encoder,
+                                               const CommandBufferDescriptor* descriptor) override;
 
         Serial GetCompletedCommandSerial() const final override;
         Serial GetLastSubmittedCommandSerial() const final override;
-        void TickImpl() override;
+        MaybeError TickImpl() override;
 
-        const dawn_native::PCIInfo& GetPCIInfo() const override;
+        ComPtr<ID3D12Device> GetD3D12Device() const;
+        ComPtr<ID3D12CommandQueue> GetCommandQueue() const;
+        ID3D12SharingContract* GetSharingContract() const;
 
-        ComPtr<IDXGIFactory4> GetFactory();
-        ComPtr<ID3D12Device> GetD3D12Device();
-        ComPtr<ID3D12CommandQueue> GetCommandQueue();
+        ComPtr<ID3D12CommandSignature> GetDispatchIndirectSignature() const;
+        ComPtr<ID3D12CommandSignature> GetDrawIndirectSignature() const;
+        ComPtr<ID3D12CommandSignature> GetDrawIndexedIndirectSignature() const;
 
-        DescriptorHeapAllocator* GetDescriptorHeapAllocator();
+        DescriptorHeapAllocator* GetDescriptorHeapAllocator() const;
         MapRequestTracker* GetMapRequestTracker() const;
-        const PlatformFunctions* GetFunctions();
-        ResourceAllocator* GetResourceAllocator();
-        ResourceUploader* GetResourceUploader();
+        CommandAllocatorManager* GetCommandAllocatorManager() const;
+        ResidencyManager* GetResidencyManager() const;
 
-        void OpenCommandList(ComPtr<ID3D12GraphicsCommandList>* commandList);
-        ComPtr<ID3D12GraphicsCommandList> GetPendingCommandList();
-        Serial GetPendingCommandSerial() const;
+        const PlatformFunctions* GetFunctions() const;
+        ComPtr<IDXGIFactory4> GetFactory() const;
 
-        void NextSerial();
-        void WaitForSerial(Serial serial);
+        ResultOrError<CommandRecordingContext*> GetPendingCommandContext();
+        Serial GetPendingCommandSerial() const override;
+
+        const D3D12DeviceInfo& GetDeviceInfo() const;
+
+        MaybeError NextSerial();
+        MaybeError WaitForSerial(Serial serial);
 
         void ReferenceUntilUnused(ComPtr<IUnknown> object);
 
-        void ExecuteCommandLists(std::initializer_list<ID3D12CommandList*> commandLists);
+        MaybeError ExecutePendingCommandContext();
+
+        ResultOrError<std::unique_ptr<StagingBufferBase>> CreateStagingBuffer(size_t size) override;
+        MaybeError CopyFromStagingToBuffer(StagingBufferBase* source,
+                                           uint64_t sourceOffset,
+                                           BufferBase* destination,
+                                           uint64_t destinationOffset,
+                                           uint64_t size) override;
+
+        ResultOrError<ResourceHeapAllocation> AllocateMemory(
+            D3D12_HEAP_TYPE heapType,
+            const D3D12_RESOURCE_DESC& resourceDescriptor,
+            D3D12_RESOURCE_STATES initialUsage);
+
+        void DeallocateMemory(ResourceHeapAllocation& allocation);
+
+        ShaderVisibleDescriptorAllocator* GetShaderVisibleDescriptorAllocator() const;
+
+        TextureBase* WrapSharedHandle(const ExternalImageDescriptor* descriptor,
+                                      HANDLE sharedHandle,
+                                      uint64_t acquireMutexKey,
+                                      bool isSwapChainTexture);
+        ResultOrError<ComPtr<IDXGIKeyedMutex>> CreateKeyedMutexForTexture(
+            ID3D12Resource* d3d12Resource);
+        void ReleaseKeyedMutexForTexture(ComPtr<IDXGIKeyedMutex> dxgiKeyedMutex);
+
+        void InitTogglesFromDriver();
 
       private:
         ResultOrError<BindGroupBase*> CreateBindGroupImpl(
@@ -90,40 +127,47 @@ namespace dawn_native { namespace d3d12 {
         ResultOrError<SamplerBase*> CreateSamplerImpl(const SamplerDescriptor* descriptor) override;
         ResultOrError<ShaderModuleBase*> CreateShaderModuleImpl(
             const ShaderModuleDescriptor* descriptor) override;
+        ResultOrError<SwapChainBase*> CreateSwapChainImpl(
+            const SwapChainDescriptor* descriptor) override;
+        ResultOrError<NewSwapChainBase*> CreateSwapChainImpl(
+            Surface* surface,
+            NewSwapChainBase* previousSwapChain,
+            const SwapChainDescriptor* descriptor) override;
         ResultOrError<TextureBase*> CreateTextureImpl(const TextureDescriptor* descriptor) override;
         ResultOrError<TextureViewBase*> CreateTextureViewImpl(
             TextureBase* texture,
             const TextureViewDescriptor* descriptor) override;
-        void CollectPCIInfo();
 
-        // Keep mFunctions as the first member so that in the destructor it is freed. Otherwise the
-        // D3D12 DLLs are unloaded before we are done using it.
-        std::unique_ptr<PlatformFunctions> mFunctions;
+        void Destroy() override;
+        MaybeError WaitForIdleForDestruction() override;
 
         Serial mCompletedSerial = 0;
         Serial mLastSubmittedSerial = 0;
         ComPtr<ID3D12Fence> mFence;
-        HANDLE mFenceEvent;
+        HANDLE mFenceEvent = nullptr;
 
-        ComPtr<IDXGIFactory4> mFactory;
-        ComPtr<IDXGIAdapter1> mHardwareAdapter;
-        ComPtr<ID3D12Device> mD3d12Device;
+        ComPtr<ID3D12Device> mD3d12Device;  // Device is owned by adapter and will not be outlived.
         ComPtr<ID3D12CommandQueue> mCommandQueue;
+        ComPtr<ID3D12SharingContract> mD3d12SharingContract;
 
-        struct PendingCommandList {
-            ComPtr<ID3D12GraphicsCommandList> commandList;
-            bool open = false;
-        } mPendingCommands;
+        // 11on12 device and device context corresponding to mCommandQueue
+        ComPtr<ID3D11On12Device> mD3d11On12Device;
+        ComPtr<ID3D11DeviceContext2> mD3d11On12DeviceContext;
+
+        ComPtr<ID3D12CommandSignature> mDispatchIndirectSignature;
+        ComPtr<ID3D12CommandSignature> mDrawIndirectSignature;
+        ComPtr<ID3D12CommandSignature> mDrawIndexedIndirectSignature;
+
+        CommandRecordingContext mPendingCommands;
 
         SerialQueue<ComPtr<IUnknown>> mUsedComObjectRefs;
 
         std::unique_ptr<CommandAllocatorManager> mCommandAllocatorManager;
         std::unique_ptr<DescriptorHeapAllocator> mDescriptorHeapAllocator;
         std::unique_ptr<MapRequestTracker> mMapRequestTracker;
-        std::unique_ptr<ResourceAllocator> mResourceAllocator;
-        std::unique_ptr<ResourceUploader> mResourceUploader;
-
-        dawn_native::PCIInfo mPCIInfo;
+        std::unique_ptr<ResourceAllocatorManager> mResourceAllocatorManager;
+        std::unique_ptr<ResidencyManager> mResidencyManager;
+        std::unique_ptr<ShaderVisibleDescriptorAllocator> mShaderVisibleDescriptorAllocator;
     };
 
 }}  // namespace dawn_native::d3d12

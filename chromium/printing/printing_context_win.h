@@ -14,6 +14,7 @@
 
 namespace printing {
 
+class MetafileSkia;
 class PrintSettings;
 
 class PRINTING_EXPORT PrintingContextWin : public PrintingContext {
@@ -21,8 +22,12 @@ class PRINTING_EXPORT PrintingContextWin : public PrintingContext {
   explicit PrintingContextWin(Delegate* delegate);
   ~PrintingContextWin() override;
 
+  // Prints the document contained in |metafile|.
+  void PrintDocument(const base::string16& device_name,
+                     const MetafileSkia& metafile);
+
   // Initializes with predefined settings.
-  Result InitWithSettingsForTest(const PrintSettings& settings);
+  Result InitWithSettingsForTest(std::unique_ptr<PrintSettings> settings);
 
   // PrintingContext implementation.
   void AskUserForSettings(int max_pages,

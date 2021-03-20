@@ -5,10 +5,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_SERIAL_SERIAL_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_SERIAL_SERIAL_H_
 
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/serial/serial.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
@@ -23,25 +25,44 @@ class SerialPort;
 class SerialPortRequestOptions;
 
 class Serial final : public EventTargetWithInlineData,
-                     public ContextLifecycleObserver {
+                     public ExecutionContextLifecycleObserver,
+                     public mojom::blink::SerialServiceClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(Serial);
+  USING_PRE_FINALIZER(Serial, Dispose);
 
  public:
-  static Serial* Create(ExecutionContext& executionContext);
-
   explicit Serial(ExecutionContext&);
 
   // EventTarget
   ExecutionContext* GetExecutionContext() const override;
   const AtomicString& InterfaceName() const override;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(connect, kConnect);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(disconnect, kDisconnect);
-  ScriptPromise getPorts(ScriptState*);
-  ScriptPromise requestPort(ScriptState*, const SerialPortRequestOptions*);
+  // ExecutionContextLifecycleObserver
+  void ContextDestroyed() override;
 
+  // SerialServiceClient
+  void OnPortAdded(mojom::blink::SerialPortInfoPtr port_info) override;
+  void OnPortRemoved(mojom::blink::SerialPortInfoPtr port_info) override;
+
+  // Web-exposed interfaces
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(connect, kConnect)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(disconnect, kDisconnect)
+  ScriptPromise getPorts(ScriptState*, ExceptionState&);
+  ScriptPromise requestPort(ScriptState*,
+                            const SerialPortRequestOptions*,
+                            ExceptionState&);
+
+  void Dispose();
+  void GetPort(
+      const base::UnguessableToken& token,
+      mojo::PendingReceiver<device::mojom::blink::SerialPort> receiver);
   void Trace(Visitor*) override;
+
+ protected:
+  // EventTarget
+  void AddedEventListener(const AtomicString& event_type,
+                          RegisteredEventListener&) override;
 
  private:
   void EnsureServiceConnection();
@@ -51,7 +72,8 @@ class Serial final : public EventTargetWithInlineData,
                   Vector<mojom::blink::SerialPortInfoPtr>);
   void OnRequestPort(ScriptPromiseResolver*, mojom::blink::SerialPortInfoPtr);
 
-  mojom::blink::SerialServicePtr service_;
+  mojo::Remote<mojom::blink::SerialService> service_;
+  mojo::Receiver<mojom::blink::SerialServiceClient> receiver_{this};
   HeapHashSet<Member<ScriptPromiseResolver>> get_ports_promises_;
   HeapHashSet<Member<ScriptPromiseResolver>> request_port_promises_;
   HeapHashMap<String, WeakMember<SerialPort>> port_cache_;

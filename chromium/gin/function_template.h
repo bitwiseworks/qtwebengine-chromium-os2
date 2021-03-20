@@ -6,6 +6,7 @@
 #define GIN_FUNCTION_TEMPLATE_H_
 
 #include <stddef.h>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/logging.h"
@@ -165,14 +166,15 @@ class Invoker<std::index_sequence<indices...>, ArgTypes...>
   template <typename ReturnType>
   void DispatchToCallback(
       base::RepeatingCallback<ReturnType(ArgTypes...)> callback) {
-    args_->Return(callback.Run(ArgumentHolder<indices, ArgTypes>::value...));
+    args_->Return(
+        callback.Run(std::move(ArgumentHolder<indices, ArgTypes>::value)...));
   }
 
   // In C++, you can declare the function foo(void), but you can't pass a void
   // expression to foo. As a result, we must specialize the case of Callbacks
   // that have the void return type.
   void DispatchToCallback(base::RepeatingCallback<void(ArgTypes...)> callback) {
-    callback.Run(ArgumentHolder<indices, ArgTypes>::value...);
+    callback.Run(std::move(ArgumentHolder<indices, ArgTypes>::value)...);
   }
 
  private:
@@ -192,11 +194,9 @@ struct Dispatcher {};
 
 template <typename ReturnType, typename... ArgTypes>
 struct Dispatcher<ReturnType(ArgTypes...)> {
-  static void DispatchToCallback(
-      const v8::FunctionCallbackInfo<v8::Value>& info) {
-    Arguments args(info);
+  static void DispatchToCallbackImpl(Arguments* args) {
     v8::Local<v8::External> v8_holder;
-    CHECK(args.GetData(&v8_holder));
+    CHECK(args->GetData(&v8_holder));
     CallbackHolderBase* holder_base = reinterpret_cast<CallbackHolderBase*>(
         v8_holder->Value());
 
@@ -204,9 +204,22 @@ struct Dispatcher<ReturnType(ArgTypes...)> {
     HolderT* holder = static_cast<HolderT*>(holder_base);
 
     using Indices = std::index_sequence_for<ArgTypes...>;
-    Invoker<Indices, ArgTypes...> invoker(&args, holder->invoker_options);
+    Invoker<Indices, ArgTypes...> invoker(args, holder->invoker_options);
     if (invoker.IsOK())
       invoker.DispatchToCallback(holder->callback);
+  }
+
+  static void DispatchToCallback(
+      const v8::FunctionCallbackInfo<v8::Value>& info) {
+    Arguments args(info);
+    DispatchToCallbackImpl(&args);
+  }
+
+  static void DispatchToCallbackForProperty(
+      v8::Local<v8::Name>,
+      const v8::PropertyCallbackInfo<v8::Value>& info) {
+    Arguments args(info);
+    DispatchToCallbackImpl(&args);
   }
 };
 
@@ -239,6 +252,26 @@ v8::Local<v8::FunctionTemplate> CreateFunctionTemplate(
                                            holder->GetHandle(isolate)));
   tmpl->RemovePrototype();
   return tmpl;
+}
+
+// CreateDataPropertyCallback creates a v8::AccessorNameGetterCallback and
+// corresponding data value that will hold and execute the provided
+// base::RepeatingCallback, using automatic conversions similar to
+// |CreateFunctionTemplate|.
+//
+// It is expected that these will be passed to v8::Template::SetLazyDataProperty
+// or another similar function.
+template <typename Sig>
+std::pair<v8::AccessorNameGetterCallback, v8::Local<v8::Value>>
+CreateDataPropertyCallback(v8::Isolate* isolate,
+                           base::RepeatingCallback<Sig> callback,
+                           InvokerOptions invoker_options = {}) {
+  typedef internal::CallbackHolder<Sig> HolderT;
+  HolderT* holder =
+      new HolderT(isolate, std::move(callback), std::move(invoker_options));
+  return {&internal::Dispatcher<Sig>::DispatchToCallbackForProperty,
+          ConvertToV8<v8::Local<v8::External>>(isolate,
+                                               holder->GetHandle(isolate))};
 }
 
 }  // namespace gin

@@ -13,8 +13,11 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <string>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
@@ -26,12 +29,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/win/windows_version.h"
-#include "device/usb/usb_ids.h"
 #include "media/midi/message_util.h"
 #include "media/midi/midi_manager_winrt.h"
 #include "media/midi/midi_service.h"
 #include "media/midi/midi_service.mojom.h"
 #include "media/midi/midi_switches.h"
+#include "services/device/public/cpp/usb/usb_ids.h"
 
 namespace midi {
 
@@ -383,7 +386,7 @@ class MidiManagerWin::InPort final : public Port {
   void Finalize(scoped_refptr<base::SingleThreadTaskRunner> runner) {
     if (in_handle_ != kInvalidInHandle) {
       runner->PostTask(FROM_HERE, base::BindOnce(&FinalizeInPort, in_handle_,
-                                                 base::Passed(&hdr_)));
+                                                 std::move(hdr_)));
       manager_->port_manager()->UnregisterInHandle(in_handle_);
       in_handle_ = kInvalidInHandle;
     }
@@ -890,7 +893,7 @@ void MidiManagerWin::SendOnTaskRunner(MidiManagerClient* client,
 
 MidiManager* MidiManager::Create(MidiService* service) {
   if (base::FeatureList::IsEnabled(features::kMidiManagerWinrt) &&
-      base::win::GetVersion() >= base::win::VERSION_WIN10) {
+      base::win::GetVersion() >= base::win::Version::WIN10) {
     return new MidiManagerWinrt(service);
   }
   return new MidiManagerWin(service);

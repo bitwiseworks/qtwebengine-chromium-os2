@@ -68,6 +68,11 @@ typedef LONG_PTR SSIZE_T, *PSSIZE_T;
 typedef DWORD ACCESS_MASK;
 typedef ACCESS_MASK REGSAM;
 
+// As defined in guiddef.h.
+#ifndef _REFGUID_DEFINED
+#define _REFGUID_DEFINED
+#define REFGUID const GUID&
+#endif
 
 // Forward declare Windows compatible handles.
 
@@ -88,6 +93,7 @@ CHROME_DECLARE_HANDLE(HWND);
 typedef LPVOID HINTERNET;
 typedef HINSTANCE HMODULE;
 typedef PVOID LSA_HANDLE;
+typedef PVOID HDEVINFO;
 
 // Forward declare some Windows struct/typedef sets.
 
@@ -109,6 +115,8 @@ typedef struct tagMENUITEMINFOW MENUITEMINFOW, MENUITEMINFO;
 
 typedef struct tagNMHDR NMHDR;
 
+typedef struct _SP_DEVINFO_DATA SP_DEVINFO_DATA;
+
 typedef PVOID PSID;
 
 // Declare Chrome versions of some Windows structures. These are needed for
@@ -124,9 +132,10 @@ struct CHROME_CONDITION_VARIABLE {
   PVOID Ptr;
 };
 
-
 // Define some commonly used Windows constants. Note that the layout of these
 // macros - including internal spacing - must be 100% consistent with windows.h.
+
+// clang-format off
 
 #ifndef INVALID_HANDLE_VALUE
 // Work around there being two slightly different definitions in the SDK.
@@ -194,6 +203,8 @@ struct CHROME_CONDITION_VARIABLE {
                                   &                           \
                                  (~SYNCHRONIZE))
 
+// clang-format on
+
 // Define some macros needed when prototyping Windows functions.
 
 #define DECLSPEC_IMPORT __declspec(dllimport)
@@ -239,6 +250,8 @@ WINBASEAPI VOID WINAPI SetLastError(_In_ DWORD dwErrCode);
 #define DeleteFile DeleteFileW
 #define DispatchMessage DispatchMessageW
 #define DrawText DrawTextW
+#define FindFirstFile FindFirstFileW
+#define FindNextFile FindNextFileW
 #define GetComputerName GetComputerNameW
 #define GetCurrentDirectory GetCurrentDirectoryW
 #define GetCurrentTime() GetTickCount()
@@ -248,6 +261,7 @@ WINBASEAPI VOID WINAPI SetLastError(_In_ DWORD dwErrCode);
 #define LoadIcon LoadIconW
 #define LoadImage LoadImageW
 #define PostMessage PostMessageW
+#define RemoveDirectory RemoveDirectoryW
 #define ReplaceFile ReplaceFileW
 #define ReportEvent ReportEventW
 #define SendMessage SendMessageW

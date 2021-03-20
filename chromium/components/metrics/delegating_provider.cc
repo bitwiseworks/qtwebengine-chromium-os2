@@ -27,9 +27,9 @@ void DelegatingProvider::Init() {
     provider->Init();
 }
 
-void DelegatingProvider::AsyncInit(const base::Closure& done_callback) {
-  base::Closure barrier =
-      base::BarrierClosure(metrics_providers_.size(), done_callback);
+void DelegatingProvider::AsyncInit(base::OnceClosure done_callback) {
+  base::RepeatingClosure barrier =
+      base::BarrierClosure(metrics_providers_.size(), std::move(done_callback));
   for (auto& provider : metrics_providers_) {
     provider->AsyncInit(barrier);
   }
@@ -63,8 +63,17 @@ bool DelegatingProvider::HasIndependentMetrics() {
 
 void DelegatingProvider::ProvideSystemProfileMetrics(
     SystemProfileProto* system_profile_proto) {
-  for (auto& provider : metrics_providers_)
-    provider->ProvideSystemProfileMetrics(system_profile_proto);
+  // ProvideSystemProfileMetricsWithLogCreationTime() should be called instead.
+  NOTREACHED();
+}
+
+void DelegatingProvider::ProvideSystemProfileMetricsWithLogCreationTime(
+    base::TimeTicks log_creation_time,
+    SystemProfileProto* system_profile_proto) {
+  for (auto& provider : metrics_providers_) {
+    provider->ProvideSystemProfileMetricsWithLogCreationTime(
+        log_creation_time, system_profile_proto);
+  }
 }
 
 bool DelegatingProvider::HasPreviousSessionData() {

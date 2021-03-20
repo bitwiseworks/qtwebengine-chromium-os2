@@ -43,9 +43,6 @@ class PLATFORM_EXPORT ScrollbarThemeMac : public ScrollbarTheme {
   ~ScrollbarThemeMac() override;
 
   void RegisterScrollbar(Scrollbar&) override;
-  void UnregisterScrollbar(Scrollbar&) override;
-
-  bool SupportsControlTints() const override { return true; }
 
   // On Mac, the painting code itself animates the opacity so there's no need
   // to disable in order to make the scrollbars invisible. In fact,
@@ -53,8 +50,15 @@ class PLATFORM_EXPORT ScrollbarThemeMac : public ScrollbarTheme {
   // Mac queues up scrollbar paint timers.
   bool ShouldDisableInvisibleScrollbars() const override { return false; }
 
-  TimeDelta InitialAutoscrollTimerDelay() override;
-  TimeDelta AutoscrollTimerDelay() override;
+  // On Mac, if Blink updates the visibility itself, it cannot tell the Mac
+  // painting code about the change. Allowing it to change means the two can
+  // get out of sync and can cause issues like Blink believing a scrollbar is
+  // visible while the user cannot see it; this can lead to odd hit testing
+  // behavior.
+  bool BlinkControlsOverlayVisibility() const override { return false; }
+
+  base::TimeDelta InitialAutoscrollTimerDelay() override;
+  base::TimeDelta AutoscrollTimerDelay() override;
 
   void PaintTickmarks(GraphicsContext&,
                       const Scrollbar&,
@@ -63,7 +67,7 @@ class PLATFORM_EXPORT ScrollbarThemeMac : public ScrollbarTheme {
   bool ShouldCenterOnThumb(const Scrollbar&, const WebMouseEvent&) override;
 
   bool ShouldRepaintAllPartsOnInvalidation() const override { return false; }
-  ScrollbarPart InvalidateOnThumbPositionChange(
+  ScrollbarPart PartsToInvalidateOnThumbPositionChange(
       const Scrollbar&,
       float old_position,
       float new_position) const override;
@@ -71,14 +75,10 @@ class PLATFORM_EXPORT ScrollbarThemeMac : public ScrollbarTheme {
   int ScrollbarThickness(ScrollbarControlSize = kRegularScrollbar) override;
   bool UsesOverlayScrollbars() const override;
   void UpdateScrollbarOverlayColorTheme(const Scrollbar&) override;
-  WebScrollbarButtonsPlacement ButtonsPlacement() const override;
 
   void SetNewPainterForScrollbar(Scrollbar&, ScrollbarPainter);
   ScrollbarPainter PainterForScrollbar(const Scrollbar&) const;
 
-  void PaintTrackBackground(GraphicsContext&,
-                            const Scrollbar&,
-                            const IntRect&) override;
   void PaintThumb(GraphicsContext& context,
                   const Scrollbar& scrollbar,
                   const IntRect& rect) override {
@@ -87,17 +87,17 @@ class PLATFORM_EXPORT ScrollbarThemeMac : public ScrollbarTheme {
   void PaintThumbWithOpacity(GraphicsContext& context,
                              const Scrollbar& scrollbar,
                              const IntRect& rect) override {
-    PaintThumbInternal(context, scrollbar, rect, ThumbOpacity(scrollbar));
+    PaintThumbInternal(context, scrollbar, rect, Opacity(scrollbar));
   }
 
-  float ThumbOpacity(const Scrollbar&) const override;
+  float Opacity(const Scrollbar&) const override;
 
   static NSScrollerStyle RecommendedScrollerStyle();
 
   // See WebScrollbarTheme for parameters description.
   static void UpdateScrollbarsWithNSDefaults(
-      float initial_button_delay,
-      float autoscroll_button_delay,
+      base::Optional<float> initial_button_delay,
+      base::Optional<float> autoscroll_button_delay,
       NSScrollerStyle preferred_scroller_style,
       bool redraw,
       bool jump_on_track_click);
@@ -107,25 +107,24 @@ class PLATFORM_EXPORT ScrollbarThemeMac : public ScrollbarTheme {
 
   bool ShouldDragDocumentInsteadOfThumb(const Scrollbar&,
                                         const WebMouseEvent&) override;
-  int ScrollbarPartToHIPressedState(ScrollbarPart);
 
-  virtual void UpdateButtonPlacement(WebScrollbarButtonsPlacement) {}
+  IntRect TrackRect(const Scrollbar&) override;
+  IntRect BackButtonRect(const Scrollbar&) override;
+  IntRect ForwardButtonRect(const Scrollbar&) override;
 
-  IntRect TrackRect(const Scrollbar&, bool painting = false) override;
-  IntRect BackButtonRect(const Scrollbar&,
-                         ScrollbarPart,
-                         bool painting = false) override;
-  IntRect ForwardButtonRect(const Scrollbar&,
-                            ScrollbarPart,
-                            bool painting = false) override;
-
-  bool HasButtons(const Scrollbar&) override { return false; }
+  bool NativeThemeHasButtons() override { return false; }
   bool HasThumb(const Scrollbar&) override;
 
   int MinimumThumbLength(const Scrollbar&) override;
 
   int TickmarkBorderWidth() override { return 1; }
 
+  void PaintTrack(GraphicsContext&, const Scrollbar&, const IntRect&) override;
+  void PaintScrollCorner(GraphicsContext&,
+                         const Scrollbar* vertical_scrollbar,
+                         const DisplayItemClient&,
+                         const IntRect& corner_rect,
+                         WebColorScheme color_scheme) override;
   void PaintThumbInternal(GraphicsContext&,
                           const Scrollbar&,
                           const IntRect&,

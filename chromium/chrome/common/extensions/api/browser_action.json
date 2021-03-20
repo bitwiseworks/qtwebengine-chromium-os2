@@ -6,6 +6,9 @@
   {
     "namespace": "browserAction",
     "description": "Use browser actions to put icons in the main Google Chrome toolbar, to the right of the address bar. In addition to its <a href='browserAction#icon'>icon</a>, a browser action can have a <a href='browserAction#tooltip'>tooltip</a>, a <a href='browserAction#badge'>badge</a>, and a <a href='browserAction#popups'>popup</a>.",
+    "compiler_options": {
+      "implemented_in": "chrome/browser/extensions/api/extension_action/extension_action_api.h"
+    },
     "types": [
       {
         "id": "ColorArray",
@@ -187,7 +190,8 @@
             "properties": {
               "text": {
                 "type": "string",
-                "description": "Any number of characters can be passed, but only about four can fit into the space."
+                "optional": true,
+                "description": "Any number of characters can be passed, but only about four can fit into the space. If an empty string (<code>''</code>) is passed, the badge text is cleared.  If <code>tabId</code> is specified and <code>text</code> is null, the text for the specified tab is cleared and defaults to the global badge text."
               },
               "tabId": {
                 "type": "integer",

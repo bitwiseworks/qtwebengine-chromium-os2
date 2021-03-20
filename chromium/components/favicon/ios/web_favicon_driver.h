@@ -8,8 +8,8 @@
 #include "base/macros.h"
 #include "components/favicon/core/favicon_driver_impl.h"
 #import "components/image_fetcher/ios/ios_image_data_fetcher_wrapper.h"
-#include "ios/web/public/web_state/web_state_observer.h"
-#include "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 namespace web {
 class WebState;
@@ -74,6 +74,8 @@ class WebFaviconDriver : public web::WebStateObserver,
   // The WebState this instance is observing. Will be null after
   // WebStateDestroyed has been called.
   web::WebState* web_state_ = nullptr;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(WebFaviconDriver);
 };

@@ -84,8 +84,8 @@ const AtomicString& SearchClearButton() {
   return name;
 }
 
-const AtomicString& SearchDecoration() {
-  DEFINE_STATIC_LOCAL(AtomicString, name, ("decoration"));
+const AtomicString& PasswordRevealButton() {
+  DEFINE_STATIC_LOCAL(AtomicString, name, ("password-reveal"));
   return name;
 }
 
@@ -101,6 +101,11 @@ const AtomicString& SliderTrack() {
 
 const AtomicString& TextFieldContainer() {
   DEFINE_STATIC_LOCAL(AtomicString, name, ("text-field-container"));
+  return name;
+}
+
+const AtomicString& FileUploadButton() {
+  DEFINE_STATIC_LOCAL(AtomicString, name, ("file-upload-button"));
   return name;
 }
 

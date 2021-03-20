@@ -39,6 +39,7 @@
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -50,12 +51,16 @@ class WebViewImpl;
 // and out of fullscreen, including restoring scroll offset and scale after
 // exiting fullscreen. It is (indirectly) used by the Fullscreen class.
 class CORE_EXPORT FullscreenController {
+  USING_FAST_MALLOC(FullscreenController);
+
  public:
-  static std::unique_ptr<FullscreenController> Create(WebViewImpl*);
+  explicit FullscreenController(WebViewImpl*);
 
   // Called by Fullscreen (via ChromeClient) to request entering or exiting
   // fullscreen.
-  void EnterFullscreen(LocalFrame&, const FullscreenOptions*);
+  void EnterFullscreen(LocalFrame&,
+                       const FullscreenOptions*,
+                       bool for_cross_process_descendant);
   void ExitFullscreen(LocalFrame&);
 
   // Called by content::RenderWidget (via WebWidget) to notify that we've
@@ -72,12 +77,13 @@ class CORE_EXPORT FullscreenController {
 
   void UpdateSize();
 
- protected:
-  explicit FullscreenController(WebViewImpl*);
-
  private:
   void UpdatePageScaleConstraints(bool reset_constraints);
   void RestoreBackgroundColorOverride();
+
+  void NotifyFramesOfFullscreenEntry(bool granted);
+
+  void EnterFullscreenCallback(bool granted);
 
   WebViewImpl* web_view_base_;
 

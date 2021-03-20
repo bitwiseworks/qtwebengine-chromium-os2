@@ -12,17 +12,17 @@
 **
 ** This file contains the implementation of an in-memory tree structure.
 **
-** Technically the tree is a B-tree of order 4 (in the Knuth sense - each
+** Technically the tree is a B-tree of order 4 (in the Knuth sense - each 
 ** node may have up to 4 children). Keys are stored within B-tree nodes by
 ** reference. This may be slightly slower than a conventional red-black
-** tree, but it is simpler. It is also an easier structure to modify to
+** tree, but it is simpler. It is also an easier structure to modify to 
 ** create a version that supports nested transaction rollback.
 **
-** This tree does not currently support a delete operation. One is not
+** This tree does not currently support a delete operation. One is not 
 ** required. When LSM deletes a key from a database, it inserts a DELETE
 ** marker into the data structure. As a result, although the value associated
 ** with a key stored in the in-memory tree structure may be modified, no
-** keys are ever removed.
+** keys are ever removed. 
 */
 
 /*
@@ -32,7 +32,7 @@
 **   that while one client is writing to the tree structure, other clients
 **   may still be querying an older snapshot of the tree.
 **
-**   One way to implement this is to use an append-only b-tree. In this
+**   One way to implement this is to use an append-only b-tree. In this 
 **   case instead of modifying nodes in-place, a copy of the node is made
 **   and the required modifications made to the copy. The parent of the
 **   node is then modified (to update the pointer so that it points to
@@ -45,36 +45,36 @@
 **   is made. This may prove excessive with large tree structures.
 **
 **   To reduce this overhead, the data structure used for a tree node is
-**   designed so that it may be edited in place exactly once without
+**   designed so that it may be edited in place exactly once without 
 **   affecting existing users. In other words, the node structure is capable
 **   of storing two separate versions of the node at the same time.
-**   When a node is to be edited, if the node structure already contains
+**   When a node is to be edited, if the node structure already contains 
 **   two versions, a copy is made as in the append-only approach. Or, if
 **   it only contains a single version, it is edited in place.
 **
 **   This reduces the overhead so that, roughly, one new node structure
-**   must be allocated for each write (on top of those allocations that
-**   would have been required by a non-MVCC tree). Logic: Assume that at
+**   must be allocated for each write (on top of those allocations that 
+**   would have been required by a non-MVCC tree). Logic: Assume that at 
 **   any time, 50% of nodes in the tree already contain 2 versions. When
 **   a new entry is written to a node, there is a 50% chance that a copy
-**   of the node will be required. And a 25% chance that a copy of its
+**   of the node will be required. And a 25% chance that a copy of its 
 **   parent is required. And so on.
 **
 ** ROLLBACK
 **
-**   The in-memory tree also supports transaction and sub-transaction
+**   The in-memory tree also supports transaction and sub-transaction 
 **   rollback. In order to rollback to point in time X, the following is
 **   necessary:
 **
-**     1. All memory allocated since X must be freed, and
+**     1. All memory allocated since X must be freed, and 
 **     2. All "v2" data adding to nodes that existed at X should be zeroed.
 **     3. The root node must be restored to its X value.
 **
-**   The Mempool object used to allocate memory for the tree supports
+**   The Mempool object used to allocate memory for the tree supports 
 **   operation (1) - see the lsmPoolMark() and lsmPoolRevert() functions.
 **
-**   To support (2), all nodes that have v2 data are part of a singly linked
-**   list, sorted by the age of the v2 data (nodes that have had data added
+**   To support (2), all nodes that have v2 data are part of a singly linked 
+**   list, sorted by the age of the v2 data (nodes that have had data added 
 **   most recently are at the end of the list). So to zero all v2 data added
 **   since X, the linked list is traversed from the first node added following
 **   X onwards.
@@ -116,9 +116,9 @@ static int lsmAssertFlagsOk(u8 keyflags){
   /* If both the START_DELETE and END_DELETE flags are set, then the INSERT
   ** flag must also be set. In other words - the three DELETE flags cannot
   ** all be set */
-  assert( (keyflags & LSM_END_DELETE)==0
-       || (keyflags & LSM_START_DELETE)==0
-       || (keyflags & LSM_POINT_DELETE)==0
+  assert( (keyflags & LSM_END_DELETE)==0 
+       || (keyflags & LSM_START_DELETE)==0 
+       || (keyflags & LSM_POINT_DELETE)==0 
   );
 
   return 1;
@@ -129,7 +129,7 @@ static int treeCountEntries(lsm_db *db);
 
 /*
 ** Container for a key-value pair. Within the *-shm file, each key/value
-** pair is stored in a single allocation (which may not actually be
+** pair is stored in a single allocation (which may not actually be 
 ** contiguous in memory). Layout is the TreeKey structure, followed by
 ** the nKey bytes of key blob, followed by the nValue bytes of value blob
 ** (if nValue is non-negative).
@@ -180,7 +180,7 @@ struct TreeBlob {
 ** cursor currently points to key aiCell[iNode] on node apTreeNode[iNode].
 **
 ** Entries in the apTreeNode[] and aiCell[] arrays contain the node and
-** index of the TreeNode.apChild[] pointer followed to descend to the
+** index of the TreeNode.apChild[] pointer followed to descend to the 
 ** current element. Hence apTreeNode[0] always contains the root node of
 ** the tree.
 */
@@ -216,7 +216,7 @@ static void tblobFree(lsm_db *pDb, TreeBlob *p){
 /***********************************************************************
 ** Start of IntArray methods.  */
 /*
-** Append value iVal to the contents of IntArray *p. Return LSM_OK if
+** Append value iVal to the contents of IntArray *p. Return LSM_OK if 
 ** successful, or LSM_NOMEM if an OOM condition is encountered.
 */
 static int intArrayAppend(lsm_env *pEnv, IntArray *p, u32 iVal){
@@ -256,7 +256,7 @@ static u32 intArrayEntry(IntArray *p, int iIdx){
 }
 
 /*
-** Truncate the int-array so that all but the first nVal values are
+** Truncate the int-array so that all but the first nVal values are 
 ** discarded.
 */
 static void intArrayTruncate(IntArray *p, int nVal){
@@ -296,7 +296,7 @@ static int treeOffsetToChunk(u32 iOff){
 (&((u8*)((pDb)->apShm[(iPtr)>>15]))[(iPtr) & (LSM_SHM_CHUNK_SIZE-1)])
 
 /*
-** Return a pointer to the mapped memory location associated with *-shm
+** Return a pointer to the mapped memory location associated with *-shm 
 ** file offset iPtr.
 */
 static void *treeShmptr(lsm_db *pDb, u32 iPtr){
@@ -322,9 +322,9 @@ static ShmChunk * treeShmChunkRc(lsm_db *pDb, int iChunk, int *pRc){
 
 #ifndef NDEBUG
 static void assertIsWorkingChild(
-  lsm_db *db,
-  TreeNode *pNode,
-  TreeNode *pParent,
+  lsm_db *db, 
+  TreeNode *pNode, 
+  TreeNode *pParent, 
   int iCell
 ){
   TreeNode *p;
@@ -513,7 +513,7 @@ void dump_node_contents(
       }
     }
 
-    printf("% 6d %.*sleaf%.*s: %s\n",
+    printf("% 6d %.*sleaf%.*s: %s\n", 
         iNode, nPath, zPath, 20-nPath-4, zSpace, s.z
     );
     lsmStringClear(&s);
@@ -531,7 +531,7 @@ void dump_node_contents(
         lsmStringInit(&s, pDb->pEnv);
         strAppendFlags(&s, pKey->flags);
         lsmAppendStrBlob(&s, TKV_KEY(pKey), pKey->nKey);
-        printf("% 6d %.*s%.*s: %s\n",
+        printf("% 6d %.*s%.*s: %s\n", 
             iNode, nPath+1, zPath, 20-nPath-1, zSpace, s.z);
         lsmStringClear(&s);
       }
@@ -571,7 +571,7 @@ static void treeCursorInit(lsm_db *pDb, int bOld, TreeCursor *pCsr){
 
 /*
 ** Return a pointer to the mapping of the TreeKey object that the cursor
-** is pointing to.
+** is pointing to. 
 */
 static TreeKey *csrGetKey(TreeCursor *pCsr, TreeBlob *pBlob, int *pRc){
   TreeKey *pRet;
@@ -618,7 +618,7 @@ static int treeCursorRestore(TreeCursor *pCsr, int *pRes){
 }
 
 /*
-** Allocate nByte bytes of space within the *-shm file. If successful,
+** Allocate nByte bytes of space within the *-shm file. If successful, 
 ** return LSM_OK and set *piPtr to the offset within the file at which
 ** the allocated space is located.
 */
@@ -727,8 +727,8 @@ static TreeLeaf *newTreeLeaf(lsm_db *pDb, u32 *piPtr, int *pRc){
 }
 
 static TreeKey *newTreeKey(
-  lsm_db *pDb,
-  u32 *piPtr,
+  lsm_db *pDb, 
+  u32 *piPtr, 
   void *pKey, int nKey,           /* Key data */
   void *pVal, int nVal,           /* Value data (or nVal<0 for delete) */
   int *pRc
@@ -785,9 +785,9 @@ static TreeKey *newTreeKey(
 }
 
 static TreeNode *copyTreeNode(
-  lsm_db *pDb,
-  TreeNode *pOld,
-  u32 *piNew,
+  lsm_db *pDb, 
+  TreeNode *pOld, 
+  u32 *piNew, 
   int *pRc
 ){
   TreeNode *pNew;
@@ -802,9 +802,9 @@ static TreeNode *copyTreeNode(
 }
 
 static TreeNode *copyTreeLeaf(
-  lsm_db *pDb,
-  TreeLeaf *pOld,
-  u32 *piNew,
+  lsm_db *pDb, 
+  TreeLeaf *pOld, 
+  u32 *piNew, 
   int *pRc
 ){
   TreeLeaf *pNew;
@@ -816,13 +816,13 @@ static TreeNode *copyTreeLeaf(
 }
 
 /*
-** The tree cursor passed as the second argument currently points to an
+** The tree cursor passed as the second argument currently points to an 
 ** internal node (not a leaf). Specifically, to a sub-tree pointer. This
 ** function replaces the sub-tree that the cursor currently points to
 ** with sub-tree pNew.
 **
 ** The sub-tree may be replaced either by writing the "v2 data" on the
-** internal node, or by allocating a new TreeNode structure and then
+** internal node, or by allocating a new TreeNode structure and then 
 ** calling this function on the parent of the internal node.
 */
 static int treeUpdatePtr(lsm_db *pDb, TreeCursor *pCsr, u32 iNew){
@@ -859,7 +859,7 @@ static int treeUpdatePtr(lsm_db *pDb, TreeCursor *pCsr, u32 iNew){
 
       if( pCsr->iNode ){
         iPtr = getChildPtr(
-            pCsr->apTreeNode[pCsr->iNode-1],
+            pCsr->apTreeNode[pCsr->iNode-1], 
             pDb->treehdr.root.iTransId, pCsr->aiCell[pCsr->iNode-1]
         );
       }else{
@@ -902,7 +902,7 @@ static int treeInsert(
   TreeNode *pNode = pCsr->apTreeNode[pCsr->iNode];
 
   /* Check if the node is currently full. If so, split pNode in two and
-  ** call this function recursively to add a key to the parent. Otherwise,
+  ** call this function recursively to add a key to the parent. Otherwise, 
   ** insert the new key directly into pNode.  */
   assert( pNode->aiKeyPtr[1] );
   if( pNode->aiKeyPtr[0] && pNode->aiKeyPtr[2] ){
@@ -935,7 +935,7 @@ static int treeInsert(
     }else{
 
       pCsr->iNode--;
-      rc = treeInsert(pDb, pCsr,
+      rc = treeInsert(pDb, pCsr, 
           iLeft, pNode->aiKeyPtr[1], iRight, pCsr->aiCell[pCsr->iNode]
       );
     }
@@ -1002,7 +1002,7 @@ static int treeInsert(
     if( iStore ){
       *piChild = iStore;
     }else{
-      *piChild = getChildPtr(pNode, WORKING_VERSION,
+      *piChild = getChildPtr(pNode, WORKING_VERSION, 
           (pNode->aiKeyPtr[2] ? 3 : 2)
       );
     }
@@ -1048,7 +1048,7 @@ static int treeInsertLeaf(
           case 3: pRight->aiKeyPtr[2] = iTreeKey; break;
         }
 
-        rc = treeInsert(pDb, pCsr, iNew, pLeaf->aiKeyPtr[1], iRight,
+        rc = treeInsert(pDb, pCsr, iNew, pLeaf->aiKeyPtr[1], iRight, 
             pCsr->aiCell[pCsr->iNode]
         );
       }
@@ -1071,7 +1071,7 @@ static int treeInsertLeaf(
 void lsmTreeMakeOld(lsm_db *pDb){
 
   /* A write transaction must be open. Otherwise the code below that
-  ** assumes (pDb->pClient->iLogOff) is current may malfunction.
+  ** assumes (pDb->pClient->iLogOff) is current may malfunction. 
   **
   ** Update: currently this assert fails due to lsm_flush(), which does
   ** not set nTransOpen.
@@ -1095,8 +1095,8 @@ void lsmTreeMakeOld(lsm_db *pDb){
 }
 
 void lsmTreeDiscardOld(lsm_db *pDb){
-  assert( lsmShmAssertLock(pDb, LSM_LOCK_WRITER, LSM_LOCK_EXCL)
-       || lsmShmAssertLock(pDb, LSM_LOCK_DMS2, LSM_LOCK_EXCL)
+  assert( lsmShmAssertLock(pDb, LSM_LOCK_WRITER, LSM_LOCK_EXCL) 
+       || lsmShmAssertLock(pDb, LSM_LOCK_DMS2, LSM_LOCK_EXCL) 
   );
   pDb->treehdr.iUsedShmid = pDb->treehdr.iOldShmid;
   pDb->treehdr.iOldShmid = 0;
@@ -1107,7 +1107,7 @@ int lsmTreeHasOld(lsm_db *pDb){
 }
 
 /*
-** This function is called during recovery to initialize the
+** This function is called during recovery to initialize the 
 ** tree header. Only the database connections private copy of the tree-header
 ** is initialized here - it will be copied into shared memory if log file
 ** recovery is successful.
@@ -1133,7 +1133,7 @@ int lsmTreeInit(lsm_db *pDb){
 }
 
 static void treeHeaderChecksum(
-  TreeHeader *pHdr,
+  TreeHeader *pHdr, 
   u32 *aCksum
 ){
   u32 cksum1 = 0x12345678;
@@ -1153,7 +1153,7 @@ static void treeHeaderChecksum(
 }
 
 /*
-** Return true if the checksum stored in TreeHeader object *pHdr is
+** Return true if the checksum stored in TreeHeader object *pHdr is 
 ** consistent with the contents of its other fields.
 */
 static int treeHeaderChecksumOk(TreeHeader *pHdr){
@@ -1173,7 +1173,7 @@ struct ShmChunkLoc {
 };
 
 /*
-** This function checks that the linked list of shared memory chunks
+** This function checks that the linked list of shared memory chunks 
 ** that starts at chunk db->treehdr.iFirst:
 **
 **   1) Includes all chunks in the shared-memory region, and
@@ -1268,8 +1268,8 @@ static int treeRepairList(lsm_db *db){
     }
   }
 
-  /* Fix the shm-id values on any chunks with a shm-id greater than or
-  ** equal to treehdr.iNextShmid. Then do a merge-sort of all chunks to
+  /* Fix the shm-id values on any chunks with a shm-id greater than or 
+  ** equal to treehdr.iNextShmid. Then do a merge-sort of all chunks to 
   ** fix the ShmChunk.iNext pointers.
   */
   if( rc==LSM_OK ){
@@ -1331,7 +1331,7 @@ static int treeRepairList(lsm_db *db){
 
 /*
 ** This function is called as part of opening a write-transaction if the
-** writer-flag is already set - indicating that the previous writer
+** writer-flag is already set - indicating that the previous writer 
 ** failed before ending its transaction.
 */
 int lsmTreeRepair(lsm_db *db){
@@ -1350,7 +1350,7 @@ int lsmTreeRepair(lsm_db *db){
     }
   }
 
-  /* Save the connections current copy of the tree-header. It will be
+  /* Save the connections current copy of the tree-header. It will be 
   ** restored before returning.  */
   memcpy(&hdr, &db->treehdr, sizeof(TreeHeader));
 
@@ -1386,7 +1386,7 @@ static void treeOverwriteKey(lsm_db *db, TreeCursor *pCsr, u32 iKey, int *pRc){
       /* Modify the value in the new version */
       pNew->aiKeyPtr[iCell] = iKey;
 
-      /* Change the pointer in the parent (if any) to point at the new
+      /* Change the pointer in the parent (if any) to point at the new 
        ** TreeNode */
       pCsr->iNode--;
       treeUpdatePtr(db, pCsr, iNew);
@@ -1455,8 +1455,8 @@ static int treeInsertEntry(
 
   assert( nVal>=0 || pVal==0 );
   assert_tree_looks_ok(LSM_OK, pTree);
-  assert( flags==LSM_INSERT       || flags==LSM_POINT_DELETE
-       || flags==LSM_START_DELETE || flags==LSM_END_DELETE
+  assert( flags==LSM_INSERT       || flags==LSM_POINT_DELETE 
+       || flags==LSM_START_DELETE || flags==LSM_END_DELETE 
   );
   assert( (flags & LSM_CONTIGUOUS)==0 );
 #if 0
@@ -1479,7 +1479,7 @@ static int treeInsertEntry(
       ** then the new entry is not required.  */
       if( (res<=0 && (pRes->flags & LSM_START_DELETE))
        || (res>0  && treePrevIsStartDelete(pDb, &csr))
-      ){
+      ){ 
         goto insert_entry_out;
       }
     }else if( flags==LSM_END_DELETE ){
@@ -1503,7 +1503,7 @@ static int treeInsertEntry(
 
     if( flags & (LSM_INSERT|LSM_POINT_DELETE) ){
       if( (res<0 && (pRes->flags & LSM_START_DELETE))
-       || (res>0 && (pRes->flags & LSM_END_DELETE))
+       || (res>0 && (pRes->flags & LSM_END_DELETE)) 
       ){
         flags = flags | (LSM_END_DELETE|LSM_START_DELETE);
       }else if( res==0 ){
@@ -1539,7 +1539,7 @@ static int treeInsertEntry(
     }else{
       /* The cursor now points to the leaf node into which the new entry should
       ** be inserted. There may or may not be a free slot within the leaf for
-      ** the new key-value pair.
+      ** the new key-value pair. 
       **
       ** iSlot is set to the index of the key within pLeaf that the new key
       ** should be inserted to the left of (or to a value 1 greater than the
@@ -1601,11 +1601,11 @@ static int treeDeleteEntry(lsm_db *db, TreeCursor *pCsr, u32 iNewptr){
   assert( ((u32)pCsr->iNode==(db->treehdr.root.nHeight-1))==(iNewptr==0) );
 
   bLeaf = ((u32)pCsr->iNode==(p->nHeight-1) && p->nHeight>1);
-
+  
   if( pNode->aiKeyPtr[0] || pNode->aiKeyPtr[2] ){
     /* There are currently at least 2 keys on this node. So just create
     ** a new copy of the node with one of the keys removed. If the node
-    ** happens to be the root node of the tree, allocate an entire
+    ** happens to be the root node of the tree, allocate an entire 
     ** TreeNode structure instead of just a TreeLeaf.  */
     TreeNode *pNew;
     u32 iNew;
@@ -1779,17 +1779,17 @@ static int treeDeleteEntry(lsm_db *db, TreeCursor *pCsr, u32 iNewptr){
 ** Delete a range of keys from the tree structure (i.e. the lsm_delete_range()
 ** function, not lsm_delete()).
 **
-** This is a two step process:
+** This is a two step process: 
 **
 **     1) Remove all entries currently stored in the tree that have keys
 **        that fall into the deleted range.
 **
-**        TODO: There are surely good ways to optimize this step - removing
+**        TODO: There are surely good ways to optimize this step - removing 
 **        a range of keys from a b-tree. But for now, this function removes
 **        them one at a time using the usual approach.
 **
 **     2) Unless the largest key smaller than or equal to (pKey1/nKey1) is
-**        already marked as START_DELETE, insert a START_DELETE key.
+**        already marked as START_DELETE, insert a START_DELETE key. 
 **        Similarly, unless the smallest key greater than or equal to
 **        (pKey2/nKey2) is already START_END, insert a START_END key.
 */
@@ -1844,12 +1844,12 @@ int lsmTreeDelete(
         /* The element to delete already lies on a leaf node */
         rc = treeDeleteEntry(db, &csr, 0);
       }else{
-        /* 1. Overwrite the current key with a copy of the next key in the
+        /* 1. Overwrite the current key with a copy of the next key in the 
         **    tree (key N).
         **
         ** 2. Seek to key N (cursor will stop at the internal node copy of
         **    N). Move to the next key (original copy of N). Delete
-        **    this entry.
+        **    this entry. 
         */
         u32 iKey;
         TreeKey *pKey;
@@ -1908,7 +1908,7 @@ int lsmTreeDelete(
 }
 
 /*
-** Return, in bytes, the amount of memory currently used by the tree
+** Return, in bytes, the amount of memory currently used by the tree 
 ** structure.
 */
 int lsmTreeSize(lsm_db *pDb){
@@ -1965,10 +1965,10 @@ static int treeCsrCompare(TreeCursor *pCsr, void *pKey, int nKey, int *pRc){
 ** cursor pointing to it and set *pRes to zero before returning. If an
 ** exact match cannot be found, do one of the following:
 **
-**   * Leave the cursor pointing to the smallest element in the tree that
+**   * Leave the cursor pointing to the smallest element in the tree that 
 **     is larger than the key and set *pRes to +1, or
 **
-**   * Leave the cursor pointing to the largest element in the tree that
+**   * Leave the cursor pointing to the largest element in the tree that 
 **     is smaller than the key and set *pRes to -1, or
 **
 **   * If the tree is empty, leave the cursor at EOF and set *pRes to -1.
@@ -2068,9 +2068,9 @@ int lsmTreeCursorNext(TreeCursor *pCsr){
   lsm_db *pDb = pCsr->pDb;
   TreeRoot *pRoot = pCsr->pRoot;
   const int iLeaf = pRoot->nHeight-1;
-  int iCell;
-  int rc = LSM_OK;
-  TreeNode *pNode;
+  int iCell; 
+  int rc = LSM_OK; 
+  TreeNode *pNode; 
 
   /* Restore the cursor position, if required */
   int iRestore = 0;
@@ -2105,8 +2105,8 @@ int lsmTreeCursorNext(TreeCursor *pCsr){
     }while( pCsr->iNode < iLeaf );
   }
 
-  /* Otherwise, the next key is found by following pointer up the tree
-  ** until there is a key immediately to the right of the pointer followed
+  /* Otherwise, the next key is found by following pointer up the tree 
+  ** until there is a key immediately to the right of the pointer followed 
   ** to reach the sub-tree containing the current key. */
   else if( iCell>=3 || pNode->aiKeyPtr[iCell]==0 ){
     while( (--pCsr->iNode)>=0 ){
@@ -2134,9 +2134,9 @@ int lsmTreeCursorPrev(TreeCursor *pCsr){
   lsm_db *pDb = pCsr->pDb;
   TreeRoot *pRoot = pCsr->pRoot;
   const int iLeaf = pRoot->nHeight-1;
-  int iCell;
-  int rc = LSM_OK;
-  TreeNode *pNode;
+  int iCell; 
+  int rc = LSM_OK; 
+  TreeNode *pNode; 
 
   /* Restore the cursor position, if required */
   int iRestore = 0;
@@ -2293,7 +2293,7 @@ int lsmTreeCursorValue(TreeCursor *pCsr, void **ppVal, int *pnVal){
 }
 
 /*
-** Return true if the cursor currently points to a valid entry.
+** Return true if the cursor currently points to a valid entry. 
 */
 int lsmTreeCursorValid(TreeCursor *pCsr){
   return (pCsr && (pCsr->pSave || pCsr->iNode>=0));

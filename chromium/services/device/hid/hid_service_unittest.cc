@@ -3,9 +3,10 @@
 // found in the LICENSE file.
 
 #include "services/device/hid/hid_service.h"
+
 #include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "services/device/public/mojom/hid.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -16,20 +17,19 @@ namespace {
 class HidServiceTest : public ::testing::Test {
  public:
   HidServiceTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
+      : task_environment_(base::test::TaskEnvironment::MainThreadType::UI) {}
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   std::unique_ptr<HidService> service_;
 };
 
-void OnGetDevices(const base::Closure& quit_closure,
+void OnGetDevices(base::OnceClosure quit_closure,
                   std::vector<mojom::HidDeviceInfoPtr> devices) {
   // Since there's no guarantee that any devices are connected at the moment
   // this test doesn't assume anything about the result but it at least verifies
   // that devices can be enumerated without the application crashing.
-  quit_closure.Run();
+  std::move(quit_closure).Run();
 }
 
 }  // namespace

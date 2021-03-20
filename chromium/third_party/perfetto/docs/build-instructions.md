@@ -24,7 +24,7 @@ Prerequisites
 **Standalone checkout**:  
 All dependent libraries are self-hosted and pulled through:
 ```
-$ tools/install-build-deps [--no-android] [--ui]
+$ tools/install-build-deps [--android] [--ui]
 ```
 
 **Android tree**:  
@@ -43,6 +43,7 @@ the `tools/` prefix below and just use gn/ninja from depot_tools.
 target_os = "android"                 # Only when building for Android
 target_cpu = "arm" / "arm64" / "x64"  # Only when building for Android
 is_debug = true / false
+cc_wrapper = "ccache"                 # Optionally speed repeated builds with ccache
 ```
 
 (See the [Build Configurations](#build-configurations) section below for more)
@@ -65,6 +66,20 @@ or
 This will generate artifacts `out/target/product/XXX/system/`.
 Executables and shared libraries are stripped by default by the Android build
 system. The unstripped artifacts are kept into `out/target/product/XXX/symbols`.
+
+IDE setup
+---------
+
+Use a following command in the checkout directory in order to generate the
+compilation database file:
+
+```
+$ tools/ninja -C out/android -t compdb cc cxx > compile_commands.json
+```
+
+After generating, it can be used in CLion (File -> Open -> Open As Project),
+Visual Studio Code with C/C++ extension and any other tool and editor that
+supports the compilation database format.
 
 Build files
 -----------
@@ -124,6 +139,11 @@ Use bundled toolchain from `buildtools/` rather than system-wide one.
 
 `cc = "gcc" / cxx = "g++"`:  
 Uses a different compiler binary (default: autodetected depending on is_clang).
+
+`cc_wrapper = "tool"`:  
+Prepends all build commands with a wrapper command. Using `"ccache"` here
+enables the [ccache](https://github.com/ccache/ccache) caching compiler,
+which can considerable speed up repeat builds.
 
 `is_asan = true`:  
 Enables [Address Sanitizer](https://github.com/google/sanitizers/wiki/AddressSanitizer)

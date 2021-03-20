@@ -5,6 +5,7 @@
 #ifndef UI_GL_GL_CONTEXT_H_
 #define UI_GL_GL_CONTEXT_H_
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -12,10 +13,11 @@
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
 #include "build/build_config.h"
 #include "ui/gfx/extension_set.h"
 #include "ui/gl/gl_export.h"
+#include "ui/gl/gl_implementation_wrapper.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_state_restorer.h"
 #include "ui/gl/gl_workarounds.h"
@@ -36,9 +38,10 @@ class GLContextVirtual;
 namespace gl {
 
 struct CurrentGL;
-class DebugGLApi;
+class LogGLApi;
 struct DriverGL;
 class GLApi;
+class GLFence;
 class GLSurface;
 class GPUTiming;
 class GPUTimingClient;
@@ -65,8 +68,16 @@ enum ContextPriority {
   ContextPriorityHigh
 };
 
-struct GLContextAttribs {
-  GpuPreference gpu_preference = PreferIntegratedGpu;
+struct GL_EXPORT GLContextAttribs {
+  GLContextAttribs();
+  GLContextAttribs(const GLContextAttribs& other);
+  GLContextAttribs(GLContextAttribs&& other);
+  ~GLContextAttribs();
+
+  GLContextAttribs& operator=(const GLContextAttribs& other);
+  GLContextAttribs& operator=(GLContextAttribs&& other);
+
+  GpuPreference gpu_preference = GpuPreference::kLowPower;
   bool bind_generates_resource = true;
   bool webgl_compatibility_context = false;
   bool global_texture_share_group = false;
@@ -74,6 +85,7 @@ struct GLContextAttribs {
   bool robust_buffer_access = false;
   int client_major_es_version = 3;
   int client_minor_es_version = 0;
+  bool can_skip_validation = false;
   ContextPriority context_priority = ContextPriorityMedium;
 };
 
@@ -144,6 +156,10 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   // (For an Android work-around only).
   virtual void SetUnbindFboOnMakeCurrent();
 
+  // Indicate that the context has become visible/invisible. This can be due to
+  // tab-switching, window minimization, etc.
+  virtual void SetVisibility(bool visibility) {}
+
   // Returns whether the current context supports the named extension. The
   // context must be current.
   bool HasExtension(const char* name);
@@ -159,7 +175,12 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   // Returns the last GLContext made current, virtual or real.
   static GLContext* GetCurrent();
 
-  virtual bool WasAllocatedUsingRobustnessExtension();
+  // Returns the 'sticky' value of glGetGraphicsResetStatus, if available.
+  // 'sticky' implies that if glGetGraphicsResetStatus ever returns a value
+  // other than GL_NO_ERROR, that value is returned until the context is
+  // destroyed.
+  // The context must be current.
+  virtual unsigned int CheckStickyGraphicsResetStatus();
 
   // Make this context current when used for context virtualization.
   bool MakeVirtuallyCurrent(GLContext* virtual_context, GLSurface* surface);
@@ -245,7 +266,14 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
 
   virtual void ResetExtensions() = 0;
 
-  GLApi* gl_api() { return gl_api_.get(); }
+  GLApi* gl_api() { return gl_api_wrapper_->api(); }
+
+#if defined(OS_MACOSX)
+  // Child classes are responsible for calling DestroyBackpressureFences during
+  // their destruction while a context is current.
+  bool HasBackpressureFences() const;
+  void DestroyBackpressureFences();
+#endif
 
  private:
   friend class base::RefCounted<GLContext>;
@@ -267,9 +295,8 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   bool static_bindings_initialized_ = false;
   bool dynamic_bindings_initialized_ = false;
   std::unique_ptr<DriverGL> driver_gl_;
-  std::unique_ptr<GLApi> gl_api_;
-  std::unique_ptr<TraceGLApi> trace_gl_api_;
-  std::unique_ptr<DebugGLApi> debug_gl_api_;
+
+  std::unique_ptr<GL_IMPL_WRAPPER_TYPE(GL)> gl_api_wrapper_;
   std::unique_ptr<CurrentGL> current_gl_;
 
   // Copy of the real API (if one was created) for dynamic initialization
@@ -280,6 +307,11 @@ class GL_EXPORT GLContext : public base::RefCounted<GLContext> {
   bool state_dirtied_externally_ = false;
   std::unique_ptr<GLStateRestorer> state_restorer_;
   std::unique_ptr<GLVersionInfo> version_info_;
+
+#if defined(OS_MACOSX)
+  std::map<uint64_t, std::unique_ptr<GLFence>> backpressure_fences_;
+  uint64_t next_backpressure_fence_ = 0;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(GLContext);
 };

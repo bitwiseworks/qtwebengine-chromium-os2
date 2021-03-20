@@ -34,7 +34,7 @@
 namespace blink {
 
 SQLResultSet::SQLResultSet()
-    : rows_(SQLResultSetRowList::Create()),
+    : rows_(MakeGarbageCollected<SQLResultSetRowList>()),
       insert_id_(0),
       rows_affected_(0),
       insert_id_set_(false),
@@ -42,7 +42,7 @@ SQLResultSet::SQLResultSet()
   DCHECK(IsMainThread());
 }
 
-void SQLResultSet::Trace(blink::Visitor* visitor) {
+void SQLResultSet::Trace(Visitor* visitor) {
   visitor->Trace(rows_);
   ScriptWrappable::Trace(visitor);
 }

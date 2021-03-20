@@ -996,8 +996,8 @@ TEST_F(BluetoothRemoteGattDescriptorTest, ReadRemoteDescriptor_NSNumber) {
 #endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN)
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     BluetoothRemoteGattDescriptorTestWinrtOnly,
     ::testing::Values(true));
 #endif  // defined(OS_WIN)

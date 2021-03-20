@@ -41,11 +41,13 @@ void SplitStringAlongWhitespace(const std::string &input, std::vector<std::strin
 
 std::string TrimString(const std::string &input, const std::string &trimChars);
 
+// Return the substring starting at offset and up to the first occurance of the |delimeter|.
+std::string GetPrefix(const std::string &input, size_t offset, const char *delimiter);
+std::string GetPrefix(const std::string &input, size_t offset, char delimiter);
+
 bool HexStringToUInt(const std::string &input, unsigned int *uintOut);
 
 bool ReadFileToString(const std::string &path, std::string *stringOut);
-
-Optional<std::vector<wchar_t>> WidenString(size_t length, const char *cString);
 
 // Check if the string str begins with the given prefix.
 // The comparison is case sensitive.
@@ -78,6 +80,9 @@ void ToLower(std::string *str);
 bool ReplaceSubstring(std::string *str,
                       const std::string &substring,
                       const std::string &replacement);
+
+// Split up a string parsed from an environment variable.
+std::vector<std::string> GetStringsFromEnvironmentVar(const char *varName, const char *separator);
 
 }  // namespace angle
 

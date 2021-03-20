@@ -5,17 +5,18 @@
 #include "media/gpu/vaapi/vaapi_video_decode_accelerator.h"
 
 #include <string.h>
+#include <va/va.h>
 
 #include <memory>
 
-#include <va/va.h>
-
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/cpu.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/ranges.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/waitable_event.h"
@@ -25,16 +26,18 @@
 #include "base/trace_event/trace_event.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "media/base/bind_to_current_loop.h"
+#include "media/base/format_utils.h"
 #include "media/base/unaligned_shared_memory.h"
+#include "media/base/video_util.h"
 #include "media/gpu/accelerated_video_decoder.h"
-#include "media/gpu/format_utils.h"
 #include "media/gpu/h264_decoder.h"
 #include "media/gpu/macros.h"
+#include "media/gpu/vaapi/h264_vaapi_video_decoder_delegate.h"
 #include "media/gpu/vaapi/vaapi_common.h"
-#include "media/gpu/vaapi/vaapi_h264_accelerator.h"
 #include "media/gpu/vaapi/vaapi_picture.h"
-#include "media/gpu/vaapi/vaapi_vp8_accelerator.h"
-#include "media/gpu/vaapi/vaapi_vp9_accelerator.h"
+#include "media/gpu/vaapi/vaapi_utils.h"
+#include "media/gpu/vaapi/vp8_vaapi_video_decoder_delegate.h"
+#include "media/gpu/vaapi/vp9_vaapi_video_decoder_delegate.h"
 #include "media/gpu/vp8_decoder.h"
 #include "media/gpu/vp9_decoder.h"
 #include "media/video/picture.h"
@@ -63,29 +66,9 @@ void ReportToUMA(VAVDADecoderFailure failure) {
                             VAVDA_DECODER_FAILURES_MAX + 1);
 }
 
-#if defined(USE_OZONE)
-void CloseGpuMemoryBufferHandle(const gfx::GpuMemoryBufferHandle& handle) {
-  for (const auto& fd : handle.native_pixmap_handle.fds) {
-    // Close the fd by wrapping it in a ScopedFD and letting
-    // it fall out of scope.
-    base::ScopedFD scoped_fd(fd.fd);
-  }
-}
-#endif
-
-// Returns true if the CPU is an Intel Kaby Lake or later.
-// cpu platform id's are referenced from the following file in kernel source
-// arch/x86/include/asm/intel-family.h
-bool IsKabyLakeOrLater() {
-  constexpr int kPentiumAndLaterFamily = 0x06;
-  constexpr int kFirstKabyLakeModelId = 0x8E;
-  static base::CPU cpuid;
-  static bool is_kaby_lake_or_later =
-      cpuid.family() == kPentiumAndLaterFamily &&
-      cpuid.model() >= kFirstKabyLakeModelId;
-  return is_kaby_lake_or_later;
-}
-
+// Returns true if the CPU is an Intel Gemini Lake or later (including Kaby
+// Lake) Cpu platform id's are referenced from the following file in kernel
+// source arch/x86/include/asm/intel-family.h
 bool IsGeminiLakeOrLater() {
   constexpr int kPentiumAndLaterFamily = 0x06;
   constexpr int kGeminiLakeModelId = 0x7A;
@@ -96,22 +79,12 @@ bool IsGeminiLakeOrLater() {
   return is_geminilake_or_later;
 }
 
-// Decides if the current platform and profile may decode using the client's
-// PictureBuffers, or engage the Vpp to adapt VaApi's and the client's format.
-bool ShouldDecodeOnclientPictureBuffers(
-    VideoDecodeAccelerator::Config::OutputMode output_mode,
-    VideoCodecProfile profile) {
-  return output_mode == VideoDecodeAccelerator::Config::OutputMode::ALLOCATE &&
-         (IsKabyLakeOrLater() || IsGeminiLakeOrLater()) &&
-         profile == VP9PROFILE_PROFILE0;
-}
-
 }  // namespace
 
 #define RETURN_AND_NOTIFY_ON_FAILURE(result, log, error_code, ret) \
   do {                                                             \
     if (!(result)) {                                               \
-      VLOGF(1) << log;                                             \
+      LOG(ERROR) << log;                                           \
       NotifyError(error_code);                                     \
       return ret;                                                  \
     }                                                              \
@@ -148,16 +121,11 @@ class VaapiVideoDecodeAccelerator::InputBuffer {
 void VaapiVideoDecodeAccelerator::NotifyError(Error error) {
   if (!task_runner_->BelongsToCurrentThread()) {
     DCHECK(decoder_thread_task_runner_->BelongsToCurrentThread());
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&VaapiVideoDecodeAccelerator::NotifyError,
-                                      weak_this_, error));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&VaapiVideoDecodeAccelerator::NotifyError,
+                                  weak_this_, error));
     return;
   }
-
-  // Post Cleanup() as a task so we don't recursively acquire lock_.
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&VaapiVideoDecodeAccelerator::Cleanup, weak_this_));
 
   VLOGF(1) << "Notifying of error " << error;
   if (client_) {
@@ -172,20 +140,23 @@ VaapiVideoDecodeAccelerator::VaapiVideoDecodeAccelerator(
     : state_(kUninitialized),
       input_ready_(&lock_),
       vaapi_picture_factory_(new VaapiPictureFactory()),
+      buffer_allocation_mode_(BufferAllocationMode::kNormal),
       surfaces_available_(&lock_),
-      decode_using_client_picture_buffers_(false),
+      va_surface_format_(VA_INVALID_ID),
       task_runner_(base::ThreadTaskRunnerHandle::Get()),
       decoder_thread_("VaapiDecoderThread"),
       finish_flush_pending_(false),
       awaiting_va_surfaces_recycle_(false),
       requested_num_pics_(0),
+      requested_num_reference_frames_(0),
+      previously_requested_num_reference_frames_(0),
       profile_(VIDEO_CODEC_PROFILE_UNKNOWN),
       make_context_current_cb_(make_context_current_cb),
       bind_image_cb_(bind_image_cb),
       weak_this_factory_(this) {
   weak_this_ = weak_this_factory_.GetWeakPtr();
-  va_surface_release_cb_ = BindToCurrentLoop(
-      base::Bind(&VaapiVideoDecodeAccelerator::RecycleVASurfaceID, weak_this_));
+  va_surface_recycle_cb_ = BindToCurrentLoop(base::BindRepeating(
+      &VaapiVideoDecodeAccelerator::RecycleVASurface, weak_this_));
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "media::VaapiVideoDecodeAccelerator",
       base::ThreadTaskRunnerHandle::Get());
@@ -227,16 +198,22 @@ bool VaapiVideoDecodeAccelerator::Initialize(const Config& config,
   }
 
   if (profile >= H264PROFILE_MIN && profile <= H264PROFILE_MAX) {
-    decoder_.reset(new H264Decoder(
-        std::make_unique<VaapiH264Accelerator>(this, vaapi_wrapper_),
-        config.container_color_space));
+    auto accelerator =
+        std::make_unique<H264VaapiVideoDecoderDelegate>(this, vaapi_wrapper_);
+    decoder_delegate_ = accelerator.get();
+    decoder_.reset(new H264Decoder(std::move(accelerator), profile,
+                                   config.container_color_space));
   } else if (profile >= VP8PROFILE_MIN && profile <= VP8PROFILE_MAX) {
-    decoder_.reset(new VP8Decoder(
-        std::make_unique<VaapiVP8Accelerator>(this, vaapi_wrapper_)));
+    auto accelerator =
+        std::make_unique<VP8VaapiVideoDecoderDelegate>(this, vaapi_wrapper_);
+    decoder_delegate_ = accelerator.get();
+    decoder_.reset(new VP8Decoder(std::move(accelerator)));
   } else if (profile >= VP9PROFILE_MIN && profile <= VP9PROFILE_MAX) {
-    decoder_.reset(new VP9Decoder(
-        std::make_unique<VaapiVP9Accelerator>(this, vaapi_wrapper_),
-        config.container_color_space));
+    auto accelerator =
+        std::make_unique<VP9VaapiVideoDecoderDelegate>(this, vaapi_wrapper_);
+    decoder_delegate_ = accelerator.get();
+    decoder_.reset(new VP9Decoder(std::move(accelerator), profile,
+                                  config.container_color_space));
   } else {
     VLOGF(1) << "Unsupported profile " << GetProfileName(profile);
     return false;
@@ -248,13 +225,13 @@ bool VaapiVideoDecodeAccelerator::Initialize(const Config& config,
   state_ = kIdle;
   profile_ = profile;
   output_mode_ = config.output_mode;
-  decode_using_client_picture_buffers_ =
-      ShouldDecodeOnclientPictureBuffers(output_mode_, profile_);
+  buffer_allocation_mode_ = DecideBufferAllocationMode();
+  previously_requested_num_reference_frames_ = 0;
   return true;
 }
 
 void VaapiVideoDecodeAccelerator::OutputPicture(
-    const scoped_refptr<VASurface>& va_surface,
+    scoped_refptr<VASurface> va_surface,
     int32_t input_id,
     gfx::Rect visible_rect,
     const VideoColorSpace& picture_color_space) {
@@ -266,7 +243,7 @@ void VaapiVideoDecodeAccelerator::OutputPicture(
   {
     base::AutoLock auto_lock(lock_);
     int32_t picture_buffer_id = available_picture_buffers_.front();
-    if (decode_using_client_picture_buffers_) {
+    if (buffer_allocation_mode_ == BufferAllocationMode::kNone) {
       // Find the |pictures_| entry matching |va_surface_id|.
       for (const auto& id_and_picture : pictures_) {
         if (id_and_picture.second->va_surface_id() == va_surface_id) {
@@ -276,7 +253,7 @@ void VaapiVideoDecodeAccelerator::OutputPicture(
       }
     }
     picture = pictures_[picture_buffer_id].get();
-    DCHECK(base::ContainsValue(available_picture_buffers_, picture_buffer_id));
+    DCHECK(base::Contains(available_picture_buffers_, picture_buffer_id));
     base::Erase(available_picture_buffers_, picture_buffer_id);
   }
 
@@ -286,7 +263,7 @@ void VaapiVideoDecodeAccelerator::OutputPicture(
   DVLOGF(4) << "Outputting VASurface " << va_surface->id()
             << " into pixmap bound to picture buffer id " << output_id;
 
-  if (!decode_using_client_picture_buffers_) {
+  if (buffer_allocation_mode_ != BufferAllocationMode::kNone) {
     TRACE_EVENT2("media,gpu", "VAVDA::DownloadFromSurface", "input_id",
                  input_id, "output_id", output_id);
     RETURN_AND_NOTIFY_ON_FAILURE(picture->DownloadFromSurface(va_surface),
@@ -307,10 +284,12 @@ void VaapiVideoDecodeAccelerator::OutputPicture(
   if (!client_)
     return;
 
+  Picture client_picture(output_id, input_id, visible_rect,
+                         picture_color_space.ToGfxColorSpace(),
+                         picture->AllowOverlay());
+  client_picture.set_read_lock_fences_enabled(true);
   // Notify the |client_| a picture is ready to be consumed.
-  client_->PictureReady(Picture(output_id, input_id, visible_rect,
-                                picture_color_space.ToGfxColorSpace(),
-                                picture->AllowOverlay()));
+  client_->PictureReady(client_picture);
 }
 
 void VaapiVideoDecodeAccelerator::TryOutputPicture() {
@@ -377,8 +356,8 @@ void VaapiVideoDecodeAccelerator::QueueInputBuffer(
       break;
 
     default:
-      VLOGF(1) << "Decode/Flush request from client in invalid state: "
-               << state_;
+      LOG(ERROR) << "Decode/Flush request from client in invalid state: "
+                 << state_;
       NotifyError(PLATFORM_FAILURE);
       break;
   }
@@ -413,10 +392,7 @@ bool VaapiVideoDecodeAccelerator::GetCurrInputBuffer_Locked() {
 
   DVLOGF(4) << "New |curr_input_buffer_|, id: " << curr_input_buffer_->id()
             << " size: " << curr_input_buffer_->buffer()->data_size() << "B";
-  decoder_->SetStream(curr_input_buffer_->id(),
-                      curr_input_buffer_->buffer()->data(),
-                      curr_input_buffer_->buffer()->data_size());
-
+  decoder_->SetStream(curr_input_buffer_->id(), *curr_input_buffer_->buffer());
   return true;
 }
 
@@ -472,16 +448,25 @@ void VaapiVideoDecodeAccelerator::DecodeTask() {
     }
 
     switch (res) {
-      case AcceleratedVideoDecoder::kAllocateNewSurfaces:
+      case AcceleratedVideoDecoder::kConfigChange: {
+        // The visible rect should be a subset of the picture size. Otherwise,
+        // the encoded stream is bad.
+        const gfx::Size pic_size = decoder_->GetPicSize();
+        const gfx::Rect visible_rect = decoder_->GetVisibleRect();
+        RETURN_AND_NOTIFY_ON_FAILURE(
+            gfx::Rect(pic_size).Contains(visible_rect),
+            "The visible rectangle is not contained by the picture size",
+            UNREADABLE_INPUT, );
         VLOGF(2) << "Decoder requesting a new set of surfaces";
         task_runner_->PostTask(
             FROM_HERE,
-            base::Bind(&VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange,
-                       weak_this_, decoder_->GetRequiredNumOfPictures(),
-                       decoder_->GetPicSize()));
+            base::BindOnce(
+                &VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange,
+                weak_this_, decoder_->GetRequiredNumOfPictures(), pic_size,
+                decoder_->GetNumReferenceFrames(), visible_rect));
         // We'll get rescheduled once ProvidePictureBuffers() finishes.
         return;
-
+      }
       case AcceleratedVideoDecoder::kRanOutOfStreamData:
         ReturnCurrInputBuffer_Locked();
         break;
@@ -515,22 +500,42 @@ void VaapiVideoDecodeAccelerator::DecodeTask() {
   }
 }
 
-void VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange(size_t num_pics,
-                                                           gfx::Size size) {
+void VaapiVideoDecodeAccelerator::InitiateSurfaceSetChange(
+    size_t num_pics,
+    gfx::Size size,
+    size_t num_reference_frames,
+    const gfx::Rect& visible_rect) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(!awaiting_va_surfaces_recycle_);
+  DCHECK_GT(num_pics, num_reference_frames);
 
   // At this point decoder has stopped running and has already posted onto our
   // loop any remaining output request callbacks, which executed before we got
-  // here. Some of them might have been pended though, because we might not
-  // have had enough TFPictures to output surfaces to. Initiate a wait cycle,
+  // here. Some of them might have been pended though, because we might not have
+  // had enough PictureBuffers to output surfaces to. Initiate a wait cycle,
   // which will wait for client to return enough PictureBuffers to us, so that
   // we can finish all pending output callbacks, releasing associated surfaces.
-  VLOGF(2) << "Initiating surface set change";
   awaiting_va_surfaces_recycle_ = true;
 
-  requested_num_pics_ = num_pics;
   requested_pic_size_ = size;
+  requested_visible_rect_ = visible_rect;
+  if (buffer_allocation_mode_ == BufferAllocationMode::kSuperReduced) {
+    // Add one to the reference frames for the one being currently egressed.
+    requested_num_reference_frames_ = num_reference_frames + 1;
+    requested_num_pics_ = num_pics - num_reference_frames;
+  } else if (buffer_allocation_mode_ == BufferAllocationMode::kReduced) {
+    // Add one to the reference frames for the one being currently egressed,
+    // and an extra allocation for both |client_| and |decoder_|.
+    requested_num_reference_frames_ = num_reference_frames + 2;
+    requested_num_pics_ = num_pics - num_reference_frames + 1;
+  } else {
+    requested_num_reference_frames_ = 0;
+    requested_num_pics_ = num_pics + num_extra_pics_;
+  }
+
+  VLOGF(2) << " |requested_num_pics_| = " << requested_num_pics_
+           << "; |requested_num_reference_frames_| = "
+           << requested_num_reference_frames_;
 
   TryFinishSurfaceSetChange();
 }
@@ -542,26 +547,47 @@ void VaapiVideoDecodeAccelerator::TryFinishSurfaceSetChange() {
     return;
 
   base::AutoLock auto_lock(lock_);
+  const size_t expected_max_available_va_surfaces =
+      IsBufferAllocationModeReducedOrSuperReduced()
+          ? previously_requested_num_reference_frames_
+          : pictures_.size();
   if (!pending_output_cbs_.empty() ||
-      pictures_.size() != available_va_surfaces_.size()) {
-    // Either:
-    // 1. Not all pending pending output callbacks have been executed yet.
-    // Wait for the client to return enough pictures and retry later.
-    // 2. The above happened and all surface release callbacks have been posted
-    // as the result, but not all have executed yet. Post ourselves after them
-    // to let them release surfaces.
+      expected_max_available_va_surfaces != available_va_surfaces_.size()) {
+    // If we're here the stream resolution has changed; we need to wait until:
+    // - all |pending_output_cbs_| have been executed
+    // - all VASurfaces are back to |available_va_surfaces_|; we can't use
+    //   |requested_num_reference_frames_| for comparison, since it might have
+    //   changed in the previous call to InitiateSurfaceSetChange(), so we use
+    //   |previously_requested_num_reference_frames_| instead.
     DVLOGF(2) << "Awaiting pending output/surface release callbacks to finish";
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&VaapiVideoDecodeAccelerator::TryFinishSurfaceSetChange,
-                   weak_this_));
+        base::BindOnce(&VaapiVideoDecodeAccelerator::TryFinishSurfaceSetChange,
+                       weak_this_));
     return;
   }
 
+  previously_requested_num_reference_frames_ = requested_num_reference_frames_;
+
   // All surfaces released, destroy them and dismiss all PictureBuffers.
   awaiting_va_surfaces_recycle_ = false;
+
+  VideoCodecProfile new_profile = decoder_->GetProfile();
+  if (profile_ != new_profile) {
+    DCHECK(decoder_delegate_);
+    profile_ = new_profile;
+    auto new_vaapi_wrapper = VaapiWrapper::CreateForVideoCodec(
+        VaapiWrapper::kDecode, profile_, base::Bind(&ReportToUMA, VAAPI_ERROR));
+    RETURN_AND_NOTIFY_ON_FAILURE(new_vaapi_wrapper.get(),
+                                 "Failed creating VaapiWrapper",
+                                 INVALID_ARGUMENT, );
+    decoder_delegate_->set_vaapi_wrapper(new_vaapi_wrapper.get());
+    vaapi_wrapper_ = std::move(new_vaapi_wrapper);
+  } else {
+    vaapi_wrapper_->DestroyContext();
+  }
+
   available_va_surfaces_.clear();
-  vaapi_wrapper_->DestroyContextAndSurfaces();
 
   for (auto iter = pictures_.begin(); iter != pictures_.end(); ++iter) {
     VLOGF(2) << "Dismissing picture id: " << iter->first;
@@ -572,19 +598,22 @@ void VaapiVideoDecodeAccelerator::TryFinishSurfaceSetChange() {
 
   // And ask for a new set as requested.
   VLOGF(2) << "Requesting " << requested_num_pics_
-           << " pictures of size: " << requested_pic_size_.ToString();
+           << " pictures of size: " << requested_pic_size_.ToString()
+           << " and visible rectangle = " << requested_visible_rect_.ToString();
 
-  const VideoPixelFormat format = GfxBufferFormatToVideoPixelFormat(
-      vaapi_picture_factory_->GetBufferFormat());
+  const base::Optional<VideoPixelFormat> format =
+      GfxBufferFormatToVideoPixelFormat(
+          vaapi_picture_factory_->GetBufferFormat());
+  CHECK(format);
   task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&Client::ProvidePictureBuffers, client_,
-                     requested_num_pics_, format, 1, requested_pic_size_,
-                     vaapi_picture_factory_->GetGLTextureTarget()));
+      FROM_HERE, base::BindOnce(&Client::ProvidePictureBuffersWithVisibleRect,
+                                client_, requested_num_pics_, *format, 1,
+                                requested_pic_size_, requested_visible_rect_,
+                                vaapi_picture_factory_->GetGLTextureTarget()));
+  // |client_| may respond via AssignPictureBuffers().
 }
 
-void VaapiVideoDecodeAccelerator::Decode(
-    const BitstreamBuffer& bitstream_buffer) {
+void VaapiVideoDecodeAccelerator::Decode(BitstreamBuffer bitstream_buffer) {
   Decode(bitstream_buffer.ToDecoderBuffer(), bitstream_buffer.id());
 }
 
@@ -594,7 +623,7 @@ void VaapiVideoDecodeAccelerator::Decode(scoped_refptr<DecoderBuffer> buffer,
   TRACE_EVENT1("media,gpu", "VAVDA::Decode", "Buffer id", bitstream_id);
 
   if (bitstream_id < 0) {
-    VLOGF(1) << "Invalid bitstream_buffer, id: " << bitstream_id;
+    LOG(ERROR) << "Invalid bitstream_buffer, id: " << bitstream_id;
     NotifyError(INVALID_ARGUMENT);
     return;
   }
@@ -620,34 +649,55 @@ void VaapiVideoDecodeAccelerator::AssignPictureBuffers(
       buffers.size() >= requested_num_pics_,
       "Got an invalid number of picture buffers. (Got " << buffers.size()
       << ", requested " << requested_num_pics_ << ")", INVALID_ARGUMENT, );
-  DCHECK(requested_pic_size_ == buffers[0].size());
+  // requested_pic_size_ can be adjusted by VDA client. We should update
+  // |requested_pic_size_| by buffers[0].size(). But AMD driver doesn't decode
+  // frames correctly if the surface stride is different from the width of a
+  // coded size.
+  // TODO(b/139460315): Save buffers[0].size() as |adjusted_size_| once the
+  // AMD driver issue is resolved.
 
-  const unsigned int va_format = GetVaFormatForVideoCodecProfile(profile_);
+  va_surface_format_ = GetVaFormatForVideoCodecProfile(profile_);
   std::vector<VASurfaceID> va_surface_ids;
 
-  // If we can't |decode_using_client_picture_buffers_|, we have to allocate a
+  // If we aren't in BufferAllocationMode::kNone, we have to allocate a
   // |vpp_vaapi_wrapper_| for VaapiPicture to DownloadFromSurface() the VA's
   // internal decoded frame.
-  if (!decode_using_client_picture_buffers_ && !vpp_vaapi_wrapper_) {
+  if (buffer_allocation_mode_ != BufferAllocationMode::kNone &&
+      !vpp_vaapi_wrapper_) {
     vpp_vaapi_wrapper_ = VaapiWrapper::Create(
         VaapiWrapper::kVideoProcess, VAProfileNone,
         base::BindRepeating(&ReportToUMA, VAAPI_VPP_ERROR));
-    if (!vpp_vaapi_wrapper_) {
-      VLOGF(1) << "Failed initializing VppVaapiWrapper";
-      NotifyError(PLATFORM_FAILURE);
-    }
+    RETURN_AND_NOTIFY_ON_FAILURE(vpp_vaapi_wrapper_,
+                                 "Failed to initialize VppVaapiWrapper",
+                                 PLATFORM_FAILURE, );
+
+    // Size is irrelevant for a VPP context.
+    RETURN_AND_NOTIFY_ON_FAILURE(vpp_vaapi_wrapper_->CreateContext(gfx::Size()),
+                                 "Failed to create Context",
+                                 PLATFORM_FAILURE, );
   }
 
   for (size_t i = 0; i < buffers.size(); ++i) {
-    DCHECK(requested_pic_size_ == buffers[i].size());
-
-    // If |decode_using_client_picture_buffers_| is false, this |picture| is
+    // If we aren't in BufferAllocationMode::kNone, this |picture| is
     // only used as a copy destination. Therefore, the VaapiWrapper used and
     // owned by |picture| is |vpp_vaapi_wrapper_|.
+
+    // TODO(b/139460315): Create with buffers[i] once the AMD driver issue is
+    // resolved.
+    PictureBuffer buffer = buffers[i];
+    buffer.set_size(requested_pic_size_);
+
+    // Note that the |size_to_bind| is not relevant in IMPORT mode.
+    const gfx::Size size_to_bind =
+        (output_mode_ == Config::OutputMode::ALLOCATE)
+            ? GetRectSizeFromOrigin(requested_visible_rect_)
+            : gfx::Size();
+
     std::unique_ptr<VaapiPicture> picture = vaapi_picture_factory_->Create(
-        decode_using_client_picture_buffers_ ? vaapi_wrapper_
-                                             : vpp_vaapi_wrapper_,
-        make_context_current_cb_, bind_image_cb_, buffers[i]);
+        (buffer_allocation_mode_ == BufferAllocationMode::kNone)
+            ? vaapi_wrapper_
+            : vpp_vaapi_wrapper_,
+        make_context_current_cb_, bind_image_cb_, buffer, size_to_bind);
     RETURN_AND_NOTIFY_ON_FAILURE(picture, "Failed creating a VaapiPicture",
                                  PLATFORM_FAILURE, );
 
@@ -656,35 +706,52 @@ void VaapiVideoDecodeAccelerator::AssignPictureBuffers(
           picture->Allocate(vaapi_picture_factory_->GetBufferFormat()),
           "Failed to allocate memory for a VaapiPicture", PLATFORM_FAILURE, );
       available_picture_buffers_.push_back(buffers[i].id());
-
       VASurfaceID va_surface_id = picture->va_surface_id();
       if (va_surface_id != VA_INVALID_ID)
         va_surface_ids.push_back(va_surface_id);
     }
 
-    DCHECK(!base::ContainsKey(pictures_, buffers[i].id()));
+    DCHECK(!base::Contains(pictures_, buffers[i].id()));
     pictures_[buffers[i].id()] = std::move(picture);
 
     surfaces_available_.Signal();
   }
 
-  // If |decode_using_client_picture_buffers_|, we use |va_surface_ids| for
+  base::RepeatingCallback<void(VASurfaceID)> va_surface_release_cb;
+
+  // If we aren't in BufferAllocationMode::kNone, we use |va_surface_ids| for
   // decode, otherwise ask |vaapi_wrapper_| to allocate them for us.
-  if (decode_using_client_picture_buffers_) {
+  if (buffer_allocation_mode_ == BufferAllocationMode::kNone) {
     DCHECK(!va_surface_ids.empty());
     RETURN_AND_NOTIFY_ON_FAILURE(
-        vaapi_wrapper_->CreateContext(va_format, requested_pic_size_),
+        vaapi_wrapper_->CreateContext(requested_pic_size_),
         "Failed creating VA Context", PLATFORM_FAILURE, );
+    DCHECK_EQ(va_surface_ids.size(), buffers.size());
+
+    va_surface_release_cb = base::DoNothing();
   } else {
+    const size_t requested_num_surfaces =
+        IsBufferAllocationModeReducedOrSuperReduced()
+            ? requested_num_reference_frames_
+            : pictures_.size();
+    CHECK_NE(requested_num_surfaces, 0u);
     va_surface_ids.clear();
+
     RETURN_AND_NOTIFY_ON_FAILURE(
         vaapi_wrapper_->CreateContextAndSurfaces(
-            va_format, requested_pic_size_, buffers.size(), &va_surface_ids),
+            va_surface_format_, requested_pic_size_,
+            VaapiWrapper::SurfaceUsageHint::kVideoDecoder,
+            requested_num_surfaces, &va_surface_ids),
         "Failed creating VA Surfaces", PLATFORM_FAILURE, );
-  }
-  DCHECK_EQ(va_surface_ids.size(), buffers.size());
 
-  available_va_surfaces_.assign(va_surface_ids.begin(), va_surface_ids.end());
+    va_surface_release_cb =
+        base::BindRepeating(&VaapiWrapper::DestroySurface, vaapi_wrapper_);
+  }
+
+  for (const VASurfaceID va_surface_id : va_surface_ids) {
+    available_va_surfaces_.emplace_back(std::make_unique<ScopedVASurfaceID>(
+        va_surface_id, va_surface_release_cb));
+  }
 
   // Resume DecodeTask if it is still in decoding state.
   if (state_ == kDecoding) {
@@ -698,13 +765,12 @@ void VaapiVideoDecodeAccelerator::AssignPictureBuffers(
 void VaapiVideoDecodeAccelerator::ImportBufferForPicture(
     int32_t picture_buffer_id,
     VideoPixelFormat pixel_format,
-    const gfx::GpuMemoryBufferHandle& gpu_memory_buffer_handle) {
+    gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle) {
   VLOGF(2) << "Importing picture id: " << picture_buffer_id;
   DCHECK(task_runner_->BelongsToCurrentThread());
 
   if (output_mode_ != Config::OutputMode::IMPORT) {
-    CloseGpuMemoryBufferHandle(gpu_memory_buffer_handle);
-    VLOGF(1) << "Cannot import in non-import mode";
+    LOG(ERROR) << "Cannot import in non-import mode";
     NotifyError(INVALID_ARGUMENT);
     return;
   }
@@ -712,8 +778,6 @@ void VaapiVideoDecodeAccelerator::ImportBufferForPicture(
   {
     base::AutoLock auto_lock(lock_);
     if (!pictures_.count(picture_buffer_id)) {
-      CloseGpuMemoryBufferHandle(gpu_memory_buffer_handle);
-
       // It's possible that we've already posted a DismissPictureBuffer for this
       // picture, but it has not yet executed when this ImportBufferForPicture
       // was posted to us by the client. In that case just ignore this (we've
@@ -723,13 +787,19 @@ void VaapiVideoDecodeAccelerator::ImportBufferForPicture(
       return;
     }
 
+    auto buffer_format = VideoPixelFormatToGfxBufferFormat(pixel_format);
+    if (!buffer_format) {
+      LOG(ERROR) << "Unsupported format: " << pixel_format;
+      NotifyError(INVALID_ARGUMENT);
+      return;
+    }
+
     VaapiPicture* picture = pictures_[picture_buffer_id].get();
     if (!picture->ImportGpuMemoryBufferHandle(
-            VideoPixelFormatToGfxBufferFormat(pixel_format),
-            gpu_memory_buffer_handle)) {
+            *buffer_format, std::move(gpu_memory_buffer_handle))) {
       // ImportGpuMemoryBufferHandle will close the handles even on failure, so
       // we don't need to do this ourselves.
-      VLOGF(1) << "Failed to import GpuMemoryBufferHandle";
+      LOG(ERROR) << "Failed to import GpuMemoryBufferHandle";
       NotifyError(PLATFORM_FAILURE);
       return;
     }
@@ -786,7 +856,7 @@ void VaapiVideoDecodeAccelerator::FlushTask() {
 
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&VaapiVideoDecodeAccelerator::FinishFlush, weak_this_));
+      base::BindOnce(&VaapiVideoDecodeAccelerator::FinishFlush, weak_this_));
 }
 
 void VaapiVideoDecodeAccelerator::Flush() {
@@ -825,7 +895,7 @@ void VaapiVideoDecodeAccelerator::FinishFlush() {
   }
 
   task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&Client::NotifyFlushDone, client_));
+                         base::BindOnce(&Client::NotifyFlushDone, client_));
 }
 
 void VaapiVideoDecodeAccelerator::ResetTask() {
@@ -846,7 +916,7 @@ void VaapiVideoDecodeAccelerator::ResetTask() {
   // And let client know that we are done with reset.
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&VaapiVideoDecodeAccelerator::FinishReset, weak_this_));
+      base::BindOnce(&VaapiVideoDecodeAccelerator::FinishReset, weak_this_));
 }
 
 void VaapiVideoDecodeAccelerator::Reset() {
@@ -891,14 +961,14 @@ void VaapiVideoDecodeAccelerator::FinishReset() {
     // Let the surface set change finish first before resetting.
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&VaapiVideoDecodeAccelerator::FinishReset, weak_this_));
+        base::BindOnce(&VaapiVideoDecodeAccelerator::FinishReset, weak_this_));
     return;
   }
 
   state_ = kIdle;
 
   task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&Client::NotifyResetDone, client_));
+                         base::BindOnce(&Client::NotifyResetDone, client_));
 
   // The client might have given us new buffers via Decode() while we were
   // resetting and might be waiting for our move, and not call Decode() anymore
@@ -924,6 +994,16 @@ void VaapiVideoDecodeAccelerator::Cleanup() {
   VLOGF(2) << "Destroying VAVDA";
   state_ = kDestroying;
 
+  // Call DismissPictureBuffer() to notify |client_| that the picture buffers
+  // are no longer used and thus |client_| shall release them. If |client_| has
+  // been invalidated in NotifyError(),|client_| will be destroyed shortly. The
+  // destruction should release all the PictureBuffers.
+  if (client_) {
+    for (const auto& id_and_picture : pictures_)
+      client_->DismissPictureBuffer(id_and_picture.first);
+  }
+  pictures_.clear();
+
   client_ptr_factory_.reset();
   weak_this_factory_.InvalidateWeakPtrs();
 
@@ -939,7 +1019,13 @@ void VaapiVideoDecodeAccelerator::Cleanup() {
     base::AutoUnlock auto_unlock(lock_);
     decoder_thread_.Stop();
   }
+  if (buffer_allocation_mode_ != BufferAllocationMode::kNone)
+    available_va_surfaces_.clear();
 
+  vaapi_wrapper_->DestroyContext();
+
+  if (vpp_vaapi_wrapper_)
+    vpp_vaapi_wrapper_->DestroyContext();
   state_ = kUninitialized;
 }
 
@@ -956,15 +1042,15 @@ bool VaapiVideoDecodeAccelerator::TryToSetupDecodeOnSeparateThread(
 }
 
 void VaapiVideoDecodeAccelerator::SurfaceReady(
-    const scoped_refptr<VASurface>& dec_surface,
+    scoped_refptr<VASurface> dec_surface,
     int32_t bitstream_id,
     const gfx::Rect& visible_rect,
     const VideoColorSpace& color_space) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&VaapiVideoDecodeAccelerator::SurfaceReady, weak_this_,
-                   dec_surface, bitstream_id, visible_rect, color_space));
+        FROM_HERE, base::BindOnce(&VaapiVideoDecodeAccelerator::SurfaceReady,
+                                  weak_this_, std::move(dec_surface),
+                                  bitstream_id, visible_rect, color_space));
     return;
   }
 
@@ -976,9 +1062,9 @@ void VaapiVideoDecodeAccelerator::SurfaceReady(
     if (state_ == kResetting || state_ == kDestroying)
       return;
   }
-  pending_output_cbs_.push(
-      base::BindOnce(&VaapiVideoDecodeAccelerator::OutputPicture, weak_this_,
-                     dec_surface, bitstream_id, visible_rect, color_space));
+  pending_output_cbs_.push(base::BindOnce(
+      &VaapiVideoDecodeAccelerator::OutputPicture, weak_this_,
+      std::move(dec_surface), bitstream_id, visible_rect, color_space));
 
   TryOutputPicture();
 }
@@ -990,49 +1076,64 @@ scoped_refptr<VASurface> VaapiVideoDecodeAccelerator::CreateSurface() {
   if (available_va_surfaces_.empty())
     return nullptr;
 
+  DCHECK_NE(VA_INVALID_ID, va_surface_format_);
   DCHECK(!awaiting_va_surfaces_recycle_);
-  if (!decode_using_client_picture_buffers_) {
-    const VASurfaceID id = available_va_surfaces_.front();
+  if (buffer_allocation_mode_ != BufferAllocationMode::kNone) {
+    auto va_surface_id = std::move(available_va_surfaces_.front());
+    const VASurfaceID id = va_surface_id->id();
     available_va_surfaces_.pop_front();
 
     TRACE_COUNTER_ID2("media,gpu", "Vaapi VASurfaceIDs", this, "used",
-                      pictures_.size() - available_va_surfaces_.size(),
+                      (IsBufferAllocationModeReducedOrSuperReduced()
+                           ? requested_num_reference_frames_
+                           : pictures_.size()) -
+                          available_va_surfaces_.size(),
                       "available", available_va_surfaces_.size());
 
-    return new VASurface(id, requested_pic_size_,
-                         vaapi_wrapper_->va_surface_format(),
-                         va_surface_release_cb_);
+    return new VASurface(
+        id, requested_pic_size_, va_surface_format_,
+        base::BindOnce(va_surface_recycle_cb_, std::move(va_surface_id)));
   }
 
   // Find the first |available_va_surfaces_| id such that the associated
   // |pictures_| entry is marked as |available_picture_buffers_|. In practice,
   // we will quickly find an available |va_surface_id|.
-  for (const VASurfaceID va_surface_id : available_va_surfaces_) {
+  for (auto it = available_va_surfaces_.begin();
+       it != available_va_surfaces_.end(); ++it) {
+    const VASurfaceID va_surface_id = (*it)->id();
     for (const auto& id_and_picture : pictures_) {
       if (id_and_picture.second->va_surface_id() == va_surface_id &&
-          base::ContainsValue(available_picture_buffers_,
-                              id_and_picture.first)) {
+          base::Contains(available_picture_buffers_, id_and_picture.first)) {
         // Remove |va_surface_id| from the list of availables, and use the id
         // to return a new VASurface.
-        base::Erase(available_va_surfaces_, va_surface_id);
-        return new VASurface(va_surface_id, requested_pic_size_,
-                             vaapi_wrapper_->va_surface_format(),
-                             va_surface_release_cb_);
+        auto va_surface = std::move(*it);
+        available_va_surfaces_.erase(it);
+        return new VASurface(
+            va_surface_id, requested_pic_size_, va_surface_format_,
+            base::BindOnce(va_surface_recycle_cb_, std::move(va_surface)));
       }
     }
   }
   return nullptr;
 }
 
-void VaapiVideoDecodeAccelerator::RecycleVASurfaceID(
-    VASurfaceID va_surface_id) {
+void VaapiVideoDecodeAccelerator::RecycleVASurface(
+    std::unique_ptr<ScopedVASurfaceID> va_surface,
+    // We don't use |va_surface_id| but it must be here because this method is
+    // bound as VASurface::ReleaseCB.
+    VASurfaceID /*va_surface_id*/) {
   DCHECK(task_runner_->BelongsToCurrentThread());
+
   {
     base::AutoLock auto_lock(lock_);
-    available_va_surfaces_.push_back(va_surface_id);
-    if (!decode_using_client_picture_buffers_) {
+    available_va_surfaces_.push_back(std::move(va_surface));
+
+    if (buffer_allocation_mode_ != BufferAllocationMode::kNone) {
       TRACE_COUNTER_ID2("media,gpu", "Vaapi VASurfaceIDs", this, "used",
-                        pictures_.size() - available_va_surfaces_.size(),
+                        (IsBufferAllocationModeReducedOrSuperReduced()
+                             ? requested_num_reference_frames_
+                             : pictures_.size()) -
+                            available_va_surfaces_.size(),
                         "available", available_va_surfaces_.size());
     }
     surfaces_available_.Signal();
@@ -1040,13 +1141,67 @@ void VaapiVideoDecodeAccelerator::RecycleVASurfaceID(
 
   TryOutputPicture();
 }
+
+// static
+VideoDecodeAccelerator::SupportedProfiles
+VaapiVideoDecodeAccelerator::GetSupportedProfiles() {
+  return VaapiWrapper::GetSupportedDecodeProfiles();
+}
+
+VaapiVideoDecodeAccelerator::BufferAllocationMode
+VaapiVideoDecodeAccelerator::DecideBufferAllocationMode() {
+  // TODO(crbug.com/912295): Enable a better BufferAllocationMode for IMPORT
+  // |output_mode_| as well.
+  if (output_mode_ == VideoDecodeAccelerator::Config::OutputMode::IMPORT)
+    return BufferAllocationMode::kNormal;
+
+  // On Gemini Lake, Kaby Lake and later we can pass to libva the client's
+  // PictureBuffers to decode onto, which skips the use of the Vpp unit and its
+  // associated format reconciliation copy, avoiding all internal buffer
+  // allocations.  This only works for VP8 and VP9: H264 GetNumReferenceFrames()
+  // depends on the bitstream and sometimes it's not enough to cover the amount
+  // of frames needed by the client pipeline (see b/133733739).
+  // TODO(crbug.com/911754): Enable for VP9 Profile 2.
+  if (IsGeminiLakeOrLater() &&
+      (profile_ == VP9PROFILE_PROFILE0 || profile_ == VP8PROFILE_ANY)) {
+    // Add one to the reference frames for the one being currently egressed, and
+    // an extra allocation for both |client_| and |decoder_|, see
+    // crrev.com/c/1576560.
+    if (profile_ == VP8PROFILE_ANY)
+      num_extra_pics_ = 3;
+    return BufferAllocationMode::kNone;
+  }
+
+  // If we're here, we have to use the Vpp unit and allocate buffers for
+  // |decoder_|; usually we'd have to allocate the |decoder_|s
+  // GetRequiredNumOfPictures() internally, we can allocate just |decoder_|s
+  // GetNumReferenceFrames() + 1. Moreover, we also request the |client_| to
+  // allocate less than the usual |decoder_|s GetRequiredNumOfPictures().
+
+  // Another +1 is experimentally needed for high-to-high resolution changes.
+  // TODO(mcasas): Figure out why and why only H264, see crbug.com/912295 and
+  // http://crrev.com/c/1363807/9/media/gpu/h264_decoder.cc#1449.
+  if (profile_ >= H264PROFILE_MIN && profile_ <= H264PROFILE_MAX)
+    return BufferAllocationMode::kReduced;
+
+  return BufferAllocationMode::kSuperReduced;
+}
+
+bool VaapiVideoDecodeAccelerator::IsBufferAllocationModeReducedOrSuperReduced()
+    const {
+  return buffer_allocation_mode_ == BufferAllocationMode::kSuperReduced ||
+         buffer_allocation_mode_ == BufferAllocationMode::kReduced;
+}
+
 bool VaapiVideoDecodeAccelerator::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
   using base::trace_event::MemoryAllocatorDump;
   base::AutoLock auto_lock(lock_);
-  if (decode_using_client_picture_buffers_ || pictures_.empty())
+  if (buffer_allocation_mode_ == BufferAllocationMode::kNone ||
+      !requested_num_reference_frames_) {
     return false;
+  }
 
   auto dump_name = base::StringPrintf("gpu/vaapi/decoder/0x%" PRIxPTR,
                                       reinterpret_cast<uintptr_t>(this));
@@ -1054,30 +1209,28 @@ bool VaapiVideoDecodeAccelerator::OnMemoryDump(
 
   constexpr float kNumBytesPerPixelYUV420 = 12.0 / 8;
   constexpr float kNumBytesPerPixelYUV420_10bpp = 2 * kNumBytesPerPixelYUV420;
-  unsigned int va_surface_format = GetVaFormatForVideoCodecProfile(profile_);
-  DCHECK(va_surface_format == VA_RT_FORMAT_YUV420 ||
-         va_surface_format == VA_RT_FORMAT_YUV420_10BPP);
+  DCHECK(va_surface_format_ == VA_RT_FORMAT_YUV420 ||
+         va_surface_format_ == VA_RT_FORMAT_YUV420_10BPP);
   const float va_surface_bytes_per_pixel =
-      va_surface_format == VA_RT_FORMAT_YUV420 ? kNumBytesPerPixelYUV420
-                                               : kNumBytesPerPixelYUV420_10bpp;
-  // Report |pictures_.size()| and the associated memory size.
-  // The calculated size is an estimation since we don't know the internal VA
+      va_surface_format_ == VA_RT_FORMAT_YUV420 ? kNumBytesPerPixelYUV420
+                                                : kNumBytesPerPixelYUV420_10bpp;
+  // Report |requested_num_surfaces| and the associated memory size. The
+  // calculated size is an estimation since we don't know the internal VA
   // strides, texture compression, headers, etc, but is a good lower boundary.
-  dump->AddScalar(
-      MemoryAllocatorDump::kNameSize, MemoryAllocatorDump::kUnitsBytes,
-      static_cast<uint64_t>(pictures_.size() * requested_pic_size_.GetArea() *
-                            va_surface_bytes_per_pixel));
+  const size_t requested_num_surfaces =
+      IsBufferAllocationModeReducedOrSuperReduced()
+          ? requested_num_reference_frames_
+          : pictures_.size();
+  dump->AddScalar(MemoryAllocatorDump::kNameSize,
+                  MemoryAllocatorDump::kUnitsBytes,
+                  static_cast<uint64_t>(requested_num_surfaces *
+                                        requested_pic_size_.GetArea() *
+                                        va_surface_bytes_per_pixel));
   dump->AddScalar(MemoryAllocatorDump::kNameObjectCount,
                   MemoryAllocatorDump::kUnitsObjects,
-                  static_cast<uint64_t>(pictures_.size()));
+                  static_cast<uint64_t>(requested_num_surfaces));
 
   return true;
-}
-
-// static
-VideoDecodeAccelerator::SupportedProfiles
-VaapiVideoDecodeAccelerator::GetSupportedProfiles() {
-  return VaapiWrapper::GetSupportedDecodeProfiles();
 }
 
 }  // namespace media

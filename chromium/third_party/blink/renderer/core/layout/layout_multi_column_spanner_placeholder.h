@@ -26,8 +26,12 @@ class LayoutMultiColumnSpannerPlaceholder final : public LayoutBox {
       const ComputedStyle& parent_style,
       LayoutBox&);
 
+  LayoutBlockFlow* MultiColumnBlockFlow() const {
+    return To<LayoutBlockFlow>(Parent());
+  }
+
   LayoutMultiColumnFlowThread* FlowThread() const {
-    return ToLayoutBlockFlow(Parent())->MultiColumnFlowThread();
+    return To<LayoutBlockFlow>(Parent())->MultiColumnFlowThread();
   }
 
   LayoutBox* LayoutObjectInFlowThread() const {
@@ -56,20 +60,24 @@ class LayoutMultiColumnSpannerPlaceholder final : public LayoutBox {
   void WillBeRemovedFromTree() override;
   bool NeedsPreferredWidthsRecalculation() const override;
   void RecalcVisualOverflow() override;
-  LayoutUnit MinPreferredLogicalWidth() const override;
-  LayoutUnit MaxPreferredLogicalWidth() const override;
+  MinMaxSizes PreferredLogicalWidths() const override;
   void UpdateLayout() override;
   void ComputeLogicalHeight(LayoutUnit logical_height,
                             LayoutUnit logical_top,
                             LogicalExtentComputedValues&) const override;
   void Paint(const PaintInfo&) const override;
   bool NodeAtPoint(HitTestResult&,
-                   const HitTestLocation& location_in_container,
-                   const LayoutPoint& accumulated_offset,
+                   const HitTestLocation&,
+                   const PhysicalOffset& accumulated_offset,
                    HitTestAction) override;
 
  private:
   LayoutMultiColumnSpannerPlaceholder(LayoutBox*);
+
+  MinMaxSizes ComputeIntrinsicLogicalWidths() const final {
+    NOTREACHED();
+    return MinMaxSizes();
+  }
 
   // The actual column-span:all layoutObject inside the flow thread.
   LayoutBox* layout_object_in_flow_thread_;

@@ -21,11 +21,16 @@
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "ipc/ipc_channel_factory.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_sync_message.h"
 #include "mojo/public/cpp/bindings/sync_event_watcher.h"
+
+#if !defined(OS_NACL) && !BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
+#include "ipc/trace_ipc_message.h"
+#endif
 
 using base::WaitableEvent;
 
@@ -172,8 +177,8 @@ class SyncChannel::ReceivedSyncMsgQueue :
     dispatch_event_.Signal();
     if (!was_task_pending) {
       listener_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&ReceivedSyncMsgQueue::DispatchMessagesTask,
-                                this, base::RetainedRef(context)));
+          FROM_HERE, base::BindOnce(&ReceivedSyncMsgQueue::DispatchMessagesTask,
+                                    this, base::RetainedRef(context)));
     }
   }
 
@@ -288,8 +293,8 @@ class SyncChannel::ReceivedSyncMsgQueue :
         listener_task_runner_(base::ThreadTaskRunnerHandle::Get()),
         sync_dispatch_watcher_(std::make_unique<mojo::SyncEventWatcher>(
             &dispatch_event_,
-            base::Bind(&ReceivedSyncMsgQueue::OnDispatchEventReady,
-                       base::Unretained(this)))) {
+            base::BindRepeating(&ReceivedSyncMsgQueue::OnDispatchEventReady,
+                                base::Unretained(this)))) {
     sync_dispatch_watcher_->AllowWokenUpBySyncWatchOnSameThread();
   }
 
@@ -416,8 +421,8 @@ bool SyncChannel::SyncContext::Pop() {
   // Send() call.  So check if we have any queued replies available that
   // can now unblock the listener thread.
   ipc_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&ReceivedSyncMsgQueue::DispatchReplies,
-                            received_sync_msgs_));
+      FROM_HERE, base::BindOnce(&ReceivedSyncMsgQueue::DispatchReplies,
+                                received_sync_msgs_));
 
   return result;
 }
@@ -452,9 +457,9 @@ bool SyncChannel::SyncContext::TryToUnblockListener(const Message* msg) {
   }
 
   base::WaitableEvent* done_event = deserializers_.back().done_event;
-  TRACE_EVENT_FLOW_BEGIN0(
-      TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
-      "SyncChannel::SyncContext::TryToUnblockListener", done_event);
+  TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
+                          "SyncChannel::SyncContext::TryToUnblockListener",
+                          done_event);
 
   done_event->Signal();
 
@@ -517,7 +522,7 @@ void SyncChannel::SyncContext::CancelPendingSends() {
   PendingSyncMessageQueue::iterator iter;
   DVLOG(1) << "Canceling pending sends";
   for (iter = deserializers_.begin(); iter != deserializers_.end(); iter++) {
-    TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+    TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
                             "SyncChannel::SyncContext::CancelPendingSends",
                             iter->done_event);
     iter->done_event->Signal();
@@ -578,6 +583,16 @@ SyncChannel::SyncChannel(
   StartWatching();
 }
 
+void SyncChannel::AddListenerTaskRunner(
+    int32_t routing_id,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  context()->AddListenerTaskRunner(routing_id, std::move(task_runner));
+}
+
+void SyncChannel::RemoveListenerTaskRunner(int32_t routing_id) {
+  context()->RemoveListenerTaskRunner(routing_id);
+}
+
 SyncChannel::~SyncChannel() = default;
 
 void SyncChannel::SetRestrictDispatchChannelGroup(int group) {
@@ -599,6 +614,8 @@ bool SyncChannel::Send(Message* message) {
   Logging::GetInstance()->GetMessageText(
       message->type(), &name, message, nullptr);
   TRACE_EVENT1("ipc", "SyncChannel::Send", "name", name);
+#elif !defined(OS_NACL)
+  TRACE_IPC_MESSAGE_SEND("ipc", "SyncChannel::Send", message);
 #else
   TRACE_EVENT2("ipc", "SyncChannel::Send",
                "class", IPC_MESSAGE_ID_CLASS(message->type()),
@@ -627,7 +644,7 @@ bool SyncChannel::Send(Message* message) {
   scoped_refptr<mojo::SyncHandleRegistry> registry = sync_handle_registry_;
   WaitForReply(registry.get(), context.get(), pump_messages);
 
-  TRACE_EVENT_FLOW_END0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
+  TRACE_EVENT_FLOW_END0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
                         "SyncChannel::Send", context->GetSendDoneEvent());
 
   return context->Pop();
@@ -652,13 +669,14 @@ void SyncChannel::WaitForReply(mojo::SyncHandleRegistry* registry,
     bool dispatch = false;
     bool send_done = false;
     bool should_pump_messages = false;
-    base::Closure on_send_done_callback = base::Bind(&OnEventReady, &send_done);
+    base::RepeatingClosure on_send_done_callback =
+        base::BindRepeating(&OnEventReady, &send_done);
     registry->RegisterEvent(context->GetSendDoneEvent(), on_send_done_callback);
 
-    base::Closure on_pump_messages_callback;
+    base::RepeatingClosure on_pump_messages_callback;
     if (pump_messages_event) {
       on_pump_messages_callback =
-          base::Bind(&OnEventReady, &should_pump_messages);
+          base::BindRepeating(&OnEventReady, &should_pump_messages);
       registry->RegisterEvent(pump_messages_event, on_pump_messages_callback);
     }
 

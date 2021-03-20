@@ -4,8 +4,9 @@
 
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_whole_entry_buffer.h"
 
-#include "base/logging.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_estimate_memory_usage.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_flags.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_macros.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_string_utils.h"
 
@@ -37,27 +38,28 @@ size_t HpackWholeEntryBuffer::EstimateMemoryUsage() const {
 }
 
 void HpackWholeEntryBuffer::OnIndexedHeader(size_t index) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnIndexedHeader: index=" << index;
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnIndexedHeader: index=" << index;
   listener_->OnIndexedHeader(index);
 }
 
 void HpackWholeEntryBuffer::OnStartLiteralHeader(HpackEntryType entry_type,
                                                  size_t maybe_name_index) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnStartLiteralHeader: entry_type="
-           << entry_type << ",  maybe_name_index=" << maybe_name_index;
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnStartLiteralHeader: entry_type="
+                 << entry_type << ",  maybe_name_index=" << maybe_name_index;
   entry_type_ = entry_type;
   maybe_name_index_ = maybe_name_index;
 }
 
 void HpackWholeEntryBuffer::OnNameStart(bool huffman_encoded, size_t len) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnNameStart: huffman_encoded="
-           << (huffman_encoded ? "true" : "false") << ",  len=" << len;
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnNameStart: huffman_encoded="
+                 << (huffman_encoded ? "true" : "false") << ",  len=" << len;
   DCHECK_EQ(maybe_name_index_, 0u);
   if (!error_detected_) {
     if (len > max_string_size_bytes_) {
-      DVLOG(1) << "Name length (" << len << ") is longer than permitted ("
-               << max_string_size_bytes_ << ")";
-      ReportError("HPACK entry name size is too long.");
+      HTTP2_DVLOG(1) << "Name length (" << len << ") is longer than permitted ("
+                     << max_string_size_bytes_ << ")";
+      ReportError(HpackDecodingError::kNameTooLong);
+      HTTP2_CODE_COUNT_N(decompress_failure_3, 18, 23);
       return;
     }
     name_.OnStart(huffman_encoded, len);
@@ -65,30 +67,35 @@ void HpackWholeEntryBuffer::OnNameStart(bool huffman_encoded, size_t len) {
 }
 
 void HpackWholeEntryBuffer::OnNameData(const char* data, size_t len) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnNameData: len=" << len << " data:\n"
-           << Http2HexDump(Http2StringPiece(data, len));
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnNameData: len=" << len
+                 << " data:\n"
+                 << Http2HexDump(quiche::QuicheStringPiece(data, len));
   DCHECK_EQ(maybe_name_index_, 0u);
   if (!error_detected_ && !name_.OnData(data, len)) {
-    ReportError("Error decoding HPACK entry name.");
+    ReportError(HpackDecodingError::kNameHuffmanError);
+    HTTP2_CODE_COUNT_N(decompress_failure_3, 19, 23);
   }
 }
 
 void HpackWholeEntryBuffer::OnNameEnd() {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnNameEnd";
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnNameEnd";
   DCHECK_EQ(maybe_name_index_, 0u);
   if (!error_detected_ && !name_.OnEnd()) {
-    ReportError("Error decoding HPACK entry name.");
+    ReportError(HpackDecodingError::kNameHuffmanError);
+    HTTP2_CODE_COUNT_N(decompress_failure_3, 20, 23);
   }
 }
 
 void HpackWholeEntryBuffer::OnValueStart(bool huffman_encoded, size_t len) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnValueStart: huffman_encoded="
-           << (huffman_encoded ? "true" : "false") << ",  len=" << len;
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnValueStart: huffman_encoded="
+                 << (huffman_encoded ? "true" : "false") << ",  len=" << len;
   if (!error_detected_) {
     if (len > max_string_size_bytes_) {
-      DVLOG(1) << "Value length (" << len << ") is longer than permitted ("
-               << max_string_size_bytes_ << ")";
-      ReportError("HPACK entry value size is too long.");
+      HTTP2_DVLOG(1) << "Value length (" << len
+                     << ") is longer than permitted (" << max_string_size_bytes_
+                     << ")";
+      ReportError(HpackDecodingError::kValueTooLong);
+      HTTP2_CODE_COUNT_N(decompress_failure_3, 21, 23);
       return;
     }
     value_.OnStart(huffman_encoded, len);
@@ -96,20 +103,23 @@ void HpackWholeEntryBuffer::OnValueStart(bool huffman_encoded, size_t len) {
 }
 
 void HpackWholeEntryBuffer::OnValueData(const char* data, size_t len) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnValueData: len=" << len << " data:\n"
-           << Http2HexDump(Http2StringPiece(data, len));
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnValueData: len=" << len
+                 << " data:\n"
+                 << Http2HexDump(quiche::QuicheStringPiece(data, len));
   if (!error_detected_ && !value_.OnData(data, len)) {
-    ReportError("Error decoding HPACK entry value.");
+    ReportError(HpackDecodingError::kValueHuffmanError);
+    HTTP2_CODE_COUNT_N(decompress_failure_3, 22, 23);
   }
 }
 
 void HpackWholeEntryBuffer::OnValueEnd() {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnValueEnd";
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnValueEnd";
   if (error_detected_) {
     return;
   }
   if (!value_.OnEnd()) {
-    ReportError("Error decoding HPACK entry value.");
+    ReportError(HpackDecodingError::kValueHuffmanError);
+    HTTP2_CODE_COUNT_N(decompress_failure_3, 23, 23);
     return;
   }
   if (maybe_name_index_ == 0) {
@@ -123,15 +133,17 @@ void HpackWholeEntryBuffer::OnValueEnd() {
 }
 
 void HpackWholeEntryBuffer::OnDynamicTableSizeUpdate(size_t size) {
-  DVLOG(2) << "HpackWholeEntryBuffer::OnDynamicTableSizeUpdate: size=" << size;
+  HTTP2_DVLOG(2) << "HpackWholeEntryBuffer::OnDynamicTableSizeUpdate: size="
+                 << size;
   listener_->OnDynamicTableSizeUpdate(size);
 }
 
-void HpackWholeEntryBuffer::ReportError(Http2StringPiece error_message) {
+void HpackWholeEntryBuffer::ReportError(HpackDecodingError error) {
   if (!error_detected_) {
-    DVLOG(1) << "HpackWholeEntryBuffer::ReportError: " << error_message;
+    HTTP2_DVLOG(1) << "HpackWholeEntryBuffer::ReportError: "
+                   << HpackDecodingErrorToString(error);
     error_detected_ = true;
-    listener_->OnHpackDecodeError(error_message);
+    listener_->OnHpackDecodeError(error);
     listener_ = HpackWholeEntryNoOpListener::NoOpListener();
   }
 }

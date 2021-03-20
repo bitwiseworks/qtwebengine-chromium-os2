@@ -4,6 +4,7 @@
 
 #include "extensions/renderer/script_context_set.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -38,7 +39,7 @@ ScriptContextSet::~ScriptContextSet() {
 ScriptContext* ScriptContextSet::Register(
     blink::WebLocalFrame* frame,
     const v8::Local<v8::Context>& v8_context,
-    int world_id) {
+    int32_t world_id) {
   const Extension* extension =
       GetExtensionFromFrameAndWorld(frame, world_id, false);
   const Extension* effective_extension =
@@ -102,7 +103,7 @@ ScriptContext* ScriptContextSet::GetMainWorldContextForFrame(
 void ScriptContextSet::ForEach(
     const std::string& extension_id,
     content::RenderFrame* render_frame,
-    const base::Callback<void(ScriptContext*)>& callback) const {
+    const base::RepeatingCallback<void(ScriptContext*)>& callback) {
   // We copy the context list, because calling into javascript may modify it
   // out from under us.
   std::set<ScriptContext*> contexts_copy = contexts_;
@@ -127,8 +128,9 @@ void ScriptContextSet::ForEach(
 }
 
 void ScriptContextSet::OnExtensionUnloaded(const std::string& extension_id) {
-  ForEach(extension_id,
-          base::Bind(&ScriptContextSet::Remove, base::Unretained(this)));
+  ScriptContextSetIterable::ForEach(
+      extension_id,
+      base::BindRepeating(&ScriptContextSet::Remove, base::Unretained(this)));
 }
 
 void ScriptContextSet::AddForTesting(std::unique_ptr<ScriptContext> context) {
@@ -137,7 +139,7 @@ void ScriptContextSet::AddForTesting(std::unique_ptr<ScriptContext> context) {
 
 const Extension* ScriptContextSet::GetExtensionFromFrameAndWorld(
     blink::WebLocalFrame* frame,
-    int world_id,
+    int32_t world_id,
     bool use_effective_url) {
   std::string extension_id;
   if (world_id != 0) {
@@ -171,7 +173,7 @@ const Extension* ScriptContextSet::GetExtensionFromFrameAndWorld(
 
 Feature::Context ScriptContextSet::ClassifyJavaScriptContext(
     const Extension* extension,
-    int world_id,
+    int32_t world_id,
     const GURL& url,
     const blink::WebSecurityOrigin& origin) {
   // WARNING: This logic must match ProcessMap::GetContextType, as much as
@@ -213,9 +215,9 @@ Feature::Context ScriptContextSet::ClassifyJavaScriptContext(
                                    : Feature::BLESSED_EXTENSION_CONTEXT;
   }
 
-  // TODO(kalman): This isUnique() check is wrong, it should be performed as
+  // TODO(kalman): This IsOpaque() check is wrong, it should be performed as
   // part of ScriptContext::IsSandboxedPage().
-  if (!origin.IsUnique() &&
+  if (!origin.IsOpaque() &&
       RendererExtensionRegistry::Get()->ExtensionBindingsAllowed(url)) {
     if (!extension)  // TODO(kalman): when does this happen?
       return Feature::UNSPECIFIED_CONTEXT;
@@ -228,6 +230,9 @@ Feature::Context ScriptContextSet::ClassifyJavaScriptContext(
 
   if (url.SchemeIs(content::kChromeUIScheme))
     return Feature::WEBUI_CONTEXT;
+
+  if (url.SchemeIs(content::kChromeUIUntrustedScheme))
+    return Feature::WEBUI_UNTRUSTED_CONTEXT;
 
   return Feature::WEB_PAGE_CONTEXT;
 }

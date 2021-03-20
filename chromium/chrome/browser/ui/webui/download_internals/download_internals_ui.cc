@@ -9,7 +9,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/download_internals/download_internals_ui_message_handler.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/browser_resources.h"
+#include "chrome/grit/dev_ui_browser_resources.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -23,7 +23,7 @@ DownloadInternalsUI::DownloadInternalsUI(content::WebUI* web_ui)
       "script-src chrome://resources 'self' 'unsafe-eval';");
 
   // Required resources.
-  html_source->SetJsonPath("strings.js");
+  html_source->UseStringsJs();
   html_source->AddResourcePath("download_internals.css",
                                IDR_DOWNLOAD_INTERNALS_CSS);
   html_source->AddResourcePath("download_internals.js",
@@ -33,10 +33,8 @@ DownloadInternalsUI::DownloadInternalsUI(content::WebUI* web_ui)
   html_source->AddResourcePath("download_internals_visuals.js",
                                IDR_DOWNLOAD_INTERNALS_VISUALS_JS);
   html_source->SetDefaultResource(IDR_DOWNLOAD_INTERNALS_HTML);
-  html_source->UseGzip();
 
   Profile* profile = Profile::FromWebUI(web_ui);
-  html_source->AddBoolean("isIncognito", profile->IsOffTheRecord());
 
   content::WebUIDataSource::Add(profile, html_source);
 

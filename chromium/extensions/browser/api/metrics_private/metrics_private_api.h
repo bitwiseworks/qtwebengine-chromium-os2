@@ -15,7 +15,7 @@
 namespace extensions {
 
 class MetricsPrivateGetIsCrashReportingEnabledFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("metricsPrivate.getIsCrashReportingEnabled",
                              METRICSPRIVATE_GETISCRASHRECORDINGENABLED)
@@ -27,7 +27,7 @@ class MetricsPrivateGetIsCrashReportingEnabledFunction
   ResponseAction Run() override;
 };
 
-class MetricsPrivateGetFieldTrialFunction : public UIThreadExtensionFunction {
+class MetricsPrivateGetFieldTrialFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("metricsPrivate.getFieldTrial",
                              METRICSPRIVATE_GETFIELDTRIAL)
@@ -39,8 +39,7 @@ class MetricsPrivateGetFieldTrialFunction : public UIThreadExtensionFunction {
   ResponseAction Run() override;
 };
 
-class MetricsPrivateGetVariationParamsFunction
-    : public UIThreadExtensionFunction {
+class MetricsPrivateGetVariationParamsFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("metricsPrivate.getVariationParams",
                              METRICSPRIVATE_GETVARIATIONPARAMS)
@@ -52,8 +51,7 @@ class MetricsPrivateGetVariationParamsFunction
   ResponseAction Run() override;
 };
 
-class MetricsPrivateRecordUserActionFunction
-    : public UIThreadExtensionFunction {
+class MetricsPrivateRecordUserActionFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("metricsPrivate.recordUserAction",
                              METRICSPRIVATE_RECORDUSERACTION)
@@ -65,7 +63,7 @@ class MetricsPrivateRecordUserActionFunction
   ResponseAction Run() override;
 };
 
-class MetricsHistogramHelperFunction : public UIThreadExtensionFunction {
+class MetricsHistogramHelperFunction : public ExtensionFunction {
  protected:
   ~MetricsHistogramHelperFunction() override {}
   void RecordValue(const std::string& name,
@@ -229,6 +227,24 @@ class MetricsPrivateRecordLongTimeFunction
 
   // ExtensionFunction:
   ResponseAction Run() override;
+};
+
+class MetricsPrivateGetHistogramFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("metricsPrivate.getHistogram",
+                             METRICSPRIVATE_GETHISTOGRAM)
+
+ private:
+  ~MetricsPrivateGetHistogramFunction() override;
+  ResponseAction Run() override;
+
+  // Sends an asynchronous response containing data for the histogram named
+  // |name|. Passed to content::FetchHistogramsAsynchronously() to be run after
+  // new data from other processes has been collected.
+  void RespondOnHistogramsFetched(const std::string& name);
+
+  // Creates a response with current data for the histogram named |name|.
+  ResponseValue GetHistogram(const std::string& name);
 };
 
 }  // namespace extensions

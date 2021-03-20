@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "ipc/ipc_message.h"
@@ -98,7 +99,7 @@ MessageHandler::~MessageHandler() {
     // The posted task won't have the proxy lock, but that's OK, it doesn't
     // touch any internal state; it's a direct call on the plugin's function.
     message_loop_->task_runner()->PostTask(
-        FROM_HERE, base::Bind(handler_if_->Destroy, instance_, user_data_));
+        FROM_HERE, base::BindOnce(handler_if_->Destroy, instance_, user_data_));
   }
 }
 
@@ -108,9 +109,9 @@ bool MessageHandler::LoopIsValid() const {
 
 void MessageHandler::HandleMessage(ScopedPPVar var) {
   message_loop_->task_runner()->PostTask(
-      FROM_HERE, RunWhileLocked(base::Bind(&HandleMessageWrapper,
-                                           handler_if_->HandleMessage,
-                                           instance_, user_data_, var)));
+      FROM_HERE, RunWhileLocked(base::BindOnce(&HandleMessageWrapper,
+                                               handler_if_->HandleMessage,
+                                               instance_, user_data_, var)));
 }
 
 void MessageHandler::HandleBlockingMessage(
@@ -118,9 +119,9 @@ void MessageHandler::HandleBlockingMessage(
     std::unique_ptr<IPC::Message> reply_msg) {
   message_loop_->task_runner()->PostTask(
       FROM_HERE,
-      RunWhileLocked(base::Bind(
+      RunWhileLocked(base::BindOnce(
           &HandleBlockingMessageWrapper, handler_if_->HandleBlockingMessage,
-          instance_, user_data_, var, base::Passed(std::move(reply_msg)))));
+          instance_, user_data_, var, std::move(reply_msg))));
 }
 
 MessageHandler::MessageHandler(

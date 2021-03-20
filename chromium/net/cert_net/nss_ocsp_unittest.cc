@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "net/cert_net/nss_ocsp.h"
+#include "net/cert_net/nss_ocsp_session_url_request.h"
 
 #include <string>
 #include <utility>
@@ -26,7 +27,7 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "net/url_request/url_request_filter.h"
 #include "net/url_request/url_request_interceptor.h"
 #include "net/url_request/url_request_test_job.h"
@@ -59,6 +60,7 @@ class AiaResponseHandler : public URLRequestInterceptor {
   URLRequestJob* MaybeInterceptRequest(
       URLRequest* request,
       NetworkDelegate* network_delegate) const override {
+    EXPECT_TRUE(request->disable_secure_dns());
     ++const_cast<AiaResponseHandler*>(this)->request_count_;
 
     return new URLRequestTestJob(request, network_delegate, headers_,
@@ -77,7 +79,7 @@ class AiaResponseHandler : public URLRequestInterceptor {
 
 }  // namespace
 
-class NssHttpTest : public TestWithScopedTaskEnvironment {
+class NssHttpTest : public TestWithTaskEnvironment {
  public:
   NssHttpTest()
       : context_(false),
@@ -150,7 +152,8 @@ TEST_F(NssHttpTest, TestAia) {
   int flags = 0;
   int error = verifier()->Verify(
       CertVerifier::RequestParams(test_cert, "aia-host.invalid", flags,
-                                  std::string()),
+                                  /*ocsp_response=*/std::string(),
+                                  /*sct_list=*/std::string()),
       &verify_result, test_callback.callback(), &request, NetLogWithSource());
   ASSERT_THAT(error, IsError(ERR_IO_PENDING));
 

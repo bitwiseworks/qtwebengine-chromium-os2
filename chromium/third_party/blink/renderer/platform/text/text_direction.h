@@ -28,6 +28,8 @@
 
 #include <cstdint>
 #include <iosfwd>
+#include "base/i18n/rtl.h"
+#include "base/logging.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 
 namespace blink {
@@ -36,7 +38,7 @@ namespace blink {
 //
 // Used for explicit directions such as in the HTML dir attribute or the CSS
 // 'direction' property.
-// https://html.spec.whatwg.org/multipage/dom.html#the-dir-attribute
+// https://html.spec.whatwg.org/C/#the-dir-attribute
 // https://drafts.csswg.org/css-writing-modes/#direction
 //
 // Also used for resolved directions by UAX#9 UNICODE BIDIRECTIONAL ALGORITHM.
@@ -57,6 +59,17 @@ inline TextDirection DirectionFromLevel(unsigned level) {
 
 PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, TextDirection);
 
+inline base::i18n::TextDirection ToBaseTextDirection(TextDirection direction) {
+  switch (direction) {
+    case TextDirection::kLtr:
+      return base::i18n::TextDirection::LEFT_TO_RIGHT;
+    case TextDirection::kRtl:
+      return base::i18n::TextDirection::RIGHT_TO_LEFT;
+  }
+  NOTREACHED();
+  return base::i18n::TextDirection::UNKNOWN_DIRECTION;
+}
+
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_TEXT_DIRECTION_H_

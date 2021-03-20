@@ -25,10 +25,9 @@ class SuggestionsSource {
   ~SuggestionsSource();
 
   using GotDataCallback =
-      base::Callback<void(scoped_refptr<base::RefCountedMemory>)>;
+      base::OnceCallback<void(scoped_refptr<base::RefCountedMemory>)>;
 
-  void StartDataRequest(const std::string& path,
-                        const GotDataCallback& callback);
+  void StartDataRequest(const std::string& path, GotDataCallback callback);
   std::string GetMimeType(const std::string& path) const;
 
  private:
@@ -40,7 +39,7 @@ class SuggestionsSource {
   const std::string base_url_;
 
   // For callbacks may be run after destruction.
-  base::WeakPtrFactory<SuggestionsSource> weak_ptr_factory_;
+  base::WeakPtrFactory<SuggestionsSource> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SuggestionsSource);
 };

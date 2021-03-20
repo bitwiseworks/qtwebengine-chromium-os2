@@ -9,8 +9,11 @@
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/observer_list.h"
+#include "base/stl_util.h"
 #include "content/browser/devtools/devtools_manager.h"
+#include "content/browser/devtools/devtools_stream_file.h"
 #include "content/browser/devtools/forwarding_agent_host.h"
 #include "content/browser/devtools/protocol/page.h"
 #include "content/browser/devtools/protocol/security_handler.h"
@@ -133,19 +136,22 @@ bool DevToolsAgentHostImpl::AttachInternal(
     return false;
   renderer_channel_.AttachSession(session);
   sessions_.push_back(session);
-  session_by_client_[session->client()] = std::move(session_owned);
+  DCHECK(session_by_client_.find(session->GetClient()) ==
+         session_by_client_.end());
+  session_by_client_.emplace(session->GetClient(), std::move(session_owned));
   if (sessions_.size() == 1)
     NotifyAttached();
   DevToolsManager* manager = DevToolsManager::GetInstance();
   if (manager->delegate())
-    manager->delegate()->ClientAttached(this, session->client());
+    manager->delegate()->ClientAttached(session);
   return true;
 }
 
 bool DevToolsAgentHostImpl::AttachClient(DevToolsAgentHostClient* client) {
   if (SessionByClient(client))
     return false;
-  return AttachInternal(std::make_unique<DevToolsSession>(client));
+  return AttachInternal(
+      std::make_unique<DevToolsSession>(client, /*session_id=*/""));
 }
 
 bool DevToolsAgentHostImpl::DetachClient(DevToolsAgentHostClient* client) {
@@ -157,26 +163,26 @@ bool DevToolsAgentHostImpl::DetachClient(DevToolsAgentHostClient* client) {
   return true;
 }
 
-bool DevToolsAgentHostImpl::DispatchProtocolMessage(
+void DevToolsAgentHostImpl::DispatchProtocolMessage(
     DevToolsAgentHostClient* client,
-    const std::string& message) {
+    base::span<const uint8_t> message) {
   DevToolsSession* session = SessionByClient(client);
-  if (!session)
-    return false;
-  return session->DispatchProtocolMessage(message);
+  if (session)
+    session->DispatchProtocolMessage(message);
 }
 
 void DevToolsAgentHostImpl::DetachInternal(DevToolsSession* session) {
   std::unique_ptr<DevToolsSession> session_owned =
-      std::move(session_by_client_[session->client()]);
+      std::move(session_by_client_[session->GetClient()]);
+  DCHECK_EQ(session, session_owned.get());
   // Make sure we dispose session prior to reporting it to the host.
   session->Dispose();
-  sessions_.erase(std::remove(sessions_.begin(), sessions_.end(), session));
-  session_by_client_.erase(session->client());
+  base::Erase(sessions_, session);
+  session_by_client_.erase(session->GetClient());
   DetachSession(session);
   DevToolsManager* manager = DevToolsManager::GetInstance();
   if (manager->delegate())
-    manager->delegate()->ClientDetached(this, session->client());
+    manager->delegate()->ClientDetached(session);
   if (sessions_.empty()) {
     io_context_.DiscardAllStreams();
     NotifyDetached();
@@ -193,6 +199,15 @@ void DevToolsAgentHostImpl::InspectElement(RenderFrameHost* frame_host,
 
 std::string DevToolsAgentHostImpl::GetId() {
   return id_;
+}
+
+std::string DevToolsAgentHostImpl::CreateIOStreamFromData(
+    scoped_refptr<base::RefCountedMemory> data) {
+  scoped_refptr<DevToolsStreamFile> stream =
+      DevToolsStreamFile::Create(GetIOContext(), true /* binary */);
+  std::string text(reinterpret_cast<const char*>(data->front()), data->size());
+  stream->Append(std::make_unique<std::string>(text));
+  return stream->handle();
 }
 
 std::string DevToolsAgentHostImpl::GetParentId() {
@@ -245,7 +260,7 @@ bool DevToolsAgentHostImpl::Inspect() {
 void DevToolsAgentHostImpl::ForceDetachAllSessions() {
   scoped_refptr<DevToolsAgentHostImpl> protect(this);
   while (!sessions_.empty()) {
-    DevToolsAgentHostClient* client = (*sessions_.begin())->client();
+    DevToolsAgentHostClient* client = (*sessions_.begin())->GetClient();
     DetachClient(client);
     client->AgentHostClosed(this);
   }
@@ -256,7 +271,7 @@ void DevToolsAgentHostImpl::ForceDetachRestrictedSessions(
   scoped_refptr<DevToolsAgentHostImpl> protect(this);
 
   for (DevToolsSession* session : restricted_sessions) {
-    DevToolsAgentHostClient* client = session->client();
+    DevToolsAgentHostClient* client = session->GetClient();
     DetachClient(client);
     client->AgentHostClosed(this);
   }

@@ -8,9 +8,7 @@
 var logging = requireNative('logging');
 var MessagingNatives = requireNative('messaging_natives');
 var WebViewConstants = require('webViewConstants').WebViewConstants;
-var WebViewInternal = getInternalApi ?
-    getInternalApi('webViewInternal') :
-    require('webViewInternal').WebViewInternal;
+var WebViewInternal = getInternalApi('webViewInternal');
 
 var PERMISSION_TYPES = ['media',
                         'geolocation',
@@ -196,7 +194,7 @@ NewWindow.prototype.getInterfaceObject = function() {
         webViewImpl.onAttach(this.event.partition);
       }
 
-      var attached = webViewImpl.attachWindow$(this.event.windowId);
+      var attached = webViewImpl.attachWindow(this.event.windowId);
       if (!attached) {
         window.console.error(ERROR_MSG_NEWWINDOW_UNABLE_TO_ATTACH);
       }

@@ -4,10 +4,9 @@
 
 // Custom binding for the GCM API.
 
-var binding = apiBridge || require('binding').Binding.create('gcm');
 var forEach = require('utils').forEach;
 
-binding.registerCustomHook(function(bindingsAPI) {
+apiBridge.registerCustomHook(function(bindingsAPI) {
   var apiFunctions = bindingsAPI.apiFunctions;
   var gcm = bindingsAPI.compiledApi;
 
@@ -16,7 +15,7 @@ binding.registerCustomHook(function(bindingsAPI) {
       // Validate message.data.
       var payloadSize = 0;
       forEach(message.data, function(property, value) {
-        if (property.length == 0)
+        if (property.length === 0)
           throw new Error("One of data keys is empty.");
 
         var lowerCasedProperty = property.toLowerCase();
@@ -34,12 +33,9 @@ binding.registerCustomHook(function(bindingsAPI) {
         throw new Error("Payload exceeded allowed size limit. Payload size is: "
             + payloadSize);
 
-      if (payloadSize == 0)
+      if (payloadSize === 0)
         throw new Error("No data to send.");
 
       return arguments;
     });
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

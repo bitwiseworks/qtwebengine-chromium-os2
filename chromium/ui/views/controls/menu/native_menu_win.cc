@@ -4,6 +4,8 @@
 
 #include "ui/views/controls/menu/native_menu_win.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -68,9 +70,9 @@ void NativeMenuWin::Rebuild(MenuInsertionDelegateWin* delegate) {
 
   owner_draw_ = model_->HasIcons() || owner_draw_;
   first_item_index_ = delegate ? delegate->GetInsertionIndex(menu_) : 0;
-  for (int menu_index = first_item_index_;
-        menu_index < first_item_index_ + model_->GetItemCount(); ++menu_index) {
-    int model_index = menu_index - first_item_index_;
+  for (int model_index = 0; model_index < model_->GetItemCount();
+       ++model_index) {
+    int menu_index = model_index + first_item_index_;
     if (model_->GetTypeAt(model_index) == ui::MenuModel::TYPE_SEPARATOR)
       AddSeparatorItemAt(menu_index, model_index);
     else
@@ -81,8 +83,7 @@ void NativeMenuWin::Rebuild(MenuInsertionDelegateWin* delegate) {
 void NativeMenuWin::UpdateStates() {
   // A depth-first walk of the menu items, updating states.
   int model_index = 0;
-  std::vector<ItemData*>::const_iterator it;
-  for (auto it = items_.begin(); it != items_.end(); ++it, ++model_index) {
+  for (const auto& item : items_) {
     int menu_index = model_index + first_item_index_;
     SetMenuItemState(menu_index, model_->IsEnabledAt(model_index),
                      model_->IsItemCheckedAt(model_index), false);
@@ -91,9 +92,10 @@ void NativeMenuWin::UpdateStates() {
       SetMenuItemLabel(menu_index, model_index,
                        model_->GetLabelAt(model_index));
     }
-    NativeMenuWin* submenu = (*it)->submenu.get();
+    NativeMenuWin* submenu = item->submenu.get();
     if (submenu)
       submenu->UpdateStates();
+    ++model_index;
   }
 }
 
@@ -152,7 +154,9 @@ void NativeMenuWin::AddSeparatorItemAt(int menu_index, int model_index) {
   InsertMenuItem(menu_, menu_index, TRUE, &mii);
 }
 
-void NativeMenuWin::SetMenuItemState(int menu_index, bool enabled, bool checked,
+void NativeMenuWin::SetMenuItemState(int menu_index,
+                                     bool enabled,
+                                     bool checked,
                                      bool is_default) {
   if (IsSeparatorItemAt(menu_index))
     return;
@@ -205,8 +209,7 @@ void NativeMenuWin::UpdateMenuItemInfoForString(MENUITEMINFO* mii,
 
   // Give Windows a pointer to the label string.
   mii->fMask |= MIIM_STRING;
-  mii->dwTypeData =
-      const_cast<wchar_t*>(items_[model_index]->label.c_str());
+  mii->dwTypeData = const_cast<wchar_t*>(items_[model_index]->label.c_str());
 }
 
 void NativeMenuWin::ResetNativeMenu() {

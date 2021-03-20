@@ -11,11 +11,10 @@
 
 namespace extensions {
 
-class DisplaySourceGetAvailableSinksFunction
-    : public UIThreadExtensionFunction {
+class DisplaySourceGetAvailableSinksFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("displaySource.getAvailableSinks",
-                             DISPLAYSOURCE_GETAVAILABLESINKS);
+                             DISPLAYSOURCE_GETAVAILABLESINKS)
   DisplaySourceGetAvailableSinksFunction() = default;
 
  protected:
@@ -29,11 +28,10 @@ class DisplaySourceGetAvailableSinksFunction
   DISALLOW_COPY_AND_ASSIGN(DisplaySourceGetAvailableSinksFunction);
 };
 
-class DisplaySourceRequestAuthenticationFunction
-    : public UIThreadExtensionFunction {
+class DisplaySourceRequestAuthenticationFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("displaySource.requestAuthentication",
-                             DISPLAYSOURCE_REQUESTAUTHENTICATION);
+                             DISPLAYSOURCE_REQUESTAUTHENTICATION)
   DisplaySourceRequestAuthenticationFunction() = default;
 
  protected:

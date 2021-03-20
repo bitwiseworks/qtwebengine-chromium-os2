@@ -28,8 +28,50 @@
 #include "third_party/blink/renderer/platform/transforms/interpolated_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/matrix_3d_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/rotate_transform_operation.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
+
+namespace {
+using ApplyCallback = base::RepeatingCallback<scoped_refptr<TransformOperation>(
+    const scoped_refptr<TransformOperation>& from,
+    const scoped_refptr<TransformOperation>& to)>;
+
+// Applies a given function (|ApplyCallback|) to matching pairs of operations.
+TransformOperations ApplyFunctionToMatchingPrefix(
+    ApplyCallback apply_cb,
+    const TransformOperations& from,
+    const TransformOperations& to,
+    wtf_size_t matching_prefix_length,
+    bool* success) {
+  TransformOperations result;
+  wtf_size_t from_size = from.Operations().size();
+  wtf_size_t to_size = to.Operations().size();
+
+  // If the lists matched entirely but one was shorter, |matching_prefix_length|
+  // will be the length of the longer list and we implicitly consider the
+  // missing functions to be matching identity operations.
+  DCHECK(matching_prefix_length <= std::max(from_size, to_size));
+
+  for (wtf_size_t i = 0; i < matching_prefix_length; i++) {
+    scoped_refptr<TransformOperation> from_operation =
+        (i < from_size) ? from.Operations()[i].get() : nullptr;
+    scoped_refptr<TransformOperation> to_operation =
+        (i < to_size) ? to.Operations()[i].get() : nullptr;
+
+    scoped_refptr<TransformOperation> result_operation =
+        apply_cb.Run(from_operation, to_operation);
+
+    if (result_operation) {
+      result.Operations().push_back(result_operation);
+    } else {
+      *success = false;
+      return result;
+    }
+  }
+  return result;
+}
+}  // namespace
 
 TransformOperations::TransformOperations(bool make_identity) {
   if (make_identity)
@@ -75,36 +117,6 @@ wtf_size_t TransformOperations::MatchingPrefixLength(
   return std::max(Operations().size(), other.Operations().size());
 }
 
-TransformOperations TransformOperations::BlendPrefixByMatchingOperations(
-    const TransformOperations& from,
-    wtf_size_t matching_prefix_length,
-    double progress,
-    bool* success) const {
-  TransformOperations result;
-  wtf_size_t from_size = from.Operations().size();
-  wtf_size_t to_size = Operations().size();
-  for (wtf_size_t i = 0; i < matching_prefix_length; i++) {
-    scoped_refptr<TransformOperation> from_operation =
-        (i < from_size) ? from.Operations()[i].get() : nullptr;
-    scoped_refptr<TransformOperation> to_operation =
-        (i < to_size) ? Operations()[i].get() : nullptr;
-
-    scoped_refptr<TransformOperation> blended_operation =
-        to_operation
-            ? to_operation->Blend(from_operation.get(), progress)
-            : (from_operation ? from_operation->Blend(nullptr, progress, true)
-                              : nullptr);
-
-    if (blended_operation)
-      result.Operations().push_back(blended_operation);
-    else {
-      *success = false;
-      return result;
-    }
-  }
-  return result;
-}
-
 scoped_refptr<TransformOperation>
 TransformOperations::BlendRemainingByUsingMatrixInterpolation(
     const TransformOperations& from,
@@ -146,8 +158,17 @@ TransformOperations TransformOperations::Blend(const TransformOperations& from,
       std::max(Operations().size(), from.Operations().size());
 
   bool success = true;
-  TransformOperations result = BlendPrefixByMatchingOperations(
-      from, matching_prefix_length, progress, &success);
+  TransformOperations result = ApplyFunctionToMatchingPrefix(
+      WTF::BindRepeating(
+          [](double progress, const scoped_refptr<TransformOperation>& from,
+             const scoped_refptr<TransformOperation>& to) {
+            // Where the lists matched but one was longer, the shorter list is
+            // padded with nullptr that represent matching identity operations.
+            return to ? to->Blend(from.get(), progress)
+                      : (from ? from->Blend(nullptr, progress, true) : nullptr);
+          },
+          progress),
+      from, *this, matching_prefix_length, &success);
   if (success && matching_prefix_length < max_path_length) {
     scoped_refptr<TransformOperation> matrix_op =
         BlendRemainingByUsingMatrixInterpolation(from, matching_prefix_length,
@@ -161,6 +182,54 @@ TransformOperations TransformOperations::Blend(const TransformOperations& from,
     return progress < 0.5 ? from : *this;
   }
   return result;
+}
+
+TransformOperations TransformOperations::Accumulate(
+    const TransformOperations& to) const {
+  if (!to.size() && !size())
+    return *this;
+
+  bool success = true;
+  wtf_size_t matching_prefix_length = MatchingPrefixLength(to);
+  wtf_size_t max_path_length =
+      std::max(Operations().size(), to.Operations().size());
+
+  // Accumulate matching pairs of transform functions.
+  TransformOperations result = ApplyFunctionToMatchingPrefix(
+      WTF::BindRepeating([](const scoped_refptr<TransformOperation>& from,
+                            const scoped_refptr<TransformOperation>& to) {
+        if (to && from)
+          return from->Accumulate(*to);
+        // Where the lists matched but one was longer, the shorter list is
+        // padded with nullptr that represent matching identity operations. For
+        // any function, accumulate(f, identity) == f, so just return f.
+        return to ? to : from;
+      }),
+      *this, to, matching_prefix_length, &success);
+
+  // Then, if there are leftover non-matching functions, accumulate the
+  // remaining matrices.
+  if (success && matching_prefix_length < max_path_length) {
+    TransformationMatrix from_transform;
+    TransformationMatrix to_transform;
+    ApplyRemaining(FloatSize(), matching_prefix_length, from_transform);
+    to.ApplyRemaining(FloatSize(), matching_prefix_length, to_transform);
+
+    scoped_refptr<TransformOperation> from_matrix =
+        Matrix3DTransformOperation::Create(from_transform);
+    scoped_refptr<TransformOperation> to_matrix =
+        Matrix3DTransformOperation::Create(to_transform);
+    scoped_refptr<TransformOperation> matrix_op =
+        from_matrix->Accumulate(*to_matrix);
+
+    if (matrix_op)
+      result.Operations().push_back(matrix_op);
+    else
+      success = false;
+  }
+
+  // On failure, behavior is to replace.
+  return success ? result : to;
 }
 
 static void FindCandidatesInPlane(double px,
@@ -202,7 +271,7 @@ static void BoundingBoxForArc(const FloatPoint3D& point,
   if (axis.Dot(to_transform.Axis()) < 0)
     to_degrees *= -1;
 
-  from_degrees = Blend(from_degrees, to_transform.Angle(), min_progress);
+  from_degrees = Blend(from_degrees, to_degrees, min_progress);
   to_degrees = Blend(to_degrees, from_transform.Angle(), 1.0 - max_progress);
   if (from_degrees > to_degrees)
     std::swap(from_degrees, to_degrees);
@@ -215,14 +284,13 @@ static void BoundingBoxForArc(const FloatPoint3D& point,
                      to_degrees);
 
   FloatPoint3D from_point = from_matrix.MapPoint(point);
-  FloatPoint3D to_point = to_matrix.MapPoint(point);
 
   if (box.IsEmpty())
     box.SetOrigin(from_point);
   else
     box.ExpandTo(from_point);
 
-  box.ExpandTo(to_point);
+  box.ExpandTo(to_matrix.MapPoint(point));
 
   switch (from_transform.GetType()) {
     case TransformOperation::kRotateX:
@@ -415,14 +483,14 @@ bool TransformOperations::BlendedBoundsForBox(const FloatBox& box,
 
         FloatBox from_box = *bounds;
         bool first = true;
-        for (size_t i = 0; i < 2; ++i) {
-          for (size_t j = 0; j < 2; ++j) {
-            for (size_t k = 0; k < 2; ++k) {
+        for (size_t j = 0; j < 2; ++j) {
+          for (size_t k = 0; k < 2; ++k) {
+            for (size_t m = 0; m < 2; ++m) {
               FloatBox bounds_for_arc;
               FloatPoint3D corner(from_box.X(), from_box.Y(), from_box.Z());
               corner +=
-                  FloatPoint3D(i * from_box.Width(), j * from_box.Height(),
-                               k * from_box.Depth());
+                  FloatPoint3D(j * from_box.Width(), k * from_box.Height(),
+                               m * from_box.Depth());
               BoundingBoxForArc(corner, *from_rotation, *to_rotation,
                                 min_progress, max_progress, bounds_for_arc);
               if (first) {

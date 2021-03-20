@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/strings/string16.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/payments/mojom/payment_request_data.mojom.h"
 #include "url/gurl.h"
 
@@ -58,14 +58,6 @@ void ParseSupportedMethods(
     std::set<std::string>* out_basic_card_supported_networks,
     std::vector<GURL>* out_url_payment_method_identifiers,
     std::set<std::string>* out_payment_method_identifiers);
-
-// Parses the supported card types (e.g., credit, debit, prepaid) from
-// supportedTypes. |out_supported_card_types_set| is expected to be empty. It
-// will always contain autofill::CreditCard::CARD_TYPE_UNKNOWN after the call.
-// Also, it gets filled with all of the card types if supportedTypes is empty.
-void ParseSupportedCardTypes(
-    const std::vector<PaymentMethodData>& method_data,
-    std::set<autofill::CreditCard::CardType>* out_supported_card_types_set);
 
 // Formats |card_number| for display. For example, "4111111111111111" is
 // formatted into "4111 1111 1111 1111". This method does not format masked card

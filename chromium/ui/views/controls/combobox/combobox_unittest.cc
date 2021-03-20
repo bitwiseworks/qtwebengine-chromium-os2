@@ -4,15 +4,21 @@
 
 #include "ui/views/controls/combobox/combobox.h"
 
+#include <memory>
 #include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_action_data.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/models/combobox_model.h"
+#include "ui/base/models/combobox_model_observer.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
@@ -20,6 +26,7 @@
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/test/event_generator.h"
+#include "ui/events/types/event_type.h"
 #include "ui/views/controls/combobox/combobox_listener.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/test/combobox_test_api.h"
@@ -57,9 +64,7 @@ class TestCombobox : public Combobox {
   bool key_handled() const { return key_handled_; }
   bool key_received() const { return key_received_; }
 
-  void clear() {
-    key_received_ = key_handled_ = false;
-  }
+  void clear() { key_received_ = key_handled_ = false; }
 
  private:
   bool key_handled_;
@@ -71,8 +76,8 @@ class TestCombobox : public Combobox {
 // A concrete class is needed to test the combobox.
 class TestComboboxModel : public ui::ComboboxModel {
  public:
-  TestComboboxModel() {}
-  ~TestComboboxModel() override {}
+  TestComboboxModel() = default;
+  ~TestComboboxModel() override = default;
 
   enum { kItemCount = 10 };
 
@@ -99,13 +104,30 @@ class TestComboboxModel : public ui::ComboboxModel {
     return 0;
   }
 
-  void SetSeparators(const std::set<int>& separators) {
-    separators_ = separators;
+  void AddObserver(ui::ComboboxModelObserver* observer) override {
+    observers_.AddObserver(observer);
+  }
+  void RemoveObserver(ui::ComboboxModelObserver* observer) override {
+    observers_.RemoveObserver(observer);
   }
 
-  void set_item_count(int item_count) { item_count_ = item_count; }
+  void SetSeparators(const std::set<int>& separators) {
+    separators_ = separators;
+    OnModelChanged();
+  }
+
+  void set_item_count(int item_count) {
+    item_count_ = item_count;
+    OnModelChanged();
+  }
 
  private:
+  void OnModelChanged() {
+    for (auto& observer : observers_)
+      observer.OnComboboxModelChanged(this);
+  }
+
+  base::ObserverList<ui::ComboboxModelObserver> observers_;
   std::set<int> separators_;
   int item_count_ = kItemCount;
 
@@ -117,29 +139,43 @@ class VectorComboboxModel : public ui::ComboboxModel {
  public:
   explicit VectorComboboxModel(std::vector<std::string>* values)
       : values_(values) {}
-  ~VectorComboboxModel() override {}
+  ~VectorComboboxModel() override = default;
 
   void set_default_index(int default_index) { default_index_ = default_index; }
 
   // ui::ComboboxModel:
-  int GetItemCount() const override { return (int)values_->size(); }
+  int GetItemCount() const override {
+    return static_cast<int>(values_->size());
+  }
   base::string16 GetItemAt(int index) override {
     return ASCIIToUTF16(values_->at(index));
   }
   bool IsItemSeparatorAt(int index) override { return false; }
   int GetDefaultIndex() const override { return default_index_; }
+  void AddObserver(ui::ComboboxModelObserver* observer) override {
+    observers_.AddObserver(observer);
+  }
+  void RemoveObserver(ui::ComboboxModelObserver* observer) override {
+    observers_.RemoveObserver(observer);
+  }
+
+  void ValuesChanged() {
+    for (auto& observer : observers_)
+      observer.OnComboboxModelChanged(this);
+  }
 
  private:
-  std::vector<std::string>* values_;
+  base::ObserverList<ui::ComboboxModelObserver> observers_;
   int default_index_ = 0;
+  std::vector<std::string>* const values_;
 
   DISALLOW_COPY_AND_ASSIGN(VectorComboboxModel);
 };
 
 class EvilListener : public ComboboxListener {
  public:
-  EvilListener() : deleted_(false) {}
-  ~EvilListener() override {}
+  EvilListener() = default;
+  ~EvilListener() override = default;
 
   // ComboboxListener:
   void OnPerformAction(Combobox* combobox) override {
@@ -150,36 +186,30 @@ class EvilListener : public ComboboxListener {
   bool deleted() const { return deleted_; }
 
  private:
-  bool deleted_;
+  bool deleted_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(EvilListener);
 };
 
 class TestComboboxListener : public views::ComboboxListener {
  public:
-  TestComboboxListener() : perform_action_index_(-1), actions_performed_(0) {}
-  ~TestComboboxListener() override {}
+  TestComboboxListener() = default;
+  ~TestComboboxListener() override = default;
 
   void OnPerformAction(views::Combobox* combobox) override {
-    perform_action_index_ = combobox->selected_index();
+    perform_action_index_ = combobox->GetSelectedIndex();
     actions_performed_++;
   }
 
-  int perform_action_index() const {
-    return perform_action_index_;
-  }
+  int perform_action_index() const { return perform_action_index_; }
 
-  bool on_perform_action_called() const {
-    return actions_performed_ > 0;
-  }
+  bool on_perform_action_called() const { return actions_performed_ > 0; }
 
-  int actions_performed() const {
-    return actions_performed_;
-  }
+  int actions_performed() const { return actions_performed_; }
 
  private:
-  int perform_action_index_;
-  int actions_performed_;
+  int perform_action_index_ = -1;
+  int actions_performed_ = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestComboboxListener);
@@ -189,7 +219,7 @@ class TestComboboxListener : public views::ComboboxListener {
 
 class ComboboxTest : public ViewsTestBase {
  public:
-  ComboboxTest() {}
+  ComboboxTest() = default;
 
   void TearDown() override {
     if (widget_)
@@ -198,22 +228,22 @@ class ComboboxTest : public ViewsTestBase {
   }
 
   void InitCombobox(const std::set<int>* separators) {
-    model_.reset(new TestComboboxModel());
+    model_ = std::make_unique<TestComboboxModel>();
 
     if (separators)
       model_->SetSeparators(*separators);
 
     ASSERT_FALSE(combobox_);
     combobox_ = new TestCombobox(model_.get());
-    test_api_.reset(new ComboboxTestApi(combobox_));
+    test_api_ = std::make_unique<ComboboxTestApi>(combobox_);
     test_api_->InstallTestMenuRunner(&menu_show_count_);
-    combobox_->set_id(1);
+    combobox_->SetID(1);
 
     widget_ = new Widget;
     Widget::InitParams params =
         CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
     params.bounds = gfx::Rect(200, 200, 200, 200);
-    widget_->Init(params);
+    widget_->Init(std::move(params));
     View* container = new View();
     widget_->SetContentsView(container);
     container->AddChildView(combobox_);
@@ -285,43 +315,43 @@ class ComboboxTest : public ViewsTestBase {
 TEST_F(ComboboxTest, KeyTestMac) {
   InitCombobox(nullptr);
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(1, menu_show_count_);
 
   PressKey(ui::VKEY_HOME);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(2, menu_show_count_);
 
   PressKey(ui::VKEY_UP, ui::EF_COMMAND_DOWN);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(3, menu_show_count_);
 
   PressKey(ui::VKEY_DOWN, ui::EF_COMMAND_DOWN);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(4, menu_show_count_);
 
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(5, menu_show_count_);
 
   PressKey(ui::VKEY_RIGHT);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(5, menu_show_count_);
 
   PressKey(ui::VKEY_LEFT);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(5, menu_show_count_);
 
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(6, menu_show_count_);
 
   PressKey(ui::VKEY_PRIOR);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(6, menu_show_count_);
 
   PressKey(ui::VKEY_NEXT);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_EQ(6, menu_show_count_);
 }
 #endif
@@ -329,7 +359,7 @@ TEST_F(ComboboxTest, KeyTestMac) {
 // Check that if a combobox is disabled before it has a native wrapper, then the
 // native wrapper inherits the disabled state when it gets created.
 TEST_F(ComboboxTest, DisabilityTest) {
-  model_.reset(new TestComboboxModel());
+  model_ = std::make_unique<TestComboboxModel>();
 
   ASSERT_FALSE(combobox_);
   combobox_ = new TestCombobox(model_.get());
@@ -339,11 +369,11 @@ TEST_F(ComboboxTest, DisabilityTest) {
   Widget::InitParams params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.bounds = gfx::Rect(100, 100, 100, 100);
-  widget_->Init(params);
+  widget_->Init(std::move(params));
   View* container = new View();
   widget_->SetContentsView(container);
   container->AddChildView(combobox_);
-  EXPECT_FALSE(combobox_->enabled());
+  EXPECT_FALSE(combobox_->GetEnabled());
 }
 
 // On Mac, key events can't change the currently selected index directly for a
@@ -355,22 +385,22 @@ TEST_F(ComboboxTest, DisabilityTest) {
 TEST_F(ComboboxTest, KeyTest) {
   InitCombobox(nullptr);
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(model_->GetItemCount(), combobox_->selected_index() + 1);
+  EXPECT_EQ(model_->GetItemCount(), combobox_->GetSelectedIndex() + 1);
   PressKey(ui::VKEY_HOME);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_DOWN);
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(2, combobox_->selected_index());
+  EXPECT_EQ(2, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_RIGHT);
-  EXPECT_EQ(2, combobox_->selected_index());
+  EXPECT_EQ(2, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_LEFT);
-  EXPECT_EQ(2, combobox_->selected_index());
+  EXPECT_EQ(2, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_PRIOR);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_NEXT);
-  EXPECT_EQ(model_->GetItemCount() - 1, combobox_->selected_index());
+  EXPECT_EQ(model_->GetItemCount(), combobox_->GetSelectedIndex() + 1);
 }
 
 // Verifies that we don't select a separator line in combobox when navigating
@@ -379,19 +409,19 @@ TEST_F(ComboboxTest, SkipSeparatorSimple) {
   std::set<int> separators;
   separators.insert(2);
   InitCombobox(&separators);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_HOME);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_PRIOR);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(9, combobox_->selected_index());
+  EXPECT_EQ(9, combobox_->GetSelectedIndex());
 }
 
 // Verifies that we never select the separator that is in the beginning of the
@@ -400,19 +430,19 @@ TEST_F(ComboboxTest, SkipSeparatorBeginning) {
   std::set<int> separators;
   separators.insert(0);
   InitCombobox(&separators);
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(2, combobox_->selected_index());
+  EXPECT_EQ(2, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(2, combobox_->selected_index());
+  EXPECT_EQ(2, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_HOME);
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_PRIOR);
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(9, combobox_->selected_index());
+  EXPECT_EQ(9, combobox_->GetSelectedIndex());
 }
 
 // Verifies that we never select the separator that is in the end of the
@@ -423,11 +453,11 @@ TEST_F(ComboboxTest, SkipSeparatorEnd) {
   InitCombobox(&separators);
   combobox_->SetSelectedIndex(8);
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(8, combobox_->selected_index());
+  EXPECT_EQ(8, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(7, combobox_->selected_index());
+  EXPECT_EQ(7, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(8, combobox_->selected_index());
+  EXPECT_EQ(8, combobox_->GetSelectedIndex());
 }
 
 // Verifies that we never select any of the adjacent separators (multiple
@@ -439,19 +469,19 @@ TEST_F(ComboboxTest, SkipMultipleSeparatorsAtBeginning) {
   separators.insert(1);
   separators.insert(2);
   InitCombobox(&separators);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(4, combobox_->selected_index());
+  EXPECT_EQ(4, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_NEXT);
-  EXPECT_EQ(9, combobox_->selected_index());
+  EXPECT_EQ(9, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_HOME);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(9, combobox_->selected_index());
+  EXPECT_EQ(9, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_PRIOR);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
 }
 
 // Verifies that we never select any of the adjacent separators (multiple
@@ -465,9 +495,9 @@ TEST_F(ComboboxTest, SkipMultipleAdjacentSeparatorsAtMiddle) {
   InitCombobox(&separators);
   combobox_->SetSelectedIndex(3);
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(7, combobox_->selected_index());
+  EXPECT_EQ(7, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(3, combobox_->selected_index());
+  EXPECT_EQ(3, combobox_->GetSelectedIndex());
 }
 
 // Verifies that we never select any of the adjacent separators (multiple
@@ -481,17 +511,17 @@ TEST_F(ComboboxTest, SkipMultipleSeparatorsAtEnd) {
   InitCombobox(&separators);
   combobox_->SetSelectedIndex(6);
   PressKey(ui::VKEY_DOWN);
-  EXPECT_EQ(6, combobox_->selected_index());
+  EXPECT_EQ(6, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_UP);
-  EXPECT_EQ(5, combobox_->selected_index());
+  EXPECT_EQ(5, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_HOME);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_NEXT);
-  EXPECT_EQ(6, combobox_->selected_index());
+  EXPECT_EQ(6, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_PRIOR);
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   PressKey(ui::VKEY_END);
-  EXPECT_EQ(6, combobox_->selected_index());
+  EXPECT_EQ(6, combobox_->GetSelectedIndex());
 }
 #endif  // !OS_MACOSX
 
@@ -506,7 +536,8 @@ TEST_F(ComboboxTest, GetTextForRowTest) {
       EXPECT_TRUE(combobox_->GetTextForRow(i).empty()) << i;
     } else {
       EXPECT_EQ(ASCIIToUTF16(i % 2 == 0 ? "PEANUT BUTTER" : "JELLY"),
-                combobox_->GetTextForRow(i)) << i;
+                combobox_->GetTextForRow(i))
+          << i;
     }
   }
 }
@@ -514,13 +545,13 @@ TEST_F(ComboboxTest, GetTextForRowTest) {
 // Verifies selecting the first matching value (and returning whether found).
 TEST_F(ComboboxTest, SelectValue) {
   InitCombobox(nullptr);
-  ASSERT_EQ(model_->GetDefaultIndex(), combobox_->selected_index());
+  ASSERT_EQ(model_->GetDefaultIndex(), combobox_->GetSelectedIndex());
   EXPECT_TRUE(combobox_->SelectValue(ASCIIToUTF16("PEANUT BUTTER")));
-  EXPECT_EQ(0, combobox_->selected_index());
+  EXPECT_EQ(0, combobox_->GetSelectedIndex());
   EXPECT_TRUE(combobox_->SelectValue(ASCIIToUTF16("JELLY")));
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
   EXPECT_FALSE(combobox_->SelectValue(ASCIIToUTF16("BANANAS")));
-  EXPECT_EQ(1, combobox_->selected_index());
+  EXPECT_EQ(1, combobox_->GetSelectedIndex());
 }
 
 TEST_F(ComboboxTest, ListenerHandlesDelete) {
@@ -543,8 +574,8 @@ TEST_F(ComboboxTest, Click) {
 
   // Click the left side. The menu is shown.
   EXPECT_EQ(0, menu_show_count_);
-  PerformClick(gfx::Point(combobox_->x() + 1,
-                          combobox_->y() + combobox_->height() / 2));
+  PerformClick(
+      gfx::Point(combobox_->x() + 1, combobox_->y() + combobox_->height() / 2));
   EXPECT_FALSE(listener.on_perform_action_called());
   EXPECT_EQ(1, menu_show_count_);
 }
@@ -559,8 +590,8 @@ TEST_F(ComboboxTest, ClickButDisabled) {
   combobox_->SetEnabled(false);
 
   // Click the left side, but nothing happens since the combobox is disabled.
-  PerformClick(gfx::Point(combobox_->x() + 1,
-                          combobox_->y() + combobox_->height() / 2));
+  PerformClick(
+      gfx::Point(combobox_->x() + 1, combobox_->y() + combobox_->height() / 2));
   EXPECT_FALSE(listener.on_perform_action_called());
   EXPECT_EQ(0, menu_show_count_);
 }
@@ -634,19 +665,13 @@ TEST_F(ComboboxTest, NotifyOnClickWithMouse) {
 
   // Click the right side (arrow button). The menu is shown.
   const gfx::Point right_point(combobox_->x() + combobox_->width() - 1,
-                         combobox_->y() + combobox_->height() / 2);
+                               combobox_->y() + combobox_->height() / 2);
 
   EXPECT_EQ(0, menu_show_count_);
 
-// On Mac, actions occur on mouse down. Otherwise mouse up.
-#if defined(OS_MACOSX)
-  const int kActOnMouseDown = 1;
-#else
-  const int kActOnMouseDown = 0;
-#endif
-
+  // Menu is shown on mouse down.
   PerformMousePress(right_point);
-  EXPECT_EQ(kActOnMouseDown, menu_show_count_);
+  EXPECT_EQ(1, menu_show_count_);
   PerformMouseRelease(right_point);
   EXPECT_EQ(1, menu_show_count_);
 
@@ -690,19 +715,19 @@ TEST_F(ComboboxTest, ContentWidth) {
 
   values.resize(1);
   values[0] = long_item;
-  combobox.ModelChanged();
+  model.ValuesChanged();
 
   const int long_item_width = test_api.content_size().width();
 
   values[0] = short_item;
-  combobox.ModelChanged();
+  model.ValuesChanged();
 
   const int short_item_width = test_api.content_size().width();
 
   values.resize(2);
   values[0] = short_item;
   values[1] = long_item;
-  combobox.ModelChanged();
+  model.ValuesChanged();
 
   // The width will fit with the longest item.
   EXPECT_EQ(long_item_width, test_api.content_size().width());
@@ -721,12 +746,10 @@ TEST_F(ComboboxTest, ModelChanged) {
   EXPECT_EQ(4, combobox_->GetSelectedRow());
 
   model_->set_item_count(5);
-  combobox_->ModelChanged();
   EXPECT_EQ(5, combobox_->GetRowCount());
   EXPECT_EQ(4, combobox_->GetSelectedRow());  // Unchanged.
 
   model_->set_item_count(4);
-  combobox_->ModelChanged();
   EXPECT_EQ(4, combobox_->GetRowCount());
   EXPECT_EQ(0, combobox_->GetSelectedRow());  // Resets.
 
@@ -738,7 +761,6 @@ TEST_F(ComboboxTest, ModelChanged) {
   std::set<int> separators;
   separators.insert(2);
   model_->SetSeparators(separators);
-  combobox_->ModelChanged();
   EXPECT_EQ(4, combobox_->GetRowCount());
   EXPECT_EQ(0, combobox_->GetSelectedRow());  // Resets.
 
@@ -748,7 +770,6 @@ TEST_F(ComboboxTest, ModelChanged) {
 
   // Test an empty model.
   model_->set_item_count(0);
-  combobox_->ModelChanged();
   EXPECT_EQ(0, combobox_->GetRowCount());
   EXPECT_EQ(0, combobox_->GetSelectedRow());  // Resets.
 }

@@ -33,24 +33,23 @@
 
 namespace blink {
 
-using namespace xpath;
-
-XPathResult::XPathResult(EvaluationContext& context, const Value& value)
+XPathResult::XPathResult(xpath::EvaluationContext& context,
+                         const xpath::Value& value)
     : value_(value), node_set_position_(0), dom_tree_version_(0) {
   switch (value_.GetType()) {
-    case Value::kBooleanValue:
+    case xpath::Value::kBooleanValue:
       result_type_ = kBooleanType;
       return;
-    case Value::kNumberValue:
+    case xpath::Value::kNumberValue:
       result_type_ = kNumberType;
       return;
-    case Value::kStringValue:
+    case xpath::Value::kStringValue:
       result_type_ = kStringType;
       return;
-    case Value::kNodeSetValue:
+    case xpath::Value::kNodeSetValue:
       result_type_ = kUnorderedNodeIteratorType;
       node_set_position_ = 0;
-      node_set_ = NodeSet::Create(value_.ToNodeSet(&context));
+      node_set_ = xpath::NodeSet::Create(value_.ToNodeSet(&context));
       document_ = &context.node->GetDocument();
       dom_tree_version_ = document_->DomTreeVersion();
       return;
@@ -58,15 +57,14 @@ XPathResult::XPathResult(EvaluationContext& context, const Value& value)
   NOTREACHED();
 }
 
-void XPathResult::Trace(blink::Visitor* visitor) {
+void XPathResult::Trace(Visitor* visitor) {
   visitor->Trace(value_);
   visitor->Trace(node_set_);
   visitor->Trace(document_);
   ScriptWrappable::Trace(visitor);
 }
 
-void XPathResult::ConvertTo(unsigned short type,
-                            ExceptionState& exception_state) {
+void XPathResult::ConvertTo(uint16_t type, ExceptionState& exception_state) {
   switch (type) {
     case kAnyType:
       break;
@@ -118,7 +116,7 @@ void XPathResult::ConvertTo(unsigned short type,
   }
 }
 
-unsigned short XPathResult::resultType() const {
+uint16_t XPathResult::resultType() const {
   return result_type_;
 }
 
@@ -153,7 +151,7 @@ Node* XPathResult::singleNodeValue(ExceptionState& exception_state) const {
     return nullptr;
   }
 
-  const NodeSet& nodes = value_.ToNodeSet(nullptr);
+  const xpath::NodeSet& nodes = value_.ToNodeSet(nullptr);
   if (resultType() == kFirstOrderedNodeType)
     return nodes.FirstNode();
   return nodes.AnyNode();
@@ -210,7 +208,7 @@ Node* XPathResult::snapshotItem(unsigned index,
     return nullptr;
   }
 
-  const NodeSet& nodes = value_.ToNodeSet(nullptr);
+  const xpath::NodeSet& nodes = value_.ToNodeSet(nullptr);
   if (index >= nodes.size())
     return nullptr;
 

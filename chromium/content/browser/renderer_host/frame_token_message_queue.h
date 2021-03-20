@@ -49,8 +49,12 @@ class CONTENT_EXPORT FrameTokenMessageQueue {
     // Process the enqueued message.
     virtual void OnProcessSwapMessage(const IPC::Message& message) = 0;
   };
-  explicit FrameTokenMessageQueue(Client* client);
+  FrameTokenMessageQueue();
   virtual ~FrameTokenMessageQueue();
+
+  // Initializes this instance. This should always be the first method called
+  // to initialize state.
+  void Init(Client* client);
 
   // Signals that a frame with token |frame_token| was finished processing. If
   // there are any queued messages belonging to it, they will be processed.
@@ -70,7 +74,7 @@ class CONTENT_EXPORT FrameTokenMessageQueue {
   // consistent incase a new renderer is created.
   void Reset();
 
-  uint32_t size() const { return callback_map_.size(); }
+  size_t size() const { return callback_map_.size(); }
 
  protected:
   // Once both the frame and its swap messages arrive, we call this method to
@@ -79,7 +83,7 @@ class CONTENT_EXPORT FrameTokenMessageQueue {
 
  private:
   // Not owned.
-  Client* const client_;
+  Client* client_ = nullptr;
 
   // Last non-zero frame token received from the renderer. Any swap messsages
   // having a token less than or equal to this value will be processed.

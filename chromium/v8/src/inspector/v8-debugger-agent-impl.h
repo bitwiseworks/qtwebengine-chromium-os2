@@ -6,6 +6,7 @@
 #define V8_INSPECTOR_V8_DEBUGGER_AGENT_IMPL_H_
 
 #include <deque>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -41,7 +42,8 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   void restore();
 
   // Part of the protocol.
-  Response enable(String16* outDebuggerId) override;
+  Response enable(Maybe<double> maxScriptsCacheSize,
+                  String16* outDebuggerId) override;
   Response disable() override;
   Response setBreakpointsActive(bool active) override;
   Response setSkipAllPauses(bool skip) override;
@@ -59,6 +61,8 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   Response setBreakpointOnFunctionCall(const String16& functionObjectId,
                                        Maybe<String16> optionalCondition,
                                        String16* outBreakpointId) override;
+  Response setInstrumentationBreakpoint(const String16& instrumentation,
+                                        String16* outBreakpointId) override;
   Response removeBreakpoint(const String16& breakpointId) override;
   Response continueToLocation(std::unique_ptr<protocol::Debugger::Location>,
                               Maybe<String16> targetCallFrames) override;
@@ -89,10 +93,12 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
           newCallFrames,
       Maybe<protocol::Runtime::StackTrace>* asyncStackTrace,
       Maybe<protocol::Runtime::StackTraceId>* asyncStackTraceId) override;
-  Response getScriptSource(const String16& scriptId,
-                           String16* scriptSource) override;
+  Response getScriptSource(const String16& scriptId, String16* scriptSource,
+                           Maybe<protocol::Binary>* bytecode) override;
+  Response getWasmBytecode(const String16& scriptId,
+                           protocol::Binary* bytecode) override;
   Response pause() override;
-  Response resume() override;
+  Response resume(Maybe<bool> terminateOnResume) override;
   Response stepOver() override;
   Response stepInto(Maybe<bool> inBreakOnAsyncCall) override;
   Response stepOut() override;
@@ -151,6 +157,8 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
 
   bool acceptsPause(bool isOOMBreak) const;
 
+  void ScriptCollected(const V8DebuggerScript* script);
+
   v8::Isolate* isolate() { return m_isolate; }
 
  private:
@@ -160,7 +168,6 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
       std::unique_ptr<protocol::Array<protocol::Debugger::CallFrame>>*);
   std::unique_ptr<protocol::Runtime::StackTrace> currentAsyncStackTrace();
   std::unique_ptr<protocol::Runtime::StackTraceId> currentExternalStackTrace();
-  std::unique_ptr<protocol::Runtime::StackTraceId> currentScheduledAsyncCall();
 
   void setPauseOnExceptionsImpl(int);
 
@@ -170,7 +177,8 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   void setBreakpointImpl(const String16& breakpointId,
                          v8::Local<v8::Function> function,
                          v8::Local<v8::String> condition);
-  void removeBreakpointImpl(const String16& breakpointId);
+  void removeBreakpointImpl(const String16& breakpointId,
+                            const std::vector<V8DebuggerScript*>& scripts);
   void clearBreakDetails();
 
   void internalSetAsyncCallStackDepth(int);
@@ -180,6 +188,8 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   void resetBlackboxedStateCache();
 
   bool isPaused() const;
+
+  void setScriptInstrumentationBreakpointIfNeeded(V8DebuggerScript* script);
 
   using ScriptsMap =
       std::unordered_map<String16, std::unique_ptr<V8DebuggerScript>>;
@@ -198,9 +208,13 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   ScriptsMap m_scripts;
   BreakpointIdToDebuggerBreakpointIdsMap m_breakpointIdToDebuggerBreakpointIds;
   DebuggerBreakpointIdToBreakpointIdMap m_debuggerBreakpointIdToBreakpointId;
+  std::unordered_map<v8::debug::BreakpointId,
+                     std::unique_ptr<protocol::DictionaryValue>>
+      m_breakpointsOnScriptRun;
 
-  std::deque<String16> m_failedToParseAnonymousScriptIds;
-  void cleanupOldFailedToParseAnonymousScriptsIfNeeded();
+  size_t m_maxScriptCacheSize = 0;
+  size_t m_cachedScriptSize = 0;
+  std::deque<String16> m_cachedScriptIds;
 
   using BreakReason =
       std::pair<String16, std::unique_ptr<protocol::DictionaryValue>>;
@@ -220,8 +234,6 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
 
   DISALLOW_COPY_AND_ASSIGN(V8DebuggerAgentImpl);
 };
-
-String16 scopeType(v8::debug::ScopeIterator::ScopeType type);
 
 }  // namespace v8_inspector
 

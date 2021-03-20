@@ -9,6 +9,7 @@
  */
 
 #include "p2p/base/mdns_message.h"
+
 #include "rtc_base/logging.h"
 #include "rtc_base/net_helpers.h"
 #include "rtc_base/string_encode.h"
@@ -365,7 +366,7 @@ bool MdnsMessage::Write(rtc::ByteBufferWriter* buf) const {
   header_.Write(buf);
 
   auto write_rr = [&buf](const std::vector<MdnsResourceRecord>& section) {
-    for (auto rr : section) {
+    for (const auto& rr : section) {
       if (!rr.Write(buf)) {
         return false;
       }
@@ -373,7 +374,7 @@ bool MdnsMessage::Write(rtc::ByteBufferWriter* buf) const {
     return true;
   };
 
-  for (auto question : question_section_) {
+  for (const auto& question : question_section_) {
     if (!question.Write(buf)) {
       return false;
     }

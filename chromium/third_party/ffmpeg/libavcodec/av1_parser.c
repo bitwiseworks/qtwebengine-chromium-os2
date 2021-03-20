@@ -23,6 +23,7 @@
 #include "av1_parse.h"
 #include "cbs.h"
 #include "cbs_av1.h"
+#include "internal.h"
 #include "parser.h"
 
 typedef struct AV1ParseContext {
@@ -68,11 +69,10 @@ static int av1_parser_parse(AVCodecParserContext *ctx,
 
         ret = ff_cbs_read(s->cbc, td, avctx->extradata, avctx->extradata_size);
         if (ret < 0) {
-            av_log(avctx, AV_LOG_ERROR, "Failed to parse extradata.\n");
-            goto end;
+            av_log(avctx, AV_LOG_WARNING, "Failed to parse extradata.\n");
         }
 
-        ff_cbs_fragment_uninit(s->cbc, td);
+        ff_cbs_fragment_reset(s->cbc, td);
     }
 
     ret = ff_cbs_read(s->cbc, td, data, size);
@@ -99,6 +99,9 @@ static int av1_parser_parse(AVCodecParserContext *ctx,
         else if (unit->type == AV1_OBU_FRAME_HEADER)
             frame = &obu->obu.frame_header;
         else
+            continue;
+
+        if (obu->header.spatial_id > 0)
             continue;
 
         if (frame->show_existing_frame) {
@@ -156,10 +159,24 @@ static int av1_parser_parse(AVCodecParserContext *ctx,
             break;
         }
         av_assert2(ctx->format != AV_PIX_FMT_NONE);
+
+        avctx->colorspace = (enum AVColorSpace) color->matrix_coefficients;
+        avctx->color_primaries = (enum AVColorPrimaries) color->color_primaries;
+        avctx->color_trc = (enum AVColorTransferCharacteristic) color->transfer_characteristics;
+        avctx->color_range = color->color_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+
+        if (ctx->width != avctx->width || ctx->height != avctx->height) {
+            ret = ff_set_dimensions(avctx, ctx->width, ctx->height);
+            if (ret < 0)
+                goto end;
+        }
     }
 
+    if (avctx->framerate.num)
+        avctx->time_base = av_inv_q(av_mul_q(avctx->framerate, (AVRational){avctx->ticks_per_frame, 1}));
+
 end:
-    ff_cbs_fragment_uninit(s->cbc, td);
+    ff_cbs_fragment_reset(s->cbc, td);
 
     s->cbc->log_ctx = NULL;
 
@@ -193,6 +210,7 @@ static void av1_parser_close(AVCodecParserContext *ctx)
 {
     AV1ParseContext *s = ctx->priv_data;
 
+    ff_cbs_fragment_free(s->cbc, &s->temporal_unit);
     ff_cbs_close(&s->cbc);
 }
 

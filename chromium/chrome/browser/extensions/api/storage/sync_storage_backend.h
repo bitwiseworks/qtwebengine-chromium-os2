@@ -48,7 +48,8 @@ class SyncStorageBackend : public syncer::SyncableService {
   virtual void DeleteStorage(const std::string& extension_id);
 
   // syncer::SyncableService implementation.
-  syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
+  void WaitUntilReadyToSync(base::OnceClosure done) override;
+  syncer::SyncDataList GetAllSyncDataForTesting(syncer::ModelType type) const;
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,

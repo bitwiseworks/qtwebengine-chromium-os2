@@ -15,7 +15,9 @@
 #include "dawn_wire/WireCmd_autogen.h"
 
 #include "common/Assert.h"
+#include "dawn_wire/Wire.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -36,6 +38,8 @@
         ObjectId
     {%- elif member.type.category == "structure" -%}
         {{as_cType(member.type.name)}}Transfer
+    {%- elif member.type.category == "bitmask" -%}
+        {{as_cType(member.type.name)}}Flags
     {%- else -%}
         {{as_cType(member.type.name)}}
     {%- endif -%}
@@ -83,7 +87,7 @@
 //* Methods are very similar to structures that have one member corresponding to each arguments.
 //* This macro takes advantage of the similarity to output [de]serialization code for a record
 //* that is either a structure or a method, with some special cases for each.
-{% macro write_record_serialization_helpers(record, name, members, is_cmd=False, is_method=False, is_return_command=False) %}
+{% macro write_record_serialization_helpers(record, name, members, is_cmd=False, is_return_command=False) %}
     {% set Return = "Return" if is_return_command else "" %}
     {% set Cmd = "Cmd" if is_cmd else "" %}
 
@@ -105,6 +109,10 @@
         {% for member in members if member.length == "strlen" %}
             size_t {{as_varName(member.name)}}Strlen;
         {% endfor %}
+
+        {% for member in members if member.optional and member.annotation != "value" and member.type.category != "object" %}
+            bool has_{{as_varName(member.name)}};
+        {% endfor %}
     };
 
     //* Returns the required transfer size for `record` in addition to the transfer structure.
@@ -115,24 +123,39 @@
 
         //* Special handling of const char* that have their length embedded directly in the command
         {% for member in members if member.length == "strlen" %}
-            result += std::strlen(record.{{as_varName(member.name)}});
+            {% set memberName = as_varName(member.name) %}
+
+            {% if member.optional %}
+                bool has_{{memberName}} = record.{{memberName}} != nullptr;
+                if (has_{{memberName}})
+            {% endif %}
+            {
+            result += std::strlen(record.{{memberName}});
+            }
         {% endfor %}
 
         //* Gather how much space will be needed for pointer members.
-        {% for member in members if member.annotation != "value" and member.length != "strlen" %}
+        {% for member in members if member.length != "strlen" and not member.skip_serialize %}
+            {% if member.type.category != "object" and member.optional %}
+                if (record.{{as_varName(member.name)}} != nullptr)
+            {% endif %}
             {
-                size_t memberLength = {{member_length(member, "record.")}};
-                result += memberLength * {{member_transfer_sizeof(member)}};
-
-                //* Structures might contain more pointers so we need to add their extra size as well.
-                {% if member.type.category == "structure" %}
-                    for (size_t i = 0; i < memberLength; ++i) {
-                        {% if member.annotation == "const*const*" %}
-                            result += {{as_cType(member.type.name)}}GetExtraRequiredSize(*record.{{as_varName(member.name)}}[i]);
-                        {% else %}
-                            result += {{as_cType(member.type.name)}}GetExtraRequiredSize(record.{{as_varName(member.name)}}[i]);
-                        {% endif %}
-                    }
+                {% if member.annotation != "value" %}
+                    size_t memberLength = {{member_length(member, "record.")}};
+                    result += memberLength * {{member_transfer_sizeof(member)}};
+                    //* Structures might contain more pointers so we need to add their extra size as well.
+                    {% if member.type.category == "structure" %}
+                        for (size_t i = 0; i < memberLength; ++i) {
+                            {% if member.annotation == "const*const*" %}
+                                result += {{as_cType(member.type.name)}}GetExtraRequiredSize(*record.{{as_varName(member.name)}}[i]);
+                            {% else %}
+                                {{assert(member.annotation == "const*")}}
+                                result += {{as_cType(member.type.name)}}GetExtraRequiredSize(record.{{as_varName(member.name)}}[i]);
+                            {% endif %}
+                        }
+                    {% endif %}
+                {% elif member.type.category == "structure" %}
+                    result += {{as_cType(member.type.name)}}GetExtraRequiredSize(record.{{as_varName(member.name)}});
                 {% endif %}
             }
         {% endfor %}
@@ -145,7 +168,7 @@
 
     //* Serializes `record` into `transfer`, using `buffer` to get more space for pointed-to data
     //* and `provider` to serialize objects.
-    void {{Return}}{{name}}Serialize(const {{Return}}{{name}}{{Cmd}}& record, {{Return}}{{name}}Transfer* transfer,
+    DAWN_DECLARE_UNUSED void {{Return}}{{name}}Serialize(const {{Return}}{{name}}{{Cmd}}& record, {{Return}}{{name}}Transfer* transfer,
                            char** buffer
         {%- if record.has_dawn_object -%}
             , const ObjectIdProvider& provider
@@ -167,32 +190,47 @@
         //* Special handling of const char* that have their length embedded directly in the command
         {% for member in members if member.length == "strlen" %}
             {% set memberName = as_varName(member.name) %}
+
+            {% if member.optional %}
+                bool has_{{memberName}} = record.{{memberName}} != nullptr;
+                transfer->has_{{memberName}} = has_{{memberName}};
+                if (has_{{memberName}})
+            {% endif %}
+            {
             transfer->{{memberName}}Strlen = std::strlen(record.{{memberName}});
 
             memcpy(*buffer, record.{{memberName}}, transfer->{{memberName}}Strlen);
             *buffer += transfer->{{memberName}}Strlen;
+            }
         {% endfor %}
 
         //* Allocate space and write the non-value arguments in it.
-        {% for member in members if member.annotation != "value" and member.length != "strlen" %}
+        {% for member in members if member.annotation != "value" and member.length != "strlen" and not member.skip_serialize %}
             {% set memberName = as_varName(member.name) %}
+
+            {% if member.type.category != "object" and member.optional %}
+                bool has_{{memberName}} = record.{{memberName}} != nullptr;
+                transfer->has_{{memberName}} = has_{{memberName}};
+                if (has_{{memberName}})
+            {% endif %}
             {
                 size_t memberLength = {{member_length(member, "record.")}};
                 auto memberBuffer = reinterpret_cast<{{member_transfer_type(member)}}*>(*buffer);
-
                 *buffer += memberLength * {{member_transfer_sizeof(member)}};
+
                 for (size_t i = 0; i < memberLength; ++i) {
                     {{serialize_member(member, "record." + memberName + "[i]", "memberBuffer[i]" )}}
                 }
             }
         {% endfor %}
     }
+    DAWN_UNUSED_FUNC({{Return}}{{name}}Serialize);
 
     //* Deserializes `transfer` into `record` getting more serialized data from `buffer` and `size`
     //* if needed, using `allocator` to store pointed-to values and `resolver` to translate object
     //* Ids to actual objects.
-    DeserializeResult {{Return}}{{name}}Deserialize({{Return}}{{name}}{{Cmd}}* record, const {{Return}}{{name}}Transfer* transfer,
-                                          const char** buffer, size_t* size, DeserializeAllocator* allocator
+    DAWN_DECLARE_UNUSED DeserializeResult {{Return}}{{name}}Deserialize({{Return}}{{name}}{{Cmd}}* record, const volatile {{Return}}{{name}}Transfer* transfer,
+                                          const volatile char** buffer, size_t* size, DeserializeAllocator* allocator
         {%- if record.has_dawn_object -%}
             , const ObjectIdResolver& resolver
         {%- endif -%}
@@ -205,51 +243,12 @@
             ASSERT(transfer->commandId == {{Return}}WireCmd::{{name}});
         {% endif %}
 
-        //* First assign result ObjectHandles:
-        //* Deserialize guarantees they are filled even if there is an ID for an error object
-        //* for the Maybe monad mechanism.
-        //* TODO(enga): This won't need to be done first once we have "WebGPU error handling".
-        {% set return_handles = members
-          |selectattr("is_return_value")
-          |selectattr("annotation", "equalto", "value")
-          |selectattr("type.dict_name", "equalto", "ObjectHandle")
-          |list %}
-
-        //* Strip return_handles so we don't deserialize it again
-        {% set members = members|reject("in", return_handles)|list %}
-
-        {% for member in return_handles %}
-            {% set memberName = as_varName(member.name) %}
-            {{deserialize_member(member, "transfer->" + memberName, "record->" + memberName)}}
-        {% endfor %}
-
-        //* Handle special transfer members for methods
-        {% if is_method %}
-            //* First assign selfId:
-            //* Deserialize guarantees they are filled even if there is an ID for an error object
-            //* for the Maybe monad mechanism.
-            //* TODO(enga): This won't need to be done first once we have "WebGPU error handling".
-            //*             We can also remove is_method
-            record->selfId = transfer->self;
-            //* This conversion is done after the copying of result* and selfId: Deserialize
-            //* guarantees they are filled even if there is an ID for an error object for the
-            //* Maybe monad mechanism.
-            DESERIALIZE_TRY(resolver.GetFromId(record->selfId, &record->self));
-
-            //* Strip self so we don't deserialize it again
-            {% set members = members|rejectattr("name.chunks", "equalto", ["self"])|list %}
-
-            //* The object resolver returns a success even if the object is null because the
-            //* frontend is responsible to validate that (null objects sometimes have special
-            //* meanings). However it is never valid to call a method on a null object so we
-            //* can error out in that case.
-            if (record->self == nullptr) {
-                return DeserializeResult::FatalError;
-            }
-        {% endif %}
-
         {% if record.extensible %}
             record->nextInChain = nullptr;
+        {% endif %}
+
+        {% if record.derived_method %}
+            record->selfId = transfer->self;
         {% endif %}
 
         //* Value types are directly in the transfer record, objects being replaced with their IDs.
@@ -261,14 +260,20 @@
         //* Special handling of const char* that have their length embedded directly in the command
         {% for member in members if member.length == "strlen" %}
             {% set memberName = as_varName(member.name) %}
+
+            {% if member.optional %}
+                bool has_{{memberName}} = transfer->has_{{memberName}};
+                record->{{memberName}} = nullptr;
+                if (has_{{memberName}})
+            {% endif %}
             {
                 size_t stringLength = transfer->{{memberName}}Strlen;
-                const char* stringInBuffer = nullptr;
+                const volatile char* stringInBuffer = nullptr;
                 DESERIALIZE_TRY(GetPtrFromBuffer(buffer, size, stringLength, &stringInBuffer));
 
                 char* copiedString = nullptr;
                 DESERIALIZE_TRY(GetSpace(allocator, stringLength + 1, &copiedString));
-                memcpy(copiedString, stringInBuffer, stringLength);
+                std::copy(stringInBuffer, stringInBuffer + stringLength, copiedString);
                 copiedString[stringLength] = '\0';
                 record->{{memberName}} = copiedString;
             }
@@ -277,9 +282,15 @@
         //* Get extra buffer data, and copy pointed to values in extra allocated space.
         {% for member in members if member.annotation != "value" and member.length != "strlen" %}
             {% set memberName = as_varName(member.name) %}
+
+            {% if member.type.category != "object" and member.optional %}
+                bool has_{{memberName}} = transfer->has_{{memberName}};
+                record->{{memberName}} = nullptr;
+                if (has_{{memberName}})
+            {% endif %}
             {
                 size_t memberLength = {{member_length(member, "record->")}};
-                auto memberBuffer = reinterpret_cast<const {{member_transfer_type(member)}}*>(buffer);
+                auto memberBuffer = reinterpret_cast<const volatile {{member_transfer_type(member)}}*>(buffer);
                 DESERIALIZE_TRY(GetPtrFromBuffer(buffer, size, memberLength, &memberBuffer));
 
                 {{as_cType(member.type.name)}}* copiedMembers = nullptr;
@@ -303,6 +314,7 @@
 
         return DeserializeResult::Success;
     }
+    DAWN_UNUSED_FUNC({{Return}}{{name}}Deserialize);
 {% endmacro %}
 
 {% macro write_command_serialization_methods(command, is_return) %}
@@ -330,12 +342,12 @@
         );
     }
 
-    DeserializeResult {{Cmd}}::Deserialize(const char** buffer, size_t* size, DeserializeAllocator* allocator
+    DeserializeResult {{Cmd}}::Deserialize(const volatile char** buffer, size_t* size, DeserializeAllocator* allocator
         {%- if command.has_dawn_object -%}
             , const ObjectIdResolver& resolver
         {%- endif -%}
     ) {
-        const {{Name}}Transfer* transfer = nullptr;
+        const volatile {{Name}}Transfer* transfer = nullptr;
         DESERIALIZE_TRY(GetPtrFromBuffer(buffer, size, 1, &transfer));
 
         return {{Name}}Deserialize(this, transfer, buffer, size, allocator
@@ -357,12 +369,26 @@ namespace dawn_wire {
         } \
     }
 
+    ObjectHandle::ObjectHandle() = default;
+    ObjectHandle::ObjectHandle(ObjectId id, ObjectSerial serial) : id(id), serial(serial) {}
+    ObjectHandle::ObjectHandle(const volatile ObjectHandle& rhs) : id(rhs.id), serial(rhs.serial) {}
+    ObjectHandle& ObjectHandle::AssignFrom(const ObjectHandle& rhs) {
+        id = rhs.id;
+        serial = rhs.serial;
+        return *this;
+    }
+    ObjectHandle& ObjectHandle::AssignFrom(const volatile ObjectHandle& rhs) {
+        id = rhs.id;
+        serial = rhs.serial;
+        return *this;
+    }
+
     namespace {
 
         // Consumes from (buffer, size) enough memory to contain T[count] and return it in data.
         // Returns FatalError if not enough memory was available
         template <typename T>
-        DeserializeResult GetPtrFromBuffer(const char** buffer, size_t* size, size_t count, const T** data) {
+        DeserializeResult GetPtrFromBuffer(const volatile char** buffer, size_t* size, size_t count, const volatile T** data) {
             constexpr size_t kMaxCountWithoutOverflows = std::numeric_limits<size_t>::max() / sizeof(T);
             if (count > kMaxCountWithoutOverflows) {
                 return DeserializeResult::FatalError;
@@ -373,7 +399,7 @@ namespace dawn_wire {
                 return DeserializeResult::FatalError;
             }
 
-            *data = reinterpret_cast<const T*>(*buffer);
+            *data = reinterpret_cast<const volatile T*>(*buffer);
             *buffer += totalSize;
             *size -= totalSize;
 
@@ -401,23 +427,24 @@ namespace dawn_wire {
         //* Output structure [de]serialization first because it is used by commands.
         {% for type in by_category["structure"] %}
             {% set name = as_cType(type.name) %}
-            {{write_record_serialization_helpers(type, name, type.members,
-              is_cmd=False)}}
+            {% if type.name.CamelCase() not in client_side_structures %}
+                {{write_record_serialization_helpers(type, name, type.members,
+                  is_cmd=False)}}
+            {% endif %}
         {% endfor %}
 
         //* Output [de]serialization helpers for commands
         {% for command in cmd_records["command"] %}
             {% set name = command.name.CamelCase() %}
             {{write_record_serialization_helpers(command, name, command.members,
-              is_cmd=True, is_method=command.derived_method != None)}}
+              is_cmd=True)}}
         {% endfor %}
 
         //* Output [de]serialization helpers for return commands
         {% for command in cmd_records["return command"] %}
             {% set name = command.name.CamelCase() %}
             {{write_record_serialization_helpers(command, name, command.members,
-              is_cmd=True, is_method=command.derived_method != None,
-              is_return_command=True)}}
+              is_cmd=True, is_return_command=True)}}
         {% endfor %}
     }  // anonymous namespace
 
@@ -428,5 +455,35 @@ namespace dawn_wire {
     {% for command in cmd_records["return command"] %}
         {{ write_command_serialization_methods(command, True) }}
     {% endfor %}
+
+        // Implementations of serialization/deserialization of WPGUDeviceProperties.
+        size_t SerializedWGPUDevicePropertiesSize(const WGPUDeviceProperties* deviceProperties) {
+            return sizeof(WGPUDeviceProperties) +
+                   WGPUDevicePropertiesGetExtraRequiredSize(*deviceProperties);
+        }
+
+        void SerializeWGPUDeviceProperties(const WGPUDeviceProperties* deviceProperties,
+                                           char* serializeBuffer) {
+            size_t devicePropertiesSize = SerializedWGPUDevicePropertiesSize(deviceProperties);
+            WGPUDevicePropertiesTransfer* transfer =
+                reinterpret_cast<WGPUDevicePropertiesTransfer*>(serializeBuffer);
+            serializeBuffer += devicePropertiesSize;
+
+            WGPUDevicePropertiesSerialize(*deviceProperties, transfer, &serializeBuffer);
+        }
+
+        bool DeserializeWGPUDeviceProperties(WGPUDeviceProperties* deviceProperties,
+                                             const volatile char* deserializeBuffer) {
+            size_t devicePropertiesSize = SerializedWGPUDevicePropertiesSize(deviceProperties);
+            const volatile WGPUDevicePropertiesTransfer* transfer = nullptr;
+            if (GetPtrFromBuffer(&deserializeBuffer, &devicePropertiesSize, 1, &transfer) !=
+                DeserializeResult::Success) {
+                return false;
+            }
+
+            return WGPUDevicePropertiesDeserialize(deviceProperties, transfer, &deserializeBuffer,
+                                                   &devicePropertiesSize,
+                                                   nullptr) == DeserializeResult::Success;
+        }
 
 }  // namespace dawn_wire

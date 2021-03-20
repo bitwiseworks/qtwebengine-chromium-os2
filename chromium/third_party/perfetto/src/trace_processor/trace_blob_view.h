@@ -51,7 +51,7 @@ class TraceBlobView {
   TraceBlobView(const TraceBlobView&) = delete;
   TraceBlobView& operator=(const TraceBlobView&) = delete;
 
-  TraceBlobView slice(size_t offset, size_t length) {
+  TraceBlobView slice(size_t offset, size_t length) const {
     PERFETTO_DCHECK(offset + length <= offset_ + length_);
     return TraceBlobView(shbuf_, offset, length);
   }
@@ -70,8 +70,8 @@ class TraceBlobView {
     return static_cast<size_t>(data - start());
   }
 
-  // const std::shared_ptr<uint8_t[]>& buffer() const { return shbuf_; }
   size_t length() const { return length_; }
+  size_t offset() const { return offset_; }
 
  private:
   // An equivalent to std::shared_ptr<uint8_t>, with the differnce that:

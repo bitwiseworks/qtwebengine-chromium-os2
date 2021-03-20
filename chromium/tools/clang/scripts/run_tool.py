@@ -47,6 +47,8 @@ extract_edits.py extracts only lines between BEGIN/END EDITS markers
 apply_edits.py reads edit lines from stdin and applies the edits
 """
 
+from __future__ import print_function
+
 import argparse
 from collections import namedtuple
 import functools
@@ -219,7 +221,7 @@ def _ExecuteTool(toolname, tool_args, build_directory, compdb_entry):
         # /showIncludes is used by Ninja to track header file dependencies on
         # Windows. We don't need to do this here, and it results in lots of spam
         # and a massive log file, so we strip it.
-        and a != '/showIncludes'
+        and a != '/showIncludes' and a != '/showIncludes:user'
         # -MMD has the same purpose on non-Windows. It may have a corresponding
         # '-MF <filename>', which we strip below.
         and a != '-MMD'
@@ -387,8 +389,8 @@ def main():
         f for i, f in enumerate(sorted(compdb_entries))
         if i % shard_count == shard_number
     ]
-    print 'Shard %d-of-%d will process %d entries out of %d' % (
-        shard_number, shard_count, len(compdb_entries), total_length)
+    print('Shard %d-of-%d will process %d entries out of %d' %
+          (shard_number, shard_count, len(compdb_entries), total_length))
 
   dispatcher = _CompilerDispatcher(os.path.join(tool_path, args.tool),
                                    args.tool_arg,

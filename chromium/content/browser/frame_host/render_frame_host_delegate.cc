@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <stddef.h>
+#include "content/browser/frame_host/render_frame_host_delegate.h"
 
+#include <stddef.h>
+#include <memory>
+#include <utility>
+
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "content/browser/frame_host/render_frame_host_delegate.h"
-#include "content/public/browser/file_select_listener.h"
 #include "ipc/ipc_message.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -27,7 +31,7 @@ const GURL& RenderFrameHostDelegate::GetMainFrameLastCommittedURL() {
 }
 
 bool RenderFrameHostDelegate::DidAddMessageToConsole(
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
@@ -36,14 +40,14 @@ bool RenderFrameHostDelegate::DidAddMessageToConsole(
 
 void RenderFrameHostDelegate::RunFileChooser(
     RenderFrameHost* render_frame_host,
-    std::unique_ptr<FileSelectListener> listener,
+    std::unique_ptr<FileChooserImpl::FileSelectListenerImpl> listener,
     const blink::mojom::FileChooserParams& params) {
   listener->FileSelectionCanceled();
 }
 
 void RenderFrameHostDelegate::EnumerateDirectory(
     RenderFrameHost* render_frame_host,
-    std::unique_ptr<FileSelectListener> listener,
+    std::unique_ptr<FileChooserImpl::FileSelectListenerImpl> listener,
     const base::FilePath& path) {
   listener->FileSelectionCanceled();
 }
@@ -62,21 +66,21 @@ void RenderFrameHostDelegate::RequestMediaAccessPermission(
   LOG(ERROR) << "RenderFrameHostDelegate::RequestMediaAccessPermission: "
              << "Not supported.";
   std::move(callback).Run(blink::MediaStreamDevices(),
-                          blink::MEDIA_DEVICE_NOT_SUPPORTED,
+                          blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED,
                           std::unique_ptr<MediaStreamUI>());
 }
 
 bool RenderFrameHostDelegate::CheckMediaAccessPermission(
     RenderFrameHost* render_frame_host,
     const url::Origin& security_origin,
-    blink::MediaStreamType type) {
+    blink::mojom::MediaStreamType type) {
   LOG(ERROR) << "RenderFrameHostDelegate::CheckMediaAccessPermission: "
              << "Not supported.";
   return false;
 }
 
 std::string RenderFrameHostDelegate::GetDefaultMediaDeviceID(
-    blink::MediaStreamType type) {
+    blink::mojom::MediaStreamType type) {
   return std::string();
 }
 
@@ -95,13 +99,15 @@ RenderFrameHostDelegate::GetGeolocationContext() {
   return nullptr;
 }
 
-device::mojom::WakeLock* RenderFrameHostDelegate::GetRendererWakeLock() {
-  return nullptr;
-}
-
 #if defined(OS_ANDROID)
-void RenderFrameHostDelegate::GetNFC(device::mojom::NFCRequest request) {}
+void RenderFrameHostDelegate::GetNFC(
+    RenderFrameHost* render_frame_host,
+    mojo::PendingReceiver<device::mojom::NFC> receiver) {}
 #endif
+
+bool RenderFrameHostDelegate::CanEnterFullscreenMode() {
+  return true;
+}
 
 bool RenderFrameHostDelegate::ShouldRouteMessageEvent(
     RenderFrameHost* target_rfh,
@@ -114,8 +120,21 @@ RenderFrameHostDelegate::GetFocusedFrameIncludingInnerWebContents() {
   return nullptr;
 }
 
+RenderFrameHostImpl* RenderFrameHostDelegate::GetMainFrame() {
+  return nullptr;
+}
+
 std::unique_ptr<WebUIImpl>
 RenderFrameHostDelegate::CreateWebUIForRenderFrameHost(const GURL& url) {
+  return nullptr;
+}
+
+RenderFrameHostDelegate* RenderFrameHostDelegate::CreateNewWindow(
+    RenderFrameHost* opener,
+    const mojom::CreateNewWindowParams& params,
+    bool is_new_browsing_instance,
+    bool has_user_gesture,
+    SessionStorageNamespace* session_storage_namespace) {
   return nullptr;
 }
 
@@ -145,6 +164,38 @@ Visibility RenderFrameHostDelegate::GetVisibility() {
 ukm::SourceId RenderFrameHostDelegate::GetUkmSourceIdForLastCommittedSource()
     const {
   return ukm::kInvalidSourceId;
+}
+
+ukm::SourceId RenderFrameHostDelegate::
+    GetUkmSourceIdForLastCommittedSourceIncludingSameDocument() const {
+  return ukm::kInvalidSourceId;
+}
+
+RenderFrameHostImpl* RenderFrameHostDelegate::GetMainFrameForInnerDelegate(
+    FrameTreeNode* frame_tree_node) {
+  return nullptr;
+}
+
+media::MediaMetricsProvider::RecordAggregateWatchTimeCallback
+RenderFrameHostDelegate::GetRecordAggregateWatchTimeCallback() {
+  return base::NullCallback();
+}
+
+bool RenderFrameHostDelegate::IsFrameLowPriority(
+    const RenderFrameHost* render_frame_host) {
+  return false;
+}
+
+void RenderFrameHostDelegate::IsClipboardPasteAllowed(
+    const GURL& url,
+    const ui::ClipboardFormatType& data_type,
+    const std::string& data,
+    IsClipboardPasteAllowedCallback callback) {
+  std::move(callback).Run(ClipboardPasteAllowed(true));
+}
+
+bool RenderFrameHostDelegate::HasSeenRecentScreenOrientationChange() {
+  return false;
 }
 
 }  // namespace content

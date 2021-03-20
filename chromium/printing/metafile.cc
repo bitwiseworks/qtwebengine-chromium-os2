@@ -29,6 +29,7 @@ bool Metafile::GetDataAsVector(std::vector<char>* buffer) const {
                  base::checked_cast<uint32_t>(buffer->size()));
 }
 
+#if !defined(OS_ANDROID)
 bool Metafile::SaveTo(base::File* file) const {
   if (!file->IsValid())
     return false;
@@ -37,12 +38,13 @@ bool Metafile::SaveTo(base::File* file) const {
   if (!GetDataAsVector(&buffer))
     return false;
 
-  int size = base::checked_cast<int>(buffer.size());
-  if (file->WriteAtCurrentPos(&buffer[0], size) != size) {
+  if (!file->WriteAtCurrentPosAndCheck(
+          base::as_bytes(base::make_span(buffer)))) {
     DLOG(ERROR) << "Failed to save file.";
     return false;
   }
   return true;
 }
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace printing

@@ -160,8 +160,8 @@ void FillVp9FrameContext(struct v4l2_vp9_entropy_ctx& v4l2_entropy_ctx,
 
 class V4L2VP9Picture : public VP9Picture {
  public:
-  explicit V4L2VP9Picture(const scoped_refptr<V4L2DecodeSurface>& dec_surface)
-      : dec_surface_(dec_surface) {}
+  explicit V4L2VP9Picture(scoped_refptr<V4L2DecodeSurface> dec_surface)
+      : dec_surface_(std::move(dec_surface)) {}
 
   V4L2VP9Picture* AsV4L2VP9Picture() override { return this; }
   scoped_refptr<V4L2DecodeSurface> dec_surface() { return dec_surface_; }
@@ -184,11 +184,8 @@ V4L2VP9Accelerator::V4L2VP9Accelerator(
     : surface_handler_(surface_handler), device_(device) {
   DCHECK(surface_handler_);
 
-  struct v4l2_queryctrl query_ctrl;
-  memset(&query_ctrl, 0, sizeof(query_ctrl));
-  query_ctrl.id = V4L2_CID_MPEG_VIDEO_VP9_ENTROPY;
   device_needs_frame_context_ =
-      (device_->Ioctl(VIDIOC_QUERYCTRL, &query_ctrl) == 0);
+      device_->IsCtrlExposed(V4L2_CID_MPEG_VIDEO_VP9_ENTROPY);
 
   DVLOG_IF(1, device_needs_frame_context_)
       << "Device requires frame context parsing";
@@ -202,15 +199,14 @@ scoped_refptr<VP9Picture> V4L2VP9Accelerator::CreateVP9Picture() {
   if (!dec_surface)
     return nullptr;
 
-  return new V4L2VP9Picture(dec_surface);
+  return new V4L2VP9Picture(std::move(dec_surface));
 }
 
-bool V4L2VP9Accelerator::SubmitDecode(
-    const scoped_refptr<VP9Picture>& pic,
-    const Vp9SegmentationParams& segm_params,
-    const Vp9LoopFilterParams& lf_params,
-    const std::vector<scoped_refptr<VP9Picture>>& ref_pictures,
-    const base::Closure& done_cb) {
+bool V4L2VP9Accelerator::SubmitDecode(scoped_refptr<VP9Picture> pic,
+                                      const Vp9SegmentationParams& segm_params,
+                                      const Vp9LoopFilterParams& lf_params,
+                                      const Vp9ReferenceFrameVector& ref_frames,
+                                      base::OnceClosure done_cb) {
   const Vp9FrameHeader* frame_hdr = pic->frame_hdr.get();
   DCHECK(frame_hdr);
 
@@ -274,13 +270,14 @@ bool V4L2VP9Accelerator::SubmitDecode(
 
   struct v4l2_ctrl_vp9_decode_param v4l2_decode_param;
   memset(&v4l2_decode_param, 0, sizeof(v4l2_decode_param));
-  DCHECK_EQ(ref_pictures.size(), base::size(v4l2_decode_param.ref_frames));
+  DCHECK_EQ(kVp9NumRefFrames, base::size(v4l2_decode_param.ref_frames));
 
   std::vector<scoped_refptr<V4L2DecodeSurface>> ref_surfaces;
-  for (size_t i = 0; i < ref_pictures.size(); ++i) {
-    if (ref_pictures[i]) {
+  for (size_t i = 0; i < kVp9NumRefFrames; ++i) {
+    auto ref_pic = ref_frames.GetFrame(i);
+    if (ref_pic) {
       scoped_refptr<V4L2DecodeSurface> ref_surface =
-          VP9PictureToV4L2DecodeSurface(ref_pictures[i]);
+          VP9PictureToV4L2DecodeSurface(ref_pic.get());
 
       v4l2_decode_param.ref_frames[i] = ref_surface->GetReferenceID();
       ref_surfaces.push_back(ref_surface);
@@ -295,16 +292,16 @@ bool V4L2VP9Accelerator::SubmitDecode(
 
   for (size_t i = 0; i < base::size(frame_hdr->ref_frame_idx); ++i) {
     uint8_t idx = frame_hdr->ref_frame_idx[i];
-    if (idx >= ref_pictures.size())
+    if (idx >= kVp9NumRefFrames)
       return false;
 
     struct v4l2_vp9_reference_frame* v4l2_ref_frame =
         &v4l2_decode_param.active_ref_frames[i];
 
-    scoped_refptr<VP9Picture> ref_pic = ref_pictures[idx];
+    scoped_refptr<VP9Picture> ref_pic = ref_frames.GetFrame(idx);
     if (ref_pic) {
       scoped_refptr<V4L2DecodeSurface> ref_surface =
-          VP9PictureToV4L2DecodeSurface(ref_pic);
+          VP9PictureToV4L2DecodeSurface(ref_pic.get());
       v4l2_ref_frame->buf_index = ref_surface->GetReferenceID();
 #define REF_TO_V4L2_REF(a) v4l2_ref_frame->a = ref_pic->frame_hdr->a
       REF_TO_V4L2_REF(frame_width);
@@ -344,7 +341,7 @@ bool V4L2VP9Accelerator::SubmitDecode(
   }
 
   scoped_refptr<V4L2DecodeSurface> dec_surface =
-      VP9PictureToV4L2DecodeSurface(pic);
+      VP9PictureToV4L2DecodeSurface(pic.get());
 
   struct v4l2_ext_controls ext_ctrls;
   memset(&ext_ctrls, 0, sizeof(ext_ctrls));
@@ -357,9 +354,9 @@ bool V4L2VP9Accelerator::SubmitDecode(
   }
 
   dec_surface->SetReferenceSurfaces(ref_surfaces);
-  dec_surface->SetDecodeDoneCallback(done_cb);
+  dec_surface->SetDecodeDoneCallback(std::move(done_cb));
 
-  if (!surface_handler_->SubmitSlice(dec_surface, frame_hdr->data,
+  if (!surface_handler_->SubmitSlice(dec_surface.get(), frame_hdr->data,
                                      frame_hdr->frame_size))
     return false;
 
@@ -368,15 +365,15 @@ bool V4L2VP9Accelerator::SubmitDecode(
   return true;
 }
 
-bool V4L2VP9Accelerator::OutputPicture(const scoped_refptr<VP9Picture>& pic) {
+bool V4L2VP9Accelerator::OutputPicture(scoped_refptr<VP9Picture> pic) {
   // TODO(crbug.com/647725): Insert correct color space.
-  surface_handler_->SurfaceReady(VP9PictureToV4L2DecodeSurface(pic),
+  surface_handler_->SurfaceReady(VP9PictureToV4L2DecodeSurface(pic.get()),
                                  pic->bitstream_id(), pic->visible_rect(),
                                  VideoColorSpace());
   return true;
 }
 
-bool V4L2VP9Accelerator::GetFrameContext(const scoped_refptr<VP9Picture>& pic,
+bool V4L2VP9Accelerator::GetFrameContext(scoped_refptr<VP9Picture> pic,
                                          Vp9FrameContext* frame_ctx) {
   struct v4l2_ctrl_vp9_entropy v4l2_entropy;
   memset(&v4l2_entropy, 0, sizeof(v4l2_entropy));
@@ -388,7 +385,7 @@ bool V4L2VP9Accelerator::GetFrameContext(const scoped_refptr<VP9Picture>& pic,
   ctrl.p_vp9_entropy = &v4l2_entropy;
 
   scoped_refptr<V4L2DecodeSurface> dec_surface =
-      VP9PictureToV4L2DecodeSurface(pic);
+      VP9PictureToV4L2DecodeSurface(pic.get());
 
   struct v4l2_ext_controls ext_ctrls;
   memset(&ext_ctrls, 0, sizeof(ext_ctrls));
@@ -409,8 +406,7 @@ bool V4L2VP9Accelerator::IsFrameContextRequired() const {
 }
 
 scoped_refptr<V4L2DecodeSurface>
-V4L2VP9Accelerator::VP9PictureToV4L2DecodeSurface(
-    const scoped_refptr<VP9Picture>& pic) {
+V4L2VP9Accelerator::VP9PictureToV4L2DecodeSurface(VP9Picture* pic) {
   V4L2VP9Picture* v4l2_pic = pic->AsV4L2VP9Picture();
   CHECK(v4l2_pic);
   return v4l2_pic->dec_surface();

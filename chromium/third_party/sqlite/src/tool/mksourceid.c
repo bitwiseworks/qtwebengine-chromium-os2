@@ -3,7 +3,7 @@
 ** Fossil "manifest" file for a project, and this program will emit on
 ** standard output the "source id" for for the program.
 **
-** (1)  The "source id" is the date of check-in together with the
+** (1)  The "source id" is the date of check-in together with the 
 **      SHA3 hash of the manifest file.
 **
 ** (2)  All individual file hashes in the manifest are verified.  If any
@@ -540,27 +540,9 @@ struct SHA1Context {
  *
  * blk0le() for little-endian and blk0be() for big-endian.
  */
-#if __GNUC__ && (defined(__i386__) || defined(__x86_64__))
-/*
- * GCC by itself only generates left rotates.  Use right rotates if
- * possible to be kinder to dinky implementations with iterative rotate
- * instructions.
- */
-#define SHA_ROT(op, x, k) \
-        ({ unsigned int y; asm(op " %1,%0" : "=r" (y) : "I" (k), "0" (x)); y; })
-#define rol(x,k) SHA_ROT("roll", x, k)
-#define ror(x,k) SHA_ROT("rorl", x, k)
-
-#else
-/* Generic C equivalent */
 #define SHA_ROT(x,l,r) ((x) << (l) | (x) >> (r))
 #define rol(x,k) SHA_ROT(x,k,32-(k))
 #define ror(x,k) SHA_ROT(x,32-(k),k)
-#endif
-
-
-
-
 
 #define blk0le(i) (block[i] = (ror(block[i],8)&0xFF00FF00) \
     |(rol(block[i],8)&0x00FF00FF))
@@ -750,7 +732,7 @@ static int sha1sum_file(const char *zFilename, char *pCksum){
 ** Print a usage comment and quit.
 */
 static void usage(const char *argv0){
-  fprintf(stderr,
+  fprintf(stderr, 
      "Usage: %s manifest\n"
      "Options:\n"
      "   -v  Diagnostic output\n"
@@ -768,7 +750,7 @@ static char *nextToken(char *z){
   *z = 0;
   return &z[1];
 }
-
+  
 
 int main(int argc, char **argv){
   const char *zManifest = 0;

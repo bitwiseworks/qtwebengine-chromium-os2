@@ -6,8 +6,6 @@ static_library("renderer") {
   sources = [
     "print_render_frame_helper.cc",
     "print_render_frame_helper.h",
-    "print_render_frame_helper_android.cc",
-    "print_render_frame_helper_linux.cc",
     "print_render_frame_helper_mac.mm",
   ]
 
@@ -23,6 +21,7 @@ static_library("renderer") {
   deps = [
     "//base",
     "//components/printing/common",
+    "//components/printing/common:mojo_interfaces",
     "//components/resources",
     "//content/public/common",
     "//content/public/renderer",

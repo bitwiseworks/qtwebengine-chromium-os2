@@ -18,7 +18,7 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/public/browser/browser_thread.h"
 #include "storage/browser/quota/quota_manager.h"
-#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom-forward.h"
 
 namespace quota_internals {
 
@@ -39,6 +39,9 @@ class QuotaInternalsProxy
   explicit QuotaInternalsProxy(QuotaInternalsHandler* handler);
 
   void RequestInfo(scoped_refptr<storage::QuotaManager> quota_manager);
+  void TriggerStoragePressure(
+      url::Origin origin,
+      scoped_refptr<storage::QuotaManager> quota_manager);
 
  private:
   friend class base::DeleteHelper<QuotaInternalsProxy>;
@@ -82,7 +85,7 @@ class QuotaInternalsProxy
   std::set<std::pair<std::string, blink::mojom::StorageType>> hosts_visited_,
       hosts_pending_;
   std::vector<PerHostStorageInfo> report_pending_;
-  base::WeakPtrFactory<QuotaInternalsProxy> weak_factory_;
+  base::WeakPtrFactory<QuotaInternalsProxy> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(QuotaInternalsProxy);
 };

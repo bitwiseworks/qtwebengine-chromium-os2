@@ -15,6 +15,8 @@
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/render_message_filter.mojom.h"
+#include "content/common/widget.mojom.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/load_states.h"
 
 class GURL;
@@ -22,6 +24,12 @@ class GURL;
 namespace IPC {
 class Message;
 }
+
+namespace blink {
+namespace mojom {
+class RendererPreferences;
+}
+}  // namespace blink
 
 namespace gfx {
 class Rect;
@@ -32,14 +40,13 @@ namespace content {
 
 class BrowserContext;
 class FrameTree;
-class RenderFrameHost;
+class RenderFrameHostImpl;
 class RenderViewHost;
 class RenderViewHostImpl;
 class RenderViewHostDelegateView;
 class SessionStorageNamespace;
 class SiteInstance;
 class WebContents;
-struct RendererPreferences;
 
 //
 // RenderViewHostDelegate
@@ -95,16 +102,12 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // The page is trying to move the RenderView's representation in the client.
   virtual void RequestSetBounds(const gfx::Rect& new_bounds) {}
 
-  // The RenderView's main frame document element is ready. This happens when
-  // the document has finished parsing.
-  virtual void DocumentAvailableInMainFrame(RenderViewHost* render_view_host) {}
-
   // The page wants to close the active view in this tab.
   virtual void RouteCloseEvent(RenderViewHost* rvh) {}
 
   // Return a dummy RendererPreferences object that will be used by the renderer
   // associated with the owning RenderViewHost.
-  virtual RendererPreferences GetRendererPrefs(
+  virtual blink::mojom::RendererPreferences GetRendererPrefs(
       BrowserContext* browser_context) const = 0;
 
   // Notification from the renderer host that blocked UI event occurred.
@@ -119,19 +122,6 @@ class CONTENT_EXPORT RenderViewHostDelegate {
 
   // The contents' preferred size changed.
   virtual void UpdatePreferredSize(const gfx::Size& pref_size) {}
-
-  // The page is trying to open a new widget (e.g. a select popup). The
-  // widget should be created associated with the given |route_id| in the
-  // process |render_process_id|, but it should not be shown yet. That should
-  // happen in response to ShowCreatedWidget.
-  virtual void CreateNewWidget(int32_t render_process_id,
-                               int32_t widget_route_id,
-                               mojom::WidgetPtr widget) {}
-
-  // Creates a full screen RenderWidget. Similar to above.
-  virtual void CreateNewFullscreenWidget(int32_t render_process_id,
-                                         int32_t widget_route_id,
-                                         mojom::WidgetPtr widget) {}
 
   // Show the newly created widget with the specified bounds.
   // The widget is identified by the route_id passed to CreateNewWidget.
@@ -152,8 +142,9 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // to this view.
   virtual SessionStorageNamespaceMap GetSessionStorageNamespaceMap();
 
-  // Returns true if the RenderViewHost will never be visible.
-  virtual bool IsNeverVisible();
+  // Returns true if RenderWidgets under this RenderViewHost will never be
+  // user-visible and thus never need to generate pixels for display.
+  virtual bool IsNeverComposited();
 
   // Returns the FrameTree the render view should use. Guaranteed to be constant
   // for the lifetime of the render view.
@@ -178,16 +169,22 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // Whether the WebContents as a persistent video.
   virtual bool HasPersistentVideo() const;
 
+  // Whether spatial navigation is permitted.
+  virtual bool IsSpatialNavigationDisabled() const;
+
   // Returns the RenderFrameHost for a pending or speculative main frame
   // navigation for the page.  Returns nullptr if there is no such navigation.
-  virtual RenderFrameHost* GetPendingMainFrame();
+  virtual RenderFrameHostImpl* GetPendingMainFrame();
 
   // The RenderView finished the first visually non-empty paint.
   virtual void DidFirstVisuallyNonEmptyPaint(RenderViewHostImpl* source) {}
 
-  // The RenderView has issued a draw command, signaling the it
-  // has been visually updated.
-  virtual void DidCommitAndDrawCompositorFrame(RenderViewHostImpl* source) {}
+  // Returns true if the render view is rendering a portal.
+  virtual bool IsPortal() const;
+
+  // Called when the theme color for the underlying document as specified
+  // by theme-color meta tag has changed.
+  virtual void OnThemeColorChanged(RenderViewHostImpl* source) {}
 
  protected:
   virtual ~RenderViewHostDelegate() {}

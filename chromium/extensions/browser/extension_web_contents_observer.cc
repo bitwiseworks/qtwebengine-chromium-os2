@@ -16,7 +16,6 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "extensions/browser/mojo/interface_registration.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/renderer_startup_helper.h"
 #include "extensions/browser/url_loader_factory_manager.h"
@@ -46,10 +45,6 @@ void ExtensionWebContentsObserver::Initialize() {
     // otherwise we wait for the RenderFrameCreated notification.
     if (!rfh->IsRenderFrameLive())
       continue;
-
-    // Initialize the FrameData for this frame here since we didn't receive the
-    // RenderFrameCreated notification for it.
-    ExtensionApiFrameIdMap::Get()->InitializeRenderFrameData(rfh);
 
     InitializeRenderFrame(rfh);
   }
@@ -95,8 +90,6 @@ void ExtensionWebContentsObserver::InitializeRenderFrame(
   render_frame_host->Send(new ExtensionMsg_NotifyRenderViewType(
       render_frame_host->GetRoutingID(), GetViewType(web_contents())));
 
-  ExtensionsBrowserClient::Get()->RegisterExtensionInterfaces(
-      &registry_, render_frame_host, frame_extension);
   ProcessManager::Get(browser_context_)
       ->RegisterRenderFrameHost(web_contents(), render_frame_host,
                                 frame_extension);
@@ -111,11 +104,6 @@ content::WebContents* ExtensionWebContentsObserver::GetAssociatedWebContents()
 void ExtensionWebContentsObserver::RenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
   DCHECK(initialized_);
-  // Optimization: Look up the extension API frame ID to force the mapping to be
-  // cached. This minimizes the number of IO->UI->IO thread hops when the ID is
-  // looked up again on the IO thread for the webRequest API.
-  ExtensionApiFrameIdMap::Get()->InitializeRenderFrameData(render_frame_host);
-
   InitializeRenderFrame(render_frame_host);
 
   const Extension* extension = GetExtensionFromFrame(render_frame_host, false);
@@ -160,37 +148,14 @@ void ExtensionWebContentsObserver::RenderFrameDeleted(
   ExtensionApiFrameIdMap::Get()->OnRenderFrameDeleted(render_frame_host);
 }
 
-void ExtensionWebContentsObserver::RenderFrameHostChanged(
-    content::RenderFrameHost* old_host,
-    content::RenderFrameHost* new_host) {
-  // TODO(karandeepb): The |new_host| here may correspond to a RenderFrameHost
-  // we haven't seen yet, which means it might also need some other
-  // initialization. See crbug.com/817205.
-  if (new_host->IsRenderFrameLive()) {
-    ExtensionApiFrameIdMap::Get()->InitializeRenderFrameData(new_host);
-  }
-}
-
 void ExtensionWebContentsObserver::ReadyToCommitNavigation(
     content::NavigationHandle* navigation_handle) {
   URLLoaderFactoryManager::ReadyToCommitNavigation(navigation_handle);
-
-  if (navigation_handle->IsInMainFrame() &&
-      !navigation_handle->IsSameDocument()) {
-    ExtensionApiFrameIdMap::Get()->OnMainFrameReadyToCommitNavigation(
-        navigation_handle);
-  }
 }
 
 void ExtensionWebContentsObserver::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
   DCHECK(initialized_);
-  if (navigation_handle->IsInMainFrame() &&
-      !navigation_handle->IsSameDocument()) {
-    ExtensionApiFrameIdMap::Get()->OnMainFrameDidFinishNavigation(
-        navigation_handle);
-  }
-
   if (!navigation_handle->HasCommitted())
     return;
 
@@ -209,14 +174,6 @@ void ExtensionWebContentsObserver::DidFinishNavigation(
     pm->RegisterRenderFrameHost(web_contents(), render_frame_host,
                                 frame_extension);
   }
-}
-
-void ExtensionWebContentsObserver::OnInterfaceRequestFromFrame(
-    content::RenderFrameHost* render_frame_host,
-    const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle* interface_pipe) {
-  DCHECK(initialized_);
-  registry_.TryBindInterface(interface_name, interface_pipe, render_frame_host);
 }
 
 void ExtensionWebContentsObserver::MediaPictureInPictureChanged(

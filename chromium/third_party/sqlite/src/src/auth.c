@@ -78,7 +78,7 @@ int sqlite3_set_authorizer(
   sqlite3_mutex_enter(db->mutex);
   db->xAuth = (sqlite3_xauth)xAuth;
   db->pAuthArg = pArg;
-  sqlite3ExpirePreparedStatements(db, 0);
+  if( db->xAuth ) sqlite3ExpirePreparedStatements(db, 1);
   sqlite3_mutex_leave(db->mutex);
   return SQLITE_OK;
 }
@@ -130,10 +130,10 @@ int sqlite3AuthReadCol(
 
 /*
 ** The pExpr should be a TK_COLUMN expression.  The table referred to
-** is in pTabList or else it is the NEW or OLD table of a trigger.
+** is in pTabList or else it is the NEW or OLD table of a trigger.  
 ** Check to see if it is OK to read this particular column.
 **
-** If the auth function returns SQLITE_IGNORE, change the TK_COLUMN
+** If the auth function returns SQLITE_IGNORE, change the TK_COLUMN 
 ** instruction into a TK_NULL.  If the auth function returns SQLITE_DENY,
 ** then generate an error.
 */
@@ -250,7 +250,7 @@ int sqlite3AuthCheck(
 */
 void sqlite3AuthContextPush(
   Parse *pParse,
-  AuthContext *pContext,
+  AuthContext *pContext, 
   const char *zContext
 ){
   assert( pParse );

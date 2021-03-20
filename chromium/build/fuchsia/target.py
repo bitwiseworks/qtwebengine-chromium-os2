@@ -4,15 +4,50 @@
 
 import boot_data
 import common
+import json
 import logging
+import os
 import remote_cmd
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 
 
 _SHUTDOWN_CMD = ['dm', 'poweroff']
-_ATTACH_MAX_RETRIES = 10
 _ATTACH_RETRY_INTERVAL = 1
+_ATTACH_RETRY_SECONDS = 60
+
+# Amount of time to wait for Amber to complete package installation, as a
+# mitigation against hangs due to amber/network-related failures.
+_INSTALL_TIMEOUT_SECS = 5 * 60
+
+
+def _GetPackageInfo(package_path):
+  """Returns a tuple with the name and version of a package."""
+
+  # Query the metadata file which resides next to the package file.
+  package_info = json.load(
+      open(os.path.join(os.path.dirname(package_path), 'package')))
+  return (package_info['name'], package_info['version'])
+
+
+class _MapIsolatedPathsForPackage:
+  """Callable object which remaps /data and /tmp paths to their package-specific
+     locations."""
+
+  def __init__(self, package_name, package_version):
+    package_sub_path = 'r/sys/fuchsia.com:{0}:{1}#meta:{0}.cmx/'.format(
+            package_name, package_version)
+    self.isolated_format = '{0}' + package_sub_path + '{1}'
+
+  def __call__(self, path):
+    for isolated_directory in ['/data/' , '/tmp/']:
+      if (path+'/').startswith(isolated_directory):
+        return self.isolated_format.format(isolated_directory,
+                                           path[len(isolated_directory):])
+    return path
 
 
 class FuchsiaTargetException(Exception):
@@ -83,52 +118,77 @@ class Target(object):
     logging.debug('running (non-blocking) \'%s\'.' % ' '.join(command))
     return self.GetCommandRunner().RunCommandPiped(command, **kwargs)
 
-  def RunCommand(self, command, silent=False):
+  def RunCommand(self, command, silent=False, timeout_secs=None):
     """Executes a remote command and waits for it to finish executing.
 
     Returns the exit code of the command."""
 
     logging.debug('running \'%s\'.' % ' '.join(command))
-    return self.GetCommandRunner().RunCommand(command, silent)
+    return self.GetCommandRunner().RunCommand(command, silent,
+                                              timeout_secs=timeout_secs)
 
-  def PutFile(self, source, dest, recursive=False):
+  def EnsureIsolatedPathsExist(self, for_package):
+    """Ensures that the package's isolated /data and /tmp exist."""
+    for isolated_directory in ['/data', '/tmp']:
+      self.RunCommand(
+          ['mkdir','-p',
+           _MapIsolatedPathsForPackage(for_package, 0)(isolated_directory)])
+
+  def PutFile(self, source, dest, recursive=False, for_package=None):
     """Copies a file from the local filesystem to the target filesystem.
 
     source: The path of the file being copied.
     dest: The path on the remote filesystem which will be copied to.
-    recursive: If true, performs a recursive copy."""
+    recursive: If true, performs a recursive copy.
+    for_package: If specified, isolated paths in the |dest| are mapped to their
+                 obsolute paths for the package, on the target. This currently
+                 affects the /data and /tmp directories.
+    """
 
     assert type(source) is str
-    self.PutFiles([source], dest, recursive)
+    self.PutFiles([source], dest, recursive, for_package)
 
-  def PutFiles(self, sources, dest, recursive=False):
+  def PutFiles(self, sources, dest, recursive=False, for_package=None):
     """Copies files from the local filesystem to the target filesystem.
 
     sources: List of local file paths to copy from, or a single path.
     dest: The path on the remote filesystem which will be copied to.
-    recursive: If true, performs a recursive copy."""
+    recursive: If true, performs a recursive copy.
+    for_package: If specified, /data in the |dest| is mapped to the package's
+                 isolated /data location.
+    """
 
     assert type(sources) is tuple or type(sources) is list
+    if for_package:
+      self.EnsureIsolatedPathsExist(for_package)
+      dest = _MapIsolatedPathsForPackage(for_package, 0)(dest)
     logging.debug('copy local:%s => remote:%s' % (sources, dest))
     self.GetCommandRunner().RunScp(sources, dest, remote_cmd.COPY_TO_TARGET,
                                    recursive)
 
-  def GetFile(self, source, dest):
+  def GetFile(self, source, dest, for_package=None):
     """Copies a file from the target filesystem to the local filesystem.
 
     source: The path of the file being copied.
-    dest: The path on the local filesystem which will be copied to."""
+    dest: The path on the local filesystem which will be copied to.
+    for_package: If specified, /data in paths in |sources| is mapped to the
+                 package's isolated /data location.
+    """
     assert type(source) is str
-    self.GetFiles([source], dest)
+    self.GetFiles([source], dest, for_package)
 
-  def GetFiles(self, sources, dest):
+  def GetFiles(self, sources, dest, for_package=None):
     """Copies files from the target filesystem to the local filesystem.
 
     sources: List of remote file paths to copy.
-    dest: The path on the local filesystem which will be copied to."""
+    dest: The path on the local filesystem which will be copied to.
+    for_package: If specified, /data in paths in |sources| is mapped to the
+                 package's isolated /data location.
+    """
     assert type(sources) is tuple or type(sources) is list
     self._AssertIsStarted()
-    host, port = self._GetEndpoint()
+    if for_package:
+      sources = map(_MapIsolatedPathsForPackage(for_package, 0), sources)
     logging.debug('copy remote:%s => local:%s' % (sources, dest))
     return self.GetCommandRunner().RunScp(sources, dest,
                                           remote_cmd.COPY_FROM_TARGET)
@@ -146,11 +206,12 @@ class Target(object):
   def _AssertIsStarted(self):
     assert self.IsStarted()
 
-  def _WaitUntilReady(self, retries=_ATTACH_MAX_RETRIES):
+  def _WaitUntilReady(self):
     logging.info('Connecting to Fuchsia using SSH.')
 
-    for retry in xrange(retries + 1):
-      host, port = self._GetEndpoint()
+    host, port = self._GetEndpoint()
+    end_time = time.time() + _ATTACH_RETRY_SECONDS
+    while time.time() < end_time:
       runner = remote_cmd.CommandRunner(self._GetSshConfigPath(), host, port)
       if runner.RunCommand(['true'], True) == 0:
         logging.info('Connected!')
@@ -174,3 +235,35 @@ class Target(object):
     elif self._target_cpu == 'x64':
       return 'x86_64'
     raise Exception('Unknown target_cpu %s:' % self._target_cpu)
+
+  def GetAmberRepo(self):
+    """Returns an AmberRepo instance which serves packages for this Target.
+    Callers should typically call GetAmberRepo() in a |with| statement, and
+    install and execute commands inside the |with| block, so that the returned
+    AmberRepo can teardown correctly, if necessary.
+    """
+    pass
+
+  def InstallPackage(self, package_paths):
+    """Installs a package and it's dependencies on the device. If the package is
+    already installed then it will be updated to the new version.
+
+    package_paths: Paths to the .far files to install."""
+
+    with self.GetAmberRepo() as amber_repo:
+      # Publish all packages to the serving TUF repository under |tuf_root|.
+      for next_package_path in package_paths:
+        amber_repo.PublishPackage(next_package_path)
+
+      # Install all packages.
+      for next_package_path in package_paths:
+        install_package_name, package_version = \
+            _GetPackageInfo(next_package_path)
+        logging.info('Installing %s version %s.' %
+                     (install_package_name, package_version))
+        return_code = self.RunCommand(['amberctl', 'get_up', '-n',
+                                       install_package_name, '-v',
+                                       package_version],
+                                       timeout_secs=_INSTALL_TIMEOUT_SECS)
+        if return_code != 0:
+          raise Exception('Error while installing %s.' % install_package_name)

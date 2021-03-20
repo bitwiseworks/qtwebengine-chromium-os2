@@ -51,7 +51,7 @@ AppCacheGroup::AppCacheGroup(AppCacheStorage* storage,
       storage_(storage),
       is_in_dtor_(false) {
   storage_->working_set()->AddGroup(this);
-  host_observer_.reset(new HostObserver(this));
+  host_observer_ = std::make_unique<HostObserver>(this);
 }
 
 AppCacheGroup::~AppCacheGroup() {
@@ -98,8 +98,8 @@ void AppCacheGroup::AddCache(AppCache* complete_cache) {
     newest_complete_cache_ = complete_cache;
 
     // Update hosts of older caches to add a reference to the newest cache.
-    // (This loop mutates |old_caches_| so a range-based for-loop cannot be
-    // used, because it caches the end iterator.)
+    // This loop mutates |old_caches_| so a range-based for-loop cannot be
+    // used, because it caches the end iterator. NOLINTNEXTLINE
     for (auto it = old_caches_.begin(); it != old_caches_.end(); ++it) {
       AppCache* cache = *it;
       for (AppCacheHost* host : cache->associated_hosts())
@@ -232,7 +232,7 @@ bool AppCacheGroup::FindObserver(
 void AppCacheGroup::ScheduleUpdateRestart(int delay_ms) {
   DCHECK(restart_update_task_.IsCancelled());
   restart_update_task_.Reset(
-      base::Bind(&AppCacheGroup::RunQueuedUpdates, this));
+      base::BindOnce(&AppCacheGroup::RunQueuedUpdates, this));
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, restart_update_task_.callback(),
       base::TimeDelta::FromMilliseconds(delay_ms));

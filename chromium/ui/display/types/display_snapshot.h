@@ -35,12 +35,15 @@ class DISPLAY_TYPES_EXPORT DisplaySnapshot {
                   DisplayConnectionType type,
                   bool is_aspect_preserving_scaling,
                   bool has_overscan,
+                  PrivacyScreenState privacy_screen_state,
                   bool has_color_correction_matrix,
                   bool color_correction_in_linear_space,
                   const gfx::ColorSpace& color_space,
+                  uint32_t bits_per_channel,
                   std::string display_name,
                   const base::FilePath& sys_path,
                   DisplayModeList modes,
+                  PanelOrientation panel_orientation,
                   const std::vector<uint8_t>& edid,
                   const DisplayMode* current_mode,
                   const DisplayMode* native_mode,
@@ -58,6 +61,9 @@ class DISPLAY_TYPES_EXPORT DisplaySnapshot {
     return is_aspect_preserving_scaling_;
   }
   bool has_overscan() const { return has_overscan_; }
+  PrivacyScreenState privacy_screen_state() const {
+    return privacy_screen_state_;
+  }
   bool has_color_correction_matrix() const {
     return has_color_correction_matrix_;
   }
@@ -66,9 +72,11 @@ class DISPLAY_TYPES_EXPORT DisplaySnapshot {
   }
   const gfx::ColorSpace& color_space() const { return color_space_; }
   void reset_color_space() { color_space_ = gfx::ColorSpace(); }
+  uint32_t bits_per_channel() const { return bits_per_channel_; }
   const std::string& display_name() const { return display_name_; }
   const base::FilePath& sys_path() const { return sys_path_; }
   const DisplayModeList& modes() const { return modes_; }
+  PanelOrientation panel_orientation() const { return panel_orientation_; }
   const std::vector<uint8_t>& edid() const { return edid_; }
   const DisplayMode* current_mode() const { return current_mode_; }
   void set_current_mode(const DisplayMode* mode) { current_mode_ = mode; }
@@ -106,6 +114,8 @@ class DISPLAY_TYPES_EXPORT DisplaySnapshot {
 
   const bool has_overscan_;
 
+  const PrivacyScreenState privacy_screen_state_;
+
   // Whether this display has advanced color correction available.
   const bool has_color_correction_matrix_;
   // Whether the color correction matrix will be applied in linear color space
@@ -114,11 +124,16 @@ class DISPLAY_TYPES_EXPORT DisplaySnapshot {
 
   gfx::ColorSpace color_space_;
 
+  uint32_t bits_per_channel_;
+
   const std::string display_name_;
 
   const base::FilePath sys_path_;
 
   DisplayModeList modes_;
+
+  // The orientation of the panel in respect to the natural device orientation.
+  PanelOrientation panel_orientation_;
 
   // The display's EDID. It can be empty if nothing extracted such as in the
   // case of a virtual display.

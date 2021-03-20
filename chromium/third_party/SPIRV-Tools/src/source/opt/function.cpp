@@ -13,12 +13,13 @@
 // limitations under the License.
 
 #include "source/opt/function.h"
-#include "function.h"
-#include "ir_context.h"
 
-#include <source/util/bit_vector.h>
 #include <ostream>
 #include <sstream>
+
+#include "function.h"
+#include "ir_context.h"
+#include "source/util/bit_vector.h"
 
 namespace spvtools {
 namespace opt {
@@ -32,6 +33,11 @@ Function* Function::Clone(IRContext* ctx) const {
         clone->AddParameter(std::unique_ptr<Instruction>(inst->Clone(ctx)));
       },
       true);
+
+  for (const auto& i : debug_insts_in_header_) {
+    clone->AddDebugInstructionInHeader(
+        std::unique_ptr<Instruction>(i.Clone(ctx)));
+  }
 
   clone->blocks_.reserve(blocks_.size());
   for (const auto& b : blocks_) {
@@ -78,6 +84,12 @@ bool Function::WhileEachInst(const std::function<bool(Instruction*)>& f,
     }
   }
 
+  for (auto& di : debug_insts_in_header_) {
+    if (!di.WhileEachInst(f, run_on_debug_line_insts)) {
+      return false;
+    }
+  }
+
   for (auto& bb : blocks_) {
     if (!bb->WhileEachInst(f, run_on_debug_line_insts)) {
       return false;
@@ -101,6 +113,12 @@ bool Function::WhileEachInst(const std::function<bool(const Instruction*)>& f,
   for (const auto& param : params_) {
     if (!static_cast<const Instruction*>(param.get())
              ->WhileEachInst(f, run_on_debug_line_insts)) {
+      return false;
+    }
+  }
+
+  for (const auto& di : debug_insts_in_header_) {
+    if (!di.WhileEachInst(f, run_on_debug_line_insts)) {
       return false;
     }
   }
@@ -139,6 +157,19 @@ BasicBlock* Function::InsertBasicBlockAfter(
     if (&*bb_iter == position) {
       new_block->SetParent(this);
       ++bb_iter;
+      bb_iter = bb_iter.InsertBefore(std::move(new_block));
+      return &*bb_iter;
+    }
+  }
+  assert(false && "Could not find insertion point.");
+  return nullptr;
+}
+
+BasicBlock* Function::InsertBasicBlockBefore(
+    std::unique_ptr<BasicBlock>&& new_block, BasicBlock* position) {
+  for (auto bb_iter = begin(); bb_iter != end(); ++bb_iter) {
+    if (&*bb_iter == position) {
+      new_block->SetParent(this);
       bb_iter = bb_iter.InsertBefore(std::move(new_block));
       return &*bb_iter;
     }

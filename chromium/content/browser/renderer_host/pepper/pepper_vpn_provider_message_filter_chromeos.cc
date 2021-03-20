@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/pepper/pepper_vpn_provider_message_filter_chromeos.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -60,7 +61,7 @@ namespace content {
 PepperVpnProviderMessageFilter::PepperVpnProviderMessageFilter(
     BrowserPpapiHostImpl* host,
     PP_Instance instance)
-    : browser_context_(nullptr), bound_(false), weak_factory_(this) {
+    : browser_context_(nullptr), bound_(false) {
   DCHECK(host);
 
   document_url_ = host->GetDocumentURLForInstance(instance);
@@ -88,14 +89,14 @@ PepperVpnProviderMessageFilter::~PepperVpnProviderMessageFilter() {
   }
 }
 
-scoped_refptr<base::TaskRunner>
+scoped_refptr<base::SequencedTaskRunner>
 PepperVpnProviderMessageFilter::OverrideTaskRunnerForMessage(
     const IPC::Message& message) {
   switch (message.type()) {
     case PpapiHostMsg_VpnProvider_Bind::ID:
     case PpapiHostMsg_VpnProvider_SendPacket::ID:
     case PpapiHostMsg_VpnProvider_OnPacketReceivedReply::ID:
-      return base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::UI});
+      return base::CreateSingleThreadTaskRunner({BrowserThread::UI});
   }
   return nullptr;
 }
@@ -157,12 +158,12 @@ int32_t PepperVpnProviderMessageFilter::OnBind(
   configuration_id_ = configuration_id;
   configuration_name_ = configuration_name;
 
-  return DoBind(base::Bind(&PepperVpnProviderMessageFilter::OnBindSuccess,
-                           weak_factory_.GetWeakPtr(),
-                           context->MakeReplyMessageContext()),
-                base::Bind(&PepperVpnProviderMessageFilter::OnBindFailure,
-                           weak_factory_.GetWeakPtr(),
-                           context->MakeReplyMessageContext()));
+  return DoBind(base::BindOnce(&PepperVpnProviderMessageFilter::OnBindSuccess,
+                               weak_factory_.GetWeakPtr(),
+                               context->MakeReplyMessageContext()),
+                base::BindOnce(&PepperVpnProviderMessageFilter::OnBindFailure,
+                               weak_factory_.GetWeakPtr(),
+                               context->MakeReplyMessageContext()));
 }
 
 int32_t PepperVpnProviderMessageFilter::OnSendPacket(
@@ -178,12 +179,13 @@ int32_t PepperVpnProviderMessageFilter::OnSendPacket(
   std::vector<char> packet(packet_pointer, packet_pointer + packet_size);
 
   return DoSendPacket(
-      packet, base::Bind(&PepperVpnProviderMessageFilter::OnSendPacketSuccess,
-                         weak_factory_.GetWeakPtr(),
-                         context->MakeReplyMessageContext(), id),
-      base::Bind(&PepperVpnProviderMessageFilter::OnSendPacketFailure,
-                 weak_factory_.GetWeakPtr(), context->MakeReplyMessageContext(),
-                 id));
+      packet,
+      base::BindOnce(&PepperVpnProviderMessageFilter::OnSendPacketSuccess,
+                     weak_factory_.GetWeakPtr(),
+                     context->MakeReplyMessageContext(), id),
+      base::BindOnce(&PepperVpnProviderMessageFilter::OnSendPacketFailure,
+                     weak_factory_.GetWeakPtr(),
+                     context->MakeReplyMessageContext(), id));
 }
 
 int32_t PepperVpnProviderMessageFilter::OnPacketReceivedReply(
@@ -204,22 +206,29 @@ int32_t PepperVpnProviderMessageFilter::DoBind(
     FailureCallback failure_callback) {
   // Initialize shared memory
   if (!send_packet_buffer_ || !recv_packet_buffer_) {
-    std::unique_ptr<base::SharedMemory> send_buffer(new base::SharedMemory);
-    std::unique_ptr<base::SharedMemory> recv_buffer(new base::SharedMemory);
+    base::UnsafeSharedMemoryRegion send_buffer =
+        base::UnsafeSharedMemoryRegion::Create(kBufferSize);
+    base::UnsafeSharedMemoryRegion recv_buffer =
+        base::UnsafeSharedMemoryRegion::Create(kBufferSize);
+    if (!send_buffer.IsValid() || !recv_buffer.IsValid())
+      return PP_ERROR_NOMEMORY;
 
-    if (!send_buffer->CreateAndMapAnonymous(kBufferSize) ||
-        !recv_buffer->CreateAndMapAnonymous(kBufferSize))
+    base::WritableSharedMemoryMapping send_mapping = send_buffer.Map();
+    base::WritableSharedMemoryMapping recv_mapping = recv_buffer.Map();
+    if (!send_mapping.IsValid() || !recv_mapping.IsValid())
       return PP_ERROR_NOMEMORY;
 
     send_packet_buffer_ = std::make_unique<ppapi::VpnProviderSharedBuffer>(
-        kMaxBufferedPackets, kMaxPacketSize, std::move(send_buffer));
+        kMaxBufferedPackets, kMaxPacketSize, std::move(send_buffer),
+        std::move(send_mapping));
     recv_packet_buffer_ = std::make_unique<ppapi::VpnProviderSharedBuffer>(
-        kMaxBufferedPackets, kMaxPacketSize, std::move(recv_buffer));
+        kMaxBufferedPackets, kMaxPacketSize, std::move(recv_buffer),
+        std::move(recv_mapping));
   }
 
   vpn_service_proxy_->Bind(
       document_url_.host(), configuration_id_, configuration_name_,
-      success_callback, failure_callback,
+      std::move(success_callback), std::move(failure_callback),
       std::make_unique<PepperVpnProviderResourceHostProxyImpl>(
           weak_factory_.GetWeakPtr()));
 
@@ -230,10 +239,10 @@ void PepperVpnProviderMessageFilter::OnBindSuccess(
     const ppapi::host::ReplyMessageContext& context) {
   bound_ = true;
 
-  context.params.AppendHandle(ppapi::proxy::SerializedHandle(
-      send_packet_buffer_->GetHandle(), kBufferSize));
-  context.params.AppendHandle(ppapi::proxy::SerializedHandle(
-      recv_packet_buffer_->GetHandle(), kBufferSize));
+  context.params.AppendHandle(
+      ppapi::proxy::SerializedHandle(send_packet_buffer_->DuplicateRegion()));
+  context.params.AppendHandle(
+      ppapi::proxy::SerializedHandle(recv_packet_buffer_->DuplicateRegion()));
 
   OnBindReply(context, PP_OK);
 }
@@ -266,8 +275,9 @@ int32_t PepperVpnProviderMessageFilter::DoSendPacket(
     const std::vector<char>& packet,
     SuccessCallback success_callback,
     FailureCallback failure_callback) {
-  vpn_service_proxy_->SendPacket(document_url_.host(), packet, success_callback,
-                                 failure_callback);
+  vpn_service_proxy_->SendPacket(document_url_.host(), packet,
+                                 std::move(success_callback),
+                                 std::move(failure_callback));
   return PP_OK_COMPLETIONPENDING;
 }
 

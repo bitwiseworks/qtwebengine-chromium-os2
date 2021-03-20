@@ -5,17 +5,19 @@
 #import <AVFoundation/AVFoundation.h>
 #include <memory>
 
-#include "base/mac/sdk_forward_declarations.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/accelerated_widget_mac/availability_macros.h"
 #include "ui/accelerated_widget_mac/ca_renderer_layer_tree.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/mac/io_surface.h"
 #include "ui/gl/ca_renderer_layer_params.h"
 #include "ui/gl/gl_image_io_surface.h"
+
+@interface CALayer (Private)
+@property BOOL wantsExtendedDynamicRangeContent;
+@end
 
 namespace gpu {
 
@@ -27,6 +29,7 @@ struct CALayerProperties {
 
   bool is_clipped = true;
   gfx::Rect clip_rect;
+  gfx::RRectF rounded_corner_bounds;
   int sorting_context_id = 0;
   gfx::Transform transform;
   gfx::RectF contents_rect = gfx::RectF(0.0f, 0.0f, 1.0f, 1.0f);
@@ -65,10 +68,10 @@ bool ScheduleCALayer(ui::CARendererLayerTree* tree,
                      CALayerProperties* properties) {
   return tree->ScheduleCALayer(ui::CARendererLayerParams(
       properties->is_clipped, properties->clip_rect,
-      properties->sorting_context_id, properties->transform,
-      properties->gl_image.get(), properties->contents_rect, properties->rect,
-      properties->background_color, properties->edge_aa_mask,
-      properties->opacity, properties->filter));
+      properties->rounded_corner_bounds, properties->sorting_context_id,
+      properties->transform, properties->gl_image.get(),
+      properties->contents_rect, properties->rect, properties->background_color,
+      properties->edge_aa_mask, properties->opacity, properties->filter));
 }
 
 void UpdateCALayerTree(std::unique_ptr<ui::CARendererLayerTree>& ca_layer_tree,
@@ -92,7 +95,20 @@ class CALayerTreeTest : public testing::Test {
   void SetUp() override {
     superlayer_.reset([[CALayer alloc] init]);
   }
-
+  // Traverse the tree. Validate that there exists only one content layer, and
+  // return that layer.
+  CALayer* GetOnlyContentLayer() {
+    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
+    CALayer* root_layer = [superlayer_ sublayers][0];
+    EXPECT_EQ(1u, [[root_layer sublayers] count]);
+    CALayer* clip_and_sorting_layer = [root_layer sublayers][0];
+    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
+    CALayer* rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    CALayer* transform_layer = [rounded_rect_layer sublayers][0];
+    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
+    return [transform_layer sublayers][0];
+  }
   base::scoped_nsobject<CALayer> superlayer_;
 };
 
@@ -103,6 +119,7 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
     CALayerProperties properties;
     properties.allow_solid_color_layers = allow_solid_color_layers;
     properties.clip_rect = gfx::Rect(2, 4, 8, 16);
+    properties.rounded_corner_bounds = gfx::RRectF(2, 4, 8, 16, 13);
     properties.transform.Translate(10, 20);
     properties.contents_rect = gfx::RectF(0.0f, 0.25f, 0.5f, 0.75f);
     properties.rect = gfx::Rect(16, 32, 64, 128);
@@ -115,6 +132,7 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
     std::unique_ptr<ui::CARendererLayerTree> ca_layer_tree;
     CALayer* root_layer = nil;
     CALayer* clip_and_sorting_layer = nil;
+    CALayer* rounded_rect_layer = nil;
     CALayer* transform_layer = nil;
     CALayer* content_layer = nil;
 
@@ -127,18 +145,27 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+      root_layer = [superlayer_ sublayers][0];
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+      clip_and_sorting_layer = [root_layer sublayers][0];
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+
+      CALayer* superlayer_for_transform = clip_and_sorting_layer;
+      if (!properties.rounded_corner_bounds.IsEmpty()) {
+        rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+        EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+        superlayer_for_transform = rounded_rect_layer;
+      }
+      transform_layer = [superlayer_for_transform sublayers][0];
       EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      content_layer = [[transform_layer sublayers] objectAtIndex:0];
+      content_layer = [transform_layer sublayers][0];
 
       // Validate the clip and sorting context layer.
       EXPECT_TRUE([clip_and_sorting_layer masksToBounds]);
       EXPECT_EQ(gfx::Rect(properties.clip_rect.size()),
                 gfx::Rect([clip_and_sorting_layer bounds]));
+      EXPECT_EQ(properties.rounded_corner_bounds.GetSimpleRadius(),
+                [rounded_rect_layer cornerRadius]);
       EXPECT_EQ(properties.clip_rect.origin(),
                 gfx::Point([clip_and_sorting_layer position]));
       EXPECT_EQ(-properties.clip_rect.origin().x(),
@@ -175,13 +202,13 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
 
       // Validate the clip and sorting context layer.
       EXPECT_TRUE([clip_and_sorting_layer masksToBounds]);
@@ -202,13 +229,13 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
 
       // Validate the clip and sorting context layer.
       EXPECT_FALSE([clip_and_sorting_layer masksToBounds]);
@@ -226,13 +253,13 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
 
       // Validate the transform layer.
       EXPECT_EQ(properties.transform.matrix().get(3, 0),
@@ -248,15 +275,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer. Note that top and bottom edges flip.
       EXPECT_EQ(kCALayerBottomEdge, [content_layer edgeAntialiasingMask]);
@@ -269,15 +295,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer. Note that edge anti-aliasing does not flip
       // for solid colors.
@@ -299,15 +324,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer.
       EXPECT_EQ(properties.rect.origin(), gfx::Point([content_layer position]));
@@ -322,15 +346,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer.
       EXPECT_EQ(properties.rect.origin(), gfx::Point([content_layer position]));
@@ -345,15 +368,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer.
       EXPECT_EQ(properties.opacity, [content_layer opacity]);
@@ -366,15 +388,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer.
       EXPECT_NSEQ(kCAFilterNearest, [content_layer minificationFilter]);
@@ -390,15 +411,14 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_EQ(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_EQ(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_EQ(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_EQ(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
 
       // Validate the content layer.
       EXPECT_EQ(static_cast<id>(properties.gl_image->io_surface().get()),
@@ -413,19 +433,26 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the tree structure.
       EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-      EXPECT_NE(root_layer, [[superlayer_ sublayers] objectAtIndex:0]);
-      root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+      EXPECT_NE(root_layer, [superlayer_ sublayers][0]);
+      root_layer = [superlayer_ sublayers][0];
       EXPECT_EQ(1u, [[root_layer sublayers] count]);
-      EXPECT_NE(clip_and_sorting_layer,
-                [[root_layer sublayers] objectAtIndex:0]);
-      clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+      EXPECT_NE(clip_and_sorting_layer, [root_layer sublayers][0]);
+      clip_and_sorting_layer = [root_layer sublayers][0];
       EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-      EXPECT_NE(transform_layer,
-                [[clip_and_sorting_layer sublayers] objectAtIndex:0]);
-      transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+
+      EXPECT_NE(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+
+      // Under a 2.0 scale factor, the corner-radius should be halved.
+      EXPECT_EQ(properties.rounded_corner_bounds.GetSimpleRadius() / 2.0f,
+                [rounded_rect_layer cornerRadius]);
+
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_NE(transform_layer, [clip_and_sorting_layer sublayers][0]);
+      transform_layer = [rounded_rect_layer sublayers][0];
       EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-      EXPECT_NE(content_layer, [[transform_layer sublayers] objectAtIndex:0]);
-      content_layer = [[transform_layer sublayers] objectAtIndex:0];
+      EXPECT_NE(content_layer, [transform_layer sublayers][0]);
+      content_layer = [transform_layer sublayers][0];
 
       // Validate the clip and sorting context layer.
       EXPECT_TRUE([clip_and_sorting_layer masksToBounds]);
@@ -463,6 +490,65 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
       EXPECT_EQ(properties.opacity, [content_layer opacity]);
       if ([content_layer respondsToSelector:(@selector(contentsScale))])
         EXPECT_EQ(properties.scale_factor, [content_layer contentsScale]);
+    }
+
+    // Remove the rounded corners. This should result in the rounded corners
+    // being removed on that layer.
+    {
+      properties.rounded_corner_bounds = gfx::RRectF();
+      UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
+
+      // Validate the tree structure.
+      EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
+      EXPECT_EQ(1u, [[root_layer sublayers] count]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
+      EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(0, [rounded_rect_layer cornerRadius]);
+      EXPECT_FALSE([rounded_rect_layer masksToBounds]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
+    }
+
+    {
+      // A no-op update should not invalidate any of the layers.
+      UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
+
+      // Validate the tree structure.
+      EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
+      EXPECT_EQ(1u, [[root_layer sublayers] count]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
+      EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
+    }
+
+    // Re-add rounded corners.
+    {
+      properties.rounded_corner_bounds = gfx::RRectF(1, 2, 3, 4, 5);
+      UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
+
+      // Validate the tree structure.
+      EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
+      EXPECT_EQ(root_layer, [superlayer_ sublayers][0]);
+      EXPECT_EQ(1u, [[root_layer sublayers] count]);
+      EXPECT_EQ(clip_and_sorting_layer, [root_layer sublayers][0]);
+      EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
+      EXPECT_EQ(rounded_rect_layer, [clip_and_sorting_layer sublayers][0]);
+      // Under a 2.0 scale factor, the corer-radius should be halved.
+      EXPECT_EQ(properties.rounded_corner_bounds.GetSimpleRadius() / 2.0f,
+                [rounded_rect_layer cornerRadius]);
+      EXPECT_TRUE([rounded_rect_layer masksToBounds]);
+      EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
+      EXPECT_EQ(1u, [[transform_layer sublayers] count]);
+      EXPECT_EQ(content_layer, [transform_layer sublayers][0]);
     }
   }
 };
@@ -514,42 +600,41 @@ TEST_F(CALayerTreeTest, SplitSortingContextZero) {
 
   // Validate the root layer.
   EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-  CALayer* root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+  CALayer* root_layer = [superlayer_ sublayers][0];
 
   // Validate that we have 3 sorting context layers.
   EXPECT_EQ(3u, [[root_layer sublayers] count]);
-  CALayer* clip_and_sorting_layer_0 = [[root_layer sublayers] objectAtIndex:0];
-  CALayer* clip_and_sorting_layer_1 = [[root_layer sublayers] objectAtIndex:1];
-  CALayer* clip_and_sorting_layer_2 = [[root_layer sublayers] objectAtIndex:2];
+  CALayer* clip_and_sorting_layer_0 = [root_layer sublayers][0];
+  CALayer* clip_and_sorting_layer_1 = [root_layer sublayers][1];
+  CALayer* clip_and_sorting_layer_2 = [root_layer sublayers][2];
+  CALayer* rounded_rect_layer_0 = [clip_and_sorting_layer_0 sublayers][0];
+  CALayer* rounded_rect_layer_1 = [clip_and_sorting_layer_1 sublayers][0];
+  CALayer* rounded_rect_layer_2 = [clip_and_sorting_layer_2 sublayers][0];
 
   // Validate that the first sorting context has 2 transform layers each with
   // one content layer.
-  EXPECT_EQ(2u, [[clip_and_sorting_layer_0 sublayers] count]);
-  CALayer* transform_layer_0_0 =
-      [[clip_and_sorting_layer_0 sublayers] objectAtIndex:0];
-  CALayer* transform_layer_0_1 =
-      [[clip_and_sorting_layer_0 sublayers] objectAtIndex:1];
+  EXPECT_EQ(2u, [[rounded_rect_layer_0 sublayers] count]);
+  CALayer* transform_layer_0_0 = [rounded_rect_layer_0 sublayers][0];
+  CALayer* transform_layer_0_1 = [rounded_rect_layer_0 sublayers][1];
   EXPECT_EQ(1u, [[transform_layer_0_0 sublayers] count]);
-  CALayer* content_layer_0 = [[transform_layer_0_0 sublayers] objectAtIndex:0];
+  CALayer* content_layer_0 = [transform_layer_0_0 sublayers][0];
   EXPECT_EQ(1u, [[transform_layer_0_1 sublayers] count]);
-  CALayer* content_layer_1 = [[transform_layer_0_1 sublayers] objectAtIndex:0];
+  CALayer* content_layer_1 = [transform_layer_0_1 sublayers][0];
 
   // Validate that the second sorting context has 1 transform layer with one
   // content layer.
-  EXPECT_EQ(1u, [[clip_and_sorting_layer_1 sublayers] count]);
-  CALayer* transform_layer_1_0 =
-      [[clip_and_sorting_layer_1 sublayers] objectAtIndex:0];
+  EXPECT_EQ(1u, [[rounded_rect_layer_1 sublayers] count]);
+  CALayer* transform_layer_1_0 = [rounded_rect_layer_1 sublayers][0];
   EXPECT_EQ(1u, [[transform_layer_1_0 sublayers] count]);
-  CALayer* content_layer_2 = [[transform_layer_1_0 sublayers] objectAtIndex:0];
+  CALayer* content_layer_2 = [transform_layer_1_0 sublayers][0];
 
   // Validate that the third sorting context has 1 transform layer with two
   // content layers.
-  EXPECT_EQ(1u, [[clip_and_sorting_layer_2 sublayers] count]);
-  CALayer* transform_layer_2_0 =
-      [[clip_and_sorting_layer_2 sublayers] objectAtIndex:0];
+  EXPECT_EQ(1u, [[rounded_rect_layer_2 sublayers] count]);
+  CALayer* transform_layer_2_0 = [rounded_rect_layer_2 sublayers][0];
   EXPECT_EQ(2u, [[transform_layer_2_0 sublayers] count]);
-  CALayer* content_layer_3 = [[transform_layer_2_0 sublayers] objectAtIndex:0];
-  CALayer* content_layer_4 = [[transform_layer_2_0 sublayers] objectAtIndex:1];
+  CALayer* content_layer_3 = [transform_layer_2_0 sublayers][0];
+  CALayer* content_layer_4 = [transform_layer_2_0 sublayers][1];
 
   // Validate that the layers come out in order.
   EXPECT_EQ(static_cast<id>(gl_images[0]->io_surface().get()),
@@ -594,32 +679,32 @@ TEST_F(CALayerTreeTest, SortingContexts) {
 
   // Validate the root layer.
   EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-  CALayer* root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+  CALayer* root_layer = [superlayer_ sublayers][0];
 
   // Validate that we have 3 sorting context layers.
   EXPECT_EQ(3u, [[root_layer sublayers] count]);
-  CALayer* clip_and_sorting_layer_0 = [[root_layer sublayers] objectAtIndex:0];
-  CALayer* clip_and_sorting_layer_1 = [[root_layer sublayers] objectAtIndex:1];
-  CALayer* clip_and_sorting_layer_2 = [[root_layer sublayers] objectAtIndex:2];
+  CALayer* clip_and_sorting_layer_0 = [root_layer sublayers][0];
+  CALayer* clip_and_sorting_layer_1 = [root_layer sublayers][1];
+  CALayer* clip_and_sorting_layer_2 = [root_layer sublayers][2];
+  CALayer* rounded_rect_layer_0 = [clip_and_sorting_layer_0 sublayers][0];
+  CALayer* rounded_rect_layer_1 = [clip_and_sorting_layer_1 sublayers][0];
+  CALayer* rounded_rect_layer_2 = [clip_and_sorting_layer_2 sublayers][0];
 
   // Validate that each sorting context has 1 transform layer.
-  EXPECT_EQ(1u, [[clip_and_sorting_layer_0 sublayers] count]);
-  CALayer* transform_layer_0 =
-      [[clip_and_sorting_layer_0 sublayers] objectAtIndex:0];
-  EXPECT_EQ(1u, [[clip_and_sorting_layer_1 sublayers] count]);
-  CALayer* transform_layer_1 =
-      [[clip_and_sorting_layer_1 sublayers] objectAtIndex:0];
-  EXPECT_EQ(1u, [[clip_and_sorting_layer_2 sublayers] count]);
-  CALayer* transform_layer_2 =
-      [[clip_and_sorting_layer_2 sublayers] objectAtIndex:0];
+  EXPECT_EQ(1u, [[rounded_rect_layer_0 sublayers] count]);
+  CALayer* transform_layer_0 = [rounded_rect_layer_0 sublayers][0];
+  EXPECT_EQ(1u, [[rounded_rect_layer_1 sublayers] count]);
+  CALayer* transform_layer_1 = [rounded_rect_layer_1 sublayers][0];
+  EXPECT_EQ(1u, [[rounded_rect_layer_2 sublayers] count]);
+  CALayer* transform_layer_2 = [rounded_rect_layer_2 sublayers][0];
 
   // Validate that each transform has 1 content layer.
   EXPECT_EQ(1u, [[transform_layer_0 sublayers] count]);
-  CALayer* content_layer_0 = [[transform_layer_0 sublayers] objectAtIndex:0];
+  CALayer* content_layer_0 = [transform_layer_0 sublayers][0];
   EXPECT_EQ(1u, [[transform_layer_1 sublayers] count]);
-  CALayer* content_layer_1 = [[transform_layer_1 sublayers] objectAtIndex:0];
+  CALayer* content_layer_1 = [transform_layer_1 sublayers][0];
   EXPECT_EQ(1u, [[transform_layer_2 sublayers] count]);
-  CALayer* content_layer_2 = [[transform_layer_2 sublayers] objectAtIndex:0];
+  CALayer* content_layer_2 = [transform_layer_2 sublayers][0];
 
   // Validate that the layers come out in order.
   EXPECT_EQ(static_cast<id>(gl_images[0]->io_surface().get()),
@@ -684,9 +769,6 @@ TEST_F(CALayerTreeTest, AVLayer) {
       CreateGLImage(gfx::Size(256, 256), gfx::BufferFormat::BGRA_8888, false);
 
   std::unique_ptr<ui::CARendererLayerTree> ca_layer_tree;
-  CALayer* root_layer = nil;
-  CALayer* clip_and_sorting_layer = nil;
-  CALayer* transform_layer = nil;
   CALayer* content_layer1 = nil;
   CALayer* content_layer2 = nil;
   CALayer* content_layer3 = nil;
@@ -695,16 +777,7 @@ TEST_F(CALayerTreeTest, AVLayer) {
   // Validate the initial values.
   {
     UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
-
-    // Validate the tree structure.
-    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer1 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer1 = GetOnlyContentLayer();
 
     // Validate the content layer.
     EXPECT_FALSE([content_layer1
@@ -718,16 +791,7 @@ TEST_F(CALayerTreeTest, AVLayer) {
   // behind the scenes, because the underlying buffer is YUV 420.
   {
     UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
-
-    // Validate the tree structure.
-    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer2 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer2 = GetOnlyContentLayer();
 
     // Validate the content layer.
     EXPECT_TRUE([content_layer2
@@ -741,16 +805,7 @@ TEST_F(CALayerTreeTest, AVLayer) {
   // Pass a frame with a CVPixelBuffer.
   {
     UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
-
-    // Validate the tree structure.
-    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer3 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer3 = GetOnlyContentLayer();
 
     // Validate the content layer.
     EXPECT_TRUE([content_layer3
@@ -765,16 +820,7 @@ TEST_F(CALayerTreeTest, AVLayer) {
   // fractional dimension.
   {
     UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
-
-    // Validate the tree structure.
-    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer3 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer3 = GetOnlyContentLayer();
 
     // Validate that the layer's size is adjusted to include the fractional
     // width, which works around a macOS bug (https://crbug.com/792632).
@@ -790,16 +836,7 @@ TEST_F(CALayerTreeTest, AVLayer) {
   properties.contents_rect = gfx::RectF(0, 0, 1, 0.9);
   {
     UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
-
-    // Validate the tree structure.
-    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
-    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer4 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer4 = GetOnlyContentLayer();
 
     // Validate the content layer.
     EXPECT_FALSE([content_layer4
@@ -817,6 +854,7 @@ TEST_F(CALayerTreeTest, AVLayerBlacklist) {
   std::unique_ptr<ui::CARendererLayerTree> ca_layer_tree;
   CALayer* root_layer = nil;
   CALayer* clip_and_sorting_layer = nil;
+  CALayer* rounded_rect_layer = nil;
   CALayer* transform_layer = nil;
   CALayer* content_layer1 = nil;
   CALayer* content_layer2 = nil;
@@ -826,13 +864,15 @@ TEST_F(CALayerTreeTest, AVLayerBlacklist) {
 
     // Validate the tree structure.
     EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    root_layer = [superlayer_ sublayers][0];
     EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    clip_and_sorting_layer = [root_layer sublayers][0];
     EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    transform_layer = [rounded_rect_layer sublayers][0];
     EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer1 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer1 = [transform_layer sublayers][0];
 
     // Validate the content layer.
     EXPECT_TRUE([content_layer1
@@ -845,13 +885,15 @@ TEST_F(CALayerTreeTest, AVLayerBlacklist) {
 
     // Validate the tree structure.
     EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    root_layer = [superlayer_ sublayers][0];
     EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    clip_and_sorting_layer = [root_layer sublayers][0];
     EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    transform_layer = [rounded_rect_layer sublayers][0];
     EXPECT_EQ(1u, [[transform_layer sublayers] count]);
-    content_layer2 = [[transform_layer sublayers] objectAtIndex:0];
+    content_layer2 = [transform_layer sublayers][0];
 
     // Validate the content layer.
     EXPECT_FALSE([content_layer2
@@ -889,12 +931,13 @@ TEST_F(CALayerTreeTest, FullscreenLowPower) {
 
     // Validate the tree structure.
     EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    CALayer* root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    CALayer* root_layer = [superlayer_ sublayers][0];
     EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    CALayer* clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    CALayer* clip_and_sorting_layer = [root_layer sublayers][0];
     EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    CALayer* transform_layer =
-        [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    CALayer* rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    CALayer* transform_layer = [rounded_rect_layer sublayers][0];
     EXPECT_EQ(1u, [[transform_layer sublayers] count]);
 
     // Validate the content layer and fullscreen low power mode.
@@ -917,12 +960,13 @@ TEST_F(CALayerTreeTest, FullscreenLowPower) {
 
     // Validate the tree structure.
     EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    CALayer* root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    CALayer* root_layer = [superlayer_ sublayers][0];
     EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    CALayer* clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    CALayer* clip_and_sorting_layer = [root_layer sublayers][0];
     EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    CALayer* transform_layer =
-        [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    CALayer* rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    CALayer* transform_layer = [rounded_rect_layer sublayers][0];
     EXPECT_EQ(2u, [[transform_layer sublayers] count]);
 
     // Validate the content layer and fullscreen low power mode.
@@ -945,12 +989,13 @@ TEST_F(CALayerTreeTest, FullscreenLowPower) {
 
     // Validate the tree structure.
     EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    CALayer* root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    CALayer* root_layer = [superlayer_ sublayers][0];
     EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    CALayer* clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    CALayer* clip_and_sorting_layer = [root_layer sublayers][0];
     EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    CALayer* transform_layer =
-        [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    CALayer* rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    CALayer* transform_layer = [rounded_rect_layer sublayers][0];
     EXPECT_EQ(2u, [[transform_layer sublayers] count]);
 
     // Validate the content layer and fullscreen low power mode.
@@ -973,18 +1018,100 @@ TEST_F(CALayerTreeTest, FullscreenLowPower) {
 
     // Validate the tree structure.
     EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
-    CALayer* root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    CALayer* root_layer = [superlayer_ sublayers][0];
     EXPECT_EQ(1u, [[root_layer sublayers] count]);
-    CALayer* clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    CALayer* clip_and_sorting_layer = [root_layer sublayers][0];
     EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
-    CALayer* transform_layer =
-        [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    CALayer* rounded_rect_layer = [clip_and_sorting_layer sublayers][0];
+    EXPECT_EQ(1u, [[rounded_rect_layer sublayers] count]);
+    CALayer* transform_layer = [rounded_rect_layer sublayers][0];
     EXPECT_EQ(2u, [[transform_layer sublayers] count]);
 
     // Validate the content layer and fullscreen low power mode.
     EXPECT_TRUE(CGRectEqualToRect([root_layer frame], CGRectZero));
     EXPECT_EQ([root_layer backgroundColor], nil);
   }
+}
+
+// Verify that HDR is triggered appropriately.
+TEST_F(CALayerTreeTest, HDRTrigger) {
+  std::unique_ptr<ui::CARendererLayerTree> ca_layer_trees[4]{
+      std::make_unique<ui::CARendererLayerTree>(true, true),
+      std::make_unique<ui::CARendererLayerTree>(true, true),
+      std::make_unique<ui::CARendererLayerTree>(true, true),
+      std::make_unique<ui::CARendererLayerTree>(true, true),
+  };
+  CALayerProperties properties;
+  properties.is_clipped = false;
+  properties.clip_rect = gfx::Rect();
+  properties.rect = gfx::Rect(0, 0, 256, 256);
+  bool result = false;
+
+  // We only copy images that have both high-bit-depth and an HDR color space.
+  scoped_refptr<gl::GLImageIOSurface> sdr_image =
+      CreateGLImage(gfx::Size(256, 256), gfx::BufferFormat::BGRA_8888, false);
+  scoped_refptr<gl::GLImageIOSurface> tricky_sdr_image =
+      CreateGLImage(gfx::Size(256, 256), gfx::BufferFormat::BGRA_8888, false);
+  scoped_refptr<gl::GLImageIOSurface> hdr_image =
+      CreateGLImage(gfx::Size(256, 256), gfx::BufferFormat::RGBA_F16, false);
+  sdr_image->SetColorSpace(gfx::ColorSpace::CreateSRGB());
+  tricky_sdr_image->SetColorSpace(gfx::ColorSpace::CreateExtendedSRGB());
+  hdr_image->SetColorSpace(gfx::ColorSpace::CreateExtendedSRGB());
+
+  // Schedule and commit the HDR layer.
+  properties.gl_image = hdr_image;
+  result = ScheduleCALayer(ca_layer_trees[0].get(), &properties);
+  EXPECT_TRUE(result);
+  ca_layer_trees[0]->CommitScheduledCALayers(
+      superlayer_, nullptr, properties.rect.size(), properties.scale_factor);
+
+  // Validate that the root layer has is triggering HDR.
+  CALayer* content_layer = GetOnlyContentLayer();
+  if (@available(macos 10.15, *))
+    EXPECT_TRUE([content_layer wantsExtendedDynamicRangeContent]);
+
+  // Commit the SDR layer.
+  properties.gl_image = sdr_image;
+  result = ScheduleCALayer(ca_layer_trees[1].get(), &properties);
+  EXPECT_TRUE(result);
+  ca_layer_trees[1]->CommitScheduledCALayers(
+      superlayer_, std::move(ca_layer_trees[0]), properties.rect.size(),
+      properties.scale_factor);
+
+  // Validate that HDR is off. The previous content layer should have been
+  // un-parented.
+  EXPECT_EQ([content_layer superlayer], nil);
+  content_layer = GetOnlyContentLayer();
+  if (@available(macos 10.15, *))
+    EXPECT_FALSE([content_layer wantsExtendedDynamicRangeContent]);
+
+  // Commit the tricky SDR layer.
+  properties.gl_image = tricky_sdr_image;
+  result = ScheduleCALayer(ca_layer_trees[2].get(), &properties);
+  EXPECT_TRUE(result);
+  ca_layer_trees[2]->CommitScheduledCALayers(
+      superlayer_, std::move(ca_layer_trees[1]), properties.rect.size(),
+      properties.scale_factor);
+
+  // Validate that HDR is still off, and that the content layer hasn't changed.
+  EXPECT_EQ(content_layer, GetOnlyContentLayer());
+  if (@available(macos 10.15, *))
+    EXPECT_FALSE([content_layer wantsExtendedDynamicRangeContent]);
+
+  // Commit the HDR layer.
+  properties.gl_image = hdr_image;
+  result = ScheduleCALayer(ca_layer_trees[3].get(), &properties);
+  EXPECT_TRUE(result);
+  ca_layer_trees[3]->CommitScheduledCALayers(
+      superlayer_, std::move(ca_layer_trees[2]), properties.rect.size(),
+      properties.scale_factor);
+
+  // Validate that HDR is back on. The previous content layer should have
+  // been un-parented.
+  EXPECT_EQ([content_layer superlayer], nil);
+  content_layer = GetOnlyContentLayer();
+  if (@available(macos 10.15, *))
+    EXPECT_TRUE([content_layer wantsExtendedDynamicRangeContent]);
 }
 
 }  // namespace gpu

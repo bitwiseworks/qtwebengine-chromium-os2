@@ -36,26 +36,26 @@ class VIEWS_EXPORT BubbleBorder : public Border {
   // 2 bit specifies horizontal or vertical.
   // 3 bit specifies whether the arrow at the center of its residing edge.
   enum ArrowMask {
-    RIGHT    = 0x01,
-    BOTTOM   = 0x02,
+    RIGHT = 0x01,
+    BOTTOM = 0x02,
     VERTICAL = 0x04,
-    CENTER   = 0x08,
+    CENTER = 0x08,
   };
 
   enum Arrow {
-    TOP_LEFT      = 0,
-    TOP_RIGHT     = RIGHT,
-    BOTTOM_LEFT   = BOTTOM,
-    BOTTOM_RIGHT  = BOTTOM | RIGHT,
-    LEFT_TOP      = VERTICAL,
-    RIGHT_TOP     = VERTICAL | RIGHT,
-    LEFT_BOTTOM   = VERTICAL | BOTTOM,
-    RIGHT_BOTTOM  = VERTICAL | BOTTOM | RIGHT,
-    TOP_CENTER    = CENTER,
+    TOP_LEFT = 0,
+    TOP_RIGHT = RIGHT,
+    BOTTOM_LEFT = BOTTOM,
+    BOTTOM_RIGHT = BOTTOM | RIGHT,
+    LEFT_TOP = VERTICAL,
+    RIGHT_TOP = VERTICAL | RIGHT,
+    LEFT_BOTTOM = VERTICAL | BOTTOM,
+    RIGHT_BOTTOM = VERTICAL | BOTTOM | RIGHT,
+    TOP_CENTER = CENTER,
     BOTTOM_CENTER = CENTER | BOTTOM,
-    LEFT_CENTER   = CENTER | VERTICAL,
-    RIGHT_CENTER  = CENTER | VERTICAL | RIGHT,
-    NONE  = 16,  // No arrow. Positioned under the supplied rect.
+    LEFT_CENTER = CENTER | VERTICAL,
+    RIGHT_CENTER = CENTER | VERTICAL | RIGHT,
+    NONE = 16,   // No arrow. Positioned under the supplied rect.
     FLOAT = 17,  // No arrow. Centered over the supplied rect.
   };
 
@@ -77,6 +77,10 @@ class VIEWS_EXPORT BubbleBorder : public Border {
     DIALOG_SHADOW = SMALL_SHADOW,
 #endif
   };
+
+  // The border is stroked at 1px, but for the purposes of reserving space we
+  // have to deal in dip coordinates, so round up to 1dip.
+  static constexpr int kBorderThicknessDip = 1;
 
   // Specific to MD bubbles: size of shadow blur (outside the bubble) and
   // vertical offset, both in DIP.
@@ -105,13 +109,15 @@ class VIEWS_EXPORT BubbleBorder : public Border {
   }
 
   static Arrow horizontal_mirror(Arrow a) {
-    return (a == TOP_CENTER || a == BOTTOM_CENTER || a >= NONE) ?
-        a : static_cast<Arrow>(a ^ RIGHT);
+    return (a == TOP_CENTER || a == BOTTOM_CENTER || a >= NONE)
+               ? a
+               : static_cast<Arrow>(a ^ RIGHT);
   }
 
   static Arrow vertical_mirror(Arrow a) {
-    return (a == LEFT_CENTER || a == RIGHT_CENTER || a >= NONE) ?
-        a : static_cast<Arrow>(a ^ BOTTOM);
+    return (a == LEFT_CENTER || a == RIGHT_CENTER || a >= NONE)
+               ? a
+               : static_cast<Arrow>(a ^ BOTTOM);
   }
 
   // Returns the insets required by a border and shadow based on
@@ -133,7 +139,7 @@ class VIEWS_EXPORT BubbleBorder : public Border {
     // Borders with custom shadow elevations do not draw the 1px border.
     if (!shadow_elevation.has_value()) {
       // Provide a 1 px border outside the bounds.
-      const int kBorderStrokeThicknessPx = 1;
+      constexpr int kBorderStrokeThicknessPx = 1;
       const SkScalar one_pixel =
           SkFloatToScalar(kBorderStrokeThicknessPx / canvas->image_scale());
       rect.outset(one_pixel, one_pixel);
@@ -165,11 +171,12 @@ class VIEWS_EXPORT BubbleBorder : public Border {
   bool use_theme_background_color() { return use_theme_background_color_; }
 
   // Sets a desired pixel distance between the arrow tip and the outside edge of
-  // the neighboring border image. For example:    |----offset----|
-  // '(' represents shadow around the '{' edge:    ((({           ^   })))
+  // the neighboring border image. For example:        |----offset----|
+  // '(' represents shadow around the '{' edge:        ((({           ^   })))
   // The arrow will still anchor to the same location but the bubble will shift
   // location to place the arrow |offset| pixels from the perpendicular edge.
   void set_arrow_offset(int offset) { arrow_offset_ = offset; }
+  int arrow_offset() const { return arrow_offset_; }
 
   // Sets the shadow elevation for MD shadows. A null |shadow_elevation| will
   // yield the default BubbleBorder MD shadow.
@@ -185,13 +192,16 @@ class VIEWS_EXPORT BubbleBorder : public Border {
   // Set a flag to avoid the bubble's shadow overlapping the anchor.
   void set_avoid_shadow_overlap(bool value) { avoid_shadow_overlap_ = value; }
 
+  // Sets an explicit insets value to be used.
+  void set_insets(const gfx::Insets& insets) { insets_ = insets; }
+
   // Get the desired widget bounds (in screen coordinates) given the anchor rect
   // and bubble content size; calculated from shadow and arrow image dimensions.
   virtual gfx::Rect GetBounds(const gfx::Rect& anchor_rect,
                               const gfx::Size& contents_size) const;
 
   // Returns the corner radius of the current image set.
-  int GetBorderCornerRadius() const;
+  int corner_radius() const { return corner_radius_; }
 
   // Overridden from Border:
   void Paint(const View& view, gfx::Canvas* canvas) override;
@@ -219,7 +229,7 @@ class VIEWS_EXPORT BubbleBorder : public Border {
       SkColor shadow_base_color = SK_ColorBLACK);
 
   // The border and arrow stroke size used in image assets, in pixels.
-  static const int kStroke;
+  static constexpr int kStroke = 1;
 
   gfx::Size GetSizeForContentsSize(const gfx::Size& contents_size) const;
 
@@ -239,7 +249,7 @@ class VIEWS_EXPORT BubbleBorder : public Border {
   int arrow_offset_;
   // Corner radius for the bubble border. If supplied the border will use
   // material design.
-  base::Optional<int> corner_radius_;
+  int corner_radius_ = 0;
 
   Shadow shadow_;
   // Elevation for the MD shadow.
@@ -249,6 +259,7 @@ class VIEWS_EXPORT BubbleBorder : public Border {
   SkColor background_color_;
   bool use_theme_background_color_;
   bool avoid_shadow_overlap_ = false;
+  base::Optional<gfx::Insets> insets_;
 
   DISALLOW_COPY_AND_ASSIGN(BubbleBorder);
 };

@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/shared_memory.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/stl_util.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/host_globals.h"
@@ -170,9 +170,8 @@ PepperAudioEncoderHost::PepperAudioEncoderHost(RendererPpapiHost* host,
       renderer_ppapi_host_(host),
       initialized_(false),
       encoder_last_error_(PP_ERROR_FAILED),
-      media_task_runner_(RenderThreadImpl::current()
-                             ->GetMediaThreadTaskRunner()),
-      weak_ptr_factory_(this) {}
+      media_task_runner_(
+          RenderThreadImpl::current()->GetMediaThreadTaskRunner()) {}
 
 PepperAudioEncoderHost::~PepperAudioEncoderHost() {
   Close();
@@ -234,14 +233,12 @@ int32_t PepperAudioEncoderHost::OnHostMsgInitialize(
 
   ppapi::host::ReplyMessageContext reply_context =
       context->MakeReplyMessageContext();
-  reply_context.params.AppendHandle(
-      SerializedHandle(renderer_ppapi_host_->ShareSharedMemoryHandleWithRemote(
-                           audio_buffer_manager_->shm()->handle()),
-                       audio_buffer_manager_->shm()->mapped_size()));
-  reply_context.params.AppendHandle(
-      SerializedHandle(renderer_ppapi_host_->ShareSharedMemoryHandleWithRemote(
-                           bitstream_buffer_manager_->shm()->handle()),
-                       bitstream_buffer_manager_->shm()->mapped_size()));
+  reply_context.params.AppendHandle(SerializedHandle(
+      renderer_ppapi_host_->ShareUnsafeSharedMemoryRegionWithRemote(
+          audio_buffer_manager_->region())));
+  reply_context.params.AppendHandle(SerializedHandle(
+      renderer_ppapi_host_->ShareUnsafeSharedMemoryRegionWithRemote(
+          bitstream_buffer_manager_->region())));
   host()->SendReply(reply_context,
                     PpapiPluginMsg_AudioEncoder_InitializeReply(
                         encoder_->GetNumberOfSamplesPerFrame(),
@@ -364,17 +361,17 @@ bool PepperAudioEncoderHost::AllocateBuffers(
       !total_bitstream_memory_size.IsValid())
     return false;
 
-  std::unique_ptr<base::SharedMemory> audio_memory(
-      RenderThreadImpl::current()->HostAllocateSharedMemoryBuffer(
-          total_audio_memory_size.ValueOrDie()));
-  if (!audio_memory)
+  base::UnsafeSharedMemoryRegion audio_region =
+      base::UnsafeSharedMemoryRegion::Create(
+          total_audio_memory_size.ValueOrDie());
+  if (!audio_region.IsValid())
     return false;
   std::unique_ptr<ppapi::MediaStreamBufferManager> audio_buffer_manager(
       new ppapi::MediaStreamBufferManager(this));
   if (!audio_buffer_manager->SetBuffers(
           kDefaultNumberOfAudioBuffers,
           base::ValueOrDieForType<int32_t>(total_audio_buffer_size),
-          std::move(audio_memory), false))
+          std::move(audio_region), false))
     return false;
 
   for (int32_t i = 0; i < audio_buffer_manager->number_of_buffers(); ++i) {
@@ -389,17 +386,17 @@ bool PepperAudioEncoderHost::AllocateBuffers(
     buffer->data_size = audio_buffer_size.ValueOrDie();
   }
 
-  std::unique_ptr<base::SharedMemory> bitstream_memory(
-      RenderThreadImpl::current()->HostAllocateSharedMemoryBuffer(
-          total_bitstream_memory_size.ValueOrDie()));
-  if (!bitstream_memory)
+  base::UnsafeSharedMemoryRegion bitstream_region =
+      base::UnsafeSharedMemoryRegion::Create(
+          total_bitstream_memory_size.ValueOrDie());
+  if (!bitstream_region.IsValid())
     return false;
   std::unique_ptr<ppapi::MediaStreamBufferManager> bitstream_buffer_manager(
       new ppapi::MediaStreamBufferManager(this));
   if (!bitstream_buffer_manager->SetBuffers(
           kDefaultNumberOfAudioBuffers,
           base::ValueOrDieForType<int32_t>(bitstream_buffer_size),
-          std::move(bitstream_memory), true))
+          std::move(bitstream_region), true))
     return false;
 
   for (int32_t i = 0; i < bitstream_buffer_manager->number_of_buffers(); ++i) {

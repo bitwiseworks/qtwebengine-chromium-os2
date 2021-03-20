@@ -12,6 +12,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <memory>
 #include <utility>
 #include <vector>
@@ -31,7 +32,6 @@
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_encoder_factory.h"
 #include "examples/peerconnection/client/defaults.h"
-#include "media/base/device.h"
 #include "modules/audio_device/include/audio_device.h"
 #include "modules/audio_processing/include/audio_processing.h"
 #include "modules/video_capture/video_capture.h"
@@ -74,13 +74,23 @@ class CapturerTrackSource : public webrtc::VideoTrackSource {
     const size_t kWidth = 640;
     const size_t kHeight = 480;
     const size_t kFps = 30;
-    const size_t kDeviceIndex = 0;
-    std::unique_ptr<webrtc::test::VcmCapturer> capturer = absl::WrapUnique(
-        webrtc::test::VcmCapturer::Create(kWidth, kHeight, kFps, kDeviceIndex));
-    if (!capturer) {
+    std::unique_ptr<webrtc::test::VcmCapturer> capturer;
+    std::unique_ptr<webrtc::VideoCaptureModule::DeviceInfo> info(
+        webrtc::VideoCaptureFactory::CreateDeviceInfo());
+    if (!info) {
       return nullptr;
     }
-    return new rtc::RefCountedObject<CapturerTrackSource>(std::move(capturer));
+    int num_devices = info->NumberOfDevices();
+    for (int i = 0; i < num_devices; ++i) {
+      capturer = absl::WrapUnique(
+          webrtc::test::VcmCapturer::Create(kWidth, kHeight, kFps, i));
+      if (capturer) {
+        return new rtc::RefCountedObject<CapturerTrackSource>(
+            std::move(capturer));
+      }
+    }
+
+    return nullptr;
   }
 
  protected:
@@ -335,7 +345,8 @@ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
         webrtc::CreateSessionDescription(type, sdp, &error);
     if (!session_description) {
       RTC_LOG(WARNING) << "Can't parse received session description message. "
-                       << "SdpParseError was: " << error.description;
+                          "SdpParseError was: "
+                       << error.description;
       return;
     }
     RTC_LOG(INFO) << " Received session description :" << message;
@@ -363,7 +374,8 @@ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
         webrtc::CreateIceCandidate(sdp_mid, sdp_mlineindex, sdp, &error));
     if (!candidate.get()) {
       RTC_LOG(WARNING) << "Can't parse received candidate message. "
-                       << "SdpParseError was: " << error.description;
+                          "SdpParseError was: "
+                       << error.description;
       return;
     }
     if (!peer_connection_->AddIceCandidate(candidate.get())) {

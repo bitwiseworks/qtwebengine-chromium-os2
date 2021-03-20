@@ -175,8 +175,10 @@ const struct QuicErrorMapping {
     // A crypto handshake message specified an unsupported version.
     {quic::QUIC_CRYPTO_VERSION_NOT_SUPPORTED,
      "quic.crypto.version_not_supported"},
-    // A crypto handshake message resulted in a stateless reject.
-    {quic::QUIC_CRYPTO_HANDSHAKE_STATELESS_REJECT,
+    // QUIC_CRYPTO_STATELESS_REJECT was code 72. The code has been
+    // deprecated, but to keep the assert below happy, there needs to be
+    // an entry for it, but the symbol is gone.
+    {static_cast<quic::QuicErrorCode>(72),
      "quic.crypto.handshake_stateless_reject"},
     // There was no intersection between the crypto primitives supported by the
     // peer and ourselves.
@@ -265,19 +267,16 @@ const struct QuicErrorMapping {
     {quic::QUIC_DECOMPRESSION_FAILURE, "quic.decompression_failure"},
     // Receive a RST_STREAM with offset larger than kMaxStreamLength.
     {quic::QUIC_STREAM_LENGTH_OVERFLOW, "quic.stream_length_overflow"},
-    // APPLICATION_CLOSE frame data is malformed.
-    {quic::QUIC_INVALID_APPLICATION_CLOSE_DATA,
-     "quic.invalid.application_close_data"},
     // Received a MAX DATA frame with errors.
     {quic::QUIC_INVALID_MAX_DATA_FRAME_DATA,
      "quic.invalid.max_data_frame_data"},
     // Received a MAX STREAM DATA frame with errors.
     {quic::QUIC_INVALID_MAX_STREAM_DATA_FRAME_DATA,
      "quic.invalid.max_stream_data_frame_data"},
-    // Received a MAX STREAM ID frame with bad data
-    {quic::QUIC_MAX_STREAM_ID_DATA, "quic.max_stream_id_data"},
-    // Received a STREAM ID BLOCKED frame with bad data
-    {quic::QUIC_STREAM_ID_BLOCKED_DATA, "quic.stream_id_blocked_data"},
+    // Received a MAX STREAMS frame with bad data
+    {quic::QUIC_MAX_STREAMS_DATA, "quic.max_streams_data"},
+    // Received a STREAMS BLOCKED frame with bad data
+    {quic::QUIC_STREAMS_BLOCKED_DATA, "quic.streams_blocked_data"},
     // Error deframing a STREAM BLOCKED frame.
     {quic::QUIC_INVALID_STREAM_BLOCKED_DATA,
      "quic.invalid.stream_blocked_data"},
@@ -300,16 +299,85 @@ const struct QuicErrorMapping {
      "quic.try.to.write.data.on.read.unidirectional.stream"},
     {quic::QUIC_INVALID_RETIRE_CONNECTION_ID_DATA,
      "quic.invalid.retire.connection.id.data"},
-    {quic::QUIC_STREAM_ID_BLOCKED_ERROR,
-     "quic.stream.id.in.stream_id_blocked.frame"},
-    {quic::QUIC_MAX_STREAM_ID_ERROR, "quic.stream.id.in.max_stream_id.frame"},
+    {quic::QUIC_STREAMS_BLOCKED_ERROR,
+     "quic.stream.id.in.streams_blocked.frame"},
+    {quic::QUIC_MAX_STREAMS_ERROR, "quic.stream.id.in.max_streams.frame"},
     {quic::QUIC_HTTP_DECODER_ERROR, "quic.http.decoder.error"},
+    {quic::QUIC_STALE_CONNECTION_CANCELLED, "quic.stale.connection.cancelled"},
+    {quic::QUIC_IETF_GQUIC_ERROR_MISSING, "quic.ietf.gquic.error_missing"},
+    {quic::QUIC_WINDOW_UPDATE_RECEIVED_ON_READ_UNIDIRECTIONAL_STREAM,
+     "quic.window.update.received.on.read.unidirectional.stream"},
+    {quic::QUIC_TOO_MANY_BUFFERED_CONTROL_FRAMES,
+     "quic.too.many.buffered.control.frames"},
+    {quic::QUIC_TRANSPORT_INVALID_CLIENT_INDICATION,
+     "quic.transport.invalid.client.indication"},
+
+    {quic::QUIC_QPACK_DECOMPRESSION_FAILED, "QUIC.QPACK.DECOMPRESSION.FAILED"},
+    {quic::QUIC_QPACK_ENCODER_STREAM_ERROR, "QUIC.QPACK.ENCODER.STREAM.ERROR"},
+    {quic::QUIC_QPACK_DECODER_STREAM_ERROR, "QUIC.QPACK.DECODER.STREAM.ERROR"},
+
+    {quic::QUIC_STREAM_DATA_BEYOND_CLOSE_OFFSET,
+     "quic.stream.data.beyond.close.offset"},
+    {quic::QUIC_STREAM_MULTIPLE_OFFSET, "quic.stream.multiple.offset"},
+
+    {quic::QUIC_HTTP_FRAME_TOO_LARGE, "quic.http.frame.too.large,"},
+    {quic::QUIC_HTTP_FRAME_ERROR, "quic.http.frame.error"},
+    {quic::QUIC_HTTP_FRAME_UNEXPECTED_ON_SPDY_STREAM,
+     "quic.http.frame.unexpected.on.spdy.stream"},
+    {quic::QUIC_HTTP_FRAME_UNEXPECTED_ON_CONTROL_STREAM,
+     "quic.http.frame.unexpected.on.control.stream"},
+
+    {quic::QUIC_HPACK_INDEX_VARINT_ERROR, "quic.hpack.index_varint_error"},
+    {quic::QUIC_HPACK_NAME_LENGTH_VARINT_ERROR,
+     "quic.hpack.name_length_varint_error"},
+    {quic::QUIC_HPACK_VALUE_LENGTH_VARINT_ERROR,
+     "quic.hpack.value_length_varint_error"},
+    {quic::QUIC_HPACK_NAME_TOO_LONG, "quic.hpack.name_too_long"},
+    {quic::QUIC_HPACK_VALUE_TOO_LONG, "quic.hpack.value_too_long"},
+    {quic::QUIC_HPACK_NAME_HUFFMAN_ERROR, "quic.hpack.name_huffman_error"},
+    {quic::QUIC_HPACK_VALUE_HUFFMAN_ERROR, "quic.hpack.value_huffman_error"},
+    {quic::QUIC_HPACK_MISSING_DYNAMIC_TABLE_SIZE_UPDATE,
+     "quic.hpack.missing_dynamic_table_size_update"},
+    {quic::QUIC_HPACK_INVALID_INDEX, "quic.hpack.invalid_index"},
+    {quic::QUIC_HPACK_INVALID_NAME_INDEX, "quic.hpack.invalid_name_index"},
+    {quic::QUIC_HPACK_DYNAMIC_TABLE_SIZE_UPDATE_NOT_ALLOWED,
+     "quic.hpack.dynamic_table_size_update_not_allowed"},
+    {quic::QUIC_HPACK_INITIAL_TABLE_SIZE_UPDATE_IS_ABOVE_LOW_WATER_MARK,
+     "quic.hpack.initial_table_size_update_is_above_low_water_mark"},
+    {quic::QUIC_HPACK_TABLE_SIZE_UPDATE_IS_ABOVE_ACKNOWLEDGED_SETTING,
+     "quic.hpack.table_size_update_is_above_acknowledge_setting"},
+    {quic::QUIC_HPACK_TRUNCATED_BLOCK, "quic.hpack.truncated_block"},
+    {quic::QUIC_HPACK_FRAGMENT_TOO_LONG, "quic.hpack.fragment_too_long"},
+    {quic::QUIC_HPACK_COMPRESSED_HEADER_SIZE_EXCEEDS_LIMIT,
+     "quic.hpack.compressed_header_size_exceeds_limit"},
+    {quic::QUIC_HTTP_INVALID_FRAME_SEQUENCE_ON_SPDY_STREAM,
+     "quic.http_invalid_frame_sequence_on_spdy_stream"},
+    {quic::QUIC_HTTP_INVALID_FRAME_SEQUENCE_ON_CONTROL_STREAM,
+     "quic.http_invalid_frame_sequence_on_control_stream"},
+    {quic::QUIC_HTTP_DUPLICATE_UNIDIRECTIONAL_STREAM,
+     "quic.http_duplicate_unidirectional_stream"},
+    {quic::QUIC_HTTP_SERVER_INITIATED_BIDIRECTIONAL_STREAM,
+     "quic.http_server_initiated_bidirectional_stream"},
+    {quic::QUIC_HTTP_STREAM_WRONG_DIRECTION,
+     "quic.http_stream_wrong_direction"},
+    {quic::QUIC_HTTP_CLOSED_CRITICAL_STREAM,
+     "quic.http_closed_critical_stream"},
+    {quic::QUIC_HTTP_MISSING_SETTINGS_FRAME,
+     "quic.http_missing_settings_frame"},
+    {quic::QUIC_HTTP_DUPLICATE_SETTING_IDENTIFIER,
+     "quic.http_duplicate_setting_identifier"},
+
+    // QUIC_INVALID_APPLICATION_CLOSE_DATA was code 101. The code has been
+    // deprecated, but to keep the assert below happy, there needs to be
+    // an entry for it, but the symbol is gone.
+    {static_cast<quic::QuicErrorCode>(101),
+     "quic.invalid.application_close_data"},
 
     // No error. Used as bound while iterating.
     {quic::QUIC_LAST_ERROR, "quic.last_error"}};
 
 // Must be updated any time a quic::QuicErrorCode is deprecated in
-// net/quic/core/quic_packets.h.
+// net/third_party/quiche/src/quic/core/quic_error_codes.h.
 const int kDeprecatedQuicErrorCount = 5;
 const int kActiveQuicErrorCount =
     quic::QUIC_LAST_ERROR - kDeprecatedQuicErrorCount;

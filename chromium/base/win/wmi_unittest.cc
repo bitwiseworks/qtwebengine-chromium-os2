@@ -6,6 +6,7 @@
 
 #include <windows.h>
 
+#include "base/strings/string16.h"
 #include "base/win/scoped_com_initializer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 

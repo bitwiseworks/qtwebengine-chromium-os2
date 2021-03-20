@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/numerics/ranges.h"
 #include "base/numerics/safe_conversions.h"
@@ -65,7 +66,7 @@ int ConfigureSocket(
 const int TCPConnectedSocket::kMaxBufferSize = 128 * 1024;
 
 TCPConnectedSocket::TCPConnectedSocket(
-    mojom::SocketObserverPtr observer,
+    mojo::PendingRemote<mojom::SocketObserver> observer,
     net::NetLog* net_log,
     TLSSocketFactory* tls_socket_factory,
     net::ClientSocketFactory* client_socket_factory,
@@ -77,7 +78,7 @@ TCPConnectedSocket::TCPConnectedSocket(
       traffic_annotation_(traffic_annotation) {}
 
 TCPConnectedSocket::TCPConnectedSocket(
-    mojom::SocketObserverPtr observer,
+    mojo::PendingRemote<mojom::SocketObserver> observer,
     std::unique_ptr<net::TransportClientSocket> socket,
     mojo::ScopedDataPipeProducerHandle receive_pipe_handle,
     mojo::ScopedDataPipeConsumerHandle send_pipe_handle,
@@ -154,8 +155,8 @@ void TCPConnectedSocket::UpgradeToTLS(
     const net::HostPortPair& host_port_pair,
     mojom::TLSClientSocketOptionsPtr socket_options,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
-    mojom::TLSClientSocketRequest request,
-    mojom::SocketObserverPtr observer,
+    mojo::PendingReceiver<mojom::TLSClientSocket> receiver,
+    mojo::PendingRemote<mojom::SocketObserver> observer,
     mojom::TCPConnectedSocket::UpgradeToTLSCallback callback) {
   if (!tls_socket_factory_) {
     std::move(callback).Run(
@@ -168,12 +169,12 @@ void TCPConnectedSocket::UpgradeToTLS(
     pending_upgrade_to_tls_callback_ = base::BindOnce(
         &TCPConnectedSocket::UpgradeToTLS, base::Unretained(this),
         host_port_pair, std::move(socket_options), traffic_annotation,
-        std::move(request), std::move(observer), std::move(callback));
+        std::move(receiver), std::move(observer), std::move(callback));
     return;
   }
   tls_socket_factory_->UpgradeToTLS(
       this, host_port_pair, std::move(socket_options), traffic_annotation,
-      std::move(request), std::move(observer), std::move(callback));
+      std::move(receiver), std::move(observer), std::move(callback));
 }
 
 void TCPConnectedSocket::SetSendBufferSize(int send_buffer_size,

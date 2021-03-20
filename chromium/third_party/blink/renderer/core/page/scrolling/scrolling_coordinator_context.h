@@ -6,56 +6,59 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_SCROLLING_SCROLLING_COORDINATOR_CONTEXT_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/animation/compositor_animation_host.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_timeline.h"
-#include "third_party/blink/renderer/platform/wtf/hash_set.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+
+namespace cc {
+class AnimationHost;
+}
 
 namespace blink {
-
-class PaintLayer;
 
 // This enscapsulates ScrollingCoordinator state for each local frame root.
 // TODO(kenrb): This class could be temporary depending on how
 // https://crbug.com/680606 is resolved.
 class CORE_EXPORT ScrollingCoordinatorContext final {
+  USING_FAST_MALLOC(ScrollingCoordinatorContext);
+
  public:
   ScrollingCoordinatorContext() {}
   virtual ~ScrollingCoordinatorContext() {}
 
-  void SetAnimationTimeline(std::unique_ptr<CompositorAnimationTimeline>);
-  void SetAnimationHost(std::unique_ptr<CompositorAnimationHost>);
+  void SetAnimationTimeline(
+      std::unique_ptr<CompositorAnimationTimeline> timeline) {
+    animation_timeline_ = std::move(timeline);
+  }
+  void SetAnimationHost(cc::AnimationHost* host) { animation_host_ = host; }
 
-  CompositorAnimationTimeline* GetCompositorAnimationTimeline();
-  CompositorAnimationHost* GetCompositorAnimationHost();
-
-  HashSet<const PaintLayer*>* GetLayersWithTouchRects();
+  CompositorAnimationTimeline* GetCompositorAnimationTimeline() {
+    return animation_timeline_.get();
+  }
+  cc::AnimationHost* GetCompositorAnimationHost() { return animation_host_; }
 
   // Non-fast scrollable regions need updating by ScrollingCoordinator.
-  bool ScrollGestureRegionIsDirty() const;
+  bool ScrollGestureRegionIsDirty() const {
+    return scroll_gesture_region_is_dirty_;
+  }
   // Touch event target rects need updating by ScrollingCoordinator.
-  bool TouchEventTargetRectsAreDirty() const;
-  // ScrollingCoordinator should update whether or not scrolling for this
-  // subtree has to happen on the main thread.
-  bool ShouldScrollOnMainThreadIsDirty() const;
-  bool WasScrollable() const;
+  bool TouchEventTargetRectsAreDirty() const {
+    return touch_event_target_rects_are_dirty_;
+  }
 
   // Only ScrollingCoordinator should ever set |dirty| to |false|.
-  void SetScrollGestureRegionIsDirty(bool dirty);
-  void SetTouchEventTargetRectsAreDirty(bool dirty);
-  void SetShouldScrollOnMainThreadIsDirty(bool dirty);
-
-  void SetWasScrollable(bool was_scrollable);
+  void SetScrollGestureRegionIsDirty(bool dirty) {
+    scroll_gesture_region_is_dirty_ = dirty;
+  }
+  void SetTouchEventTargetRectsAreDirty(bool dirty) {
+    touch_event_target_rects_are_dirty_ = dirty;
+  }
 
  private:
-  HashSet<const PaintLayer*> layers_with_touch_rects_;
-
   std::unique_ptr<CompositorAnimationTimeline> animation_timeline_;
-  std::unique_ptr<CompositorAnimationHost> animation_host_;
+  cc::AnimationHost* animation_host_ = nullptr;
 
   bool scroll_gesture_region_is_dirty_ = false;
   bool touch_event_target_rects_are_dirty_ = false;
-  bool should_scroll_on_main_thread_is_dirty_ = false;
-  bool was_scrollable_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ScrollingCoordinatorContext);
 };

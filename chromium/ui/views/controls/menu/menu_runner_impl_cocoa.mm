@@ -4,7 +4,6 @@
 
 #import "ui/views/controls/menu/menu_runner_impl_cocoa.h"
 
-#include "base/mac/sdk_forward_declarations.h"
 #import "base/message_loop/message_pump_mac.h"
 #import "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/menu_controller.h"
@@ -20,8 +19,8 @@ namespace views {
 namespace internal {
 namespace {
 
-const CGFloat kNativeCheckmarkWidth = 18;
-const CGFloat kNativeMenuItemHeight = 18;
+constexpr CGFloat kNativeCheckmarkWidth = 18;
+constexpr CGFloat kNativeMenuItemHeight = 18;
 
 // Returns the first item in |menu_controller|'s menu that will be checked.
 NSMenuItem* FirstCheckedItem(MenuControllerCocoa* menu_controller) {
@@ -74,7 +73,8 @@ base::scoped_nsobject<NSView> CreateMenuAnchorView(
   // When the actual menu width is larger than the anchor, right alignment
   // should be respected.
   if (actual_menu_width > rect.size.width &&
-      position == views::MENU_ANCHOR_TOPRIGHT && !base::i18n::IsRTL()) {
+      position == views::MenuAnchorPosition::kTopRight &&
+      !base::i18n::IsRTL()) {
     int width_diff = actual_menu_width - rect.size.width;
     rect.origin.x -= width_diff;
   }
@@ -122,24 +122,25 @@ NSEvent* EventForPositioningContextMenu(const gfx::Rect& anchor,
 MenuRunnerImplInterface* MenuRunnerImplInterface::Create(
     ui::MenuModel* menu_model,
     int32_t run_types,
-    const base::Closure& on_menu_closed_callback) {
+    base::RepeatingClosure on_menu_closed_callback) {
   if ((run_types & MenuRunner::CONTEXT_MENU) &&
       !(run_types & MenuRunner::IS_NESTED)) {
-    return new MenuRunnerImplCocoa(menu_model, on_menu_closed_callback);
+    return new MenuRunnerImplCocoa(menu_model,
+                                   std::move(on_menu_closed_callback));
   }
-  return new MenuRunnerImplAdapter(menu_model, on_menu_closed_callback);
+  return new MenuRunnerImplAdapter(menu_model,
+                                   std::move(on_menu_closed_callback));
 }
 
 MenuRunnerImplCocoa::MenuRunnerImplCocoa(
     ui::MenuModel* menu,
-    const base::Closure& on_menu_closed_callback)
+    base::RepeatingClosure on_menu_closed_callback)
     : running_(false),
       delete_after_run_(false),
       closing_event_time_(base::TimeTicks()),
-      on_menu_closed_callback_(on_menu_closed_callback) {
+      on_menu_closed_callback_(std::move(on_menu_closed_callback)) {
   menu_controller_.reset([[MenuControllerCocoa alloc] initWithModel:menu
                                              useWithPopUpButtonCell:NO]);
-  [menu_controller_ setPostItemSelectedAsTask:YES];
 }
 
 bool MenuRunnerImplCocoa::IsRunning() const {
@@ -157,6 +158,7 @@ void MenuRunnerImplCocoa::Release() {
     // prevent NSMenu attempting to access the weak pointer to the ui::MenuModel
     // it holds (which is not owned by |this|). Toolkit-views menus use
     // MenuRunnerImpl::empty_delegate_ to handle this case.
+    [menu_controller_ cancel];
     menu_controller_.reset();
   } else {
     delete this;
@@ -164,11 +166,10 @@ void MenuRunnerImplCocoa::Release() {
 }
 
 void MenuRunnerImplCocoa::RunMenuAt(Widget* parent,
-                                    MenuButton* button,
+                                    MenuButtonController* button_controller,
                                     const gfx::Rect& bounds,
                                     MenuAnchorPosition anchor,
-                                    int32_t run_types,
-                                    base::flat_set<int> alerted_commands) {
+                                    int32_t run_types) {
   DCHECK(!IsRunning());
   DCHECK(parent);
   closing_event_time_ = base::TimeTicks();

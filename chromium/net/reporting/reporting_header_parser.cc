@@ -5,18 +5,21 @@
 #include "net/reporting/reporting_header_parser.h"
 
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "net/base/network_isolation_key.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/reporting/reporting_cache.h"
-#include "net/reporting/reporting_client.h"
 #include "net/reporting/reporting_context.h"
 #include "net/reporting/reporting_delegate.h"
+#include "net/reporting/reporting_endpoint.h"
 
 namespace net {
 
@@ -38,12 +41,6 @@ void RecordHeaderEndpointGroupOutcome(HeaderEndpointGroupOutcome outcome) {
       HeaderEndpointGroupOutcome::MAX);
 }
 
-bool EndpointParsedSuccessfully(HeaderEndpointOutcome outcome) {
-  return outcome == HeaderEndpointOutcome::REMOVED ||
-         outcome == HeaderEndpointOutcome::SET_REJECTED_BY_DELEGATE ||
-         outcome == HeaderEndpointOutcome::SET;
-}
-
 void RecordHeaderEndpointOutcome(HeaderEndpointOutcome outcome) {
   UMA_HISTOGRAM_ENUMERATION(
       ReportingHeaderParser::kHeaderEndpointOutcomeHistogram, outcome,
@@ -54,7 +51,7 @@ const char kUrlKey[] = "url";
 const char kIncludeSubdomainsKey[] = "include_subdomains";
 const char kEndpointsKey[] = "endpoints";
 const char kGroupKey[] = "group";
-const char kGroupDefaultValue[] = "default";
+const char kDefaultGroupName[] = "default";
 const char kMaxAgeKey[] = "max_age";
 const char kPriorityKey[] = "priority";
 const char kWeightKey[] = "weight";
@@ -66,17 +63,11 @@ const char kWeightKey[] = "weight";
 // |value| is the parsed JSON value of the endpoint tuple.
 //
 // |*endpoint_out| will contain the endpoint URL parsed out of the tuple.
-HeaderEndpointOutcome ProcessEndpoint(ReportingDelegate* delegate,
-                                      ReportingCache* cache,
-                                      base::TimeTicks now,
-                                      const std::string& group,
-                                      int ttl_sec,
-                                      ReportingClient::Subdomains subdomains,
-                                      const url::Origin& origin,
-                                      const base::Value& value,
-                                      GURL* endpoint_url_out) {
-  *endpoint_url_out = GURL();
-
+HeaderEndpointOutcome ProcessEndpoint(
+    ReportingDelegate* delegate,
+    const ReportingEndpointGroupKey& group_key,
+    const base::Value& value,
+    ReportingEndpoint::EndpointInfo* endpoint_info_out) {
   const base::DictionaryValue* dict = nullptr;
   if (!value.GetAsDictionary(&dict))
     return HeaderEndpointOutcome::DISCARDED_NOT_DICTIONARY;
@@ -88,35 +79,36 @@ HeaderEndpointOutcome ProcessEndpoint(ReportingDelegate* delegate,
   if (!dict->GetString(kUrlKey, &endpoint_url_string))
     return HeaderEndpointOutcome::DISCARDED_URL_NOT_STRING;
 
-  GURL endpoint_url(endpoint_url_string);
+  GURL endpoint_url;
+  // Support path-absolute-URL string
+  if (std::strspn(endpoint_url_string.c_str(), "/") == 1) {
+    endpoint_url = group_key.origin.GetURL().Resolve(endpoint_url_string);
+  } else {
+    endpoint_url = GURL(endpoint_url_string);
+  }
   if (!endpoint_url.is_valid())
     return HeaderEndpointOutcome::DISCARDED_URL_INVALID;
   if (!endpoint_url.SchemeIsCryptographic())
     return HeaderEndpointOutcome::DISCARDED_URL_INSECURE;
+  endpoint_info_out->url = std::move(endpoint_url);
 
-  int priority = ReportingClient::kDefaultPriority;
+  int priority = ReportingEndpoint::EndpointInfo::kDefaultPriority;
   if (dict->HasKey(kPriorityKey) && !dict->GetInteger(kPriorityKey, &priority))
     return HeaderEndpointOutcome::DISCARDED_PRIORITY_NOT_INTEGER;
+  if (priority < 0)
+    return HeaderEndpointOutcome::DISCARDED_PRIORITY_NEGATIVE;
+  endpoint_info_out->priority = priority;
 
-  int weight = ReportingClient::kDefaultWeight;
+  int weight = ReportingEndpoint::EndpointInfo::kDefaultWeight;
   if (dict->HasKey(kWeightKey) && !dict->GetInteger(kWeightKey, &weight))
     return HeaderEndpointOutcome::DISCARDED_WEIGHT_NOT_INTEGER;
-  if (weight <= 0)
-    return HeaderEndpointOutcome::DISCARDED_WEIGHT_NOT_POSITIVE;
+  if (weight < 0)
+    return HeaderEndpointOutcome::DISCARDED_WEIGHT_NEGATIVE;
+  endpoint_info_out->weight = weight;
 
-  *endpoint_url_out = endpoint_url;
-
-  if (ttl_sec == 0) {
-    cache->RemoveClientForOriginAndEndpoint(origin, endpoint_url);
-    return HeaderEndpointOutcome::REMOVED;
-  }
-
-  if (!delegate->CanSetClient(origin, endpoint_url))
+  if (!delegate->CanSetClient(group_key.origin, endpoint_url))
     return HeaderEndpointOutcome::SET_REJECTED_BY_DELEGATE;
 
-  cache->SetClient(origin, endpoint_url, subdomains, group,
-                   now + base::TimeDelta::FromSeconds(ttl_sec), priority,
-                   weight);
   return HeaderEndpointOutcome::SET;
 }
 
@@ -125,20 +117,24 @@ HeaderEndpointOutcome ProcessEndpoint(ReportingDelegate* delegate,
 // |origin| is the origin that sent the Report-To header.
 //
 // |value| is the parsed JSON value of the endpoint group tuple.
-HeaderEndpointGroupOutcome ProcessEndpointGroup(ReportingDelegate* delegate,
-                                                ReportingCache* cache,
-                                                std::set<GURL>* new_endpoints,
-                                                base::TimeTicks now,
-                                                const url::Origin& origin,
-                                                const base::Value& value) {
+HeaderEndpointGroupOutcome ProcessEndpointGroup(
+    ReportingDelegate* delegate,
+    ReportingCache* cache,
+    const NetworkIsolationKey& network_isolation_key,
+    const url::Origin& origin,
+    const base::Value& value,
+    ReportingEndpointGroup* parsed_endpoint_group_out) {
   const base::DictionaryValue* dict = nullptr;
   if (!value.GetAsDictionary(&dict))
     return HeaderEndpointGroupOutcome::DISCARDED_NOT_DICTIONARY;
   DCHECK(dict);
 
-  std::string group = kGroupDefaultValue;
-  if (dict->HasKey(kGroupKey) && !dict->GetString(kGroupKey, &group))
+  std::string group_name = kDefaultGroupName;
+  if (dict->HasKey(kGroupKey) && !dict->GetString(kGroupKey, &group_name))
     return HeaderEndpointGroupOutcome::DISCARDED_GROUP_NOT_STRING;
+  ReportingEndpointGroupKey group_key(network_isolation_key, origin,
+                                      group_name);
+  parsed_endpoint_group_out->group_key = group_key;
 
   int ttl_sec = -1;
   if (!dict->HasKey(kMaxAgeKey))
@@ -147,13 +143,27 @@ HeaderEndpointGroupOutcome ProcessEndpointGroup(ReportingDelegate* delegate,
     return HeaderEndpointGroupOutcome::DISCARDED_TTL_NOT_INTEGER;
   if (ttl_sec < 0)
     return HeaderEndpointGroupOutcome::DISCARDED_TTL_NEGATIVE;
+  // max_age: 0 signifies removal of the endpoint group.
+  if (ttl_sec == 0) {
+    cache->RemoveEndpointGroup(group_key);
+    return HeaderEndpointGroupOutcome::REMOVED_TTL_ZERO;
+  }
+  parsed_endpoint_group_out->ttl = base::TimeDelta::FromSeconds(ttl_sec);
 
-  ReportingClient::Subdomains subdomains = ReportingClient::Subdomains::EXCLUDE;
   bool subdomains_bool = false;
   if (dict->HasKey(kIncludeSubdomainsKey) &&
       dict->GetBoolean(kIncludeSubdomainsKey, &subdomains_bool) &&
       subdomains_bool == true) {
-    subdomains = ReportingClient::Subdomains::INCLUDE;
+    // Disallow eTLDs from setting include_subdomains endpoint groups.
+    if (registry_controlled_domains::GetRegistryLength(
+            origin.GetURL(),
+            registry_controlled_domains::INCLUDE_UNKNOWN_REGISTRIES,
+            registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES) == 0) {
+      return HeaderEndpointGroupOutcome::
+          DISCARDED_INCLUDE_SUBDOMAINS_NOT_ALLOWED;
+    }
+
+    parsed_endpoint_group_out->include_subdomains = OriginSubdomains::INCLUDE;
   }
 
   const base::ListValue* endpoint_list = nullptr;
@@ -162,19 +172,31 @@ HeaderEndpointGroupOutcome ProcessEndpointGroup(ReportingDelegate* delegate,
   if (!dict->GetList(kEndpointsKey, &endpoint_list))
     return HeaderEndpointGroupOutcome::DISCARDED_ENDPOINTS_NOT_LIST;
 
+  std::vector<ReportingEndpoint::EndpointInfo> endpoints;
+
   for (size_t i = 0; i < endpoint_list->GetSize(); i++) {
     const base::Value* endpoint = nullptr;
     bool got_endpoint = endpoint_list->Get(i, &endpoint);
     DCHECK(got_endpoint);
-    GURL endpoint_url;
+
+    ReportingEndpoint::EndpointInfo parsed_endpoint;
 
     HeaderEndpointOutcome outcome =
-        ProcessEndpoint(delegate, cache, now, group, ttl_sec, subdomains,
-                        origin, *endpoint, &endpoint_url);
-    if (EndpointParsedSuccessfully(outcome))
-      new_endpoints->insert(endpoint_url);
+        ProcessEndpoint(delegate, group_key, *endpoint, &parsed_endpoint);
+
+    if (outcome == HeaderEndpointOutcome::SET)
+      endpoints.push_back(std::move(parsed_endpoint));
+
     RecordHeaderEndpointOutcome(outcome);
   }
+
+  // Remove the group if it is empty.
+  if (endpoints.empty()) {
+    cache->RemoveEndpointGroup(group_key);
+    return HeaderEndpointGroupOutcome::REMOVED_EMPTY;
+  }
+
+  parsed_endpoint_group_out->endpoints = std::move(endpoints);
 
   return HeaderEndpointGroupOutcome::PARSED;
 }
@@ -232,28 +254,33 @@ void ReportingHeaderParser::ParseHeader(ReportingContext* context,
   ReportingCache* cache = context->cache();
 
   url::Origin origin = url::Origin::Create(url);
+  NetworkIsolationKey network_isolation_key = NetworkIsolationKey::Todo();
 
-  std::vector<GURL> old_endpoints;
-  cache->GetEndpointsForOrigin(origin, &old_endpoints);
+  std::vector<ReportingEndpointGroup> parsed_header;
 
-  std::set<GURL> new_endpoints;
-
-  base::TimeTicks now = context->tick_clock()->NowTicks();
   for (size_t i = 0; i < group_list->GetSize(); i++) {
-    const base::Value* group = nullptr;
-    bool got_group = group_list->Get(i, &group);
+    const base::Value* group_value = nullptr;
+    bool got_group = group_list->Get(i, &group_value);
     DCHECK(got_group);
-    HeaderEndpointGroupOutcome outcome = ProcessEndpointGroup(
-        delegate, cache, &new_endpoints, now, origin, *group);
+    ReportingEndpointGroup parsed_endpoint_group;
+    HeaderEndpointGroupOutcome outcome =
+        ProcessEndpointGroup(delegate, cache, network_isolation_key, origin,
+                             *group_value, &parsed_endpoint_group);
     RecordHeaderEndpointGroupOutcome(outcome);
+    if (outcome == HeaderEndpointGroupOutcome::PARSED)
+      parsed_header.push_back(std::move(parsed_endpoint_group));
   }
 
-  // Remove any endpoints that weren't specified in the current header(s).
-  for (const GURL& old_endpoint : old_endpoints) {
-    if (new_endpoints.count(old_endpoint) == 0u)
-      cache->RemoveClientForOriginAndEndpoint(origin, old_endpoint);
+  // Remove the client if it has no valid endpoint groups.
+  if (parsed_header.empty()) {
+    // TODO(chlily): Pass NIK to cache.
+    cache->RemoveClient(NetworkIsolationKey::Todo(), origin);
+    RecordHeaderOutcome(HeaderOutcome::REMOVED_EMPTY);
+    return;
   }
 
+  // TODO(chlily): Pass NIK to cache.
+  cache->OnParsedHeader(origin, std::move(parsed_header));
   RecordHeaderOutcome(HeaderOutcome::PARSED);
 }
 

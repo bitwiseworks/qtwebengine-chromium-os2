@@ -26,6 +26,7 @@
 
 #include "third_party/blink/renderer/core/loader/resource/xsl_style_sheet_resource.h"
 
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/text_resource_decoder_options.h"
@@ -35,6 +36,7 @@ namespace blink {
 
 static void ApplyXSLRequestProperties(FetchParameters& params) {
   params.SetRequestContext(mojom::RequestContextType::XSLT);
+  params.SetRequestDestination(network::mojom::RequestDestination::kXslt);
   // TODO(japhet): Accept: headers can be set manually on XHRs from script, in
   // the browser process, and... here. The browser process can't tell the
   // difference between an XSL stylesheet and a CSS stylesheet, so it assumes

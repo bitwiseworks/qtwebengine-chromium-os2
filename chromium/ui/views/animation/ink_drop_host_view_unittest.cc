@@ -5,12 +5,14 @@
 #include "ui/views/animation/ink_drop_host_view.h"
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/event_utils.h"
+#include "ui/events/types/event_type.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/animation/animation_test_api.h"
 #include "ui/gfx/color_palette.h"
@@ -25,7 +27,7 @@ using InkDropMode = InkDropHostViewTestApi::InkDropMode;
 
 class TestInkDropHostView : public InkDropHostView {
  public:
-  TestInkDropHostView() {}
+  TestInkDropHostView() = default;
 
   // Accessors to InkDropHostView internals.
   ui::EventHandler* GetTargetHandler() { return target_handler(); }
@@ -80,7 +82,7 @@ InkDropHostViewTest::InkDropHostViewTest()
       animation_mode_reset_(gfx::AnimationTestApi::SetRichAnimationRenderMode(
           gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED)) {}
 
-InkDropHostViewTest::~InkDropHostViewTest() {}
+InkDropHostViewTest::~InkDropHostViewTest() = default;
 
 void InkDropHostViewTest::MouseEventTriggersInkDropHelper(
     InkDropMode ink_drop_mode) {

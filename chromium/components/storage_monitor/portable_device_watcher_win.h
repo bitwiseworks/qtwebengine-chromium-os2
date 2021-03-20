@@ -97,8 +97,9 @@ class PortableDeviceWatcherWin {
   // devices are found.
   void SetNotifications(StorageMonitor::Receiver* notifications);
 
-  void EjectDevice(const std::string& device_id,
-                   base::Callback<void(StorageMonitor::EjectStatus)> callback);
+  void EjectDevice(
+      const std::string& device_id,
+      base::OnceCallback<void(StorageMonitor::EjectStatus)> callback);
 
  private:
   friend class TestPortableDeviceWatcherWin;
@@ -141,7 +142,7 @@ class PortableDeviceWatcherWin {
   StorageMonitor::Receiver* storage_notifications_;
 
   // Used by |media_task_runner_| to create cancelable callbacks.
-  base::WeakPtrFactory<PortableDeviceWatcherWin> weak_ptr_factory_;
+  base::WeakPtrFactory<PortableDeviceWatcherWin> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PortableDeviceWatcherWin);
 };

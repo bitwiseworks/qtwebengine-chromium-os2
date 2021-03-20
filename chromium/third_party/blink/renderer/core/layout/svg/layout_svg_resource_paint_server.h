@@ -25,7 +25,7 @@
 #include "third_party/blink/renderer/platform/graphics/gradient.h"
 #include "third_party/blink/renderer/platform/graphics/pattern.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -114,11 +114,11 @@ class LayoutSVGResourcePaintServer : public LayoutSVGResourceContainer {
                                                      LayoutSVGResourceMode);
 };
 
-DEFINE_TYPE_CASTS(LayoutSVGResourcePaintServer,
-                  LayoutSVGResourceContainer,
-                  resource,
-                  resource->IsSVGPaintServer(),
-                  resource.IsSVGPaintServer());
+template <>
+inline bool IsResourceOfType<LayoutSVGResourcePaintServer>(
+    const LayoutSVGResourceContainer* container) {
+  return container->IsSVGPaintServer();
+}
 
 }  // namespace blink
 

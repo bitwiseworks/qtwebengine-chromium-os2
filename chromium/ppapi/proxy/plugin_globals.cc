@@ -5,7 +5,8 @@
 #include "ppapi/proxy/plugin_globals.h"
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -57,15 +58,14 @@ class PluginGlobals::BrowserSender : public IPC::Sender {
 PluginGlobals* PluginGlobals::plugin_globals_ = NULL;
 
 PluginGlobals::PluginGlobals(
-    const scoped_refptr<base::TaskRunner>& ipc_task_runner)
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
     : ppapi::PpapiGlobals(),
       plugin_proxy_delegate_(NULL),
       callback_tracker_(new CallbackTracker),
       ipc_task_runner_(ipc_task_runner),
       resource_reply_thread_registrar_(
           new ResourceReplyThreadRegistrar(GetMainThreadMessageLoop())),
-      udp_socket_filter_(new UDPSocketFilter()),
-      weak_factory_(this) {
+      udp_socket_filter_(new UDPSocketFilter()) {
   DCHECK(!plugin_globals_);
   plugin_globals_ = this;
 
@@ -79,14 +79,13 @@ PluginGlobals::PluginGlobals(
 
 PluginGlobals::PluginGlobals(
     PerThreadForTest per_thread_for_test,
-    const scoped_refptr<base::TaskRunner>& ipc_task_runner)
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
     : ppapi::PpapiGlobals(per_thread_for_test),
       plugin_proxy_delegate_(NULL),
       callback_tracker_(new CallbackTracker),
       ipc_task_runner_(ipc_task_runner),
       resource_reply_thread_registrar_(
-          new ResourceReplyThreadRegistrar(GetMainThreadMessageLoop())),
-      weak_factory_(this) {
+          new ResourceReplyThreadRegistrar(GetMainThreadMessageLoop())) {
   DCHECK(!plugin_globals_);
 }
 
@@ -99,7 +98,7 @@ PluginGlobals::~PluginGlobals() {
     // we clear plugin_globals_, because the Resource destructor tries to access
     // this PluginGlobals.
     DCHECK(!loop_for_main_thread_.get() || loop_for_main_thread_->HasOneRef());
-    loop_for_main_thread_ = NULL;
+    loop_for_main_thread_.reset();
   }
   plugin_globals_ = NULL;
 }
@@ -174,7 +173,7 @@ base::TaskRunner* PluginGlobals::GetFileTaskRunner() {
   if (!file_thread_.get()) {
     file_thread_.reset(new base::Thread("Plugin::File"));
     base::Thread::Options options;
-    options.message_loop_type = base::MessageLoop::TYPE_IO;
+    options.message_pump_type = base::MessagePumpType::IO;
     file_thread_->StartWithOptions(options);
   }
   return file_thread_->task_runner().get();

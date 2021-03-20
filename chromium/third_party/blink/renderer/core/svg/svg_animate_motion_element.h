@@ -33,11 +33,12 @@ class SVGAnimateMotionElement final : public SVGAnimationElement {
   explicit SVGAnimateMotionElement(Document&);
   ~SVGAnimateMotionElement() override;
 
-  DECLARE_NODE_FACTORY(SVGAnimateMotionElement);
   void UpdateAnimationPath();
 
  private:
-  bool HasValidTarget() override;
+  bool HasValidAnimation() const override;
+  void WillChangeAnimationTarget() override;
+  void DidChangeAnimationTarget() override;
 
   void ParseAttribute(const AttributeModificationParams&) override;
 
@@ -51,7 +52,7 @@ class SVGAnimateMotionElement final : public SVGAnimationElement {
                                 const String& by_string) override;
   void CalculateAnimatedValue(float percentage,
                               unsigned repeat_count,
-                              SVGSMILElement* result_element) override;
+                              SVGSMILElement* result_element) const override;
   void ApplyResultsToTarget() override;
   float CalculateDistance(const String& from_string,
                           const String& to_string) override;

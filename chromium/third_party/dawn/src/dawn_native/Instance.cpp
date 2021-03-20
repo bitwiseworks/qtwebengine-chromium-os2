@@ -15,9 +15,9 @@
 #include "dawn_native/Instance.h"
 
 #include "common/Assert.h"
+#include "common/Log.h"
 #include "dawn_native/ErrorData.h"
-
-#include <iostream>
+#include "dawn_native/Surface.h"
 
 namespace dawn_native {
 
@@ -51,8 +51,25 @@ namespace dawn_native {
 
     // InstanceBase
 
+    // static
+    InstanceBase* InstanceBase::Create(const InstanceDescriptor* descriptor) {
+        Ref<InstanceBase> instance = AcquireRef(new InstanceBase);
+        if (!instance->Initialize(descriptor)) {
+            return nullptr;
+        }
+        return instance.Detach();
+    }
+
+    bool InstanceBase::Initialize(const InstanceDescriptor*) {
+        return true;
+    }
+
     void InstanceBase::DiscoverDefaultAdapters() {
         EnsureBackendConnections();
+
+        if (mDiscoveredDefaultAdapters) {
+            return;
+        }
 
         // Query and merge all default adapters for all backends
         for (std::unique_ptr<BackendConnection>& backend : mBackends) {
@@ -65,11 +82,34 @@ namespace dawn_native {
                 mAdapters.push_back(std::move(adapter));
             }
         }
+
+        mDiscoveredDefaultAdapters = true;
     }
 
     // This is just a wrapper around the real logic that uses Error.h error handling.
     bool InstanceBase::DiscoverAdapters(const AdapterDiscoveryOptionsBase* options) {
         return !ConsumedError(DiscoverAdaptersInternal(options));
+    }
+
+    const ToggleInfo* InstanceBase::GetToggleInfo(const char* toggleName) {
+        return mTogglesInfo.GetToggleInfo(toggleName);
+    }
+
+    Toggle InstanceBase::ToggleNameToEnum(const char* toggleName) {
+        return mTogglesInfo.ToggleNameToEnum(toggleName);
+    }
+
+    const ExtensionInfo* InstanceBase::GetExtensionInfo(const char* extensionName) {
+        return mExtensionsInfo.GetExtensionInfo(extensionName);
+    }
+
+    Extension InstanceBase::ExtensionNameToEnum(const char* extensionName) {
+        return mExtensionsInfo.ExtensionNameToEnum(extensionName);
+    }
+
+    ExtensionsSet InstanceBase::ExtensionNamesToExtensionsSet(
+        const std::vector<const char*>& requiredExtensions) {
+        return mExtensionsInfo.ExtensionNamesToExtensionsSet(requiredExtensions);
     }
 
     const std::vector<std::unique_ptr<AdapterBase>>& InstanceBase::GetAdapters() const {
@@ -81,7 +121,7 @@ namespace dawn_native {
             return;
         }
 
-        auto Register = [this](BackendConnection* connection, BackendType expectedType) {
+        auto Register = [this](BackendConnection* connection, wgpu::BackendType expectedType) {
             if (connection != nullptr) {
                 ASSERT(connection->GetType() == expectedType);
                 ASSERT(connection->GetInstance() == this);
@@ -90,25 +130,25 @@ namespace dawn_native {
         };
 
 #if defined(DAWN_ENABLE_BACKEND_D3D12)
-        Register(d3d12::Connect(this), BackendType::D3D12);
+        Register(d3d12::Connect(this), wgpu::BackendType::D3D12);
 #endif  // defined(DAWN_ENABLE_BACKEND_D3D12)
 #if defined(DAWN_ENABLE_BACKEND_METAL)
-        Register(metal::Connect(this), BackendType::Metal);
+        Register(metal::Connect(this), wgpu::BackendType::Metal);
 #endif  // defined(DAWN_ENABLE_BACKEND_METAL)
-#if defined(DAWN_ENABLE_BACKEND_NULL)
-        Register(null::Connect(this), BackendType::Null);
-#endif  // defined(DAWN_ENABLE_BACKEND_NULL)
-#if defined(DAWN_ENABLE_BACKEND_OPENGL)
-        Register(opengl::Connect(this), BackendType::OpenGL);
-#endif  // defined(DAWN_ENABLE_BACKEND_OPENGL)
 #if defined(DAWN_ENABLE_BACKEND_VULKAN)
-        Register(vulkan::Connect(this), BackendType::Vulkan);
+        Register(vulkan::Connect(this), wgpu::BackendType::Vulkan);
 #endif  // defined(DAWN_ENABLE_BACKEND_VULKAN)
+#if defined(DAWN_ENABLE_BACKEND_OPENGL)
+        Register(opengl::Connect(this), wgpu::BackendType::OpenGL);
+#endif  // defined(DAWN_ENABLE_BACKEND_OPENGL)
+#if defined(DAWN_ENABLE_BACKEND_NULL)
+        Register(null::Connect(this), wgpu::BackendType::Null);
+#endif  // defined(DAWN_ENABLE_BACKEND_NULL)
 
         mBackendsConnected = true;
     }
 
-    ResultOrError<BackendConnection*> InstanceBase::FindBackend(BackendType type) {
+    ResultOrError<BackendConnection*> InstanceBase::FindBackend(wgpu::BackendType type) {
         for (std::unique_ptr<BackendConnection>& backend : mBackends) {
             if (backend->GetType() == type) {
                 return backend.get();
@@ -122,7 +162,7 @@ namespace dawn_native {
         EnsureBackendConnections();
 
         BackendConnection* backend;
-        DAWN_TRY_ASSIGN(backend, FindBackend(options->backendType));
+        DAWN_TRY_ASSIGN(backend, FindBackend(static_cast<wgpu::BackendType>(options->backendType)));
 
         std::vector<std::unique_ptr<AdapterBase>> newAdapters;
         DAWN_TRY_ASSIGN(newAdapters, backend->DiscoverAdapters(options));
@@ -138,15 +178,46 @@ namespace dawn_native {
 
     bool InstanceBase::ConsumedError(MaybeError maybeError) {
         if (maybeError.IsError()) {
-            ErrorData* error = maybeError.AcquireError();
+            std::unique_ptr<ErrorData> error = maybeError.AcquireError();
 
             ASSERT(error != nullptr);
-            std::cout << error->GetMessage() << std::endl;
-            delete error;
+            dawn::InfoLog() << error->GetMessage();
 
             return true;
         }
         return false;
+    }
+
+    void InstanceBase::EnableBackendValidation(bool enableBackendValidation) {
+        mEnableBackendValidation = enableBackendValidation;
+    }
+
+    bool InstanceBase::IsBackendValidationEnabled() const {
+        return mEnableBackendValidation;
+    }
+
+    void InstanceBase::EnableBeginCaptureOnStartup(bool beginCaptureOnStartup) {
+        mBeginCaptureOnStartup = beginCaptureOnStartup;
+    }
+
+    bool InstanceBase::IsBeginCaptureOnStartupEnabled() const {
+        return mBeginCaptureOnStartup;
+    }
+
+    void InstanceBase::SetPlatform(dawn_platform::Platform* platform) {
+        mPlatform = platform;
+    }
+
+    dawn_platform::Platform* InstanceBase::GetPlatform() const {
+        return mPlatform;
+    }
+
+    Surface* InstanceBase::CreateSurface(const SurfaceDescriptor* descriptor) {
+        if (ConsumedError(ValidateSurfaceDescriptor(this, descriptor))) {
+            return nullptr;
+        }
+
+        return new Surface(this, descriptor);
     }
 
 }  // namespace dawn_native

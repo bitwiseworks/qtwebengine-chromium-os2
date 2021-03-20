@@ -36,7 +36,6 @@
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -45,7 +44,7 @@ WorkerPerformance::WorkerPerformance(WorkerGlobalScope* context)
                   context->GetTaskRunner(TaskType::kPerformanceTimeline)),
       execution_context_(context) {}
 
-void WorkerPerformance::Trace(blink::Visitor* visitor) {
+void WorkerPerformance::Trace(Visitor* visitor) {
   visitor->Trace(execution_context_);
   Performance::Trace(visitor);
 }

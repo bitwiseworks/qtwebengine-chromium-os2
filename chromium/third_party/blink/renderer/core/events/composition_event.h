@@ -27,10 +27,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_COMPOSITION_EVENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_COMPOSITION_EVENT_H_
 
-#include "third_party/blink/renderer/core/events/composition_event_init.h"
 #include "third_party/blink/renderer/core/events/ui_event.h"
 
 namespace blink {
+
+class CompositionEventInit;
 
 class CompositionEvent final : public UIEvent {
   DEFINE_WRAPPERTYPEINFO();
@@ -38,12 +39,6 @@ class CompositionEvent final : public UIEvent {
  public:
   static CompositionEvent* Create() {
     return MakeGarbageCollected<CompositionEvent>();
-  }
-
-  static CompositionEvent* Create(const AtomicString& type,
-                                  AbstractView* view,
-                                  const String& data) {
-    return MakeGarbageCollected<CompositionEvent>(type, view, data);
   }
 
   static CompositionEvent* Create(const AtomicString& type,
@@ -68,7 +63,7 @@ class CompositionEvent final : public UIEvent {
 
   bool IsCompositionEvent() const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   String data_;

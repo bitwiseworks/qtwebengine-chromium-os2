@@ -5,12 +5,12 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_COALESCED_INPUT_EVENT_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_COALESCED_INPUT_EVENT_H_
 
+#include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/public/common/input/web_pointer_event.h"
 #include "third_party/blink/public/platform/web_common.h"
-#include "third_party/blink/public/platform/web_input_event.h"
-#include "third_party/blink/public/platform/web_pointer_event.h"
+#include "third_party/blink/public/platform/web_vector.h"
 
 #include <memory>
-#include <vector>
 
 namespace blink {
 
@@ -21,11 +21,11 @@ class BLINK_PLATFORM_EXPORT WebCoalescedInputEvent {
  public:
   explicit WebCoalescedInputEvent(const WebInputEvent&);
   WebCoalescedInputEvent(const WebInputEvent&,
-                         const std::vector<const WebInputEvent*>&,
-                         const std::vector<const WebInputEvent*>&);
+                         const WebVector<const WebInputEvent*>&,
+                         const WebVector<const WebInputEvent*>&);
   WebCoalescedInputEvent(const WebPointerEvent&,
-                         const std::vector<WebPointerEvent>&,
-                         const std::vector<WebPointerEvent>&);
+                         const WebVector<WebPointerEvent>&,
+                         const WebVector<WebPointerEvent>&);
   // Copy constructor to deep copy the event.
   WebCoalescedInputEvent(const WebCoalescedInputEvent&);
 
@@ -34,26 +34,21 @@ class BLINK_PLATFORM_EXPORT WebCoalescedInputEvent {
   const WebInputEvent& Event() const;
   size_t CoalescedEventSize() const;
   const WebInputEvent& CoalescedEvent(size_t index) const;
-  std::vector<const WebInputEvent*> GetCoalescedEventsPointers() const;
+  WebVector<const WebInputEvent*> GetCoalescedEventsPointers() const;
 
   void AddPredictedEvent(const blink::WebInputEvent&);
   size_t PredictedEventSize() const;
   const WebInputEvent& PredictedEvent(size_t index) const;
-  std::vector<const WebInputEvent*> GetPredictedEventsPointers() const;
+  WebVector<const WebInputEvent*> GetPredictedEventsPointers() const;
 
  private:
-  struct BLINK_PLATFORM_EXPORT WebInputEventDeleter {
-    void operator()(blink::WebInputEvent*) const;
-  };
-
-  using WebScopedInputEvent =
-      std::unique_ptr<WebInputEvent, WebInputEventDeleter>;
+  using WebScopedInputEvent = std::unique_ptr<WebInputEvent>;
 
   WebScopedInputEvent MakeWebScopedInputEvent(const blink::WebInputEvent&);
 
   WebScopedInputEvent event_;
-  std::vector<WebScopedInputEvent> coalesced_events_;
-  std::vector<WebScopedInputEvent> predicted_events_;
+  WebVector<WebScopedInputEvent> coalesced_events_;
+  WebVector<WebScopedInputEvent> predicted_events_;
 };
 
 using WebScopedCoalescedInputEvent = std::unique_ptr<WebCoalescedInputEvent>;

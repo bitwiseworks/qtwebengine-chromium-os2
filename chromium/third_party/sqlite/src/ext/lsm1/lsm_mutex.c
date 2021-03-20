@@ -64,7 +64,7 @@ void lsmMutexLeave(lsm_env *pEnv, lsm_mutex *pMutex){
 #ifndef NDEBUG
 /*
 ** Return non-zero if the mutex passed as the second argument is held
-** by the calling thread, or zero otherwise. If the implementation is not
+** by the calling thread, or zero otherwise. If the implementation is not 
 ** able to tell if the mutex is held by the caller, it should return
 ** non-zero.
 **
@@ -75,9 +75,9 @@ int lsmMutexHeld(lsm_env *pEnv, lsm_mutex *pMutex){
 }
 
 /*
-** Return non-zero if the mutex passed as the second argument is not
-** held by the calling thread, or zero otherwise. If the implementation
-** is not able to tell if the mutex is held by the caller, it should
+** Return non-zero if the mutex passed as the second argument is not 
+** held by the calling thread, or zero otherwise. If the implementation 
+** is not able to tell if the mutex is held by the caller, it should 
 ** return non-zero.
 **
 ** This function is only used as part of assert() statements.

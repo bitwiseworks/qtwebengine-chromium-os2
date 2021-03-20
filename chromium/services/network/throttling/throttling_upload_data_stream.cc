@@ -4,6 +4,7 @@
 
 #include "services/network/throttling/throttling_upload_data_stream.h"
 
+#include "base/bind.h"
 #include "net/base/net_errors.h"
 
 namespace network {
@@ -13,8 +14,8 @@ ThrottlingUploadDataStream::ThrottlingUploadDataStream(
     : net::UploadDataStream(upload_data_stream->is_chunked(),
                             upload_data_stream->identifier()),
       throttle_callback_(
-          base::Bind(&ThrottlingUploadDataStream::ThrottleCallback,
-                     base::Unretained(this))),
+          base::BindRepeating(&ThrottlingUploadDataStream::ThrottleCallback,
+                              base::Unretained(this))),
       throttled_byte_count_(0),
       upload_data_stream_(upload_data_stream) {}
 

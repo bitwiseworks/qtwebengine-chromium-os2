@@ -35,7 +35,7 @@ class MockWebContentsDelegate : public content::WebContentsDelegate {
 
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  blink::MediaStreamType type) override {
+                                  blink::mojom::MediaStreamType type) override {
     checked_ = true;
     if (check_message_loop_runner_.get())
       check_message_loop_runner_->Quit();
@@ -83,12 +83,14 @@ class WebViewMediaAccessAPITest : public WebViewAPITest {
     ASSERT_TRUE(test_run_listener.WaitUntilSatisfied());
   }
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Enable fake devices to make sure there is at least one device in the
-    // system. Otherwise, this test would fail on machines without physical
-    // media devices since getUserMedia fails early in those cases.
-    WebViewAPITest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kUseFakeDeviceForMediaStream);
+  void SetUp() override {
+    WebViewAPITest::SetUp();
+    // Verify fake devices are enabled. This is necessary to make sure there is
+    // at least one device in the system. Otherwise, this test would fail on
+    // machines without physical media devices since getUserMedia fails early in
+    // those cases.
+    EXPECT_TRUE(base::CommandLine::ForCurrentProcess()->HasSwitch(
+        switches::kUseFakeDeviceForMediaStream));
   }
 };
 

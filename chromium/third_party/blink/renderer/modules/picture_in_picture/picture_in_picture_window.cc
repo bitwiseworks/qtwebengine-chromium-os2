@@ -6,20 +6,21 @@
 
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
 PictureInPictureWindow::PictureInPictureWindow(
     ExecutionContext* execution_context,
-    const WebSize& size)
-    : ContextClient(execution_context), size_(size) {}
+    const gfx::Size& size)
+    : ExecutionContextClient(execution_context), size_(size) {}
 
 void PictureInPictureWindow::OnClose() {
-  size_.width = size_.height = 0;
+  size_ = gfx::Size();
 }
 
-void PictureInPictureWindow::OnResize(const WebSize& size) {
+void PictureInPictureWindow::OnResize(const gfx::Size& size) {
   if (size_ == size)
     return;
 
@@ -47,9 +48,9 @@ bool PictureInPictureWindow::HasPendingActivity() const {
   return GetExecutionContext() && HasEventListeners();
 }
 
-void PictureInPictureWindow::Trace(blink::Visitor* visitor) {
+void PictureInPictureWindow::Trace(Visitor* visitor) {
   EventTargetWithInlineData::Trace(visitor);
-  ContextClient::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 }  // namespace blink

@@ -8,6 +8,8 @@
 #include <keyhi.h>
 #include <stdint.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
@@ -72,8 +74,7 @@ std::unique_ptr<em::PolicyFetchResponse> AssembleAndSignPolicy(
 
 OwnerSettingsService::OwnerSettingsService(
     const scoped_refptr<ownership::OwnerKeyUtil>& owner_key_util)
-    : owner_key_util_(owner_key_util), weak_factory_(this) {
-}
+    : owner_key_util_(owner_key_util) {}
 
 OwnerSettingsService::~OwnerSettingsService() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -98,27 +99,27 @@ bool OwnerSettingsService::IsOwner() {
   return private_key_.get() && private_key_->key();
 }
 
-void OwnerSettingsService::IsOwnerAsync(const IsOwnerCallback& callback) {
+void OwnerSettingsService::IsOwnerAsync(IsOwnerCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (private_key_.get()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, IsOwner()));
+        FROM_HERE, base::BindOnce(std::move(callback), IsOwner()));
   } else {
-    pending_is_owner_callbacks_.push_back(callback);
+    pending_is_owner_callbacks_.push_back(std::move(callback));
   }
 }
 
 bool OwnerSettingsService::AssembleAndSignPolicyAsync(
     base::TaskRunner* task_runner,
     std::unique_ptr<em::PolicyData> policy,
-    const AssembleAndSignPolicyAsyncCallback& callback) {
+    AssembleAndSignPolicyAsyncCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!task_runner || !IsOwner())
     return false;
   return base::PostTaskAndReplyWithResult(
       task_runner, FROM_HERE,
-      base::Bind(&AssembleAndSignPolicy, base::Passed(&policy), private_key_),
-      callback);
+      base::BindOnce(&AssembleAndSignPolicy, std::move(policy), private_key_),
+      std::move(callback));
 }
 
 bool OwnerSettingsService::SetBoolean(const std::string& setting, bool value) {
@@ -147,8 +148,8 @@ bool OwnerSettingsService::SetString(const std::string& setting,
 }
 
 void OwnerSettingsService::ReloadKeypair() {
-  ReloadKeypairImpl(
-      base::Bind(&OwnerSettingsService::OnKeypairLoaded, as_weak_ptr()));
+  ReloadKeypairImpl(base::BindRepeating(&OwnerSettingsService::OnKeypairLoaded,
+                                        as_weak_ptr()));
 }
 
 void OwnerSettingsService::OnKeypairLoaded(
@@ -159,14 +160,12 @@ void OwnerSettingsService::OnKeypairLoaded(
   public_key_ = public_key;
   private_key_ = private_key;
 
-  const bool is_owner = IsOwner();
   std::vector<IsOwnerCallback> is_owner_callbacks;
   is_owner_callbacks.swap(pending_is_owner_callbacks_);
-  for (std::vector<IsOwnerCallback>::iterator it(is_owner_callbacks.begin());
-       it != is_owner_callbacks.end();
-       ++it) {
-    it->Run(is_owner);
-  }
+
+  const bool is_owner = IsOwner();
+  for (auto& callback : is_owner_callbacks)
+    std::move(callback).Run(is_owner);
 
   OnPostKeypairLoadedActions();
 }

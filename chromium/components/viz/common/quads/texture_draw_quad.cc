@@ -8,13 +8,22 @@
 
 #include "base/logging.h"
 #include "base/trace_event/traced_value.h"
-#include "base/values.h"
 #include "cc/base/math_util.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 namespace viz {
 
-TextureDrawQuad::TextureDrawQuad() = default;
+TextureDrawQuad::TextureDrawQuad()
+    : y_flipped(false),
+      nearest_neighbor(false),
+      premultiplied_alpha(false),
+      secure_output_only(false),
+      protected_video_type(gfx::ProtectedVideoType::kClear) {
+  static_assert(static_cast<int>(gfx::ProtectedVideoType::kMaxValue) < 4,
+                "protected_video_type needs more bits in order to represent "
+                "all the enum values");
+}
 
 TextureDrawQuad::TextureDrawQuad(const TextureDrawQuad& other) = default;
 
@@ -31,11 +40,11 @@ void TextureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
                              bool y_flipped,
                              bool nearest_neighbor,
                              bool secure_output_only,
-                             ui::ProtectedVideoType protected_video_type) {
+                             gfx::ProtectedVideoType protected_video_type) {
   needs_blending = needs_blending || vertex_opacity[0] != 1.0f ||
                    vertex_opacity[1] != 1.0f || vertex_opacity[2] != 1.0f ||
                    vertex_opacity[3] != 1.0f;
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::TEXTURE_CONTENT, rect,
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::Material::kTextureContent, rect,
                    visible_rect, needs_blending);
   resources.ids[kResourceIdIndex] = resource_id;
   resources.count = 1;
@@ -67,11 +76,11 @@ void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                              bool y_flipped,
                              bool nearest_neighbor,
                              bool secure_output_only,
-                             ui::ProtectedVideoType protected_video_type) {
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::TEXTURE_CONTENT, rect,
+                             gfx::ProtectedVideoType protected_video_type) {
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::Material::kTextureContent, rect,
                    visible_rect, needs_blending);
   resources.ids[kResourceIdIndex] = resource_id;
-  overlay_resources.size_in_pixels[kResourceIdIndex] = resource_size_in_pixels;
+  overlay_resources.size_in_pixels = resource_size_in_pixels;
   resources.count = 1;
   this->premultiplied_alpha = premultiplied_alpha;
   this->uv_top_left = uv_top_left;
@@ -88,7 +97,7 @@ void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
 }
 
 const TextureDrawQuad* TextureDrawQuad::MaterialCast(const DrawQuad* quad) {
-  DCHECK(quad->material == DrawQuad::TEXTURE_CONTENT);
+  DCHECK(quad->material == DrawQuad::Material::kTextureContent);
   return static_cast<const TextureDrawQuad*>(quad);
 }
 
@@ -99,7 +108,8 @@ void TextureDrawQuad::ExtendValue(base::trace_event::TracedValue* value) const {
   cc::MathUtil::AddToTracedValue("uv_top_left", uv_top_left, value);
   cc::MathUtil::AddToTracedValue("uv_bottom_right", uv_bottom_right, value);
 
-  value->SetInteger("background_color", background_color);
+  value->SetString("background_color",
+                   color_utils::SkColorToRgbaString(background_color));
 
   value->BeginArray("vertex_opacity");
   for (size_t i = 0; i < 4; ++i)

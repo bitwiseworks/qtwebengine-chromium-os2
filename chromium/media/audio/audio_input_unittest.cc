@@ -5,13 +5,14 @@
 #include <stdint.h>
 
 #include "base/bind.h"
+#include "base/callback.h"
+#include "base/command_line.h"
 #include "base/environment.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/test/test_message_loop.h"
 #include "base/threading/platform_thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_device_info_accessor_for_tests.h"
@@ -19,6 +20,7 @@
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_unittest_util.h"
 #include "media/audio/test_audio_thread.h"
+#include "media/base/media_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -27,23 +29,41 @@ namespace media {
 // expected and if any error has been reported.
 class TestInputCallback : public AudioInputStream::AudioInputCallback {
  public:
-  TestInputCallback() : callback_count_(0), had_error_(0) {}
+  TestInputCallback(base::OnceClosure quit_closure)
+      : quit_closure_(std::move(quit_closure)),
+        callback_count_(0),
+        had_error_(0) {}
   void OnData(const AudioBus* source,
               base::TimeTicks capture_time,
               double volume) override {
-    ++callback_count_;
+    if (!quit_closure_.is_null()) {
+      ++callback_count_;
+      if (callback_count_ >= 2) {
+        std::move(quit_closure_).Run();
+      }
+    }
   }
-  void OnError() override { ++had_error_; }
-  // Returns how many times OnData() has been called.
+  void OnError() override {
+    if (!quit_closure_.is_null()) {
+      ++had_error_;
+      std::move(quit_closure_).Run();
+    }
+  }
+  // Returns how many times OnData() has been called. This should not be called
+  // until |quit_closure_| has run.
   int callback_count() const {
+    DCHECK(quit_closure_.is_null());
     return callback_count_;
   }
-  // Returns how many times the OnError callback was called.
+  // Returns how many times the OnError callback was called. This should not be
+  // called until |quit_closure_| has run.
   int had_error() const {
+    DCHECK(quit_closure_.is_null());
     return had_error_;
   }
 
  private:
+  base::OnceClosure quit_closure_;
   int callback_count_;
   int had_error_;
 };
@@ -51,10 +71,16 @@ class TestInputCallback : public AudioInputStream::AudioInputCallback {
 class AudioInputTest : public testing::Test {
  public:
   AudioInputTest()
-      : message_loop_(base::MessageLoop::TYPE_UI),
+      : message_loop_(base::MessagePumpType::UI),
         audio_manager_(AudioManager::CreateForTesting(
             std::make_unique<TestAudioThread>())),
-        audio_input_stream_(NULL) {
+        audio_input_stream_(nullptr) {
+#if defined(OS_LINUX)
+    // Due to problems with PulseAudio failing to start, use a fake audio
+    // stream. https://crbug.com/1047655#c70
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kDisableAudioOutput);
+#endif
     base::RunLoop().RunUntilIdle();
   }
 
@@ -62,47 +88,48 @@ class AudioInputTest : public testing::Test {
 
  protected:
   bool InputDevicesAvailable() {
+#if defined(OS_FUCHSIA)
+    // On Fuchsia HasAudioInputDevices() returns true, but AudioInputStream is
+    // not implemented. Audio input is implemented in
+    // FuchsiaAudioCapturerStream. It implements AudioCapturerStream interface
+    // and runs in the renderer process.
+    return false;
+#else
     return AudioDeviceInfoAccessorForTests(audio_manager_.get())
         .HasAudioInputDevices();
+#endif
   }
 
   void MakeAudioInputStreamOnAudioThread() {
-    RunOnAudioThread(
-        base::Bind(&AudioInputTest::MakeAudioInputStream,
-                   base::Unretained(this)));
+    RunOnAudioThread(base::BindOnce(&AudioInputTest::MakeAudioInputStream,
+                                    base::Unretained(this)));
   }
 
   void CloseAudioInputStreamOnAudioThread() {
-    RunOnAudioThread(
-        base::Bind(&AudioInputStream::Close,
-                   base::Unretained(audio_input_stream_)));
+    RunOnAudioThread(base::BindOnce(&AudioInputStream::Close,
+                                    base::Unretained(audio_input_stream_)));
     audio_input_stream_ = NULL;
   }
 
   void OpenAndCloseAudioInputStreamOnAudioThread() {
     RunOnAudioThread(
-        base::Bind(&AudioInputTest::OpenAndClose,
-                   base::Unretained(this)));
+        base::BindOnce(&AudioInputTest::OpenAndClose, base::Unretained(this)));
   }
 
   void OpenStopAndCloseAudioInputStreamOnAudioThread() {
-    RunOnAudioThread(
-        base::Bind(&AudioInputTest::OpenStopAndClose,
-                   base::Unretained(this)));
+    RunOnAudioThread(base::BindOnce(&AudioInputTest::OpenStopAndClose,
+                                    base::Unretained(this)));
   }
 
   void OpenAndStartAudioInputStreamOnAudioThread(
       AudioInputStream::AudioInputCallback* sink) {
-    RunOnAudioThread(
-        base::Bind(&AudioInputTest::OpenAndStart,
-                   base::Unretained(this),
-                   sink));
+    RunOnAudioThread(base::BindOnce(&AudioInputTest::OpenAndStart,
+                                    base::Unretained(this), sink));
   }
 
   void StopAndCloseAudioInputStreamOnAudioThread() {
     RunOnAudioThread(
-        base::Bind(&AudioInputTest::StopAndClose,
-                   base::Unretained(this)));
+        base::BindOnce(&AudioInputTest::StopAndClose, base::Unretained(this)));
   }
 
   void MakeAudioInputStream() {
@@ -112,7 +139,8 @@ class AudioInputTest : public testing::Test {
             .GetInputStreamParameters(AudioDeviceDescription::kDefaultDeviceId);
     audio_input_stream_ = audio_manager_->MakeAudioInputStream(
         params, AudioDeviceDescription::kDefaultDeviceId,
-        base::Bind(&AudioInputTest::OnLogMessage, base::Unretained(this)));
+        base::BindRepeating(&AudioInputTest::OnLogMessage,
+                            base::Unretained(this)));
     EXPECT_TRUE(audio_input_stream_);
   }
 
@@ -145,9 +173,9 @@ class AudioInputTest : public testing::Test {
   }
 
   // Synchronously runs the provided callback/closure on the audio thread.
-  void RunOnAudioThread(const base::Closure& closure) {
+  void RunOnAudioThread(base::OnceClosure closure) {
     DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
-    closure.Run();
+    std::move(closure).Run();
   }
 
   void OnLogMessage(const std::string& message) {}
@@ -167,52 +195,30 @@ TEST_F(AudioInputTest, CreateAndClose) {
   CloseAudioInputStreamOnAudioThread();
 }
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(ARCH_CPU_ARM_FAMILY)
-// This test is failing on ARM linux: http://crbug.com/238490
-#define MAYBE_OpenAndClose DISABLED_OpenAndClose
-#else
-#define MAYBE_OpenAndClose OpenAndClose
-#endif
 // Test create, open and close of an AudioInputStream without recording audio.
-TEST_F(AudioInputTest, MAYBE_OpenAndClose) {
+TEST_F(AudioInputTest, OpenAndClose) {
   ABORT_AUDIO_TEST_IF_NOT(InputDevicesAvailable());
   MakeAudioInputStreamOnAudioThread();
   OpenAndCloseAudioInputStreamOnAudioThread();
 }
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(ARCH_CPU_ARM_FAMILY)
-// This test is failing on ARM linux: http://crbug.com/238490
-#define MAYBE_OpenStopAndClose DISABLED_OpenStopAndClose
-#else
-#define MAYBE_OpenStopAndClose OpenStopAndClose
-#endif
 // Test create, open, stop and close of an AudioInputStream without recording.
-TEST_F(AudioInputTest, MAYBE_OpenStopAndClose) {
+TEST_F(AudioInputTest, OpenStopAndClose) {
   ABORT_AUDIO_TEST_IF_NOT(InputDevicesAvailable());
   MakeAudioInputStreamOnAudioThread();
   OpenStopAndCloseAudioInputStreamOnAudioThread();
 }
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(ARCH_CPU_ARM_FAMILY)
-// This test is failing on ARM linux: http://crbug.com/238490
-#define MAYBE_Record DISABLED_Record
-#else
-#define MAYBE_Record Record
-#endif
 // Test a normal recording sequence using an AudioInputStream.
-// Very simple test which starts capturing during half a second and verifies
-// that recording starts.
-TEST_F(AudioInputTest, MAYBE_Record) {
+// Very simple test which starts capturing and verifies that recording starts.
+TEST_F(AudioInputTest, Record) {
   ABORT_AUDIO_TEST_IF_NOT(InputDevicesAvailable());
   MakeAudioInputStreamOnAudioThread();
 
-  TestInputCallback test_callback;
+  base::RunLoop run_loop;
+  TestInputCallback test_callback(run_loop.QuitClosure());
   OpenAndStartAudioInputStreamOnAudioThread(&test_callback);
 
-  base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, run_loop.QuitClosure(),
-      base::TimeDelta::FromMilliseconds(500));
   run_loop.Run();
   EXPECT_GE(test_callback.callback_count(), 2);
   EXPECT_FALSE(test_callback.had_error());

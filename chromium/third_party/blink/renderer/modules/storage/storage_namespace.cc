@@ -29,12 +29,12 @@
 
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
-#include "third_party/blink/public/platform/web_storage_area.h"
-#include "third_party/blink/public/platform/web_storage_namespace.h"
 #include "third_party/blink/public/web/web_view_client.h"
 #include "third_party/blink/renderer/modules/storage/cached_storage_area.h"
 #include "third_party/blink/renderer/modules/storage/inspector_dom_storage_agent.h"
@@ -47,24 +47,10 @@ namespace blink {
 const char StorageNamespace::kSupplementName[] = "SessionStorageNamespace";
 
 StorageNamespace::StorageNamespace(StorageController* controller)
-    : controller_(controller) {
-  CHECK(base::FeatureList::IsEnabled(features::kOnionSoupDOMStorage));
-}
+    : controller_(controller) {}
 StorageNamespace::StorageNamespace(StorageController* controller,
                                    const String& namespace_id)
-    : controller_(controller), namespace_id_(namespace_id) {
-  CHECK(base::FeatureList::IsEnabled(features::kOnionSoupDOMStorage));
-}
-
-StorageNamespace::StorageNamespace(
-    std::unique_ptr<WebStorageNamespace> web_storage_namespace)
-    : controller_(nullptr),
-      namespace_id_(web_storage_namespace->GetNamespaceId()),
-      web_storage_namespace_(std::move(web_storage_namespace)) {
-  CHECK(!base::FeatureList::IsEnabled(features::kOnionSoupDOMStorage));
-}
-
-StorageNamespace::~StorageNamespace() = default;
+    : controller_(controller), namespace_id_(namespace_id) {}
 
 // static
 void StorageNamespace::ProvideSessionStorageNamespaceTo(Page& page,
@@ -112,35 +98,57 @@ scoped_refptr<CachedStorageArea> StorageNamespace::GetCachedArea(
   scoped_refptr<const SecurityOrigin> origin(origin_ptr);
 
   controller_->ClearAreasIfNeeded();
-  if (IsSessionStorage()) {
-    EnsureConnected();
-    mojom::blink::StorageAreaAssociatedPtr area_ptr;
-    namespace_->OpenArea(origin,
-                         MakeRequest(&area_ptr, controller_->IPCTaskRunner()));
-    result = CachedStorageArea::CreateForSessionStorage(
-        origin, std::move(area_ptr), controller_->IPCTaskRunner(), this);
-  } else {
-    mojom::blink::StorageAreaPtr area_ptr;
-    controller_->storage_partition_service()->OpenLocalStorage(
-        origin, MakeRequest(&area_ptr, controller_->IPCTaskRunner()));
-    result = CachedStorageArea::CreateForLocalStorage(
-        origin, std::move(area_ptr), controller_->IPCTaskRunner(), this);
-  }
+  result = base::MakeRefCounted<CachedStorageArea>(
+      IsSessionStorage() ? CachedStorageArea::AreaType::kSessionStorage
+                         : CachedStorageArea::AreaType::kLocalStorage,
+      origin, controller_->IPCTaskRunner(), this);
   cached_areas_.insert(std::move(origin), result);
   return result;
 }
 
 void StorageNamespace::CloneTo(const String& target) {
-  CHECK(base::FeatureList::IsEnabled(features::kOnionSoupDOMStorage));
   DCHECK(IsSessionStorage()) << "Cannot clone a local storage namespace.";
   EnsureConnected();
+
+  // Spec requires that all mutations on storage areas *before* cloning are
+  // visible in the clone and that no mutations on the original storage areas
+  // *after* cloning, are visible in the clone. Consider the following scenario
+  // in the comments below:
+  //
+  //   1. Area A calls Put("x", 42)
+  //   2. Area B calls Put("y", 13)
+  //   3. Area A & B's StorageNamespace gets CloneTo()'d to a new namespace
+  //   4. Area A calls Put("x", 43) in the original namespace
+  //
+  // First, we synchronize StorageNamespace against every cached StorageArea.
+  // This ensures that all StorageArea operations (e.g. Put, Delete) up to this
+  // point will have executed before the StorageNamespace implementation is able
+  // to receive or process the following |Clone()| call. Given the above
+  // example, this would mean that A.x=42 and B.y=13 definitely WILL be present
+  // in the cloned namespace.
+  for (auto& entry : cached_areas_) {
+    namespace_.PauseReceiverUntilFlushCompletes(
+        entry.value->RemoteArea().FlushAsync());
+  }
+
   namespace_->Clone(target);
+
+  // Finally, we synchronize every StorageArea against StorageNamespace. This
+  // ensures that any future calls on each StorageArea cannot be received and
+  // processed until after the above |Clone()| call executes.  Given the example
+  // above, this would mean that A.x=43 definitely WILL NOT be present in the
+  // cloned namespace; only the original namespace will be updated, and A.x will
+  // still hold a value of 42 in the new clone.
+  for (auto& entry : cached_areas_) {
+    entry.value->RemoteArea().PauseReceiverUntilFlushCompletes(
+        namespace_.FlushAsync());
+  }
 }
 
 size_t StorageNamespace::TotalCacheSize() const {
   size_t total = 0;
   for (const auto& it : cached_areas_)
-    total += it.value->memory_used();
+    total += it.value->quota_used();
   return total;
 }
 
@@ -179,20 +187,31 @@ void StorageNamespace::DidDispatchStorageEvent(const SecurityOrigin* origin,
         origin);
   }
 }
-std::unique_ptr<WebStorageArea> StorageNamespace::GetWebStorageArea(
-    const SecurityOrigin* origin) {
-  CHECK(!base::FeatureList::IsEnabled(features::kOnionSoupDOMStorage));
-  return base::WrapUnique(
-      web_storage_namespace_->CreateStorageArea(WebSecurityOrigin(origin)));
+
+void StorageNamespace::BindStorageArea(
+    const scoped_refptr<const SecurityOrigin>& origin,
+    mojo::PendingReceiver<mojom::blink::StorageArea> receiver) {
+  if (IsSessionStorage()) {
+    controller_->dom_storage()->BindSessionStorageArea(origin, namespace_id_,
+                                                       std::move(receiver));
+  } else {
+    controller_->dom_storage()->OpenLocalStorage(origin, std::move(receiver));
+  }
+}
+
+void StorageNamespace::ResetStorageAreaAndNamespaceConnections() {
+  for (const auto& area : cached_areas_)
+    area.value->ResetConnection();
+  namespace_.reset();
 }
 
 void StorageNamespace::EnsureConnected() {
   DCHECK(IsSessionStorage());
   if (namespace_)
     return;
-  auto request = MakeRequest(&namespace_, controller_->IPCTaskRunner());
-  controller_->storage_partition_service()->OpenSessionStorage(
-      namespace_id_, std::move(request));
+  controller_->dom_storage()->BindSessionStorageNamespace(
+      namespace_id_,
+      namespace_.BindNewPipeAndPassReceiver(controller_->IPCTaskRunner()));
 }
 
 }  // namespace blink

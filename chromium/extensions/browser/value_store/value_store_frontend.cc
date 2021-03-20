@@ -10,6 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/task/post_task.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -29,8 +30,7 @@ class ValueStoreFrontend::Backend : public base::RefCountedThreadSafe<Backend> {
           BackendType backend_type)
       : store_factory_(store_factory), backend_type_(backend_type) {}
 
-  void Get(const std::string& key,
-           const ValueStoreFrontend::ReadCallback& callback) {
+  void Get(const std::string& key, ValueStoreFrontend::ReadCallback callback) {
     DCHECK(IsOnBackendSequence());
     LazyInit();
     ValueStore::ReadResult result = storage_->Get(key);
@@ -45,10 +45,9 @@ class ValueStoreFrontend::Backend : public base::RefCountedThreadSafe<Backend> {
                    << " failed: " << result.status().message;
     }
 
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        base::Bind(&ValueStoreFrontend::Backend::RunCallback, this, callback,
-                   base::Passed(&value)));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&ValueStoreFrontend::Backend::RunCallback,
+                                  this, std::move(callback), std::move(value)));
   }
 
   void Set(const std::string& key, std::unique_ptr<base::Value> value) {
@@ -91,10 +90,10 @@ class ValueStoreFrontend::Backend : public base::RefCountedThreadSafe<Backend> {
     }
   }
 
-  void RunCallback(const ValueStoreFrontend::ReadCallback& callback,
+  void RunCallback(ValueStoreFrontend::ReadCallback callback,
                    std::unique_ptr<base::Value> value) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    callback.Run(std::move(value));
+    std::move(callback).Run(std::move(value));
   }
 
   // The factory which will be used to lazily create the ValueStore when needed.
@@ -114,7 +113,7 @@ class ValueStoreFrontend::Backend : public base::RefCountedThreadSafe<Backend> {
 ValueStoreFrontend::ValueStoreFrontend(
     const scoped_refptr<ValueStoreFactory>& store_factory,
     BackendType backend_type)
-    : backend_(new Backend(store_factory, backend_type)) {
+    : backend_(base::MakeRefCounted<Backend>(store_factory, backend_type)) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -122,13 +121,12 @@ ValueStoreFrontend::~ValueStoreFrontend() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
-void ValueStoreFrontend::Get(const std::string& key,
-                             const ReadCallback& callback) {
+void ValueStoreFrontend::Get(const std::string& key, ReadCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   GetBackendTaskRunner()->PostTask(
-      FROM_HERE,
-      base::Bind(&ValueStoreFrontend::Backend::Get, backend_, key, callback));
+      FROM_HERE, base::BindOnce(&ValueStoreFrontend::Backend::Get, backend_,
+                                key, std::move(callback)));
 }
 
 void ValueStoreFrontend::Set(const std::string& key,
@@ -136,8 +134,8 @@ void ValueStoreFrontend::Set(const std::string& key,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   GetBackendTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&ValueStoreFrontend::Backend::Set, backend_, key,
-                            base::Passed(&value)));
+      FROM_HERE, base::BindOnce(&ValueStoreFrontend::Backend::Set, backend_,
+                                key, std::move(value)));
 }
 
 void ValueStoreFrontend::Remove(const std::string& key) {
@@ -145,5 +143,5 @@ void ValueStoreFrontend::Remove(const std::string& key) {
 
   GetBackendTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&ValueStoreFrontend::Backend::Remove, backend_, key));
+      base::BindOnce(&ValueStoreFrontend::Backend::Remove, backend_, key));
 }

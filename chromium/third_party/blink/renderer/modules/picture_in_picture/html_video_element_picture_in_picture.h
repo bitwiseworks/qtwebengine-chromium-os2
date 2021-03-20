@@ -7,42 +7,32 @@
 
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
 
 namespace blink {
 
+class ExceptionState;
 class HTMLVideoElement;
 class ScriptPromise;
 class ScriptState;
-class PictureInPictureControl;
-struct PictureInPictureControlInfo;
 
-class MODULES_EXPORT HTMLVideoElementPictureInPicture {
+class HTMLVideoElementPictureInPicture {
   STATIC_ONLY(HTMLVideoElementPictureInPicture);
 
  public:
-  static ScriptPromise requestPictureInPicture(ScriptState*, HTMLVideoElement&);
+  static ScriptPromise requestPictureInPicture(ScriptState*,
+                                               HTMLVideoElement&,
+                                               ExceptionState&);
 
-  static void setPictureInPictureControls(
-      HTMLVideoElement&,
-      const HeapVector<Member<PictureInPictureControl>>&);
+  static bool FastHasAttribute(const HTMLVideoElement&, const QualifiedName&);
 
-  static bool FastHasAttribute(const QualifiedName&, const HTMLVideoElement&);
-
-  static void SetBooleanAttribute(const QualifiedName&,
-                                  HTMLVideoElement&,
+  static void SetBooleanAttribute(HTMLVideoElement&,
+                                  const QualifiedName&,
                                   bool);
 
   DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(enterpictureinpicture,
-                                         kEnterpictureinpicture);
+                                         kEnterpictureinpicture)
   DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(leavepictureinpicture,
-                                         kLeavepictureinpicture);
-  DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(pictureinpicturecontrolclick,
-                                         kPictureinpicturecontrolclick);
-
-  static std::vector<PictureInPictureControlInfo>
-  ToPictureInPictureControlInfoVector(
-      const HeapVector<Member<PictureInPictureControl>>&);
+                                         kLeavepictureinpicture)
 };
 
 }  // namespace blink

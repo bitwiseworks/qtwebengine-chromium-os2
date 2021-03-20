@@ -13,6 +13,7 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/guest_view/web_view/web_ui/web_ui_url_fetcher.h"
@@ -23,7 +24,7 @@ void SerializeOnBlockingTask(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     std::unique_ptr<extensions::UserScriptList> user_scripts,
     extensions::UserScriptLoader::LoadScriptsCallback callback) {
-  std::unique_ptr<base::SharedMemory> memory =
+  base::ReadOnlySharedMemoryRegion memory =
       extensions::UserScriptLoader::Serialize(*user_scripts);
 
   task_runner->PostTask(
@@ -154,7 +155,7 @@ void WebUIUserScriptLoader::OnSingleWebUIURLFetchComplete(
 }
 
 void WebUIUserScriptLoader::OnWebUIURLFetchComplete() {
-  base::PostTaskWithTraits(
+  base::ThreadPool::PostTask(
       FROM_HERE, {base::MayBlock()},
       base::BindOnce(
           &SerializeOnBlockingTask, base::SequencedTaskRunnerHandle::Get(),

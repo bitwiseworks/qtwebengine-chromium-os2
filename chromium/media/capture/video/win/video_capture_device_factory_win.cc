@@ -13,9 +13,11 @@
 #include <wrl.h>
 #include <wrl/client.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
@@ -78,6 +80,7 @@ static_assert(base::size(kBlacklistedCameraNames) == BLACKLISTED_CAMERA_MAX + 1,
               "kBlacklistedCameraNames should be same size as "
               "BlacklistedCameraNames enum");
 
+// Use this list only for USB webcams.
 const char* const kModelIdsBlacklistedForMediaFoundation[] = {
     // Devices using Empia 2860 or 2820 chips, see https://crbug.com/849636.
     "eb1a:2860", "eb1a:2820", "1ce6:2820",
@@ -86,19 +89,44 @@ const char* const kModelIdsBlacklistedForMediaFoundation[] = {
     // Sensoray 2253
     "1943:2253",
     // Dell E5440
-    "0c45:64d0", "0c45:64d2"};
+    "0c45:64d0", "0c45:64d2",
+    // Dell E7440
+    "1bcf:2985",
+    // Lenovo Thinkpad Model 20CG0006FMZ front and rear cameras, see
+    // also https://crbug.com/924528.
+    "04ca:7047", "04ca:7048",
+    // HP Elitebook 840 G1
+    "04f2:b3ed", "04f2:b3ca", "05c8:035d", "05c8:0369",
+    // HP HD Camera. See https://crbug.com/1011888.
+    "04ca:7095",
+    // RBG/IR camera for Windows Hello Face Auth. See https://crbug.com/984864.
+    "13d3:5257",
+    // Acer Aspire f5-573g. See https://crbug.com/1034644.
+    "0bda:57f2"};
 
-const std::pair<VideoCaptureApi, std::vector<std::pair<GUID, GUID>>>
-    kMfAttributes[] = {{VideoCaptureApi::WIN_MEDIA_FOUNDATION,
-                        {
-                            {MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-                             MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID},
-                        }},
-                       {VideoCaptureApi::WIN_MEDIA_FOUNDATION_SENSOR,
-                        {{MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-                          MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID},
-                         {MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_CATEGORY,
-                          KSCATEGORY_SENSOR_CAMERA}}}};
+// Use this list only for non-USB webcams.
+const char* const kDisplayNamesBlacklistedForMediaFoundation[] = {
+    // VMware Virtual Webcams cause hangs when there is no physical Webcam.
+    // See https://crbug.com/1044974.
+    "VMware Virtual Webcam"};
+
+const std::vector<
+    std::pair<VideoCaptureApi, std::vector<std::pair<GUID, GUID>>>>&
+GetMFAttributes() {
+  static const base::NoDestructor<std::vector<
+      std::pair<VideoCaptureApi, std::vector<std::pair<GUID, GUID>>>>>
+      mf_attributes({{{VideoCaptureApi::WIN_MEDIA_FOUNDATION,
+                       {
+                           {MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID},
+                       }},
+                      {VideoCaptureApi::WIN_MEDIA_FOUNDATION_SENSOR,
+                       {{MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                         MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID},
+                        {MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_CATEGORY,
+                         KSCATEGORY_SENSOR_CAMERA}}}}});
+  return *mf_attributes;
+}
 
 bool IsDeviceBlacklistedForQueryingDetailedFrameRates(
     const std::string& display_name) {
@@ -107,7 +135,13 @@ bool IsDeviceBlacklistedForQueryingDetailedFrameRates(
 
 bool IsDeviceBlacklistedForMediaFoundationByModelId(
     const std::string& model_id) {
-  return base::ContainsValue(kModelIdsBlacklistedForMediaFoundation, model_id);
+  return base::Contains(kModelIdsBlacklistedForMediaFoundation, model_id);
+}
+
+bool IsDeviceBlacklistedForMediaFoundationByDisplayName(
+    const std::string& display_name) {
+  return base::Contains(kDisplayNamesBlacklistedForMediaFoundation,
+                        display_name);
 }
 
 bool LoadMediaFoundationDlls() {
@@ -132,10 +166,8 @@ bool PrepareVideoCaptureAttributesMediaFoundation(
   // Once https://bugs.chromium.org/p/chromium/issues/detail?id=791615 is fixed,
   // we must make sure that this method succeeds in capture_unittests context
   // when MediaFoundation is enabled.
-  if (!VideoCaptureDeviceFactoryWin::PlatformSupportsMediaFoundation() ||
-      !InitializeMediaFoundation()) {
+  if (!VideoCaptureDeviceFactoryWin::PlatformSupportsMediaFoundation())
     return false;
-  }
 
   if (FAILED(MFCreateAttributes(attributes, count)))
     return false;
@@ -150,19 +182,15 @@ bool PrepareVideoCaptureAttributesMediaFoundation(
 bool CreateVideoCaptureDeviceMediaFoundation(const Descriptor& descriptor,
                                              IMFMediaSource** source) {
   ComPtr<IMFAttributes> attributes;
-  static_assert(
-      base::size(kMfAttributes) == 2,
-      "Implementation here asumes that kMfAttributes has size of two.");
-  DCHECK_EQ(kMfAttributes[0].first, VideoCaptureApi::WIN_MEDIA_FOUNDATION);
+  DCHECK_EQ(GetMFAttributes()[0].first, VideoCaptureApi::WIN_MEDIA_FOUNDATION);
   const auto& attributes_data =
       descriptor.capture_api == VideoCaptureApi::WIN_MEDIA_FOUNDATION
-          ? kMfAttributes[0].second
-          : kMfAttributes[1].second;
+          ? GetMFAttributes()[0].second
+          : GetMFAttributes()[1].second;
   // We allocate attributes_data.size() + 1 (+1 is for sym_link below) elements
   // in attributes store.
   if (!PrepareVideoCaptureAttributesMediaFoundation(
-          attributes_data, attributes_data.size() + 1,
-          attributes.GetAddressOf())) {
+          attributes_data, attributes_data.size() + 1, &attributes)) {
     return false;
   }
 
@@ -261,14 +289,12 @@ void GetDeviceSupportedFormatsMediaFoundation(const Descriptor& descriptor,
   DVLOG(1) << "GetDeviceSupportedFormatsMediaFoundation for "
            << descriptor.display_name();
   ComPtr<IMFMediaSource> source;
-  if (!CreateVideoCaptureDeviceMediaFoundation(descriptor,
-                                               source.GetAddressOf())) {
+  if (!CreateVideoCaptureDeviceMediaFoundation(descriptor, &source)) {
     return;
   }
 
   ComPtr<IMFSourceReader> reader;
-  HRESULT hr = MFCreateSourceReaderFromMediaSource(source.Get(), NULL,
-                                                   reader.GetAddressOf());
+  HRESULT hr = MFCreateSourceReaderFromMediaSource(source.Get(), NULL, &reader);
   if (FAILED(hr)) {
     DLOG(ERROR) << "MFCreateSourceReaderFromMediaSource failed: "
                 << logging::SystemErrorCodeToString(hr);
@@ -279,7 +305,7 @@ void GetDeviceSupportedFormatsMediaFoundation(const Descriptor& descriptor,
   ComPtr<IMFMediaType> type;
   while (SUCCEEDED(hr = reader->GetNativeMediaType(
                        static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM),
-                       stream_index, type.GetAddressOf()))) {
+                       stream_index, &type))) {
     UINT32 width, height;
     hr = MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height);
     if (FAILED(hr)) {
@@ -322,7 +348,7 @@ void GetDeviceSupportedFormatsMediaFoundation(const Descriptor& descriptor,
 
 bool IsEnclosureLocationSupported() {
   // DeviceInformation class is only available in Win10 onwards (v10.0.10240.0).
-  if (base::win::GetVersion() < base::win::VERSION_WIN10) {
+  if (base::win::GetVersion() < base::win::Version::WIN10) {
     DVLOG(1) << "DeviceInformation not supported before Windows 10";
     return false;
   }
@@ -352,8 +378,7 @@ bool VideoCaptureDeviceFactoryWin::PlatformSupportsMediaFoundation() {
 VideoCaptureDeviceFactoryWin::VideoCaptureDeviceFactoryWin()
     : use_media_foundation_(
           base::FeatureList::IsEnabled(media::kMediaFoundationVideoCapture)),
-      com_thread_("Windows Video Capture COM Thread"),
-      weak_ptr_factory_(this) {
+      com_thread_("Windows Video Capture COM Thread") {
   mf_enum_device_sources_func_ =
       PlatformSupportsMediaFoundation() ? MFEnumDeviceSources : nullptr;
   direct_show_enum_devices_func_ =
@@ -369,6 +394,7 @@ VideoCaptureDeviceFactoryWin::VideoCaptureDeviceFactoryWin()
     LogVideoCaptureWinBackendUsed(
         VideoCaptureWinBackendUsed::kUsingDirectShowAsFallback);
   } else if (use_media_foundation_) {
+    session_ = InitializeMediaFoundation();
     LogVideoCaptureWinBackendUsed(
         VideoCaptureWinBackendUsed::kUsingMediaFoundationAsDefault);
   } else {
@@ -393,7 +419,7 @@ std::unique_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryWin::CreateDevice(
       DCHECK(PlatformSupportsMediaFoundation());
       ComPtr<IMFMediaSource> source;
       if (!CreateVideoCaptureDeviceMediaFoundation(device_descriptor,
-                                                   source.GetAddressOf())) {
+                                                   &source)) {
         break;
       }
       std::unique_ptr<VideoCaptureDevice> device(
@@ -423,7 +449,8 @@ void VideoCaptureDeviceFactoryWin::GetDeviceDescriptors(
     VideoCaptureDeviceDescriptors* device_descriptors) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  if (use_media_foundation_) {
+  if (use_media_foundation_ && session_) {
+    DCHECK(PlatformSupportsMediaFoundation());
     GetDeviceDescriptorsMediaFoundation(device_descriptors);
     AugmentDescriptorListWithDirectShowOnlyDevices(device_descriptors);
   } else {
@@ -526,7 +553,7 @@ void VideoCaptureDeviceFactoryWin::FoundAllDevicesUWP(
   ComPtr<ABI::Windows::Foundation::Collections::IVectorView<
       ABI::Windows::Devices::Enumeration::DeviceInformation*>>
       devices;
-  operation->GetResults(devices.GetAddressOf());
+  operation->GetResults(&devices);
 
   unsigned int count = 0;
   if (devices) {
@@ -535,7 +562,7 @@ void VideoCaptureDeviceFactoryWin::FoundAllDevicesUWP(
 
   for (unsigned int j = 0; j < count; ++j) {
     ComPtr<ABI::Windows::Devices::Enumeration::IDeviceInformation> device_info;
-    HRESULT hr = devices->GetAt(j, device_info.GetAddressOf());
+    HRESULT hr = devices->GetAt(j, &device_info);
     if (SUCCEEDED(hr)) {
       HSTRING id;
       device_info->get_Id(&id);
@@ -547,8 +574,7 @@ void VideoCaptureDeviceFactoryWin::FoundAllDevicesUWP(
 
       ComPtr<ABI::Windows::Devices::Enumeration::IEnclosureLocation>
           enclosure_location;
-      hr =
-          device_info->get_EnclosureLocation(enclosure_location.GetAddressOf());
+      hr = device_info->get_EnclosureLocation(&enclosure_location);
       if (FAILED(hr)) {
         break;
       }
@@ -611,7 +637,7 @@ void VideoCaptureDeviceFactoryWin::GetDeviceDescriptorsMediaFoundation(
   // KSCATEGORY_SENSOR_CAMERA is supplied. We enumerate twice. As it is possible
   // that SENSOR_CAMERA is also in VIDEO_CAMERA category, we prevent duplicate
   // entries. https://crbug.com/807293
-  for (const auto& api_attributes : kMfAttributes) {
+  for (const auto& api_attributes : GetMFAttributes()) {
     ScopedCoMem<IMFActivate*> devices;
     UINT32 count;
     if (!EnumerateVideoDevicesMediaFoundation(api_attributes.second, &devices,
@@ -634,13 +660,17 @@ void VideoCaptureDeviceFactoryWin::GetDeviceDescriptorsMediaFoundation(
           const std::string device_id =
               base::SysWideToUTF8(std::wstring(id, id_size));
           const std::string model_id = GetDeviceModelId(device_id);
-          if (IsDeviceBlacklistedForMediaFoundationByModelId(model_id))
+          const std::string display_name =
+              base::SysWideToUTF8(std::wstring(name, name_size));
+          if (IsDeviceBlacklistedForMediaFoundationByModelId(model_id) ||
+              IsDeviceBlacklistedForMediaFoundationByDisplayName(
+                  display_name)) {
             continue;
+          }
           if (list_was_empty ||
               !DescriptorsContainDeviceId(*device_descriptors, device_id)) {
-            device_descriptors->emplace_back(
-                base::SysWideToUTF8(std::wstring(name, name_size)), device_id,
-                model_id, api_attributes.first);
+            device_descriptors->emplace_back(display_name, device_id, model_id,
+                                             api_attributes.first);
           }
         }
       }
@@ -696,7 +726,7 @@ bool VideoCaptureDeviceFactoryWin::EnumerateVideoDevicesMediaFoundation(
     UINT32* count) {
   ComPtr<IMFAttributes> attributes;
   if (!PrepareVideoCaptureAttributesMediaFoundation(
-          attributes_data, attributes_data.size(), attributes.GetAddressOf())) {
+          attributes_data, attributes_data.size(), &attributes)) {
     return false;
   }
   return SUCCEEDED(
@@ -709,15 +739,14 @@ void VideoCaptureDeviceFactoryWin::GetDeviceDescriptorsDirectShow(
   DVLOG(1) << __func__;
 
   ComPtr<IEnumMoniker> enum_moniker;
-  HRESULT hr = direct_show_enum_devices_func_.Run(enum_moniker.GetAddressOf());
+  HRESULT hr = direct_show_enum_devices_func_.Run(&enum_moniker);
   // CreateClassEnumerator returns S_FALSE on some Windows OS
   // when no camera exist. Therefore the FAILED macro can't be used.
   if (hr != S_OK)
     return;
 
   // Enumerate all video capture devices.
-  for (ComPtr<IMoniker> moniker;
-       enum_moniker->Next(1, moniker.GetAddressOf(), NULL) == S_OK;
+  for (ComPtr<IMoniker> moniker; enum_moniker->Next(1, &moniker, NULL) == S_OK;
        moniker.Reset()) {
     ComPtr<IPropertyBag> prop_bag;
     hr = moniker->BindToStorage(0, 0, IID_PPV_ARGS(&prop_bag));

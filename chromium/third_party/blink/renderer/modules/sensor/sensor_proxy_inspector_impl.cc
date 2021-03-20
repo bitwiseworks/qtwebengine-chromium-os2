@@ -14,17 +14,15 @@
 
 namespace blink {
 
-using namespace device::mojom::blink;
-
 SensorProxyInspectorImpl::SensorProxyInspectorImpl(
-    SensorType sensor_type,
+    device::mojom::blink::SensorType sensor_type,
     SensorProviderProxy* provider,
     Page* page)
     : SensorProxy(sensor_type, provider, page) {}
 
 SensorProxyInspectorImpl::~SensorProxyInspectorImpl() {}
 
-void SensorProxyInspectorImpl::Trace(blink::Visitor* visitor) {
+void SensorProxyInspectorImpl::Trace(Visitor* visitor) {
   SensorProxy::Trace(visitor);
 }
 
@@ -41,14 +39,14 @@ void SensorProxyInspectorImpl::Initialize() {
 }
 
 void SensorProxyInspectorImpl::AddConfiguration(
-    SensorConfigurationPtr configuration,
+    device::mojom::blink::SensorConfigurationPtr configuration,
     base::OnceCallback<void(bool)> callback) {
   DCHECK(IsInitialized());
   std::move(callback).Run(true);
 }
 
 void SensorProxyInspectorImpl::RemoveConfiguration(
-    SensorConfigurationPtr configuration) {
+    device::mojom::blink::SensorConfigurationPtr configuration) {
   DCHECK(IsInitialized());
 }
 

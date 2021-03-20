@@ -37,8 +37,6 @@
 
 namespace blink {
 
-class HTMLInputElement;
-
 class PickerIndicatorElement final : public HTMLDivElement,
                                      public DateTimeChooserClient {
   USING_GARBAGE_COLLECTED_MIXIN(PickerIndicatorElement);
@@ -55,9 +53,9 @@ class PickerIndicatorElement final : public HTMLDivElement,
     virtual void PickerIndicatorChooseValue(double) = 0;
     virtual Element& PickerOwnerElement() const = 0;
     virtual bool SetupDateTimeChooserParameters(DateTimeChooserParameters&) = 0;
+    virtual void DidEndChooser() = 0;
+    virtual String AriaRoleForPickerIndicator() const = 0;
   };
-
-  static PickerIndicatorElement* Create(Document&, PickerIndicatorOwner&);
 
   PickerIndicatorElement(Document&, PickerIndicatorOwner&);
   ~PickerIndicatorElement() override;
@@ -65,6 +63,7 @@ class PickerIndicatorElement final : public HTMLDivElement,
 
   void OpenPopup();
   void ClosePopup();
+  bool HasOpenedPopup() const;
   bool WillRespondToMouseClickEvents() override;
   void RemovePickerIndicatorOwner() { picker_indicator_owner_ = nullptr; }
   AXObject* PopupRootAXObject() const;
@@ -76,24 +75,23 @@ class PickerIndicatorElement final : public HTMLDivElement,
   void DidEndChooser() override;
 
  private:
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
   void DefaultEventHandler(Event&) override;
-  void DetachLayoutTree(const AttachContext& = AttachContext()) override;
+  void DetachLayoutTree(bool performing_reattach) override;
   bool IsPickerIndicatorElement() const override;
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void DidNotifySubtreeInsertionsToDocument() override;
-
-  HTMLInputElement* HostInput();
 
   Member<PickerIndicatorOwner> picker_indicator_owner_;
   Member<DateTimeChooser> chooser_;
 };
 
-DEFINE_TYPE_CASTS(PickerIndicatorElement,
-                  Element,
-                  element,
-                  element->IsPickerIndicatorElement(),
-                  element.IsPickerIndicatorElement());
+template <>
+struct DowncastTraits<PickerIndicatorElement> {
+  static bool AllowFrom(const Element& element) {
+    return element.IsPickerIndicatorElement();
+  }
+};
 
 }  // namespace blink
 #endif

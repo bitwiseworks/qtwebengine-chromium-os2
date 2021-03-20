@@ -6,8 +6,6 @@
 
 #include <stdint.h>
 
-#include <utility>
-
 #include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/autofill/core/browser/field_types.h"
@@ -16,39 +14,28 @@
 
 namespace autofill {
 
-AutofillField::AutofillField()
-    : server_type_(NO_SERVER_DATA),
-      heuristic_type_(UNKNOWN_TYPE),
-      overall_type_(AutofillType(NO_SERVER_DATA)),
-      html_type_(HTML_TYPE_UNSPECIFIED),
-      html_mode_(HTML_MODE_NONE),
-      phone_part_(IGNORED),
-      credit_card_number_offset_(0),
-      previously_autofilled_(false),
-      only_fill_when_focused_(false),
-      generation_type_(AutofillUploadContents::Field::NO_GENERATION),
-      generated_password_changed_(false),
-      vote_type_(AutofillUploadContents::Field::NO_INFORMATION) {}
+AutofillField::AutofillField() = default;
+
+AutofillField::AutofillField(FieldSignature field_signature)
+    : field_signature_(field_signature) {}
 
 AutofillField::AutofillField(const FormFieldData& field,
                              const base::string16& unique_name)
     : FormFieldData(field),
       unique_name_(unique_name),
-      server_type_(NO_SERVER_DATA),
-      heuristic_type_(UNKNOWN_TYPE),
-      overall_type_(AutofillType(NO_SERVER_DATA)),
-      html_type_(HTML_TYPE_UNSPECIFIED),
-      html_mode_(HTML_MODE_NONE),
-      phone_part_(IGNORED),
-      credit_card_number_offset_(0),
-      previously_autofilled_(false),
-      only_fill_when_focused_(false),
-      parseable_name_(field.name),
-      generation_type_(AutofillUploadContents::Field::NO_GENERATION),
-      generated_password_changed_(false),
-      vote_type_(AutofillUploadContents::Field::NO_INFORMATION) {}
+      parseable_name_(field.name) {
+  field_signature_ =
+      CalculateFieldSignatureByNameAndType(name, form_control_type);
+}
 
-AutofillField::~AutofillField() {}
+AutofillField::~AutofillField() = default;
+
+std::unique_ptr<AutofillField> AutofillField::CreateForPasswordManagerUpload(
+    FieldSignature field_signature) {
+  std::unique_ptr<AutofillField> field;
+  field.reset(new AutofillField(field_signature));
+  return field;
+}
 
 void AutofillField::set_heuristic_type(ServerFieldType type) {
   if (type >= 0 && type < MAX_VALID_FIELD_TYPE &&
@@ -73,18 +60,17 @@ void AutofillField::set_server_type(ServerFieldType type) {
 }
 
 void AutofillField::add_possible_types_validities(
-    const std::map<ServerFieldType, AutofillProfile::ValidityState>&
-        possible_types_validities) {
+    const ServerFieldTypeValidityStateMap& possible_types_validities) {
   for (const auto& possible_type_validity : possible_types_validities) {
     possible_types_validities_[possible_type_validity.first].push_back(
         possible_type_validity.second);
   }
 }
 
-std::vector<AutofillProfile::ValidityState>
+std::vector<AutofillDataModel::ValidityState>
 AutofillField::get_validities_for_possible_type(ServerFieldType type) {
   if (possible_types_validities_.find(type) == possible_types_validities_.end())
-    return {AutofillProfile::UNVALIDATED};
+    return {AutofillDataModel::UNVALIDATED};
   return possible_types_validities_[type];
 }
 
@@ -114,6 +100,19 @@ AutofillType AutofillField::ComputedType() const {
       (GroupTypeOfServerFieldType(server_type_) == PHONE_BILLING ||
        GroupTypeOfServerFieldType(server_type_) == PHONE_HOME)) {
     return AutofillType(server_type_);
+  }
+
+  // If the explicit type is cc-exp and either the server or heuristics agree on
+  // a 2 vs 4 digit specialization of cc-exp, use that specialization.
+  if (html_type_ == HTML_TYPE_CREDIT_CARD_EXP) {
+    if (server_type_ == CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR ||
+        server_type_ == CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR) {
+      return AutofillType(server_type_);
+    }
+    if (heuristic_type_ == CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR ||
+        heuristic_type_ == CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR) {
+      return AutofillType(heuristic_type_);
+    }
   }
 
   // Use the html type specified by the website unless it is unrecognized and
@@ -168,11 +167,13 @@ bool AutofillField::IsEmpty() const {
 }
 
 FieldSignature AutofillField::GetFieldSignature() const {
-  return CalculateFieldSignatureByNameAndType(name, form_control_type);
+  return field_signature_
+             ? *field_signature_
+             : CalculateFieldSignatureByNameAndType(name, form_control_type);
 }
 
 std::string AutofillField::FieldSignatureAsStr() const {
-  return base::UintToString(GetFieldSignature());
+  return base::NumberToString(GetFieldSignature());
 }
 
 bool AutofillField::IsFieldFillable() const {
@@ -187,7 +188,7 @@ void AutofillField::NormalizePossibleTypesValidities() {
   for (const auto& possible_type : possible_types_) {
     if (possible_types_validities_[possible_type].empty()) {
       possible_types_validities_[possible_type].push_back(
-          AutofillProfile::UNVALIDATED);
+          AutofillDataModel::UNVALIDATED);
     }
   }
 }

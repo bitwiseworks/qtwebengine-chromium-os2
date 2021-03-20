@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
+#include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_provider_proxy.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_reading_remapper.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
@@ -17,12 +18,10 @@
 
 namespace blink {
 
-using namespace device::mojom::blink;
-
 const char SensorProxy::kDefaultErrorDescription[] =
     "Could not connect to a sensor";
 
-SensorProxy::SensorProxy(SensorType sensor_type,
+SensorProxy::SensorProxy(device::mojom::blink::SensorType sensor_type,
                          SensorProviderProxy* provider,
                          Page* page)
     : PageVisibilityObserver(page),
@@ -33,7 +32,7 @@ SensorProxy::SensorProxy(SensorType sensor_type,
 
 SensorProxy::~SensorProxy() {}
 
-void SensorProxy::Trace(blink::Visitor* visitor) {
+void SensorProxy::Trace(Visitor* visitor) {
   visitor->Trace(observers_);
   visitor->Trace(provider_);
   PageVisibilityObserver::Trace(visitor);
@@ -65,14 +64,14 @@ void SensorProxy::ReportError(DOMExceptionCode code, const String& message) {
 
 namespace {
 
-uint16_t GetScreenOrientationAngleForPage(Page* page) {
+uint16_t GetScreenOrientationAngle(LocalFrame& frame) {
   if (WebTestSupport::IsRunningWebTest()) {
     // Simulate that the device is turned 90 degrees on the right.
     // 'orientation_angle' must be 270 as per
     // https://w3c.github.io/screen-orientation/#dfn-update-the-orientation-information.
     return 270;
   }
-  return page->GetChromeClient().GetScreenInfo().orientation_angle;
+  return frame.GetChromeClient().GetScreenInfo(frame).orientation_angle;
 }
 
 }  // namespace
@@ -83,7 +82,9 @@ const device::SensorReading& SensorProxy::GetReading(bool remapped) const {
     if (remapped_reading_.timestamp() != reading_.timestamp()) {
       remapped_reading_ = reading_;
       SensorReadingRemapper::RemapToScreenCoords(
-          type_, GetScreenOrientationAngleForPage(GetPage()),
+          type_,
+          GetScreenOrientationAngle(
+              *provider_->GetSupplementable()->GetFrame()),
           &remapped_reading_);
     }
     return remapped_reading_;
@@ -130,7 +131,7 @@ bool SensorProxy::ShouldSuspendUpdates() const {
   return !focused_frame_origin->CanAccess(this_origin);
 }
 
-SensorProvider* SensorProxy::sensor_provider() const {
+device::mojom::blink::SensorProvider* SensorProxy::sensor_provider() const {
   return provider_->sensor_provider();
 }
 

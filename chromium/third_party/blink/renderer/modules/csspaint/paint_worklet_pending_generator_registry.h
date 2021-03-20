@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_CSSPAINT_PAINT_WORKLET_PENDING_GENERATOR_REGISTRY_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CSSPAINT_PAINT_WORKLET_PENDING_GENERATOR_REGISTRY_H_
 
+#include "base/macros.h"
 #include "third_party/blink/renderer/modules/csspaint/css_paint_image_generator_impl.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
@@ -18,15 +19,13 @@ class CSSPaintDefinition;
 // PaintWorklet instance.
 class PaintWorkletPendingGeneratorRegistry
     : public GarbageCollected<PaintWorkletPendingGeneratorRegistry> {
-  WTF_MAKE_NONCOPYABLE(PaintWorkletPendingGeneratorRegistry);
-
  public:
   PaintWorkletPendingGeneratorRegistry() = default;
 
   void NotifyGeneratorReady(const String& name);
   void AddPendingGenerator(const String& name, CSSPaintImageGeneratorImpl*);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   // The map of CSSPaintImageGeneratorImpl which are waiting for a
@@ -35,6 +34,8 @@ class PaintWorkletPendingGeneratorRegistry
   using GeneratorHashSet = HeapHashSet<WeakMember<CSSPaintImageGeneratorImpl>>;
   using PendingGeneratorMap = HeapHashMap<String, Member<GeneratorHashSet>>;
   PendingGeneratorMap pending_generators_;
+
+  DISALLOW_COPY_AND_ASSIGN(PaintWorkletPendingGeneratorRegistry);
 };
 
 }  // namespace blink

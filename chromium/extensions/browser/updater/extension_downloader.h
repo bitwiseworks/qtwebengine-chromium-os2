@@ -13,8 +13,10 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/version.h"
 #include "extensions/browser/updater/extension_downloader_delegate.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
@@ -29,15 +31,11 @@ namespace crx_file {
 enum class VerifierFormat;
 }
 
-namespace identity {
+namespace signin {
 class PrimaryAccountAccessTokenFetcher;
 class IdentityManager;
 struct AccessTokenInfo;
-}  // namespace identity
-
-namespace net {
-class URLRequestStatus;
-}
+}  // namespace signin
 
 namespace network {
 class SharedURLLoaderFactory;
@@ -47,10 +45,6 @@ class URLLoaderFactory;
 }
 struct ResourceRequest;
 }  // namespace network
-
-namespace service_manager {
-class Connector;
-}
 
 namespace extensions {
 
@@ -82,7 +76,6 @@ class ExtensionDownloader {
   ExtensionDownloader(
       ExtensionDownloaderDelegate* delegate,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      service_manager::Connector* connector,
       crx_file::VerifierFormat crx_format_requirement,
       const base::FilePath& profile_path = base::FilePath());
   ~ExtensionDownloader();
@@ -99,6 +92,14 @@ class ExtensionDownloader {
                     int request_id,
                     ManifestFetchData::FetchPriority fetch_priority);
 
+  // Check AddPendingExtensionWithVersion with the version set as "0.0.0.0".
+  bool AddPendingExtension(const std::string& id,
+                           const GURL& update_url,
+                           Manifest::Location install_source,
+                           bool is_corrupt_reinstall,
+                           int request_id,
+                           ManifestFetchData::FetchPriority fetch_priority);
+
   // Adds extension |id| to the list of extensions to check for updates.
   // Returns false if the |id| can't be updated due to invalid details.
   // In that case, no callbacks will be performed on the |delegate_|.
@@ -108,13 +109,17 @@ class ExtensionDownloader {
   // parameter is used to indicate in the request that we detected corruption in
   // the local copy of the extension and we want to perform a reinstall of it.
   // |fetch_priority| parameter notifies the downloader the priority of this
-  // extension update (either foreground or background).
-  bool AddPendingExtension(const std::string& id,
-                           const GURL& update_url,
-                           Manifest::Location install_source,
-                           bool is_corrupt_reinstall,
-                           int request_id,
-                           ManifestFetchData::FetchPriority fetch_priority);
+  // extension update (either foreground or background). The |version|
+  // parameter specifies the version of the downloaded crx file,
+  // equals to 0.0.0.0 if there is no crx file.
+  bool AddPendingExtensionWithVersion(
+      const std::string& id,
+      const GURL& update_url,
+      Manifest::Location install_source,
+      bool is_corrupt_reinstall,
+      int request_id,
+      ManifestFetchData::FetchPriority fetch_priority,
+      base::Version version);
 
   // Schedules a fetch of the manifest of all the extensions added with
   // AddExtension() and AddPendingExtension().
@@ -123,7 +128,7 @@ class ExtensionDownloader {
   // Sets the IdentityManager instance to be used for OAuth2 authentication on
   // protected Webstore downloads. The IdentityManager instance must be valid to
   // use for the lifetime of this object.
-  void SetIdentityManager(identity::IdentityManager* identity_manager);
+  void SetIdentityManager(signin::IdentityManager* identity_manager);
 
   void set_brand_code(const std::string& brand_code) {
     brand_code_ = brand_code;
@@ -159,6 +164,7 @@ class ExtensionDownloader {
   static const char kUpdateInteractivityBackground[];
 
  private:
+  friend class ExtensionDownloaderTest;
   friend class ExtensionUpdaterTest;
 
   // These counters are bumped as extensions are added to be fetched. They
@@ -273,6 +279,11 @@ class ExtensionDownloader {
                         std::set<std::string>* no_updates,
                         std::set<std::string>* errors);
 
+  // Checks whether extension is presented in cache. If yes, return path to its
+  // cached CRX, base::nullopt otherwise.
+  base::Optional<base::FilePath> GetCachedExtension(
+      const ExtensionFetch& fetch_data);
+
   // Begins (or queues up) download of an updated extension.
   void FetchUpdatedExtension(std::unique_ptr<ExtensionFetch> fetch_data);
 
@@ -283,11 +294,29 @@ class ExtensionDownloader {
   // Handles the result of a crx fetch.
   void OnExtensionLoadComplete(base::FilePath crx_path);
 
-  // Invokes OnExtensionDownloadFailed() on the |delegate_| for each extension
-  // in the set, with |error| as the reason for failure.
-  void NotifyExtensionsDownloadFailed(const std::set<std::string>& id_set,
-                                      const std::set<int>& request_ids,
+  // Invokes OnExtensionDownloadStageChanged() on the |delegate_| for each
+  // extension in the set, with |stage| as the current stage. Make a copy of
+  // arguments because there is no guarantee that callback won't indirectly
+  // change source of IDs.
+  void NotifyExtensionsDownloadStageChanged(
+      std::set<std::string> extension_ids,
+      ExtensionDownloaderDelegate::Stage stage);
+
+  // Calls NotifyExtensionsDownloadFailedWithFailureData with empty failure
+  // data.
+  void NotifyExtensionsDownloadFailed(std::set<std::string> id_set,
+                                      std::set<int> request_ids,
                                       ExtensionDownloaderDelegate::Error error);
+
+  // Invokes OnExtensionDownloadFailed() on the |delegate_| for each extension
+  // in the set, with |error| as the reason for failure, and failure data. Make
+  // a copy of arguments because there is no guarantee that callback won't
+  // indirectly change source of IDs.
+  void NotifyExtensionsDownloadFailedWithFailureData(
+      std::set<std::string> extension_ids,
+      std::set<int> request_ids,
+      ExtensionDownloaderDelegate::Error error,
+      const ExtensionDownloaderDelegate::FailureData& data);
 
   // Send a notification that an update was found for |id| that we'll
   // attempt to download.
@@ -313,11 +342,10 @@ class ExtensionDownloader {
   // |true| if the fetch should be retried. Returns |false| if the failure was
   // not related to authentication, leaving the ExtensionFetch data unmodified.
   bool IterateFetchCredentialsAfterFailure(ExtensionFetch* fetch,
-                                           const net::URLRequestStatus& status,
                                            int response_code);
 
   void OnAccessTokenFetchComplete(GoogleServiceAuthError error,
-                                  identity::AccessTokenInfo token_info);
+                                  signin::AccessTokenInfo token_info);
 
   ManifestFetchData* CreateManifestFetchData(
       const GURL& update_url,
@@ -346,9 +374,6 @@ class ExtensionDownloader {
 
   // The profile path used to load file:// URLs. It can be invalid.
   base::FilePath profile_path_for_url_loader_factory_;
-
-  // The connector to the ServiceManager.
-  service_manager::Connector* connector_;
 
   // Collects UMA samples that are reported when ReportStats() is called.
   URLStats url_stats_;
@@ -379,14 +404,14 @@ class ExtensionDownloader {
 
   // May be used to fetch access tokens for protected download requests. May be
   // null. If non-null, guaranteed to outlive this object.
-  identity::IdentityManager* identity_manager_;
+  signin::IdentityManager* identity_manager_;
 
   // A Webstore download-scoped access token for the |identity_provider_|'s
   // active account, if any.
   std::string access_token_;
 
   // A pending access token fetcher.
-  std::unique_ptr<identity::PrimaryAccountAccessTokenFetcher>
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher>
       access_token_fetcher_;
 
   // Brand code to include with manifest fetch queries if sending ping data.
@@ -406,7 +431,7 @@ class ExtensionDownloader {
   crx_file::VerifierFormat crx_format_requirement_;
 
   // Used to create WeakPtrs to |this|.
-  base::WeakPtrFactory<ExtensionDownloader> weak_ptr_factory_;
+  base::WeakPtrFactory<ExtensionDownloader> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionDownloader);
 };

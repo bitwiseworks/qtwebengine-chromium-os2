@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/core/paint/inline_flow_box_painter.h"
 
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_api_shim.h"
 #include "third_party/blink/renderer/core/layout/line/inline_flow_box.h"
@@ -16,7 +15,7 @@
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
-#include "third_party/blink/renderer/platform/graphics/paint/hit_test_display_item.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
@@ -44,8 +43,7 @@ InlineFlowBoxPainter::InlineFlowBoxPainter(const InlineFlowBox& flow_box)
           GetNode(GetBoxModelObject(flow_box)),
           flow_box.GetLineLayoutItem().StyleRef(),
           flow_box.GetLineLayoutItem().StyleRef(flow_box.IsFirstLineStyle())),
-      inline_flow_box_(flow_box) {
-}
+      inline_flow_box_(flow_box) {}
 
 void InlineFlowBoxPainter::Paint(const PaintInfo& paint_info,
                                  const LayoutPoint& paint_offset,
@@ -187,12 +185,11 @@ void InlineFlowBoxPainter::PaintBackgroundBorderShadow(
     const LayoutPoint& paint_offset) {
   DCHECK(paint_info.phase == PaintPhase::kForeground);
 
-  if (RuntimeEnabledFeatures::PaintTouchActionRectsEnabled())
-    RecordHitTestData(paint_info, paint_offset);
-
   if (inline_flow_box_.GetLineLayoutItem().StyleRef().Visibility() !=
       EVisibility::kVisible)
     return;
+
+  RecordHitTestData(paint_info, paint_offset);
 
   // You can use p::first-line to specify a background. If so, the root line
   // boxes for a line may actually have to paint a background.
@@ -225,10 +222,11 @@ void InlineFlowBoxPainter::PaintBackgroundBorderShadow(
       LineLayoutAPIShim::LayoutObjectFrom(inline_flow_box_.BoxModelObject()));
   BackgroundImageGeometry geometry(box_model);
   BoxModelObjectPainter box_painter(box_model, &inline_flow_box_);
-  PaintBoxDecorationBackground(box_painter, paint_info, paint_offset,
-                               paint_rect, geometry, object_has_multiple_boxes,
-                               inline_flow_box_.IncludeLogicalLeftEdge(),
-                               inline_flow_box_.IncludeLogicalRightEdge());
+  PaintBoxDecorationBackground(
+      box_painter, paint_info, PhysicalOffsetToBeNoop(paint_offset),
+      PhysicalRectToBeNoop(paint_rect), geometry, object_has_multiple_boxes,
+      inline_flow_box_.IncludeLogicalLeftEdge(),
+      inline_flow_box_.IncludeLogicalRightEdge());
 }
 
 void InlineFlowBoxPainter::PaintMask(const PaintInfo& paint_info,
@@ -257,7 +255,8 @@ void InlineFlowBoxPainter::PaintMask(const PaintInfo& paint_info,
   BackgroundImageGeometry geometry(box_model);
   BoxModelObjectPainter box_painter(box_model, &inline_flow_box_);
   PaintFillLayers(box_painter, paint_info, Color::kTransparent,
-                  box_model.StyleRef().MaskLayers(), paint_rect, geometry,
+                  box_model.StyleRef().MaskLayers(),
+                  PhysicalRectToBeNoop(paint_rect), geometry,
                   object_has_multiple_boxes);
 
   bool has_box_image = mask_box_image && mask_box_image->CanRender();
@@ -271,8 +270,8 @@ void InlineFlowBoxPainter::PaintMask(const PaintInfo& paint_info,
   if (!object_has_multiple_boxes) {
     NinePieceImagePainter::Paint(paint_info.context, box_model,
                                  box_model.GetDocument(), GetNode(&box_model),
-                                 paint_rect, box_model.StyleRef(),
-                                 mask_nine_piece_image);
+                                 PhysicalRectToBeNoop(paint_rect),
+                                 box_model.StyleRef(), mask_nine_piece_image);
   } else {
     // We have a mask image that spans multiple lines.
     // FIXME: What the heck do we do with RTL here? The math we're using is
@@ -287,8 +286,8 @@ void InlineFlowBoxPainter::PaintMask(const PaintInfo& paint_info,
     paint_info.context.Clip(clip_rect);
     NinePieceImagePainter::Paint(paint_info.context, box_model,
                                  box_model.GetDocument(), GetNode(&box_model),
-                                 image_strip_paint_rect, box_model.StyleRef(),
-                                 mask_nine_piece_image);
+                                 PhysicalRectToBeNoop(image_strip_paint_rect),
+                                 box_model.StyleRef(), mask_nine_piece_image);
   }
 }
 
@@ -340,24 +339,19 @@ void InlineFlowBoxPainter::RecordHitTestData(const PaintInfo& paint_info,
   LayoutObject* layout_object =
       LineLayoutAPIShim::LayoutObjectFrom(inline_flow_box_.GetLineLayoutItem());
 
-  // If an object is not visible, it does not participate in hit testing.
-  if (layout_object->StyleRef().Visibility() != EVisibility::kVisible)
-    return;
+  DCHECK_EQ(layout_object->StyleRef().Visibility(), EVisibility::kVisible);
 
-  auto touch_action = layout_object->EffectiveWhitelistedTouchAction();
-  if (touch_action == TouchAction::kTouchActionAuto)
-    return;
-
-  HitTestDisplayItem::Record(
-      paint_info.context, inline_flow_box_,
-      HitTestRect(AdjustedPaintRect(paint_offset), touch_action));
+  paint_info.context.GetPaintController().RecordHitTestData(
+      inline_flow_box_, PixelSnappedIntRect(AdjustedPaintRect(paint_offset)),
+      layout_object->EffectiveAllowedTouchAction());
 }
 
 void InlineFlowBoxPainter::PaintNormalBoxShadow(const PaintInfo& info,
                                                 const ComputedStyle& s,
                                                 const LayoutRect& paint_rect) {
   BoxPainterBase::PaintNormalBoxShadow(
-      info, paint_rect, s, inline_flow_box_.IncludeLogicalLeftEdge(),
+      info, PhysicalRectToBeNoop(paint_rect), s,
+      inline_flow_box_.IncludeLogicalLeftEdge(),
       inline_flow_box_.IncludeLogicalRightEdge());
 }
 
@@ -365,7 +359,8 @@ void InlineFlowBoxPainter::PaintInsetBoxShadow(const PaintInfo& info,
                                                const ComputedStyle& s,
                                                const LayoutRect& paint_rect) {
   BoxPainterBase::PaintInsetBoxShadowWithBorderRect(
-      info, paint_rect, s, inline_flow_box_.IncludeLogicalLeftEdge(),
+      info, PhysicalRectToBeNoop(paint_rect), s,
+      inline_flow_box_.IncludeLogicalLeftEdge(),
       inline_flow_box_.IncludeLogicalRightEdge());
 }
 

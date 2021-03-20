@@ -16,6 +16,7 @@
 #include "base/task/cancelable_task_tracker.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/history/core/browser/top_sites_database.h"
@@ -25,7 +26,7 @@ namespace history {
 
 TopSitesBackend::TopSitesBackend()
     : db_(new TopSitesDatabase()),
-      db_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+      db_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::TaskPriority::USER_VISIBLE,
            base::TaskShutdownBehavior::BLOCK_SHUTDOWN, base::MayBlock()})) {
   DCHECK(db_task_runner_);
@@ -46,12 +47,10 @@ void TopSitesBackend::Shutdown() {
 void TopSitesBackend::GetMostVisitedSites(
     GetMostVisitedSitesCallback callback,
     base::CancelableTaskTracker* tracker) {
-  scoped_refptr<MostVisitedThreadSafe> sites = new MostVisitedThreadSafe();
-  tracker->PostTaskAndReply(
+  tracker->PostTaskAndReplyWithResult(
       db_task_runner_.get(), FROM_HERE,
-      base::BindOnce(&TopSitesBackend::GetMostVisitedSitesOnDBThread, this,
-                     sites),
-      base::BindOnce(std::move(callback), sites));
+      base::BindOnce(&TopSitesBackend::GetMostVisitedSitesOnDBThread, this),
+      std::move(callback));
 }
 
 void TopSitesBackend::UpdateTopSites(const TopSitesDelta& delta,
@@ -85,13 +84,12 @@ void TopSitesBackend::ShutdownDBOnDBThread() {
   db_.reset();
 }
 
-void TopSitesBackend::GetMostVisitedSitesOnDBThread(
-    scoped_refptr<MostVisitedThreadSafe> sites) {
+MostVisitedURLList TopSitesBackend::GetMostVisitedSitesOnDBThread() {
   DCHECK(db_task_runner_->RunsTasksInCurrentSequence());
-
-  if (db_) {
-    db_->GetSites(&(sites->data));
-  }
+  MostVisitedURLList list;
+  if (db_)
+    db_->GetSites(&list);
+  return list;
 }
 
 void TopSitesBackend::UpdateTopSitesOnDBThread(

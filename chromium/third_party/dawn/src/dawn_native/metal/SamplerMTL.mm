@@ -20,53 +20,50 @@
 namespace dawn_native { namespace metal {
 
     namespace {
-        MTLSamplerMinMagFilter FilterModeToMinMagFilter(dawn::FilterMode mode) {
+        MTLSamplerMinMagFilter FilterModeToMinMagFilter(wgpu::FilterMode mode) {
             switch (mode) {
-                case dawn::FilterMode::Nearest:
+                case wgpu::FilterMode::Nearest:
                     return MTLSamplerMinMagFilterNearest;
-                case dawn::FilterMode::Linear:
+                case wgpu::FilterMode::Linear:
                     return MTLSamplerMinMagFilterLinear;
             }
         }
 
-        MTLSamplerMipFilter FilterModeToMipFilter(dawn::FilterMode mode) {
+        MTLSamplerMipFilter FilterModeToMipFilter(wgpu::FilterMode mode) {
             switch (mode) {
-                case dawn::FilterMode::Nearest:
+                case wgpu::FilterMode::Nearest:
                     return MTLSamplerMipFilterNearest;
-                case dawn::FilterMode::Linear:
+                case wgpu::FilterMode::Linear:
                     return MTLSamplerMipFilterLinear;
             }
         }
 
-        MTLSamplerAddressMode AddressMode(dawn::AddressMode mode) {
+        MTLSamplerAddressMode AddressMode(wgpu::AddressMode mode) {
             switch (mode) {
-                case dawn::AddressMode::Repeat:
+                case wgpu::AddressMode::Repeat:
                     return MTLSamplerAddressModeRepeat;
-                case dawn::AddressMode::MirroredRepeat:
+                case wgpu::AddressMode::MirrorRepeat:
                     return MTLSamplerAddressModeMirrorRepeat;
-                case dawn::AddressMode::ClampToEdge:
+                case wgpu::AddressMode::ClampToEdge:
                     return MTLSamplerAddressModeClampToEdge;
-                case dawn::AddressMode::ClampToBorderColor:
-                    return MTLSamplerAddressModeClampToBorderColor;
             }
+        }
+    }
+
+    // static
+    ResultOrError<Sampler*> Sampler::Create(Device* device, const SamplerDescriptor* descriptor) {
+        if (descriptor->compare != wgpu::CompareFunction::Never &&
+            device->IsToggleEnabled(Toggle::MetalDisableSamplerCompare)) {
+            return DAWN_VALIDATION_ERROR("Sampler compare function not supported.");
         }
 
-        MTLSamplerBorderColor BorderColor(dawn::BorderColor color) {
-            switch (color) {
-                case dawn::BorderColor::TransparentBlack:
-                    return MTLSamplerBorderColorTransparentBlack;
-                case dawn::BorderColor::OpaqueBlack:
-                    return MTLSamplerBorderColorOpaqueBlack;
-                case dawn::BorderColor::OpaqueWhite:
-                    return MTLSamplerBorderColorOpaqueWhite;
-            }
-        }
+        return new Sampler(device, descriptor);
     }
 
     Sampler::Sampler(Device* device, const SamplerDescriptor* descriptor)
         : SamplerBase(device, descriptor) {
         MTLSamplerDescriptor* mtlDesc = [MTLSamplerDescriptor new];
-        [mtlDesc autorelease];
+
         mtlDesc.minFilter = FilterModeToMinMagFilter(descriptor->minFilter);
         mtlDesc.magFilter = FilterModeToMinMagFilter(descriptor->magFilter);
         mtlDesc.mipFilter = FilterModeToMipFilter(descriptor->mipmapFilter);
@@ -77,10 +74,16 @@ namespace dawn_native { namespace metal {
 
         mtlDesc.lodMinClamp = descriptor->lodMinClamp;
         mtlDesc.lodMaxClamp = descriptor->lodMaxClamp;
-        mtlDesc.compareFunction = ToMetalCompareFunction(descriptor->compareFunction);
-        mtlDesc.borderColor = BorderColor(descriptor->borderColor);
+
+        if (descriptor->compare != wgpu::CompareFunction::Never) {
+            // Anything other than Never is unsupported before A9, which we validate in
+            // Sampler::Create.
+            mtlDesc.compareFunction = ToMetalCompareFunction(descriptor->compare);
+        }
 
         mMtlSamplerState = [device->GetMTLDevice() newSamplerStateWithDescriptor:mtlDesc];
+
+        [mtlDesc release];
     }
 
     Sampler::~Sampler() {

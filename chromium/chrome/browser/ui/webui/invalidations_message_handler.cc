@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "chrome/browser/invalidation/deprecated_profile_invalidation_provider_factory.h"
 #include "chrome/browser/invalidation/profile_invalidation_provider_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/invalidation/impl/invalidation_logger.h"
@@ -15,33 +14,25 @@
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/invalidation/public/invalidation_handler.h"
 #include "components/invalidation/public/invalidation_service.h"
+#include "components/invalidation/public/topic_invalidation_map.h"
 #include "content/public/browser/web_ui.h"
 
 namespace invalidation {
 class InvalidationLogger;
 }  // namespace invalidation
 
-namespace syncer {
-class ObjectIdInvalidationMap;
-}  // namespace syncer
 
 namespace {
 
 invalidation::ProfileInvalidationProvider* GetInvalidationProvider(
     Profile* profile) {
-  if (base::FeatureList::IsEnabled(invalidation::switches::kFCMInvalidations)) {
-    return invalidation::ProfileInvalidationProviderFactory::GetForProfile(
-        profile);
-  } else {
-    return invalidation::DeprecatedProfileInvalidationProviderFactory::
-        GetForProfile(profile);
-  }
+  return invalidation::ProfileInvalidationProviderFactory::GetForProfile(
+      profile);
 }
 
 }  // namespace
 
-InvalidationsMessageHandler::InvalidationsMessageHandler()
-    : logger_(NULL), weak_ptr_factory_(this) {}
+InvalidationsMessageHandler::InvalidationsMessageHandler() : logger_(nullptr) {}
 
 InvalidationsMessageHandler::~InvalidationsMessageHandler() {
   if (logger_)
@@ -77,8 +68,8 @@ void InvalidationsMessageHandler::HandleRequestDetailedStatus(
       GetInvalidationProvider(Profile::FromWebUI(web_ui()));
   if (invalidation_provider) {
     invalidation_provider->GetInvalidationService()->RequestDetailedStatus(
-        base::Bind(&InvalidationsMessageHandler::OnDetailedStatus,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindRepeating(&InvalidationsMessageHandler::OnDetailedStatus,
+                            weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -107,15 +98,19 @@ void InvalidationsMessageHandler::OnStateChange(
       base::Value(last_changed_timestamp.ToJsTime()));
 }
 
-void InvalidationsMessageHandler::OnUpdateIds(
+void InvalidationsMessageHandler::OnUpdatedTopics(
     const std::string& handler_name,
-    const syncer::ObjectIdCountMap& ids) {
+    const syncer::TopicCountMap& topics) {
   base::ListValue list_of_objects;
-  for (auto it = ids.begin(); it != ids.end(); ++it) {
+  for (const auto& topic_item : topics) {
     std::unique_ptr<base::DictionaryValue> dic(new base::DictionaryValue());
-    dic->SetString("name", (it->first).name());
-    dic->SetInteger("source", (it->first).source());
-    dic->SetInteger("totalCount", it->second);
+    dic->SetString("name", topic_item.first);
+    // TODO(crbug.com/1056181): source has been deprecated and after Topic->
+    // ObjectID refactoring completely makes no sense. It needs to be cleaned
+    // up together with other ObjectID references in js counterpart. Pass 0
+    // temporary to avoid changes in js counterpart.
+    dic->SetInteger("source", 0);
+    dic->SetInteger("totalCount", topic_item.second);
     list_of_objects.Append(std::move(dic));
   }
   web_ui()->CallJavascriptFunctionUnsafe("chrome.invalidations.updateIds",
@@ -126,7 +121,7 @@ void InvalidationsMessageHandler::OnDebugMessage(
     const base::DictionaryValue& details) {}
 
 void InvalidationsMessageHandler::OnInvalidation(
-    const syncer::ObjectIdInvalidationMap& new_invalidations) {
+    const syncer::TopicInvalidationMap& new_invalidations) {
   std::unique_ptr<base::ListValue> invalidations_list =
       new_invalidations.ToValue();
   web_ui()->CallJavascriptFunctionUnsafe(

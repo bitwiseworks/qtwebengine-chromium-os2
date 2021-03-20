@@ -4,10 +4,12 @@
 
 #include "src/asmjs/asm-scanner.h"
 
-#include "src/char-predicates-inl.h"
-#include "src/conversions.h"
-#include "src/flags.h"
+#include <cinttypes>
+
+#include "src/flags/flags.h"
+#include "src/numbers/conversions.h"
 #include "src/parsing/scanner.h"
+#include "src/strings/char-predicates-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -16,7 +18,7 @@ namespace {
 // Cap number of identifiers to ensure we can assign both global and
 // local ones a token id in the range of an int32_t.
 static const int kMaxIdentifierCount = 0xF000000;
-};
+}  // namespace
 
 AsmJsScanner::AsmJsScanner(Utf16CharacterStream* stream)
     : stream_(stream),
@@ -271,7 +273,7 @@ void AsmJsScanner::ConsumeIdentifier(uc32 ch) {
 
 void AsmJsScanner::ConsumeNumber(uc32 ch) {
   std::string number;
-  number = ch;
+  number.assign(1, ch);
   bool has_dot = ch == '.';
   bool has_prefix = false;
   for (;;) {
@@ -422,7 +424,8 @@ void AsmJsScanner::ConsumeCompareOrShift(uc32 ch) {
 }
 
 bool AsmJsScanner::IsIdentifierStart(uc32 ch) {
-  return IsInRange(AsciiAlphaToLower(ch), 'a', 'z') || ch == '_' || ch == '$';
+  return base::IsInRange(AsciiAlphaToLower(ch), 'a', 'z') || ch == '_' ||
+         ch == '$';
 }
 
 bool AsmJsScanner::IsIdentifierPart(uc32 ch) { return IsAsciiIdentifier(ch); }

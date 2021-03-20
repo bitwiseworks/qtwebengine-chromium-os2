@@ -24,7 +24,17 @@ class ViewModelUtils;
 // the correct View subclass.
 class VIEWS_EXPORT ViewModelBase {
  public:
+  struct Entry {
+    Entry() = default;
+
+    View* view = nullptr;
+    gfx::Rect ideal_bounds;
+  };
+  using Entries = std::vector<Entry>;
+
   ~ViewModelBase();
+
+  const Entries& entries() const { return entries_; }
 
   // Removes the view at the specified index. This does not actually remove the
   // view from the view hierarchy.
@@ -79,14 +89,6 @@ class VIEWS_EXPORT ViewModelBase {
   // For access to ViewAtBase().
   friend class ViewModelUtils;
 
-  struct Entry {
-    Entry() : view(NULL) {}
-
-    View* view;
-    gfx::Rect ideal_bounds;
-  };
-  typedef std::vector<Entry> Entries;
-
 #if !defined(NDEBUG)
   void check_index(int index) const {
     DCHECK_LT(index, static_cast<int>(entries_.size()));
@@ -109,7 +111,7 @@ class VIEWS_EXPORT ViewModelBase {
 template <class T>
 class ViewModelT : public ViewModelBase {
  public:
-  ViewModelT<T>() {}
+  ViewModelT<T>() = default;
 
   // Adds |view| to this model. This does not add |view| to a view hierarchy,
   // only to this model.
@@ -125,7 +127,7 @@ class ViewModelT : public ViewModelBase {
 // ViewModel is a collection of views with no specfic type. If all views have
 // the same type, the use of ViewModelT is preferred so that the views can be
 // retrieved without potentially unsafe downcasts.
-typedef ViewModelT<View> ViewModel;
+using ViewModel = ViewModelT<View>;
 
 }  // namespace views
 

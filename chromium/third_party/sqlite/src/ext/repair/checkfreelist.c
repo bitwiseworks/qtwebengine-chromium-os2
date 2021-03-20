@@ -14,7 +14,7 @@
 **
 **   int sqlite3_check_freelist(sqlite3 *db, const char *zDb);
 **
-** This function checks the free-list in database zDb (one of "main",
+** This function checks the free-list in database zDb (one of "main", 
 ** "temp", etc.) and reports any errors by invoking the sqlite3_log()
 ** function. It returns SQLITE_OK if successful, or an SQLite error
 ** code otherwise. It is not an error if the free-list is corrupted but
@@ -100,8 +100,8 @@ static int sqlGetInteger(
 }
 
 /*
-** Argument zFmt must be a printf-style format string and must be
-** followed by its required arguments. If argument pzOut is NULL,
+** Argument zFmt must be a printf-style format string and must be 
+** followed by its required arguments. If argument pzOut is NULL, 
 ** then the results of printf()ing the format string are passed to
 ** sqlite3_log(). Otherwise, they are appended to the string
 ** at (*pzOut).
@@ -129,13 +129,13 @@ static int checkFreelistError(char **pzOut, const char *zFmt, ...){
 }
 
 static int checkFreelist(
-  sqlite3 *db,
+  sqlite3 *db, 
   const char *zDb,
   char **pzOut
 ){
   /* This query returns one row for each page on the free list. Each row has
   ** two columns - the page number and page content.  */
-  const char *zTrunk =
+  const char *zTrunk = 
     "WITH freelist_trunk(i, d, n) AS ("
       "SELECT 1, NULL, sqlite_readint32(data, 32) "
       "FROM sqlite_dbpage(:1) WHERE pgno=1 "
@@ -171,8 +171,8 @@ static int checkFreelist(
     u32 nLeaf = get4byte(&aData[4]);
 
     if( nLeaf>((nData/4)-2-6) ){
-      rc = checkFreelistError(pzOut,
-          "leaf count out of range (%d) on trunk page %d",
+      rc = checkFreelistError(pzOut, 
+          "leaf count out of range (%d) on trunk page %d", 
           (int)nLeaf, (int)iTrunk
       );
       nLeaf = (nData/4) - 2 - 6;
@@ -180,7 +180,7 @@ static int checkFreelist(
 
     nFree += 1+nLeaf;
     if( iNext>nPage ){
-      rc = checkFreelistError(pzOut,
+      rc = checkFreelistError(pzOut, 
           "trunk page %d is out of range", (int)iNext
       );
     }
@@ -189,7 +189,7 @@ static int checkFreelist(
       u32 iLeaf = get4byte(&aData[8 + 4*i]);
       if( iLeaf==0 || iLeaf>nPage ){
         rc = checkFreelistError(pzOut,
-            "leaf page %d is out of range (child %d of trunk page %d)",
+            "leaf page %d is out of range (child %d of trunk page %d)", 
             (int)iLeaf, (int)i, (int)iTrunk
         );
       }
@@ -198,7 +198,7 @@ static int checkFreelist(
 
   if( rc==SQLITE_OK && nFree!=nExpected ){
     rc = checkFreelistError(pzOut,
-        "free-list count mismatch: actual=%d header=%d",
+        "free-list count mismatch: actual=%d header=%d", 
         (int)nFree, (int)nExpected
     );
   }
@@ -290,8 +290,8 @@ static int cflRegister(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_checkfreelist_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   SQLITE_EXTENSION_INIT2(pApi);

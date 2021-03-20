@@ -35,21 +35,12 @@ namespace blink {
 class ChromeClient;
 class ColorChooserClient;
 class PagePopup;
+class PagePopupController;
 
 class CORE_EXPORT ColorChooserPopupUIController final
     : public ColorChooserUIController,
       public PagePopupClient {
-  USING_PRE_FINALIZER(ColorChooserPopupUIController, Dispose);
-
  public:
-  static ColorChooserPopupUIController* Create(
-      LocalFrame* frame,
-      ChromeClient* chrome_client,
-      blink::ColorChooserClient* client) {
-    return MakeGarbageCollected<ColorChooserPopupUIController>(
-        frame, chrome_client, client);
-  }
-
   ColorChooserPopupUIController(LocalFrame*,
                                 ChromeClient*,
                                 blink::ColorChooserClient*);
@@ -65,21 +56,29 @@ class CORE_EXPORT ColorChooserPopupUIController final
 
   // PagePopupClient functions:
   void WriteDocument(SharedBuffer*) override;
-  void SelectFontsFromOwnerDocument(Document&) override {}
   Locale& GetLocale() override;
   void SetValueAndClosePopup(int, const String&) override;
   void SetValue(const String&) override;
   void CancelPopup() override;
   Element& OwnerElement() override;
   void DidClosePopup() override;
+  PagePopupController* CreatePagePopupController(PagePopup&) override;
+
+  void OpenEyeDropper();
+  void EyeDropperResponseHandler(bool success, uint32_t color);
 
  private:
+  ChromeClient& GetChromeClient() override;
+
   void OpenPopup();
-  void Dispose();
+
+  void WriteColorPickerDocument(SharedBuffer*);
+  void WriteColorSuggestionPickerDocument(SharedBuffer*);
 
   Member<ChromeClient> chrome_client_;
   PagePopup* popup_;
   Locale& locale_;
+  mojo::Remote<mojom::blink::EyeDropperChooser> eye_dropper_chooser_;
 };
 
 }  // namespace blink

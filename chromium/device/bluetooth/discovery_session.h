@@ -31,13 +31,10 @@ class DiscoverySession : public mojom::DiscoverySession {
   void Stop(StopCallback callback) override;
 
  private:
-  void OnStop(StopCallback callback);
-  void OnStopError(StopCallback callback);
-
   // The underlying discovery session.
   std::unique_ptr<device::BluetoothDiscoverySession> discovery_session_;
 
-  base::WeakPtrFactory<DiscoverySession> weak_ptr_factory_;
+  base::WeakPtrFactory<DiscoverySession> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DiscoverySession);
 };

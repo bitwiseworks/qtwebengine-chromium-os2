@@ -4,6 +4,8 @@
 
 #include "media/capture/video/video_capture_system_impl.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "build/build_config.h"

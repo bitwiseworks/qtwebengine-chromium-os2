@@ -12,21 +12,20 @@
 #include "core/fxcrt/fx_system.h"
 
 class CPDF_Font;
-class FXTEXT_CHARPOS;
+class TextCharPos;
 
 class CPDF_CharPosList {
  public:
-  CPDF_CharPosList();
+  CPDF_CharPosList(const std::vector<uint32_t>& charCodes,
+                   const std::vector<float>& charPos,
+                   CPDF_Font* pFont,
+                   float font_size);
   ~CPDF_CharPosList();
 
-  void Load(const std::vector<uint32_t>& charCodes,
-            const std::vector<float>& charPos,
-            CPDF_Font* pFont,
-            float font_size);
+  const std::vector<TextCharPos>& Get() const { return m_CharPos; }
 
-  // TODO(thestig): Convert to unique_ptr or vector.
-  FXTEXT_CHARPOS* m_pCharPos = nullptr;
-  uint32_t m_nChars = 0;
+ private:
+  std::vector<TextCharPos> m_CharPos;
 };
 
 #endif  // CORE_FPDFAPI_RENDER_CPDF_CHARPOSLIST_H_

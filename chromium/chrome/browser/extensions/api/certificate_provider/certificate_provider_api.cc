@@ -10,40 +10,47 @@
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/values.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider_service.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider_service_factory.h"
+#include "chrome/browser/chromeos/certificate_provider/pin_dialog_manager.h"
+#include "chrome/browser/chromeos/certificate_provider/security_token_pin_dialog_host.h"
 #include "chrome/common/extensions/api/certificate_provider.h"
 #include "chrome/common/extensions/api/certificate_provider_internal.h"
-#include "content/public/common/console_message_level.h"
+#include "chromeos/components/security_token_pin/constants.h"
+#include "extensions/browser/quota_service.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_private_key.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
 namespace api_cp = extensions::api::certificate_provider;
 namespace api_cpi = extensions::api::certificate_provider_internal;
+using PinCodeType = chromeos::security_token_pin::CodeType;
+using PinErrorLabel = chromeos::security_token_pin::ErrorLabel;
 
 namespace {
 
-chromeos::RequestPinView::RequestPinErrorType GetErrorTypeForView(
-    api_cp::PinRequestErrorType error_type) {
+PinErrorLabel GetErrorLabelForDialog(api_cp::PinRequestErrorType error_type) {
   switch (error_type) {
     case api_cp::PinRequestErrorType::PIN_REQUEST_ERROR_TYPE_INVALID_PIN:
-      return chromeos::RequestPinView::RequestPinErrorType::INVALID_PIN;
+      return PinErrorLabel::kInvalidPin;
     case api_cp::PinRequestErrorType::PIN_REQUEST_ERROR_TYPE_INVALID_PUK:
-      return chromeos::RequestPinView::RequestPinErrorType::INVALID_PUK;
+      return PinErrorLabel::kInvalidPuk;
     case api_cp::PinRequestErrorType::
         PIN_REQUEST_ERROR_TYPE_MAX_ATTEMPTS_EXCEEDED:
-      return chromeos::RequestPinView::RequestPinErrorType::
-          MAX_ATTEMPTS_EXCEEDED;
+      return PinErrorLabel::kMaxAttemptsExceeded;
     case api_cp::PinRequestErrorType::PIN_REQUEST_ERROR_TYPE_UNKNOWN_ERROR:
-      return chromeos::RequestPinView::RequestPinErrorType::UNKNOWN_ERROR;
+      return PinErrorLabel::kUnknown;
     case api_cp::PinRequestErrorType::PIN_REQUEST_ERROR_TYPE_NONE:
-      return chromeos::RequestPinView::RequestPinErrorType::NONE;
+      return PinErrorLabel::kNone;
   }
 
   NOTREACHED();
-  return chromeos::RequestPinView::RequestPinErrorType::NONE;
+  return PinErrorLabel::kNone;
 }
 
 }  // namespace
@@ -65,14 +72,61 @@ const char kCertificateProviderErrorTimeout[] =
 const char kCertificateProviderNoActiveDialog[] =
     "No active dialog from extension.";
 const char kCertificateProviderInvalidId[] = "Invalid signRequestId";
+const char kCertificateProviderInvalidAttemptsLeft[] = "Invalid attemptsLeft";
 const char kCertificateProviderOtherFlowInProgress[] = "Other flow in progress";
 const char kCertificateProviderPreviousDialogActive[] =
     "Previous request not finished";
 const char kCertificateProviderNoUserInput[] = "No user input received";
 
+// The BucketMapper implementation for the requestPin API that avoids using the
+// quota when the current request uses the requestId that is strictly greater
+// than all previous ones.
+class RequestPinExceptFirstQuotaBucketMapper final
+    : public QuotaLimitHeuristic::BucketMapper {
+ public:
+  RequestPinExceptFirstQuotaBucketMapper() = default;
+  ~RequestPinExceptFirstQuotaBucketMapper() override = default;
+
+  void GetBucketsForArgs(const base::ListValue* args,
+                         QuotaLimitHeuristic::BucketList* buckets) override {
+    if (args->GetList().empty())
+      return;
+    const base::Value& details = args->GetList()[0];
+    if (!details.is_dict())
+      return;
+    const base::Value* sign_request_id =
+        details.FindKeyOfType("signRequestId", base::Value::Type::INTEGER);
+    if (!sign_request_id)
+      return;
+    if (sign_request_id->GetInt() > biggest_request_id_) {
+      // Either it's the first request with the newly issued requestId, or it's
+      // an invalid requestId (bigger than the real one). Return a new bucket in
+      // order to apply no quota for the former case; for the latter case the
+      // quota doesn't matter much, except that we're maybe making it stricter
+      // for future requests (which is bearable).
+      biggest_request_id_ = sign_request_id->GetInt();
+      new_request_bucket_ = std::make_unique<QuotaLimitHeuristic::Bucket>();
+      buckets->push_back(new_request_bucket_.get());
+      return;
+    }
+    // Either it's a repeatitive request for the given requestId, or the
+    // extension reordered the requests. Fall back to the default bucket (shared
+    // between all requests) in that case.
+    buckets->push_back(&default_bucket_);
+  }
+
+ private:
+  int biggest_request_id_ = -1;
+  QuotaLimitHeuristic::Bucket default_bucket_;
+  std::unique_ptr<QuotaLimitHeuristic::Bucket> new_request_bucket_;
+
+  DISALLOW_COPY_AND_ASSIGN(RequestPinExceptFirstQuotaBucketMapper);
+};
+
 }  // namespace
 
-const int api::certificate_provider::kMaxClosedDialogsPer10Mins = 2;
+const int api::certificate_provider::kMaxClosedDialogsPerMinute = 10;
+const int api::certificate_provider::kMaxClosedDialogsPer10Minutes = 30;
 
 CertificateProviderInternalReportCertificatesFunction::
     ~CertificateProviderInternalReportCertificatesFunction() {}
@@ -106,6 +160,10 @@ CertificateProviderInternalReportCertificatesFunction::Run() {
       rejected_certificates.push_back(input_cert_info.certificate);
   }
 
+  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  VLOG(1) << "Certificates provided by extension " << extension()->id() << ": "
+          << cert_infos.size() << ", rejected " << rejected_certificates.size();
+
   if (service->SetCertificatesProvidedByExtension(
           extension_id(), params->request_id, cert_infos)) {
     return RespondNow(ArgumentList(
@@ -124,7 +182,7 @@ bool CertificateProviderInternalReportCertificatesFunction::
         chromeos::certificate_provider::CertificateInfo* out_info) {
   const std::vector<uint8_t>& cert_der = info.certificate;
   if (cert_der.empty()) {
-    WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_ERROR,
+    WriteToConsole(blink::mojom::ConsoleMessageLevel::kError,
                    kCertificateProviderErrorInvalidX509Cert);
     return false;
   }
@@ -136,7 +194,7 @@ bool CertificateProviderInternalReportCertificatesFunction::
   out_info->certificate = net::X509Certificate::CreateFromBytesUnsafeOptions(
       reinterpret_cast<const char*>(cert_der.data()), cert_der.size(), options);
   if (!out_info->certificate) {
-    WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_ERROR,
+    WriteToConsole(blink::mojom::ConsoleMessageLevel::kError,
                    kCertificateProviderErrorInvalidX509Cert);
     return false;
   }
@@ -151,11 +209,11 @@ bool CertificateProviderInternalReportCertificatesFunction::
     case net::X509Certificate::kPublicKeyTypeRSA:
       break;
     case net::X509Certificate::kPublicKeyTypeECDSA:
-      WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_ERROR,
+      WriteToConsole(blink::mojom::ConsoleMessageLevel::kError,
                      kCertificateProviderErrorECDSANotSupported);
       return false;
     default:
-      WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_ERROR,
+      WriteToConsole(blink::mojom::ConsoleMessageLevel::kError,
                      kCertificateProviderErrorUnknownKeyType);
       return false;
   }
@@ -194,6 +252,10 @@ CertificateProviderStopPinRequestFunction::Run() {
       api_cp::RequestPin::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  VLOG(1) << "Handling PIN stop request from extension " << extension()->id()
+          << " error " << params->details.error_type;
+
   chromeos::CertificateProviderService* const service =
       chromeos::CertificateProviderServiceFactory::GetForBrowserContext(
           browser_context());
@@ -205,44 +267,46 @@ CertificateProviderStopPinRequestFunction::Run() {
     if (!dialog_closed) {
       // This might happen if the user closed the dialog while extension was
       // processing the input.
+      // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+      VLOG(1) << "PIN stop request failed: "
+              << kCertificateProviderNoActiveDialog;
       return RespondNow(Error(kCertificateProviderNoActiveDialog));
     }
 
+    // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+    VLOG(1) << "PIN stop request succeeded";
     return RespondNow(NoArguments());
   }
 
   // Extension provided an error, which means it intends to notify the user with
   // the error and not allow any more input.
-  chromeos::RequestPinView::RequestPinErrorType error_type =
-      GetErrorTypeForView(params->details.error_type);
-  chromeos::PinDialogManager::StopPinRequestResponse update_response =
-      service->pin_dialog_manager()->UpdatePinDialog(
-          extension()->id(), error_type,
-          false,  // Don't accept any input.
-          base::Bind(&CertificateProviderStopPinRequestFunction::DialogClosed,
-                     this));
-  switch (update_response) {
-    case chromeos::PinDialogManager::StopPinRequestResponse::NO_ACTIVE_DIALOG:
-      return RespondNow(Error(kCertificateProviderNoActiveDialog));
-    case chromeos::PinDialogManager::StopPinRequestResponse::NO_USER_INPUT:
-      return RespondNow(Error(kCertificateProviderNoUserInput));
-    case chromeos::PinDialogManager::StopPinRequestResponse::STOPPED:
+  const PinErrorLabel error_label =
+      GetErrorLabelForDialog(params->details.error_type);
+  const chromeos::PinDialogManager::StopPinRequestResult stop_request_result =
+      service->pin_dialog_manager()->StopPinRequestWithError(
+          extension()->id(), error_label,
+          base::BindOnce(
+              &CertificateProviderStopPinRequestFunction::OnPinRequestStopped,
+              this));
+  std::string error_result;
+  switch (stop_request_result) {
+    case chromeos::PinDialogManager::StopPinRequestResult::kNoActiveDialog:
+      error_result = kCertificateProviderNoActiveDialog;
+      break;
+    case chromeos::PinDialogManager::StopPinRequestResult::kNoUserInput:
+      error_result = kCertificateProviderNoUserInput;
+      break;
+    case chromeos::PinDialogManager::StopPinRequestResult::kSuccess:
       return RespondLater();
   }
-
-  NOTREACHED();
-  return RespondLater();
+  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  VLOG(1) << "PIN stop request failed: " << error_result;
+  return RespondNow(Error(error_result));
 }
 
-void CertificateProviderStopPinRequestFunction::DialogClosed(
-    const base::string16& value) {
-  chromeos::CertificateProviderService* const service =
-      chromeos::CertificateProviderServiceFactory::GetForBrowserContext(
-          browser_context());
-  DCHECK(service);
-
+void CertificateProviderStopPinRequestFunction::OnPinRequestStopped() {
+  VLOG(1) << "PIN stop request succeeded";
   Respond(NoArguments());
-  service->pin_dialog_manager()->OnPinDialogClosed();
 }
 
 CertificateProviderRequestPinFunction::
@@ -258,12 +322,27 @@ bool CertificateProviderRequestPinFunction::ShouldSkipQuotaLimiting() const {
 }
 
 void CertificateProviderRequestPinFunction::GetQuotaLimitHeuristics(
-    extensions::QuotaLimitHeuristics* heuristics) const {
+    QuotaLimitHeuristics* heuristics) const {
+  // Apply a 1-minute and a 10-minute quotas. A special bucket mapper is used in
+  // order to, approximately, skip applying quotas to the first request for each
+  // requestId (such logic cannot be done in ShouldSkipQuotaLimiting(), since
+  // it's not called with the request's parameters). The limitation constants
+  // are decremented below to account the first request.
+
   QuotaLimitHeuristic::Config short_limit_config = {
-      api::certificate_provider::kMaxClosedDialogsPer10Mins,
+      api::certificate_provider::kMaxClosedDialogsPerMinute - 1,
+      base::TimeDelta::FromMinutes(1)};
+  heuristics->push_back(std::make_unique<QuotaService::TimedLimit>(
+      short_limit_config,
+      std::make_unique<RequestPinExceptFirstQuotaBucketMapper>(),
+      "MAX_PIN_DIALOGS_CLOSED_PER_MINUTE"));
+
+  QuotaLimitHeuristic::Config long_limit_config = {
+      api::certificate_provider::kMaxClosedDialogsPer10Minutes - 1,
       base::TimeDelta::FromMinutes(10)};
   heuristics->push_back(std::make_unique<QuotaService::TimedLimit>(
-      short_limit_config, new QuotaLimitHeuristic::SingletonBucketMapper(),
+      long_limit_config,
+      std::make_unique<RequestPinExceptFirstQuotaBucketMapper>(),
       "MAX_PIN_DIALOGS_CLOSED_PER_10_MINUTES"));
 }
 
@@ -272,60 +351,80 @@ ExtensionFunction::ResponseAction CertificateProviderRequestPinFunction::Run() {
       api_cp::RequestPin::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  api_cp::PinRequestType pin_request_type =
+  const api_cp::PinRequestType pin_request_type =
       params->details.request_type ==
               api_cp::PinRequestType::PIN_REQUEST_TYPE_NONE
           ? api_cp::PinRequestType::PIN_REQUEST_TYPE_PIN
           : params->details.request_type;
 
-  chromeos::RequestPinView::RequestPinErrorType error_type =
-      GetErrorTypeForView(params->details.error_type);
+  const PinErrorLabel error_label =
+      GetErrorLabelForDialog(params->details.error_type);
 
-  chromeos::RequestPinView::RequestPinCodeType code_type =
+  const PinCodeType code_type =
       (pin_request_type == api_cp::PinRequestType::PIN_REQUEST_TYPE_PIN)
-          ? chromeos::RequestPinView::RequestPinCodeType::PIN
-          : chromeos::RequestPinView::RequestPinCodeType::PUK;
+          ? PinCodeType::kPin
+          : PinCodeType::kPuk;
 
   chromeos::CertificateProviderService* const service =
       chromeos::CertificateProviderServiceFactory::GetForBrowserContext(
           browser_context());
   DCHECK(service);
 
-  int attempts_left =
-      params->details.attempts_left ? *params->details.attempts_left : -1;
-  chromeos::PinDialogManager::RequestPinResponse result =
-      service->pin_dialog_manager()->ShowPinDialog(
-          extension()->id(), extension()->name(),
-          params->details.sign_request_id, code_type, error_type, attempts_left,
-          base::Bind(&CertificateProviderRequestPinFunction::OnInputReceived,
-                     this));
-  switch (result) {
-    case chromeos::PinDialogManager::RequestPinResponse::SUCCESS:
-      return RespondLater();
-    case chromeos::PinDialogManager::RequestPinResponse::INVALID_ID:
-      return RespondNow(Error(kCertificateProviderInvalidId));
-    case chromeos::PinDialogManager::RequestPinResponse::OTHER_FLOW_IN_PROGRESS:
-      return RespondNow(Error(kCertificateProviderOtherFlowInProgress));
-    case chromeos::PinDialogManager::RequestPinResponse::
-        DIALOG_DISPLAYED_ALREADY:
-      return RespondNow(Error(kCertificateProviderPreviousDialogActive));
+  int attempts_left = -1;
+  if (params->details.attempts_left) {
+    if (*params->details.attempts_left < 0)
+      return RespondNow(Error(kCertificateProviderInvalidAttemptsLeft));
+    attempts_left = *params->details.attempts_left;
   }
 
-  NOTREACHED();
-  return RespondNow(Error(kCertificateProviderPreviousDialogActive));
+  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  VLOG(1) << "Starting PIN request from extension " << extension()->id()
+          << " signRequestId " << params->details.sign_request_id << " type "
+          << params->details.request_type << " error "
+          << params->details.error_type << " attempts " << attempts_left;
+
+  const chromeos::PinDialogManager::RequestPinResult result =
+      service->pin_dialog_manager()->RequestPin(
+          extension()->id(), extension()->name(),
+          params->details.sign_request_id, code_type, error_label,
+          attempts_left,
+          base::BindOnce(
+              &CertificateProviderRequestPinFunction::OnInputReceived, this));
+  std::string error_result;
+  switch (result) {
+    case chromeos::PinDialogManager::RequestPinResult::kSuccess:
+      return RespondLater();
+    case chromeos::PinDialogManager::RequestPinResult::kInvalidId:
+      error_result = kCertificateProviderInvalidId;
+      break;
+    case chromeos::PinDialogManager::RequestPinResult::kOtherFlowInProgress:
+      error_result = kCertificateProviderOtherFlowInProgress;
+      break;
+    case chromeos::PinDialogManager::RequestPinResult::kDialogDisplayedAlready:
+      error_result = kCertificateProviderPreviousDialogActive;
+      break;
+  }
+  // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+  VLOG(1) << "PIN request failed: " << error_result;
+  return RespondNow(Error(error_result));
 }
 
 void CertificateProviderRequestPinFunction::OnInputReceived(
-    const base::string16& value) {
+    const std::string& value) {
   std::unique_ptr<base::ListValue> create_results(new base::ListValue());
   chromeos::CertificateProviderService* const service =
       chromeos::CertificateProviderServiceFactory::GetForBrowserContext(
           browser_context());
   DCHECK(service);
   if (!value.empty()) {
+    // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+    VLOG(1) << "PIN request succeeded";
     api::certificate_provider::PinResponseDetails details;
-    details.user_input.reset(new std::string(value.begin(), value.end()));
+    details.user_input = std::make_unique<std::string>(value);
     create_results->Append(details.ToValue());
+  } else {
+    // TODO(crbug.com/1046860): Remove logging after stabilizing the feature.
+    VLOG(1) << "PIN request canceled";
   }
 
   Respond(ArgumentList(std::move(create_results)));

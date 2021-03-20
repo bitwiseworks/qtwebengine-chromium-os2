@@ -117,9 +117,9 @@ the entered context is the context of the main frame
 (not the context of `<iframe>`).
 
 The entered context is a concept to implement the
-[entry settings object](https://html.spec.whatwg.org/multipage/webappapis.html#entry-settings-object)
+[entry settings object](https://html.spec.whatwg.org/C/#entry-settings-object)
 of the HTML spec. The current context is a concept to implement the
-[incumbent settings object](https://html.spec.whatwg.org/multipage/webappapis.html#incumbent-settings-object)
+[incumbent settings object](https://html.spec.whatwg.org/C/#incumbent-settings-object)
 of the HTML spec.
 
 In summary, the entered context is a context from which the current JavaScript
@@ -227,7 +227,7 @@ As a result, we have multiple DOM wrapper storages in one isolate.
 The mapping of the main world is written in `ScriptWrappable`.
 If `ScriptWrappable::main_world_wrapper_` has a non-empty value, it is a DOM
 wrapper of the C++ DOM object of the main world.
-The mapping of other worlds are written in `DOMWrapperMap`.
+The mapping of other worlds are written in `DOMDataStore`.
 
 ## DOM wrappers and contexts
 

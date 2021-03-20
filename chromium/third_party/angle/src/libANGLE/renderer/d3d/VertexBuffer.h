@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -13,6 +13,7 @@
 #include "common/PackedEnums.h"
 #include "common/angleutils.h"
 #include "libANGLE/Error.h"
+#include "libANGLE/renderer/Format.h"
 
 #include <GLES2/gl2.h>
 
@@ -62,7 +63,7 @@ class VertexBuffer : angle::NonCopyable
     unsigned int getSerial() const;
 
     // This may be overridden (e.g. by VertexBuffer11) if necessary.
-    virtual void hintUnmapResource(){};
+    virtual void hintUnmapResource() {}
 
     // Reference counting.
     void addRef();
@@ -172,11 +173,8 @@ class StaticVertexBufferInterface : public VertexBufferInterface
         void set(const gl::VertexAttribute &attrib, const gl::VertexBinding &binding);
 
       private:
-        gl::VertexAttribType type;
-        GLuint size;
+        angle::FormatID formatID;
         GLuint stride;
-        bool normalized;
-        bool pureInteger;
         size_t offset;
     };
 

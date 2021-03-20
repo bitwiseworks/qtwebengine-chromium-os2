@@ -25,7 +25,7 @@
 namespace button_drag_utils {
 
 // Maximum width of the link drag image in pixels.
-static const int kLinkDragImageMaxWidth = 150;
+static constexpr int kLinkDragImageMaxWidth = 150;
 
 void SetURLAndDragImage(const GURL& url,
                         const base::string16& title,
@@ -46,12 +46,12 @@ void SetDragImage(const GURL& url,
                   const views::Widget& widget,
                   ui::OSExchangeData* data) {
   // Create a button to render the drag image for us.
-  views::LabelButton button(NULL,
-                            title.empty() ? base::UTF8ToUTF16(url.spec())
-                                          : title);
+  views::LabelButton button(
+      nullptr, title.empty() ? base::UTF8ToUTF16(url.spec()) : title);
   button.SetTextSubpixelRenderingEnabled(false);
   const ui::NativeTheme* theme = widget.GetNativeTheme();
-  button.SetTextColor(views::Button::STATE_NORMAL,
+  button.SetTextColor(
+      views::Button::STATE_NORMAL,
       theme->GetSystemColor(ui::NativeTheme::kColorId_TextfieldDefaultColor));
 
   SkColor bg_color = theme->GetSystemColor(
@@ -66,8 +66,9 @@ void SetDragImage(const GURL& url,
   button.SetMaxSize(gfx::Size(kLinkDragImageMaxWidth, 0));
   if (icon.isNull()) {
     button.SetImage(views::Button::STATE_NORMAL,
-                    *ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-                        IDR_DEFAULT_FAVICON).ToImageSkia());
+                    *ui::ResourceBundle::GetSharedInstance()
+                         .GetImageNamed(IDR_DEFAULT_FAVICON)
+                         .ToImageSkia());
   } else {
     button.SetImage(views::Button::STATE_NORMAL, icon);
   }

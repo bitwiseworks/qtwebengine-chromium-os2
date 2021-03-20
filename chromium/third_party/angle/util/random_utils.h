@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -10,10 +10,10 @@
 #ifndef UTIL_RANDOM_UTILS_H
 #define UTIL_RANDOM_UTILS_H
 
-// TODO(jmadill): Rework this if Chromium decides to ban <random>
 #include <random>
 #include <vector>
 
+#include "common/vector_utils.h"
 #include "util/util_export.h"
 
 namespace angle
@@ -70,6 +70,14 @@ inline void FillVectorWithRandomUBytes(std::vector<uint8_t> *data)
     FillVectorWithRandomUBytes(&rng, data);
 }
 
+inline Vector4 RandomVec4(int seed, float minValue, float maxValue)
+{
+    RNG rng(seed);
+    srand(seed);
+    return Vector4(
+        rng.randomFloatBetween(minValue, maxValue), rng.randomFloatBetween(minValue, maxValue),
+        rng.randomFloatBetween(minValue, maxValue), rng.randomFloatBetween(minValue, maxValue));
+}
 }  // namespace angle
 
 #endif  // UTIL_RANDOM_UTILS_H

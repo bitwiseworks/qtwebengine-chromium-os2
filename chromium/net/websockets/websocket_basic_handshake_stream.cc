@@ -23,6 +23,7 @@
 #include "base/time/time.h"
 #include "crypto/random.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_endpoint.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_body_drainer.h"
@@ -33,6 +34,8 @@
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/websocket_endpoint_lock_manager.h"
 #include "net/socket/websocket_transport_client_socket_pool.h"
+#include "net/ssl/ssl_cert_request_info.h"
+#include "net/ssl/ssl_info.h"
 #include "net/websockets/websocket_basic_stream.h"
 #include "net/websockets/websocket_basic_stream_adapters.h"
 #include "net/websockets/websocket_deflate_parameters.h"
@@ -168,16 +171,13 @@ WebSocketBasicHandshakeStream::WebSocketBasicHandshakeStream(
     WebSocketStreamRequestAPI* request,
     WebSocketEndpointLockManager* websocket_endpoint_lock_manager)
     : result_(HandshakeResult::INCOMPLETE),
-      state_(std::move(connection),
-             using_proxy,
-             false /* http_09_on_non_default_ports_enabled */),
+      state_(std::move(connection), using_proxy),
       connect_delegate_(connect_delegate),
       http_response_info_(nullptr),
       requested_sub_protocols_(std::move(requested_sub_protocols)),
       requested_extensions_(std::move(requested_extensions)),
       stream_request_(request),
-      websocket_endpoint_lock_manager_(websocket_endpoint_lock_manager),
-      weak_ptr_factory_(this) {
+      websocket_endpoint_lock_manager_(websocket_endpoint_lock_manager) {
   DCHECK(connect_delegate);
   DCHECK(request);
 }
@@ -200,7 +200,17 @@ int WebSocketBasicHandshakeStream::InitializeStream(
     CompletionOnceCallback callback) {
   DCHECK(request_info->traffic_annotation.is_valid());
   url_ = request_info->url;
-  state_.Initialize(request_info, can_send_early, priority, net_log);
+  // The WebSocket may receive a socket in the early data state from
+  // HttpNetworkTransaction, which means it must call ConfirmHandshake() for
+  // requests that need replay protection. However, the first request on any
+  // WebSocket stream is a GET with an idempotent request
+  // (https://tools.ietf.org/html/rfc6455#section-1.3), so there is no need to
+  // call ConfirmHandshake().
+  //
+  // Data after the WebSockets handshake may not be replayable, but the
+  // handshake is guaranteed to be confirmed once the HTTP response is received.
+  DCHECK(can_send_early);
+  state_.Initialize(request_info, priority, net_log);
   return OK;
 }
 
@@ -278,8 +288,12 @@ int WebSocketBasicHandshakeStream::ReadResponseBody(
 void WebSocketBasicHandshakeStream::Close(bool not_reusable) {
   // This class ignores the value of |not_reusable| and never lets the socket be
   // re-used.
-  if (parser())
-    parser()->Close(true);
+  if (!parser())
+    return;
+  StreamSocket* socket = state_.connection()->socket();
+  if (socket)
+    socket->Disconnect();
+  state_.connection()->Reset();
 }
 
 bool WebSocketBasicHandshakeStream::IsResponseBodyComplete() const {
@@ -287,15 +301,16 @@ bool WebSocketBasicHandshakeStream::IsResponseBodyComplete() const {
 }
 
 bool WebSocketBasicHandshakeStream::IsConnectionReused() const {
-  return parser()->IsConnectionReused();
+  return state_.IsConnectionReused();
 }
 
 void WebSocketBasicHandshakeStream::SetConnectionReused() {
-  parser()->SetConnectionReused();
+  state_.connection()->set_reuse_type(ClientSocketHandle::REUSED_IDLE);
 }
 
 bool WebSocketBasicHandshakeStream::CanReuseConnection() const {
-  return parser() && parser()->CanReuseConnection();
+  return parser() && state_.connection()->socket() &&
+         parser()->CanReuseConnection();
 }
 
 int64_t WebSocketBasicHandshakeStream::GetTotalReceivedBytes() const {
@@ -318,11 +333,19 @@ bool WebSocketBasicHandshakeStream::GetLoadTimingInfo(
 }
 
 void WebSocketBasicHandshakeStream::GetSSLInfo(SSLInfo* ssl_info) {
+  if (!state_.connection()->socket()) {
+    ssl_info->Reset();
+    return;
+  }
   parser()->GetSSLInfo(ssl_info);
 }
 
 void WebSocketBasicHandshakeStream::GetSSLCertRequestInfo(
     SSLCertRequestInfo* cert_request_info) {
+  if (!state_.connection()->socket()) {
+    cert_request_info->Reset();
+    return;
+  }
   parser()->GetSSLCertRequestInfo(cert_request_info);
 }
 
@@ -380,15 +403,12 @@ std::unique_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {
           state_.read_buf(), sub_protocol_, extensions_);
   DCHECK(extension_params_.get());
   if (extension_params_->deflate_enabled) {
-    RecordDeflateMode(
-        extension_params_->deflate_parameters.client_context_take_over_mode());
-
     return std::make_unique<WebSocketDeflateStream>(
         std::move(basic_stream), extension_params_->deflate_parameters,
         std::make_unique<WebSocketDeflatePredictorImpl>());
-  } else {
-    return basic_stream;
   }
+
+  return basic_stream;
 }
 
 base::WeakPtr<WebSocketHandshakeStreamBase>
@@ -407,13 +427,6 @@ void WebSocketBasicHandshakeStream::ReadResponseHeadersCallback(
   std::move(callback).Run(ValidateResponse(result));
 }
 
-void WebSocketBasicHandshakeStream::OnFinishOpeningHandshake() {
-  DCHECK(http_response_info_);
-  WebSocketDispatchOnFinishOpeningHandshake(
-      connect_delegate_, url_, http_response_info_->headers,
-      http_response_info_->socket_address, http_response_info_->response_time);
-}
-
 int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
   DCHECK(http_response_info_);
   // Most net errors happen during connection, so they are not seen by this
@@ -425,7 +438,6 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
     base::UmaHistogramSparse("Net.WebSocket.ResponseCode", response_code);
     switch (response_code) {
       case HTTP_SWITCHING_PROTOCOLS:
-        OnFinishOpeningHandshake();
         return ValidateUpgradeResponse(headers);
 
       // We need to pass these through for authentication to work.
@@ -447,7 +459,6 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
               "Error during WebSocket handshake: Unexpected response code: %d",
               headers->response_code()));
         }
-        OnFinishOpeningHandshake();
         result_ = HandshakeResult::INVALID_STATUS;
         return ERR_INVALID_RESPONSE;
     }
@@ -459,7 +470,6 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
     }
     OnFailure(std::string("Error during WebSocket handshake: ") +
               ErrorToString(rv));
-    OnFinishOpeningHandshake();
     // Some error codes (for example ERR_CONNECTION_CLOSED) get changed to OK at
     // higher levels. To prevent an unvalidated connection getting erroneously
     // upgraded, don't pass through the status code unchanged if it is

@@ -19,7 +19,6 @@
 #include "ppapi/thunk/ppb_image_data_api.h"
 #include "ppapi/thunk/thunk.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/blink/public/platform/web_float_point.h"
 #include "third_party/blink/public/platform/web_float_rect.h"
 #include "third_party/blink/public/platform/web_font.h"
 #include "third_party/blink/public/platform/web_font_description.h"
@@ -31,7 +30,6 @@
 using ppapi::StringVar;
 using ppapi::thunk::EnterResourceNoLock;
 using ppapi::thunk::PPB_ImageData_API;
-using blink::WebFloatPoint;
 using blink::WebFloatRect;
 using blink::WebFont;
 using blink::WebFontDescription;
@@ -75,7 +73,8 @@ class TextRunCollection {
     } else {
       bidi_ = ubidi_open();
       UErrorCode uerror = U_ZERO_ERROR;
-      ubidi_setPara(bidi_, reinterpret_cast<const UChar*>(text_.data()), text_.size(), run.rtl, nullptr, &uerror);
+      ubidi_setPara(bidi_, text_.data(), text_.size(), run.rtl, nullptr,
+                    &uerror);
       if (U_SUCCESS(uerror))
         num_runs_ = ubidi_countRuns(bidi_, &uerror);
     }
@@ -400,8 +399,8 @@ int32_t BrowserFontResource_Trusted::PixelOffsetForCharacter(
       // a 0-width rect around the insertion point. But that will be on the
       // right side of the character for an RTL run, which would be wrong.
       WebFloatRect rect = font_->SelectionRectForText(
-          run, WebFloatPoint(0.0f, 0.0f), font_->Height(),
-          char_offset - run_begin, char_offset - run_begin + 1);
+          run, gfx::PointF(), font_->Height(), char_offset - run_begin,
+          char_offset - run_begin + 1);
       return cur_pixel_offset + static_cast<int>(rect.x);
     } else {
       // Character is past this run, account for the pixels and continue
@@ -419,18 +418,13 @@ void BrowserFontResource_Trusted::DrawTextToCanvas(
     uint32_t color,
     const PP_Rect* clip) {
   // Convert position and clip.
-  WebFloatPoint web_position(static_cast<float>(position->x),
-                             static_cast<float>(position->y));
-  WebRect web_clip;
-  if (!clip) {
-    // Use entire canvas. PaintCanvas doesn't have a size on it, so we just use
-    // the current clip bounds.
-    SkRect skclip = destination->getLocalClipBounds();
-    web_clip = WebRect(skclip.fLeft, skclip.fTop, skclip.fRight - skclip.fLeft,
-                       skclip.fBottom - skclip.fTop);
-  } else {
-    web_clip = WebRect(clip->point.x, clip->point.y,
-                       clip->size.width, clip->size.height);
+  gfx::PointF web_position(static_cast<float>(position->x),
+                           static_cast<float>(position->y));
+
+  cc::PaintCanvasAutoRestore auto_restore(destination, !!clip);
+  if (clip) {
+    destination->clipRect(SkRect::MakeXYWH(
+        clip->point.x, clip->point.y, clip->size.width, clip->size.height));
   }
 
   TextRunCollection runs(text);
@@ -438,13 +432,13 @@ void BrowserFontResource_Trusted::DrawTextToCanvas(
     int32_t run_begin = 0;
     int32_t run_len = 0;
     WebTextRun run = runs.GetRunAt(i, &run_begin, &run_len);
-    font_->DrawText(destination, run, web_position, color, web_clip);
+    font_->DrawText(destination, run, web_position, color);
 
     // Advance to the next run. Note that we avoid doing this for the last run
     // since it's unnecessary, measuring text is slow, and most of the time
     // there will be only one run anyway.
     if (i != runs.num_runs() - 1)
-      web_position.x += font_->CalculateWidth(run);
+      web_position.Offset(font_->CalculateWidth(run), 0);
   }
 }
 

@@ -5,17 +5,22 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 
 #include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/web/web_plugin.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
+#include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
+#include "third_party/blink/renderer/core/html/html_plugin_element.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 
 namespace blink {
 
@@ -23,10 +28,9 @@ class ElementTest : public EditingTestBase {};
 
 TEST_F(ElementTest, SupportsFocus) {
   Document& document = GetDocument();
-  DCHECK(IsHTMLHtmlElement(document.documentElement()));
+  DCHECK(IsA<HTMLHtmlElement>(document.documentElement()));
   document.setDesignMode("on");
-  document.View()->UpdateAllLifecyclePhases(
-      DocumentLifecycle::LifecycleUpdateReason::kTest);
+  document.View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
   EXPECT_TRUE(document.documentElement()->SupportsFocus())
       << "<html> with designMode=on should be focusable.";
 }
@@ -61,8 +65,7 @@ TEST_F(ElementTest,
 
   // Insert a new <div> above the sticky. This will dirty layout and invalidate
   // the sticky constraints.
-  writer->SetInnerHTMLFromString(
-      "<div style='height: 100px; width: 700px;'></div>");
+  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -106,8 +109,7 @@ TEST_F(ElementTest, OffsetTopAndLeftCorrectForStickyElementsAfterInsertion) {
 
   // Insert a new <div> above the sticky. This will dirty layout and invalidate
   // the sticky constraints.
-  writer->SetInnerHTMLFromString(
-      "<div style='height: 100px; width: 700px;'></div>");
+  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -121,8 +123,7 @@ TEST_F(ElementTest, OffsetTopAndLeftCorrectForStickyElementsAfterInsertion) {
                    ->NeedsCompositingInputsUpdate());
 
   // Dirty layout again, since |OffsetTop| will have cleaned it.
-  writer->SetInnerHTMLFromString(
-      "<div style='height: 100px; width: 700px;'></div>");
+  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -164,8 +165,7 @@ TEST_F(ElementTest, BoundsInViewportCorrectForStickyElementsAfterInsertion) {
 
   // Insert a new <div> above the sticky. This will dirty layout and invalidate
   // the sticky constraints.
-  writer->SetInnerHTMLFromString(
-      "<div style='height: 100px; width: 700px;'></div>");
+  writer->setInnerHTML("<div style='height: 100px; width: 700px;'></div>");
   EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
             document.Lifecycle().GetState());
 
@@ -218,9 +218,8 @@ TEST_F(ElementTest, StickySubtreesAreTrackedCorrectly) {
   // This forces 'child' to fork it's StyleRareInheritedData, so that we can
   // ensure that the sticky subtree update behavior survives forking.
   document.getElementById("child")->SetInlineStyleProperty(
-      CSSPropertyWebkitRubyPosition, CSSValueAfter);
-  document.View()->UpdateAllLifecyclePhases(
-      DocumentLifecycle::LifecycleUpdateReason::kTest);
+      CSSPropertyID::kWebkitRubyPosition, CSSValueID::kAfter);
+  document.View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
   EXPECT_EQ(DocumentLifecycle::kPaintClean, document.Lifecycle().GetState());
 
   EXPECT_EQ(RubyPosition::kBefore, outer_sticky->StyleRef().GetRubyPosition());
@@ -241,9 +240,8 @@ TEST_F(ElementTest, StickySubtreesAreTrackedCorrectly) {
   // it and the 'innerSticky' should be updated, and the 'innerSticky' should
   // fork it's StyleRareInheritedData to maintain the sticky subtree bit.
   document.getElementById("outerSticky")
-      ->SetInlineStyleProperty(CSSPropertyPosition, CSSValueStatic);
-  document.View()->UpdateAllLifecyclePhases(
-      DocumentLifecycle::LifecycleUpdateReason::kTest);
+      ->SetInlineStyleProperty(CSSPropertyID::kPosition, CSSValueID::kStatic);
+  document.View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
   EXPECT_EQ(DocumentLifecycle::kPaintClean, document.Lifecycle().GetState());
 
   EXPECT_FALSE(outer_sticky->StyleRef().SubtreeIsSticky());
@@ -462,6 +460,72 @@ TEST_F(ElementTest, OptionElementDisplayNoneComputedStyle) {
   EXPECT_FALSE(document.getElementById("option")->GetComputedStyle());
   EXPECT_FALSE(document.getElementById("inner-group")->GetComputedStyle());
   EXPECT_FALSE(document.getElementById("inner-option")->GetComputedStyle());
+}
+
+// A fake plugin which will assert that script is allowed in Destroy.
+class ScriptOnDestroyPlugin : public GarbageCollected<ScriptOnDestroyPlugin>,
+                              public WebPlugin {
+ public:
+  bool Initialize(WebPluginContainer* container) override {
+    container_ = container;
+    return true;
+  }
+  void Destroy() override {
+    destroy_called_ = true;
+    ASSERT_FALSE(ScriptForbiddenScope::IsScriptForbidden());
+  }
+  WebPluginContainer* Container() const override { return container_; }
+
+  void UpdateAllLifecyclePhases(DocumentUpdateReason) override {}
+  void Paint(cc::PaintCanvas*, const WebRect&) override {}
+  void UpdateGeometry(const WebRect&,
+                      const WebRect&,
+                      const WebRect&,
+                      bool) override {}
+  void UpdateFocus(bool, mojom::blink::FocusType) override {}
+  void UpdateVisibility(bool) override {}
+  WebInputEventResult HandleInputEvent(const WebCoalescedInputEvent&,
+                                       ui::Cursor*) override {
+    return {};
+  }
+  void DidReceiveResponse(const WebURLResponse&) override {}
+  void DidReceiveData(const char* data, size_t data_length) override {}
+  void DidFinishLoading() override {}
+  void DidFailLoading(const WebURLError&) override {}
+
+  void Trace(Visitor*) {}
+
+  bool DestroyCalled() const { return destroy_called_; }
+
+ private:
+  WebPluginContainer* container_;
+  bool destroy_called_ = false;
+};
+
+TEST_F(ElementTest, CreateAndAttachShadowRootSuspendsPluginDisposal) {
+  Document& document = GetDocument();
+  SetBodyContent(R"HTML(
+    <div id=target>
+      <embed id=plugin type=application/x-blink-text-plugin></embed>
+    </div>
+  )HTML");
+
+  // Set the plugin element up to have the ScriptOnDestroy plugin.
+  auto* plugin_element =
+      DynamicTo<HTMLPlugInElement>(document.getElementById("plugin"));
+  ASSERT_TRUE(plugin_element);
+
+  auto* plugin = MakeGarbageCollected<ScriptOnDestroyPlugin>();
+  auto* plugin_container =
+      MakeGarbageCollected<WebPluginContainerImpl>(*plugin_element, plugin);
+  plugin->Initialize(plugin_container);
+  plugin_element->SetEmbeddedContentView(plugin_container);
+
+  // Now create a shadow root on target, which should cause the plugin to be
+  // destroyed. Test passes if we pass the script forbidden check in the plugin.
+  auto* target = document.getElementById("target");
+  target->CreateUserAgentShadowRoot();
+  ASSERT_TRUE(plugin->DestroyCalled());
 }
 
 }  // namespace blink

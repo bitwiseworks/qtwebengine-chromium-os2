@@ -33,7 +33,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_PERFORMANCE_H_
 
 #include "base/single_thread_task_runner.h"
-#include "third_party/blink/public/platform/web_resource_timing_info.h"
+#include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_double.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
@@ -42,7 +42,6 @@
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/core/timing/performance_navigation_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_paint_timing.h"
-#include "third_party/blink/renderer/core/timing/sub_task_attribution.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -51,31 +50,38 @@
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
+namespace base {
+class Clock;
+class TickClock;
+}  // namespace base
+
 namespace blink {
 
 class PerformanceMarkOptions;
 class ExceptionState;
+class LargestContentfulPaint;
+class LayoutShift;
 class MemoryInfo;
 class PerformanceElementTiming;
 class PerformanceEventTiming;
-class PerformanceLayoutJank;
 class PerformanceMark;
 class PerformanceMeasure;
 class PerformanceNavigation;
 class PerformanceObserver;
 class PerformanceTiming;
+class ProfilerInitOptions;
 class ResourceResponse;
 class ResourceTimingInfo;
+class ScriptPromise;
 class ScriptState;
 class ScriptValue;
 class SecurityOrigin;
 class StringOrPerformanceMeasureOptions;
-class SubTaskAttribution;
 class UserTiming;
 class V8ObjectBuilder;
 
-using PerformanceEntryVector = HeapVector<TraceWrapperMember<PerformanceEntry>>;
-using PerformanceEntryDeque = HeapDeque<TraceWrapperMember<PerformanceEntry>>;
+using PerformanceEntryVector = HeapVector<Member<PerformanceEntry>>;
+using PerformanceEntryDeque = HeapDeque<Member<PerformanceEntry>>;
 
 class CORE_EXPORT Performance : public EventTargetWithInlineData {
   DEFINE_WRAPPERTYPEINFO();
@@ -89,24 +95,23 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
   virtual PerformanceTiming* timing() const;
   virtual PerformanceNavigation* navigation() const;
   virtual MemoryInfo* memory() const;
-  virtual bool shouldYield() const;
-
-  virtual void UpdateLongTaskInstrumentation() {}
+  virtual ScriptPromise measureMemory(ScriptState*,
+                                      ExceptionState& exception_state) const;
 
   // Reduce the resolution to prevent timing attacks. See:
   // http://www.w3.org/TR/hr-time-2/#privacy-security
   static double ClampTimeResolution(double time_seconds);
 
   static DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(
-      TimeTicks time_origin,
-      TimeTicks monotonic_time,
+      base::TimeTicks time_origin,
+      base::TimeTicks monotonic_time,
       bool allow_negative_value);
 
   // Translate given platform monotonic time in seconds into a high resolution
   // DOMHighResTimeStamp in milliseconds. The result timestamp is relative to
   // document's time origin and has a time resolution that is safe for
   // exposing to web.
-  DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(TimeTicks) const;
+  DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(base::TimeTicks) const;
   DOMHighResTimeStamp now() const;
 
   // High Resolution Time Level 3 timeOrigin.
@@ -114,27 +119,35 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
   DOMHighResTimeStamp timeOrigin() const;
 
   // Internal getter method for the time origin value.
-  double GetTimeOrigin() const { return TimeTicksInSeconds(time_origin_); }
+  double GetTimeOrigin() const {
+    return time_origin_.since_origin().InSecondsF();
+  }
 
   PerformanceEntryVector getEntries();
+  // Get BufferedEntriesByType will return all entries in the buffer regardless
+  // of whether they are exposed in the Performance Timeline. getEntriesByType
+  // will only return all entries for existing types in
+  // PerformanceEntry.IsValidTimelineEntryType.
+  PerformanceEntryVector getBufferedEntriesByType(
+      const AtomicString& entry_type);
   PerformanceEntryVector getEntriesByType(const AtomicString& entry_type);
-  PerformanceEntryVector getEntriesByName(const AtomicString& name,
-                                          const AtomicString& entry_type);
+  PerformanceEntryVector getEntriesByName(
+      const AtomicString& name,
+      const AtomicString& entry_type = g_null_atom);
 
   void clearResourceTimings();
   void setResourceTimingBufferSize(unsigned);
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(resourcetimingbufferfull,
-                                  kResourcetimingbufferfull);
+                                  kResourcetimingbufferfull)
 
-  void AddLongTaskTiming(
-      TimeTicks start_time,
-      TimeTicks end_time,
-      const AtomicString& name,
-      const String& culprit_frame_src,
-      const String& culprit_frame_id,
-      const String& culprit_frame_name,
-      const SubTaskAttribution::EntriesVector& sub_task_attributions);
+  void AddLongTaskTiming(base::TimeTicks start_time,
+                         base::TimeTicks end_time,
+                         const AtomicString& name,
+                         const AtomicString& container_type,
+                         const String& container_src,
+                         const String& container_id,
+                         const String& container_name);
 
   // Generates and add a performance entry for the given ResourceTimingInfo.
   // |overridden_initiator_type| allows the initiator type to be overridden to
@@ -145,40 +158,31 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
   // Generates timing info suitable for appending to the performance entries of
   // a context with |origin|. This should be rarely used; most callsites should
   // prefer the convenience method |GenerateAndAddResourceTiming()|.
-  static WebResourceTimingInfo GenerateResourceTiming(
+  static mojom::blink::ResourceTimingInfoPtr GenerateResourceTiming(
       const SecurityOrigin& destination_origin,
       const ResourceTimingInfo&,
       ExecutionContext& context_for_use_counter);
-  void AddResourceTiming(const WebResourceTimingInfo&,
-                         const AtomicString& initiator_type);
+  void AddResourceTiming(
+      mojom::blink::ResourceTimingInfoPtr,
+      const AtomicString& initiator_type,
+      mojo::PendingReceiver<mojom::blink::WorkerTimingContainer>
+          worker_timing_receiver);
 
   void NotifyNavigationTimingToObservers();
 
-  void AddFirstPaintTiming(TimeTicks start_time);
+  void AddFirstPaintTiming(base::TimeTicks start_time);
 
-  void AddFirstContentfulPaintTiming(TimeTicks start_time);
+  void AddFirstContentfulPaintTiming(base::TimeTicks start_time);
 
   bool IsElementTimingBufferFull() const;
   void AddElementTimingBuffer(PerformanceElementTiming&);
-  unsigned ElementTimingBufferSize() const;
-  void clearElementTimings();
-  void setElementTimingBufferMaxSize(unsigned);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(elementtimingbufferfull,
-                                  kElementtimingbufferfull);
 
   bool IsEventTimingBufferFull() const;
   void AddEventTimingBuffer(PerformanceEventTiming&);
-  unsigned EventTimingBufferSize() const;
-  void clearEventTimings();
-  void setEventTimingBufferMaxSize(unsigned);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(eventtimingbufferfull,
-                                  kEventtimingbufferfull);
 
-  void AddLayoutJankBuffer(PerformanceLayoutJank&);
+  void AddLayoutShiftBuffer(LayoutShift&);
 
-  PerformanceMark* mark(ScriptState*,
-                        const AtomicString& mark_name,
-                        ExceptionState&);
+  void AddLargestContentfulPaint(LargestContentfulPaint*);
 
   PerformanceMark* mark(ScriptState*,
                         const AtomicString& mark_name,
@@ -186,6 +190,7 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
                         ExceptionState&);
 
   void clearMarks(const AtomicString& mark_name);
+  void clearMarks() { return clearMarks(AtomicString()); }
 
   // This enum is used to index different possible strings for for UMA enum
   // histogram. New enum values can be added, but existing enums must never be
@@ -224,6 +229,7 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
     kMaxValue = kDomLoading
   };
 
+  UserTiming& GetUserTiming();
   PerformanceMeasure* measure(ScriptState*,
                               const AtomicString& measure_name,
                               ExceptionState&);
@@ -242,20 +248,37 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
       ExceptionState&);
 
   void clearMeasures(const AtomicString& measure_name);
+  void clearMeasures() { return clearMeasures(AtomicString()); }
+
+  ScriptPromise profile(ScriptState*,
+                        const ProfilerInitOptions*,
+                        ExceptionState&);
 
   void UnregisterPerformanceObserver(PerformanceObserver&);
   void RegisterPerformanceObserver(PerformanceObserver&);
   void UpdatePerformanceObserverFilterOptions();
   void ActivateObserver(PerformanceObserver&);
-  void ResumeSuspendedObservers();
+  void SuspendObserver(PerformanceObserver&);
 
   bool HasObserverFor(PerformanceEntry::EntryType) const;
 
-  // TODO(npm): is the AtomicString parameter here actually needed?
-  static bool PassesTimingAllowCheck(const ResourceResponse&,
+  // Checks whether the single ResourceResponse passes the Timing-Allow-Origin
+  // check. The first parameter is the ResourceResponse being checked. The
+  // second parameter is the next ResourceResponse in the redirect chain, or is
+  // equal to the first parameter if there is no such response. This parameter
+  // is only introduced temporarily to enable computing a UseCounter within this
+  // method. The first bool parameter is
+  // https://fetch.spec.whatwg.org/#concept-request-response-tainting, while the
+  // second bool is
+  // https://fetch.spec.whatwg.org/#concept-request-tainted-origin.
+  // The next ResourceResponse and tainted origin flag are currently only being
+  // used in a UseCounter.
+  static bool PassesTimingAllowCheck(const ResourceResponse& response,
+                                     const ResourceResponse& next_response,
                                      const SecurityOrigin&,
-                                     const AtomicString&,
-                                     ExecutionContext*);
+                                     ExecutionContext*,
+                                     bool* response_tainting_not_basic,
+                                     bool* tainted_origin_flag);
 
   static bool AllowsTimingRedirect(const Vector<ResourceResponse>&,
                                    const ResourceResponse&,
@@ -264,29 +287,50 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
 
   ScriptValue toJSONForBinding(ScriptState*) const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
+
+  class UnifiedClock {
+   public:
+    UnifiedClock(const base::Clock* clock, const base::TickClock* tick_clock)
+        : clock_(clock), tick_clock_(tick_clock) {}
+    DOMHighResTimeStamp GetUnixAtZeroMonotonic() const;
+    base::TimeTicks NowTicks() const;
+
+   private:
+    const base::Clock* clock_;
+    const base::TickClock* tick_clock_;
+    mutable base::Optional<DOMHighResTimeStamp> unix_at_zero_monotonic_;
+  };
+
+  // The caller owns the |clock|.
+  void SetClocksForTesting(const UnifiedClock* clock);
+  void ResetTimeOriginForTesting(base::TimeTicks time_origin);
 
  private:
-  void AddPaintTiming(PerformancePaintTiming::PaintType, TimeTicks start_time);
+  void AddPaintTiming(PerformancePaintTiming::PaintType,
+                      base::TimeTicks start_time);
 
   PerformanceMeasure* MeasureInternal(
       ScriptState*,
       const AtomicString& measure_name,
       const StringOrPerformanceMeasureOptions& start,
-      base::Optional<String> end,
+      base::Optional<String> end_mark,
       ExceptionState&);
 
   PerformanceMeasure* MeasureWithDetail(ScriptState*,
                                         const AtomicString& measure_name,
                                         const StringOrDouble& start,
+                                        base::Optional<double> duration,
                                         const StringOrDouble& end,
                                         const ScriptValue& detail,
                                         ExceptionState&);
 
   void CopySecondaryBuffer();
+  PerformanceEntryVector getEntriesByTypeInternal(
+      PerformanceEntry::EntryType type);
 
  protected:
-  Performance(TimeTicks time_origin,
+  Performance(base::TimeTicks time_origin,
               scoped_refptr<base::SingleThreadTaskRunner>);
 
   // Expect WindowPerformance to override this method,
@@ -299,7 +343,6 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
   void FireResourceTimingBufferFull(TimerBase*);
 
   void NotifyObserversOfEntry(PerformanceEntry&) const;
-  void NotifyObserversOfEntries(PerformanceEntryVector&);
 
   void DeliverObservationsTimerFired(TimerBase*);
 
@@ -317,17 +360,20 @@ class CORE_EXPORT Performance : public EventTargetWithInlineData {
   unsigned event_timing_buffer_max_size_;
   PerformanceEntryVector element_timing_buffer_;
   unsigned element_timing_buffer_max_size_;
-  PerformanceEntryVector layout_jank_buffer_;
+  PerformanceEntryVector layout_shift_buffer_;
+  PerformanceEntryVector largest_contentful_paint_buffer_;
+  PerformanceEntryVector longtask_buffer_;
   Member<PerformanceEntry> navigation_timing_;
-  TraceWrapperMember<UserTiming> user_timing_;
+  Member<UserTiming> user_timing_;
   Member<PerformanceEntry> first_paint_timing_;
   Member<PerformanceEntry> first_contentful_paint_timing_;
   Member<PerformanceEventTiming> first_input_timing_;
 
-  TimeTicks time_origin_;
+  base::TimeTicks time_origin_;
+  const UnifiedClock* unified_clock_;
 
   PerformanceEntryTypeMask observer_filter_options_;
-  HeapLinkedHashSet<TraceWrapperMember<PerformanceObserver>> observers_;
+  HeapLinkedHashSet<Member<PerformanceObserver>> observers_;
   HeapLinkedHashSet<Member<PerformanceObserver>> active_observers_;
   HeapLinkedHashSet<Member<PerformanceObserver>> suspended_observers_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;

@@ -67,12 +67,12 @@ WebString WebSecurityOrigin::Host() const {
   return private_->Host();
 }
 
-unsigned short WebSecurityOrigin::Port() const {
+uint16_t WebSecurityOrigin::Port() const {
   DCHECK(private_);
   return private_->Port();
 }
 
-unsigned short WebSecurityOrigin::EffectivePort() const {
+uint16_t WebSecurityOrigin::EffectivePort() const {
   DCHECK(private_);
   return private_->EffectivePort();
 }
@@ -91,6 +91,11 @@ bool WebSecurityOrigin::CanAccess(const WebSecurityOrigin& other) const {
 bool WebSecurityOrigin::CanRequest(const WebURL& url) const {
   DCHECK(private_);
   return private_->CanRequest(url);
+}
+
+bool WebSecurityOrigin::CanDisplay(const WebURL& url) const {
+  DCHECK(private_);
+  return private_->CanDisplay(url);
 }
 
 bool WebSecurityOrigin::IsPotentiallyTrustworthy() const {

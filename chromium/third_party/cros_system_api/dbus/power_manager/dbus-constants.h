@@ -28,6 +28,7 @@ const char kGetPowerSupplyPropertiesMethod[] = "GetPowerSupplyProperties";
 const char kGetSwitchStatesMethod[] = "GetSwitchStates";
 const char kHandleUserActivityMethod[] = "HandleUserActivity";
 const char kHandleVideoActivityMethod[] = "HandleVideoActivity";
+const char kHandleWakeNotificationMethod[] = "HandleWakeNotification";
 const char kSetIsProjectingMethod[] = "SetIsProjecting";
 const char kSetPolicyMethod[] = "SetPolicy";
 const char kSetPowerSourceMethod[] = "SetPowerSource";
@@ -44,10 +45,10 @@ const char kHandlePowerButtonAcknowledgmentMethod[] =
 const char kIgnoreNextPowerButtonPressMethod[] = "IgnoreNextPowerButtonPress";
 const char kRecordDarkResumeWakeReasonMethod[] = "RecordDarkResumeWakeReason";
 const char kGetInactivityDelaysMethod[] = "GetInactivityDelays";
-const char kDeferScreenDimMethod[] = "DeferScreenDim";
 const char kCreateArcTimersMethod[] = "CreateArcTimers";
 const char kStartArcTimerMethod[] = "StartArcTimer";
 const char kDeleteArcTimersMethod[] = "DeleteArcTimers";
+const char kHasAmbientColorDeviceMethod[] = "HasAmbientColorDevice";
 
 // Signals emitted by powerd.
 const char kScreenBrightnessChangedSignal[] = "ScreenBrightnessChanged";
@@ -58,11 +59,12 @@ const char kSuspendImminentSignal[] = "SuspendImminent";
 const char kDarkSuspendImminentSignal[] = "DarkSuspendImminent";
 const char kSuspendDoneSignal[] = "SuspendDone";
 const char kInputEventSignal[] = "InputEvent";
-const char kScreenDimImminentSignal[] = "ScreenDimImminent";
 const char kIdleActionImminentSignal[] = "IdleActionImminent";
 const char kIdleActionDeferredSignal[] = "IdleActionDeferred";
 const char kScreenIdleStateChangedSignal[] = "ScreenIdleStateChanged";
 const char kInactivityDelaysChangedSignal[] = "InactivityDelaysChanged";
+const char kAmbientColorTemperatureChangedSignal[] =
+    "AmbientColorTemperatureChanged";
 
 // Values
 const int kBrightnessTransitionGradual = 1;

@@ -152,6 +152,10 @@ bool IsOriginAndPathRegexCriterion(URLMatcherCondition::Criterion criterion) {
   return criterion == URLMatcherCondition::ORIGIN_AND_PATH_MATCHES;
 }
 
+bool IsMatcherEmpty(const std::unique_ptr<SubstringSetMatcher>& matcher) {
+  return !matcher || matcher->IsEmpty();
+}
+
 }  // namespace
 
 //
@@ -223,7 +227,7 @@ bool URLMatcherCondition::IsMatch(
     const std::set<StringPattern::ID>& matching_patterns,
     const GURL& url) const {
   DCHECK(string_pattern_);
-  if (!base::ContainsKey(matching_patterns, string_pattern_->id()))
+  if (!base::Contains(matching_patterns, string_pattern_->id()))
     return false;
   // The criteria HOST_CONTAINS, PATH_CONTAINS, QUERY_CONTAINS are based on
   // a substring match on the raw URL. In case of a match, we need to verify
@@ -463,7 +467,7 @@ void URLMatcherConditionFactory::ForgetUnusedPatterns(
       const std::set<StringPattern::ID>& used_patterns) {
   auto i = substring_pattern_singletons_.begin();
   while (i != substring_pattern_singletons_.end()) {
-    if (base::ContainsKey(used_patterns, i->first->id()))
+    if (base::Contains(used_patterns, i->first->id()))
       ++i;
     else
       substring_pattern_singletons_.erase(i++);
@@ -471,7 +475,7 @@ void URLMatcherConditionFactory::ForgetUnusedPatterns(
 
   i = regex_pattern_singletons_.begin();
   while (i != regex_pattern_singletons_.end()) {
-    if (base::ContainsKey(used_patterns, i->first->id()))
+    if (base::Contains(used_patterns, i->first->id()))
       ++i;
     else
       regex_pattern_singletons_.erase(i++);
@@ -479,7 +483,7 @@ void URLMatcherConditionFactory::ForgetUnusedPatterns(
 
   i = origin_and_path_regex_pattern_singletons_.begin();
   while (i != origin_and_path_regex_pattern_singletons_.end()) {
-    if (base::ContainsKey(used_patterns, i->first->id()))
+    if (base::Contains(used_patterns, i->first->id()))
       ++i;
     else
       origin_and_path_regex_pattern_singletons_.erase(i++);
@@ -509,7 +513,7 @@ URLMatcherCondition URLMatcherConditionFactory::CreateCondition(
   if (iter != pattern_singletons->end())
     return URLMatcherCondition(criterion, iter->first);
 
-  StringPattern* new_pattern = new StringPattern(pattern, id_counter_++);
+  StringPattern* new_pattern = new StringPattern(pattern, GetNextID());
   (*pattern_singletons)[new_pattern] = base::WrapUnique(new_pattern);
   return URLMatcherCondition(criterion, new_pattern);
 }
@@ -552,6 +556,15 @@ std::string URLMatcherConditionFactory::CanonicalizeQuery(
   if (append_end_of_query_component)
     query += kQueryComponentDelimiter;
   return query;
+}
+
+int URLMatcherConditionFactory::GetNextID() {
+  id_counter_++;
+
+  if (id_counter_ == StringPattern::kInvalidId)
+    id_counter_++;
+
+  return id_counter_;
 }
 
 bool URLMatcherConditionFactory::StringPatternPointerCompare::operator()(
@@ -682,7 +695,7 @@ URLMatcherSchemeFilter::URLMatcherSchemeFilter(
 URLMatcherSchemeFilter::~URLMatcherSchemeFilter() {}
 
 bool URLMatcherSchemeFilter::IsMatch(const GURL& url) const {
-  return base::ContainsValue(filters_, url.scheme());
+  return base::Contains(filters_, url.scheme());
 }
 
 //
@@ -773,7 +786,7 @@ bool URLMatcherConditionSet::IsMatch(
   // elements are found, no need to verify match that is expected to take more
   // cycles.
   for (auto i = query_conditions_.begin(); i != query_conditions_.end(); ++i) {
-    if (!base::ContainsKey(matching_patterns, i->string_pattern()->id()))
+    if (!base::Contains(matching_patterns, i->string_pattern()->id()))
       return false;
   }
   for (auto i = query_conditions_.begin(); i != query_conditions_.end(); ++i) {
@@ -823,14 +836,14 @@ std::set<URLMatcherConditionSet::ID> URLMatcher::MatchURL(
   std::set<StringPattern::ID> matches;
   std::string url_for_component_searches;
 
-  if (!full_url_matcher_.IsEmpty()) {
-    full_url_matcher_.Match(
+  if (!IsMatcherEmpty(full_url_matcher_)) {
+    full_url_matcher_->Match(
         condition_factory_.CanonicalizeURLForFullSearches(url), &matches);
   }
-  if (!url_component_matcher_.IsEmpty()) {
+  if (!IsMatcherEmpty(url_component_matcher_)) {
     url_for_component_searches =
         condition_factory_.CanonicalizeURLForComponentSearches(url);
-    url_component_matcher_.Match(url_for_component_searches, &matches);
+    url_component_matcher_->Match(url_for_component_searches, &matches);
   }
   if (!regex_set_matcher_.IsEmpty()) {
     regex_set_matcher_.Match(
@@ -868,15 +881,12 @@ std::set<URLMatcherConditionSet::ID> URLMatcher::MatchURL(
 }
 
 bool URLMatcher::IsEmpty() const {
-  return condition_factory_.IsEmpty() &&
-      url_matcher_condition_sets_.empty() &&
-      substring_match_triggers_.empty() &&
-      full_url_matcher_.IsEmpty() &&
-      url_component_matcher_.IsEmpty() &&
-      regex_set_matcher_.IsEmpty() &&
-      origin_and_path_regex_set_matcher_.IsEmpty() &&
-      registered_full_url_patterns_.empty() &&
-      registered_url_component_patterns_.empty();
+  return condition_factory_.IsEmpty() && url_matcher_condition_sets_.empty() &&
+         substring_match_triggers_.empty() &&
+         IsMatcherEmpty(full_url_matcher_) &&
+         IsMatcherEmpty(url_component_matcher_) &&
+         regex_set_matcher_.IsEmpty() &&
+         origin_and_path_regex_set_matcher_.IsEmpty();
 }
 
 void URLMatcher::UpdateSubstringSetMatcher(bool full_url_conditions) {
@@ -915,32 +925,13 @@ void URLMatcher::UpdateSubstringSetMatcher(bool full_url_conditions) {
     }
   }
 
-  // This is the set of patterns that were registered before this function
-  // is called.
-  std::set<const StringPattern*>& registered_patterns =
-      full_url_conditions ? registered_full_url_patterns_
-                          : registered_url_component_patterns_;
-
-  // Add all patterns that are in new_patterns but not in registered_patterns.
-  std::vector<const StringPattern*> patterns_to_register =
-      base::STLSetDifference<std::vector<const StringPattern*> >(
-          new_patterns, registered_patterns);
-
-  // Remove all patterns that are in registered_patterns but not in
-  // new_patterns.
-  std::vector<const StringPattern*> patterns_to_unregister =
-      base::STLSetDifference<std::vector<const StringPattern*> >(
-           registered_patterns, new_patterns);
-
   // Update the SubstringSetMatcher.
-  SubstringSetMatcher& url_matcher =
+  std::unique_ptr<SubstringSetMatcher>& url_matcher =
       full_url_conditions ? full_url_matcher_ : url_component_matcher_;
-  url_matcher.RegisterAndUnregisterPatterns(patterns_to_register,
-                                            patterns_to_unregister);
 
-  // Update the set of registered_patterns for the next time this function
-  // is being called.
-  registered_patterns.swap(new_patterns);
+  url_matcher =
+      std::make_unique<SubstringSetMatcher>(std::vector<const StringPattern*>(
+          new_patterns.begin(), new_patterns.end()));
 }
 
 void URLMatcher::UpdateRegexSetMatcher() {

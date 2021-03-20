@@ -38,9 +38,6 @@ void FrameConnectorDelegate::SynchronizeVisualProperties(
 
   if (!view_)
     return;
-#if defined(USE_AURA)
-  view_->SetFrameSinkId(frame_sink_id);
-#endif  // defined(USE_AURA)
 
   RenderWidgetHostImpl* render_widget_host = view_->host();
   DCHECK(render_widget_host);
@@ -48,7 +45,11 @@ void FrameConnectorDelegate::SynchronizeVisualProperties(
   render_widget_host->SetAutoResize(visual_properties.auto_resize_enabled,
                                     visual_properties.min_size_for_auto_resize,
                                     visual_properties.max_size_for_auto_resize);
-  render_widget_host->SetPageScaleFactor(visual_properties.page_scale_factor);
+  render_widget_host->SetVisualPropertiesFromParentFrame(
+      visual_properties.page_scale_factor,
+      visual_properties.is_pinch_gesture_active,
+      visual_properties.visible_viewport_size,
+      visual_properties.compositor_viewport);
 
   render_widget_host->SynchronizeVisualProperties();
 }
@@ -59,20 +60,16 @@ gfx::PointF FrameConnectorDelegate::TransformPointToRootCoordSpace(
   return gfx::PointF();
 }
 
-bool FrameConnectorDelegate::TransformPointToLocalCoordSpaceLegacy(
+bool FrameConnectorDelegate::TransformPointToCoordSpaceForView(
     const gfx::PointF& point,
-    const viz::SurfaceId& original_surface,
+    RenderWidgetHostViewBase* target_view,
     const viz::SurfaceId& local_surface_id,
     gfx::PointF* transformed_point) {
   return false;
 }
 
-bool FrameConnectorDelegate::TransformPointToCoordSpaceForView(
-    const gfx::PointF& point,
-    RenderWidgetHostViewBase* target_view,
-    const viz::SurfaceId& local_surface_id,
-    gfx::PointF* transformed_point,
-    viz::EventSource source) {
+bool FrameConnectorDelegate::BubbleScrollEvent(
+    const blink::WebGestureEvent& event) {
   return false;
 }
 
@@ -80,8 +77,16 @@ bool FrameConnectorDelegate::HasFocus() {
   return false;
 }
 
-bool FrameConnectorDelegate::LockMouse() {
-  return false;
+blink::mojom::PointerLockResult FrameConnectorDelegate::LockMouse(
+    bool request_unadjusted_movement) {
+  NOTREACHED();
+  return blink::mojom::PointerLockResult::kUnknownError;
+}
+
+blink::mojom::PointerLockResult FrameConnectorDelegate::ChangeMouseLock(
+    bool request_unadjusted_movement) {
+  NOTREACHED();
+  return blink::mojom::PointerLockResult::kUnknownError;
 }
 
 void FrameConnectorDelegate::EnableAutoResize(const gfx::Size& min_size,
@@ -94,7 +99,7 @@ bool FrameConnectorDelegate::IsInert() const {
 }
 
 cc::TouchAction FrameConnectorDelegate::InheritedEffectiveTouchAction() const {
-  return cc::TouchAction::kTouchActionAuto;
+  return cc::TouchAction::kAuto;
 }
 
 bool FrameConnectorDelegate::IsHidden() const {

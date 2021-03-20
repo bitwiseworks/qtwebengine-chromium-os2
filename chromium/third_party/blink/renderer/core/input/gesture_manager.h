@@ -22,15 +22,15 @@ class MouseEventManager;
 
 // This class takes care of gestures and delegating the action based on the
 // gesture to the responsible class.
-class CORE_EXPORT GestureManager
-    : public GarbageCollectedFinalized<GestureManager> {
+class CORE_EXPORT GestureManager final
+    : public GarbageCollected<GestureManager> {
  public:
   GestureManager(LocalFrame&,
                  ScrollManager&,
                  MouseEventManager&,
                  PointerEventManager&,
                  SelectionController&);
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   void Clear();
 
@@ -38,6 +38,7 @@ class CORE_EXPORT GestureManager
       WebInputEvent::Type);
   WebInputEventResult HandleGestureEventInFrame(
       const GestureEventWithHitTestResults&);
+  bool LongTapShouldInvokeContextMenu() const;
 
  private:
   WebInputEventResult HandleGestureShowPress();

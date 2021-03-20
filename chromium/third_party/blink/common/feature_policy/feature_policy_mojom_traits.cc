@@ -12,9 +12,9 @@ bool StructTraits<blink::mojom::ParsedFeaturePolicyDeclarationDataView,
                   blink::ParsedFeaturePolicyDeclaration>::
     Read(blink::mojom::ParsedFeaturePolicyDeclarationDataView in,
          blink::ParsedFeaturePolicyDeclaration* out) {
-  out->matches_all_origins = in.matches_all_origins();
-
-  return in.ReadOrigins(&out->origins) && in.ReadFeature(&out->feature);
+  return in.ReadFeature(&out->feature) &&
+         in.ReadFallbackValue(&out->fallback_value) &&
+         in.ReadOpaqueValue(&out->opaque_value) && in.ReadValues(&out->values);
 }
 
 }  // namespace mojo

@@ -8,10 +8,9 @@
 
 #include <memory>
 
-#include "base/mac/scoped_block.h"
 #include "base/memory/ref_counted.h"
 #include "base/stl_util.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -19,6 +18,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -106,11 +106,11 @@ namespace image_fetcher {
 class IOSImageDataFetcherWrapperTest : public PlatformTest {
  protected:
   IOSImageDataFetcherWrapperTest()
-      : callback_([^(NSData* data) {
+      : callback_(^(NSData* data, const RequestMetadata&) {
           result_data_ = data;
           result_ = [UIImage imageWithData:data];
           called_ = true;
-        } copy]) {
+        }) {
     shared_factory_ =
         base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
             &factory_);
@@ -125,14 +125,14 @@ class IOSImageDataFetcherWrapperTest : public PlatformTest {
   }
 
   // Message loop for the main test thread.
-  base::test::ScopedTaskEnvironment environment_;
+  base::test::TaskEnvironment environment_;
 
-  base::mac::ScopedBlock<ImageDataFetcherBlock> callback_;
+  __strong ImageDataFetcherBlock callback_;
   network::TestURLLoaderFactory factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_factory_;
   std::unique_ptr<IOSImageDataFetcherWrapper> image_fetcher_;
-  NSData* result_data_ = nil;
-  UIImage* result_ = nil;
+  __strong NSData* result_data_ = nil;
+  __strong UIImage* result_ = nil;
   bool called_ = false;
 
  private:
@@ -172,13 +172,14 @@ TEST_F(IOSImageDataFetcherWrapperTest, TestGoodWebP) {
 
   std::string content(reinterpret_cast<const char*>(kWEBPImage),
                       sizeof(kWEBPImage));
-  network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
+  network::mojom::URLResponseHeadPtr head =
+      network::mojom::URLResponseHead::New();
+  head->headers = new net::HttpResponseHeaders(
       std::string(kWEBPHeaderResponse, base::size(kWEBPHeaderResponse)));
-  head.mime_type = "image/webp";
+  head->mime_type = "image/webp";
   network::URLLoaderCompletionStatus status;
   status.decoded_body_length = content.size();
-  factory_.AddResponse(GURL(kTestUrl), head, content, status);
+  factory_.AddResponse(GURL(kTestUrl), std::move(head), content, status);
   environment_.RunUntilIdle();
   EXPECT_NE(nil, result_);
   EXPECT_TRUE(called_);
@@ -198,13 +199,14 @@ TEST_F(IOSImageDataFetcherWrapperTest, TestBadWebP) {
   SetupFetcher();
 
   std::string content = "This is not a valid WebP image";
-  network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
+  network::mojom::URLResponseHeadPtr head =
+      network::mojom::URLResponseHead::New();
+  head->headers = new net::HttpResponseHeaders(
       std::string(kWEBPHeaderResponse, base::size(kWEBPHeaderResponse)));
-  head.mime_type = "image/webp";
+  head->mime_type = "image/webp";
   network::URLLoaderCompletionStatus status;
   status.decoded_body_length = content.size();
-  factory_.AddResponse(GURL(kTestUrl), head, content, status);
+  factory_.AddResponse(GURL(kTestUrl), std::move(head), content, status);
   environment_.RunUntilIdle();
   EXPECT_EQ(nil, result_);
   EXPECT_TRUE(called_);

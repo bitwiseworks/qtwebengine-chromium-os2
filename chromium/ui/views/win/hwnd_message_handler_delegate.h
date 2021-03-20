@@ -17,7 +17,7 @@ class Insets;
 class Point;
 class Rect;
 class Size;
-}
+}  // namespace gfx
 
 namespace ui {
 class Accelerator;
@@ -26,7 +26,7 @@ class KeyEvent;
 class MouseEvent;
 class ScrollEvent;
 class TouchEvent;
-}
+}  // namespace ui
 
 namespace views {
 
@@ -57,9 +57,11 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   // TODO(bsep): Investigate deleting this when v2 Apps support is removed.
   virtual bool HasFrame() const = 0;
 
+  // True if the window should paint as active (regardless of whether it has
+  // system focus).
+  virtual bool ShouldPaintAsActive() const = 0;
+
   virtual void SchedulePaint() = 0;
-  virtual void SetAlwaysRenderAsActive(bool always_render_as_active) = 0;
-  virtual bool IsAlwaysRenderAsActive() = 0;
 
   virtual bool CanResize() const = 0;
   virtual bool CanMaximize() const = 0;
@@ -116,16 +118,13 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   // TODO(beng): Investigate migrating these methods to On* prefixes once
   // HWNDMessageHandler is the WindowImpl.
 
-  // Called when another app was activated.
-  virtual void HandleAppDeactivated() = 0;
-
   // Called when the window was activated or deactivated. |active| reflects the
   // new state.
   virtual void HandleActivationChanged(bool active) = 0;
 
   // Called when a well known "app command" from the system was performed.
   // Returns true if the command was handled.
-  virtual bool HandleAppCommand(short command) = 0;
+  virtual bool HandleAppCommand(int command) = 0;
 
   // Called from WM_CANCELMODE.
   virtual void HandleCancelMode() = 0;
@@ -243,9 +242,7 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // Like PreHandleMSG, but called after HWNDMessageHandler's built-in handling
   // has run and after DefWindowProc.
-  virtual void PostHandleMSG(UINT message,
-                             WPARAM w_param,
-                             LPARAM l_param) = 0;
+  virtual void PostHandleMSG(UINT message, WPARAM w_param, LPARAM l_param) = 0;
 
   // Called when a scroll event is received. Returns true if the event was
   // handled by the delegate.
@@ -266,7 +263,7 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   virtual void HandleWindowScaleFactorChanged(float window_scale_factor) = 0;
 
  protected:
-  virtual ~HWNDMessageHandlerDelegate() {}
+  virtual ~HWNDMessageHandlerDelegate() = default;
 };
 
 }  // namespace views

@@ -82,9 +82,9 @@ bool OriginIdentifierValueMap::PatternPair::operator<(
          std::tie(other.primary_pattern, other.secondary_pattern);
 }
 
-OriginIdentifierValueMap::ValueEntry::ValueEntry(){};
+OriginIdentifierValueMap::ValueEntry::ValueEntry() {}
 
-OriginIdentifierValueMap::ValueEntry::~ValueEntry(){};
+OriginIdentifierValueMap::ValueEntry::~ValueEntry() {}
 
 std::unique_ptr<RuleIterator> OriginIdentifierValueMap::GetRuleIterator(
     ContentSettingsType content_type,
@@ -168,7 +168,7 @@ void OriginIdentifierValueMap::SetValue(
   DCHECK(secondary_pattern.IsValid());
   // TODO(raymes): Remove this after we track down the cause of
   // crbug.com/531548.
-  CHECK_NE(CONTENT_SETTINGS_TYPE_DEFAULT, content_type);
+  CHECK_NE(ContentSettingsType::DEFAULT, content_type);
   EntryMapKey key(content_type, resource_identifier);
   PatternPair patterns(primary_pattern, secondary_pattern);
   ValueEntry* entry = &entries_[key][patterns];

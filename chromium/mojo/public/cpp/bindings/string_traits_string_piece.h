@@ -12,7 +12,7 @@ namespace mojo {
 
 template <>
 struct StringTraits<base::StringPiece> {
-  static bool IsNull(const base::StringPiece& input) {
+  static bool IsNull(base::StringPiece input) {
     // base::StringPiece is always converted to non-null mojom string. We could
     // have let StringPiece containing a null data pointer map to null mojom
     // string, but StringPiece::empty() returns true in this case. It seems
@@ -23,17 +23,13 @@ struct StringTraits<base::StringPiece> {
 
   static void SetToNull(base::StringPiece* output) {
     // Convert null to an "empty" base::StringPiece.
-    output->set(nullptr, 0);
+    *output = base::StringPiece();
   }
 
-  static size_t GetSize(const base::StringPiece& input) { return input.size(); }
-
-  static const char* GetData(const base::StringPiece& input) {
-    return input.data();
-  }
+  static base::StringPiece GetUTF8(base::StringPiece input) { return input; }
 
   static bool Read(StringDataView input, base::StringPiece* output) {
-    output->set(input.storage(), input.size());
+    *output = base::StringPiece(input.storage(), input.size());
     return true;
   }
 };

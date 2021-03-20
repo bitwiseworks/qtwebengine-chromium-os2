@@ -4,6 +4,8 @@
 
 #include "media/cast/cast_sender_impl.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
@@ -26,14 +28,12 @@ class LocalVideoFrameInput : public VideoFrameInput {
             video_sender.get() ?
                 video_sender->CreateVideoFrameFactory().release() : nullptr) {}
 
-  void InsertRawVideoFrame(const scoped_refptr<media::VideoFrame>& video_frame,
-                           const base::TimeTicks& capture_time) final {
-    cast_environment_->PostTask(CastEnvironment::MAIN,
-                                FROM_HERE,
-                                base::Bind(&VideoSender::InsertRawVideoFrame,
-                                           video_sender_,
-                                           video_frame,
-                                           capture_time));
+  void InsertRawVideoFrame(scoped_refptr<media::VideoFrame> video_frame,
+                           base::TimeTicks capture_time) final {
+    cast_environment_->PostTask(
+        CastEnvironment::MAIN, FROM_HERE,
+        base::BindOnce(&VideoSender::InsertRawVideoFrame, video_sender_,
+                       std::move(video_frame), capture_time));
   }
 
   scoped_refptr<VideoFrame> MaybeCreateOptimizedFrame(
@@ -70,12 +70,10 @@ class LocalAudioFrameInput : public AudioFrameInput {
 
   void InsertAudio(std::unique_ptr<AudioBus> audio_bus,
                    const base::TimeTicks& recorded_time) final {
-    cast_environment_->PostTask(CastEnvironment::MAIN,
-                                FROM_HERE,
-                                base::Bind(&AudioSender::InsertAudio,
-                                           audio_sender_,
-                                           base::Passed(&audio_bus),
-                                           recorded_time));
+    cast_environment_->PostTask(
+        CastEnvironment::MAIN, FROM_HERE,
+        base::BindOnce(&AudioSender::InsertAudio, audio_sender_,
+                       std::move(audio_bus), recorded_time));
   }
 
  protected:
@@ -100,9 +98,7 @@ std::unique_ptr<CastSender> CastSender::Create(
 
 CastSenderImpl::CastSenderImpl(scoped_refptr<CastEnvironment> cast_environment,
                                CastTransport* const transport_sender)
-    : cast_environment_(cast_environment),
-      transport_sender_(transport_sender),
-      weak_factory_(this) {
+    : cast_environment_(cast_environment), transport_sender_(transport_sender) {
   CHECK(cast_environment.get());
 }
 
@@ -115,13 +111,11 @@ void CastSenderImpl::InitializeAudio(
 
   VLOG(1) << "CastSenderImpl@" << this << "::InitializeAudio()";
 
-  audio_sender_.reset(
-      new AudioSender(cast_environment_,
-                      audio_config,
-                      base::Bind(&CastSenderImpl::OnAudioStatusChange,
-                                 weak_factory_.GetWeakPtr(),
-                                 status_change_cb),
-                      transport_sender_));
+  audio_sender_ = std::make_unique<AudioSender>(
+      cast_environment_, audio_config,
+      base::BindRepeating(&CastSenderImpl::OnAudioStatusChange,
+                          weak_factory_.GetWeakPtr(), status_change_cb),
+      transport_sender_);
   if (video_sender_) {
     DCHECK(audio_sender_->GetTargetPlayoutDelay() ==
            video_sender_->GetTargetPlayoutDelay());
@@ -137,17 +131,13 @@ void CastSenderImpl::InitializeVideo(
 
   VLOG(1) << "CastSenderImpl@" << this << "::InitializeVideo()";
 
-  video_sender_.reset(new VideoSender(
-      cast_environment_,
-      video_config,
-      base::Bind(&CastSenderImpl::OnVideoStatusChange,
-                 weak_factory_.GetWeakPtr(),
-                 status_change_cb),
-      create_vea_cb,
-      create_video_encode_mem_cb,
-      transport_sender_,
-      base::Bind(&CastSenderImpl::SetTargetPlayoutDelay,
-                 weak_factory_.GetWeakPtr())));
+  video_sender_ = std::make_unique<VideoSender>(
+      cast_environment_, video_config,
+      base::BindRepeating(&CastSenderImpl::OnVideoStatusChange,
+                          weak_factory_.GetWeakPtr(), status_change_cb),
+      create_vea_cb, create_video_encode_mem_cb, transport_sender_,
+      base::BindRepeating(&CastSenderImpl::SetTargetPlayoutDelay,
+                          weak_factory_.GetWeakPtr()));
   if (audio_sender_) {
     DCHECK(audio_sender_->GetTargetPlayoutDelay() ==
            video_sender_->GetTargetPlayoutDelay());

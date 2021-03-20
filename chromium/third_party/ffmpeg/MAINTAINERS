@@ -39,7 +39,7 @@ QuickTime faststart:
 Miscellaneous Areas
 ===================
 
-documentation                           Stefano Sabatini, Mike Melanson, Timothy Gu, Lou Logan, Gyan Doshi
+documentation                           Stefano Sabatini, Mike Melanson, Timothy Gu, Gyan Doshi
 project server                          Árpád Gereöffy, Michael Niedermayer, Reimar Doeffinger, Alexander Strasser, Nikolay Aleksandrov
 presets                                 Robert Swain
 metadata subsystem                      Aurelien Jacobs
@@ -52,8 +52,9 @@ Communication
 
 website                                 Deby Barbara Lepage
 fate.ffmpeg.org                         Timothy Gu
-Trac bug tracker                        Alexander Strasser, Michael Niedermayer, Carl Eugen Hoyos, Lou Logan
-mailing lists                           Baptiste Coudurier, Lou Logan
+Trac bug tracker                        Alexander Strasser, Michael Niedermayer, Carl Eugen Hoyos
+Patchwork                               Andriy Gelman
+mailing lists                           Baptiste Coudurier
 Google+                                 Paul B Mahol, Michael Niedermayer, Alexander Strasser
 Twitter                                 Lou Logan, Reynaldo H. Verdejo Pinochet
 Launchpad                               Timothy Gu
@@ -143,6 +144,7 @@ Codecs:
   asv*                                  Michael Niedermayer
   atrac3plus*                           Maxim Poliakovski
   audiotoolbox*                         Rodger Combs
+  avs2*                                 Huiwen Ren
   bgmc.c, bgmc.h                        Thilo Borgmann
   binkaudio.c                           Peter Ross
   cavs*                                 Stefan Gehrer
@@ -167,7 +169,6 @@ Codecs:
   eacmv*, eaidct*, eat*                 Peter Ross
   evrc*                                 Paul B Mahol
   exif.c, exif.h                        Thilo Borgmann
-  exr.c                                 Martin Vignali
   ffv1*                                 Michael Niedermayer
   ffwavesynth.c                         Nicolas George
   fifo.c                                Jan Sebechlebsky
@@ -189,6 +190,7 @@ Codecs:
   libcelt_dec.c                         Nicolas George
   libcodec2.c                           Tomas Härdin
   libdirac*                             David Conrad
+  libdavs2.c                            Huiwen Ren
   libgsm.c                              Michel Bardiaux
   libkvazaar.c                          Arttu Ylä-Outinen
   libopenjpeg.c                         Jaikrishnan Menon
@@ -197,6 +199,7 @@ Codecs:
   libvorbis.c                           David Conrad
   libvpx*                               James Zern
   libxavs.c                             Stefan Gehrer
+  libxavs2.c                            Huiwen Ren
   libzvbi-teletextdec.c                 Marton Balint
   lzo.h, lzo.c                          Reimar Doeffinger
   mdec.c                                Michael Niedermayer
@@ -212,6 +215,7 @@ Codecs:
   msvideo1.c                            Mike Melanson
   nuv.c                                 Reimar Doeffinger
   nvdec*, nvenc*                        Timo Rothenpieler
+  omx.c                                 Martin Storsjo, Aman Gupta
   opus*                                 Rostislav Pehlivanov
   paf.*                                 Paul B Mahol
   pcx.c                                 Ivo van Poorten
@@ -360,11 +364,14 @@ Filters:
   vf_ssim.c                             Paul B Mahol
   vf_stereo3d.c                         Paul B Mahol
   vf_telecine.c                         Paul B Mahol
+  vf_tonemap_opencl.c                   Ruiling Song
   vf_yadif.c                            Michael Niedermayer
   vf_zoompan.c                          Paul B Mahol
 
 Sources:
   vsrc_mandelbrot.c                     Michael Niedermayer
+
+dnn                                     Yejun Guo
 
 libavformat
 ===========
@@ -444,7 +451,7 @@ Muxers/Demuxers:
   mpegtsenc.c                           Baptiste Coudurier
   msnwc_tcp.c                           Ramiro Polla
   mtv.c                                 Reynaldo H. Verdejo Pinochet
-  mxf*                                  Baptiste Coudurier
+  mxf*                                  Baptiste Coudurier, Tomas Härdin
   nistspheredec.c                       Paul B Mahol
   nsvdec.c                              Francois Revol
   nut*                                  Michael Niedermayer
@@ -500,6 +507,7 @@ Protocols:
   ftp.c                                 Lukasz Marek
   http.c                                Ronald S. Bultje
   libssh.c                              Lukasz Marek
+  libzmq.c                              Andriy Gelman
   mms*.c                                Ronald S. Bultje
   udp.c                                 Luca Abeni
   icecast.c                             Marvin Scholz
@@ -526,6 +534,7 @@ Alpha                                   Falk Hueffner
 MIPS                                    Manojkumar Bhosale, Shiyou Yin
 Mac OS X / PowerPC                      Romain Dolbeau, Guillaume Poirier
 Amiga / PowerPC                         Colin Ward
+Linux / PowerPC                         Lauri Kasanen
 Windows MinGW                           Alex Beregszaszi, Ramiro Polla
 Windows Cygwin                          Victor Paesa
 Windows MSVC                            Matthew Oliver, Hendrik Leppkes
@@ -611,6 +620,7 @@ Sascha Sommer                 38A0 F88B 868E 9D3A 97D4 D6A0 E823 706F 1E07 0D3C
 Stefano Sabatini              0D0B AD6B 5330 BBAD D3D6 6A0C 719C 2839 FC43 2D5F
 Steinar H. Gunderson          C2E9 004F F028 C18E 4EAD DB83 7F61 7561 7797 8F76
 Stephan Hilb                  4F38 0B3A 5F39 B99B F505 E562 8D5C 5554 4E17 8863
+Thilo Borgmann (thilo)        CE1D B7F4 4D20 FC3A DD9F FE5A 257C 5B8F 1D20 B92F
 Tiancheng "Timothy" Gu        9456 AFC0 814A 8139 E994 8351 7FE6 B095 B582 B0D4
 Tim Nicholson                 38CF DB09 3ED0 F607 8B67 6CED 0C0B FC44 8B0B FC83
 Tomas Härdin (thardin)        A79D 4E3D F38F 763F 91F5 8B33 A01E 8AE0 41BB 2551

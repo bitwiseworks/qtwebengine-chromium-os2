@@ -22,7 +22,7 @@ void CSSGlobalRuleSet::InitWatchedSelectorsRuleSet(Document& document) {
       watch->WatchedCallbackSelectors();
   if (!watched_selectors.size())
     return;
-  watched_selectors_rule_set_ = RuleSet::Create();
+  watched_selectors_rule_set_ = MakeGarbageCollected<RuleSet>();
   for (unsigned i = 0; i < watched_selectors.size(); ++i) {
     watched_selectors_rule_set_->AddStyleRule(watched_selectors[i],
                                               kRuleHasNoSpecialState);
@@ -60,7 +60,7 @@ void CSSGlobalRuleSet::Dispose() {
   is_dirty_ = true;
 }
 
-void CSSGlobalRuleSet::Trace(blink::Visitor* visitor) {
+void CSSGlobalRuleSet::Trace(Visitor* visitor) {
   visitor->Trace(watched_selectors_rule_set_);
 }
 

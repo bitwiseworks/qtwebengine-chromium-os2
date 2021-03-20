@@ -37,7 +37,8 @@ struct ContextState;
 
 class MockGLES2Decoder : public GLES2Decoder {
  public:
-  MockGLES2Decoder(CommandBufferServiceBase* command_buffer_service,
+  MockGLES2Decoder(DecoderClient* client,
+                   CommandBufferServiceBase* command_buffer_service,
                    Outputter* outputter);
   ~MockGLES2Decoder() override;
 
@@ -128,6 +129,14 @@ class MockGLES2Decoder : public GLES2Decoder {
                     unsigned format,
                     int width,
                     int height));
+  MOCK_METHOD7(ClearCompressedTextureLevel3D,
+               bool(Texture* texture,
+                    unsigned target,
+                    int level,
+                    unsigned format,
+                    int width,
+                    int height,
+                    int depth));
   MOCK_METHOD1(IsCompressedTextureFormat,
                bool(unsigned format));
   MOCK_METHOD8(ClearLevel3D,
@@ -176,7 +185,7 @@ class MockGLES2Decoder : public GLES2Decoder {
       void(CopyTexImageResourceManager* copy_texture_resource_manager));
 
  private:
-  base::WeakPtrFactory<MockGLES2Decoder> weak_ptr_factory_;
+  base::WeakPtrFactory<MockGLES2Decoder> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MockGLES2Decoder);
 };

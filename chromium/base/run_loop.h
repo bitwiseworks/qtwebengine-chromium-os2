@@ -11,6 +11,7 @@
 #include "base/base_export.h"
 #include "base/callback.h"
 #include "base/containers/stack.h"
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -25,6 +26,12 @@ class WebEngineContext;
 }
 
 namespace base {
+
+namespace test {
+class ScopedRunLoopTimeout;
+class ScopedDisableRunLoopTimeout;
+}  // namespace test
+
 #if defined(OS_ANDROID)
 class MessagePumpForUI;
 #endif
@@ -86,8 +93,8 @@ class BASE_EXPORT RunLoop {
   //             are present.
   // WARNING #2: This may return too early! For example, if used to run until an
   //             incoming event has occurred but that event depends on a task in
-  //             a different queue -- e.g. a system event.
-  // Per the warnings below, this tends to lead to flaky tests; prefer
+  //             a different queue -- e.g. another TaskRunner or a system event.
+  // Per the warnings above, this tends to lead to flaky tests; prefer
   // QuitClosure()+Run() when at all possible.
   void RunUntilIdle();
 
@@ -99,7 +106,7 @@ class BASE_EXPORT RunLoop {
   // Quit() quits an earlier call to Run() immediately. QuitWhenIdle() quits an
   // earlier call to Run() when there aren't any tasks or messages in the queue.
   //
-  // These methods are thread-safe but note that Quit() is best-effort when
+  // These methods are thread-safe but note that Quit() is asynchronous when
   // called from another thread (will quit soon but tasks that were already
   // queued on this RunLoop will get to run first).
   //
@@ -110,25 +117,37 @@ class BASE_EXPORT RunLoop {
   // RunLoop has already finished running has no effect.
   //
   // WARNING: You must NEVER assume that a call to Quit() or QuitWhenIdle() will
-  // terminate the targetted message loop. If a nested RunLoop continues
+  // terminate the targeted message loop. If a nested RunLoop continues
   // running, the target may NEVER terminate. It is very easy to livelock (run
   // forever) in such a case.
   void Quit();
   void QuitWhenIdle();
 
-  // Convenience methods to get a closure that safely calls Quit() or
-  // QuitWhenIdle() (has no effect if the RunLoop instance is gone).
+  // Returns a RepeatingClosure that safely calls Quit() or QuitWhenIdle() (has
+  // no effect if the RunLoop instance is gone).
   //
-  // The resulting Closure is thread-safe (note however that invoking the
-  // QuitClosure() from another thread than this RunLoop's will result in an
-  // asynchronous rather than immediate Quit()).
+  // These methods must be called from the thread on which the RunLoop was
+  // created.
+  //
+  // Returned closures may be safely:
+  //   * Passed to other threads.
+  //   * Run() from other threads, though this will quit the RunLoop
+  //     asynchronously.
+  //   * Run() after the RunLoop has stopped or been destroyed, in which case
+  //     they are a no-op).
+  //   * Run() before RunLoop::Run(), in which case RunLoop::Run() returns
+  //     immediately."
   //
   // Example:
   //   RunLoop run_loop;
-  //   PostTask(run_loop.QuitClosure());
+  //   DoFooAsyncAndNotify(run_loop.QuitClosure());
   //   run_loop.Run();
-  Closure QuitClosure();
-  Closure QuitWhenIdleClosure();
+  //
+  // Note that Quit() itself is thread-safe and may be invoked directly if you
+  // have access to the RunLoop reference from another thread (e.g. from a
+  // capturing lambda or test observer).
+  RepeatingClosure QuitClosure();
+  RepeatingClosure QuitWhenIdleClosure();
 
   // Returns true if there is an active RunLoop on this thread.
   // Safe to call before RegisterDelegateForCurrentThread().
@@ -167,17 +186,18 @@ class BASE_EXPORT RunLoop {
 
     // Used by RunLoop to inform its Delegate to Run/Quit. Implementations are
     // expected to keep on running synchronously from the Run() call until the
-    // eventual matching Quit() call. Upon receiving a Quit() call it should
-    // return from the Run() call as soon as possible without executing
-    // remaining tasks/messages. Run() calls can nest in which case each Quit()
-    // call should result in the topmost active Run() call returning. The only
-    // other trigger for Run() to return is the
-    // |should_quit_when_idle_callback_| which the Delegate should probe before
-    // sleeping when it becomes idle. |application_tasks_allowed| is true if
-    // this is the first Run() call on the stack or it was made from a nested
-    // RunLoop of Type::kNestableTasksAllowed (otherwise this Run() level should
-    // only process system tasks).
-    virtual void Run(bool application_tasks_allowed) = 0;
+    // eventual matching Quit() call or a delay of |timeout| expires. Upon
+    // receiving a Quit() call or timing out it should return from the Run()
+    // call as soon as possible without executing remaining tasks/messages.
+    // Run() calls can nest in which case each Quit() call should result in the
+    // topmost active Run() call returning. The only other trigger for Run()
+    // to return is the |should_quit_when_idle_callback_| which the Delegate
+    // should probe before sleeping when it becomes idle.
+    // |application_tasks_allowed| is true if this is the first Run() call on
+    // the stack or it was made from a nested RunLoop of
+    // Type::kNestableTasksAllowed (otherwise this Run() level should only
+    // process system tasks).
+    virtual void Run(bool application_tasks_allowed, TimeDelta timeout) = 0;
     virtual void Quit() = 0;
 
     // Invoked right before a RunLoop enters a nested Run() call on this
@@ -234,56 +254,7 @@ class BASE_EXPORT RunLoop {
   // instance and increase readability.
   static void QuitCurrentDeprecated();
   static void QuitCurrentWhenIdleDeprecated();
-  static Closure QuitCurrentWhenIdleClosureDeprecated();
-
-  // Configures all RunLoop::Run() calls on the current thread to run the
-  // supplied |on_timeout| callback if they run for longer than |timeout|.
-  //
-  // Specifying Run() timeouts per-thread avoids the need to cope with Run()s
-  // executing concurrently with ScopedRunTimeoutForTest initialization or
-  // teardown, and allows "default" timeouts to be specified by suites, rather
-  // than explicitly configuring them for every RunLoop, in each test.
-  //
-  // Tests can temporarily override any currently-active Run() timeout, e.g. to
-  // allow a step to Run() for longer than the suite's default timeout, by
-  // creating a new ScopedRunTimeoutForTest on their stack, e.g:
-  //
-  //   ScopedRunTimeoutForTest default_timeout(kDefaultRunTimeout);
-  //   ... do other test stuff ...
-  //   RunLoop().Run(); // Run for up to kDefaultRunTimeout.
-  //   ...
-  //   {
-  //     ScopedRunTimeoutForTest test_specific_timeout(kTestSpecificTimeout);
-  //     RunLoop().Run(); // Run for up to kTestSpecificTimeout.
-  //   }
-  //   ...
-  //   RunLoop().Run(); // Run for up to kDefaultRunTimeout.
-  //
-  // The currently-active timeout can be temporarily disabled by passing a zero
-  // timeout e.g:
-  //   ScopedRunTimeoutForTest disable_timeout(TimeDelta());
-  //
-  // ScopedTaskEnvironment applies a default Run() timeout after which a
-  // LOG(FATAL) is performed, to dump a crash stack for diagnosis.
-  class BASE_EXPORT ScopedRunTimeoutForTest {
-   public:
-    explicit ScopedRunTimeoutForTest(TimeDelta timeout);
-    ScopedRunTimeoutForTest(TimeDelta timeout, RepeatingClosure on_timeout);
-    ~ScopedRunTimeoutForTest();
-
-    // Returns the active ScopedRunTimeoutForTest on the calling thread, if any,
-    // or null otherwise.
-    static const RunLoop::ScopedRunTimeoutForTest* Current();
-
-    TimeDelta timeout() const { return timeout_; }
-    const RepeatingClosure& on_timeout() const { return on_timeout_; }
-
-   private:
-    const TimeDelta timeout_;
-    const RepeatingClosure on_timeout_;
-    ScopedRunTimeoutForTest* const nested_timeout_;
-    DISALLOW_COPY_AND_ASSIGN(ScopedRunTimeoutForTest);
-  };
+  static RepeatingClosure QuitCurrentWhenIdleClosureDeprecated();
 
   // Run() will DCHECK if called while there's a ScopedDisallowRunningForTesting
   // in scope on its thread. This is useful to add safety to some test
@@ -307,6 +278,15 @@ class BASE_EXPORT RunLoop {
     DISALLOW_COPY_AND_ASSIGN(ScopedDisallowRunningForTesting);
   };
 
+  // Support for //base/test/scoped_run_loop_timeout.h.
+  // This must be public for access by the implementation code in run_loop.cc.
+  struct BASE_EXPORT RunLoopTimeout {
+    RunLoopTimeout();
+    ~RunLoopTimeout();
+    TimeDelta timeout;
+    RepeatingClosure on_timeout;
+  };
+
  private:
   FRIEND_TEST_ALL_PREFIXES(MessageLoopTypedTest, RunLoopQuitOrderAfter);
   friend class QtWebEngineCore::WebEngineContext;
@@ -323,14 +303,21 @@ class BASE_EXPORT RunLoop {
   friend class MessagePumpUIApplication;
 #endif
 
+  // Support for //base/test/scoped_run_loop_timeout.h.
+  friend class test::ScopedRunLoopTimeout;
+  friend class test::ScopedDisableRunLoopTimeout;
+
+  static void SetTimeoutForCurrentThread(const RunLoopTimeout* timeout);
+  static const RunLoopTimeout* GetTimeoutForCurrentThread();
+
   // Return false to abort the Run.
   bool BeforeRun();
   void AfterRun();
 
-  // A copy of RunLoop::Delegate for the thread driven by tis RunLoop for quick
-  // access without using TLS (also allows access to state from another sequence
-  // during Run(), ref. |sequence_checker_| below).
-  Delegate* delegate_;
+  // A cached reference of RunLoop::Delegate for the thread driven by this
+  // RunLoop for quick access without using TLS (also allows access to state
+  // from another sequence during Run(), ref. |sequence_checker_| below).
+  Delegate* const delegate_;
 
   const Type type_;
 
@@ -362,7 +349,7 @@ class BASE_EXPORT RunLoop {
   const scoped_refptr<SingleThreadTaskRunner> origin_task_runner_;
 
   // WeakPtrFactory for QuitClosure safety.
-  WeakPtrFactory<RunLoop> weak_factory_;
+  WeakPtrFactory<RunLoop> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RunLoop);
 };

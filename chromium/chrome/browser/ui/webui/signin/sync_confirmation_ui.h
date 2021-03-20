@@ -11,7 +11,6 @@
 
 #include "base/macros.h"
 #include "chrome/browser/ui/webui/signin/signin_web_dialog_ui.h"
-#include "components/consent_auditor/consent_auditor.h"
 
 namespace content {
 class WebUIDataSource;
@@ -42,9 +41,8 @@ class SyncConfirmationUI : public SigninWebDialogUI {
                          const std::string& name,
                          int ids);
 
+  // For consent auditing.
   std::unordered_map<std::string, int> js_localized_string_to_ids_map_;
-
-  consent_auditor::Feature consent_feature_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncConfirmationUI);
 };
