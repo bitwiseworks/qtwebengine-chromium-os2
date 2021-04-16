@@ -130,7 +130,7 @@ angle_test("angle_unittests") {
   }
 }
 
-if (is_win || is_linux || is_mac || is_android || is_fuchsia) {
+if (is_win || is_linux || is_mac || is_android || is_fuchsia || is_os2) {
   import("angle_end2end_tests.gni")
 
   angle_test("angle_end2end_tests") {
@@ -279,7 +279,7 @@ if (is_win || is_linux || is_android || is_mac) {
   }
 }
 
-if (is_win || is_linux || is_android || is_mac || is_fuchsia) {
+if (is_win || is_linux || is_android || is_mac || is_fuchsia || is_os2) {
   import("angle_perftests.gni")
 
   angle_source_set("angle_trace_perftests") {
@@ -1152,13 +1152,13 @@ group("angle_tests") {
     ":angle_perftests",
     ":angle_unittests",
   ]
-  if (!is_fuchsia) {
+  if (!is_fuchsia && !is_os2) {
     deps += [
       ":angle_white_box_perftests",
       ":angle_white_box_tests",
     ]
   }
-  if (build_angle_deqp_tests && !is_fuchsia) {
+  if (build_angle_deqp_tests && !is_fuchsia && !is_os2) {
     deps += [
       ":angle_deqp_egl_tests",
       ":angle_deqp_gles2_tests",

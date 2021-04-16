@@ -326,7 +326,7 @@ template("grit") {
       _brotli_target = "//third_party/brotli:brotli($host_toolchain)"
       _brotli_executable = get_label_info(_brotli_target, "root_out_dir") +
                            "/" + get_label_info(_brotli_target, "name")
-      if (host_os == "win") {
+      if (host_os == "win" || host_os == "os2") {
         _brotli_executable += ".exe"
       }
 

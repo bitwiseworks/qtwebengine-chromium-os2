@@ -108,7 +108,7 @@ group("telemetry_chrome_test_without_chrome") {
   ]
 
   # Cr-Fuchsia doesn't support breakpad.
-  if (!is_win && !is_fuchsia) {
+  if (!is_win && !is_fuchsia && !is_os2) {
     data_deps += [
       # This is defined for Windows, but is unused by Telemetry on
       # Windows, and including it can have issues when cross-compiling
