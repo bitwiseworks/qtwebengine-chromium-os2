@@ -93,6 +93,7 @@ class GamepadPose {
 
 enum class GamepadMapping { kNone = 0, kStandard = 1, kXrStandard = 2 };
 
+enum class GamepadHand { kNone = 0, kLeft = 1, kRight = 2 };
 
 // This structure is intentionally POD and fixed size so that it can be shared
 // memory between hardware polling threads and the rest of the browser. See
