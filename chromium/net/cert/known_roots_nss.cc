@@ -56,10 +56,10 @@ bool IsKnownRoot(CERTCertificate* root) {
           // TODO: We need to use dlopen + dlsym (and underscore) since
           // RTLD_DEFAULT is not yet implemented in LIBCn (check
           // https://github.com/bitwiseworks/libc/issues/86 for details).
-          dlsym2("_PK11_HasAttributeSet")));
+          dlsym2("_PK11_HasAttributeSet"));
 #else
           dlsym(RTLD_DEFAULT, "PK11_HasAttributeSet"));
-#endif          
+#endif
   if (pk11_has_attribute_set) {
     // Historically, the set of root certs was determined based on whether or
     // not it was part of nssckbi.[so,dll], the read-only PKCS#11 module that

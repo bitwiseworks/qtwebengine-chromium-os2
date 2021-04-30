@@ -852,10 +852,10 @@ int CertVerifyProcNSS::VerifyInternalImpl(
           // TODO: We need to use dlopen + dlsym (and underscore) since
           // RTLD_DEFAULT is not yet implemented in LIBCn (check
           // https://github.com/bitwiseworks/libc/issues/86 for details).
-          dlsym2("_CERT_CacheOCSPResponseFromSideChannel")));
-#else  
+          dlsym2("_CERT_CacheOCSPResponseFromSideChannel"));
+#else
           dlsym(RTLD_DEFAULT, "CERT_CacheOCSPResponseFromSideChannel"));
-#endif          
+#endif
   if (!ocsp_response.empty() && cache_ocsp_response_from_side_channel) {
     // Note: NSS uses a thread-safe global hash table, so this call will
     // affect any concurrent verification operations on |cert| or copies of
