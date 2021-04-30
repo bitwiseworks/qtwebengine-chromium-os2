@@ -38,6 +38,27 @@ enum MessageLoopProblems {
   MESSAGE_LOOP_PROBLEM_MAX,
 };
 
+// Returns the number of milliseconds before |next_task_time|, clamped between
+// zero and the biggest ULONG value (or (ULONG)-1 if |next_task_time.is_max()|).
+// Optionally, a recent value of Now() may be passed in to avoid resampling it.
+ULONG GetSleepTimeoutMs(TimeTicks next_task_time,
+                        TimeTicks recent_now = TimeTicks()) {
+  // Shouldn't need to sleep or install a timer when there's pending immediate
+  // work.
+  DCHECK(!next_task_time.is_null());
+
+  if (next_task_time.is_max())
+    return (ULONG)-1;
+
+  auto now = recent_now.is_null() ? TimeTicks::Now() : recent_now;
+  auto timeout_ms = (next_task_time - now).InMillisecondsRoundedUp();
+
+  // A saturated_cast with an unsigned destination automatically clamps negative
+  // values at zero.
+  static_assert(!std::is_signed<ULONG>::value, "ULONG is unexpectedly signed");
+  return saturated_cast<ULONG>(timeout_ms);
+}
+
 }  // namespace
 
 static const char kWndClass[] = "Chrome_MessagePumpWindow";
@@ -53,8 +74,11 @@ static const ULONG kMsgStopTimer  = WM_USER + 3;
 // MessagePumpOS2 public:
 
 MessagePumpOS2::MessagePumpOS2() = default;
+MessagePumpOS2::~MessagePumpOS2() = default;
 
 void MessagePumpOS2::Run(Delegate* delegate) {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   RunState s;
   s.delegate = delegate;
   s.should_quit = false;
@@ -69,29 +93,10 @@ void MessagePumpOS2::Run(Delegate* delegate) {
 }
 
 void MessagePumpOS2::Quit() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   DCHECK(state_);
   state_->should_quit = true;
-}
-
-//-----------------------------------------------------------------------------
-// MessagePumpOS2 protected:
-
-int MessagePumpOS2::GetCurrentDelay() const {
-  if (delayed_work_time_.is_null())
-    return -1;
-
-  // Be careful here.  TimeDelta has a precision of microseconds, but we want a
-  // value in milliseconds.  If there are 5.5ms left, should the delay be 5 or
-  // 6?  It should be 6 to avoid executing delayed work too early.
-  double timeout = ceil((delayed_work_time_ - TimeTicks::Now()).InMillisecondsF());
-
-  // Range check the |timeout| while converting to an integer.  If the |timeout|
-  // is negative, then we need to run delayed work soon.  If the |timeout| is
-  // "overflowingly" large, that means a delayed task was posted with a
-  // super-long delay.
-  return timeout < 0 ? 0 :
-      (timeout > std::numeric_limits<int>::max() ?
-       std::numeric_limits<int>::max() : static_cast<int>(timeout));
 }
 
 //-----------------------------------------------------------------------------
@@ -108,7 +113,10 @@ MessagePumpForUI::~MessagePumpForUI() {
 }
 
 void MessagePumpForUI::ScheduleWork() {
-  if (__atomic_xchg(&work_state_, HAVE_WORK) != READY)
+  // This is the only MessagePumpForUI method which can be called outside of
+  // |bound_thread_|.
+  bool not_scheduled = false;
+  if (!work_scheduled_.compare_exchange_strong(not_scheduled, true))
     return;  // Someone else continued the pumping.
 
   // Make sure the MessagePump does some work for us.
@@ -126,25 +134,48 @@ void MessagePumpForUI::ScheduleWork() {
   // probably be recoverable.
 
   // Clarify that we didn't really insert.
-  __atomic_xchg(&work_state_, READY);
+  work_scheduled_ = false;
   UMA_HISTOGRAM_ENUMERATION("Chrome.MessageLoopProblem", MESSAGE_POST_ERROR,
                             MESSAGE_LOOP_PROBLEM_MAX);
 }
 
 void MessagePumpForUI::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
-  delayed_work_time_ = delayed_work_time;
-  RescheduleTimer();
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
+  // Since this is always called from |bound_thread_|, there is almost always
+  // nothing to do as the loop is already running. When the loop becomes idle,
+  // it will typically WaitForWork() in DoRunLoop() with the timeout provided by
+  // DoWork(). The only alternative to this is entering a native nested loop
+  // (e.g. modal dialog) under a ScopedNestableTaskAllower, in which case
+  // HandleWorkMessage() will be invoked when the system picks up kMsgHaveWork
+  // and it will ScheduleNativeTimer() if it's out of immediate work. However,
+  // in that alternate scenario : it's possible for a Windows native task (e.g.
+  // https://docs.microsoft.com/en-us/windows/desktop/winmsg/using-hooks) to
+  // wake the native nested loop and PostDelayedTask() to the current thread
+  // from it. This is the only case where we must install/adjust the native
+  // timer from ScheduleDelayedWork() because if we don't, the native loop will
+  // go back to sleep, unaware of the new |delayed_work_time|.
+  // TODO(gab): This could potentially be replaced by a ForegroundIdleProc hook
+  // if Windows ends up being the only platform requiring ScheduleDelayedWork().
+  if (in_native_loop_ && !work_scheduled_) {
+    // TODO(gab): Consider passing a NextWorkInfo object to ScheduleDelayedWork
+    // to take advantage of |recent_now| here too.
+    ScheduleNativeTimer({delayed_work_time, TimeTicks::Now()});
+  }
 }
 
 void MessagePumpForUI::EnableWmQuit() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
   enable_wm_quit_ = true;
 }
 
 void MessagePumpForUI::AddObserver(Observer* observer) {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
   observers_.AddObserver(observer);
 }
 
 void MessagePumpForUI::RemoveObserver(Observer* observer) {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
   observers_.RemoveObserver(observer);
 }
 
@@ -157,7 +188,7 @@ Lock MessagePumpForUI::timer_ids_lock_;
 MessagePumpForUI::TimerIDMap MessagePumpForUI::timer_ids_;
 
 // static
-ULONG MessagePumpForUI::SetTimer(HWND hwnd, MessagePumpForUI *that, int msec) {
+ULONG MessagePumpForUI::SetTimer(HWND hwnd, MessagePumpForUI *that, ULONG msec) {
   AutoLock auto_lock(timer_ids_lock_);
   TimerID tid = { hwnd, 1 };
   for (; tid.id <= TID_USERMAX; ++tid.id) {
@@ -184,11 +215,14 @@ MessagePumpForUI *MessagePumpForUI::GetTimer(HWND hwnd, ULONG id) {
 }
 
 // static
-void MessagePumpForUI::KillTimer(HWND hwnd, ULONG id) {
+BOOL MessagePumpForUI::KillTimer(HWND hwnd, ULONG id) {
   AutoLock auto_lock(timer_ids_lock_);
-  WinStopTimer(0, hwnd, id);
-  TimerID tid = { hwnd, (USHORT)id };
-  timer_ids_.erase(tid);
+  BOOL rc = WinStopTimer(0, hwnd, id);
+  if (rc) {
+    TimerID tid = { hwnd, (USHORT)id };
+    timer_ids_.erase(tid);
+  }
+  return rc;
 }
 
 // static
@@ -215,6 +249,8 @@ MRESULT APIENTRY MessagePumpForUI::WndProcThunk(
 }
 
 void MessagePumpForUI::DoRunLoop() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   // IF this was just a simple PeekMessage() loop (servicing all possible work
   // queues), then Windows would try to achieve the following order according
   // to MSDN documentation about PeekMessage with no filter):
@@ -237,40 +273,45 @@ void MessagePumpForUI::DoRunLoop() {
     // work, then it is a good time to consider sleeping (waiting) for more
     // work.
 
+    in_native_loop_ = false;
     state_->delegate->BeforeDoInternalWork();
+    DCHECK(!in_native_loop_);
+
     bool more_work_is_plausible = ProcessNextWindowsMessage();
+    in_native_loop_ = false;
     if (state_->should_quit)
       break;
 
-    more_work_is_plausible |= state_->delegate->DoWork();
+    Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+    in_native_loop_ = false;
+    more_work_is_plausible |= next_work_info.is_immediate();
     if (state_->should_quit)
       break;
 
-    more_work_is_plausible |=
-        state_->delegate->DoDelayedWork(&delayed_work_time_);
-    // If we did not process any delayed work, then we can assume that our
-    // existing WM_TIMER if any will fire when delayed work should run.  We
-    // don't want to disturb that timer if it is already in flight.  However,
-    // if we did do all remaining delayed work, then lets kill the WM_TIMER.
-    if (more_work_is_plausible && delayed_work_time_.is_null())
-      if (timer_id_) {
-        KillTimer(message_hwnd_, timer_id_);
-        timer_id_ = 0;
-      }
-    if (state_->should_quit)
-      break;
-
+    if (installed_native_timer_) {
+      // As described in ScheduleNativeTimer(), the native timer is only
+      // installed and needed while in a nested native loop. If it is installed,
+      // it means the above work entered such a loop. Having now resumed, the
+      // native timer is no longer needed.
+      KillNativeTimer();
+    }
     if (more_work_is_plausible)
       continue;
 
     more_work_is_plausible = state_->delegate->DoIdleWork();
+    // DoIdleWork() shouldn't end up in native nested loops and thus shouldn't
+    // have any chance of reinstalling a native timer.
+    DCHECK(!in_native_loop_);
+    DCHECK(!installed_native_timer_);
     if (state_->should_quit)
       break;
 
     if (more_work_is_plausible)
       continue;
 
-    WaitForWork();  // Wait (sleep) until we have work to do again.
+    // WaitForWork() does some work itself, so notify the delegate of it.
+    state_->delegate->BeforeWait();
+    WaitForWork(next_work_info);
   }
 }
 
@@ -293,18 +334,26 @@ void MessagePumpForUI::InitMessageWnd()
   DCHECK(message_hwnd_);
 }
 
-void MessagePumpForUI::WaitForWork() {
+void MessagePumpForUI::WaitForWork(Delegate::NextWorkInfo next_work_info) {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   // Wait until a message is available.
   WinWaitMsg(0, 0, 0);
 }
 
 void MessagePumpForUI::HandleWorkMessage() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
+  // The kMsgHaveWork message was consumed by a native loop, we must assume
+  // we're in one until DoRunLoop() gets control back.
+  in_native_loop_ = true;
+
   // If we are being called outside of the context of Run, then don't try to do
   // any work.  This could correspond to a MessageBox call or something of that
   // sort.
   if (!state_) {
     // Since we handled a kMsgHaveWork message, we must still update this flag.
-    __atomic_xchg(&work_state_, READY);
+    work_scheduled_ = false;
     return;
   }
 
@@ -313,64 +362,101 @@ void MessagePumpForUI::HandleWorkMessage() {
   // messages that may be in the Windows message queue.
   ProcessPumpReplacementMessage();
 
-  // Now give the delegate a chance to do some work.  It'll let us know if it
-  // needs to do more work.
-  if (state_->delegate->DoWork())
+  Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+  if (next_work_info.is_immediate()) {
     ScheduleWork();
-  state_->delegate->DoDelayedWork(&delayed_work_time_);
-  RescheduleTimer();
+  } else {
+    ScheduleNativeTimer(next_work_info);
+  }
 }
 
 void MessagePumpForUI::HandleTimerMessage() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
+  // ::KillTimer doesn't remove pending WM_TIMER messages from the queue,
+  // explicitly ignore the last WM_TIMER message in that case to avoid handling
+  // work from here when DoRunLoop() is active (which could result in scheduling
+  // work from two places at once). Note: we're still fine in the event that a
+  // second native nested loop is entered before such a dead WM_TIMER message is
+  // discarded because ::SetTimer merely resets the timer if invoked twice with
+  // the same id.
+  if (!installed_native_timer_)
+    return;
+
+  // We only need to fire once per specific delay, another timer may be
+  // scheduled below but we're done with this one.
+  KillNativeTimer();
+
   // If we are being called outside of the context of Run, then don't do
   // anything.  This could correspond to a MessageBox call or something of
   // that sort.
   if (!state_)
     return;
 
-  state_->delegate->DoDelayedWork(&delayed_work_time_);
-  RescheduleTimer();
+  Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+  if (next_work_info.is_immediate()) {
+    ScheduleWork();
+  } else {
+    ScheduleNativeTimer(next_work_info);
+  }
 }
 
-void MessagePumpForUI::RescheduleTimer() {
-  if (delayed_work_time_.is_null())
+void MessagePumpForUI::ScheduleNativeTimer(
+    Delegate::NextWorkInfo next_work_info) {
+  DCHECK(!next_work_info.is_immediate());
+  DCHECK(in_native_loop_);
+
+  // Do not redundantly set the same native timer again if it was already set.
+  // This can happen when a nested native loop goes idle with pending delayed
+  // tasks, then gets woken up by an immediate task, and goes back to idle with
+  // the same pending delay. No need to kill the native timer if there is
+  // already one but the |delayed_run_time| has changed as ::SetTimer reuses the
+  // same id and will replace and reset the existing timer.
+  if (installed_native_timer_ &&
+      *installed_native_timer_ == next_work_info.delayed_run_time) {
     return;
-  //
+  }
+
+  if (next_work_info.delayed_run_time.is_max())
+    return;
+
   // NOTE: OS/2 PM timers are very similar to Windows ones and the comments
   // apply to it most of the time; so we don't bother ourselves changing
   // the names.
   //
-  // We would *like* to provide high resolution timers.  Windows timers using
-  // SetTimer() have a 10ms granularity.  We have to use WM_TIMER as a wakeup
-  // mechanism because the application can enter modal windows loops where it
-  // is not running our MessageLoop; the only way to have our timers fire in
-  // these cases is to post messages there.
-  //
-  // To provide sub-10ms timers, we process timers directly from our run loop.
-  // For the common case, timers will be processed there as the run loop does
-  // its normal work.  However, we *also* set the system timer so that WM_TIMER
-  // events fire.  This mops up the case of timers not being able to work in
-  // modal message loops.  It is possible for the SetTimer to pop and have no
-  // pending timers, because they could have already been processed by the
-  // run loop itself.
-  //
-  // We use a single SetTimer corresponding to the timer that will expire
-  // soonest.  As new timers are created and destroyed, we update SetTimer.
-  // Getting a spurious SetTimer event firing is benign, as we'll just be
-  // processing an empty timer queue.
-  //
-  int delay_msec = GetCurrentDelay();
-  DCHECK_GE(delay_msec, 0);
+  // We do not use native Windows timers in general as they have a poor, 10ms,
+  // granularity. Instead we rely on MsgWaitForMultipleObjectsEx's
+  // high-resolution timeout to sleep without timers in WaitForWork(). However,
+  // when entering a nested native ::GetMessage() loop (e.g. native modal
+  // windows) under a ScopedNestableTaskAllower, we have to rely on a native
+  // timer when HandleWorkMessage() runs out of immediate work. Since
+  // ScopedNestableTaskAllower invokes ScheduleWork() : we are guaranteed that
+  // HandleWorkMessage() will be called after entering a nested native loop that
+  // should process application tasks. But once HandleWorkMessage() is out of
+  // immediate work, ::SetTimer() is used to guarantee we are invoked again
+  // should the next delayed task expire before the nested native loop ends. The
+  // native timer being unnecessary once we return to our DoRunLoop(), we
+  // ::KillTimer when it resumes (nested native loops should be rare so we're
+  // not worried about ::SetTimer<=>::KillTimer churn).
+  // TODO(gab): The long-standing legacy dependency on the behavior of
+  // ScopedNestableTaskAllower is unfortunate, would be nice to make this a
+  // MessagePump concept (instead of requiring impls to invoke ScheduleWork()
+  // one-way and no-op DoWork() the other way).
+
+  UINT delay_msec = strict_cast<UINT>(GetSleepTimeoutMs(
+      next_work_info.delayed_run_time, next_work_info.recent_now));
   if (delay_msec == 0) {
     ScheduleWork();
   } else {
-    // Tell the optimizer to retain these values to simplify analyzing hangs.
+    // Tell the optimizer to retain the delay to simplify analyzing hangs.
     base::debug::Alias(&delay_msec);
     // Create a WM_TIMER event that will wake us up to check for any pending
     // timers (in case we are running within a nested, external sub-pump).
     timer_id_ = SetTimer(message_hwnd_, this, delay_msec);
     if (timer_id_)
       return;
+    installed_native_timer_ = next_work_info.delayed_run_time;
+
     // If we can't set timers, we are in big trouble... but cross our fingers
     // for now.
     // TODO(jar): If we don't see this error, use a CHECK() here instead.
@@ -379,7 +465,19 @@ void MessagePumpForUI::RescheduleTimer() {
   }
 }
 
+void MessagePumpForUI::KillNativeTimer() {
+  DCHECK(installed_native_timer_);
+  DCHECK(timer_id_);
+  const bool success =
+      KillTimer(message_hwnd_, timer_id_);
+  DPCHECK(success);
+  timer_id_ = 0;
+  installed_native_timer_.reset();
+}
+
 bool MessagePumpForUI::ProcessNextWindowsMessage() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   // If there are sent messages in the queue then WinPeekMsg internally
   // dispatches the message and returns false. We return true in this
   // case to ensure that the message loop peeks again instead of calling
@@ -398,6 +496,8 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
 }
 
 bool MessagePumpForUI::ProcessMessageHelper(QMSG& msg) {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   TRACE_EVENT1("base,toplevel", "MessagePumpForUI::ProcessMessageHelper",
                "message", msg.msg);
   if (WM_QUIT == msg.msg) {
@@ -428,6 +528,8 @@ bool MessagePumpForUI::ProcessMessageHelper(QMSG& msg) {
 }
 
 bool MessagePumpForUI::ProcessPumpReplacementMessage() {
+  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
+
   // When we encounter a kMsgHaveWork message, this method is called to peek and
   // process a replacement message. The goal is to make the kMsgHaveWork as non-
   // intrusive as possible, even though a continuous stream of such messages are
@@ -445,8 +547,8 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
          msg.hwnd != message_hwnd_);
 
   // Since we discarded a kMsgHaveWork message, we must update the flag.
-  int old_work_state_ = __atomic_xchg(&work_state_, READY);
-  DCHECK_EQ(HAVE_WORK, old_work_state_);
+  DCHECK(work_scheduled_);
+  work_scheduled_ = false;
 
   // We don't need a special time slice if we didn't have_message to process.
   if (!have_message)
