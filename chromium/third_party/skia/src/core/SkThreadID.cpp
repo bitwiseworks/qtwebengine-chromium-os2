@@ -5,12 +5,18 @@
  * found in the LICENSE file.
  */
 
+#ifdef __OS2__
+// SkThreadID.h includes stdlib.h w/o this define but _gettid needs it.
+#define _EMX_SOURCE
+#endif
+
 #include "include/private/SkThreadID.h"
 
 #ifdef SK_BUILD_FOR_WIN
     #include "src/core/SkLeanWindows.h"
     SkThreadID SkGetThreadID() { return GetCurrentThreadId(); }
 #elif defined SK_BUILD_FOR_OS2
+    #define _EMX_SOURCE
     #include <stdlib.h>
     SkThreadID SkGetThreadID() { return (int64_t)_gettid(); }
 #else

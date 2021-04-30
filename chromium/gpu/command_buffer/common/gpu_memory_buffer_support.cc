@@ -56,7 +56,7 @@ uint32_t GetPlatformSpecificTextureTarget() {
   return macos_specific_texture_target;
 #elif defined(OS_ANDROID) || defined(OS_LINUX)
   return GL_TEXTURE_EXTERNAL_OES;
-#elif defined(OS_WIN) || defined(OS_FUCHSIA)
+#elif defined(OS_WIN) || defined(OS_FUCHSIA) || defined(OS_OS2)
   return GL_TEXTURE_2D;
 #elif defined(OS_NACL)
   NOTREACHED();

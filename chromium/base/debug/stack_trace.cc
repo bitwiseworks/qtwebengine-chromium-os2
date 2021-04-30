@@ -242,7 +242,7 @@ std::string StackTrace::ToStringWithPrefix(const char* prefix_string) const {
 }
 
 std::ostream& operator<<(std::ostream& os, const StackTrace& s) {
-#if !defined(__UCLIBC__) & !defined(_AIX)
+#if !defined(__UCLIBC__) & !defined(_AIX) && !defined(OS_OS2)
   s.OutputToStream(&os);
 #else
   os << "StackTrace::OutputToStream not implemented.";

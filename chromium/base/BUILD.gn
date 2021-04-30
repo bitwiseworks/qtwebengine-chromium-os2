@@ -889,10 +889,6 @@ jumbo_component("base") {
       "files/file_posix.cc",
       "files/file_util_posix.cc",
       "files/memory_mapped_file_posix.cc",
-      "memory/madv_free_discardable_memory_allocator_posix.cc",
-      "memory/madv_free_discardable_memory_allocator_posix.h",
-      "memory/madv_free_discardable_memory_posix.cc",
-      "memory/madv_free_discardable_memory_posix.h",
       "message_loop/watchable_io_message_pump_posix.cc",
       "message_loop/watchable_io_message_pump_posix.h",
       "native_library_posix.cc",
@@ -929,7 +925,16 @@ jumbo_component("base") {
       "timer/hi_res_timer_manager_posix.cc",
     ]
 
-    if (!is_nacl && !is_mac && !is_ios) {
+    if (!is_os2) {
+      sources += [
+        "memory/madv_free_discardable_memory_allocator_posix.cc",
+        "memory/madv_free_discardable_memory_allocator_posix.h",
+        "memory/madv_free_discardable_memory_posix.cc",
+        "memory/madv_free_discardable_memory_posix.h",
+      ]
+    }
+
+    if (!is_nacl && !is_mac && !is_ios && !is_os2) {
       sources += [
         "profiler/stack_copier_signal.cc",
         "profiler/stack_copier_signal.h",
@@ -1097,10 +1102,11 @@ jumbo_component("base") {
       "process/process_handle_os2.cc",
       "process/process_iterator_os2.cc",
       "process/process_metrics_os2.cc",
+      "profiler/stack_sampler_posix.cc",
       "threading/platform_thread_os2.cc",
     ]
   }
- 
+
   if (is_mac) {
     sources += [
       "allocator/allocator_interception_mac.h",
@@ -1888,10 +1894,12 @@ jumbo_component("base") {
       "nix/xdg_util.cc",
       "nix/xdg_util.h",
       "process/memory_os2.cc",
+      "profiler/module_cache_stub.cc",
       "rand_util_os2.cc",
       "system/sys_info_os2.cc",
     ]
     sources -= [
+      "profiler/module_cache_posix.cc",
       "rand_util_posix.cc",
       "strings/string16.cc",
       "threading/platform_thread_internal_posix.cc",
@@ -2941,7 +2949,7 @@ test("base_unittests") {
       "posix/unix_domain_socket_unittest.cc",
       "task/thread_pool/task_tracker_posix_unittest.cc",
     ]
-    if (!is_nacl && !is_mac && !is_ios) {
+    if (!is_nacl && !is_mac && !is_ios && !is_os2) {
       sources += [ "profiler/stack_copier_signal_unittest.cc" ]
     }
   }

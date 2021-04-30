@@ -41,6 +41,11 @@ inline constexpr uint32_t CodeIfOnKeyboardPage(uint32_t usage) {
 }
 #define DOM_CODE(usb, evdev, xkb, win, mac, code, id) \
   { usb, CodeIfOnKeyboardPage(usb), code }
+#elif defined(OS_OS2)
+// TODO: Are OS/2 scan codes equal to Windows ones? Use 0 for now
+// (as it used to be in a previous Chromium version).
+#define DOM_CODE(usb, evdev, xkb, win, mac, code, id) \
+  { usb, 0, code }
 #else
 #error Unsupported platform
 #endif

@@ -143,7 +143,7 @@ void SetSystemPagesAccessInternal(
                              GetAccessFlags(accessibility));
     if (arc != NO_ERROR) {
       if (arc == ERROR_NOT_ENOUGH_MEMORY)
-        OOM_CRASH();
+        OOM_CRASH(length);
       // We check `arc` for `NO_ERROR` here so that in a crash
       // report we get the arc number.
       CHECK_EQ(static_cast<ULONG>(NO_ERROR), arc);

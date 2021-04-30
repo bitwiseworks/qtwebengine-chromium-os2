@@ -232,7 +232,7 @@ void VerifyDebugger() {
 #endif
 }
 
-#elif defined(OS_FUCHSIA) || defined(OS_OS2)
+#elif defined(OS_FUCHSIA)
 
 bool BeingDebugged() {
   zx_info_process_t info = {};

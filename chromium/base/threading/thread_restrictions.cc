@@ -23,7 +23,7 @@ std::ostream& operator<<(std::ostream&out, const ThreadLocalBoolean& tl) {
 
 namespace {
 
-#if defined(OS_NACL) || defined(OS_ANDROID)
+#if defined(OS_NACL) || defined(OS_ANDROID) || defined(OS_OS2)
 // NaCL doesn't support stack sampling and Android is slow at stack
 // sampling and this causes timeouts (crbug.com/959139).
 using ThreadLocalBooleanWithStacks = ThreadLocalBoolean;

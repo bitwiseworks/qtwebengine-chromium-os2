@@ -57,7 +57,7 @@ NOINLINE void OnNoMemoryInternal(size_t size) {
   if (!DosQuerySysInfo(QSV_MAXHPRMEM, QSV_MAXHSHMEM, buf, sizeof(buf)))
     LOG(ERROR) << "System high mem: max private " << buf[0]
                << ", max shared " << buf[1];
-  TRAP_SEQUENCE();
+  IMMEDIATE_CRASH();
 #else
   LOG(FATAL) << "Out of memory. size=" << tmp_size;
 #endif

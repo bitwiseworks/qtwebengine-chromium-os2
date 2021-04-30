@@ -67,7 +67,7 @@ config("bundled_icu_config") {
     defines += [ "ICU_UTIL_DATA_IMPL=ICU_UTIL_DATA_STATIC" ]
   }
 
-  if (is_win) {
+  if (is_win || is_os2) {
     defines += [ "UCHAR_TYPE=wchar_t" ]
   } else {
     defines += [ "UCHAR_TYPE=uint16_t" ]
@@ -1215,7 +1215,7 @@ config("system_icu_config") {
     "ICU_UTIL_DATA_IMPL=ICU_UTIL_DATA_STATIC",
   ]
 
-  if (is_win) {
+  if (is_win || is_os2) {
     defines += [ "UCHAR_TYPE=wchar_t" ]
   } else {
     defines += [ "UCHAR_TYPE=uint16_t" ]
