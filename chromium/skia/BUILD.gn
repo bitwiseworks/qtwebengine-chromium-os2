@@ -491,7 +491,6 @@ component("skia") {
     sources += [
       "//third_party/skia/src/ports/SkFontMgr_fontconfig.cpp",
       "ext/fontmgr_default_os2.cc",
-      "ext/fontmgr_default_os2.h",
     ]
   }
 
