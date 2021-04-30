@@ -49,6 +49,11 @@ if (is_mac || is_ios) {
   } else if (current_cpu == "x64") {
     _nasm_flags = [ "-fmacho64" ]
   }
+} else if (is_os2) {
+  _nasm_flags = [
+    "-DPREFIX",
+    "-fobj",
+  ]
 } else if (is_posix || is_fuchsia) {
   if (current_cpu == "x86") {
     _nasm_flags = [ "-felf32" ]
@@ -69,7 +74,7 @@ if (is_mac || is_ios) {
   }
 }
 
-if (is_win) {
+if (is_win || is_os2) {
   asm_obj_extension = "obj"
 } else {
   asm_obj_extension = "o"
@@ -135,7 +140,7 @@ template("nasm_assemble") {
 
     # Output file.
     outputs = [
-      "$target_out_dir/$source_set_name/{{source_name_part}}.o",
+      "$target_out_dir/$source_set_name/{{source_name_part}}.$asm_obj_extension",
     ]
     args += [
       "-MD",

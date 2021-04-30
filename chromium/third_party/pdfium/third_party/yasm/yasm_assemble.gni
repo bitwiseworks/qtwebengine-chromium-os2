@@ -55,6 +55,12 @@ if (is_mac || is_ios) {
       "amd64",
     ]
   }
+} else if (is_os2) {
+  # These are actually NASM options (see below).
+  _yasm_flags = [
+    "-DPREFIX",
+    "-fobj",
+  ]
 } else if (is_posix || is_fuchsia) {
   if (current_cpu == "x86") {
     _yasm_flags = [
@@ -87,7 +93,7 @@ if (is_mac || is_ios) {
   }
 }
 
-if (is_win) {
+if (is_win || is_os2) {
   asm_obj_extension = "obj"
 } else {
   asm_obj_extension = "o"
@@ -114,13 +120,19 @@ template("yasm_assemble") {
       inputs = invoker.inputs
     }
 
-    # Executable (first in the args). The binary might be in the root build dir
-    # (no cross-compiling) or in a toolchain-specific subdirectory of that
-    # (when cross-compiling).
-    yasm_label = "//third_party/yasm($host_toolchain)"
-    args = [ "./" +  # Force current dir.
+    if (is_os2) {
+      # Yasm doesn't support OMF as output, we have to use nasm. It should be
+      # nearly 100% compatible both source and command line wise.
+      args = [ "nasm" ]
+    } else {
+      # Executable (first in the args). The binary might be in the root build dir
+      # (no cross-compiling) or in a toolchain-specific subdirectory of that
+      # (when cross-compiling).
+      yasm_label = "//third_party/yasm($host_toolchain)"
+      args = [ "./" +  # Force current dir.
              rebase_path(get_label_info(yasm_label, "root_out_dir") + "/yasm",
                          root_build_dir) ]
+    }
 
     # Deps.
     deps = [
@@ -166,7 +178,7 @@ template("yasm_assemble") {
 
     # Output file.
     outputs = [
-      "$target_out_dir/$source_set_name/{{source_name_part}}.o",
+      "$target_out_dir/$source_set_name/{{source_name_part}}.$asm_obj_extension",
     ]
     args += [
       "-o",
