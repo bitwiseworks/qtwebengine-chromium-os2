@@ -32,6 +32,9 @@ typedef int mode_t;
 #if !defined(O_BINARY)
 #define O_BINARY 0
 #endif
+#if !defined(O_CLOEXEC)
+#define O_CLOEXEC O_NOINHERIT
+#endif
 #endif
 
 #include <string>

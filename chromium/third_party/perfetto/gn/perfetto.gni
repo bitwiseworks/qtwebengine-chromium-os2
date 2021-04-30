@@ -139,7 +139,7 @@ declare_args() {
   # system backend in the client library.
   # This includes building things that rely on POSIX sockets, this places
   # limitations on the supported operating systems.
-  enable_perfetto_ipc = !is_win && !is_fuchsia && !is_nacl &&
+  enable_perfetto_ipc = !is_win && !is_fuchsia && !is_nacl && !is_os2 &&
                         (perfetto_build_standalone ||
                          perfetto_build_with_android || build_with_chromium)
 

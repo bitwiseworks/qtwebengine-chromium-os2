@@ -141,12 +141,17 @@ inline TimeNanos GetTimeInternalNs(clockid_t clk_id) {
 // Return ns from boot. Conversely to GetWallTimeNs, this clock counts also time
 // during suspend (when supported).
 inline TimeNanos GetBootTimeNs() {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_OS2)
+  // OS/2 lacks CLOCK_BOOTTIME
+  static const clockid_t kBootTimeClockSource = kWallTimeClockSource;
+#else
   // Determine if CLOCK_BOOTTIME is available on the first call.
   static const clockid_t kBootTimeClockSource = [] {
     struct timespec ts = {};
     int res = clock_gettime(CLOCK_BOOTTIME, &ts);
     return res == 0 ? CLOCK_BOOTTIME : kWallTimeClockSource;
   }();
+#endif
   return GetTimeInternalNs(kBootTimeClockSource);
 }
 
