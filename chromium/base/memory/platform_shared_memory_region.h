@@ -185,7 +185,7 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
                                          size_t size,
                                          const UnguessableToken& guid);
 #if defined(OS_POSIX) && !defined(OS_ANDROID) && \
-    !(defined(OS_MACOSX) && !defined(OS_IOS))
+    !(defined(OS_MACOSX) && !defined(OS_IOS)) && !defined(OS_OS2)
   // Specialized version of Take() for POSIX that takes only one file descriptor
   // instead of pair. Cannot be used with kWritable |mode|.
   static PlatformSharedMemoryRegion Take(ScopedFD handle,

@@ -30,19 +30,6 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
   return PlatformSharedMemoryRegion(std::move(handle), mode, size, guid);
 }
 
-// static
-PlatformSharedMemoryRegion
-PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
-    const SharedMemoryHandle& handle,
-    Mode mode) {
-  CHECK(mode == Mode::kReadOnly || mode == Mode::kUnsafe);
-  if (!handle.IsValid())
-    return {};
-
-  return Take(base::os2::ScopedShmemHandle(handle.GetHandle()), mode, handle.GetSize(),
-              handle.GetGUID());
-}
-
 SHMEM PlatformSharedMemoryRegion::GetPlatformHandle() const {
   return handle_.get();
 }
