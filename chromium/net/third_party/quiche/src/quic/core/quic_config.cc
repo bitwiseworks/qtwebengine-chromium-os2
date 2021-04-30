@@ -988,9 +988,12 @@ bool QuicConfig::FillTransportParameters(TransportParameters* params) const {
   if (alternate_server_address_.HasSendValue()) {
     TransportParameters::PreferredAddress preferred_address;
     QuicSocketAddress socket_address = alternate_server_address_.GetSendValue();
+#if !defined(__OS2__)
     if (socket_address.host().IsIPv6()) {
       preferred_address.ipv6_socket_address = socket_address;
-    } else {
+    } else
+#endif
+    {
       preferred_address.ipv4_socket_address = socket_address;
     }
     params->preferred_address =
@@ -1093,10 +1096,13 @@ QuicErrorCode QuicConfig::ProcessTransportParameters(
   }
 
   if (params.preferred_address != nullptr) {
+#if !defined(__OS2__)
     if (params.preferred_address->ipv6_socket_address.port() != 0) {
       alternate_server_address_.SetReceivedValue(
           params.preferred_address->ipv6_socket_address);
-    } else if (params.preferred_address->ipv4_socket_address.port() != 0) {
+    } else
+#endif
+    if (params.preferred_address->ipv4_socket_address.port() != 0) {
       alternate_server_address_.SetReceivedValue(
           params.preferred_address->ipv4_socket_address);
     }

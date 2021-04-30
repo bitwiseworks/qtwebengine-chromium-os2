@@ -304,7 +304,9 @@ std::ostream& operator<<(std::ostream& os,
 
 TransportParameters::PreferredAddress::PreferredAddress()
     : ipv4_socket_address(QuicIpAddress::Any4(), 0),
+#if !defined(__OS2__)
       ipv6_socket_address(QuicIpAddress::Any6(), 0),
+#endif
       connection_id(EmptyQuicConnectionId()),
       stateless_reset_token(kStatelessResetTokenLength, 0) {}
 
@@ -319,7 +321,9 @@ std::ostream& operator<<(
 
 std::string TransportParameters::PreferredAddress::ToString() const {
   return "[" + ipv4_socket_address.ToString() + " " +
+#if !defined(__OS2__)
          ipv6_socket_address.ToString() + " connection_id " +
+#endif
          connection_id.ToString() + " stateless_reset_token " +
          quiche::QuicheTextUtils::HexEncode(
              reinterpret_cast<const char*>(stateless_reset_token.data()),
@@ -446,8 +450,11 @@ bool TransportParameters::AreValid(std::string* error_details) const {
     return false;
   }
   if (preferred_address &&
-      (!preferred_address->ipv4_socket_address.host().IsIPv4() ||
-       !preferred_address->ipv6_socket_address.host().IsIPv6())) {
+      (!preferred_address->ipv4_socket_address.host().IsIPv4()
+#if !defined(__OS2__)
+       || !preferred_address->ipv6_socket_address.host().IsIPv6()
+#endif
+      )) {
     QUIC_BUG << "Preferred address family failure";
     *error_details = "Internal preferred address family failure";
     return false;
@@ -571,17 +578,24 @@ bool SerializeTransportParameters(ParsedQuicVersion version,
   if (in.preferred_address) {
     std::string v4_address_bytes =
         in.preferred_address->ipv4_socket_address.host().ToPackedString();
+#if !defined(__OS2__)
     std::string v6_address_bytes =
         in.preferred_address->ipv6_socket_address.host().ToPackedString();
-    if (v4_address_bytes.length() != 4 || v6_address_bytes.length() != 16 ||
-        in.preferred_address->stateless_reset_token.size() !=
+#endif
+    if (v4_address_bytes.length() != 4
+#if !defined(__OS2__)
+        || v6_address_bytes.length() != 16
+#endif
+        || in.preferred_address->stateless_reset_token.size() !=
             kStatelessResetTokenLength) {
       QUIC_BUG << "Bad lengths " << *in.preferred_address;
       return false;
     }
     const uint64_t preferred_address_length =
         v4_address_bytes.length() + /* IPv4 port */ sizeof(uint16_t) +
+#if !defined(__OS2__)
         v6_address_bytes.length() + /* IPv6 port */ sizeof(uint16_t) +
+#endif
         /* connection ID length byte */ sizeof(uint8_t) +
         in.preferred_address->connection_id.length() +
         in.preferred_address->stateless_reset_token.size();
@@ -591,8 +605,10 @@ bool SerializeTransportParameters(ParsedQuicVersion version,
                                        version) ||
         !writer.WriteStringPiece(v4_address_bytes) ||
         !writer.WriteUInt16(in.preferred_address->ipv4_socket_address.port()) ||
+#if !defined(__OS2__)
         !writer.WriteStringPiece(v6_address_bytes) ||
         !writer.WriteUInt16(in.preferred_address->ipv6_socket_address.port()) ||
+#endif
         !writer.WriteUInt8(in.preferred_address->connection_id.length()) ||
         !writer.WriteBytes(in.preferred_address->connection_id.data(),
                            in.preferred_address->connection_id.length()) ||
@@ -804,15 +820,22 @@ bool ParseTransportParameters(ParsedQuicVersion version,
         break;
       case TransportParameters::kPreferredAddress: {
         TransportParameters::PreferredAddress preferred_address;
-        uint16_t ipv4_port, ipv6_port;
+        uint16_t ipv4_port;
+#if !defined(__OS2__)
+        uint16_t ipv6_port;
+#endif
         in_addr ipv4_address;
+#if !defined(__OS2__)
         in6_addr ipv6_address;
+#endif
         preferred_address.stateless_reset_token.resize(
             kStatelessResetTokenLength);
         if (!value_reader.ReadBytes(&ipv4_address, sizeof(ipv4_address)) ||
             !value_reader.ReadUInt16(&ipv4_port) ||
+#if !defined(__OS2__)
             !value_reader.ReadBytes(&ipv6_address, sizeof(ipv6_address)) ||
             !value_reader.ReadUInt16(&ipv6_port) ||
+#endif
             !value_reader.ReadLengthPrefixedConnectionId(
                 &preferred_address.connection_id) ||
             !value_reader.ReadBytes(&preferred_address.stateless_reset_token[0],
@@ -822,10 +845,15 @@ bool ParseTransportParameters(ParsedQuicVersion version,
         }
         preferred_address.ipv4_socket_address =
             QuicSocketAddress(QuicIpAddress(ipv4_address), ipv4_port);
+#if !defined(__OS2__)
         preferred_address.ipv6_socket_address =
             QuicSocketAddress(QuicIpAddress(ipv6_address), ipv6_port);
-        if (!preferred_address.ipv4_socket_address.host().IsIPv4() ||
-            !preferred_address.ipv6_socket_address.host().IsIPv6()) {
+#endif
+        if (!preferred_address.ipv4_socket_address.host().IsIPv4()
+#if !defined(__OS2__)
+            || !preferred_address.ipv6_socket_address.host().IsIPv6()
+#endif
+           ) {
           *error_details = "Received preferred addresses of bad families " +
                            preferred_address.ToString();
           return false;

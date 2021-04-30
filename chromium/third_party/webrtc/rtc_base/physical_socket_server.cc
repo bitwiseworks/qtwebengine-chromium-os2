@@ -296,7 +296,7 @@ int PhysicalSocket::GetOption(Option opt, int* value) {
     *value = (*value != IP_PMTUDISC_DONT) ? 1 : 0;
 #endif
   } else if (opt == OPT_DSCP) {
-#if defined(WEBRTC_POSIX)
+#if defined(WEBRTC_POSIX) && !defined(WEBRTC_OS2)
     // unshift DSCP value to get six most significant bits of IP DiffServ field
     *value >>= 2;
 #endif
@@ -314,12 +314,12 @@ int PhysicalSocket::SetOption(Option opt, int value) {
     value = (value) ? IP_PMTUDISC_DO : IP_PMTUDISC_DONT;
 #endif
   } else if (opt == OPT_DSCP) {
-#if defined(WEBRTC_POSIX)
+#if defined(WEBRTC_POSIX) && !defined(WEBRTC_OS2)
     // shift DSCP value to fit six most significant bits of IP DiffServ field
     value <<= 2;
 #endif
   }
-#if defined(WEBRTC_POSIX)
+#if defined(WEBRTC_POSIX) && !defined(WEBRTC_OS2)
   if (sopt == IPV6_TCLASS) {
     // Set the IPv4 option in all cases to support dual-stack sockets.
     ::setsockopt(s_, IPPROTO_IP, IP_TOS, (SockOptArg)&value, sizeof(value));
@@ -572,7 +572,7 @@ int PhysicalSocket::TranslateOption(Option opt, int* slevel, int* sopt) {
       *sopt = TCP_NODELAY;
       break;
     case OPT_DSCP:
-#if defined(WEBRTC_POSIX)
+#if defined(WEBRTC_POSIX) && !defined(WEBRTC_OS2)
       if (family_ == AF_INET6) {
         *slevel = IPPROTO_IPV6;
         *sopt = IPV6_TCLASS;

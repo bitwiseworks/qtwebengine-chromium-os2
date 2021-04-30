@@ -1138,7 +1138,9 @@ struct sctpstat {
 
 union sctp_sockstore {
 	struct sockaddr_in sin;
+#ifdef INET6
 	struct sockaddr_in6 sin6;
+#endif
 #if defined(__Userspace__)
 	struct sockaddr_conn sconn;
 #endif

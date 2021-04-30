@@ -35,14 +35,20 @@ class QUIC_EXPORT_PRIVATE QuicIpAddress {
 
   // TODO(fayang): Remove Loopback*() and use TestLoopback*() in tests.
   static QuicIpAddress Loopback4();
+#if !defined(__OS2__)
   static QuicIpAddress Loopback6();
+#endif
   static QuicIpAddress Any4();
+#if !defined(__OS2__)
   static QuicIpAddress Any6();
+#endif
 
   QuicIpAddress();
   QuicIpAddress(const QuicIpAddress& other) = default;
   explicit QuicIpAddress(const in_addr& ipv4_address);
+#if !defined(__OS2__)
   explicit QuicIpAddress(const in6_addr& ipv6_address);
+#endif
   QuicIpAddress& operator=(const QuicIpAddress& other) = default;
   QuicIpAddress& operator=(QuicIpAddress&& other) = default;
   QUIC_EXPORT_PRIVATE friend bool operator==(QuicIpAddress lhs,
@@ -71,16 +77,22 @@ class QUIC_EXPORT_PRIVATE QuicIpAddress {
   bool FromPackedString(const char* data, size_t length);
   bool FromString(std::string str);
   bool IsIPv4() const;
+#if !defined(__OS2__)
   bool IsIPv6() const;
+#endif
   bool InSameSubnet(const QuicIpAddress& other, int subnet_length);
 
   in_addr GetIPv4() const;
+#if !defined(__OS2__)
   in6_addr GetIPv6() const;
+#endif
 
  private:
   union {
     in_addr v4;
+#if !defined(__OS2__)
     in6_addr v6;
+#endif
     uint8_t bytes[kMaxAddressSize];
     char chars[kMaxAddressSize];
   } address_;

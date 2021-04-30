@@ -128,6 +128,7 @@ bool AddressInfo::IsAllLocalhostOfOneFamily() const {
           return false;
         break;
       }
+#if !defined(OS_OS2)
       case AF_INET6: {
         const struct sockaddr_in6* addr_in6 =
             reinterpret_cast<struct sockaddr_in6*>(ai->ai_addr);
@@ -137,6 +138,7 @@ bool AddressInfo::IsAllLocalhostOfOneFamily() const {
           return false;
         break;
       }
+#endif
       default:
         NOTREACHED();
         return false;

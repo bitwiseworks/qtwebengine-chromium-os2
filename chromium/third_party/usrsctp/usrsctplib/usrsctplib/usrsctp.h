@@ -137,7 +137,9 @@ struct sockaddr_conn {
 
 union sctp_sockstore {
 	struct sockaddr_in sin;
+#ifdef INET6
 	struct sockaddr_in6 sin6;
+#endif
 	struct sockaddr_conn sconn;
 	struct sockaddr sa;
 };
