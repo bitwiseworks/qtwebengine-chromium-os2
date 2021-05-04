@@ -972,7 +972,8 @@ void Thread::SetThreadLocal(LocalStorageKey key, void* value) {
 // pthread_getattr_np used below is non portable (hence the _np suffix). We
 // keep this version in POSIX as most Linux-compatible derivatives will
 // support it. MacOS and FreeBSD are different here.
-#if !defined(V8_OS_FREEBSD) && !defined(V8_OS_MACOSX)
+#if !defined(V8_OS_FREEBSD) && !defined(V8_OS_MACOSX) && \
+    !defined(V8_OS_OS2)
 
 // static
 void* Stack::GetStackStart() {
@@ -998,7 +999,8 @@ void* Stack::GetStackStart() {
   return nullptr;
 }
 
-#endif  // !defined(V8_OS_FREEBSD) && !defined(V8_OS_MACOSX)
+#endif  // !defined(V8_OS_FREEBSD) && !defined(V8_OS_MACOSX) && \
+        // !defined(V8_OS_OS2)
 
 // static
 void* Stack::GetCurrentStackPosition() { return __builtin_frame_address(0); }

@@ -174,5 +174,15 @@ void OS::SignalCodeMovingGC() {
   // Nothing to do on OS/2.
 }
 
+void OS::AdjustSchedulingParams() {}
+
+// static
+void* Stack::GetStackStart() {
+  PTIB ptib;
+  if (DosGetInfoBlocks(&ptib, NULL))
+    return nullptr;
+  return ptib->tib_pstack;
+}
+
 }  // namespace base
 }  // namespace v8
