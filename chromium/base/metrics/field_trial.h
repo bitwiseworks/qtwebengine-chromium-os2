@@ -580,7 +580,7 @@ class BASE_EXPORT FieldTrialList {
   // the child looks up directly.
   static void InsertFieldTrialHandleIfNeeded(
       MachPortsForRendezvous* rendezvous_ports);
-#elif defined(OS_POSIX) && !defined(OS_NACL) && !defined(OS_NACL)
+#elif defined(OS_POSIX) && !defined(OS_NACL) && !defined(OS_OS2)
   // On POSIX, we also need to explicitly pass down this file descriptor that
   // should be shared with the child process. Returns -1 if it was not
   // initialized properly. The current process remains the onwer of the passed
