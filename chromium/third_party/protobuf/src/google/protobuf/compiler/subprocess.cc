@@ -43,7 +43,7 @@
 #include <sys/wait.h>
 #endif
 
-#if defined(OS_OS2)
+#if defined(__OS2__)
 #include <sys/socket.h>
 #define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
 #endif
