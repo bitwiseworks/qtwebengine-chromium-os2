@@ -17,9 +17,11 @@ class PlatformEmbeddedFileWriterGeneric
  public:
   PlatformEmbeddedFileWriterGeneric(EmbeddedTargetArch target_arch,
                                     EmbeddedTargetOs target_os)
-      : target_arch_(target_arch), target_os_(target_os) {
+      : target_arch_(target_arch), target_os_(target_os)
+      , symbol_prefix_ (target_os_ == EmbeddedTargetOs::kOS2 ? "_" : "") {
     DCHECK(target_os_ == EmbeddedTargetOs::kChromeOS ||
            target_os_ == EmbeddedTargetOs::kFuchsia ||
+           target_os_ == EmbeddedTargetOs::kOS2 ||
            target_os_ == EmbeddedTargetOs::kGeneric);
   }
 
@@ -55,6 +57,7 @@ class PlatformEmbeddedFileWriterGeneric
  private:
   const EmbeddedTargetArch target_arch_;
   const EmbeddedTargetOs target_os_;
+  const char* symbol_prefix_;
 };
 
 }  // namespace internal

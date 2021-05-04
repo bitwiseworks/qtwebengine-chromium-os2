@@ -12,8 +12,6 @@
 namespace v8 {
 namespace internal {
 
-#define SYMBOL_PREFIX ""
-
 namespace {
 
 const char* DirectiveAsString(DataDirective directive) {
@@ -35,17 +33,31 @@ const char* DirectiveAsString(DataDirective directive) {
 void PlatformEmbeddedFileWriterGeneric::SectionText() {
   if (target_os_ == EmbeddedTargetOs::kChromeOS) {
     fprintf(fp_, ".section .text.hot.embedded\n");
+  } else if (target_os_ == EmbeddedTargetOs::kOS2) {
+    // a.out doesn't support .section
+    fprintf(fp_, ".text\n");
   } else {
     fprintf(fp_, ".section .text\n");
   }
 }
 
 void PlatformEmbeddedFileWriterGeneric::SectionData() {
-  fprintf(fp_, ".section .data\n");
+  if (target_os_ == EmbeddedTargetOs::kOS2) {
+    // a.out doesn't support .section
+    fprintf(fp_, ".data\n");
+  } else {
+    fprintf(fp_, ".section .data\n");
+  }
 }
 
 void PlatformEmbeddedFileWriterGeneric::SectionRoData() {
-  fprintf(fp_, ".section .rodata\n");
+  if (target_os_ == EmbeddedTargetOs::kOS2) {
+    // a.out doesn't support .section and has no .rodata,
+    // use .text segment explicitly
+    fprintf(fp_, ".text\n");
+  } else {
+    fprintf(fp_, ".section .rodata\n");
+  }
 }
 
 void PlatformEmbeddedFileWriterGeneric::DeclareUint32(const char* name,
@@ -62,11 +74,11 @@ void PlatformEmbeddedFileWriterGeneric::DeclarePointerToSymbol(
   DeclareSymbolGlobal(name);
   DeclareLabel(name);
   fprintf(fp_, "  %s %s%s\n", DirectiveAsString(PointerSizeDirective()),
-          SYMBOL_PREFIX, target);
+          symbol_prefix_, target);
 }
 
 void PlatformEmbeddedFileWriterGeneric::DeclareSymbolGlobal(const char* name) {
-  fprintf(fp_, ".global %s%s\n", SYMBOL_PREFIX, name);
+  fprintf(fp_, ".global %s%s\n", symbol_prefix_, name);
 }
 
 void PlatformEmbeddedFileWriterGeneric::AlignToCodeAlignment() {
@@ -86,13 +98,18 @@ void PlatformEmbeddedFileWriterGeneric::Comment(const char* string) {
 }
 
 void PlatformEmbeddedFileWriterGeneric::DeclareLabel(const char* name) {
-  fprintf(fp_, "%s%s:\n", SYMBOL_PREFIX, name);
+  fprintf(fp_, "%s%s:\n", symbol_prefix_, name);
 }
 
 void PlatformEmbeddedFileWriterGeneric::SourceInfo(int fileid,
                                                    const char* filename,
                                                    int line) {
-  fprintf(fp_, ".loc %d %d\n", fileid, line);
+  if (target_os_ == EmbeddedTargetOs::kOS2) {
+    // a.out doesn't support .debug_line/.debug_info sections.
+    // TODO: use .stabs/.stabd instead.
+  } else {
+    fprintf(fp_, ".loc %d %d\n", fileid, line);
+  }
 }
 
 void PlatformEmbeddedFileWriterGeneric::DeclareFunctionBegin(const char* name,
@@ -107,7 +124,7 @@ void PlatformEmbeddedFileWriterGeneric::DeclareFunctionBegin(const char* name,
   } else {
     // Other ELF Format binaries use ".type <function name>, @function"
     // to create a DWARF subprogram entry.
-    fprintf(fp_, ".type %s, @function\n", name);
+    fprintf(fp_, ".type %s%s, @function\n", name, symbol_prefix_);
   }
   fprintf(fp_, ".size %s, %u\n", name, size);
 }
@@ -132,21 +149,21 @@ void PlatformEmbeddedFileWriterGeneric::DeclareExternalFilename(
 }
 
 void PlatformEmbeddedFileWriterGeneric::FileEpilogue() {
-  // Omitting this section can imply an executable stack, which is usually
-  // a linker warning/error. C++ compilers add these automatically, but
-  // compiling assembly requires the .note.GNU-stack section to be inserted
-  // manually.
-  // Additional documentation:
-  // https://wiki.gentoo.org/wiki/Hardened/GNU_stack_quickstart
-  fprintf(fp_, ".section .note.GNU-stack,\"\",%%progbits\n");
+  if (target_os_ != EmbeddedTargetOs::kOS2) {
+    // Omitting this section can imply an executable stack, which is usually
+    // a linker warning/error. C++ compilers add these automatically, but
+    // compiling assembly requires the .note.GNU-stack section to be inserted
+    // manually.
+    // Additional documentation:
+    // https://wiki.gentoo.org/wiki/Hardened/GNU_stack_quickstart
+    fprintf(fp_, ".section .note.GNU-stack,\"\",%%progbits\n");
+  }
 }
 
 int PlatformEmbeddedFileWriterGeneric::IndentedDataDirective(
     DataDirective directive) {
   return fprintf(fp_, "  %s ", DirectiveAsString(directive));
 }
-
-#undef SYMBOL_PREFIX
 
 }  // namespace internal
 }  // namespace v8
