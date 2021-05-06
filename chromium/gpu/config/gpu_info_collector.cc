@@ -97,6 +97,7 @@ std::string GetGLString(unsigned int pname) {
   return std::string();
 }
 
+#if defined(USE_EGL)
 std::string QueryEGLStringi(EGLDisplay display,
                             unsigned int name,
                             unsigned int index) {
@@ -106,6 +107,7 @@ std::string QueryEGLStringi(EGLDisplay display,
     return std::string(egl_string);
   return std::string();
 }
+#endif
 
 // Return a version string in the format of "major.minor".
 std::string GetVersionFromString(const std::string& version_string) {
@@ -404,6 +406,7 @@ void CollectGraphicsInfoForTesting(GPUInfo* gpu_info) {
 
 bool CollectGpuExtraInfo(GpuExtraInfo* gpu_extra_info,
                          const GpuPreferences& prefs) {
+#if defined(USE_EGL)
   // Populate the list of ANGLE features by querying the functions exposed by
   // EGL_ANGLE_feature_control if it's available.
   if (gl::GLSurfaceEGL::IsANGLEFeatureControlSupported()) {
@@ -427,6 +430,7 @@ bool CollectGpuExtraInfo(GpuExtraInfo* gpu_extra_info,
           QueryEGLStringi(display, EGL_FEATURE_CONDITION_ANGLE, i);
     }
   }
+#endif
 
 #if defined(USE_X11)
   // Create the GLVisualPickerGLX singleton now while the GbmSupportX11

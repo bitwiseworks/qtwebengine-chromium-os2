@@ -15,6 +15,7 @@
 namespace gl {
 namespace init {
 
+#if defined(USE_EGL)
 // This code emulates GL fences (GL_APPLE_sync or GL_ARB_sync) via
 // EGL_KHR_fence_sync extension. It's used to provide Skia ways of
 // synchronization on platforms that does not have GL fences but support EGL
@@ -96,6 +97,7 @@ std::map<GLuint, base::TimeTicks>& GetProgramCreateTimesMap() {
 #endif
 
 }  // namespace
+#endif  // USE_EGL
 
 namespace {
 
@@ -759,6 +761,7 @@ sk_sp<GrGLInterface> CreateGrGLInterface(
       functions->fClientWaitSync = gl->glClientWaitSyncAPPLEFn;
       functions->fWaitSync = gl->glWaitSyncAPPLEFn;
       functions->fDeleteSync = gl->glDeleteSyncAPPLEFn;
+#if defined(USE_EGL)
     } else if (g_driver_egl.ext.b_EGL_KHR_fence_sync) {
       // Emulate APPLE_sync via egl
       extensions.add("GL_APPLE_sync");
@@ -768,6 +771,7 @@ sk_sp<GrGLInterface> CreateGrGLInterface(
       functions->fClientWaitSync = glClientWaitSyncEmulateEGL;
       functions->fWaitSync = glWaitSyncEmulateEGL;
       functions->fDeleteSync = glDeleteSyncEmulateEGL;
+#endif
     }
   } else if (use_version_es2) {
     // We have gl sync, but want to Skia use ES2 that doesn't have fences.
