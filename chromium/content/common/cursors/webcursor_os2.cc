@@ -5,7 +5,6 @@
 #include "content/common/cursors/webcursor.h"
 
 #include "base/logging.h"
-#include "third_party/blink/public/platform/web_cursor_info.h"
 
 namespace content {
 
@@ -16,17 +15,12 @@ ui::PlatformCursor WebCursor::GetPlatformCursor(const ui::Cursor& cursor) {
 }
 #endif
 
-void WebCursor::InitPlatformData() {
-}
-
 bool WebCursor::IsPlatformDataEqual(const WebCursor& other) const {
   return true;
 }
 
-void WebCursor::CleanupPlatformData() {
-}
+void WebCursor::CleanupPlatformData() {}
 
-void WebCursor::CopyPlatformData(const WebCursor& other) {
-}
+void WebCursor::CopyPlatformData(const WebCursor& other) {}
 
 }  // namespace content

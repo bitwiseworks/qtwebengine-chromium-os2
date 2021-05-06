@@ -46,12 +46,6 @@ bool InitializeStaticGLBindings(GLImplementation implementation) {
   return false;
 }
 
-void InitializeDebugGLBindings() {
-  // TODO: Implement it on OS/2.
-
-  InitializeDebugGLBindingsGL();
-}
-
 void ShutdownGLPlatform() {
   // TODO: Implement it on OS/2.
 

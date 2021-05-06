@@ -18,14 +18,14 @@ CursorLoaderOS2::~CursorLoaderOS2() {
   UnloadAll();
 }
 
-void CursorLoaderOS2::LoadImageCursor(CursorType id,
+void CursorLoaderOS2::LoadImageCursor(mojom::CursorType id,
                                       int resource_id,
                                       const gfx::Point& hot) {
   // TODO: Implement this on OS/2.
   NOTIMPLEMENTED();
 }
 
-void CursorLoaderOS2::LoadAnimatedCursor(CursorType id,
+void CursorLoaderOS2::LoadAnimatedCursor(mojom::CursorType id,
                                          int resource_id,
                                          const gfx::Point& hot,
                                          int frame_delay_ms) {

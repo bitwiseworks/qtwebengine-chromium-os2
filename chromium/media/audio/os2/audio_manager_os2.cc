@@ -26,18 +26,18 @@ AudioManagerOS2::~AudioManagerOS2() = default;
 
 bool AudioManagerOS2::HasAudioOutputDevices() {
   // TODO: Implement it on OS/2.
-  return false;
+  return true;
 }
 
 bool AudioManagerOS2::HasAudioInputDevices() {
-  NOTIMPLEMENTED();
-  return false;
+  // TODO: Implement it on OS/2.
+  return true;
 }
 
 void AudioManagerOS2::GetAudioInputDeviceNames(
     AudioDeviceNames* device_names) {
-  device_names->clear();
-  NOTIMPLEMENTED();
+  // TODO: Implement device enumeration.
+  *device_names = {AudioDeviceName::CreateDefault()};
 }
 
 void AudioManagerOS2::GetAudioOutputDeviceNames(
@@ -48,8 +48,19 @@ void AudioManagerOS2::GetAudioOutputDeviceNames(
 
 AudioParameters AudioManagerOS2::GetInputStreamParameters(
     const std::string& device_id) {
-  NOTIMPLEMENTED();
-  return AudioParameters();
+  // TODO: Implement it on OS/2.
+  //
+  // Use 16kHz sample rate with 10ms buffer, which is consistent with
+  // the default configuration used in the AudioCapturer implementation.
+  // Assume that the system-provided AudioConsumer supports echo cancellation,
+  // noise suppression and automatic gain control.
+  AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                         CHANNEL_LAYOUT_MONO, 16000, 160);
+  params.set_effects(AudioParameters::ECHO_CANCELLER |
+                     AudioParameters::NOISE_SUPPRESSION |
+                     AudioParameters::AUTOMATIC_GAIN_CONTROL);
+
+  return params;
 }
 
 AudioParameters AudioManagerOS2::GetPreferredOutputStreamParameters(

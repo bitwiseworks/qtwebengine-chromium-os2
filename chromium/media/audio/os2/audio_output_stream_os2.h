@@ -28,6 +28,7 @@ class AudioOutputStreamOS2 : public AudioOutputStream {
   bool Open() override;
   void Start(AudioSourceCallback* callback) override;
   void Stop() override;
+  void Flush() override;
   void SetVolume(double volume) override;
   void GetVolume(double* volume) override;
   void Close() override;

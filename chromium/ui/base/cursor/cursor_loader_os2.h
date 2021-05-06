@@ -21,10 +21,10 @@ class UI_BASE_EXPORT CursorLoaderOS2 : public CursorLoader {
   ~CursorLoaderOS2() override;
 
   // CursorLoader overrides:
-  void LoadImageCursor(CursorType id,
+  void LoadImageCursor(mojom::CursorType id,
                        int resource_id,
                        const gfx::Point& hot) override;
-  void LoadAnimatedCursor(CursorType id,
+  void LoadAnimatedCursor(mojom::CursorType id,
                           int resource_id,
                           const gfx::Point& hot,
                           int frame_delay_ms) override;

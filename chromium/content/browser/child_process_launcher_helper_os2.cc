@@ -39,27 +39,13 @@ bool ChildProcessLauncherHelper::TerminateProcess(const base::Process& process,
   return process.Terminate(exit_code, false);
 }
 
-// static
-void ChildProcessLauncherHelper::SetRegisteredFilesForService(
-    const std::string& service_name,
-    std::map<std::string, base::FilePath> required_files) {
-  // TODO: Implement this on OS/2.
-  NOTIMPLEMENTED();
-}
-
-// static
-void ChildProcessLauncherHelper::ResetRegisteredFilesForTesting() {
-  // TODO: Implement this on OS/2.
-  NOTIMPLEMENTED();
-}
-
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
 }
 
 base::Optional<mojo::NamedPlatformChannel>
 ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
   return base::nullopt;
 }
 
@@ -68,19 +54,18 @@ ChildProcessLauncherHelper::GetFilesToMap() {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   return CreateDefaultPosixFilesToMap(
       child_process_id(), mojo_channel_->remote_endpoint(),
-      false /* include_service_required_files */, GetProcessType(),
-      command_line());
+      /*files_to_preload=*/{}, GetProcessType(), command_line());
 }
 
 bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const PosixFileDescriptorInfo& files_to_register,
+    PosixFileDescriptorInfo& files_to_register,
     base::LaunchOptions* options) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   // Convert FD mapping to FileHandleMappingVector
   options->fds_to_remap = files_to_register.GetMappingWithIDAdjustment(
       base::GlobalDescriptors::kBaseDescriptor);
 
-  options->environ = delegate_->GetEnvironment();
+  options->environment = delegate_->GetEnvironment();
 
   return true;
 }

@@ -59,7 +59,7 @@ void AudioOutputStreamOS2::Start(AudioSourceCallback* callback) {
   if (arc) {
     LOG(ERROR) << "kaiPlay("<< std::hex << handle_ << ") returned "
                << std::dec << (LONG)arc;
-    callback_->OnError();
+    callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
   }
 }
 
@@ -71,11 +71,15 @@ void AudioOutputStreamOS2::Stop() {
     LOG(ERROR) << "kaiStop("<< std::hex << handle_ << ") returned "
                << std::dec << (LONG)arc;
     if (callback_)
-      callback_->OnError();
+      callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
   }
 
   callback_ = nullptr;
 }
+
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void AudioOutputStreamOS2::Flush() {}
 
 void AudioOutputStreamOS2::SetVolume(double volume) {
   DCHECK(0.0 <= volume && volume <= 1.0) << volume;
@@ -119,7 +123,7 @@ ULONG AudioOutputStreamOS2::Callback(PVOID buf, ULONG size) {
   }
 
   // Error.
-  callback_->OnError();
+  callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
   return 0;
 }
 
