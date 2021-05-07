@@ -31,11 +31,9 @@ config("compiler") {
 config("os2_executable_flags") {
   ldflags = [ "-Zstack", "0x2000" ]
 
-  # All executables are PM apps except AddressSanitizer builds that write
-  # to stderr. Having a console attached is also handy for debug builds.
-  if (!is_debug && !is_asan) {
-    ldflags += [ "-Zlinker", "/PM:PM", "-Zno-fork" ]
-  }
+  # TODO: Use ldflags += [ "-Zlinker", "/PM:PM", "-Zno-fork" ] for executables
+  # that need to be PM apps. For now build all executables in VIO mode (default)
+  # so that they will have a console attached (see also ../win/console_app.gni).
 }
 
 # Settings for DLLs.
