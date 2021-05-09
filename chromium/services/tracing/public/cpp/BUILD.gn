@@ -118,7 +118,7 @@ target(tracing_lib_type, "cpp") {
     ]
 
     # Add the SystemProducer implementations.
-    if (is_posix) {
+    if (is_posix && !is_os2) {
       sources += [
         "perfetto/posix_system_producer.cc",
         "perfetto/posix_system_producer.h",

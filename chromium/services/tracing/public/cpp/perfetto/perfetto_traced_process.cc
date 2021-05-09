@@ -20,7 +20,7 @@
 #include "services/tracing/public/cpp/trace_startup.h"
 #include "services/tracing/public/cpp/tracing_features.h"
 
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_OS2)
 // As per 'gn help check':
 /*
   If you have conditional includes, make sure the build conditions and the
@@ -31,27 +31,27 @@
 // non-android builds.
 #include "services/tracing/public/cpp/perfetto/posix_system_producer.h"  // nogncheck
 #include "third_party/perfetto/include/perfetto/ext/tracing/ipc/default_socket.h"  // nogncheck
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_OS2)
 
 namespace tracing {
 namespace {
 std::unique_ptr<SystemProducer> NewSystemProducer(PerfettoTaskRunner* runner,
                                                   const char* socket_name) {
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_OS2)
   if (ShouldSetupSystemTracing()) {
     DCHECK(socket_name);
     return std::make_unique<PosixSystemProducer>(socket_name, runner);
   }
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_OS2)
   return std::make_unique<DummyProducer>(runner);
 }
 
 const char* MaybeSocket() {
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_OS2)
   return perfetto::GetProducerSocket();
 #else
   return nullptr;
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_OS2)
 }
 }  // namespace
 

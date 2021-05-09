@@ -105,13 +105,13 @@ DiscardableMemoryBacking GetDiscardableMemoryBacking() {
     return DiscardableMemoryBacking::kSharedMemory;
 #endif  // defined(OS_ANDROID)
 
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_OS2)
   if (base::FeatureList::IsEnabled(
           base::features::kMadvFreeDiscardableMemory) &&
       base::GetMadvFreeSupport() == base::MadvFreeSupport::kSupported) {
     return DiscardableMemoryBacking::kMadvFree;
   }
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_OS2)
 
   return DiscardableMemoryBacking::kSharedMemory;
 }

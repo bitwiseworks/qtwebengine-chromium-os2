@@ -27,7 +27,7 @@ namespace content {
 
 std::unique_ptr<base::DiscardableMemoryAllocator>
 CreateDiscardableMemoryAllocator() {
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_OS2)
   if (base::GetDiscardableMemoryBacking() ==
       base::DiscardableMemoryBacking::kMadvFree) {
     DVLOG(1) << "Using MADV_FREE for discardable memory";

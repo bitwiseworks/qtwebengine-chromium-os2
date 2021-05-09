@@ -92,5 +92,7 @@ component("mixers") {
     sources += [ "mac/native_color_mixer.cc" ]
   } else if (is_win) {
     sources += [ "win/native_color_mixer.cc" ]
+  } else if (is_os2) {
+    sources += [ "os2/native_color_mixer.cc" ]
   }
 }

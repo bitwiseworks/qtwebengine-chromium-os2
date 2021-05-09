@@ -21,9 +21,9 @@ std::vector<GLImplementation> GetAllowedGLImplementations() {
   return std::vector<GLImplementation>();
 }
 
-bool GetGLWindowSystemBindingInfo(GLWindowSystemBindingInfo* info) {
+bool GetGLWindowSystemBindingInfo(const GLVersionInfo& gl_info,
+                                  GLWindowSystemBindingInfo* info) {
   // TODO: Implement it on OS/2.
-
   return false;
 }
 
