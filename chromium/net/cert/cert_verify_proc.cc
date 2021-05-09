@@ -516,8 +516,8 @@ scoped_refptr<CertVerifyProc> CertVerifyProc::CreateSystemVerifyProc(
 }
 #endif
 
-#if defined(OS_FUCHSIA) || defined(USE_NSS_CERTS) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS)) || defined(OS_OS2)
+#if defined(OS_FUCHSIA) || defined(OS_OS2) || defined(USE_NSS_CERTS) || \
+    (defined(OS_MACOSX) && !defined(OS_IOS))
 // static
 scoped_refptr<CertVerifyProc> CertVerifyProc::CreateBuiltinVerifyProc(
     scoped_refptr<CertNetFetcher> cert_net_fetcher) {

@@ -200,7 +200,7 @@ std::unique_ptr<CertVerifyImpl> CreateCertVerifyImplFromName(
     base::StringPiece impl_name,
     scoped_refptr<net::CertNetFetcher> cert_net_fetcher,
     bool use_system_roots) {
-#if !defined(OS_FUCHSIA)
+#if !defined(OS_FUCHSIA) && !defined(OS_OS2)
   if (impl_name == "platform") {
     if (!use_system_roots) {
       std::cerr << "WARNING: platform verifier not supported with "
@@ -416,7 +416,7 @@ int main(int argc, char** argv) {
   std::string impls_str = command_line.GetSwitchValueASCII("impls");
   if (impls_str.empty()) {
     // Default value.
-#if !defined(OS_FUCHSIA)
+#if !defined(OS_FUCHSIA) && !defined(OS_OS2)
     impls_str = "platform,";
 #endif
     impls_str += "builtin,pathbuilder";

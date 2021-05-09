@@ -85,7 +85,7 @@ std::unique_ptr<CertVerifier> CertVerifier::CreateDefault(
   return std::unique_ptr<CertVerifier>();
 #else
   scoped_refptr<CertVerifyProc> verify_proc;
-#if defined(OS_FUCHSIA)
+#if defined(OS_FUCHSIA) || defined(OS_OS2)
   verify_proc =
       CertVerifyProc::CreateBuiltinVerifyProc(std::move(cert_net_fetcher));
 #elif BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)

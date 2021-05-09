@@ -232,7 +232,7 @@ const std::vector<CertVerifyProcType> kAllCertVerifiers = {
     CERT_VERIFY_PROC_MAC, CERT_VERIFY_PROC_BUILTIN
 #elif defined(OS_WIN)
     CERT_VERIFY_PROC_WIN
-#elif defined(OS_FUCHSIA)
+#elif defined(OS_FUCHSIA) || defined(OS_OS2)
     CERT_VERIFY_PROC_BUILTIN
 #else
 #error Unsupported platform
