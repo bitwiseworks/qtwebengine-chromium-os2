@@ -5,5 +5,5 @@
 import("//build/config/linux/gtk/gtk.gni")
 
 declare_args() {
-  use_pangocairo = use_gtk
+  use_pangocairo = use_gtk || is_os2
 }
