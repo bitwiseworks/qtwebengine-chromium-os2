@@ -7,11 +7,11 @@
 namespace printing {
 namespace features {
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
 // Enables Advanced PPD Attributes.
 const base::Feature kAdvancedPpdAttributes{"AdvancedPpdAttributes",
                                            base::FEATURE_ENABLED_BY_DEFAULT};
-#endif  // defined(OS_CHROMEOS)
+#endif  // defined(OS_CHROMEOS) || defined(OS_OS2)
 
 #if defined(OS_MACOSX)
 // Use the CUPS IPP printing backend instead of the original CUPS backend that

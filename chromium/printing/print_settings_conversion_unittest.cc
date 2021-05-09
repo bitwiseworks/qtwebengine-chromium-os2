@@ -53,14 +53,14 @@ TEST(PrintSettingsConversionTest, ConversionTest) {
   PrintSettings settings;
   bool success = PrintSettingsFromJobSettings(value.value(), &settings);
   ASSERT_TRUE(success);
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
   EXPECT_TRUE(settings.send_user_info());
   EXPECT_EQ("username@domain.net", settings.username());
   EXPECT_EQ("0000", settings.pin_value());
 #endif
 }
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
 TEST(PrintSettingsConversionTest, ConversionTest_DontSendUsername) {
   base::Optional<base::Value> value = base::JSONReader::Read(kPrinterSettings);
   ASSERT_TRUE(value.has_value());

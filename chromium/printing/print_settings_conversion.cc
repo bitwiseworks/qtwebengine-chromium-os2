@@ -206,7 +206,7 @@ bool PrintSettingsFromJobSettings(const base::Value& job_settings,
 #endif
   }
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
   bool send_user_info =
       job_settings.FindBoolKey(kSettingSendUserInfo).value_or(false);
   settings->set_send_user_info(send_user_info);

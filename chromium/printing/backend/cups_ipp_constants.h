@@ -5,6 +5,8 @@
 #ifndef PRINTING_BACKEND_CUPS_IPP_CONSTANTS_H_
 #define PRINTING_BACKEND_CUPS_IPP_CONSTANTS_H_
 
+#include "build/build_config.h"
+
 namespace printing {
 
 // property names
@@ -22,7 +24,7 @@ extern const char kIppPinEncryption[];
 extern const char kCollated[];
 extern const char kUncollated[];
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
 
 extern const char kIppDocumentAttributes[];
 extern const char kIppJobAttributes[];
@@ -32,7 +34,7 @@ extern const char kPinEncryptionNone[];
 extern const char kOptionFalse[];
 extern const char kOptionTrue[];
 
-#endif  // defined(OS_CHROMEOS)
+#endif  // defined(OS_CHROMEOS) || defined(OS_OS2)
 
 }  // namespace printing
 

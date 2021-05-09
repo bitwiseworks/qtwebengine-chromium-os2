@@ -19,7 +19,7 @@ PrinterBasicInfo::PrinterBasicInfo(const PrinterBasicInfo& other) = default;
 
 PrinterBasicInfo::~PrinterBasicInfo() = default;
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
 
 AdvancedCapabilityValue::AdvancedCapabilityValue() = default;
 
@@ -35,7 +35,7 @@ AdvancedCapability::AdvancedCapability(const AdvancedCapability& other) =
 
 AdvancedCapability::~AdvancedCapability() = default;
 
-#endif  // defined(OS_CHROMEOS)
+#endif  // defined(OS_CHROMEOS) || defined(OS_OS2)
 
 PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults() = default;
 

@@ -15,9 +15,9 @@ namespace features {
 // The following features are declared alphabetically. The features should be
 // documented with descriptions of their behaviors in the .cc file.
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(OS_OS2)
 PRINTING_EXPORT extern const base::Feature kAdvancedPpdAttributes;
-#endif  // defined(OS_CHROMEOS)
+#endif  // defined(OS_CHROMEOS) || defined(OS_OS2)
 
 #if defined(OS_MACOSX)
 PRINTING_EXPORT extern const base::Feature kCupsIppPrintingBackend;

@@ -14,7 +14,7 @@ if (is_mac) {
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
-if (use_cups && is_chromeos) {
+if (use_cups && (is_chromeos || is_os2)) {
   import("//printing/backend/tools/code_generator.gni")
 }
 
@@ -37,7 +37,7 @@ source_set("printing_export") {
   sources = [ "printing_export.h" ]
 }
 
-if (use_cups && is_chromeos) {
+if (use_cups && (is_chromeos || is_os2)) {
   ipp_handler_map_path = "$target_gen_dir/backend/ipp_handler_map.cc"
 
   ipp_code_generate("ipp_handlers_generate") {
@@ -122,7 +122,7 @@ component("printing") {
     ]
   }
 
-  if (is_chromeos) {
+  if (is_chromeos || is_os2) {
     defines += [ "PRINT_BACKEND_AVAILABLE" ]
 
     sources += [
@@ -238,7 +238,7 @@ component("printing") {
       ]
     }
 
-    if (is_chromeos) {
+    if (is_chromeos || is_os2) {
       deps += [ ":ipp_handlers_generate" ]
 
       sources += [
@@ -250,7 +250,7 @@ component("printing") {
         ipp_handler_map_path,
       ]
       set_sources_assignment_filter(sources_assignment_filter)
-    } else {
+    } else if (!is_os2) {
       # TODO(crbug.com/1062136): Remove the original CUPS backend for macOS
       # when Cloud Print support is terminated. Follow up after Jan 1, 2021.
       sources += [
