@@ -113,7 +113,7 @@ bool Animation::ShouldRenderRichAnimation() {
 }
 
 #if defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_IOS) || \
-    defined(OS_FUCHSIA)
+    defined(OS_FUCHSIA) || defined(OS_OS2)
 // static
 bool Animation::ShouldRenderRichAnimationImpl() {
   return true;
@@ -138,7 +138,7 @@ void Animation::UpdatePrefersReducedMotion() {
 }
 #endif  // !defined(OS_ANDROID)
 #endif  // defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_IOS) ||
-        // defined(OS_FUCHSIA)
+        // defined(OS_FUCHSIA) || defined(OS_OS2)
 
 // static
 bool Animation::PrefersReducedMotion() {

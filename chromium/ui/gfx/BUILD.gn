@@ -337,14 +337,14 @@ jumbo_component("gfx") {
     ]
   }
 
-  if (is_android || is_fuchsia) {
+  if (is_android || is_fuchsia || is_os2) {
     sources += [
       "font_fallback_skia.cc",
       "font_render_params_skia.cc",
     ]
   }
 
-  if (is_android || is_fuchsia || is_win || is_mac) {
+  if (is_android || is_fuchsia || is_os2 || is_win || is_mac) {
     sources += [
       "font_fallback_skia_impl.cc",
       "font_fallback_skia_impl.h",
@@ -411,13 +411,6 @@ jumbo_component("gfx") {
   if (use_x11) {
     deps += [ "//ui/gfx/x" ]
     configs += [ "//build/config/linux:x11" ]
-  }
-
-  if (is_os2) {
-    sources += [
-      "font_fallback_os2.cc",
-      "font_render_params_os2.cc",
-    ]
   }
 }
 
@@ -772,7 +765,7 @@ test("gfx_unittests") {
     sources += [ "system_fonts_win_unittest.cc" ]
   }
 
-  if (is_linux || is_android || is_fuchsia || is_win) {
+  if (is_linux || is_android || is_fuchsia || is_os2 || is_win) {
     sources += [ "platform_font_skia_unittest.cc" ]
   }
 
@@ -818,7 +811,7 @@ test("gfx_unittests") {
     deps += [ "//ui/android:ui_java" ]
   }
 
-  if (is_android || is_fuchsia) {
+  if (is_android || is_fuchsia || is_os2) {
     sources += [ "font_fallback_skia_unittest.cc" ]
   }
 
@@ -872,7 +865,7 @@ test("gfx_unittests") {
     deps += [ "//third_party/fontconfig" ]
   }
 
-  if (is_fuchsia) {
+  if (is_fuchsia || is_os2) {
     deps += [ "//skia:test_fonts" ]
   }
 }
