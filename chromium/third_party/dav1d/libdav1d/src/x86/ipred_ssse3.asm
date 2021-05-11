@@ -101,7 +101,7 @@ JMP_TABLE ipred_filter,     ssse3, w4, w8, w16, w32
 cextern filter_intra_taps
 
 
-SECTION .text
+SECTION_TEXT
 
 ;---------------------------------------------------------------------------------------
 ;int dav1d_ipred_h_ssse3(pixel *dst, const ptrdiff_t stride, const pixel *const topleft,

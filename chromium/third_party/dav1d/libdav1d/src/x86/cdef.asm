@@ -126,7 +126,7 @@ CDEF_FILTER_JMP_TABLE 4x4
 CDEF_FILTER_JMP_TABLE 4x8
 CDEF_FILTER_JMP_TABLE 8x8
 
-SECTION .text
+SECTION_TEXT
 
 %macro PREP_REGS 2 ; w, h
     ; off1/2/3[k] [6 total] from [tapq+12+(dir+0/2/6)*2+k]

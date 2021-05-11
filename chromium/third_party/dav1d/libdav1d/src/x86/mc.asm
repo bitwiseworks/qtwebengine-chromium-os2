@@ -252,7 +252,7 @@ BIDIR_JMP_TABLE w_mask_422_avx512icl,      4, 8, 16, 32, 64, 128
 BIDIR_JMP_TABLE w_mask_444_avx512icl,      4, 8, 16, 32, 64, 128
 %endif ; HAVE_AVX512ICL
 
-SECTION .text
+SECTION_TEXT
 
 INIT_XMM avx2
 DECLARE_REG_TMP 4, 6, 7

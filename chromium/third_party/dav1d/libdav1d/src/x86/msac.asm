@@ -69,7 +69,7 @@ endstruc
 
 %define m(x, y) mangle(private_prefix %+ _ %+ x %+ y)
 
-SECTION .text
+SECTION_TEXT
 
 %if WIN64
 DECLARE_REG_TMP 0, 1, 2, 3, 4, 5, 7, 3, 8

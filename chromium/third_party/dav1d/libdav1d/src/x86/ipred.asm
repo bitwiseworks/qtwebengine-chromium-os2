@@ -174,7 +174,7 @@ JMP_TABLE pal_pred,         avx2, w4, w8, w16, w32, w64
 cextern dr_intra_derivative
 cextern filter_intra_taps
 
-SECTION .text
+SECTION_TEXT
 
 INIT_YMM avx2
 cglobal ipred_dc_top, 3, 7, 6, dst, stride, tl, w, h

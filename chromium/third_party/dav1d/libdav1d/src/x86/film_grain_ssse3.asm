@@ -85,7 +85,7 @@ endstruc
 
 cextern gaussian_sequence
 
-SECTION .text
+SECTION_TEXT
 
 %macro SCRATCH 3
 %if ARCH_X86_32

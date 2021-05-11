@@ -25,7 +25,7 @@
 
 %include "ext/x86/x86inc.asm"
 
-SECTION .text
+SECTION_TEXT
 
 cglobal cpu_cpuid, 0, 5, 0, regs, leaf, subleaf
     mov        r4, regsmp

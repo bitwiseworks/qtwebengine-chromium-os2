@@ -85,7 +85,7 @@ endstruc
 
 cextern gaussian_sequence
 
-SECTION .text
+SECTION_TEXT
 
 INIT_XMM avx2
 cglobal generate_grain_y, 2, 9, 16, buf, fg_data

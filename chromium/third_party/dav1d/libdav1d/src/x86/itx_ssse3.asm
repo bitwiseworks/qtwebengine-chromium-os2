@@ -144,7 +144,7 @@ iadst4_dconly1b: times 2 dw 30424, 26752, 19856, 10568
 iadst4_dconly2a: dw 10568, 10568, 10568, 10568, 19856, 19856, 19856, 19856
 iadst4_dconly2b: dw 26752, 26752, 26752, 26752, 30424, 30424, 30424, 30424
 
-SECTION .text
+SECTION_TEXT
 
 %macro REPX 2-*
     %xdefine %%f(x) %1

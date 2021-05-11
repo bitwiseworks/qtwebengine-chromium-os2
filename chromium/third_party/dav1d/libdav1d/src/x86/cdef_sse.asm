@@ -67,7 +67,7 @@ tap_table: ; masks for 8-bit shift emulation
            db  1 * 16 + 1,  2 * 16 + 2
            db  1 * 16 + 0,  2 * 16 + 1
 
-SECTION .text
+SECTION_TEXT
 
 %macro movif32 2
  %if ARCH_X86_32

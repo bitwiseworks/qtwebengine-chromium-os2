@@ -155,7 +155,7 @@ HV_JMP_TABLE prep, bilin, ssse3, 7,    4, 8, 16, 32, 64, 128
 
 cextern mc_warp_filter
 
-SECTION .text
+SECTION_TEXT
 
 INIT_XMM ssse3
 

@@ -53,7 +53,7 @@ pw_4096: times 8 dw 4096
 
 pd_mask: dd 1, 2, 4, 8
 
-SECTION .text
+SECTION_TEXT
 
 %macro ABSSUB 4 ; dst, a, b, tmp
     psubusb       %1, %2, %3

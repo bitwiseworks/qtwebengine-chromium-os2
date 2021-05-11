@@ -48,7 +48,7 @@ pd_0xf00801c7: dd 0xf00801c7
 
 cextern sgr_x_by_x
 
-SECTION .text
+SECTION_TEXT
 
 INIT_YMM avx2
 cglobal wiener_filter_h, 8, 12, 16, dst, left, src, stride, fh, w, h, edge

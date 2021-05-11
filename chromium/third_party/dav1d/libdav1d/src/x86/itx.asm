@@ -126,7 +126,7 @@ pw_m2751_3035x8: dw -2751*8, 3035*8
 
 %define o_idct64_offset idct64_mul - (o_base) - 8
 
-SECTION .text
+SECTION_TEXT
 
 ; Code size reduction trickery: Intead of using rip-relative loads with
 ; mandatory 4-byte offsets everywhere, we can set up a base pointer with a
