@@ -1679,7 +1679,7 @@ void NetworkContext::OnHttpAuthDynamicParamsChanged(
       http_auth_dynamic_network_service_params->negotiate_disable_cname_lookup);
   http_auth_merged_preferences_.set_negotiate_enable_port(
       http_auth_dynamic_network_service_params->enable_negotiate_port);
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA) || defined(OS_OS2)
   http_auth_merged_preferences_.set_ntlm_v2_enabled(
       http_auth_dynamic_network_service_params->ntlm_v2_enabled);
 #endif
@@ -1705,6 +1705,7 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext() {
     cert_verifier = std::make_unique<WrappedTestingCertVerifier>();
   } else {
 #if defined(OS_ANDROID) || defined(OS_FUCHSIA) || defined(OS_CHROMEOS) || \
+    defined(OS_OS2) || \
     BUILDFLAG(TRIAL_COMPARISON_CERT_VERIFIER_SUPPORTED) ||                \
     BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
     cert_net_fetcher_ = base::MakeRefCounted<net::CertNetFetcherURLRequest>();
