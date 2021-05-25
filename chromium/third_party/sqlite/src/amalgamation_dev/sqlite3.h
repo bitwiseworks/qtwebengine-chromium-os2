@@ -7264,6 +7264,7 @@ SQLITE_API int sqlite3_vfs_unregister(sqlite3_vfs*);
 ** implementations are available in the SQLite core:
 **
 ** <ul>
+** <li>   SQLITE_MUTEX_OS2
 ** <li>   SQLITE_MUTEX_PTHREADS
 ** <li>   SQLITE_MUTEX_W32
 ** <li>   SQLITE_MUTEX_NOOP
@@ -7271,9 +7272,9 @@ SQLITE_API int sqlite3_vfs_unregister(sqlite3_vfs*);
 **
 ** The SQLITE_MUTEX_NOOP implementation is a set of routines
 ** that does no real locking and is appropriate for use in
-** a single-threaded application.  The SQLITE_MUTEX_PTHREADS and
-** SQLITE_MUTEX_W32 implementations are appropriate for use on Unix
-** and Windows.
+** a single-threaded application.  The The SQLITE_MUTEX_OS2,
+** SQLITE_MUTEX_PTHREADS and SQLITE_MUTEX_W32 implementations
+** are appropriate for use on OS/2, Unix and Windows.
 **
 ** If SQLite is compiled with the SQLITE_MUTEX_APPDEF preprocessor
 ** macro defined (with "-DSQLITE_MUTEX_APPDEF=1"), then no mutex
