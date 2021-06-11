@@ -86,8 +86,13 @@ AudioParameters AudioManagerOS2::GetPreferredOutputStreamParameters(
   memset(&wanted, 0, sizeof(wanted));
   wanted.ulType = KAIT_PLAY;
   wanted.ulBitsPerSample = kOS2BitsPerSample;
-  wanted.ulSamplingRate = input_params.sample_rate();
-  wanted.ulChannels = input_params.channels() >= kOS2MaxChannels ? 2 : 1;
+  if (input_params.IsValid()) {
+    wanted.ulSamplingRate = input_params.sample_rate();
+    wanted.ulChannels = input_params.channels() >= kOS2MaxChannels ? 2 : 1;
+  } else {
+    wanted.ulSamplingRate = 48000;
+    wanted.ulChannels = kOS2MaxChannels;
+  }
   wanted.pfnCallBack = (PFNKAICB)this; // Any valid pointer, won't be used anyway.
 
   arc = kaiOpen(&wanted, &obtained, &handle);
