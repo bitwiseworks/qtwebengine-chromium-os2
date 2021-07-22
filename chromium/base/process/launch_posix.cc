@@ -347,7 +347,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
       options.real_path.value().c_str() : argv_cstr[0];
 
   // Reserve space for possible stdin/err/out inheritance and EOL
-  int stdfds[options.fds_to_remap.size() + 3 * 2 + 1];
+  int stdfds[(options.fds_to_remap.size() + 3) * 2 + 1];
   int *pfd = stdfds;
   int null_fd = -1;
 

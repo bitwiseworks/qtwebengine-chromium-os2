@@ -57,11 +57,13 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
   std::unique_ptr<PosixFileDescriptorInfo> files_to_register(
       PosixFileDescriptorInfoImpl::Create());
 
-// Mac and OS/2 shared memory doesn't use file descriptors.
-#if !defined(OS_MACOSX) && !defined(OS_OS2)
+#if !defined(OS_MACOSX)
+#if !defined(OS_OS2)
+  // Mac and OS/2 shared memory doesn't use file descriptors.
   int fd = base::FieldTrialList::GetFieldTrialDescriptor();
   if (fd != -1)
     files_to_register->Share(service_manager::kFieldTrialDescriptor, fd);
+#endif
 
   DCHECK(mojo_channel_remote_endpoint.is_valid());
   files_to_register->Share(
@@ -98,6 +100,7 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
   }
   command_line->AppendSwitchASCII(service_manager::switches::kSharedFiles,
                                   file_switch_value_builder.switch_value());
+
 
   return files_to_register;
 }
