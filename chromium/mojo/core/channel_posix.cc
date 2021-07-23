@@ -386,33 +386,35 @@ class ChannelPosix : public Channel,
     }
     size_t bytes_written = 0;
     std::vector<PlatformHandleInTransit> handles = message_view.TakeHandles();
-    size_t num_handles = handles.size();
-    size_t handles_written = message_view.num_handles_sent();
-    do {
-      message_view.advance_data_offset(bytes_written);
-
-      ssize_t result;
 #if defined(OS_OS2)
-      // We are about to actually write to the remote process. Platform handles
-      // are either already sent to it in |Write| (if the remote process ID is
-      // known) or will be taken by it in |GetReadPlatformHandles| (otherwise).
-      // In the 1st case, we may safely drop handles to have them closed on our
-      // end. In the 2nd case, we must release them now to make sure they are
-      // NOT closed before the remote process calls |GetReadPlatformHandles|.
-      // The remote process will take care about closing them with LIBCx help.
-      // If the remote process crashes before doing so, we will leak them but
-      // it's irrelevant as this means our total dysfunction is imminent.
-      if (num_handles) {
-        if (!remote_process().is_valid()) {
-          // Release to avoid early closure of not-yet-taken handles.
-          for (auto& handle : handles)
-            handle.CompleteTransit();
-        }
+    // We are about to actually write to the remote process. Platform handles
+    // are either already sent to it in |Write| (if the remote process ID is
+    // known) or will be taken by it in |GetReadPlatformHandles| (otherwise).
+    // In the 1st case, we may safely drop handles to have them closed on our
+    // end. In the 2nd case, we must release them now to make sure they are
+    // NOT closed before the remote process calls |GetReadPlatformHandles|.
+    // The remote process will take care about closing them with LIBCx help.
+    // If the remote process crashes before doing so, we will leak them but
+    // it's irrelevant as this means our total dysfunction is imminent.
+    if (!handles.empty()) {
+      if (!remote_process().is_valid()) {
+        // Release to avoid early closure of not-yet-taken handles.
+        for (auto& handle : handles)
+          handle.CompleteTransit();
       }
       // No need to set sent/to-be-taken handles back even on failure to send
       // the message iteslf.
       handles.clear();
+    }
 #else
+    size_t num_handles = handles.size();
+    size_t handles_written = message_view.num_handles_sent();
+#endif
+    do {
+      message_view.advance_data_offset(bytes_written);
+
+      ssize_t result;
+#if !defined(OS_OS2)
       if (handles_written < num_handles) {
         iovec iov = {const_cast<void*>(message_view.data()),
                      message_view.data_num_bytes()};
@@ -492,7 +494,10 @@ class ChannelPosix : public Channel,
       }
 
       bytes_written = static_cast<size_t>(result);
-    } while (handles_written < num_handles ||
+    } while (
+#if !defined(OS_OS2)
+             handles_written < num_handles ||
+#endif
              bytes_written < message_view.data_num_bytes());
 
     return FlushOutgoingMessagesNoLock();
