@@ -149,6 +149,10 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 #elif defined(OS_OS2)
     // OS/2 uses LIBCx transfer handle API.
     typedef LIBCX_HANDLE HandleEntry;
+    struct OS2ExtraHeader {
+      pid_t pid;
+      HandleEntry handles[0];
+    };
 #endif
 #pragma pack(pop)
 
@@ -198,7 +202,9 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     size_t num_handles() const;
     bool has_handles() const;
 #if defined(OS_OS2)
-    HandleEntry* mutable_handles() { return handles_; }
+    OS2ExtraHeader* mutable_os2_header() {
+        return reinterpret_cast<OS2ExtraHeader*>(mutable_extra_header());
+    }
 #endif
 
     bool is_legacy_message() const;
@@ -234,9 +240,6 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 
 #if defined(OS_WIN)
     // On Windows, handles are serialised into the extra header section.
-    HandleEntry* handles_ = nullptr;
-#elif defined(OS_OS2)
-    // On OS/2, handles are serialised into the extra header section.
     HandleEntry* handles_ = nullptr;
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
     // On OSX, handles are serialised into the extra header section.

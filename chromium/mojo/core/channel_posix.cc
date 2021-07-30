@@ -134,12 +134,22 @@ class ChannelPosix : public Channel,
 #if defined(OS_OS2)
     // On OS/2, we can have SHMEM and socket handles which are located in the
     // extra header section.
-    if (remote_process().is_valid() && message->has_handles()) {
-      Channel::Message::HandleEntry* handles = message->mutable_handles();
-      // Send all handles at once.
-      int rc = libcx_send_handles(handles, message->num_handles(),
-          remote_process().get(), 0);
-      DPCHECK(rc == 0);
+    if (message->has_handles()) {
+      if (remote_process().is_valid()) {
+        Channel::Message::HandleEntry* handles = message->mutable_os2_header()->handles;
+        // Send all handles at once.
+        int rc = libcx_send_handles(handles, message->num_handles(),
+            remote_process().get(), 0);
+        // The process may have gone already, shouldn't assert in this case.
+        DPCHECK(rc == 0 || errno == ESRCH);
+        // Make sure PID in the messgae is reset as we already gave access to
+        // handles (also see below).
+        message->mutable_os2_header()->pid = 0;
+      } else {
+        // Send this process ID so that the remote party could call
+        // libcx_take_handles when it doesn't know our PID.
+        message->mutable_os2_header()->pid = getpid();
+      }
     }
 #endif
 
@@ -182,17 +192,21 @@ class ChannelPosix : public Channel,
     // On OS/2, we can have SHMEM and socket handles which are located in the
     // extra header section.
     DCHECK(extra_header);
+    using OS2ExtraHeader = Channel::Message::OS2ExtraHeader;
     using HandleEntry = Channel::Message::HandleEntry;
-    size_t handles_size = sizeof(HandleEntry) * num_handles;
+    size_t handles_size = sizeof(OS2ExtraHeader) +
+        sizeof(HandleEntry) * num_handles;
     if (handles_size > extra_header_size)
       return false;
-    const HandleEntry* extra_header_handles =
-        reinterpret_cast<const HandleEntry*>(extra_header);
+    const OS2ExtraHeader *os2_header =
+        reinterpret_cast<const OS2ExtraHeader*>(extra_header);
     std::vector<LIBCX_HANDLE> new_handles(
-        extra_header_handles, extra_header_handles + num_handles);
-    if (remote_process().is_valid()) {
-      int rc = libcx_take_handles(new_handles.data(), num_handles,
-          remote_process().get(), LIBCX_HANDLE_CLOSE);
+        os2_header->handles, os2_header->handles + num_handles);
+    pid_t pid = remote_process().is_valid() ? remote_process().get() :
+        os2_header->pid;
+    if (pid) {
+      int rc = libcx_take_handles(new_handles.data(), num_handles, pid,
+          LIBCX_HANDLE_CLOSE);
       DPCHECK(rc == 0);
     }
     handles->resize(num_handles);
