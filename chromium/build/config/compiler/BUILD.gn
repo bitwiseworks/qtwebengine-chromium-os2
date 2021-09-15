@@ -370,7 +370,7 @@ config("compiler") {
       }
     }
 
-    if (is_official_build || force_local_build_id) {
+    if ((is_official_build || force_local_build_id) && !is_os2) {
       # Explicitly pass --build-id to ld. Compilers used to always pass this
       # implicitly but don't any more (in particular clang when built without
       # ENABLE_LINKER_BUILD_ID=ON). The crash infrastructure does need a build
