@@ -160,8 +160,16 @@ void PathOutput::WritePathStr(std::ostream& out,
 // it's system-absolute.
 #if defined(OS_DOSLIKE)
     // On Windows, trim the leading slash, since the input for absolute
-    // paths will look like "/C:/foo/bar.txt".
-    EscapeStringToStream(out, str.substr(1), options_);
+    // paths will look like "/C:/foo/bar.txt". On OS/2, however, there
+    // may be absolute paths with rewrite rules like "/@unixroot" which
+    // should be left intact.
+    base::StringPiece substr = str.substr(1);
+#if defined(OS_OS2)
+    if (!base::FilePath(substr).IsAbsolute())
+      EscapeStringToStream(out, str, options_);
+    else
+#endif
+    EscapeStringToStream(out, substr, options_);
 #else
     EscapeStringToStream(out, str, options_);
 #endif
