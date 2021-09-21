@@ -102,9 +102,21 @@ bool IsPathAbsolute(StringPieceType path) {
     return path.length() > letter + 1 &&
         FilePath::IsSeparator(path[letter + 1]);
   }
+#if defined(OS_OS2)
+  // We have to treat all paths starting with separators as absolute because of
+  // the path rewrite rules that e.g. redirect /@unixroot and /tmp to absolute
+  // locations. In order to distinguish between these rewritten paths and those
+  // pseudo-absolute ones relative to the current drive, we would have to call
+  // LIBC and this is not expected by this API. Pseudo-absolute paths are rare
+  // and generally not used and treating them absolute should not have any
+  // real harm. The opposite is not true and e.g. breaks ResourceBundle::
+  // AddDataPackFromPathInternal that stops loading from /@unixroot paths then.
+  return path.length() > 0 && FilePath::IsSeparator(path[0]);
+#else
   // Look for a pair of leading separators.
   return path.length() > 1 &&
       FilePath::IsSeparator(path[0]) && FilePath::IsSeparator(path[1]);
+#endif
 #else  // FILE_PATH_USES_DRIVE_LETTERS
   // Look for a separator in the first position.
   return path.length() > 0 && FilePath::IsSeparator(path[0]);
