@@ -9,18 +9,19 @@
 // canonicalizer for file URLs. Do not use outside of these modules.
 
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "url/url_parse_internal.h"
 
 namespace url {
 
-#ifdef WIN32
+#ifdef OS_DOSLIKE
 
 // We allow both "c:" and "c|" as drive identifiers.
 inline bool IsWindowsDriveSeparator(base::char16 ch) {
   return ch == ':' || ch == '|';
 }
 
-#endif  // WIN32
+#endif  // OS_DOSLIKE
 
 // Returns the index of the next slash in the input after the given index, or
 // spec_len if the end of the input is reached.
@@ -32,7 +33,7 @@ inline int FindNextSlash(const CHAR* spec, int begin_index, int spec_len) {
   return idx;
 }
 
-#ifdef WIN32
+#ifdef OS_DOSLIKE
 
 // Returns true if the start_offset in the given spec looks like it begins a
 // drive spec, for example "c:". This function explicitly handles start_offset
@@ -74,7 +75,7 @@ inline bool DoesBeginUNCPath(const CHAR* text,
   return IsURLSlash(text[start_offset]) && IsURLSlash(text[start_offset + 1]);
 }
 
-#endif  // WIN32
+#endif  // OS_DOSLIKE
 
 }  // namespace url
 

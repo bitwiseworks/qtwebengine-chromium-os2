@@ -13,6 +13,7 @@
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "url/url_canon_internal.h"
 #include "url/url_constants.h"
 #include "url/url_file.h"
@@ -221,7 +222,7 @@ bool DoCanonicalize(const CHAR* spec,
   }
 
   Parsed parsed_input;
-#ifdef WIN32
+#ifdef OS_DOSLIKE
   // For Windows, we allow things that look like absolute Windows paths to be
   // fixed up magically to file URLs. This is done for IE compatibility. For
   // example, this will change "c:/foo" into a file URL rather than treating

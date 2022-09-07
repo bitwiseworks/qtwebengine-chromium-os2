@@ -6,6 +6,7 @@
 
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
@@ -52,7 +53,7 @@ TEST(GURLTest, Types) {
   EXPECT_EQ("http://hostname.com/", TypesTestCase("http://HOSTNAME.com"));
   EXPECT_EQ("http://hostname.com/", TypesTestCase("http:///HOSTNAME.com"));
 
-#ifdef WIN32
+#ifdef OS_DOSLIKE
   // URLs that look like Windows absolute path specs.
   EXPECT_EQ("file:///C:/foo.txt", TypesTestCase("c:\\foo.txt"));
   EXPECT_EQ("file:///Z:/foo.txt", TypesTestCase("Z|foo.txt"));
@@ -481,7 +482,7 @@ TEST(GURLTest, Replacements) {
        "", "window.open('foo');", "", "", "javascript:window.open('foo');"},
       {"file:///C:/foo/bar.txt", "http", NULL, NULL, "www.google.com", "99",
        "/foo", "search", "ref", "http://www.google.com:99/foo?search#ref"},
-#ifdef WIN32
+#ifdef OS_DOSLIKE
       {"http://www.google.com/foo/bar.html?foo#bar", "file", "", "", "", "",
        "c:\\", "", "", "file:///C:/"},
 #endif

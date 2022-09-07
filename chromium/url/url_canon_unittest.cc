@@ -1720,7 +1720,7 @@ TEST(URLCanonTest, CanonicalizeFileURL) {
     Component expected_host;
     Component expected_path;
   } cases[] = {
-#ifdef _WIN32
+#ifdef OS_DOSLIKE
       // Windows-style paths
       {"file:c:\\foo\\bar.html", "file:///C:/foo/bar.html", true, Component(),
        Component(7, 16)},
@@ -1787,7 +1787,7 @@ TEST(URLCanonTest, CanonicalizeFileURL) {
     {"file://localhost",  "file://localhost/", true, Component(7, 9), Component(16, 1)},
     {"file://localhost/", "file://localhost/", true, Component(7, 9), Component(16, 1)},
     {"file://localhost/test", "file://localhost/test", true, Component(7, 9), Component(16, 5)},
-#endif  // _WIN32
+#endif  // OS_DOSLIKE
   };
 
   for (size_t i = 0; i < base::size(cases); i++) {
@@ -2165,7 +2165,7 @@ TEST(URLCanonTest, ResolveRelativeURL) {
       // behavior.
     {"http://host/a", true, false, "\\/another/path", true, true, true, "http://another/path"},
     {"http://host/a", true, false, "/\\Another\\path", true, true, true, "http://another/path"},
-#ifdef WIN32
+#ifdef OS_DOSLIKE
       // Resolving against Windows file base URLs.
     {"file:///C:/foo", true, true, "http://host/", true, false, false, NULL},
     {"file:///C:/foo", true, true, "bar", true, true, true, "file:///C:/bar"},

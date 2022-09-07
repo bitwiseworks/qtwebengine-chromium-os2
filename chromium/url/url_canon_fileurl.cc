@@ -5,6 +5,7 @@
 // Functions for canonicalizing "file:" URLs.
 
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "url/url_canon.h"
 #include "url/url_canon_internal.h"
 #include "url/url_file.h"
@@ -14,7 +15,7 @@ namespace url {
 
 namespace {
 
-#ifdef WIN32
+#ifdef OS_DOSLIKE
 
 // Given a pointer into the spec, this copies and canonicalizes the drive
 // letter and colon to the output, if one is found. If there is not a drive
@@ -50,7 +51,7 @@ int FileDoDriveSpec(const CHAR* spec, int begin, int end,
   return after_slashes + 2;
 }
 
-#endif  // WIN32
+#endif  // OS_DOSLIKE
 
 template<typename CHAR, typename UCHAR>
 bool DoFileCanonicalizePath(const CHAR* spec,
@@ -60,7 +61,7 @@ bool DoFileCanonicalizePath(const CHAR* spec,
   // Copies and normalizes the "c:" at the beginning, if present.
   out_path->begin = output->length();
   int after_drive;
-#ifdef WIN32
+#ifdef OS_DOSLIKE
   after_drive = FileDoDriveSpec(spec, path.begin, path.end(), output);
 #else
   after_drive = path.begin;
