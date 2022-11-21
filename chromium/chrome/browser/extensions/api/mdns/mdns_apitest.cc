@@ -11,6 +11,7 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/media/router/test/mock_dns_sd_registry.h"
 #include "chrome/common/extensions/api/mdns.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/common/switches.h"
 #include "extensions/test/result_catcher.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -30,7 +31,7 @@ class MDnsAPITest : public extensions::ExtensionApiTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     extensions::ExtensionApiTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(
-        extensions::switches::kWhitelistedExtensionID,
+        extensions::switches::kAllowlistedExtensionID,
         "ddchlicdkolnonkihahngkmmmjnjlkkf");
   }
 
@@ -48,15 +49,8 @@ class MDnsAPITest : public extensions::ExtensionApiTest {
 
 }  // namespace
 
-// TODO(justinlin): Win Dbg has a workaround that makes RunExtensionSubtest
-// always return true without actually running the test. Remove when fixed.
-#if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_RegisterListener DISABLED_RegisterListener
-#else
-#define MAYBE_RegisterListener RegisterListener
-#endif
 // Test loading extension, registering an MDNS listener and dispatching events.
-IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_RegisterListener) {
+IN_PROC_BROWSER_TEST_F(MDnsAPITest, RegisterListener) {
   const std::string& service_type = "_googlecast._tcp.local";
   SetUpTestDnsSdRegistry();
 
@@ -85,15 +79,8 @@ IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_RegisterListener) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-// TODO(justinlin): Win Dbg has a workaround that makes RunExtensionSubtest
-// always return true without actually running the test. Remove when fixed.
-#if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_ForceDiscovery DISABLED_ForceDiscovery
-#else
-#define MAYBE_ForceDiscovery ForceDiscovery
-#endif
 // Test loading extension, registering an MDNS listener and dispatching events.
-IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_ForceDiscovery) {
+IN_PROC_BROWSER_TEST_F(MDnsAPITest, ForceDiscovery) {
   const std::string& service_type = "_googlecast._tcp.local";
   SetUpTestDnsSdRegistry();
 
@@ -119,15 +106,8 @@ IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_ForceDiscovery) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-// TODO(justinlin): Win Dbg has a workaround that makes RunExtensionSubtest
-// always return true without actually running the test. Remove when fixed.
-#if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_RegisterMultipleListeners DISABLED_RegisterMultipleListeners
-#else
-#define MAYBE_RegisterMultipleListeners RegisterMultipleListeners
-#endif
 // Test loading extension and registering multiple listeners.
-IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_RegisterMultipleListeners) {
+IN_PROC_BROWSER_TEST_F(MDnsAPITest, RegisterMultipleListeners) {
   const std::string& service_type = "_googlecast._tcp.local";
   const std::string& test_service_type = "_testing._tcp.local";
   SetUpTestDnsSdRegistry();
@@ -160,15 +140,8 @@ IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_RegisterMultipleListeners) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-// TODO(justinlin): Win Dbg has a workaround that makes RunExtensionSubtest
-// always return true without actually running the test. Remove when fixed.
-#if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_RegisterTooManyListeners DISABLED_RegisterTooManyListeners
-#else
-#define MAYBE_RegisterTooManyListeners RegisterTooManyListeners
-#endif
 // Test loading extension and registering multiple listeners.
-IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_RegisterTooManyListeners) {
+IN_PROC_BROWSER_TEST_F(MDnsAPITest, RegisterTooManyListeners) {
   SetUpTestDnsSdRegistry();
 
   EXPECT_CALL(*dns_sd_registry_, RegisterDnsSdListener(_)).Times(10);
@@ -181,16 +154,8 @@ IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_RegisterTooManyListeners) {
       << message_;
 }
 
-// TODO(justinlin): Win Dbg has a workaround that makes RunExtensionSubtest
-// always return true without actually running the test. Remove when fixed.
-#if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_MaxServiceInstancesPerEventConst \
-  DISABLED_MaxServiceInstancesPerEventConst
-#else
-#define MAYBE_MaxServiceInstancesPerEventConst MaxServiceInstancesPerEventConst
-#endif
 // Test loading extension and registering multiple listeners.
-IN_PROC_BROWSER_TEST_F(MDnsAPITest, MAYBE_MaxServiceInstancesPerEventConst) {
+IN_PROC_BROWSER_TEST_F(MDnsAPITest, MaxServiceInstancesPerEventConst) {
   EXPECT_TRUE(RunExtensionSubtest("mdns/api",
                                   "get_max_service_instances.html"));
 }

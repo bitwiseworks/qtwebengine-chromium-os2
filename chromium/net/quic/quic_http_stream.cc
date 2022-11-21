@@ -93,26 +93,20 @@ HttpResponseInfo::ConnectionInfo QuicHttpStream::ConnectionInfoFromQuicVersion(
       return HttpResponseInfo::CONNECTION_INFO_QUIC_43;
     case quic::QUIC_VERSION_46:
       return HttpResponseInfo::CONNECTION_INFO_QUIC_46;
-    case quic::QUIC_VERSION_48:
-      return quic_version.handshake_protocol == quic::PROTOCOL_TLS1_3
-                 ? HttpResponseInfo::CONNECTION_INFO_QUIC_T048
-                 : HttpResponseInfo::CONNECTION_INFO_QUIC_Q048;
-    case quic::QUIC_VERSION_49:
-      return quic_version.handshake_protocol == quic::PROTOCOL_TLS1_3
-                 ? HttpResponseInfo::CONNECTION_INFO_QUIC_T049
-                 : HttpResponseInfo::CONNECTION_INFO_QUIC_Q049;
     case quic::QUIC_VERSION_50:
-      return quic_version.handshake_protocol == quic::PROTOCOL_TLS1_3
+      return quic_version.UsesTls()
                  ? HttpResponseInfo::CONNECTION_INFO_QUIC_T050
                  : HttpResponseInfo::CONNECTION_INFO_QUIC_Q050;
-    case quic::QUIC_VERSION_IETF_DRAFT_25:
-      DCHECK(quic_version.handshake_protocol == quic::PROTOCOL_TLS1_3);
-      return HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_25;
     case quic::QUIC_VERSION_IETF_DRAFT_27:
-      DCHECK(quic_version.handshake_protocol == quic::PROTOCOL_TLS1_3);
+      DCHECK(quic_version.UsesTls());
       return HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_27;
+    case quic::QUIC_VERSION_IETF_DRAFT_29:
+      DCHECK(quic_version.UsesTls());
+      return HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_29;
     case quic::QUIC_VERSION_RESERVED_FOR_NEGOTIATION:
       return HttpResponseInfo::CONNECTION_INFO_QUIC_999;
+    case quic::QUIC_VERSION_51:
+      return HttpResponseInfo::CONNECTION_INFO_QUIC_T051;
   }
   NOTREACHED();
   return HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION;
@@ -651,7 +645,7 @@ int QuicHttpStream::DoSendBody() {
   int len = request_body_buf_->BytesRemaining();
   if (len > 0 || eof) {
     next_state_ = STATE_SEND_BODY_COMPLETE;
-    quiche::QuicheStringPiece data(request_body_buf_->data(), len);
+    base::StringPiece data(request_body_buf_->data(), len);
     return stream_->WriteStreamData(
         data, eof,
         base::BindOnce(&QuicHttpStream::OnIOComplete,

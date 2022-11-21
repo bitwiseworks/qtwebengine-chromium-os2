@@ -72,8 +72,8 @@ ScriptPromise ShapeDetector::detect(
       canvas_image_source->ElementSize(FloatSize(), kRespectImageOrientation));
 
   SourceImageStatus source_image_status = kInvalidSourceImageStatus;
-  scoped_refptr<Image> image = canvas_image_source->GetSourceImageForCanvas(
-      &source_image_status, kPreferNoAcceleration, size);
+  scoped_refptr<Image> image =
+      canvas_image_source->GetSourceImageForCanvas(&source_image_status, size);
   if (!image || source_image_status != kNormalSourceImageStatus) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kInvalidStateError, "Invalid element or state."));
@@ -84,11 +84,10 @@ ScriptPromise ShapeDetector::detect(
     return promise;
   }
 
-  // makeNonTextureImage() will make a raster copy of
-  // PaintImageForCurrentFrame() if needed, otherwise returning the original
-  // SkImage.
+  // GetSwSkImage() will make a raster copy of PaintImageForCurrentFrame()
+  // if needed, otherwise returning the original SkImage.
   const sk_sp<SkImage> sk_image =
-      image->PaintImageForCurrentFrame().GetSkImage()->makeNonTextureImage();
+      image->PaintImageForCurrentFrame().GetSwSkImage();
 
   SkBitmap sk_bitmap;
   if (!sk_image->asLegacyBitmap(&sk_bitmap)) {
@@ -134,7 +133,10 @@ ScriptPromise ShapeDetector::DetectShapesOnImageData(
   base::CheckedNumeric<int> allocation_size = image_data->Size().Area() * 4;
   CHECK_EQ(allocation_size.ValueOrDefault(0), sk_bitmap.computeByteSize());
 
-  memcpy(sk_bitmap.getPixels(), image_data->data()->Data(),
+  // TODO(crbug.com/1115317): Should be compatible with uint_8, float16 and
+  // float32.
+  memcpy(sk_bitmap.getPixels(),
+         image_data->data().GetAsUint8ClampedArray()->Data(),
          sk_bitmap.computeByteSize());
 
   return DoDetect(resolver, std::move(sk_bitmap));
@@ -150,15 +152,15 @@ ScriptPromise ShapeDetector::DetectShapesOnImageElement(
     return promise;
   }
 
-  ImageResourceContent* const image_resource = img->CachedImage();
-  if (!image_resource || image_resource->ErrorOccurred()) {
+  ImageResourceContent* const image_content = img->CachedImage();
+  if (!image_content || image_content->ErrorOccurred()) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kInvalidStateError,
         "Failed to load or decode HTMLImageElement."));
     return promise;
   }
 
-  Image* const blink_image = image_resource->GetImage();
+  Image* const blink_image = image_content->GetImage();
   if (!blink_image) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kInvalidStateError,
@@ -166,8 +168,10 @@ ScriptPromise ShapeDetector::DetectShapesOnImageElement(
     return promise;
   }
 
+  // The call to asLegacyBitmap() below forces a readback so getting SwSkImage
+  // here doesn't readback unnecessarily
   const sk_sp<SkImage> sk_image =
-      blink_image->PaintImageForCurrentFrame().GetSkImage();
+      blink_image->PaintImageForCurrentFrame().GetSwSkImage();
   DCHECK_EQ(img->naturalWidth(), static_cast<unsigned>(sk_image->width()));
   DCHECK_EQ(img->naturalHeight(), static_cast<unsigned>(sk_image->height()));
 

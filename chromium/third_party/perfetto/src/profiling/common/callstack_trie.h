@@ -29,7 +29,7 @@ namespace perfetto {
 namespace profiling {
 
 struct Mapping {
-  Mapping(Interned<std::string> b) : build_id(std::move(b)) {}
+  explicit Mapping(Interned<std::string> b) : build_id(std::move(b)) {}
 
   Interned<std::string> build_id;
   uint64_t exact_offset = 0;
@@ -104,7 +104,7 @@ class GlobalCallstackTrie {
     friend class GlobalCallstackTrie;
 
     // Allow building a node out of a frame for base::LookupSet.
-    Node(Interned<Frame> frame) : Node(frame, 0, nullptr) {}
+    explicit Node(Interned<Frame> frame) : Node(frame, 0, nullptr) {}
     Node(Interned<Frame> frame, uint64_t id)
         : Node(std::move(frame), id, nullptr) {}
     Node(Interned<Frame> frame, uint64_t id, Node* parent)
@@ -135,7 +135,11 @@ class GlobalCallstackTrie {
   GlobalCallstackTrie(GlobalCallstackTrie&&) = delete;
   GlobalCallstackTrie& operator=(GlobalCallstackTrie&&) = delete;
 
+  Interned<Frame> InternCodeLocation(const FrameData& loc);
+
   Node* CreateCallsite(const std::vector<FrameData>& callstack);
+  Node* CreateCallsite(const std::vector<Interned<Frame>>& callstack);
+
   static void IncrementNode(Node* node);
   static void DecrementNode(Node* node);
 
@@ -152,7 +156,6 @@ class GlobalCallstackTrie {
  private:
   Node* GetOrCreateChild(Node* self, const Interned<Frame>& loc);
 
-  Interned<Frame> InternCodeLocation(const FrameData& loc);
   Interned<Frame> MakeRootFrame();
 
   Interner<std::string> string_interner_;

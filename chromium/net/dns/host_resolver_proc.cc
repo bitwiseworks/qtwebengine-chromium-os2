@@ -8,7 +8,7 @@
 
 #include "build/build_config.h"
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "net/base/address_list.h"
 #include "net/base/net_errors.h"
@@ -159,7 +159,7 @@ int SystemHostResolverCall(const std::string& host,
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::WILL_BLOCK);
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_OPENBSD) && \
+#if defined(OS_POSIX) && !defined(OS_APPLE) && !defined(OS_OPENBSD) && \
     !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
   DnsReloaderMaybeReload();
 #endif

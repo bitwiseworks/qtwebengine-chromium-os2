@@ -11,6 +11,7 @@
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
 #include "third_party/blink/renderer/core/css/css_custom_font_data.h"
 #include "third_party/blink/renderer/core/css/css_font_face.h"
+#include "third_party/blink/renderer/core/css/font_face_set_document.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
@@ -29,13 +30,57 @@
 
 namespace blink {
 
+bool RemoteFontFaceSource::NeedsInterventionToAlignWithLCPGoal() const {
+  DCHECK_EQ(display_, kFontDisplayAuto);
+  if (!base::FeatureList::IsEnabled(
+          features::kAlignFontDisplayAutoTimeoutWithLCPGoal)) {
+    return false;
+  }
+  if (!GetDocument() ||
+      !FontFaceSetDocument::From(*GetDocument())->HasReachedLCPLimit()) {
+    return false;
+  }
+  // If a 'font-display: auto' font hasn't finished loading by the LCP limit, it
+  // should enter the swap or failure period immediately, so that it doesn't
+  // become a source of bad LCP. The only exception is when the font is
+  // immediately available from the memory cache, in which case it can be used
+  // right away without any latency.
+  return !IsLoaded() ||
+         (!FinishedFromMemoryCache() && !finished_before_lcp_limit_);
+}
+
+RemoteFontFaceSource::DisplayPeriod
+RemoteFontFaceSource::ComputeFontDisplayAutoPeriod() const {
+  DCHECK_EQ(display_, kFontDisplayAuto);
+  if (NeedsInterventionToAlignWithLCPGoal()) {
+    using Mode = features::AlignFontDisplayAutoTimeoutWithLCPGoalMode;
+    Mode mode =
+        features::kAlignFontDisplayAutoTimeoutWithLCPGoalModeParam.Get();
+    if (mode == Mode::kToSwapPeriod)
+      return kSwapPeriod;
+    DCHECK_EQ(Mode::kToFailurePeriod, mode);
+    if (custom_font_data_ && !custom_font_data_->MayBeIconFont())
+      return kFailurePeriod;
+    return kSwapPeriod;
+  }
+
+  if (is_intervention_triggered_)
+    return kSwapPeriod;
+
+  switch (phase_) {
+    case kNoLimitExceeded:
+    case kShortLimitExceeded:
+      return kBlockPeriod;
+    case kLongLimitExceeded:
+      return kSwapPeriod;
+  }
+}
+
 RemoteFontFaceSource::DisplayPeriod RemoteFontFaceSource::ComputePeriod()
     const {
   switch (display_) {
     case kFontDisplayAuto:
-      if (is_intervention_triggered_)
-        return kSwapPeriod;
-      FALLTHROUGH;
+      return ComputeFontDisplayAutoPeriod();
     case kFontDisplayBlock:
       switch (phase_) {
         case kNoLimitExceeded:
@@ -79,7 +124,8 @@ RemoteFontFaceSource::DisplayPeriod RemoteFontFaceSource::ComputePeriod()
 
       if (GetDocument()->GetFontPreloadManager().RenderingHasBegun()) {
         if (FinishedFromMemoryCache() ||
-            finished_before_document_rendering_begin_)
+            finished_before_document_rendering_begin_ ||
+            !has_been_requested_while_pending_)
           return kSwapPeriod;
         return kFailurePeriod;
       }
@@ -101,12 +147,14 @@ RemoteFontFaceSource::RemoteFontFaceSource(CSSFontFace* css_font_face,
       font_selector_(font_selector),
       // No need to report the violation here since the font is not loaded yet
       display_(
-          GetFontDisplayWithFeaturePolicyCheck(display,
-                                               font_selector,
-                                               ReportOptions::kDoNotReport)),
+          GetFontDisplayWithDocumentPolicyCheck(display,
+                                                font_selector,
+                                                ReportOptions::kDoNotReport)),
       phase_(kNoLimitExceeded),
       is_intervention_triggered_(ShouldTriggerWebFontsIntervention()),
-      finished_before_document_rendering_begin_(false) {
+      finished_before_document_rendering_begin_(false),
+      has_been_requested_while_pending_(false),
+      finished_before_lcp_limit_(false) {
   DCHECK(face_);
   period_ = ComputePeriod();
 }
@@ -142,15 +190,15 @@ void RemoteFontFaceSource::NotifyFinished(Resource* resource) {
     return;
   // Prevent promise rejection while shutting down the document.
   // See crbug.com/960290
-  if (execution_context->IsDocument() &&
-      To<LocalDOMWindow>(execution_context)->document()->IsDetached()) {
+  auto* window = DynamicTo<LocalDOMWindow>(execution_context);
+  if (window && window->document()->IsDetached())
     return;
-  }
 
   FontResource* font = ToFontResource(resource);
   histograms_.RecordRemoteFont(font);
 
   custom_font_data_ = font->GetCustomFontData();
+  url_ = resource->Url().GetString();
 
   // FIXME: Provide more useful message such as OTS rejection reason.
   // See crbug.com/97467
@@ -171,9 +219,11 @@ void RemoteFontFaceSource::NotifyFinished(Resource* resource) {
 
   PruneTable();
 
-  if (GetDocument() &&
-      !GetDocument()->GetFontPreloadManager().RenderingHasBegun()) {
-    finished_before_document_rendering_begin_ = true;
+  if (GetDocument()) {
+    if (!GetDocument()->GetFontPreloadManager().RenderingHasBegun())
+      finished_before_document_rendering_begin_ = true;
+    if (!FontFaceSetDocument::From(*GetDocument())->HasReachedLCPLimit())
+      finished_before_lcp_limit_ = true;
   }
 
   if (FinishedFromMemoryCache())
@@ -182,7 +232,8 @@ void RemoteFontFaceSource::NotifyFinished(Resource* resource) {
     UpdatePeriod();
 
   if (face_->FontLoaded(this)) {
-    font_selector_->FontFaceInvalidated();
+    font_selector_->FontFaceInvalidated(
+        FontInvalidationReason::kFontFaceLoaded);
 
     const scoped_refptr<FontCustomPlatformData> customFontData =
         font->GetCustomFontData();
@@ -215,33 +266,37 @@ void RemoteFontFaceSource::SetDisplay(FontDisplay display) {
   // using the loaded font.
   if (IsLoaded())
     return;
-  display_ = GetFontDisplayWithFeaturePolicyCheck(
+  display_ = GetFontDisplayWithDocumentPolicyCheck(
       display, font_selector_, ReportOptions::kReportOnFailure);
   UpdatePeriod();
 }
 
-void RemoteFontFaceSource::UpdatePeriod() {
+bool RemoteFontFaceSource::UpdatePeriod() {
   DisplayPeriod new_period = ComputePeriod();
+  bool changed = new_period != period_;
 
   // Fallback font is invisible iff the font is loading and in the block period.
   // Invalidate the font if its fallback visibility has changed.
   if (IsLoading() && period_ != new_period &&
       (period_ == kBlockPeriod || new_period == kBlockPeriod)) {
     PruneTable();
-    if (face_->FallbackVisibilityChanged(this))
-      font_selector_->FontFaceInvalidated();
+    if (face_->FallbackVisibilityChanged(this)) {
+      font_selector_->FontFaceInvalidated(
+          FontInvalidationReason::kGeneralInvalidation);
+    }
     histograms_.RecordFallbackTime();
   }
   period_ = new_period;
+  return changed;
 }
 
-FontDisplay RemoteFontFaceSource::GetFontDisplayWithFeaturePolicyCheck(
+FontDisplay RemoteFontFaceSource::GetFontDisplayWithDocumentPolicyCheck(
     FontDisplay display,
     const FontSelector* font_selector,
     ReportOptions report_option) const {
   ExecutionContext* context = font_selector->GetExecutionContext();
   if (display != kFontDisplayFallback && display != kFontDisplayOptional &&
-      context && context->IsDocument() &&
+      context && context->IsWindow() &&
       !context->IsFeatureEnabled(
           mojom::blink::DocumentPolicyFeature::kFontDisplay, report_option)) {
     return kFontDisplayOptional;
@@ -304,11 +359,12 @@ RemoteFontFaceSource::CreateLoadingFallbackFontData(
   scoped_refptr<CSSCustomFontData> css_font_data = CSSCustomFontData::Create(
       this, period_ == kBlockPeriod ? CSSCustomFontData::kInvisibleFallback
                                     : CSSCustomFontData::kVisibleFallback);
+  has_been_requested_while_pending_ = true;
   return SimpleFontData::Create(temporary_font->PlatformData(), css_font_data);
 }
 
 void RemoteFontFaceSource::BeginLoadIfNeeded() {
-  if (IsLoaded())
+  if (IsLoaded() || !font_selector_->GetExecutionContext())
     return;
   DCHECK(GetResource());
 
@@ -345,7 +401,7 @@ void RemoteFontFaceSource::BeginLoadIfNeeded() {
   face_->DidBeginLoad();
 }
 
-void RemoteFontFaceSource::Trace(Visitor* visitor) {
+void RemoteFontFaceSource::Trace(Visitor* visitor) const {
   visitor->Trace(face_);
   visitor->Trace(font_selector_);
   CSSFontFaceSource::Trace(visitor);

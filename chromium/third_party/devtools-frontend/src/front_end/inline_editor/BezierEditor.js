@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Platform from '../platform/platform.js';
 import * as UI from '../ui/ui.js';
@@ -157,7 +160,8 @@ export class BezierEditor extends UI.Widget.VBox {
    * @return {!PresetCategory}
    */
   _createCategory(presetGroup) {
-    const presetElement = createElementWithClass('div', 'bezier-preset-category');
+    const presetElement = document.createElement('div');
+    presetElement.classList.add('bezier-preset-category');
     const iconElement = presetElement.createSVGChild('svg', 'bezier-preset monospace');
     const category = {presets: presetGroup, presetIndex: 0, icon: presetElement};
     this._presetUI.drawCurve(UI.Geometry.CubicBezier.parse(category.presets[0].value), iconElement);

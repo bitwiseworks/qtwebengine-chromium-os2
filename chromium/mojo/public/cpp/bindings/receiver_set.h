@@ -24,7 +24,7 @@
 
 namespace mojo {
 
-using ReceiverId = size_t;
+using ReceiverId = uint64_t;
 
 template <typename ReceiverType>
 struct ReceiverSetTraits;
@@ -160,6 +160,16 @@ class ReceiverSetBase {
       return false;
     receivers_.erase(it);
     return true;
+  }
+
+  // Unbinds and takes all receivers in this set.
+  std::vector<PendingType> TakeReceivers() {
+    std::vector<PendingType> pending_receivers;
+    for (auto& it : receivers_) {
+      pending_receivers.push_back(it.second->Unbind());
+    }
+    receivers_.clear();
+    return pending_receivers;
   }
 
   // Removes all receivers from the set, effectively closing all of them. This
@@ -300,6 +310,8 @@ class ReceiverSetBase {
 
     void FlushForTesting() { receiver_.FlushForTesting(); }
 
+    PendingType Unbind() { return receiver_.Unbind(); }
+
    private:
     class DispatchFilter : public MessageFilter {
      public:
@@ -349,11 +361,11 @@ class ReceiverSetBase {
                      Context context,
                      scoped_refptr<base::SequencedTaskRunner> task_runner) {
     ReceiverId id = next_receiver_id_++;
-    DCHECK_GE(next_receiver_id_, 0u);
     auto entry =
         std::make_unique<Entry>(std::move(impl), std::move(receiver), this, id,
                                 std::move(context), std::move(task_runner));
-    receivers_.insert(std::make_pair(id, std::move(entry)));
+    auto result = receivers_.insert(std::make_pair(id, std::move(entry)));
+    CHECK(result.second) << "ReceiverId overflow with collision";
     return id;
   }
 

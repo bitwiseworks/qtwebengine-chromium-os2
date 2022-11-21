@@ -60,7 +60,7 @@ class AXPlatformNodeTextChildProviderTest : public AXPlatformNodeWinTest {
 
     ui::AXNodeData text_child_of_text;
     text_child_of_text.id = 6;
-    text_child_of_text.role = ax::mojom::Role::kStaticText;
+    text_child_of_text.role = ax::mojom::Role::kInlineTextBox;
     text_child_of_text.SetName("text child of text.");
     text_child_of_root.child_ids.push_back(text_child_of_text.id);
 
@@ -296,7 +296,7 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
 
   ComPtr<IRawElementProviderSimple> enclosing_element;
   text_range_provider->GetEnclosingElement(&enclosing_element);
-  EXPECT_EQ(text_child_of_text_text_provider_raw_.Get(),
+  EXPECT_EQ(text_child_of_root_text_provider_raw_.Get(),
             enclosing_element.Get());
 }
 
@@ -353,7 +353,7 @@ TEST_F(AXPlatformNodeTextChildProviderTest,
 
   ComPtr<IRawElementProviderSimple> enclosing_element;
   text_range_provider->GetEnclosingElement(&enclosing_element);
-  EXPECT_EQ(text_child_of_text_text_provider_raw_.Get(),
+  EXPECT_EQ(text_child_of_root_text_provider_raw_.Get(),
             enclosing_element.Get());
 }
 

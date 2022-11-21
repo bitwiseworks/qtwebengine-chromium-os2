@@ -27,8 +27,7 @@ declare_args() {
   # builtin_cert_verifier_feature_supported platforms.
   # See crbug.com/410574.  This can be removed when the builtin verifier is
   # unconditionally enabled on all platforms.
-  builtin_cert_verifier_policy_supported =
-      is_chromeos || is_desktop_linux || is_mac
+  builtin_cert_verifier_policy_supported = is_mac
 
   # Enables support for background apps.
   enable_background_contents = !is_android && !is_chromecast
@@ -52,9 +51,6 @@ declare_args() {
   enable_one_click_signin =
       is_win || is_mac || (is_linux && !is_chromeos && !is_chromecast)
 
-  # Enables password change in leaked password dialog, disabled by default.
-  enable_password_change_in_leaked_dialog = false
-
   enable_service_discovery = (enable_mdns && !is_android) || is_mac
 
   # Enables use of the session service, which is enabled by default.
@@ -65,9 +61,6 @@ declare_args() {
 
   # Indicates if Wayland display server support is enabled.
   enable_wayland_server = is_chromeos
-
-  # Indicates if the build is using PGO.
-  pgo_build = chrome_pgo_phase > 0
 
   # optimize_webui was moved to ui/base/ui_features.gni
 }
@@ -88,6 +81,7 @@ chrome_grit_defines = [
   "enable_printing=$enable_basic_printing",
   "enable_service_discovery=$enable_service_discovery",
   "enable_supervised_users=$enable_supervised_users",
+  "enable_tab_search=$enable_tab_search",
   "enable_vr=$enable_vr",
   "enable_webrtc=$enable_webrtc",
   "enable_webui_tab_strip=$enable_webui_tab_strip",

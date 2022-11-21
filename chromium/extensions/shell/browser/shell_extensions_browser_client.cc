@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_context.h"
@@ -214,8 +213,7 @@ ShellExtensionsBrowserClient::GetExtensionSystemFactory() {
 }
 
 void ShellExtensionsBrowserClient::RegisterBrowserInterfaceBindersForFrame(
-    service_manager::BinderMapWithContext<content::RenderFrameHost*>*
-        binder_map,
+    mojo::BinderMapWithContext<content::RenderFrameHost*>* binder_map,
     content::RenderFrameHost* render_frame_host,
     const Extension* extension) const {
   PopulateExtensionFrameBinders(binder_map, render_frame_host, extension);
@@ -238,8 +236,8 @@ void ShellExtensionsBrowserClient::BroadcastEventToRenderers(
     std::unique_ptr<base::ListValue> args,
     bool dispatch_to_off_the_record_profiles) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&ShellExtensionsBrowserClient::BroadcastEventToRenderers,
                        base::Unretained(this), histogram_value, event_name,
                        std::move(args), dispatch_to_off_the_record_profiles));

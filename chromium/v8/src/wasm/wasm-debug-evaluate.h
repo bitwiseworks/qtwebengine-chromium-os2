@@ -7,7 +7,6 @@
 
 #include "src/base/macros.h"
 #include "src/handles/maybe-handles.h"
-#include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-objects.h"
 
 namespace v8 {
@@ -16,7 +15,7 @@ namespace wasm {
 
 MaybeHandle<String> V8_EXPORT_PRIVATE DebugEvaluate(
     Vector<const byte> snippet, Handle<WasmInstanceObject> debuggee_instance,
-    WasmInterpreter::FramePtr frame);
+    StandardFrame* frame);
 
 }  // namespace wasm
 }  // namespace internal

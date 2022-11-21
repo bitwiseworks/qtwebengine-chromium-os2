@@ -22,6 +22,7 @@
 
 #include <utility>
 
+#include "third_party/blink/public/web/web_print_page_description.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -130,13 +131,12 @@ void PrintContext::ComputePageRectsWithPageSizeInternal(
                                 : inline_direction_start - page_logical_width;
 
     auto* scrollable_area = GetFrame()->View()->LayoutViewport();
-    IntSize frame_scroll = scrollable_area->ScrollOffsetInt();
-    page_logical_left -= frame_scroll.Width();
-    page_logical_top -= frame_scroll.Height();
     IntRect page_rect(page_logical_left, page_logical_top, page_logical_width,
                       page_logical_height);
     if (!is_horizontal)
       page_rect = page_rect.TransposedRect();
+    IntSize frame_scroll = scrollable_area->ScrollOffsetInt();
+    page_rect.Move(-frame_scroll.Width(), -frame_scroll.Height());
     page_rects_.push_back(page_rect);
   }
 }
@@ -218,8 +218,8 @@ void PrintContext::CollectLinkedDestinations(Node* node) {
   if (url.HasFragmentIdentifier() &&
       EqualIgnoringFragmentIdentifier(url, node->GetDocument().BaseURL())) {
     String name = url.FragmentIdentifier();
-    if (Element* element = node->GetDocument().FindAnchor(name))
-      linked_destinations_.Set(name, element);
+    if (Node* target = node->GetDocument().FindAnchor(name))
+      linked_destinations_.Set(name, target);
   }
 }
 
@@ -245,7 +245,7 @@ void PrintContext::OutputLinkedDestinations(GraphicsContext& context,
 // static
 String PrintContext::PageProperty(LocalFrame* frame,
                                   const char* property_name,
-                                  int page_number) {
+                                  uint32_t page_number) {
   Document* document = frame->GetDocument();
   ScopedPrintContext print_context(frame);
   // Any non-zero size is OK here. We don't care about actual layout. We just
@@ -274,27 +274,32 @@ String PrintContext::PageProperty(LocalFrame* frame,
   return String("pageProperty() unimplemented for: ") + property_name;
 }
 
-bool PrintContext::IsPageBoxVisible(LocalFrame* frame, int page_number) {
+bool PrintContext::IsPageBoxVisible(LocalFrame* frame, uint32_t page_number) {
   return frame->GetDocument()->IsPageBoxVisible(page_number);
 }
 
 String PrintContext::PageSizeAndMarginsInPixels(LocalFrame* frame,
-                                                int page_number,
+                                                uint32_t page_number,
                                                 int width,
                                                 int height,
                                                 int margin_top,
                                                 int margin_right,
                                                 int margin_bottom,
                                                 int margin_left) {
-  DoubleSize page_size(width, height);
-  frame->GetDocument()->PageSizeAndMarginsInPixels(page_number, page_size,
-                                                   margin_top, margin_right,
-                                                   margin_bottom, margin_left);
+  WebPrintPageDescription description;
+  description.size = WebDoubleSize(width, height);
+  description.margin_top = margin_top;
+  description.margin_right = margin_right;
+  description.margin_bottom = margin_bottom;
+  description.margin_left = margin_left;
+  frame->GetDocument()->GetPageDescription(page_number, &description);
 
-  return "(" + String::Number(floor(page_size.Width())) + ", " +
-         String::Number(floor(page_size.Height())) + ") " +
-         String::Number(margin_top) + ' ' + String::Number(margin_right) + ' ' +
-         String::Number(margin_bottom) + ' ' + String::Number(margin_left);
+  return "(" + String::Number(floor(description.size.Width())) + ", " +
+         String::Number(floor(description.size.Height())) + ") " +
+         String::Number(description.margin_top) + ' ' +
+         String::Number(description.margin_right) + ' ' +
+         String::Number(description.margin_bottom) + ' ' +
+         String::Number(description.margin_left);
 }
 
 // static
@@ -319,7 +324,7 @@ bool PrintContext::IsFrameValid() const {
          frame_->GetDocument()->GetLayoutView();
 }
 
-void PrintContext::Trace(Visitor* visitor) {
+void PrintContext::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(linked_destinations_);
 }

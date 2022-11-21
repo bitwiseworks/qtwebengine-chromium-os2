@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/dummy_schedulers.h"
 
 #include "third_party/blink/renderer/platform/scheduler/main_thread/main_thread_scheduler_impl.h"
+#include "third_party/blink/renderer/platform/scheduler/public/agent_group_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/page_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
@@ -54,6 +55,7 @@ class DummyFrameScheduler : public FrameScheduler {
   }
   void OnFirstContentfulPaint() override {}
   void OnFirstMeaningfulPaint() override {}
+  void OnLoad() override {}
   bool IsExemptFromBudgetBasedThrottling() const override { return false; }
   std::unique_ptr<blink::mojom::blink::PauseSubresourceLoadingHandle>
   GetPauseSubresourceLoadingHandle() override {
@@ -80,6 +82,7 @@ class DummyFrameScheduler : public FrameScheduler {
   base::WeakPtr<FrameScheduler> GetWeakPtr() override {
     return weak_ptr_factory_.GetWeakPtr();
   }
+  void ReportActiveSchedulerTrackedFeatures() override {}
 
  private:
   PageScheduler* page_scheduler_;
@@ -100,8 +103,10 @@ class DummyPageScheduler : public PageScheduler {
     return std::make_unique<DummyFrameScheduler>(this);
   }
 
+  void OnTitleOrFaviconUpdated() override {}
   void SetPageVisible(bool) override {}
   void SetPageFrozen(bool) override {}
+  void SetPageBackForwardCached(bool) override {}
   void SetKeepActive(bool) override {}
   bool IsMainFrameLocal() const override { return true; }
   void SetIsMainFrameLocal(bool) override {}
@@ -171,10 +176,6 @@ class DummyThreadScheduler : public ThreadScheduler {
     return base::ThreadTaskRunnerHandle::Get();
   }
 
-  scoped_refptr<base::SingleThreadTaskRunner> IPCTaskRunner() override {
-    return base::ThreadTaskRunnerHandle::Get();
-  }
-
   scoped_refptr<base::SingleThreadTaskRunner> NonWakingTaskRunner() override {
     return base::ThreadTaskRunnerHandle::Get();
   }
@@ -182,6 +183,9 @@ class DummyThreadScheduler : public ThreadScheduler {
   std::unique_ptr<PageScheduler> CreatePageScheduler(
       PageScheduler::Delegate*) override {
     return std::make_unique<DummyPageScheduler>();
+  }
+  AgentGroupScheduler* GetCurrentAgentGroupScheduler() override {
+    return nullptr;
   }
 
   // ThreadScheduler implementation:
@@ -231,16 +235,6 @@ class DummyWebThreadScheduler : public WebThreadScheduler,
   }
 
   scoped_refptr<base::SingleThreadTaskRunner> CompositorTaskRunner() override {
-    DCHECK(WTF::IsMainThread());
-    return base::ThreadTaskRunnerHandle::Get();
-  }
-
-  scoped_refptr<base::SingleThreadTaskRunner> IPCTaskRunner() override {
-    DCHECK(WTF::IsMainThread());
-    return base::ThreadTaskRunnerHandle::Get();
-  }
-
-  scoped_refptr<base::SingleThreadTaskRunner> CleanupTaskRunner() override {
     DCHECK(WTF::IsMainThread());
     return base::ThreadTaskRunnerHandle::Get();
   }

@@ -6,15 +6,16 @@
 
 #include <utility>
 
+#include "base/check.h"
 #include "base/feature_list.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/payments/content/payment_app.h"
 #include "components/payments/content/payment_request_converter.h"
 #include "components/payments/core/features.h"
 #include "components/payments/core/method_strings.h"
-#include "components/payments/core/payment_app.h"
 #include "components/payments/core/payment_method_data.h"
 #include "components/payments/core/payment_request_data_util.h"
 #include "components/payments/core/payments_experimental_features.h"
@@ -77,7 +78,7 @@ PaymentRequestSpec::PaymentRequestSpec(
     mojom::PaymentOptionsPtr options,
     mojom::PaymentDetailsPtr details,
     std::vector<mojom::PaymentMethodDataPtr> method_data,
-    Observer* observer,
+    base::WeakPtr<Observer> observer,
     const std::string& app_locale)
     : options_(std::move(options)),
       details_(std::move(details)),
@@ -86,7 +87,7 @@ PaymentRequestSpec::PaymentRequestSpec(
       selected_shipping_option_(nullptr),
       current_update_reason_(UpdateReason::NONE) {
   if (observer)
-    AddObserver(observer);
+    AddObserver(observer.get());
   if (!details_->display_items)
     details_->display_items = std::vector<mojom::PaymentItemPtr>();
   if (!details_->shipping_options)
@@ -355,6 +356,18 @@ const std::vector<mojom::PaymentShippingOptionPtr>&
 PaymentRequestSpec::GetShippingOptions() const {
   DCHECK(details_->shipping_options);
   return *details_->shipping_options;
+}
+
+bool PaymentRequestSpec::IsSecurePaymentConfirmationRequested() const {
+  // No other payment method will be requested together with secure payment
+  // confirmation.
+  return payment_method_identifiers_set_.size() == 1 &&
+         *payment_method_identifiers_set_.begin() ==
+             methods::kSecurePaymentConfirmation;
+}
+
+base::WeakPtr<PaymentRequestSpec> PaymentRequestSpec::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 const mojom::PaymentDetailsModifierPtr*

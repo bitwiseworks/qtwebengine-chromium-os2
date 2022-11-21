@@ -5,16 +5,18 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_PRIVACY_BUDGET_IDENTIFIABILITY_METRICS_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_PRIVACY_BUDGET_IDENTIFIABILITY_METRICS_H_
 
-#include <stdint.h>
+#include <cstdint>
+#include <cstring>
+#include <type_traits>
 
 #include "base/containers/span.h"
 #include "third_party/blink/public/common/common_export.h"
 
 namespace blink {
 
-// DigestForMetrics, which is NOT a cryptographic hash function, takes a span of
-// bytes as input and calculates a digest that can be used with identifiability
-// metric reporting functions.
+// IdentifiabilityDigestOfBytes, which is NOT a cryptographic hash function,
+// takes a span of bytes as input and calculates a digest that can be used with
+// identifiability metric reporting functions.
 //
 // The returned digest ...:
 //
@@ -32,7 +34,12 @@ namespace blink {
 //   up with collisions, and to come up with a pre-image given a digest.
 //
 // Note: This is NOT a cryptographic hash function.
-BLINK_COMMON_EXPORT uint64_t DigestForMetrics(base::span<const uint8_t> in);
+BLINK_COMMON_EXPORT uint64_t
+IdentifiabilityDigestOfBytes(base::span<const uint8_t> in);
+
+// The zero-length digest, i.e. the digest computed for no bytes.
+static constexpr uint64_t kIdentifiabilityDigestOfNoBytes =
+    0x9ae16a3b2f90404fULL;
 
 }  // namespace blink
 

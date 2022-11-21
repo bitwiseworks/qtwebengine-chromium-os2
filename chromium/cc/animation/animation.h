@@ -65,17 +65,6 @@ class CC_ANIMATION_EXPORT Animation : public base::RefCounted<Animation> {
   }
   void SetAnimationTimeline(AnimationTimeline* timeline);
 
-  // TODO(yigu): There is a reverse dependency between AnimationTimeline and
-  // Animation. ScrollTimeline update should be handled by AnimationHost instead
-  // of Animation. This could be fixed once the snapshotting in blink is
-  // implemented. https://crbug.com/1023508.
-
-  // Should be called when the ScrollTimeline attached to this animation has a
-  // change, such as when the scroll source changes ElementId.
-  void UpdateScrollTimeline(base::Optional<ElementId> scroller_id,
-                            base::Optional<double> start_scroll_offset,
-                            base::Optional<double> end_scroll_offset);
-
   scoped_refptr<ElementAnimations> element_animations() const;
 
   void set_animation_delegate(AnimationDelegate* delegate) {
@@ -83,6 +72,14 @@ class CC_ANIMATION_EXPORT Animation : public base::RefCounted<Animation> {
   }
 
   void AttachElement(ElementId element_id);
+  // Specially designed for a custom property animation on a paint worklet
+  // element. It doesn't require an element id to run on the compositor thread.
+  // However, our compositor animation system requires the element to be on the
+  // property tree in order to keep ticking the animation. Therefore, we use a
+  // reserved element id for this animation so that the compositor animation
+  // system recognize it. We do not use 0 as the element id because 0 is
+  // kInvalidElementId.
+  void AttachNoElement();
   void DetachElement();
 
   void AddKeyframeModel(std::unique_ptr<KeyframeModel> keyframe_model);
@@ -106,7 +103,8 @@ class CC_ANIMATION_EXPORT Animation : public base::RefCounted<Animation> {
   // Adds TIME_UPDATED event generated in the current frame to the given
   // animation events.
   virtual void TakeTimeUpdatedEvent(AnimationEvents* events) {}
-  virtual void Tick(base::TimeTicks monotonic_time);
+  virtual void Tick(base::TimeTicks tick_time);
+  bool IsScrollLinkedAnimation() const;
 
   void AddToTicking();
   void RemoveFromTicking();
@@ -117,7 +115,6 @@ class CC_ANIMATION_EXPORT Animation : public base::RefCounted<Animation> {
   // to be dispatched.
   void DispatchAndDelegateAnimationEvent(const AnimationEvent& event);
 
-  size_t TickingKeyframeModelsCount() const;
   bool AffectsCustomProperty() const;
 
   void SetNeedsPushProperties();
@@ -145,6 +142,9 @@ class CC_ANIMATION_EXPORT Animation : public base::RefCounted<Animation> {
 
   // Delegates animation event
   void DelegateAnimationEvent(const AnimationEvent& event);
+
+  // Common code between AttachElement and AttachNoElement.
+  void AttachElementInternal(ElementId element_id);
 
  protected:
   explicit Animation(int id);

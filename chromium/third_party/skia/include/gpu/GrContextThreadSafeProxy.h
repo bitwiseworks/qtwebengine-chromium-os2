@@ -8,11 +8,18 @@
 #ifndef GrContextThreadSafeProxy_DEFINED
 #define GrContextThreadSafeProxy_DEFINED
 
-#include "include/private/GrContext_Base.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkRefCnt.h"
+#include "include/gpu/GrContextOptions.h"
+#include "include/gpu/GrTypes.h"
+
+#include <atomic>
 
 class GrBackendFormat;
+class GrCaps;
 class GrContextThreadSafeProxyPriv;
-struct SkImageInfo;
+class GrTextBlobCache;
+class GrThreadSafeUniquelyKeyedProxyViewCache;
 class SkSurfaceCharacterization;
 class SkSurfaceProps;
 
@@ -20,9 +27,9 @@ class SkSurfaceProps;
  * Can be used to perform actions related to the generating GrContext in a thread safe manner. The
  * proxy does not access the 3D API (e.g. OpenGL) that backs the generating GrContext.
  */
-class SK_API GrContextThreadSafeProxy : public GrContext_Base {
+class SK_API GrContextThreadSafeProxy final : public SkNVRefCnt<GrContextThreadSafeProxy> {
 public:
-    ~GrContextThreadSafeProxy() override;
+    ~GrContextThreadSafeProxy();
 
     /**
      *  Create a surface characterization for a DDL that will be replayed into the GrContext
@@ -58,13 +65,16 @@ public:
      */
     SkSurfaceCharacterization createCharacterization(
                                   size_t cacheMaxResourceBytes,
-                                  const SkImageInfo& ii, const GrBackendFormat& backendFormat,
-                                  int sampleCount, GrSurfaceOrigin origin,
+                                  const SkImageInfo& ii,
+                                  const GrBackendFormat& backendFormat,
+                                  int sampleCount,
+                                  GrSurfaceOrigin origin,
                                   const SkSurfaceProps& surfaceProps,
                                   bool isMipMapped,
                                   bool willUseGLFBO0 = false,
                                   bool isTextureable = true,
-                                  GrProtected isProtected = GrProtected::kNo);
+                                  GrProtected isProtected = GrProtected::kNo,
+                                  bool vkRTSupportsInputAttachment = false);
 
     /*
      * Retrieve the default GrBackendFormat for a given SkColorType and renderability.
@@ -73,13 +83,13 @@ public:
      *
      * The caller should check that the returned format is valid.
      */
-    GrBackendFormat defaultBackendFormat(SkColorType ct, GrRenderable renderable) const {
-        return INHERITED::defaultBackendFormat(ct, renderable);
-    }
+    GrBackendFormat defaultBackendFormat(SkColorType ct, GrRenderable renderable) const;
+
+    bool isValid() const { return nullptr != fCaps; }
 
     bool operator==(const GrContextThreadSafeProxy& that) const {
         // Each GrContext should only ever have a single thread-safe proxy.
-        SkASSERT((this == &that) == (this->contextID() == that.contextID()));
+        SkASSERT((this == &that) == (this->fContextID == that.fContextID));
         return this == &that;
     }
 
@@ -87,17 +97,29 @@ public:
 
     // Provides access to functions that aren't part of the public API.
     GrContextThreadSafeProxyPriv priv();
-    const GrContextThreadSafeProxyPriv priv() const;
+    const GrContextThreadSafeProxyPriv priv() const;  // NOLINT(readability-const-return-type)
 
 private:
     friend class GrContextThreadSafeProxyPriv; // for ctor and hidden methods
 
     // DDL TODO: need to add unit tests for backend & maybe options
-    GrContextThreadSafeProxy(GrBackendApi, const GrContextOptions&, uint32_t contextID);
+    GrContextThreadSafeProxy(GrBackendApi, const GrContextOptions&);
 
-    bool init(sk_sp<const GrCaps>) override;
+    void abandonContext();
+    bool abandoned() const;
 
-    typedef GrContext_Base INHERITED;
+    // TODO: This should be part of the constructor but right now we have a chicken-and-egg problem
+    // with GrContext where we get the caps by creating a GPU which requires a context (see the
+    // `init` method on GrContext_Base).
+    void init(sk_sp<const GrCaps>);
+
+    const GrBackendApi               fBackend;
+    const GrContextOptions           fOptions;
+    const uint32_t                   fContextID;
+    sk_sp<const GrCaps>              fCaps;
+    std::unique_ptr<GrTextBlobCache> fTextBlobCache;
+    std::unique_ptr<GrThreadSafeUniquelyKeyedProxyViewCache> fThreadSafeViewCache;
+    std::atomic<bool>                fAbandoned{false};
 };
 
 #endif

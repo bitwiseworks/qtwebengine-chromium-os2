@@ -28,6 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Platform from '../platform/platform.js';
 
@@ -37,9 +40,7 @@ import {ToolbarButton} from './Toolbar.js';
 import {Widget} from './Widget.js';
 import {Events as ZoomManagerEvents, ZoomManager} from './ZoomManager.js';
 
-/**
- * @unrestricted
- */
+
 export class SplitWidget extends Widget {
   /**
    * @param {boolean} isVertical
@@ -74,7 +75,6 @@ export class SplitWidget extends Widget {
     this._defaultSidebarHeight = defaultSidebarHeight || this._defaultSidebarWidth;
     this._constraintsInDip = !!constraintsInDip;
     this._resizeStartSizeDIP = 0;
-    // Note: go via self.Common for globally-namespaced singletons.
     this._setting = settingName ? Common.Settings.Settings.instance().createSetting(settingName, {}) : null;
 
     this._totalSizeCSS = 0;
@@ -84,7 +84,7 @@ export class SplitWidget extends Widget {
     /** @type {?Widget} */
     this._sidebarWidget = null;
     this._animationFrameHandle = 0;
-    /** @type {?function()} */
+    /** @type {?function():void} */
     this._animationCallback = null;
     this._showHideSidebarButtonTitle = '';
     /** @type {?ToolbarButton} */
@@ -570,7 +570,7 @@ export class SplitWidget extends Widget {
 
   /**
    * @param {boolean} reverse
-   * @param {function()=} callback
+   * @param {function():void=} callback
    */
   _animate(reverse, callback) {
     const animationTime = 50;
@@ -817,14 +817,14 @@ export class SplitWidget extends Widget {
    * @param {!Element} resizerElement
    */
   installResizer(resizerElement) {
-    this._resizerWidget.addElement(resizerElement);
+    this._resizerWidget.addElement(/** @type {!HTMLElement} */ (resizerElement));
   }
 
   /**
    * @param {!Element} resizerElement
    */
   uninstallResizer(resizerElement) {
-    this._resizerWidget.removeElement(resizerElement);
+    this._resizerWidget.removeElement(/** @type {!HTMLElement} */ (resizerElement));
   }
 
   /**

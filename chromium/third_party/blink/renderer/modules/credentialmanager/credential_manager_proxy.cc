@@ -5,16 +5,19 @@
 #include "third_party/blink/renderer/modules/credentialmanager/credential_manager_proxy.h"
 
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 
 namespace blink {
 
-CredentialManagerProxy::CredentialManagerProxy(Document& document)
-    : document_(document) {
-  LocalFrame* frame = document_->GetFrame();
+CredentialManagerProxy::CredentialManagerProxy(LocalDOMWindow& window)
+    : Supplement<LocalDOMWindow>(window),
+      authenticator_(window.GetExecutionContext()),
+      credential_manager_(window.GetExecutionContext()),
+      sms_receiver_(window.GetExecutionContext()),
+      payment_credential_(window.GetExecutionContext()) {
+  LocalFrame* frame = window.GetFrame();
   DCHECK(frame);
   frame->GetBrowserInterfaceBroker().GetInterface(
       credential_manager_.BindNewPipeAndPassReceiver(
@@ -27,8 +30,8 @@ CredentialManagerProxy::CredentialManagerProxy(Document& document)
 CredentialManagerProxy::~CredentialManagerProxy() = default;
 
 mojom::blink::SmsReceiver* CredentialManagerProxy::SmsReceiver() {
-  if (!sms_receiver_) {
-    LocalFrame* frame = document_->GetFrame();
+  if (!sms_receiver_.is_bound()) {
+    LocalFrame* frame = GetSupplementable()->GetFrame();
     DCHECK(frame);
     frame->GetBrowserInterfaceBroker().GetInterface(
         sms_receiver_.BindNewPipeAndPassReceiver(
@@ -37,27 +40,38 @@ mojom::blink::SmsReceiver* CredentialManagerProxy::SmsReceiver() {
   return sms_receiver_.get();
 }
 
-// static
-CredentialManagerProxy* CredentialManagerProxy::From(Document& document) {
-  auto* supplement =
-      Supplement<Document>::From<CredentialManagerProxy>(document);
-  if (!supplement) {
-    supplement = MakeGarbageCollected<CredentialManagerProxy>(document);
-    ProvideTo(document, supplement);
+payments::mojom::blink::PaymentCredential*
+CredentialManagerProxy::PaymentCredential() {
+  if (!payment_credential_.is_bound()) {
+    LocalFrame* frame = GetSupplementable()->GetFrame();
+    DCHECK(frame);
+    frame->GetBrowserInterfaceBroker().GetInterface(
+        payment_credential_.BindNewPipeAndPassReceiver(
+            frame->GetTaskRunner(TaskType::kMiscPlatformAPI)));
   }
-  return supplement;
+  return payment_credential_.get();
 }
 
 // static
 CredentialManagerProxy* CredentialManagerProxy::From(
     ScriptState* script_state) {
   DCHECK(script_state->ContextIsValid());
-  return From(Document::From(*ExecutionContext::From(script_state)));
+  LocalDOMWindow& window = *LocalDOMWindow::From(script_state);
+  auto* supplement =
+      Supplement<LocalDOMWindow>::From<CredentialManagerProxy>(window);
+  if (!supplement) {
+    supplement = MakeGarbageCollected<CredentialManagerProxy>(window);
+    ProvideTo(window, supplement);
+  }
+  return supplement;
 }
 
-void CredentialManagerProxy::Trace(Visitor* visitor) {
-  visitor->Trace(document_);
-  Supplement<Document>::Trace(visitor);
+void CredentialManagerProxy::Trace(Visitor* visitor) const {
+  visitor->Trace(authenticator_);
+  visitor->Trace(credential_manager_);
+  visitor->Trace(sms_receiver_);
+  visitor->Trace(payment_credential_);
+  Supplement<LocalDOMWindow>::Trace(visitor);
 }
 
 // static

@@ -1,6 +1,8 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Platform from '../platform/platform.js';
@@ -13,7 +15,8 @@ export class TimelineHistoryManager {
   constructor() {
     /** @type {!Array<!PerformanceModel>} */
     this._recordings = [];
-    this._action = /** @type {!UI.Action.Action} */ (self.UI.actionRegistry.action('timeline.show-history'));
+    this._action =
+        /** @type {!UI.Action.Action} */ (UI.ActionRegistry.ActionRegistry.instance().action('timeline.show-history'));
     /** @type {!Map<string, number>} */
     this._nextNumberByDomain = new Map();
     this._button = new ToolbarButton(this._action);
@@ -191,7 +194,9 @@ export class TimelineHistoryManager {
     this._nextNumberByDomain.set(domain, sequenceNumber + 1);
     const timeElement = createElement('span');
 
-    const preview = createElementWithClass('div', 'preview-item vbox');
+    const preview = document.createElement('div');
+    preview.classList.add('preview-item');
+    preview.classList.add('vbox');
     const data = {preview: preview, title: title, time: timeElement, lastUsed: Date.now()};
     performanceModel[previewDataSymbol] = data;
 
@@ -209,7 +214,9 @@ export class TimelineHistoryManager {
    * @return {!Element}
    */
   _buildTextDetails(performanceModel, title, timeElement) {
-    const container = createElementWithClass('div', 'text-details hbox');
+    const container = document.createElement('div');
+    container.classList.add('text-details');
+    container.classList.add('hbox');
     const nameSpan = container.createChild('span', 'name');
     nameSpan.textContent = title;
     UI.ARIAUtils.setAccessibleName(nameSpan, title);
@@ -226,7 +233,8 @@ export class TimelineHistoryManager {
    * @return {!Element}
    */
   _buildScreenshotThumbnail(performanceModel) {
-    const container = createElementWithClass('div', 'screenshot-thumb');
+    const container = document.createElement('div');
+    container.classList.add('screenshot-thumb');
     const thumbnailAspectRatio = 3 / 2;
     container.style.width = this._totalHeight * thumbnailAspectRatio + 'px';
     container.style.height = this._totalHeight + 'px';
@@ -350,7 +358,9 @@ export class DropDown {
     this._listControl.element.focus();
     this._listControl.selectItem(currentModel);
 
-    return new Promise(fulfill => this._selectionDone = fulfill);
+    return new Promise(fulfill => {
+      this._selectionDone = fulfill;
+    });
   }
 
   /**
@@ -471,7 +481,9 @@ export class ToolbarButton extends UI.Toolbar.ToolbarItem {
    * @param {!UI.Action.Action} action
    */
   constructor(action) {
-    super(createElementWithClass('button', 'history-dropdown-button'));
+    const element = document.createElement('button');
+    element.classList.add('history-dropdown-button');
+    super(element);
     UI.Utils.appendStyle(this.element, 'timeline/historyToolbarButton.css');
     this._contentElement = this.element.createChild('span', 'content');
     const dropdownArrowIcon = UI.Icon.Icon.create('smallicon-triangle-down');

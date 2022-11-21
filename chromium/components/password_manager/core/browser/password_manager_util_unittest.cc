@@ -13,20 +13,18 @@
 #include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
-#include "components/autofill/core/common/password_form.h"
+#include "base/values.h"
+#include "components/password_manager/core/browser/mock_password_feature_manager.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
+#include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/test_password_store.h"
 #include "components/password_manager/core/common/password_manager_features.h"
-#include "components/password_manager/core/common/password_manager_pref_names.h"
-#include "components/prefs/pref_registry_simple.h"
-#include "components/prefs/testing_pref_service.h"
-#include "components/signin/public/identity_manager/account_info.h"
-#include "components/sync/driver/test_sync_service.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using autofill::PasswordForm;
+using password_manager::PasswordForm;
 
 namespace password_manager_util {
 namespace {
@@ -40,30 +38,45 @@ constexpr char kTestUsername[] = "Username";
 constexpr char kTestUsername2[] = "Username2";
 constexpr char kTestPassword[] = "12345";
 
-autofill::PasswordForm GetTestAndroidCredential() {
-  autofill::PasswordForm form;
-  form.scheme = autofill::PasswordForm::Scheme::kHtml;
-  form.origin = GURL(kTestAndroidRealm);
+class MockPasswordManagerClient
+    : public password_manager::StubPasswordManagerClient {
+ public:
+  MockPasswordManagerClient() = default;
+  ~MockPasswordManagerClient() override = default;
+
+  MOCK_METHOD(void,
+              TriggerReauthForPrimaryAccount,
+              (signin_metrics::ReauthAccessPoint,
+               base::OnceCallback<void(
+                   password_manager::PasswordManagerClient::ReauthSucceeded)>),
+              (override));
+  MOCK_METHOD(void, GeneratePassword, (), (override));
+};
+
+PasswordForm GetTestAndroidCredential() {
+  PasswordForm form;
+  form.scheme = PasswordForm::Scheme::kHtml;
+  form.url = GURL(kTestAndroidRealm);
   form.signon_realm = kTestAndroidRealm;
   form.username_value = base::ASCIIToUTF16(kTestUsername);
   form.password_value = base::ASCIIToUTF16(kTestPassword);
   return form;
 }
 
-autofill::PasswordForm GetTestCredential() {
-  autofill::PasswordForm form;
-  form.scheme = autofill::PasswordForm::Scheme::kHtml;
-  form.origin = GURL(kTestURL);
-  form.signon_realm = form.origin.GetOrigin().spec();
+PasswordForm GetTestCredential() {
+  PasswordForm form;
+  form.scheme = PasswordForm::Scheme::kHtml;
+  form.url = GURL(kTestURL);
+  form.signon_realm = form.url.GetOrigin().spec();
   form.username_value = base::ASCIIToUTF16(kTestUsername);
   form.password_value = base::ASCIIToUTF16(kTestPassword);
   return form;
 }
 
-autofill::PasswordForm GetTestProxyCredential() {
-  autofill::PasswordForm form;
-  form.scheme = autofill::PasswordForm::Scheme::kBasic;
-  form.origin = GURL(kTestProxyOrigin);
+PasswordForm GetTestProxyCredential() {
+  PasswordForm form;
+  form.scheme = PasswordForm::Scheme::kBasic;
+  form.url = GURL(kTestProxyOrigin);
   form.signon_realm = kTestProxySignonRealm;
   form.username_value = base::ASCIIToUTF16(kTestUsername);
   form.password_value = base::ASCIIToUTF16(kTestPassword);
@@ -78,26 +91,24 @@ using testing::DoAll;
 using testing::Return;
 
 TEST(PasswordManagerUtil, TrimUsernameOnlyCredentials) {
-  std::vector<std::unique_ptr<autofill::PasswordForm>> forms;
-  std::vector<std::unique_ptr<autofill::PasswordForm>> expected_forms;
-  forms.push_back(
-      std::make_unique<autofill::PasswordForm>(GetTestAndroidCredential()));
+  std::vector<std::unique_ptr<PasswordForm>> forms;
+  std::vector<std::unique_ptr<PasswordForm>> expected_forms;
+  forms.push_back(std::make_unique<PasswordForm>(GetTestAndroidCredential()));
   expected_forms.push_back(
-      std::make_unique<autofill::PasswordForm>(GetTestAndroidCredential()));
+      std::make_unique<PasswordForm>(GetTestAndroidCredential()));
 
-  autofill::PasswordForm username_only;
-  username_only.scheme = autofill::PasswordForm::Scheme::kUsernameOnly;
+  PasswordForm username_only;
+  username_only.scheme = PasswordForm::Scheme::kUsernameOnly;
   username_only.signon_realm = kTestAndroidRealm;
   username_only.username_value = base::ASCIIToUTF16(kTestUsername2);
-  forms.push_back(std::make_unique<autofill::PasswordForm>(username_only));
+  forms.push_back(std::make_unique<PasswordForm>(username_only));
 
   username_only.federation_origin =
       url::Origin::Create(GURL(kTestFederationURL));
   username_only.skip_zero_click = false;
-  forms.push_back(std::make_unique<autofill::PasswordForm>(username_only));
+  forms.push_back(std::make_unique<PasswordForm>(username_only));
   username_only.skip_zero_click = true;
-  expected_forms.push_back(
-      std::make_unique<autofill::PasswordForm>(username_only));
+  expected_forms.push_back(std::make_unique<PasswordForm>(username_only));
 
   TrimUsernameOnlyCredentials(&forms);
 
@@ -105,18 +116,18 @@ TEST(PasswordManagerUtil, TrimUsernameOnlyCredentials) {
 }
 
 TEST(PasswordManagerUtil, GetSignonRealmWithProtocolExcluded) {
-  autofill::PasswordForm http_form;
-  http_form.origin = GURL("http://www.google.com/page-1/");
+  PasswordForm http_form;
+  http_form.url = GURL("http://www.google.com/page-1/");
   http_form.signon_realm = "http://www.google.com/";
   EXPECT_EQ(GetSignonRealmWithProtocolExcluded(http_form), "www.google.com/");
 
-  autofill::PasswordForm https_form;
-  https_form.origin = GURL("https://www.google.com/page-1/");
+  PasswordForm https_form;
+  https_form.url = GURL("https://www.google.com/page-1/");
   https_form.signon_realm = "https://www.google.com/";
   EXPECT_EQ(GetSignonRealmWithProtocolExcluded(https_form), "www.google.com/");
 
-  autofill::PasswordForm federated_form;
-  federated_form.origin = GURL("http://localhost:8000/");
+  PasswordForm federated_form;
+  federated_form.url = GURL("http://localhost:8000/");
   federated_form.signon_realm =
       "federation://localhost/accounts.federation.com";
   EXPECT_EQ(GetSignonRealmWithProtocolExcluded(federated_form),
@@ -282,24 +293,24 @@ TEST(PasswordManagerUtil, FindBestMatchesInProfileAndAccountStores) {
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_MatchUsername) {
-  autofill::PasswordForm stored = GetTestCredential();
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.password_value = base::ASCIIToUTF16("new_password");
 
   EXPECT_EQ(&stored, GetMatchForUpdating(parsed, {&stored}));
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_RejectUnknownUsername) {
-  autofill::PasswordForm stored = GetTestCredential();
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.username_value = base::ASCIIToUTF16("other_username");
 
   EXPECT_EQ(nullptr, GetMatchForUpdating(parsed, {&stored}));
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_FederatedCredential) {
-  autofill::PasswordForm stored = GetTestCredential();
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.password_value.clear();
   parsed.federation_origin = url::Origin::Create(GURL(kTestFederationURL));
 
@@ -307,17 +318,17 @@ TEST(PasswordManagerUtil, GetMatchForUpdating_FederatedCredential) {
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_MatchUsernamePSL) {
-  autofill::PasswordForm stored = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
   stored.is_public_suffix_match = true;
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
 
   EXPECT_EQ(&stored, GetMatchForUpdating(parsed, {&stored}));
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_MatchUsernamePSLAnotherPassword) {
-  autofill::PasswordForm stored = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
   stored.is_public_suffix_match = true;
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.password_value = base::ASCIIToUTF16("new_password");
 
   EXPECT_EQ(nullptr, GetMatchForUpdating(parsed, {&stored}));
@@ -325,9 +336,9 @@ TEST(PasswordManagerUtil, GetMatchForUpdating_MatchUsernamePSLAnotherPassword) {
 
 TEST(PasswordManagerUtil,
      GetMatchForUpdating_MatchUsernamePSLNewPasswordKnown) {
-  autofill::PasswordForm stored = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
   stored.is_public_suffix_match = true;
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.new_password_value = parsed.password_value;
   parsed.password_value.clear();
 
@@ -336,9 +347,9 @@ TEST(PasswordManagerUtil,
 
 TEST(PasswordManagerUtil,
      GetMatchForUpdating_MatchUsernamePSLNewPasswordUnknown) {
-  autofill::PasswordForm stored = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
   stored.is_public_suffix_match = true;
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.new_password_value = base::ASCIIToUTF16("new_password");
   parsed.password_value.clear();
 
@@ -346,25 +357,25 @@ TEST(PasswordManagerUtil,
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_EmptyUsernameFindByPassword) {
-  autofill::PasswordForm stored = GetTestCredential();
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.username_value.clear();
 
   EXPECT_EQ(&stored, GetMatchForUpdating(parsed, {&stored}));
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_EmptyUsernameFindByPasswordPSL) {
-  autofill::PasswordForm stored = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
   stored.is_public_suffix_match = true;
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.username_value.clear();
 
   EXPECT_EQ(&stored, GetMatchForUpdating(parsed, {&stored}));
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_EmptyUsernameCMAPI) {
-  autofill::PasswordForm stored = GetTestCredential();
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm stored = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.username_value.clear();
   parsed.type = PasswordForm::Type::kApi;
 
@@ -374,17 +385,17 @@ TEST(PasswordManagerUtil, GetMatchForUpdating_EmptyUsernameCMAPI) {
 }
 
 TEST(PasswordManagerUtil, GetMatchForUpdating_EmptyUsernamePickFirst) {
-  autofill::PasswordForm stored1 = GetTestCredential();
+  PasswordForm stored1 = GetTestCredential();
   stored1.username_value = base::ASCIIToUTF16("Adam");
   stored1.password_value = base::ASCIIToUTF16("Adam_password");
-  autofill::PasswordForm stored2 = GetTestCredential();
+  PasswordForm stored2 = GetTestCredential();
   stored2.username_value = base::ASCIIToUTF16("Ben");
   stored2.password_value = base::ASCIIToUTF16("Ben_password");
-  autofill::PasswordForm stored3 = GetTestCredential();
+  PasswordForm stored3 = GetTestCredential();
   stored3.username_value = base::ASCIIToUTF16("Cindy");
   stored3.password_value = base::ASCIIToUTF16("Cindy_password");
 
-  autofill::PasswordForm parsed = GetTestCredential();
+  PasswordForm parsed = GetTestCredential();
   parsed.username_value.clear();
 
   // The first credential is picked (arbitrarily).
@@ -393,239 +404,92 @@ TEST(PasswordManagerUtil, GetMatchForUpdating_EmptyUsernamePickFirst) {
 }
 
 TEST(PasswordManagerUtil, MakeNormalizedBlacklistedForm_Android) {
-  autofill::PasswordForm blacklisted_credential = MakeNormalizedBlacklistedForm(
+  PasswordForm blacklisted_credential = MakeNormalizedBlacklistedForm(
       password_manager::PasswordStore::FormDigest(GetTestAndroidCredential()));
-  EXPECT_TRUE(blacklisted_credential.blacklisted_by_user);
+  EXPECT_TRUE(blacklisted_credential.blocked_by_user);
   EXPECT_EQ(PasswordForm::Scheme::kHtml, blacklisted_credential.scheme);
   EXPECT_EQ(kTestAndroidRealm, blacklisted_credential.signon_realm);
-  EXPECT_EQ(GURL(kTestAndroidRealm), blacklisted_credential.origin);
+  EXPECT_EQ(GURL(kTestAndroidRealm), blacklisted_credential.url);
 }
 
 TEST(PasswordManagerUtil, MakeNormalizedBlacklistedForm_Html) {
-  autofill::PasswordForm blacklisted_credential = MakeNormalizedBlacklistedForm(
+  PasswordForm blacklisted_credential = MakeNormalizedBlacklistedForm(
       password_manager::PasswordStore::FormDigest(GetTestCredential()));
-  EXPECT_TRUE(blacklisted_credential.blacklisted_by_user);
+  EXPECT_TRUE(blacklisted_credential.blocked_by_user);
   EXPECT_EQ(PasswordForm::Scheme::kHtml, blacklisted_credential.scheme);
   EXPECT_EQ(GURL(kTestURL).GetOrigin().spec(),
             blacklisted_credential.signon_realm);
-  EXPECT_EQ(GURL(kTestURL).GetOrigin(), blacklisted_credential.origin);
+  EXPECT_EQ(GURL(kTestURL).GetOrigin(), blacklisted_credential.url);
 }
 
 TEST(PasswordManagerUtil, MakeNormalizedBlacklistedForm_Proxy) {
-  autofill::PasswordForm blacklisted_credential = MakeNormalizedBlacklistedForm(
+  PasswordForm blacklisted_credential = MakeNormalizedBlacklistedForm(
       password_manager::PasswordStore::FormDigest(GetTestProxyCredential()));
-  EXPECT_TRUE(blacklisted_credential.blacklisted_by_user);
+  EXPECT_TRUE(blacklisted_credential.blocked_by_user);
   EXPECT_EQ(PasswordForm::Scheme::kBasic, blacklisted_credential.scheme);
   EXPECT_EQ(kTestProxySignonRealm, blacklisted_credential.signon_realm);
-  EXPECT_EQ(GURL(kTestProxyOrigin), blacklisted_credential.origin);
+  EXPECT_EQ(GURL(kTestProxyOrigin), blacklisted_credential.url);
 }
 
-TEST(PasswordManagerUtil, AccountStoragePerAccountSettings_FeatureDisabled) {
-  base::test::ScopedFeatureList features;
-  features.InitAndDisableFeature(
-      password_manager::features::kEnablePasswordsAccountStorage);
+TEST(PasswordManagerUtil, ManualGenerationShouldNotReauthIfNotNeeded) {
+  MockPasswordManagerClient mock_client;
+  ON_CALL(*(mock_client.GetPasswordFeatureManager()),
+          ShouldShowAccountStorageOptIn)
+      .WillByDefault(Return(false));
 
-  TestingPrefServiceSimple pref_service;
-  pref_service.registry()->RegisterDictionaryPref(
-      password_manager::prefs::kAccountStoragePerAccountSettings);
+  EXPECT_CALL(mock_client, TriggerReauthForPrimaryAccount).Times(0);
+  EXPECT_CALL(mock_client, GeneratePassword);
 
-  CoreAccountInfo account;
-  account.email = "first@account.com";
-  account.gaia = "first";
-  account.account_id = CoreAccountId::FromGaiaId(account.gaia);
-
-  // SyncService is running in transport mode with |account|.
-  syncer::TestSyncService sync_service;
-  sync_service.SetIsAuthenticatedAccountPrimary(false);
-  sync_service.SetAuthenticatedAccountInfo(account);
-  ASSERT_EQ(sync_service.GetTransportState(),
-            syncer::SyncService::TransportState::ACTIVE);
-  ASSERT_FALSE(sync_service.IsSyncFeatureEnabled());
-
-  // Since the account storage feature is disabled, the profile store should be
-  // the default.
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
-
-  // Same if the user is signed out.
-  sync_service.SetAuthenticatedAccountInfo(CoreAccountInfo());
-  sync_service.SetTransportState(syncer::SyncService::TransportState::DISABLED);
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
+  UserTriggeredManualGenerationFromContextMenu(&mock_client);
 }
 
-TEST(PasswordManagerUtil, AccountStoragePerAccountSettings) {
-  base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(
-      password_manager::features::kEnablePasswordsAccountStorage);
+TEST(PasswordManagerUtil,
+     ManualGenerationShouldGeneratePasswordIfReauthSucessful) {
+  MockPasswordManagerClient mock_client;
+  ON_CALL(*(mock_client.GetPasswordFeatureManager()),
+          ShouldShowAccountStorageOptIn)
+      .WillByDefault(Return(true));
 
-  TestingPrefServiceSimple pref_service;
-  pref_service.registry()->RegisterDictionaryPref(
-      password_manager::prefs::kAccountStoragePerAccountSettings);
+  EXPECT_CALL(
+      mock_client,
+      TriggerReauthForPrimaryAccount(
+          signin_metrics::ReauthAccessPoint::kGeneratePasswordContextMenu, _))
+      .WillOnce(
+          [](signin_metrics::ReauthAccessPoint,
+             base::OnceCallback<void(
+                 password_manager::PasswordManagerClient::ReauthSucceeded)>
+                 callback) {
+            std::move(callback).Run(
+                password_manager::PasswordManagerClient::ReauthSucceeded(true));
+          });
+  EXPECT_CALL(mock_client, GeneratePassword);
 
-  CoreAccountInfo first_account;
-  first_account.email = "first@account.com";
-  first_account.gaia = "first";
-  first_account.account_id = CoreAccountId::FromGaiaId(first_account.gaia);
-
-  CoreAccountInfo second_account;
-  second_account.email = "second@account.com";
-  second_account.gaia = "second";
-  second_account.account_id = CoreAccountId::FromGaiaId(second_account.gaia);
-
-  syncer::TestSyncService sync_service;
-  sync_service.SetDisableReasons(
-      {syncer::SyncService::DISABLE_REASON_NOT_SIGNED_IN});
-  sync_service.SetTransportState(syncer::SyncService::TransportState::DISABLED);
-  sync_service.SetIsAuthenticatedAccountPrimary(false);
-
-  // Initially the user is not signed in, so everything is off/local.
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowPasswordStorePicker(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
-
-  // Now let SyncService run in transport mode with |first_account|.
-  sync_service.SetAuthenticatedAccountInfo(first_account);
-  sync_service.SetDisableReasons({});
-  sync_service.SetTransportState(syncer::SyncService::TransportState::ACTIVE);
-  ASSERT_FALSE(sync_service.IsSyncFeatureEnabled());
-
-  // By default, the user is not opted in. But since they're eligible for
-  // account storage, the default store should be the account one.
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_TRUE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kAccountStore);
-
-  // Opt in!
-  SetAccountStorageOptIn(&pref_service, &sync_service, true);
-  EXPECT_TRUE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  // ...and change the default store to the profile one.
-  SetDefaultPasswordStore(&pref_service, &sync_service,
-                          autofill::PasswordForm::Store::kProfileStore);
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
-
-  // Change to |second_account|. The opt-in for |first_account| should not
-  // apply, and similarly the default store should be back to "account".
-  sync_service.SetAuthenticatedAccountInfo(second_account);
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_TRUE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kAccountStore);
-
-  // Change back to |first_account|. The previous opt-in and chosen default
-  // store should now apply again.
-  sync_service.SetAuthenticatedAccountInfo(first_account);
-  EXPECT_TRUE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
-
-  // Sign out. Now the settings should have reasonable default values (not opted
-  // in, save to profile store).
-  sync_service.SetAuthenticatedAccountInfo(CoreAccountInfo());
-  sync_service.SetTransportState(syncer::SyncService::TransportState::DISABLED);
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
+  UserTriggeredManualGenerationFromContextMenu(&mock_client);
 }
 
-TEST(PasswordManagerUtil, SyncSuppressesAccountStorageOptIn) {
-  base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(
-      password_manager::features::kEnablePasswordsAccountStorage);
+TEST(PasswordManagerUtil,
+     ManualGenerationShouldNotGeneratePasswordIfReauthFailed) {
+  MockPasswordManagerClient mock_client;
+  ON_CALL(*(mock_client.GetPasswordFeatureManager()),
+          ShouldShowAccountStorageOptIn)
+      .WillByDefault(Return(true));
 
-  TestingPrefServiceSimple pref_service;
-  pref_service.registry()->RegisterDictionaryPref(
-      password_manager::prefs::kAccountStoragePerAccountSettings);
+  EXPECT_CALL(
+      mock_client,
+      TriggerReauthForPrimaryAccount(
+          signin_metrics::ReauthAccessPoint::kGeneratePasswordContextMenu, _))
+      .WillOnce(
+          [](signin_metrics::ReauthAccessPoint,
+             base::OnceCallback<void(
+                 password_manager::PasswordManagerClient::ReauthSucceeded)>
+                 callback) {
+            std::move(callback).Run(
+                password_manager::PasswordManagerClient::ReauthSucceeded(
+                    false));
+          });
+  EXPECT_CALL(mock_client, GeneratePassword).Times(0);
 
-  CoreAccountInfo account;
-  account.email = "name@account.com";
-  account.gaia = "name";
-  account.account_id = CoreAccountId::FromGaiaId(account.gaia);
-
-  // Initially, the user is signed in but doesn't have Sync-the-feature enabled,
-  // so the SyncService is running in transport mode.
-  syncer::TestSyncService sync_service;
-  sync_service.SetIsAuthenticatedAccountPrimary(false);
-  sync_service.SetAuthenticatedAccountInfo(account);
-  ASSERT_EQ(sync_service.GetTransportState(),
-            syncer::SyncService::TransportState::ACTIVE);
-  ASSERT_FALSE(sync_service.IsSyncFeatureEnabled());
-
-  // In this state, the user could opt in to the account storage.
-  ASSERT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  ASSERT_TRUE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  ASSERT_TRUE(ShouldShowPasswordStorePicker(&pref_service, &sync_service));
-
-  // Now the user enables Sync-the-feature.
-  sync_service.SetIsAuthenticatedAccountPrimary(true);
-  sync_service.SetFirstSetupComplete(true);
-  ASSERT_TRUE(sync_service.IsSyncFeatureEnabled());
-
-  // Now the account-storage opt-in should *not* be available anymore.
-  EXPECT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowPasswordStorePicker(&pref_service, &sync_service));
-}
-
-TEST(PasswordManagerUtil, SyncDisablesAccountStorage) {
-  base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(
-      password_manager::features::kEnablePasswordsAccountStorage);
-
-  TestingPrefServiceSimple pref_service;
-  pref_service.registry()->RegisterDictionaryPref(
-      password_manager::prefs::kAccountStoragePerAccountSettings);
-
-  CoreAccountInfo account;
-  account.email = "name@account.com";
-  account.gaia = "name";
-  account.account_id = CoreAccountId::FromGaiaId(account.gaia);
-
-  // The SyncService is running in transport mode.
-  syncer::TestSyncService sync_service;
-  sync_service.SetIsAuthenticatedAccountPrimary(false);
-  sync_service.SetAuthenticatedAccountInfo(account);
-  ASSERT_EQ(sync_service.GetTransportState(),
-            syncer::SyncService::TransportState::ACTIVE);
-  ASSERT_FALSE(sync_service.IsSyncFeatureEnabled());
-
-  // The account storage is available in principle, so the opt-in will be shown,
-  // and saving will default to the account store.
-  ASSERT_FALSE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  ASSERT_TRUE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  ASSERT_TRUE(ShouldShowPasswordStorePicker(&pref_service, &sync_service));
-  ASSERT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kAccountStore);
-
-  // Opt in.
-  SetAccountStorageOptIn(&pref_service, &sync_service, true);
-  ASSERT_TRUE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  ASSERT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  ASSERT_TRUE(ShouldShowPasswordStorePicker(&pref_service, &sync_service));
-  ASSERT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kAccountStore);
-
-  // Now enable Sync-the-feature. This should effectively turn *off* the account
-  // storage again (since with Sync, there's only a single combined storage),
-  // even though the opt-in wasn't actually cleared.
-  sync_service.SetIsAuthenticatedAccountPrimary(true);
-  sync_service.SetFirstSetupComplete(true);
-  ASSERT_TRUE(sync_service.IsSyncFeatureEnabled());
-  EXPECT_TRUE(IsOptedInForAccountStorage(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowAccountStorageOptIn(&pref_service, &sync_service));
-  EXPECT_FALSE(ShouldShowPasswordStorePicker(&pref_service, &sync_service));
-  EXPECT_EQ(GetDefaultPasswordStore(&pref_service, &sync_service),
-            autofill::PasswordForm::Store::kProfileStore);
+  UserTriggeredManualGenerationFromContextMenu(&mock_client);
 }
 
 }  // namespace password_manager_util

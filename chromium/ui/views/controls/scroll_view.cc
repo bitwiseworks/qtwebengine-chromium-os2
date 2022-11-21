@@ -7,11 +7,14 @@
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/feature_list.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/numerics/ranges.h"
 #include "build/build_config.h"
+#include "ui/accessibility/ax_action_data.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/compositor/overscroll/scroll_input_handler.h"
 #include "ui/events/event.h"
@@ -159,12 +162,18 @@ class ScrollView::Viewport : public View {
 };
 
 ScrollView::ScrollView()
+    : ScrollView(base::FeatureList::IsEnabled(
+                     ::features::kUiCompositorScrollWithLayers)
+                     ? ScrollWithLayers::kEnabled
+                     : ScrollWithLayers::kDisabled) {}
+
+ScrollView::ScrollView(ScrollWithLayers scroll_with_layers)
     : horiz_sb_(PlatformStyle::CreateScrollBar(true)),
       vert_sb_(PlatformStyle::CreateScrollBar(false)),
       corner_view_(std::make_unique<ScrollCornerView>()),
-      scroll_with_layers_enabled_(base::FeatureList::IsEnabled(
-          ::features::kUiCompositorScrollWithLayers)) {
-  set_notify_enter_exit_on_child(true);
+      scroll_with_layers_enabled_(scroll_with_layers ==
+                                  ScrollWithLayers::kEnabled) {
+  SetNotifyEnterExitOnChild(true);
 
   // Since |contents_viewport_| is accessed during the AddChildView call, make
   // sure the field is initialized.
@@ -377,7 +386,7 @@ void ScrollView::Layout() {
   // When horizontal scrollbar is disabled, it should not matter
   // if its OverlapsContent matches vertical bar's.
   if (!hide_horizontal_scrollbar_) {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     // On Mac, scrollbars may update their style one at a time, so they may
     // temporarily be of different types. Refuse to lay out at this point.
     if (horiz_sb_->OverlapsContent() != vert_sb_->OverlapsContent())
@@ -639,6 +648,70 @@ void ScrollView::OnThemeChanged() {
   UpdateBorder();
   if (background_color_id_)
     UpdateBackground();
+}
+
+void ScrollView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  View::GetAccessibleNodeData(node_data);
+  if (!contents_)
+    return;
+
+  ScrollBar* horizontal = horizontal_scroll_bar();
+  if (horizontal) {
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollX,
+                               CurrentOffset().x());
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollXMin,
+                               horizontal->GetMinPosition());
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollXMax,
+                               horizontal->GetMaxPosition());
+  }
+  ScrollBar* vertical = vertical_scroll_bar();
+  if (vertical) {
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollY,
+                               CurrentOffset().y());
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollYMin,
+                               vertical->GetMinPosition());
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollYMax,
+                               vertical->GetMaxPosition());
+  }
+  if (horizontal || vertical)
+    node_data->AddBoolAttribute(ax::mojom::BoolAttribute::kScrollable, true);
+}
+
+bool ScrollView::HandleAccessibleAction(const ui::AXActionData& action_data) {
+  if (!contents_)
+    return View::HandleAccessibleAction(action_data);
+
+  ScrollBar* horizontal = horizontal_scroll_bar();
+  ScrollBar* vertical = vertical_scroll_bar();
+  switch (action_data.action) {
+    case ax::mojom::Action::kScrollLeft:
+      if (horizontal)
+        return horizontal->ScrollByAmount(ScrollBar::ScrollAmount::kPrevPage);
+      else
+        return false;
+    case ax::mojom::Action::kScrollRight:
+      if (horizontal)
+        return horizontal->ScrollByAmount(ScrollBar::ScrollAmount::kNextPage);
+      else
+        return false;
+    case ax::mojom::Action::kScrollUp:
+      if (vertical)
+        return vertical->ScrollByAmount(ScrollBar::ScrollAmount::kPrevPage);
+      else
+        return false;
+    case ax::mojom::Action::kScrollDown:
+      if (vertical)
+        return vertical->ScrollByAmount(ScrollBar::ScrollAmount::kNextPage);
+      else
+        return false;
+    case ax::mojom::Action::kSetScrollOffset:
+      ScrollToOffset(gfx::ScrollOffset(action_data.target_point.x(),
+                                       action_data.target_point.y()));
+      return true;
+    default:
+      return View::HandleAccessibleAction(action_data);
+      break;
+  }
 }
 
 void ScrollView::ScrollToPosition(ScrollBar* source, int position) {
@@ -957,18 +1030,16 @@ void ScrollView::UpdateOverflowIndicatorVisibility(
           offset.x() < horiz_sb_->GetMaxPosition() && draw_overflow_indicator_);
 }
 
-BEGIN_METADATA(ScrollView)
-METADATA_PARENT_CLASS(View)
-ADD_READONLY_PROPERTY_METADATA(ScrollView, int, MinHeight)
-ADD_READONLY_PROPERTY_METADATA(ScrollView, int, MaxHeight)
-ADD_PROPERTY_METADATA(ScrollView, base::Optional<SkColor>, BackgroundColor)
-ADD_PROPERTY_METADATA(ScrollView,
-                      base::Optional<ui::NativeTheme::ColorId>,
+BEGIN_METADATA(ScrollView, View)
+ADD_READONLY_PROPERTY_METADATA(int, MinHeight)
+ADD_READONLY_PROPERTY_METADATA(int, MaxHeight)
+ADD_PROPERTY_METADATA(base::Optional<SkColor>, BackgroundColor)
+ADD_PROPERTY_METADATA(base::Optional<ui::NativeTheme::ColorId>,
                       BackgroundThemeColorId)
-ADD_PROPERTY_METADATA(ScrollView, bool, DrawOverflowIndicator)
-ADD_PROPERTY_METADATA(ScrollView, bool, HasFocusIndicator)
-ADD_PROPERTY_METADATA(ScrollView, bool, HideHorizontalScrollBar)
-END_METADATA()
+ADD_PROPERTY_METADATA(bool, DrawOverflowIndicator)
+ADD_PROPERTY_METADATA(bool, HasFocusIndicator)
+ADD_PROPERTY_METADATA(bool, HideHorizontalScrollBar)
+END_METADATA
 
 // VariableRowHeightScrollHelper ----------------------------------------------
 

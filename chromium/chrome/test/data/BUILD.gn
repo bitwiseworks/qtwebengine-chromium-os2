@@ -4,6 +4,7 @@
 
 import("//chrome/common/features.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
+import("//pdf/features.gni")
 import("//third_party/closure_compiler/compile_js.gni")
 import("//tools/grit/grit_rule.gni")
 
@@ -31,8 +32,25 @@ mojom("web_ui_test_bindings") {
   ]
 }
 
-js_type_check("closure_compile") {
-  deps = [ ":test_api_js" ]
+group("closure_compile") {
+  deps = [
+    ":closure_compile_local",
+    "cast:closure_compile",
+  ]
+
+  if (enable_pdf) {
+    deps += [ "pdf:closure_compile" ]
+  }
+  if (!is_android) {
+    deps += [ "webui:closure_compile" ]
+  }
+}
+
+js_type_check("closure_compile_local") {
+  deps = [
+    ":test_api_js",
+    "cast",
+  ]
 }
 
 js_library("test_api_js") {

@@ -8,9 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "base/macros.h"
+#include "base/notreached.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
@@ -24,6 +25,7 @@
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/ct_verifier.h"
 #include "net/cert/multi_log_ct_verifier.h"
+#include "net/cert/sct_auditing_delegate.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
@@ -44,7 +46,7 @@
 #include "net/url_request/static_http_user_agent_settings.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_storage.h"
-#include "net/url_request/url_request_job_factory_impl.h"
+#include "net/url_request/url_request_job_factory.h"
 #include "net/url_request/url_request_throttler_manager.h"
 #include "url/url_constants.h"
 
@@ -106,7 +108,6 @@ class BasicNetworkDelegate : public NetworkDelegateImpl {
   }
 
   bool OnCanGetCookies(const URLRequest& request,
-                       const CookieList& cookie_list,
                        bool allowed_from_caller) override {
     return allowed_from_caller;
   }
@@ -192,6 +193,8 @@ void URLRequestContextBuilder::SetHttpNetworkSessionComponents(
   session_context->cert_transparency_verifier =
       request_context->cert_transparency_verifier();
   session_context->ct_policy_enforcer = request_context->ct_policy_enforcer();
+  session_context->sct_auditing_delegate =
+      request_context->sct_auditing_delegate();
   session_context->proxy_resolution_service =
       request_context->proxy_resolution_service();
   session_context->proxy_delegate = request_context->proxy_delegate();
@@ -257,6 +260,11 @@ void URLRequestContextBuilder::set_ct_verifier(
 void URLRequestContextBuilder::set_ct_policy_enforcer(
     std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer) {
   ct_policy_enforcer_ = std::move(ct_policy_enforcer);
+}
+
+void URLRequestContextBuilder::set_sct_auditing_delegate(
+    std::unique_ptr<SCTAuditingDelegate> sct_auditing_delegate) {
+  sct_auditing_delegate_ = std::move(sct_auditing_delegate);
 }
 
 void URLRequestContextBuilder::set_quic_context(
@@ -473,6 +481,10 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
         std::make_unique<DefaultCTPolicyEnforcer>());
   }
 
+  if (sct_auditing_delegate_) {
+    storage->set_sct_auditing_delegate(std::move(sct_auditing_delegate_));
+  }
+
   if (quic_context_) {
     storage->set_quic_context(std::move(quic_context_));
   } else {
@@ -485,7 +497,7 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   }
 
   if (!proxy_resolution_service_) {
-#if !defined(OS_LINUX) && !defined(OS_ANDROID)
+#if !defined(OS_LINUX) && !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
     // TODO(willchan): Switch to using this code when
     // ConfiguredProxyResolutionService::CreateSystemProxyConfigService()'s
     // signature doesn't suck.
@@ -494,21 +506,11 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
           ConfiguredProxyResolutionService::CreateSystemProxyConfigService(
               base::ThreadTaskRunnerHandle::Get().get());
     }
-#endif  // !defined(OS_LINUX) && !defined(OS_ANDROID)
+#endif  // !defined(OS_LINUX) && !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
     proxy_resolution_service_ = CreateProxyResolutionService(
         std::move(proxy_config_service_), context.get(),
         context->host_resolver(), context->network_delegate(),
-        context->net_log());
-
-    // Although CreateProxyResolutionService() tries its best to set the PAC
-    // quick check flag, it may be overridden by a child class. We should make
-    // sure we set that value here if applicable.
-    ConfiguredProxyResolutionService* configured_proxy_resolution_service =
-        nullptr;
-    if (proxy_resolution_service_->CastToConfiguredProxyResolutionService(
-            &configured_proxy_resolution_service))
-      configured_proxy_resolution_service->set_quick_check_enabled(
-          pac_quick_check_enabled_);
+        context->net_log(), pac_quick_check_enabled_);
   }
   ProxyResolutionService* proxy_resolution_service =
       proxy_resolution_service_.get();
@@ -552,6 +554,10 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
 
   HttpNetworkSession::Context network_session_context;
   SetHttpNetworkSessionComponents(context.get(), &network_session_context);
+  // Unlike the other fields of HttpNetworkSession::Context,
+  // |client_socket_factory| is not mirrored in URLRequestContext.
+  network_session_context.client_socket_factory =
+      client_socket_factory_for_testing_;
 
   storage->set_http_network_session(std::make_unique<HttpNetworkSession>(
       http_network_session_params_, network_session_context));
@@ -604,8 +610,8 @@ std::unique_ptr<URLRequestContext> URLRequestContextBuilder::Build() {
   }
   storage->set_http_transaction_factory(std::move(http_transaction_factory));
 
-  std::unique_ptr<URLRequestJobFactoryImpl> job_factory =
-      std::make_unique<URLRequestJobFactoryImpl>();
+  std::unique_ptr<URLRequestJobFactory> job_factory =
+      std::make_unique<URLRequestJobFactory>();
   // Adds caller-provided protocol handlers first so that these handlers are
   // used over the ftp handler below.
   for (auto& scheme_handler : protocol_handlers_) {
@@ -634,9 +640,10 @@ URLRequestContextBuilder::CreateProxyResolutionService(
     URLRequestContext* url_request_context,
     HostResolver* host_resolver,
     NetworkDelegate* network_delegate,
-    NetLog* net_log) {
+    NetLog* net_log,
+    bool pac_quick_check_enabled) {
   return ConfiguredProxyResolutionService::CreateUsingSystemProxyResolver(
-      std::move(proxy_config_service), pac_quick_check_enabled_, net_log);
+      std::move(proxy_config_service), net_log, pac_quick_check_enabled);
 }
 
 }  // namespace net

@@ -15,7 +15,6 @@
 
 #include "base/compiler_specific.h"
 #include "base/files/platform_file.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/unsafe_shared_memory_region.h"
@@ -51,13 +50,13 @@ const MojoPlatformHandleType kPlatformSharedBufferHandleType =
 const MojoPlatformHandleType kPlatformFileHandleType =
     MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR;
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
 const MojoPlatformHandleType kPlatformSharedBufferHandleType =
     MOJO_PLATFORM_HANDLE_TYPE_MACH_PORT;
 #else
 const MojoPlatformHandleType kPlatformSharedBufferHandleType =
     MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR;
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+#endif  // defined(OS_MAC)
 
 #endif  // defined(OS_WIN)
 

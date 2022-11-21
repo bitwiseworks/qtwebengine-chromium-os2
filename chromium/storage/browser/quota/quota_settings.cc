@@ -26,9 +26,11 @@ namespace {
 
 const int64_t _kMBytes = 1024 * 1024;
 const int kRandomizedPercentage = 10;
+const double kDefaultPerHostRatio = 0.75;
+const double kDefaultPoolSizeRatio = 0.8;
 
 // Skews |value| by +/- |percent|.
-int64_t RandomizeByPercent(int64_t value, int percent) {
+int64_t MyRandomizeByPercent(int64_t value, int percent) {
   double random_percent = (base::RandDouble() - 0.5) * percent * 2;
   return value + (value * (random_percent / 100.0));
 }
@@ -47,7 +49,7 @@ QuotaSettings CalculateIncognitoDynamicSettings(
     max_incognito_pool_size = std::numeric_limits<int64_t>::max();
   } else {
     max_incognito_pool_size =
-        RandomizeByPercent(max_incognito_pool_size, kRandomizedPercentage);
+        MyRandomizeByPercent(max_incognito_pool_size, kRandomizedPercentage);
   }
 
   QuotaSettings settings;
@@ -74,10 +76,7 @@ base::Optional<QuotaSettings> CalculateNominalDynamicSettings(
 
   // The fraction of the device's storage the browser is willing to use for
   // temporary storage.
-  const double kTemporaryPoolSizeRatio =
-      base::FeatureList::IsEnabled(features::kQuotaUnlimitedPoolSize)
-          ? 1.0
-          : features::kExperimentalPoolSizeRatio.Get();
+  const double kTemporaryPoolSizeRatio = kDefaultPoolSizeRatio;
 
   // The amount of the device's storage the browser attempts to
   // keep free. If there is less than this amount of storage free
@@ -111,10 +110,7 @@ base::Optional<QuotaSettings> CalculateNominalDynamicSettings(
   const double kMustRemainAvailableRatio = 0.01;             // 1%
 
   // The fraction of the temporary pool that can be utilized by a single host.
-  const double kPerHostTemporaryRatio =
-      base::FeatureList::IsEnabled(features::kQuotaUnlimitedPoolSize)
-          ? 1.0
-          : features::kPerHostRatio.Get();
+  const double kPerHostTemporaryRatio = kDefaultPerHostRatio;
 
   // SessionOnly (or ephemeral) origins are allotted a fraction of what
   // normal origins are provided, and the amount is capped to a hard limit.
@@ -140,7 +136,7 @@ base::Optional<QuotaSettings> CalculateNominalDynamicSettings(
                static_cast<int64_t>(total * kMustRemainAvailableRatio));
   settings.per_host_quota = pool_size * kPerHostTemporaryRatio;
   settings.session_only_per_host_quota = std::min(
-      RandomizeByPercent(kMaxSessionOnlyHostQuota, kRandomizedPercentage),
+      MyRandomizeByPercent(kMaxSessionOnlyHostQuota, kRandomizedPercentage),
       static_cast<int64_t>(settings.per_host_quota *
                            kSessionOnlyHostQuotaRatio));
   settings.refresh_interval = base::TimeDelta::FromSeconds(60);

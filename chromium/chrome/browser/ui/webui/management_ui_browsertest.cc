@@ -16,6 +16,7 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -91,7 +92,7 @@ IN_PROC_BROWSER_TEST_F(ManagementUITest, ManagementStateChange) {
   policy::PolicyMap policy_map;
   policy_map.Set("test-policy", policy::POLICY_LEVEL_MANDATORY,
                  policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_PLATFORM,
-                 std::make_unique<base::Value>("hello world"), nullptr);
+                 base::Value("hello world"), nullptr);
   provider()->UpdateExtensionPolicy(policy_map,
                                     kOnPremReportingExtensionBetaId);
 

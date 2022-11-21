@@ -37,10 +37,10 @@ component("model") {
     "assistant_ui_model_observer.h",
     "ui/assistant_card_element.cc",
     "ui/assistant_card_element.h",
+    "ui/assistant_error_element.cc",
+    "ui/assistant_error_element.h",
     "ui/assistant_text_element.cc",
     "ui/assistant_text_element.h",
-    "ui/assistant_timers_element.cc",
-    "ui/assistant_timers_element.h",
     "ui/assistant_ui_element.cc",
     "ui/assistant_ui_element.h",
   ]
@@ -48,9 +48,10 @@ component("model") {
   deps = [
     "//ash/assistant/ui:constants",
     "//ash/public/cpp",
-    "//chromeos/services/assistant/public:feature_flags",
+    "//chromeos/services/assistant/public/cpp",
     "//chromeos/services/assistant/public/mojom",
     "//services/content/public/cpp",
+    "//ui/accessibility/mojom",
     "//ui/gfx/geometry",
   ]
 }

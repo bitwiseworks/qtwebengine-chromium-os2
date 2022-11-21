@@ -8,13 +8,14 @@
 #include <tuple>
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/logging.h"
 #include "extensions/browser/api/declarative_net_request/indexed_rule.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_matcher.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_source.h"
+#include "extensions/browser/api/web_request/web_request_info.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/api/declarative_net_request/test_utils.h"
 #include "extensions/common/extension.h"
@@ -29,7 +30,7 @@ namespace dnr_api = api::declarative_net_request;
 RequestAction CreateRequestActionForTesting(RequestAction::Type type,
                                             uint32_t rule_id,
                                             uint32_t rule_priority,
-                                            dnr_api::SourceType source_type,
+                                            RulesetID ruleset_id,
                                             const ExtensionId& extension_id) {
   dnr_api::RuleActionType action = [type] {
     switch (type) {
@@ -42,44 +43,66 @@ RequestAction CreateRequestActionForTesting(RequestAction::Type type,
         return dnr_api::RULE_ACTION_TYPE_REDIRECT;
       case RequestAction::Type::UPGRADE:
         return dnr_api::RULE_ACTION_TYPE_UPGRADESCHEME;
-      case RequestAction::Type::REMOVE_HEADERS:
-        return dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS;
       case RequestAction::Type::ALLOW_ALL_REQUESTS:
         return dnr_api::RULE_ACTION_TYPE_ALLOWALLREQUESTS;
+      case RequestAction::Type::MODIFY_HEADERS:
+        return dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS;
     }
   }();
   return RequestAction(type, rule_id,
                        ComputeIndexedRulePriority(rule_priority, action),
-                       source_type, extension_id);
+                       ruleset_id, extension_id);
+}
+
+bool operator==(const RequestAction::HeaderInfo& lhs,
+                const RequestAction::HeaderInfo& rhs) {
+  return lhs.header == rhs.header && lhs.operation == rhs.operation;
+}
+
+std::ostream& operator<<(std::ostream& output,
+                         const RequestAction::HeaderInfo& header_info) {
+  output << "\nRequestAction::HeaderInfo\n";
+  output << "\t|operation| " << dnr_api::ToString(header_info.operation)
+         << "\n";
+  output << "\t|header| " << header_info.header << "\n";
+  output << "\t|value| "
+         << (header_info.value ? *header_info.value : std::string("nullopt"));
+  return output;
 }
 
 // Note: This is not declared in the anonymous namespace so that we can use it
 // with gtest. This reuses the logic used to test action equality in
-// TestRequestACtion in test_utils.h.
+// TestRequestAction in test_utils.h.
 bool operator==(const RequestAction& lhs, const RequestAction& rhs) {
-  // TODO(crbug.com/947591): Modify this method for
-  // flat::IndexType_modify_headers.
-  static_assert(flat::IndexType_count == 6,
+  static_assert(flat::IndexType_count == 3,
                 "Modify this method to ensure it stays updated as new actions "
                 "are added.");
 
-  auto are_vectors_equal = [](std::vector<const char*> a,
-                              std::vector<const char*> b) {
-    return std::set<base::StringPiece>(a.begin(), a.end()) ==
-           std::set<base::StringPiece>(b.begin(), b.end());
-  };
-
   auto get_members_tuple = [](const RequestAction& action) {
     return std::tie(action.type, action.redirect_url, action.rule_id,
-                    action.index_priority, action.source_type,
+                    action.index_priority, action.ruleset_id,
                     action.extension_id);
   };
 
+  auto are_headers_equal = [](std::vector<RequestAction::HeaderInfo> a,
+                              std::vector<RequestAction::HeaderInfo> b) {
+    auto header_info_comparator = [](const RequestAction::HeaderInfo& lhs,
+                                     const RequestAction::HeaderInfo& rhs) {
+      return std::make_tuple(lhs.header, lhs.operation, lhs.value) >
+             std::make_tuple(rhs.header, rhs.operation, rhs.value);
+    };
+
+    std::sort(a.begin(), a.end(), header_info_comparator);
+    std::sort(b.begin(), b.end(), header_info_comparator);
+
+    return a == b;
+  };
+
   return get_members_tuple(lhs) == get_members_tuple(rhs) &&
-         are_vectors_equal(lhs.request_headers_to_remove,
-                           rhs.request_headers_to_remove) &&
-         are_vectors_equal(lhs.response_headers_to_remove,
-                           rhs.response_headers_to_remove);
+         are_headers_equal(lhs.request_headers_to_modify,
+                           rhs.request_headers_to_modify) &&
+         are_headers_equal(lhs.response_headers_to_modify,
+                           rhs.response_headers_to_modify);
 }
 
 std::ostream& operator<<(std::ostream& output, RequestAction::Type type) {
@@ -99,11 +122,11 @@ std::ostream& operator<<(std::ostream& output, RequestAction::Type type) {
     case RequestAction::Type::UPGRADE:
       output << "UPGRADE";
       break;
-    case RequestAction::Type::REMOVE_HEADERS:
-      output << "REMOVE_HEADERS";
-      break;
     case RequestAction::Type::ALLOW_ALL_REQUESTS:
       output << "ALLOW_ALL_REQUESTS";
+      break;
+    case RequestAction::Type::MODIFY_HEADERS:
+      output << "MODIFY_HEADERS";
       break;
   }
   return output;
@@ -118,13 +141,12 @@ std::ostream& operator<<(std::ostream& output, const RequestAction& action) {
          << "\n";
   output << "|rule_id| " << action.rule_id << "\n";
   output << "|index_priority| " << action.index_priority << "\n";
-  output << "|source_type| "
-         << api::declarative_net_request::ToString(action.source_type) << "\n";
+  output << "|ruleset_id| " << action.ruleset_id << "\n";
   output << "|extension_id| " << action.extension_id << "\n";
-  output << "|request_headers_to_remove| "
-         << ::testing::PrintToString(action.request_headers_to_remove) << "\n";
-  output << "|response_headers_to_remove| "
-         << ::testing::PrintToString(action.response_headers_to_remove);
+  output << "|request_headers_to_modify|"
+         << ::testing::PrintToString(action.request_headers_to_modify) << "\n";
+  output << "|response_headers_to_modify|"
+         << ::testing::PrintToString(action.response_headers_to_modify);
   return output;
 }
 
@@ -188,9 +210,6 @@ std::ostream& operator<<(std::ostream& output, const ParseResult& result) {
     case ParseResult::ERROR_INVALID_URL_FILTER:
       output << "ERROR_INVALID_URL_FILTER";
       break;
-    case ParseResult::ERROR_EMPTY_REMOVE_HEADERS_LIST:
-      output << "ERROR_EMPTY_REMOVE_HEADERS_LIST";
-      break;
     case ParseResult::ERROR_INVALID_REDIRECT:
       output << "ERROR_INVALID_REDIRECT";
       break;
@@ -224,18 +243,6 @@ std::ostream& operator<<(std::ostream& output, const ParseResult& result) {
     case ParseResult::ERROR_INVALID_REGEX_FILTER:
       output << "ERROR_INVALID_REGEX_FILTER";
       break;
-    case ParseResult::ERROR_NO_HEADERS_SPECIFIED:
-      output << "ERROR_NO_HEADERS_SPECIFIED";
-      break;
-    case ParseResult::ERROR_EMPTY_REQUEST_HEADERS_LIST:
-      output << "ERROR_EMPTY_REQUEST_HEADERS_LIST";
-      break;
-    case ParseResult::ERROR_EMPTY_RESPONSE_HEADERS_LIST:
-      output << "ERROR_EMPTY_RESPONSE_HEADERS_LIST";
-      break;
-    case ParseResult::ERROR_INVALID_HEADER_NAME:
-      output << "ERROR_INVALID_HEADER_NAME";
-      break;
     case ParseResult::ERROR_REGEX_TOO_LARGE:
       output << "ERROR_REGEX_TOO_LARGE";
       break;
@@ -251,6 +258,54 @@ std::ostream& operator<<(std::ostream& output, const ParseResult& result) {
     case ParseResult::ERROR_INVALID_ALLOW_ALL_REQUESTS_RESOURCE_TYPE:
       output << "ERROR_INVALID_ALLOW_ALL_REQUESTS_RESOURCE_TYPE";
       break;
+    case ParseResult::ERROR_NO_HEADERS_SPECIFIED:
+      output << "ERROR_NO_HEADERS_SPECIFIED";
+      break;
+    case ParseResult::ERROR_EMPTY_REQUEST_HEADERS_LIST:
+      output << "ERROR_EMPTY_REQUEST_HEADERS_LIST";
+      break;
+    case ParseResult::ERROR_EMPTY_RESPONSE_HEADERS_LIST:
+      output << "ERROR_EMPTY_RESPONSE_HEADERS_LIST";
+      break;
+    case ParseResult::ERROR_INVALID_HEADER_NAME:
+      output << "ERROR_INVALID_HEADER_NAME";
+      break;
+    case ParseResult::ERROR_INVALID_HEADER_VALUE:
+      output << "ERROR_INVALID_HEADER_VALUE";
+      break;
+    case ParseResult::ERROR_HEADER_VALUE_NOT_SPECIFIED:
+      output << "ERROR_HEADER_VALUE_NOT_SPECIFIED";
+      break;
+    case ParseResult::ERROR_HEADER_VALUE_PRESENT:
+      output << "ERROR_HEADER_VALUE_PRESENT";
+      break;
+    case ParseResult::ERROR_APPEND_REQUEST_HEADER_UNSUPPORTED:
+      output << "ERROR_APPEND_REQUEST_HEADER_UNSUPPORTED";
+      break;
+  }
+  return output;
+}
+
+std::ostream& operator<<(std::ostream& output, LoadRulesetResult result) {
+  switch (result) {
+    case LoadRulesetResult::kSuccess:
+      output << "kSuccess";
+      break;
+    case LoadRulesetResult::kErrorInvalidPath:
+      output << "kErrorInvalidPath";
+      break;
+    case LoadRulesetResult::kErrorCannotReadFile:
+      output << "kErrorCannotReadFile";
+      break;
+    case LoadRulesetResult::kErrorChecksumMismatch:
+      output << "kErrorChecksumMismatch";
+      break;
+    case LoadRulesetResult::kErrorVersionMismatch:
+      output << "kErrorVersionMismatch";
+      break;
+    case LoadRulesetResult::kErrorChecksumNotFound:
+      output << "kErrorChecksumNotFound";
+      break;
   }
   return output;
 }
@@ -260,18 +315,21 @@ bool AreAllIndexedStaticRulesetsValid(
     content::BrowserContext* browser_context) {
   std::vector<RulesetSource> sources = RulesetSource::CreateStatic(extension);
 
+  const ExtensionPrefs* prefs = ExtensionPrefs::Get(browser_context);
   for (RulesetSource& source : sources) {
+    if (prefs->ShouldIgnoreDNRRuleset(extension.id(), source.id()))
+      continue;
+
     int expected_checksum = -1;
-    if (!ExtensionPrefs::Get(browser_context)
-             ->GetDNRStaticRulesetChecksum(extension.id(), source.id(),
-                                           &expected_checksum)) {
+    if (!prefs->GetDNRStaticRulesetChecksum(extension.id(), source.id(),
+                                            &expected_checksum)) {
       return false;
     }
 
     std::unique_ptr<RulesetMatcher> matcher;
     if (RulesetMatcher::CreateVerifiedMatcher(std::move(source),
                                               expected_checksum, &matcher) !=
-        RulesetMatcher::kLoadSuccess) {
+        LoadRulesetResult::kSuccess) {
       return false;
     }
   }
@@ -283,6 +341,8 @@ bool CreateVerifiedMatcher(const std::vector<TestRule>& rules,
                            const RulesetSource& source,
                            std::unique_ptr<RulesetMatcher>* matcher,
                            int* expected_checksum) {
+  using IndexStatus = IndexAndPersistJSONRulesetResult::Status;
+
   // Serialize |rules|.
   ListBuilder builder;
   for (const auto& rule : rules)
@@ -292,7 +352,7 @@ bool CreateVerifiedMatcher(const std::vector<TestRule>& rules,
   // Index ruleset.
   IndexAndPersistJSONRulesetResult result =
       source.IndexAndPersistJSONRulesetUnsafe();
-  if (!result.success) {
+  if (result.status == IndexStatus::kError) {
     DCHECK(result.error.empty()) << result.error;
     return false;
   }
@@ -300,40 +360,91 @@ bool CreateVerifiedMatcher(const std::vector<TestRule>& rules,
   if (!result.warnings.empty())
     return false;
 
+  DCHECK_EQ(IndexStatus::kSuccess, result.status);
   if (expected_checksum)
     *expected_checksum = result.ruleset_checksum;
 
   // Create verified matcher.
-  RulesetMatcher::LoadRulesetResult load_result =
-      RulesetMatcher::CreateVerifiedMatcher(source, result.ruleset_checksum,
-                                            matcher);
-  return load_result == RulesetMatcher::kLoadSuccess;
+  LoadRulesetResult load_result = RulesetMatcher::CreateVerifiedMatcher(
+      source, result.ruleset_checksum, matcher);
+  return load_result == LoadRulesetResult::kSuccess;
 }
 
-RulesetSource CreateTemporarySource(size_t id,
-                                    dnr_api::SourceType source_type,
+RulesetSource CreateTemporarySource(RulesetID id,
                                     size_t rule_count_limit,
                                     ExtensionId extension_id) {
   std::unique_ptr<RulesetSource> source = RulesetSource::CreateTemporarySource(
-      id, source_type, rule_count_limit, std::move(extension_id));
+      id, rule_count_limit, std::move(extension_id));
   CHECK(source);
   return source->Clone();
 }
 
 dnr_api::ModifyHeaderInfo CreateModifyHeaderInfo(
     dnr_api::HeaderOperation operation,
-    std::string header) {
+    std::string header,
+    base::Optional<std::string> value) {
   dnr_api::ModifyHeaderInfo header_info;
 
   header_info.operation = operation;
   header_info.header = header;
+
+  if (value)
+    header_info.value = std::make_unique<std::string>(*value);
 
   return header_info;
 }
 
 bool EqualsForTesting(const dnr_api::ModifyHeaderInfo& lhs,
                       const dnr_api::ModifyHeaderInfo& rhs) {
-  return lhs.operation == rhs.operation && lhs.header == rhs.header;
+  bool are_values_equal = lhs.value && rhs.value ? *lhs.value == *rhs.value
+                                                 : lhs.value == rhs.value;
+  return lhs.operation == rhs.operation && lhs.header == rhs.header &&
+         are_values_equal;
+}
+
+RulesetManagerObserver::RulesetManagerObserver(RulesetManager* manager)
+    : manager_(manager), current_count_(manager_->GetMatcherCountForTest()) {
+  manager_->SetObserverForTest(this);
+}
+
+RulesetManagerObserver::~RulesetManagerObserver() {
+  manager_->SetObserverForTest(nullptr);
+}
+
+std::vector<GURL> RulesetManagerObserver::GetAndResetRequestSeen() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  std::vector<GURL> seen_requests;
+  std::swap(seen_requests, observed_requests_);
+  return seen_requests;
+}
+
+void RulesetManagerObserver::WaitForExtensionsWithRulesetsCount(size_t count) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  ASSERT_FALSE(expected_count_);
+  if (current_count_ == count)
+    return;
+
+  expected_count_ = count;
+  run_loop_ = std::make_unique<base::RunLoop>();
+  run_loop_->Run();
+}
+
+void RulesetManagerObserver::OnRulesetCountChanged(size_t count) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  current_count_ = count;
+  if (expected_count_ != count)
+    return;
+
+  ASSERT_TRUE(run_loop_.get());
+
+  run_loop_->Quit();
+  expected_count_.reset();
+}
+
+void RulesetManagerObserver::OnEvaluateRequest(const WebRequestInfo& request,
+                                               bool is_incognito_context) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  observed_requests_.push_back(request.url);
 }
 
 }  // namespace declarative_net_request

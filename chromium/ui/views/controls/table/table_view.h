@@ -13,7 +13,6 @@
 #include "ui/base/models/table_model.h"
 #include "ui/base/models/table_model_observer.h"
 #include "ui/gfx/font_list.h"
-#include "ui/views/controls/focus_ring.h"
 #include "ui/views/view.h"
 #include "ui/views/views_export.h"
 
@@ -105,6 +104,7 @@ class VIEWS_EXPORT TableView : public views::View,
   // Creates a new table using the model and columns specified.
   // The table type applies to the content of the first column (text, icon and
   // text, checkbox and text).
+  TableView();
   TableView(ui::TableModel* model,
             const std::vector<ui::TableColumn>& columns,
             TableTypes table_type,
@@ -114,6 +114,12 @@ class VIEWS_EXPORT TableView : public views::View,
   // Returns a new ScrollView that contains the given |table|.
   static std::unique_ptr<ScrollView> CreateScrollViewWithTable(
       std::unique_ptr<TableView> table);
+
+  // Initialize the table with the appropriate data.
+  void Init(ui::TableModel* model,
+            const std::vector<ui::TableColumn>& columns,
+            TableTypes table_type,
+            bool single_selection);
 
   // Assigns a new model to the table view, detaching the old one if present.
   // If |model| is NULL, the table view cannot be used after this call. This
@@ -142,9 +148,6 @@ class VIEWS_EXPORT TableView : public views::View,
   // Changes the visibility of the specified column (by id).
   void SetColumnVisibility(int id, bool is_visible);
   bool IsColumnVisible(int id) const;
-
-  // Adds the specified column. |col| is not made visible.
-  void AddColumn(const ui::TableColumn& col);
 
   // Returns true if the column with the specified id is known (either visible
   // or not).
@@ -383,11 +386,6 @@ class VIEWS_EXPORT TableView : public views::View,
   // |visible_column_index| indexes into |visible_columns_|.
   AXVirtualView* GetVirtualAccessibilityCell(int row, int visible_column_index);
 
-  // Returns |rect|, adjusted for use in AXRelativeBounds by translating it into
-  // screen coordinates. The result must be converted to gfx::RectF when setting
-  // into AXRelativeBounds.
-  gfx::Rect AdjustRectForAXRelativeBounds(const gfx::Rect& rect) const;
-
   ui::TableModel* model_ = nullptr;
 
   std::vector<ui::TableColumn> columns_;
@@ -401,15 +399,15 @@ class VIEWS_EXPORT TableView : public views::View,
   int active_visible_column_index_ = -1;
 
   // Used to draw a focus indicator around the active cell.
-  std::unique_ptr<FocusRing> focus_ring_ = FocusRing::Install(this);
+  FocusRing* focus_ring_ = nullptr;
 
   // The header. This is only created if more than one column is specified or
   // the first column has a non-empty title.
   TableHeader* header_ = nullptr;
 
-  const TableTypes table_type_;
+  TableTypes table_type_ = TableTypes::TEXT_ONLY;
 
-  const bool single_selection_;
+  bool single_selection_ = true;
 
   // If |select_on_remove_| is true: when a selected item is removed, if the
   // removed item is not the last item, select its next one; otherwise select

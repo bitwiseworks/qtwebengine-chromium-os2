@@ -77,7 +77,7 @@ struct hash<std::pair<ConstantValue, ConstantType>> {
     }
 };
 
-}
+}  // namespace std
 
 namespace SkSL {
 
@@ -112,7 +112,7 @@ public:
     , fBoolFalse(0)
     , fSetupFragPosition(false)
     , fCurrentBlock(0)
-    , fSynthetics(nullptr, errors) {
+    , fSynthetics(errors) {
         this->setupIntrinsics();
     }
 
@@ -177,7 +177,7 @@ private:
 
     void writeProgramElement(const ProgramElement& pe, OutputStream& out);
 
-    SpvId writeInterfaceBlock(const InterfaceBlock& intf);
+    SpvId writeInterfaceBlock(const InterfaceBlock& intf, bool appendRTHeight = true);
 
     SpvId writeFunctionStart(const FunctionDeclaration& f, OutputStream& out);
 
@@ -387,8 +387,6 @@ private:
     SpvId fBoolTrue;
     SpvId fBoolFalse;
     std::unordered_map<std::pair<ConstantValue, ConstantType>, SpvId> fNumberConstants;
-    // The constant float2(0, 1), used in swizzling
-    SpvId fConstantZeroOneVector = 0;
     bool fSetupFragPosition;
     // label of the current block, or 0 if we are not in a block
     SpvId fCurrentBlock;
@@ -403,9 +401,9 @@ private:
     friend class PointerLValue;
     friend class SwizzleLValue;
 
-    typedef CodeGenerator INHERITED;
+    using INHERITED = CodeGenerator;
 };
 
-}
+}  // namespace SkSL
 
 #endif

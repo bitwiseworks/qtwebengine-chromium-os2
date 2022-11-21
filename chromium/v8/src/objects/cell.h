@@ -6,7 +6,7 @@
 #define V8_OBJECTS_CELL_H_
 
 #include "src/objects/heap-object.h"
-#include "torque-generated/class-definitions-tq.h"
+#include "torque-generated/class-definitions.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -19,9 +19,6 @@ class Cell : public TorqueGeneratedCell<Cell, HeapObject> {
   static inline Cell FromValueAddress(Address value);
 
   inline Address ValueAddress() { return address() + kValueOffset; }
-
-  // Dispatched behavior.
-  DECL_PRINTER(Cell)
 
   using BodyDescriptor = FixedBodyDescriptor<kValueOffset, kSize, kSize>;
 

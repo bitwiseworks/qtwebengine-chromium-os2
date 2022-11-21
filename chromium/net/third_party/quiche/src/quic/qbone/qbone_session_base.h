@@ -31,9 +31,6 @@ class QUIC_EXPORT_PRIVATE QboneSessionBase : public QuicSession {
   // Overrides from QuicSession.
   // This will ensure that the crypto session is created.
   void Initialize() override;
-  // This will ensure that we keep track of stream ids that can be
-  // write blocked.
-  void CloseStream(QuicStreamId stream_id) override;
   // This will check if the packet is wholly contained.
   void OnStreamFrame(const QuicStreamFrame& frame) override;
   // Called whenever a MESSAGE frame is received.
@@ -110,8 +107,6 @@ class QUIC_EXPORT_PRIVATE QboneSessionBase : public QuicSession {
   // Number of times the connection has failed to send packets as MESSAGE frame
   // and used streams as a fallback.
   uint64_t num_fallback_to_stream_ = 0;
-
-  QuicUnorderedSet<QuicStreamId> reliable_streams_;
 };
 
 }  // namespace quic

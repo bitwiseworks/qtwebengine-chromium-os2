@@ -7,6 +7,7 @@
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -27,7 +28,7 @@ class InteractionMediaQueriesDynamicTest : public ContentBrowserTest {
 }  //  namespace
 
 // Disable test on Android ASAN bot: crbug.com/807420
-#if defined(OS_WIN) || defined(OS_LINUX) || \
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS) || \
     (defined(OS_ANDROID) && !defined(ADDRESS_SANITIZER))
 IN_PROC_BROWSER_TEST_F(InteractionMediaQueriesDynamicTest,
                        PointerMediaQueriesDynamic) {

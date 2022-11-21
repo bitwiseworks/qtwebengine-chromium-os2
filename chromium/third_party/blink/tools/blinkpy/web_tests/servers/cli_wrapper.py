@@ -25,7 +25,6 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 """A utility module for making standalone scripts to start servers.
 
 Scripts in tools/ can use this module to start servers that are normally used
@@ -39,10 +38,10 @@ import signal
 
 from blinkpy.common.host import Host
 from blinkpy.common.system.log_utils import configure_logging
+from blinkpy.web_tests.port.base import ARTIFACTS_SUB_DIR
 from blinkpy.web_tests.port.factory import configuration_options
 from blinkpy.web_tests.port.factory import python_server_options
-from blinkpy.web_tests.port.base import ARTIFACTS_SUB_DIR
-
+from blinkpy.web_tests.servers.server_base import ServerError
 
 _log = logging.getLogger(__name__)
 
@@ -60,25 +59,35 @@ def parse_python_server_options(argv=None):
     return option, args
 
 
-def main(server_constructor, sleep_fn=None, argv=None, description=None, **kwargs):
+def main(server_constructor,
+         sleep_fn=None,
+         argv=None,
+         description=None,
+         **kwargs):
     host = Host()
-    # Signals will interrupt sleep, so we can use a long duration.
-    sleep_fn = sleep_fn or (lambda: host.sleep(10))
+    sleep_fn = sleep_fn or (lambda: host.sleep(1))
 
-    parser = optparse.OptionParser(description=description, formatter=RawTextHelpFormatter())
-    parser.add_option('--output-dir', type=str, default=None,
-                      help='output directory, for log files etc.')
-    parser.add_option('-v', '--verbose', action='store_true', help='print debug logs')
+    parser = optparse.OptionParser(
+        description=description, formatter=RawTextHelpFormatter())
+    parser.add_option(
+        '--output-dir',
+        type=str,
+        default=None,
+        help='output directory, for log files etc.')
+    parser.add_option(
+        '-v', '--verbose', action='store_true', help='print debug logs')
     for opt in configuration_options():
         parser.add_option(opt)
     options, _ = parser.parse_args(argv)
 
-    configure_logging(logging_level=logging.DEBUG if options.verbose else logging.INFO,
-                      include_time=options.verbose)
+    configure_logging(
+        logging_level=logging.DEBUG if options.verbose else logging.INFO,
+        include_time=options.verbose)
 
     port_obj = host.port_factory.get(options=options)
     if not options.output_dir:
-        options.output_dir = host.filesystem.join(port_obj.default_results_directory(), ARTIFACTS_SUB_DIR)
+        options.output_dir = host.filesystem.join(
+            port_obj.default_results_directory(), ARTIFACTS_SUB_DIR)
 
     # Create the output directory if it doesn't already exist.
     host.filesystem.maybe_make_directory(options.output_dir)
@@ -97,6 +106,11 @@ def main(server_constructor, sleep_fn=None, argv=None, description=None, **kwarg
     try:
         while True:
             sleep_fn()
+            if not server.alive():
+                raise ServerError('Server is no longer listening')
+    except ServerError as e:
+        _log.error(e)
     except (SystemExit, KeyboardInterrupt):
         _log.info('Exiting...')
+    finally:
         server.stop()

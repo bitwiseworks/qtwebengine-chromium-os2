@@ -6,12 +6,14 @@
 
 #include "fxjs/xfa/cjx_tree.h"
 
+#include <memory>
 #include <vector>
 
 #include "fxjs/js_resources.h"
 #include "fxjs/xfa/cfxjse_engine.h"
 #include "fxjs/xfa/cfxjse_value.h"
-#include "third_party/base/ptr_util.h"
+#include "third_party/base/numerics/safe_conversions.h"
+#include "v8/include/cppgc/allocation.h"
 #include "xfa/fxfa/parser/cxfa_arraynodelist.h"
 #include "xfa/fxfa/parser/cxfa_attachnodelist.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
@@ -27,7 +29,7 @@ CJX_Tree::CJX_Tree(CXFA_Object* obj) : CJX_Object(obj) {
   DefineMethods(MethodSpecs);
 }
 
-CJX_Tree::~CJX_Tree() {}
+CJX_Tree::~CJX_Tree() = default;
 
 bool CJX_Tree::DynamicTypeIs(TypeTag eType) const {
   return eType == static_type__ || ParentType__::DynamicTypeIs(eType);
@@ -48,14 +50,14 @@ CJS_Result CJX_Tree::resolveNode(
   uint32_t dwFlag = XFA_RESOLVENODE_Children | XFA_RESOLVENODE_Attributes |
                     XFA_RESOLVENODE_Properties | XFA_RESOLVENODE_Parent |
                     XFA_RESOLVENODE_Siblings;
-  XFA_RESOLVENODE_RS resolveNodeRS;
+  XFA_ResolveNodeRS resolveNodeRS;
   if (!pScriptContext->ResolveObjects(ToNode(refNode),
                                       expression.AsStringView(), &resolveNodeRS,
                                       dwFlag, nullptr)) {
     return CJS_Result::Success(runtime->NewNull());
   }
 
-  if (resolveNodeRS.dwFlags == XFA_ResolveNode_RSType_Nodes) {
+  if (resolveNodeRS.dwFlags == XFA_ResolveNodeRS::Type::kNodes) {
     CXFA_Object* pObject = resolveNodeRS.objects.front().Get();
     CFXJSE_Value* value =
         GetDocument()->GetScriptContext()->GetOrCreateJSBindingFromMap(pObject);
@@ -69,7 +71,7 @@ CJS_Result CJX_Tree::resolveNode(
     return CJS_Result::Success(runtime->NewNull());
   }
 
-  auto pValue = pdfium::MakeUnique<CFXJSE_Value>(pScriptContext->GetIsolate());
+  auto pValue = std::make_unique<CFXJSE_Value>(pScriptContext->GetIsolate());
   CJX_Object* jsObject = resolveNodeRS.objects.front()->JSObject();
   (*resolveNodeRS.script_attribute.callback)(
       jsObject, pValue.get(), false, resolveNodeRS.script_attribute.attribute);
@@ -88,7 +90,7 @@ CJS_Result CJX_Tree::resolveNodes(
     refNode = GetDocument()->GetScriptContext()->GetThisObject();
 
   CFXJSE_Engine* pScriptContext = GetDocument()->GetScriptContext();
-  auto pValue = pdfium::MakeUnique<CFXJSE_Value>(pScriptContext->GetIsolate());
+  auto pValue = std::make_unique<CFXJSE_Value>(pScriptContext->GetIsolate());
   ResolveNodeList(pValue.get(), runtime->ToWideString(params[0]),
                   XFA_RESOLVENODE_Children | XFA_RESOLVENODE_Attributes |
                       XFA_RESOLVENODE_Properties | XFA_RESOLVENODE_Parent |
@@ -107,7 +109,7 @@ void CJX_Tree::all(CFXJSE_Value* pValue,
   }
 
   uint32_t dwFlag = XFA_RESOLVENODE_Siblings | XFA_RESOLVENODE_ALL;
-  WideString wsExpression = GetAttribute(XFA_Attribute::Name) + L"[*]";
+  WideString wsExpression = GetAttributeByEnum(XFA_Attribute::Name) + L"[*]";
   ResolveNodeList(pValue, wsExpression, dwFlag, nullptr);
 }
 
@@ -134,10 +136,13 @@ void CJX_Tree::nodes(CFXJSE_Value* pValue,
     return;
   }
 
-  CFXJSE_Engine* pScriptContext = GetDocument()->GetScriptContext();
-  CXFA_AttachNodeList* pNodeList =
-      new CXFA_AttachNodeList(GetDocument(), ToNode(GetXFAObject()));
-  pValue->SetHostObject(pNodeList, pScriptContext->GetJseNormalClass());
+  CXFA_Document* pDoc = GetDocument();
+  auto* pNodeList = cppgc::MakeGarbageCollected<CXFA_AttachNodeList>(
+      pDoc->GetHeap()->GetAllocationHandle(), pDoc, GetXFANode());
+  pDoc->GetNodeOwner()->PersistList(pNodeList);
+
+  CFXJSE_Engine* pEngine = pDoc->GetScriptContext();
+  pValue->SetHostObject(pNodeList->JSObject(), pEngine->GetJseNormalClass());
 }
 
 void CJX_Tree::parent(CFXJSE_Value* pValue,
@@ -148,7 +153,7 @@ void CJX_Tree::parent(CFXJSE_Value* pValue,
     return;
   }
 
-  CXFA_Node* pParent = ToNode(GetXFAObject())->GetParent();
+  CXFA_Node* pParent = GetXFANode()->GetParent();
   if (!pParent) {
     pValue->SetNull();
     return;
@@ -166,7 +171,7 @@ void CJX_Tree::index(CFXJSE_Value* pValue,
     return;
   }
 
-  CXFA_Node* pNode = ToNode(GetXFAObject());
+  CXFA_Node* pNode = GetXFANode();
   size_t iIndex = pNode ? pNode->GetIndexByName() : 0;
   pValue->SetInteger(pdfium::base::checked_cast<int32_t>(iIndex));
 }
@@ -179,7 +184,7 @@ void CJX_Tree::classIndex(CFXJSE_Value* pValue,
     return;
   }
 
-  CXFA_Node* pNode = ToNode(GetXFAObject());
+  CXFA_Node* pNode = GetXFANode();
   size_t iIndex = pNode ? pNode->GetIndexByClassName() : 0;
   pValue->SetInteger(pdfium::base::checked_cast<int32_t>(iIndex));
 }
@@ -201,14 +206,19 @@ void CJX_Tree::ResolveNodeList(CFXJSE_Value* pValue,
                                uint32_t dwFlag,
                                CXFA_Node* refNode) {
   if (!refNode)
-    refNode = ToNode(GetXFAObject());
+    refNode = GetXFANode();
 
-  XFA_RESOLVENODE_RS resolveNodeRS;
-  CFXJSE_Engine* pScriptContext = GetDocument()->GetScriptContext();
+  XFA_ResolveNodeRS resolveNodeRS;
+  CXFA_Document* pDoc = GetDocument();
+  CFXJSE_Engine* pScriptContext = pDoc->GetScriptContext();
   pScriptContext->ResolveObjects(refNode, wsExpression.AsStringView(),
                                  &resolveNodeRS, dwFlag, nullptr);
-  CXFA_ArrayNodeList* pNodeList = new CXFA_ArrayNodeList(GetDocument());
-  if (resolveNodeRS.dwFlags == XFA_ResolveNode_RSType_Nodes) {
+
+  auto* pNodeList = cppgc::MakeGarbageCollected<CXFA_ArrayNodeList>(
+      pDoc->GetHeap()->GetAllocationHandle(), pDoc);
+  pDoc->GetNodeOwner()->PersistList(pNodeList);
+
+  if (resolveNodeRS.dwFlags == XFA_ResolveNodeRS::Type::kNodes) {
     for (auto& pObject : resolveNodeRS.objects) {
       if (pObject->IsNode())
         pNodeList->Append(pObject->AsNode());
@@ -218,7 +228,7 @@ void CJX_Tree::ResolveNodeList(CFXJSE_Value* pValue,
         resolveNodeRS.script_attribute.eValueType == XFA_ScriptType::Object) {
       for (auto& pObject : resolveNodeRS.objects) {
         auto innerValue =
-            pdfium::MakeUnique<CFXJSE_Value>(pScriptContext->GetIsolate());
+            std::make_unique<CFXJSE_Value>(pScriptContext->GetIsolate());
         CJX_Object* jsObject = pObject->JSObject();
         (*resolveNodeRS.script_attribute.callback)(
             jsObject, innerValue.get(), false,
@@ -229,5 +239,6 @@ void CJX_Tree::ResolveNodeList(CFXJSE_Value* pValue,
       }
     }
   }
-  pValue->SetHostObject(pNodeList, pScriptContext->GetJseNormalClass());
+  pValue->SetHostObject(pNodeList->JSObject(),
+                        pScriptContext->GetJseNormalClass());
 }

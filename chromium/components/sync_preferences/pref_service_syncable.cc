@@ -10,7 +10,6 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/value_conversions.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/default_pref_store.h"
 #include "components/prefs/in_memory_pref_store.h"
@@ -126,24 +125,22 @@ PrefServiceSyncable::CreateIncognitoPrefService(
 }
 
 bool PrefServiceSyncable::IsSyncing() {
-  if (pref_sync_associator_.models_associated())
-    return true;
-#if defined(OS_CHROMEOS)
-  if (os_pref_sync_associator_.models_associated())
-    return true;
-#endif
-  return false;
+  return pref_sync_associator_.models_associated();
 }
 
 bool PrefServiceSyncable::IsPrioritySyncing() {
-  if (priority_pref_sync_associator_.models_associated())
-    return true;
-#if defined(OS_CHROMEOS)
-  if (os_priority_pref_sync_associator_.models_associated())
-    return true;
-#endif
-  return false;
+  return priority_pref_sync_associator_.models_associated();
 }
+
+#if defined(OS_CHROMEOS)
+bool PrefServiceSyncable::AreOsPrefsSyncing() {
+  return os_pref_sync_associator_.models_associated();
+}
+
+bool PrefServiceSyncable::AreOsPriorityPrefsSyncing() {
+  return os_priority_pref_sync_associator_.models_associated();
+}
+#endif  // defined(OS_CHROMEOS)
 
 void PrefServiceSyncable::AddObserver(PrefServiceSyncableObserver* observer) {
   observer_list_.AddObserver(observer);

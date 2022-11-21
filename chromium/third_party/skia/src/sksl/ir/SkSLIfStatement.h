@@ -17,9 +17,11 @@ namespace SkSL {
  * An 'if' statement.
  */
 struct IfStatement : public Statement {
+    static constexpr Kind kStatementKind = Kind::kIf;
+
     IfStatement(int offset, bool isStatic, std::unique_ptr<Expression> test,
                 std::unique_ptr<Statement> ifTrue, std::unique_ptr<Statement> ifFalse)
-    : INHERITED(offset, kIf_Kind)
+    : INHERITED(offset, kStatementKind)
     , fIsStatic(isStatic)
     , fTest(std::move(test))
     , fIfTrue(std::move(ifTrue))
@@ -30,7 +32,6 @@ struct IfStatement : public Statement {
                 fIfTrue->clone(), fIfFalse ? fIfFalse->clone() : nullptr));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         String result;
         if (fIsStatic) {
@@ -42,7 +43,6 @@ struct IfStatement : public Statement {
         }
         return result;
     }
-#endif
 
     bool fIsStatic;
     std::unique_ptr<Expression> fTest;
@@ -50,9 +50,9 @@ struct IfStatement : public Statement {
     // may be null
     std::unique_ptr<Statement> fIfFalse;
 
-    typedef Statement INHERITED;
+    using INHERITED = Statement;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

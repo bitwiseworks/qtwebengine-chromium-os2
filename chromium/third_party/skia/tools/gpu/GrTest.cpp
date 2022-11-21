@@ -8,7 +8,7 @@
 #include "include/core/SkString.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContextOptions.h"
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkMathPriv.h"
 #include "src/gpu/GrClip.h"
@@ -54,24 +54,22 @@ int GrResourceCache::countUniqueKeysWithTag(const char* tag) const {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#define ASSERT_SINGLE_OWNER \
-    SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(fRenderTargetContext->singleOwner());)
-
+#define ASSERT_SINGLE_OWNER GR_ASSERT_SINGLE_OWNER(fRenderTargetContext->singleOwner())
 
 uint32_t GrRenderTargetContextPriv::testingOnly_getOpsTaskID() {
     return fRenderTargetContext->getOpsTask()->uniqueID();
 }
 
 void GrRenderTargetContextPriv::testingOnly_addDrawOp(std::unique_ptr<GrDrawOp> op) {
-    this->testingOnly_addDrawOp(GrNoClip(), std::move(op));
+    this->testingOnly_addDrawOp(nullptr, std::move(op), {});
 }
 
 void GrRenderTargetContextPriv::testingOnly_addDrawOp(
-        const GrClip& clip,
+        const GrClip* clip,
         std::unique_ptr<GrDrawOp> op,
         const std::function<GrRenderTargetContext::WillAddOpFn>& willAddFn) {
     ASSERT_SINGLE_OWNER
-    if (fRenderTargetContext->fContext->priv().abandoned()) {
+    if (fRenderTargetContext->fContext->abandoned()) {
         fRenderTargetContext->fContext->priv().opMemoryPool()->release(std::move(op));
         return;
     }
@@ -202,6 +200,10 @@ void GrDrawRandomOp(SkRandom* random, GrRenderTargetContext* renderTargetContext
     uint32_t index = random->nextULessThan(static_cast<uint32_t>(kTotal));
     auto op = gFactories[index](
             std::move(paint), random, context, renderTargetContext->numSamples());
-    SkASSERT(op);
-    renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
+
+    // Creating a GrAtlasTextOp my not produce an op if for example, it is totally outside the
+    // render target context.
+    if (op) {
+        renderTargetContext->priv().testingOnly_addDrawOp(std::move(op));
+    }
 }

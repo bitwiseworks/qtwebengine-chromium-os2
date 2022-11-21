@@ -11,6 +11,7 @@
 
 #include "base/build_time.h"
 #include "base/cpu.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_flattener.h"
 #include "base/metrics/histogram_functions.h"
@@ -23,6 +24,7 @@
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "components/metrics/delegating_provider.h"
 #include "components/metrics/environment_recorder.h"
 #include "components/metrics/histogram_encoder.h"
@@ -169,6 +171,10 @@ void MetricsLog::RecordCoreSystemProfile(MetricsServiceClient* client,
   RecordCoreSystemProfile(client->GetVersionString(), client->GetChannel(),
                           client->GetApplicationLocale(),
                           client->GetAppPackageName(), system_profile);
+
+  std::string brand_code;
+  if (client->GetBrand(&brand_code))
+    system_profile->set_brand_code(brand_code);
 }
 
 // static
@@ -203,7 +209,15 @@ void MetricsLog::RecordCoreSystemProfile(
 #endif
 
   metrics::SystemProfileProto::OS* os = system_profile->mutable_os();
+#if BUILDFLAG(IS_LACROS)
+  // The Lacros browser runs on Chrome OS, but reports a special OS name to
+  // differentiate itself from the built-in ash browser + window manager binary.
+  os->set_name("Lacros");
+#elif defined(OS_CHROMEOS)
+  os->set_name("CrOS");
+#else
   os->set_name(base::SysInfo::OperatingSystemName());
+#endif
   os->set_version(base::SysInfo::OperatingSystemVersion());
 
 // On ChromeOS, KernelVersion refers to the Linux kernel version and
@@ -229,6 +243,7 @@ void MetricsLog::RecordCoreSystemProfile(
 void MetricsLog::RecordHistogramDelta(const std::string& histogram_name,
                                       const base::HistogramSamples& snapshot) {
   DCHECK(!closed_);
+  samples_count_ += snapshot.TotalCount();
   EncodeHistogramDelta(histogram_name, snapshot, &uma_proto_);
 }
 
@@ -306,7 +321,7 @@ const SystemProfileProto& MetricsLog::RecordEnvironment(
   //
   // The |has_environment| case will happen on the very first log, where we
   // call RecordEnvironment() in order to persist the system profile in the
-  // persistent hitograms .pma file.
+  // persistent histograms .pma file.
   if (has_environment_) {
     uma_proto_.clear_system_profile();
     MetricsLog::RecordCoreSystemProfile(client_,
@@ -318,10 +333,6 @@ const SystemProfileProto& MetricsLog::RecordEnvironment(
   SystemProfileProto* system_profile = uma_proto_.mutable_system_profile();
   WriteMetricsEnableDefault(client_->GetMetricsReportingDefaultState(),
                             system_profile);
-
-  std::string brand_code;
-  if (client_->GetBrand(&brand_code))
-    system_profile->set_brand_code(brand_code);
 
   delegating_provider->ProvideSystemProfileMetricsWithLogCreationTime(
       creation_time_, system_profile);

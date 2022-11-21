@@ -50,12 +50,6 @@ bool QuicStreamFactoryPeer::HasActiveJob(QuicStreamFactory* factory,
                                               false /* disable_secure_dns */));
 }
 
-bool QuicStreamFactoryPeer::HasActiveCertVerifierJob(
-    QuicStreamFactory* factory,
-    const quic::QuicServerId& server_id) {
-  return factory->HasActiveCertVerifierJob(server_id);
-}
-
 // static
 QuicChromiumClientSession* QuicStreamFactoryPeer::GetPendingSession(
     QuicStreamFactory* factory,
@@ -123,27 +117,6 @@ quic::QuicTime::Delta QuicStreamFactoryPeer::GetPingTimeout(
   return factory->ping_timeout_;
 }
 
-bool QuicStreamFactoryPeer::GetRaceCertVerification(
-    QuicStreamFactory* factory) {
-  return factory->params_.race_cert_verification;
-}
-
-void QuicStreamFactoryPeer::SetRaceCertVerification(
-    QuicStreamFactory* factory,
-    bool race_cert_verification) {
-  factory->params_.race_cert_verification = race_cert_verification;
-}
-
-quic::QuicAsyncStatus QuicStreamFactoryPeer::StartCertVerifyJob(
-    QuicStreamFactory* factory,
-    const quic::QuicServerId& server_id,
-    const NetworkIsolationKey& network_isolation_key,
-    int cert_verify_flags,
-    const NetLogWithSource& net_log) {
-  return factory->StartCertVerifyJobForTesting(server_id, network_isolation_key,
-                                               cert_verify_flags, net_log);
-}
-
 void QuicStreamFactoryPeer::SetYieldAfterPackets(QuicStreamFactory* factory,
                                                  int yield_after_packets) {
   factory->yield_after_packets_ = yield_after_packets;
@@ -202,14 +175,14 @@ void QuicStreamFactoryPeer::CacheDummyServerConfig(
   DCHECK(!cached->certs().empty());
 }
 
-quic::QuicClientPushPromiseIndex* QuicStreamFactoryPeer::GetPushPromiseIndex(
-    QuicStreamFactory* factory) {
-  return &factory->push_promise_index_;
-}
-
 int QuicStreamFactoryPeer::GetNumPushStreamsCreated(
     QuicStreamFactory* factory) {
   return factory->num_push_streams_created_;
+}
+
+size_t QuicStreamFactoryPeer::GetNumDegradingSessions(
+    QuicStreamFactory* factory) {
+  return factory->connectivity_monitor_.GetNumDegradingSessions();
 }
 
 void QuicStreamFactoryPeer::SetAlarmFactory(

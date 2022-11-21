@@ -7,14 +7,15 @@
 #import <AppKit/AppKit.h>
 #include <stddef.h>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/notreached.h"
 #include "content/app/resources/grit/content_resources.h"
 #include "content/public/common/content_client.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "ui/base/cursor/cursor.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/image/image.h"
@@ -231,11 +232,7 @@ gfx::NativeCursor WebCursor::GetNativeCursor() {
       return GetCoreCursorWithFallback(kMoveCursor,
                                        IDR_MOVE_CURSOR, 7, 7);
     case ui::mojom::CursorType::kVerticalText:
-      // IBeamCursorForVerticalLayout is >= 10.7.
-      if ([NSCursor respondsToSelector:@selector(IBeamCursorForVerticalLayout)])
-        return [NSCursor IBeamCursorForVerticalLayout];
-      else
-        return LoadCursor(IDR_VERTICALTEXT_CURSOR, 7, 7);
+      return [NSCursor IBeamCursorForVerticalLayout];
     case ui::mojom::CursorType::kCell:
       return GetCoreCursorWithFallback(kCellCursor,
                                        IDR_CELL_CURSOR, 7, 7);
@@ -276,10 +273,6 @@ gfx::NativeCursor WebCursor::GetNativeCursor() {
   }
   NOTREACHED();
   return nil;
-}
-
-bool WebCursor::IsPlatformDataEqual(const WebCursor& other) const {
-  return true;
 }
 
 void WebCursor::CleanupPlatformData() {}

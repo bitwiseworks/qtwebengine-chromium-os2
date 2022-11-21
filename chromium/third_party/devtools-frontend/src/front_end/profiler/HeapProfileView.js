@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
 
@@ -71,7 +75,7 @@ export class HeapProfileView extends ProfileView {
   _onIdsRangeChanged(event) {
     const minId = /** @type {number} */ (event.data.minId);
     const maxId = /** @type {number} */ (event.data.maxId);
-    this._selectedSizeText.setText(ls`Selected size: ${Number.bytesToString(event.data.size)}`);
+    this._selectedSizeText.setText(ls`Selected size: ${Platform.NumberUtilities.bytesToString(event.data.size)}`);
     this._setSelectionRange(minId, maxId);
   }
 
@@ -173,13 +177,14 @@ export class HeapProfileView extends ProfileView {
 
     text += '\nBinary Images:\n';
     for (const module of modules) {
+      const endAddress = /** @type {bigint} */ (module.endAddress);
       const fileName = /[^/\\]*$/.exec(module.name)[0];
       const version = '1.0';
       const formattedUuid = module.uuid.includes('-') ?
           module.uuid :
           module.uuid.replace(/(.{8})(.{4})(.{4})(.{4})(.{12}).*/, '$1-$2-$3-$4-$5');
       text += `${('0x' + module.address.toString(16)).padStart(18)} - `;
-      text += `${('0x' + (module.endAddress - BigInt(1)).toString(16)).padStart(18)}`;
+      text += `${('0x' + (endAddress - BigInt(1)).toString(16)).padStart(18)}`;
       text += `  ${fileName} (${version}) <${formattedUuid}> ${module.name}\n`;
     }
 
@@ -204,11 +209,12 @@ export class HeapProfileView extends ProfileView {
           (addressText ? node.functionName.substr(addressText.length + 1) : node.functionName) || '???';
       text += `${padding}${Math.round(node.total / 1024)}  ${functionName}  `;
       if (module) {
+        const address = /** @type {bigint} */ (module.address);
         const fileName = /[^/\\]*$/.exec(module.name);
         if (fileName) {
           text += `(in ${fileName})  `;
         }
-        const offset = BigInt(addressText) - module.address;
+        const offset = BigInt(addressText) - address;
         text += `load address ${module.baseAddress} + 0x${offset.toString(16)}  `;
       }
       if (addressText) {
@@ -283,7 +289,7 @@ export class SamplingHeapProfileTypeBase extends ProfileType {
   }
 
   _startRecordingProfile() {
-    const heapProfilerModel = self.UI.context.flavor(SDK.HeapProfilerModel.HeapProfilerModel);
+    const heapProfilerModel = UI.Context.Context.instance().flavor(SDK.HeapProfilerModel.HeapProfilerModel);
     if (this.profileBeingRecorded() || !heapProfilerModel) {
       return;
     }
@@ -294,7 +300,7 @@ export class SamplingHeapProfileTypeBase extends ProfileType {
 
     const icon = UI.Icon.Icon.create('smallicon-warning');
     icon.title = ls`Heap profiler is recording`;
-    self.UI.inspectorView.setPanelIcon('heap_profiler', icon);
+    UI.InspectorView.InspectorView.instance().setPanelIcon('heap_profiler', icon);
 
     this._recording = true;
     this._startSampling();
@@ -315,7 +321,7 @@ export class SamplingHeapProfileTypeBase extends ProfileType {
       recordedProfile.updateStatus('');
       this.setProfileBeingRecorded(null);
     }
-    self.UI.inspectorView.setPanelIcon('heap_profiler', null);
+    UI.InspectorView.InspectorView.instance().setPanelIcon('heap_profiler', null);
     this.dispatchEventToListeners(ProfileEvents.ProfileComplete, recordedProfile);
   }
 
@@ -512,7 +518,7 @@ export class SamplingNativeHeapSnapshotType extends SamplingHeapProfileTypeBase 
     if (this.profileBeingRecorded()) {
       return;
     }
-    const heapProfilerModel = self.UI.context.flavor(SDK.HeapProfilerModel.HeapProfilerModel);
+    const heapProfilerModel = UI.Context.Context.instance().flavor(SDK.HeapProfilerModel.HeapProfilerModel);
     if (!heapProfilerModel) {
       return;
     }
@@ -537,7 +543,7 @@ export class SamplingNativeHeapSnapshotType extends SamplingHeapProfileTypeBase 
 
   /**
    * @param {!SDK.HeapProfilerModel.HeapProfilerModel} heapProfilerModel
-   * @return {!Promise<!Protocol.HeapProfiler.SamplingHeapProfile>}
+   * @return {!Promise<?SDK.HeapProfilerModel.CommonHeapProfile>}
    */
   _takeNativeSnapshot(heapProfilerModel) {
     throw 'Not implemented';
@@ -555,10 +561,10 @@ export class SamplingNativeHeapSnapshotBrowserType extends SamplingNativeHeapSna
   /**
    * @override
    * @param {!SDK.HeapProfilerModel.HeapProfilerModel} heapProfilerModel
-   * @return {!Promise<!Protocol.HeapProfiler.SamplingHeapProfile>}
+   * @return {!Promise<?SDK.HeapProfilerModel.CommonHeapProfile>}
    */
   async _takeNativeSnapshot(heapProfilerModel) {
-    return await heapProfilerModel.takeNativeBrowserSnapshot();
+    return heapProfilerModel.takeNativeBrowserSnapshot();
   }
 }
 
@@ -571,10 +577,10 @@ export class SamplingNativeHeapSnapshotRendererType extends SamplingNativeHeapSn
   /**
    * @override
    * @param {!SDK.HeapProfilerModel.HeapProfilerModel} heapProfilerModel
-   * @return {!Promise<!Protocol.HeapProfiler.SamplingHeapProfile>}
+   * @return {!Promise<?SDK.HeapProfilerModel.CommonHeapProfile>}
    */
   async _takeNativeSnapshot(heapProfilerModel) {
-    return await heapProfilerModel.takeNativeSnapshot();
+    return heapProfilerModel.takeNativeSnapshot();
   }
 }
 
@@ -866,8 +872,8 @@ export class HeapFlameChartDataProvider extends ProfileFlameChartDataProvider {
       entryInfo.push({title: title, value: value});
     }
     pushEntryInfoRow(ls`Name`, UI.UIUtils.beautifyFunctionName(node.functionName));
-    pushEntryInfoRow(ls`Self size`, Number.bytesToString(node.self));
-    pushEntryInfoRow(ls`Total size`, Number.bytesToString(node.total));
+    pushEntryInfoRow(ls`Self size`, Platform.NumberUtilities.bytesToString(node.self));
+    pushEntryInfoRow(ls`Total size`, Platform.NumberUtilities.bytesToString(node.total));
     const linkifier = new Components.Linkifier.Linkifier();
     const link = linkifier.maybeLinkifyConsoleCallFrame(
         this._heapProfilerModel ? this._heapProfilerModel.target() : null, node.callFrame);

@@ -11,7 +11,7 @@
 #include "cast/streaming/packet_util.h"
 #include "cast/streaming/rtcp_session.h"
 #include "util/integer_division.h"
-#include "util/logging.h"
+#include "util/osp_logging.h"
 #include "util/std_util.h"
 
 namespace openscreen {
@@ -277,7 +277,7 @@ void CompoundRtcpBuilder::AppendCastFeedbackAckFields(
   if (!acks_for_next_packet_.empty()) {
     OSP_DCHECK(AreElementsSortedAndUnique(acks_for_next_packet_));
     const FrameId first_frame_id = checkpoint_frame_id_ + 2;
-    for (const FrameId frame_id : acks_for_next_packet_) {
+    for (const FrameId& frame_id : acks_for_next_packet_) {
       const int bit_index = frame_id - first_frame_id;
       if (bit_index < 0) {
         continue;

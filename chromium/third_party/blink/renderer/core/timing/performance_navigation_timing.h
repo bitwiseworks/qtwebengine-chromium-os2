@@ -28,7 +28,6 @@ class CORE_EXPORT PerformanceNavigationTiming final
     : public PerformanceResourceTiming,
       public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(PerformanceNavigationTiming);
   friend class PerformanceNavigationTimingTest;
 
  public:
@@ -62,7 +61,7 @@ class CORE_EXPORT PerformanceNavigationTiming final
   DOMHighResTimeStamp redirectEnd() const override;
   DOMHighResTimeStamp responseEnd() const override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  protected:
   void BuildJSONValue(V8ObjectBuilder&) const override;

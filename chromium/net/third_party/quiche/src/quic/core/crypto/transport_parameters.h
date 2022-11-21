@@ -8,13 +8,15 @@
 #include <memory>
 #include <vector>
 
-#include "net/third_party/quiche/src/quic/core/crypto/crypto_handshake_message.h"
 #include "net/third_party/quiche/src/quic/core/quic_connection_id.h"
 #include "net/third_party/quiche/src/quic/core/quic_data_reader.h"
 #include "net/third_party/quiche/src/quic/core/quic_data_writer.h"
+#include "net/third_party/quiche/src/quic/core/quic_tag.h"
 #include "net/third_party/quiche/src/quic/core/quic_types.h"
 #include "net/third_party/quiche/src/quic/core/quic_versions.h"
 #include "net/third_party/quiche/src/quic/platform/api/quic_containers.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_socket_address.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_optional.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 namespace quic {
@@ -27,7 +29,7 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
   // The identifier used to differentiate transport parameters.
   enum TransportParameterId : uint64_t;
   // A map used to specify custom parameters.
-  typedef QuicUnorderedMap<uint16_t, std::string> ParameterMap;
+  typedef QuicHashMap<uint64_t, std::string> ParameterMap;
   // Represents an individual QUIC transport parameter that only encodes a
   // variable length integer. Can only be created inside the constructor for
   // TransportParameters.
@@ -35,7 +37,6 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
    public:
     // Forbid constructing and copying apart from TransportParameters.
     IntegerParameter() = delete;
-    IntegerParameter(const IntegerParameter&) = delete;
     IntegerParameter& operator=(const IntegerParameter&) = delete;
     // Sets the value of this transport parameter.
     void set_value(uint64_t value);
@@ -67,6 +68,8 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
                      uint64_t default_value,
                      uint64_t min_value,
                      uint64_t max_value);
+    IntegerParameter(const IntegerParameter& other) = default;
+    IntegerParameter(IntegerParameter&& other) = default;
     // Human-readable string representation.
     std::string ToString(bool for_use_in_list) const;
 
@@ -88,7 +91,11 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
   // send to clients.
   struct QUIC_EXPORT_PRIVATE PreferredAddress {
     PreferredAddress();
+    PreferredAddress(const PreferredAddress& other) = default;
+    PreferredAddress(PreferredAddress&& other) = default;
     ~PreferredAddress();
+    bool operator==(const PreferredAddress& rhs) const;
+    bool operator!=(const PreferredAddress& rhs) const;
 
     QuicSocketAddress ipv4_socket_address;
     QuicSocketAddress ipv6_socket_address;
@@ -103,7 +110,10 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
   };
 
   TransportParameters();
+  TransportParameters(const TransportParameters& other);
   ~TransportParameters();
+  bool operator==(const TransportParameters& rhs) const;
+  bool operator!=(const TransportParameters& rhs) const;
 
   // Represents the sender of the transport parameters. When |perspective| is
   // Perspective::IS_CLIENT, this struct is being used in the client_hello
@@ -123,17 +133,17 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
 
   // The value of the Destination Connection ID field from the first
   // Initial packet sent by the client.
-  QuicConnectionId original_connection_id;
+  quiche::QuicheOptional<QuicConnectionId> original_destination_connection_id;
 
-  // Idle timeout expressed in milliseconds.
-  IntegerParameter idle_timeout_milliseconds;
+  // Maximum idle timeout expressed in milliseconds.
+  IntegerParameter max_idle_timeout_ms;
 
   // Stateless reset token used in verifying stateless resets.
   std::vector<uint8_t> stateless_reset_token;
 
   // Limits the size of packets that the endpoint is willing to receive.
   // This indicates that packets larger than this limit will be dropped.
-  IntegerParameter max_packet_size;
+  IntegerParameter max_udp_payload_size;
 
   // Contains the initial value for the maximum amount of data that can
   // be sent on the connection.
@@ -161,8 +171,12 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
   // delay sending acknowledgments.
   IntegerParameter max_ack_delay;
 
+  // Minimum amount of time in microseconds by which the endpoint will
+  // delay sending acknowledgments. Used to enable sender control of ack delay.
+  IntegerParameter min_ack_delay_us;
+
   // Indicates lack of support for connection migration.
-  bool disable_migration;
+  bool disable_active_migration;
 
   // Used to effect a change in server address at the end of the handshake.
   std::unique_ptr<PreferredAddress> preferred_address;
@@ -171,14 +185,34 @@ struct QUIC_EXPORT_PRIVATE TransportParameters {
   // to store.
   IntegerParameter active_connection_id_limit;
 
+  // The value that the endpoint included in the Source Connection ID field of
+  // the first Initial packet it sent.
+  quiche::QuicheOptional<QuicConnectionId> initial_source_connection_id;
+
+  // The value that the server included in the Source Connection ID field of a
+  // Retry packet it sent.
+  quiche::QuicheOptional<QuicConnectionId> retry_source_connection_id;
+
   // Indicates support for the DATAGRAM frame and the maximum frame size that
-  // the sender accepts. See draft-pauly-quic-datagram.
+  // the sender accepts. See draft-ietf-quic-datagram.
   IntegerParameter max_datagram_frame_size;
 
-  // Transport parameters used by Google QUIC but not IETF QUIC. This is
-  // serialized into a TransportParameter struct with a TransportParameterId of
-  // kGoogleQuicParamId.
-  std::unique_ptr<CryptoHandshakeMessage> google_quic_params;
+  // Google-specific transport parameter that carries an estimate of the
+  // initial round-trip time in microseconds.
+  IntegerParameter initial_round_trip_time_us;
+
+  // Google-specific connection options.
+  quiche::QuicheOptional<QuicTagVector> google_connection_options;
+
+  // Google-specific user agent identifier.
+  quiche::QuicheOptional<std::string> user_agent_id;
+
+  // Google-specific handshake done support. This is only used for T050.
+  bool support_handshake_done;
+
+  // Google-specific mechanism to indicate that IETF QUIC Key Update has not
+  // yet been implemented. This will be removed once we implement it.
+  bool key_update_not_yet_supported;
 
   // Validates whether transport parameters are valid according to
   // the specification. If the transport parameters are not valid, this method
@@ -209,13 +243,25 @@ QUIC_EXPORT_PRIVATE bool SerializeTransportParameters(
 // This method returns true if the input was successfully parsed.
 // On failure, this method will write a human-readable error message to
 // |error_details|.
-// TODO(nharper): Write fuzz tests for this method.
 QUIC_EXPORT_PRIVATE bool ParseTransportParameters(ParsedQuicVersion version,
                                                   Perspective perspective,
                                                   const uint8_t* in,
                                                   size_t in_len,
                                                   TransportParameters* out,
                                                   std::string* error_details);
+
+// Serializes |in| and |application_data| in a deterministic format so that
+// multiple calls to SerializeTransportParametersForTicket with the same inputs
+// will generate the same output, and if the inputs differ, then the output will
+// differ. The output of this function is used by the server in
+// SSL_set_quic_early_data_context to determine whether early data should be
+// accepted: Early data will only be accepted if the inputs to this function
+// match what they were on the connection that issued an early data capable
+// ticket.
+QUIC_EXPORT_PRIVATE bool SerializeTransportParametersForTicket(
+    const TransportParameters& in,
+    const std::vector<uint8_t>& application_data,
+    std::vector<uint8_t>* out);
 
 }  // namespace quic
 

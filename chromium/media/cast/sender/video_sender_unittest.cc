@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -41,7 +42,6 @@ static const int kHeight = 240;
 using testing::_;
 using testing::AtLeast;
 
-
 void SaveOperationalStatus(OperationalStatus* out_status,
                            OperationalStatus in_status) {
   DVLOG(1) << "OperationalStatus transitioning from " << *out_status << " to "
@@ -52,15 +52,13 @@ void SaveOperationalStatus(OperationalStatus* out_status,
 class TestPacketSender : public PacketTransport {
  public:
   TestPacketSender()
-      : number_of_rtp_packets_(0),
-        number_of_rtcp_packets_(0),
-        paused_(false) {}
+      : number_of_rtp_packets_(0), number_of_rtcp_packets_(0), paused_(false) {}
 
   // A singular packet implies a RTCP packet.
-  bool SendPacket(PacketRef packet, const base::Closure& cb) final {
+  bool SendPacket(PacketRef packet, base::OnceClosure cb) final {
     if (paused_) {
       stored_packet_ = packet;
-      callback_ = cb;
+      callback_ = std::move(cb);
       return false;
     }
     if (IsRtcpPacket(&packet->data[0], packet->data.size())) {
@@ -90,8 +88,8 @@ class TestPacketSender : public PacketTransport {
   void SetPause(bool paused) {
     paused_ = paused;
     if (!paused && stored_packet_.get()) {
-      SendPacket(stored_packet_, callback_);
-      callback_.Run();
+      SendPacket(stored_packet_, base::OnceClosure());
+      std::move(callback_).Run();
     }
   }
 
@@ -99,14 +97,13 @@ class TestPacketSender : public PacketTransport {
   int number_of_rtp_packets_;
   int number_of_rtcp_packets_;
   bool paused_;
-  base::Closure callback_;
+  base::OnceClosure callback_;
   PacketRef stored_packet_;
 
   DISALLOW_COPY_AND_ASSIGN(TestPacketSender);
 };
 
-void IgnorePlayoutDelayChanges(base::TimeDelta unused_playout_delay) {
-}
+void IgnorePlayoutDelayChanges(base::TimeDelta unused_playout_delay) {}
 
 class PeerVideoSender : public VideoSender {
  public:
@@ -570,29 +567,26 @@ TEST_F(VideoSenderTest, CheckVideoFrameFactoryIsNull) {
   EXPECT_EQ(nullptr, video_sender_->CreateVideoFrameFactory().get());
 }
 
-TEST_F(VideoSenderTest, PopulatesResourceUtilizationInFrameMetadata) {
+TEST_F(VideoSenderTest, PopulatesResourceUtilizationInFrameFeedback) {
   InitEncoder(false, true);
   ASSERT_EQ(STATUS_INITIALIZED, operational_status_);
 
   for (int i = 0; i < 3; ++i) {
     scoped_refptr<media::VideoFrame> video_frame = GetNewVideoFrame();
-    ASSERT_FALSE(video_frame->metadata()->HasKey(
-        media::VideoFrameMetadata::RESOURCE_UTILIZATION));
+    EXPECT_LE(video_frame->feedback()->resource_utilization, 0.0);
 
     const base::TimeTicks reference_time = testing_clock_.NowTicks();
     video_sender_->InsertRawVideoFrame(video_frame, reference_time);
 
     // Run encode tasks.  VideoSender::OnEncodedVideoFrame() will be called once
     // encoding of the frame is complete, and this is when the
-    // RESOURCE_UTILIZATION metadata is populated.
+    // resource_utilization metadata is populated.
     RunTasks(33);
 
-    // Check that the RESOURCE_UTILIZATION value is set and non-negative.  Don't
+    // Check that the resource_utilization value is set and non-negative.  Don't
     // check for specific values because they are dependent on real-world CPU
     // encode time, which can vary across test runs.
-    double utilization = -1.0;
-    EXPECT_TRUE(video_frame->metadata()->GetDouble(
-        media::VideoFrameMetadata::RESOURCE_UTILIZATION, &utilization));
+    double utilization = video_frame->feedback()->resource_utilization;
     EXPECT_LE(0.0, utilization);
     if (i == 0)
       EXPECT_GE(1.0, utilization);  // Key frames never exceed 1.0.

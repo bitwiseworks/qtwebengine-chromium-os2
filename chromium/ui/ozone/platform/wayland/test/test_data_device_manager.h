@@ -5,7 +5,7 @@
 #ifndef UI_OZONE_PLATFORM_WAYLAND_TEST_TEST_DATA_DEVICE_MANAGER_H_
 #define UI_OZONE_PLATFORM_WAYLAND_TEST_TEST_DATA_DEVICE_MANAGER_H_
 
-#include <wayland-server-protocol-core.h>
+#include <wayland-server-protocol.h>
 
 #include "base/macros.h"
 #include "ui/ozone/platform/wayland/test/global_object.h"
@@ -34,8 +34,8 @@ class TestDataDeviceManager : public GlobalObject {
   }
 
  private:
-  TestDataDevice* data_device_;
-  TestDataSource* data_source_;
+  TestDataDevice* data_device_ = nullptr;
+  TestDataSource* data_source_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(TestDataDeviceManager);
 };

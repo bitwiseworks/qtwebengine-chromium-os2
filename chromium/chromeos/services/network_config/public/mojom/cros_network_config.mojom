@@ -12,6 +12,7 @@
 
 module chromeos.network_config.mojom;
 
+import "chromeos/services/network_config/public/mojom/network_types.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "services/network/public/mojom/ip_address.mojom";
 
@@ -30,73 +31,6 @@ enum ActivationStateType {
 enum AuthenticationType {
   kNone,
   k8021x,
-};
-
-// Connection state of visible networks.
-enum ConnectionStateType {
-  kOnline,
-  kConnected,
-  kPortal,
-  kConnecting,
-  kNotConnected,
-};
-
-// Device / Technology state for devices.
-enum DeviceStateType {
-  kUninitialized,
-  kDisabled,
-  kEnabling,
-  kEnabled,
-  kProhibited,
-  // Not used in DeviceStateProperties, but useful when querying by type.
-  kUnavailable,
-};
-
-// The network technology type. NOTE: 'All' and 'Wireless' are only used by
-// FilterType for requesting groups of networks.
-enum NetworkType {
-  kAll,
-  kCellular,
-  kEthernet,
-  // Mobile includes Cellular, and Tether.
-  kMobile,
-  kTether,
-  kVPN,
-  // Wireles includes Cellular, Tether, and WiFi.
-  kWireless,
-  kWiFi,
-};
-
-// The ONC source for the network configuration, i.e. whether it is stored in
-// the User or Device profile and whether it was configured by policy.
-enum OncSource {
-  // The network is not remembered, or the property is not configurable.
-  kNone,
-  // The configuration is saved in the user profile.
-  kUser,
-  // The configuration is saved in the device profile.
-  kDevice,
-  // The configuration came from a user policy and is saved in the user profile.
-  kUserPolicy,
-  // The configuration came from a device policy and is saved in the device
-  // profile.
-  kDevicePolicy,
-};
-
-// The policy source for property values managed by policy.
-enum PolicySource {
-  // The property is not controlled by policy.
-  kNone,
-  // The property value came from a user policy and is enforced.
-  kUserPolicyEnforced,
-  // The property value came from a device policy and is enforced.
-  kDevicePolicyEnforced,
-  // The property value came from a user policy and is recommended.
-  kUserPolicyRecommended,
-  // The property value came from a device policy and is recommended.
-  kDevicePolicyRecommended,
-  // The property value came from an extension.
-  kActiveExtension,
 };
 
 enum ProxyMode {
@@ -366,7 +300,7 @@ struct PaymentPortalProperties {
 // active_value: The value provided by the configuration manager (e.g. Shill).
 //     This will match |policy_value| when |policy_source| is enforced.
 // policy_source: The source of the value provided by policy when available,
-//     or kNone (see PolicySource).
+//     or kNone (see PolicySource in network_types.mojom).
 // policy_value: The value provided by policy when available.
 
 // Fundamental managed types.
@@ -549,8 +483,13 @@ struct ManagedOpenVPNProperties {
 
 struct ManagedCellularProperties {
   ManagedBoolean? auto_connect;
-  ManagedApnProperties? apn;
+  // The current user selected APN. This corresponds to APN field
+  // in ONC.
+  ManagedApnProperties? selected_apn;
   ManagedApnList? apn_list;
+  // List of user-entered custom APN entries. Note: This field is not
+  // part of ONC spec.
+  array<ApnProperties>? custom_apn_list;
   ActivationStateType activation_state;
   bool allow_roaming = false;
   string? esn;
@@ -602,7 +541,6 @@ struct ManagedWiFiProperties {
   ManagedEAPProperties? eap;
   int32 frequency = 0;
   array<int32>? frequency_list;
-  ManagedBoolean? ft_enabled;
   ManagedString? hex_ssid;
   ManagedBoolean? hidden_ssid;
   // Note: |passphrase| contains a placeholder if set to avoid leaking secrets.
@@ -611,6 +549,11 @@ struct ManagedWiFiProperties {
   SecurityType security;
   int32 signal_strength = 0;
   string? tethering_state;
+  // Indicates whether the network is eligible to be included in Chrome Sync.
+  bool is_syncable;
+  // True for unshared networks and for shared networks configured by the
+  // active user.  Updated whenever the passphrase is modified.
+  bool is_configured_by_active_user;
 };
 
 union NetworkTypeManagedProperties {
@@ -635,6 +578,7 @@ struct ManagedProperties {
   string guid;
   ManagedString? ip_address_config_type;
   array<IPConfigProperties>? ip_configs;
+  ManagedBoolean? metered;
   ManagedString? name;
   ManagedString? name_servers_config_type;
   ManagedInt32? priority;
@@ -657,6 +601,11 @@ struct ManagedProperties {
 
 // Wrapper to allow optional auto_connect configuration.
 struct AutoConnectConfig {
+  bool value;
+};
+
+// Wrapper to allow optional metered configuration.
+struct MeteredConfig {
   bool value;
 };
 
@@ -786,6 +735,7 @@ struct ConfigProperties {
   // preserve the existing guid.
   string? guid;
   string? ip_address_config_type;
+  MeteredConfig? metered;
   // Name is only required for new configurations.
   string? name;
   string? name_servers_config_type;
@@ -947,6 +897,9 @@ interface CrosNetworkConfig {
 
   // Requests a scan for new networks. If the list updates,
   // CrosNetworkConfigObserver::OnNetworkStateListChanged() will be signaled.
+  // Note: If |type| is Cellular, a mobile network scan will be requested
+  // if supported. This is disruptive and should only be triggered by an
+  // explicit user action.
   RequestNetworkScan(NetworkType type);
 
   // Returns the global policy properties. These properties are not expected to

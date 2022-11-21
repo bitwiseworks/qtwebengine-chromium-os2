@@ -6,8 +6,22 @@
  * @fileoverview A dialog prompting the user to encrypt a personal certificate
  * before it is exported to disk.
  */
+import '../../cr_elements/cr_button/cr_button.m.js';
+import '../../cr_elements/cr_dialog/cr_dialog.m.js';
+import '../../cr_elements/cr_input/cr_input.m.js';
+import '../../cr_elements/shared_vars_css.m.js';
+import './certificate_shared_css.js';
+
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {I18nBehavior} from '../../js/i18n_behavior.m.js';
+
+import {CertificatesBrowserProxy, CertificatesBrowserProxyImpl, CertificateSubnode} from './certificates_browser_proxy.js';
+
 Polymer({
   is: 'certificate-password-encryption-dialog',
+
+  _template: html`{__html_template__}`,
 
   behaviors: [I18nBehavior],
 
@@ -28,13 +42,12 @@ Polymer({
     },
   },
 
-  /** @private {?certificate_manager.CertificatesBrowserProxy} */
+  /** @private {?CertificatesBrowserProxy} */
   browserProxy_: null,
 
   /** @override */
   ready() {
-    this.browserProxy_ =
-        certificate_manager.CertificatesBrowserProxyImpl.getInstance();
+    this.browserProxy_ = CertificatesBrowserProxyImpl.getInstance();
   },
 
   /** @override */

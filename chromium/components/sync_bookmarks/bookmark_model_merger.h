@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_MODEL_MERGER_H_
 #define COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_MODEL_MERGER_H_
 
+#include <list>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -50,12 +51,16 @@ class BookmarkModelMerger {
   // and metadata entities in the injected tracker.
   void Merge();
 
+  size_t valid_updates_without_full_title_for_uma() const {
+    return valid_updates_without_full_title_;
+  }
+
  private:
   // Internal representation of a remote tree, composed of nodes.
   class RemoteTreeNode final {
    private:
     using UpdatesPerParentId =
-        std::unordered_map<std::string, syncer::UpdateResponseDataList>;
+        std::unordered_map<std::string, std::list<syncer::UpdateResponseData>>;
 
    public:
     // Constructs a tree given |update| as root and recursively all descendants
@@ -63,8 +68,10 @@ class BookmarkModelMerger {
     // |updates_per_parent_id| must not be null. All updates
     // |*updates_per_parent_id| must represent valid updates. Updates
     // corresponding from descendant nodes are moved away from
-    // |*updates_per_parent_id|.
+    // |*updates_per_parent_id|. |max_depth| is the max tree depth to sync
+    // after which content is silently ignored.
     static RemoteTreeNode BuildTree(syncer::UpdateResponseData update,
+                                    size_t max_depth,
                                     UpdatesPerParentId* updates_per_parent_id);
 
     ~RemoteTreeNode();
@@ -196,6 +203,8 @@ class BookmarkModelMerger {
   // permanent node. Computed upon construction via BuildRemoteForest().
   const RemoteForest remote_forest_;
   std::unordered_map<std::string, GuidMatch> guid_to_match_map_;
+
+  size_t valid_updates_without_full_title_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkModelMerger);
 };

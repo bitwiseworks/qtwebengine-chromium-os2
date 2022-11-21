@@ -15,7 +15,7 @@
 #include "osp/public/presentation/presentation_controller.h"
 #include "osp/public/presentation/presentation_receiver.h"
 #include "osp/public/protocol_connection.h"
-#include "util/logging.h"
+#include "util/osp_logging.h"
 #include "util/std_util.h"
 
 // TODO(crbug.com/openscreen/27): Address TODOs in this file
@@ -106,8 +106,8 @@ Error Connection::SendString(absl::string_view message) {
     return Error::Code::kNoActiveConnection;
 
   msgs::PresentationConnectionMessage cbor_message;
-  OSP_LOG << "sending '" << message << "' to (" << presentation_.id << ", "
-          << connection_id_.value() << ")";
+  OSP_LOG_INFO << "sending '" << message << "' to (" << presentation_.id << ", "
+               << connection_id_.value() << ")";
   cbor_message.connection_id = connection_id_.value();
   cbor_message.message.which =
       msgs::PresentationConnectionMessage::Message::Which::kString;
@@ -122,8 +122,8 @@ Error Connection::SendBinary(std::vector<uint8_t>&& data) {
     return Error::Code::kNoActiveConnection;
 
   msgs::PresentationConnectionMessage cbor_message;
-  OSP_LOG << "sending " << data.size() << " bytes to (" << presentation_.id
-          << ", " << connection_id_.value() << ")";
+  OSP_LOG_INFO << "sending " << data.size() << " bytes to (" << presentation_.id
+               << ", " << connection_id_.value() << ")";
   cbor_message.connection_id = connection_id_.value();
   cbor_message.message.which =
       msgs::PresentationConnectionMessage::Message::Which::kBytes;

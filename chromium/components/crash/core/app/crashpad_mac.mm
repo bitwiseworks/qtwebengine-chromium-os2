@@ -12,8 +12,8 @@
 #include <map>
 #include <vector>
 
+#include "base/check.h"
 #include "base/files/file_path.h"
-#include "base/logging.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -39,10 +39,14 @@ std::map<std::string, std::string> GetProcessSimpleAnnotations() {
     std::map<std::string, std::string> process_annotations;
     @autoreleasepool {
       NSBundle* outer_bundle = base::mac::OuterBundle();
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      process_annotations["prod"] = "Chrome_Mac";
+#else
       NSString* product = base::mac::ObjCCast<NSString>([outer_bundle
           objectForInfoDictionaryKey:base::mac::CFToNSCast(kCFBundleNameKey)]);
       process_annotations["prod"] =
           base::SysNSStringToUTF8(product).append("_Mac");
+#endif
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       // Empty means stable.
@@ -52,10 +56,16 @@ std::map<std::string, std::string> GetProcessSimpleAnnotations() {
 #endif
       NSString* channel = base::mac::ObjCCast<NSString>(
           [outer_bundle objectForInfoDictionaryKey:@"KSChannelID"]);
-      if (channel) {
+      if (!channel || [channel isEqual:@"arm64"] ||
+          [channel isEqual:@"universal"]) {
+        if (allow_empty_channel)
+          process_annotations["channel"] = "";
+      } else {
+        if ([channel hasPrefix:@"arm64-"])
+          channel = [channel substringFromIndex:[@"arm64-" length]];
+        else if ([channel hasPrefix:@"universal-"])
+          channel = [channel substringFromIndex:[@"universal-" length]];
         process_annotations["channel"] = base::SysNSStringToUTF8(channel);
-      } else if (allow_empty_channel) {
-        process_annotations["channel"] = "";
       }
 
       NSString* version =
@@ -133,13 +143,7 @@ base::FilePath PlatformCrashpadInitialization(
       crash_reporter_client->GetCrashDumpLocation(&database_path);
       crash_reporter_client->GetCrashMetricsLocation(&metrics_path);
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OFFICIAL_BUILD)
-      // Only allow the possibility of report upload in official builds. This
-      // crash server won't have symbols for any other build types.
-      std::string url = "https://clients2.google.com/cr/report";
-#else
-      std::string url;
-#endif
+      std::string url = crash_reporter_client->GetUploadUrl();
 
       std::vector<std::string> arguments;
 

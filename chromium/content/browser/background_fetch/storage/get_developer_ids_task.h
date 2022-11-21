@@ -16,6 +16,9 @@
 #include "url/origin.h"
 
 namespace content {
+
+class ServiceWorkerRegistration;
+
 namespace background_fetch {
 
 // Gets the developer ids for all active registrations - registrations that have
@@ -34,8 +37,12 @@ class GetDeveloperIdsTask : public DatabaseTask {
   void Start() override;
 
  private:
-  void DidGetUniqueIds(const base::flat_map<std::string, std::string>& data_map,
-                       blink::ServiceWorkerStatusCode status);
+  void DidGetServiceWorkerRegistration(
+      blink::ServiceWorkerStatusCode status,
+      scoped_refptr<ServiceWorkerRegistration> registration);
+  void DidGetUniqueIds(
+      blink::ServiceWorkerStatusCode status,
+      const base::flat_map<std::string, std::string>& data_map);
 
   void FinishWithError(blink::mojom::BackgroundFetchError error) override;
 

@@ -12,7 +12,9 @@
 #include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
+#if !defined(TOOLKIT_QT)
 #include "chrome/browser/browser_process.h"
+#endif
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
@@ -40,8 +42,8 @@ class PeerConnectionTrackerProxyImpl
 
   void EnableWebRtcEventLogging(const WebRtcEventLogPeerConnectionKey& key,
                                 int output_period_ms) override {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(
             &PeerConnectionTrackerProxyImpl::EnableWebRtcEventLoggingInternal,
             key, output_period_ms));
@@ -49,8 +51,8 @@ class PeerConnectionTrackerProxyImpl
 
   void DisableWebRtcEventLogging(
       const WebRtcEventLogPeerConnectionKey& key) override {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(
             &PeerConnectionTrackerProxyImpl::DisableWebRtcEventLoggingInternal,
             key));
@@ -84,7 +86,7 @@ class PeerConnectionTrackerProxyImpl
 // 1. Certain platforms (mobile) are blocked from remote-bound logging.
 // 2. There is a Finch-controlled kill-switch for the feature.
 bool IsRemoteLoggingFeatureEnabled() {
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(TOOLKIT_QT)
   bool enabled = false;
 #else
   bool enabled = base::FeatureList::IsEnabled(features::kWebRtcRemoteEventLog);
@@ -412,8 +414,8 @@ void WebRtcEventLogManager::StartRemoteLogging(
   }
 
   if (error) {
-    base::PostTask(FROM_HERE, {BrowserThread::UI},
-                   base::BindOnce(std::move(reply), false, std::string(),
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(std::move(reply), false, std::string(),
                                   std::string(error)));
     return;
   }
@@ -532,7 +534,7 @@ std::unique_ptr<LogFileWriter::Factory>
 WebRtcEventLogManager::CreateRemoteLogFileWriterFactory() {
   if (remote_log_file_writer_factory_for_testing_) {
     return std::move(remote_log_file_writer_factory_for_testing_);
-#if !defined(OS_ANDROID)
+#if !defined(OS_ANDROID) && !defined(TOOLKIT_QT)
   } else if (base::FeatureList::IsEnabled(
                  features::kWebRtcRemoteEventLogGzipped)) {
     return std::make_unique<GzippedLogFileWriterFactory>(
@@ -888,8 +890,8 @@ void WebRtcEventLogManager::StartRemoteLoggingInternal(
   DCHECK_EQ(result, !log_id.empty());
   DCHECK_EQ(!result, !error_message.empty());
 
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(std::move(reply), result, log_id, error_message));
 }
 
@@ -935,7 +937,7 @@ void WebRtcEventLogManager::SetLocalLogsObserverInternal(
   local_logs_observer_ = observer;
 
   if (reply) {
-    base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(reply));
+    content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(reply));
   }
 }
 
@@ -947,7 +949,7 @@ void WebRtcEventLogManager::SetRemoteLogsObserverInternal(
   remote_logs_observer_ = observer;
 
   if (reply) {
-    base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(reply));
+    content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(reply));
   }
 }
 
@@ -960,7 +962,7 @@ void WebRtcEventLogManager::SetClockForTesting(base::Clock* clock,
                  base::OnceClosure reply) {
     manager->local_logs_manager_.SetClockForTesting(clock);
 
-    base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(reply));
+    content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(reply));
   };
 
   // |this| is destroyed by ~BrowserProcessImpl(), so base::Unretained(this)
@@ -980,7 +982,7 @@ void WebRtcEventLogManager::SetPeerConnectionTrackerProxyForTesting(
                  base::OnceClosure reply) {
     manager->pc_tracker_proxy_ = std::move(pc_tracker_proxy);
 
-    base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(reply));
+    content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, std::move(reply));
   };
 
   // |this| is destroyed by ~BrowserProcessImpl(), so base::Unretained(this)
@@ -1004,7 +1006,8 @@ void WebRtcEventLogManager::SetWebRtcEventLogUploaderFactoryForTesting(
         remote_logs_manager.SetWebRtcEventLogUploaderFactoryForTesting(
             std::move(uploader_factory));
 
-        base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(reply));
+        content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
+                                                     std::move(reply));
       };
 
   // |this| is destroyed by ~BrowserProcessImpl(), so base::Unretained(this)

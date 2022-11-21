@@ -10,6 +10,7 @@
 #ifndef BASE_CALLBACK_HELPERS_H_
 #define BASE_CALLBACK_HELPERS_H_
 
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -17,7 +18,6 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 
 namespace base {
@@ -33,10 +33,23 @@ struct IsBaseCallbackImpl<OnceCallback<R(Args...)>> : std::true_type {};
 template <typename R, typename... Args>
 struct IsBaseCallbackImpl<RepeatingCallback<R(Args...)>> : std::true_type {};
 
+template <typename T>
+struct IsOnceCallbackImpl : std::false_type {};
+
+template <typename R, typename... Args>
+struct IsOnceCallbackImpl<OnceCallback<R(Args...)>> : std::true_type {};
+
 }  // namespace internal
 
+// IsBaseCallback<T>::value is true when T is any of the Closure or Callback
+// family of types.
 template <typename T>
 using IsBaseCallback = internal::IsBaseCallbackImpl<std::decay_t<T>>;
+
+// IsOnceCallback<T>::value is true when T is a OnceClosure or OnceCallback
+// type.
+template <typename T>
+using IsOnceCallback = internal::IsOnceCallbackImpl<std::decay_t<T>>;
 
 // SFINAE friendly enabler allowing to overload methods for both Repeating and
 // OnceCallbacks.
@@ -59,6 +72,10 @@ class AdaptCallbackForRepeatingHelper final {
       : callback_(std::move(callback)) {
     DCHECK(callback_);
   }
+  AdaptCallbackForRepeatingHelper(const AdaptCallbackForRepeatingHelper&) =
+      delete;
+  AdaptCallbackForRepeatingHelper& operator=(
+      const AdaptCallbackForRepeatingHelper&) = delete;
 
   void Run(Args... args) {
     if (subtle::NoBarrier_AtomicExchange(&has_run_, 1))
@@ -70,8 +87,6 @@ class AdaptCallbackForRepeatingHelper final {
  private:
   volatile subtle::Atomic32 has_run_ = 0;
   base::OnceCallback<void(Args...)> callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(AdaptCallbackForRepeatingHelper);
 };
 
 }  // namespace internal
@@ -99,6 +114,8 @@ class BASE_EXPORT ScopedClosureRunner {
  public:
   ScopedClosureRunner();
   explicit ScopedClosureRunner(OnceClosure closure);
+  ScopedClosureRunner(const ScopedClosureRunner&) = delete;
+  ScopedClosureRunner& operator=(const ScopedClosureRunner&) = delete;
   ~ScopedClosureRunner();
 
   ScopedClosureRunner(ScopedClosureRunner&& other);
@@ -118,8 +135,6 @@ class BASE_EXPORT ScopedClosureRunner {
 
  private:
   OnceClosure closure_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedClosureRunner);
 };
 
 }  // namespace base

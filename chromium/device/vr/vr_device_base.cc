@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/metrics/histogram_functions.h"
-#include "device/vr/vr_device_provider.h"
+#include "device/vr/public/cpp/vr_device_provider.h"
 
 namespace device {
 
@@ -17,6 +17,10 @@ VRDeviceBase::~VRDeviceBase() = default;
 
 mojom::XRDeviceId VRDeviceBase::GetId() const {
   return id_;
+}
+
+mojom::XRDeviceDataPtr VRDeviceBase::GetDeviceData() const {
+  return device_data_.Clone();
 }
 
 void VRDeviceBase::PauseTracking() {}
@@ -62,7 +66,6 @@ void VRDeviceBase::ListenToDeviceChanges(
 
 void VRDeviceBase::SetVRDisplayInfo(mojom::VRDisplayInfoPtr display_info) {
   DCHECK(display_info);
-  DCHECK(display_info->id == id_);
   display_info_ = std::move(display_info);
 
   if (listener_)
@@ -75,13 +78,18 @@ void VRDeviceBase::OnVisibilityStateChanged(
     listener_->OnVisibilityStateChanged(visibility_state);
 }
 
+#if defined(OS_WIN)
+void VRDeviceBase::SetLuid(const LUID& luid) {
+  if (luid.HighPart != 0 || luid.LowPart != 0) {
+    // Only set the LUID if it exists and is nonzero.
+    device_data_.luid = base::make_optional<LUID>(luid);
+  }
+}
+#endif
+
 mojo::PendingRemote<mojom::XRRuntime> VRDeviceBase::BindXRRuntime() {
   DVLOG(2) << __func__;
   return runtime_receiver_.BindNewPipeAndPassRemote();
-}
-
-void VRDeviceBase::SetInlinePosesEnabled(bool enable) {
-  inline_poses_enabled_ = enable;
 }
 
 void LogViewerType(VrViewerType type) {

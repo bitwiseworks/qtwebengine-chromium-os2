@@ -20,18 +20,22 @@ class GrPipeline;
 
 class GrMockGpu : public GrGpu {
 public:
-    static sk_sp<GrGpu> Make(const GrMockOptions*, const GrContextOptions&, GrContext*);
+    static sk_sp<GrGpu> Make(const GrMockOptions*, const GrContextOptions&, GrDirectContext*);
 
     ~GrMockGpu() override {}
 
     GrOpsRenderPass* getOpsRenderPass(
-            GrRenderTarget*, GrSurfaceOrigin, const SkIRect&,
+            GrRenderTarget*,
+            GrStencilAttachment*,
+            GrSurfaceOrigin,
+            const SkIRect&,
             const GrOpsRenderPass::LoadAndStoreInfo&,
             const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-            const SkTArray<GrSurfaceProxy*, true>& sampledProxies) override;
+            const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+            GrXferBarrierFlags renderPassXferBarriers) override;
 
     GrFence SK_WARN_UNUSED_RESULT insertFence() override { return 0; }
-    bool waitFence(GrFence, uint64_t) override { return true; }
+    bool waitFence(GrFence) override { return true; }
     void deleteFence(GrFence) const override {}
 
     std::unique_ptr<GrSemaphore> SK_WARN_UNUSED_RESULT makeSemaphore(bool isOwned) override {
@@ -54,7 +58,7 @@ public:
     void checkFinishProcs() override {}
 
 private:
-    GrMockGpu(GrContext* context, const GrMockOptions&, const GrContextOptions&);
+    GrMockGpu(GrDirectContext*, const GrMockOptions&, const GrContextOptions&);
 
     void onResetContext(uint32_t resetBits) override {}
 
@@ -74,7 +78,7 @@ private:
     sk_sp<GrTexture> onCreateCompressedTexture(SkISize dimensions,
                                                const GrBackendFormat&,
                                                SkBudgeted,
-                                               GrMipMapped,
+                                               GrMipmapped,
                                                GrProtected,
                                                const void* data, size_t dataSize) override;
 
@@ -129,29 +133,43 @@ private:
 
     bool onRegenerateMipMapLevels(GrTexture*) override { return true; }
 
-    void onResolveRenderTarget(GrRenderTarget* target, const SkIRect&, ForExternalIO) override {}
+    void onResolveRenderTarget(GrRenderTarget* target, const SkIRect&) override {}
 
-    bool onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
-                       const GrFlushInfo& info, const GrPrepareForExternalIORequests&) override {
-        if (info.fFinishedProc) {
-            info.fFinishedProc(info.fFinishedContext);
-        }
+    void addFinishedProc(GrGpuFinishedProc finishedProc,
+                         GrGpuFinishedContext finishedContext) override {
+        SkASSERT(finishedProc);
+        finishedProc(finishedContext);
+    }
+
+    bool onSubmitToGpu(bool syncCpu) override {
         return true;
     }
 
     GrStencilAttachment* createStencilAttachmentForRenderTarget(
-            const GrRenderTarget*, int width, int height, int numStencilSamples) override;
+            const GrRenderTarget*, SkISize dimensions, int numStencilSamples) override;
     GrBackendTexture onCreateBackendTexture(SkISize dimensions,
                                             const GrBackendFormat&,
                                             GrRenderable,
-                                            GrMipMapped,
-                                            GrProtected,
-                                            const BackendTextureData*) override;
+                                            GrMipmapped,
+                                            GrProtected) override;
+
+    bool onUpdateBackendTexture(const GrBackendTexture&,
+                                sk_sp<GrRefCntedCallback> finishedCallback,
+                                const BackendTextureData*) override {
+        return true;
+    }
+
     GrBackendTexture onCreateCompressedBackendTexture(SkISize dimensions,
                                                       const GrBackendFormat&,
-                                                      GrMipMapped,
-                                                      GrProtected,
-                                                      const BackendTextureData*) override;
+                                                      GrMipmapped,
+                                                      GrProtected) override;
+
+    bool onUpdateCompressedBackendTexture(const GrBackendTexture&,
+                                          sk_sp<GrRefCntedCallback> finishedCallback,
+                                          const BackendTextureData*) override {
+        return true;
+    }
+
     void deleteBackendTexture(const GrBackendTexture&) override;
 
     bool compile(const GrProgramDesc&, const GrProgramInfo&) override { return false; }
@@ -174,7 +192,7 @@ private:
 
     SkTHashSet<int> fOutstandingTestingOnlyTextureIDs;
 
-    typedef GrGpu INHERITED;
+    using INHERITED = GrGpu;
 };
 
 #endif

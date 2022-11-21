@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/strings/string_split.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "net/base/net_errors.h"
@@ -56,10 +57,10 @@ void CookieSettings::set_content_settings_for_legacy_cookie_access(
   AppendEmergencyLegacyCookieAccess(&settings_for_legacy_cookie_access_);
 }
 
-SessionCleanupCookieStore::DeleteCookiePredicate
-CookieSettings::CreateDeleteCookieOnExitPredicate() const {
+DeleteCookiePredicate CookieSettings::CreateDeleteCookieOnExitPredicate()
+    const {
   if (!HasSessionOnlyOrigins())
-    return SessionCleanupCookieStore::DeleteCookiePredicate();
+    return DeleteCookiePredicate();
   return base::BindRepeating(&CookieSettings::ShouldDeleteCookieOnExit,
                              base::Unretained(this),
                              std::cref(content_settings_));
@@ -166,8 +167,43 @@ void CookieSettings::GetCookieSettingInternal(
     }
   }
 
-  if (block_third && is_third_party_request)
+  bool block = block_third && is_third_party_request;
+  if (block) {
+    for (const auto& entry : storage_access_grants_) {
+      // If a valid entry exists that matches both our first party and request
+      // url this indicates a Storage Access API grant that may unblock
+      // storage access despite third party cookies being blocked.
+      // ContentSettingsType::STORAGE_ACCESS stores grants in the following
+      // manner:
+      // Primary Pattern:   Embedded site requiring third party storage access
+      // Secondary Pattern: Top-Level site hosting embedded content
+      // Value:             CONTENT_SETTING_[ALLOW/BLOCK] indicating grant
+      //                    status
+      if (!entry.IsExpired() && entry.primary_pattern.Matches(url) &&
+          entry.secondary_pattern.Matches(first_party_url)) {
+        ContentSetting storage_access_setting = entry.GetContentSetting();
+        // We'll only utilize the SAA grant if our value is set to
+        // CONTENT_SETTING_ALLOW as other values would indicate the user
+        // rejected a prompt to allow access.
+        if (storage_access_setting == CONTENT_SETTING_ALLOW) {
+          block = false;
+          FireStorageAccessHistogram(net::cookie_util::StorageAccessResult::
+                                         ACCESS_ALLOWED_STORAGE_ACCESS_GRANT);
+        }
+
+        break;
+      }
+    }
+  } else {
+    FireStorageAccessHistogram(
+        net::cookie_util::StorageAccessResult::ACCESS_ALLOWED);
+  }
+
+  if (block) {
     *cookie_setting = CONTENT_SETTING_BLOCK;
+    FireStorageAccessHistogram(
+        net::cookie_util::StorageAccessResult::ACCESS_BLOCKED);
+  }
 }
 
 bool CookieSettings::HasSessionOnlyOrigins() const {

@@ -58,25 +58,25 @@ class BluetoothAdvertisementServiceProviderImpl
     exported_object_->ExportMethod(
         bluetooth_advertisement::kBluetoothAdvertisementInterface,
         bluetooth_advertisement::kRelease,
-        base::Bind(&BluetoothAdvertisementServiceProviderImpl::Release,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&BluetoothAdvertisementServiceProviderImpl::OnExported,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindRepeating(&BluetoothAdvertisementServiceProviderImpl::Release,
+                            weak_ptr_factory_.GetWeakPtr()),
+        base::BindOnce(&BluetoothAdvertisementServiceProviderImpl::OnExported,
+                       weak_ptr_factory_.GetWeakPtr()));
 
     // Export dbus property methods.
     exported_object_->ExportMethod(
         dbus::kDBusPropertiesInterface, dbus::kDBusPropertiesGet,
-        base::Bind(&BluetoothAdvertisementServiceProviderImpl::Get,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&BluetoothAdvertisementServiceProviderImpl::OnExported,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindRepeating(&BluetoothAdvertisementServiceProviderImpl::Get,
+                            weak_ptr_factory_.GetWeakPtr()),
+        base::BindOnce(&BluetoothAdvertisementServiceProviderImpl::OnExported,
+                       weak_ptr_factory_.GetWeakPtr()));
 
     exported_object_->ExportMethod(
         dbus::kDBusPropertiesInterface, dbus::kDBusPropertiesGetAll,
-        base::Bind(&BluetoothAdvertisementServiceProviderImpl::GetAll,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&BluetoothAdvertisementServiceProviderImpl::OnExported,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindRepeating(&BluetoothAdvertisementServiceProviderImpl::GetAll,
+                            weak_ptr_factory_.GetWeakPtr()),
+        base::BindOnce(&BluetoothAdvertisementServiceProviderImpl::OnExported,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 
   ~BluetoothAdvertisementServiceProviderImpl() override {
@@ -172,6 +172,7 @@ class BluetoothAdvertisementServiceProviderImpl
               method_call, kErrorInvalidArgs,
               "No such property: '" + property_name + "'.");
       std::move(response_sender).Run(std::move(error_response));
+      return;
     }
 
     writer.CloseContainer(&variant_writer);
@@ -426,8 +427,13 @@ BluetoothLEAdvertisementServiceProvider::Create(
         std::move(manufacturer_data), std::move(solicit_uuids),
         std::move(service_data));
   }
+#if defined(USE_REAL_DBUS_CLIENTS)
+  LOG(FATAL) << "Fake is unavailable if USE_REAL_DBUS_CLIENTS is defined.";
+  return nullptr;
+#else
   return std::make_unique<FakeBluetoothLEAdvertisementServiceProvider>(
       object_path, delegate);
+#endif  // defined(USE_REAL_DBUS_CLIENTS)
 }
 
 }  // namespace bluez

@@ -7,20 +7,21 @@
 
 #include "base/macros.h"
 #include "content/public/renderer/content_renderer_client.h"
-#include "fuchsia/engine/renderer/url_request_rules_receiver.h"
+#include "fuchsia/engine/renderer/web_engine_render_frame_observer.h"
 
 class WebEngineContentRendererClient : public content::ContentRendererClient {
  public:
   WebEngineContentRendererClient();
   ~WebEngineContentRendererClient() override;
 
-  // Returns the UrlRequestRulesReceiver corresponding to |render_frame_id|.
-  UrlRequestRulesReceiver* GetUrlRequestRulesReceiverForRenderFrameId(
+  // Returns the WebEngineRenderFrameObserver corresponding to
+  // |render_frame_id|.
+  WebEngineRenderFrameObserver* GetWebEngineRenderFrameObserverForRenderFrameId(
       int render_frame_id) const;
 
  private:
-  // Called by UrlRequestRulesReceivers when their corresponding RenderFrame is
-  // in the process of being deleted.
+  // Called by WebEngineRenderFrameObserver when its corresponding RenderFrame
+  // is in the process of being deleted.
   void OnRenderFrameDeleted(int render_frame_id);
 
   // content::ContentRendererClient overrides.
@@ -32,10 +33,20 @@ class WebEngineContentRendererClient : public content::ContentRendererClient {
   std::unique_ptr<content::URLLoaderThrottleProvider>
   CreateURLLoaderThrottleProvider(
       content::URLLoaderThrottleProviderType type) override;
+  bool DeferMediaLoad(content::RenderFrame* render_frame,
+                      bool has_played_media_before,
+                      base::OnceClosure closure) override;
+  std::unique_ptr<media::Demuxer> OverrideDemuxerForUrl(
+      content::RenderFrame* render_frame,
+      const GURL& url,
+      scoped_refptr<base::SingleThreadTaskRunner> media_task_runner) override;
 
-  // Map of rules receivers per RenderFrame ID.
-  std::map<int, std::unique_ptr<UrlRequestRulesReceiver>>
-      url_request_receivers_by_id_;
+  bool RunClosureWhenInForeground(content::RenderFrame* render_frame,
+                                  base::OnceClosure closure);
+
+  // Map of RenderFrame ID to WebEngineRenderFrameObserver.
+  std::map<int, std::unique_ptr<WebEngineRenderFrameObserver>>
+      render_frame_id_to_observer_map_;
 
   DISALLOW_COPY_AND_ASSIGN(WebEngineContentRendererClient);
 };

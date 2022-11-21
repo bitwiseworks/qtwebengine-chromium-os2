@@ -20,10 +20,10 @@ namespace internal {
 
 using Node = compiler::Node;
 
-TNode<IntPtrT> StringBuiltinsAssembler::DirectStringData(
+TNode<RawPtrT> StringBuiltinsAssembler::DirectStringData(
     TNode<String> string, TNode<Word32T> string_instance_type) {
   // Compute the effective offset of the first character.
-  TVARIABLE(IntPtrT, var_data);
+  TVARIABLE(RawPtrT, var_data);
   Label if_sequential(this), if_external(this), if_join(this);
   Branch(Word32Equal(Word32And(string_instance_type,
                                Int32Constant(kStringRepresentationMask)),
@@ -32,9 +32,9 @@ TNode<IntPtrT> StringBuiltinsAssembler::DirectStringData(
 
   BIND(&if_sequential);
   {
-    var_data = IntPtrAdd(
-        IntPtrConstant(SeqOneByteString::kHeaderSize - kHeapObjectTag),
-        BitcastTaggedToWord(string));
+    var_data = RawPtrAdd(
+        ReinterpretCast<RawPtrT>(BitcastTaggedToWord(string)),
+        IntPtrConstant(SeqOneByteString::kHeaderSize - kHeapObjectTag));
     Goto(&if_join);
   }
 
@@ -47,7 +47,7 @@ TNode<IntPtrT> StringBuiltinsAssembler::DirectStringData(
                                    Int32Constant(kUncachedExternalStringMask)),
                          Int32Constant(kUncachedExternalStringTag)));
     var_data =
-        LoadObjectField<IntPtrT>(string, ExternalString::kResourceDataOffset);
+        DecodeExternalPointer(LoadExternalStringResourceData(CAST(string)));
     Goto(&if_join);
   }
 
@@ -254,8 +254,8 @@ void StringBuiltinsAssembler::StringEqual_Loop(
   CSA_ASSERT(this, WordEqual(LoadStringLengthAsWord(rhs), length));
 
   // Compute the effective offset of the first character.
-  TNode<IntPtrT> lhs_data = DirectStringData(lhs, lhs_instance_type);
-  TNode<IntPtrT> rhs_data = DirectStringData(rhs, rhs_instance_type);
+  TNode<RawPtrT> lhs_data = DirectStringData(lhs, lhs_instance_type);
+  TNode<RawPtrT> rhs_data = DirectStringData(rhs, rhs_instance_type);
 
   // Loop over the {lhs} and {rhs} strings to see if they are equal.
   TVARIABLE(IntPtrT, var_offset, IntPtrConstant(0));
@@ -1164,10 +1164,11 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
     DescriptorIndexNameValue additional_property_to_check,
     const NodeFunction0& regexp_call, const NodeFunction1& generic_call) {
   Label out(this);
+  Label get_property_lookup(this);
 
-  // Smis definitely don't have an attached symbol.
-  GotoIf(TaggedIsSmi(object), &out);
-  TNode<HeapObject> heap_object = CAST(object);
+  // Smis have to go through the GetProperty lookup in case Number.prototype or
+  // Object.prototype was modified.
+  GotoIf(TaggedIsSmi(object), &get_property_lookup);
 
   // Take the fast path for RegExps.
   // There's two conditions: {object} needs to be a fast regexp, and
@@ -1175,6 +1176,8 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
   // since it may mutate {object}).
   {
     Label stub_call(this), slow_lookup(this);
+
+    TNode<HeapObject> heap_object = CAST(object);
 
     GotoIf(TaggedIsSmi(maybe_string), &slow_lookup);
     GotoIfNot(IsString(CAST(maybe_string)), &slow_lookup);
@@ -1196,9 +1199,9 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
     regexp_call();
 
     BIND(&slow_lookup);
+    // Special case null and undefined to skip the property lookup.
+    Branch(IsNullOrUndefined(heap_object), &out, &get_property_lookup);
   }
-
-  GotoIf(IsNullOrUndefined(heap_object), &out);
 
   // Fall back to a slow lookup of {heap_object[symbol]}.
   //
@@ -1208,7 +1211,8 @@ void StringBuiltinsAssembler::MaybeCallFunctionAtSymbol(
   // We handle the former by jumping to {out} for null values as well, while
   // the latter is already handled by the Call({maybe_func}) operation.
 
-  const TNode<Object> maybe_func = GetProperty(context, heap_object, symbol);
+  BIND(&get_property_lookup);
+  const TNode<Object> maybe_func = GetProperty(context, object, symbol);
   GotoIf(IsUndefined(maybe_func), &out);
   GotoIf(IsNull(maybe_func), &out);
 
@@ -1635,6 +1639,12 @@ TNode<JSArray> StringBuiltinsAssembler::StringToArray(
 
     ToDirectStringAssembler to_direct(state(), subject_string);
     to_direct.TryToDirect(&call_runtime);
+
+    // The extracted direct string may be two-byte even though the wrapping
+    // string is one-byte.
+    GotoIfNot(IsOneByteStringInstanceType(to_direct.instance_type()),
+              &call_runtime);
+
     TNode<FixedArray> elements = CAST(AllocateFixedArray(
         PACKED_ELEMENTS, length, AllocationFlag::kAllowLargeObjectAllocation));
     // Don't allocate anything while {string_data} is live!

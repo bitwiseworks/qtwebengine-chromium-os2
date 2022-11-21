@@ -10,18 +10,26 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/cpu.h"
 #include "base/feature_list.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
-#include "base/task/post_task.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+#if !defined(TOOLKIT_QT)
+#include "chrome/browser/media/audio_service_util.h"
+#endif
 #include "chrome/common/channel_info.h"
+#if !defined(TOOLKIT_QT)
 #include "chrome/common/media/webrtc_logging.mojom.h"
+#else
+#include "qtwebengine/common/media/webrtc_logging.mojom.h"
+#endif
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -37,14 +45,13 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
 #include "services/network/public/mojom/network_service.mojom.h"
-#include "services/service_manager/sandbox/features.h"
-#include "services/service_manager/sandbox/sandbox_type.h"
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include "base/linux_util.h"
+#include "base/task/thread_pool.h"
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -58,7 +65,7 @@ namespace {
 
 void ForwardMessageViaTaskRunner(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
-    base::Callback<void(const std::string&)> callback,
+    base::RepeatingCallback<void(const std::string&)> callback,
     const std::string& message) {
   task_runner->PostTask(FROM_HERE,
                         base::BindOnce(std::move(callback), message));
@@ -142,17 +149,18 @@ bool WebRtcTextLogHandler::GetChannelIsClosing() const {
 
 void WebRtcTextLogHandler::SetMetaData(
     std::unique_ptr<WebRtcLogMetaDataMap> meta_data,
-    const GenericDoneCallback& callback) {
+    GenericDoneCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
 
   if (channel_is_closing_) {
-    FireGenericDoneCallback(callback, false, "The renderer is closing.");
+    FireGenericDoneCallback(std::move(callback), false,
+                            "The renderer is closing.");
     return;
   }
 
   if (logging_state_ != CLOSED && logging_state_ != STARTED) {
-    FireGenericDoneCallback(callback, false,
+    FireGenericDoneCallback(std::move(callback), false,
                             "Meta data must be set before stop or upload.");
     return;
   }
@@ -172,26 +180,28 @@ void WebRtcTextLogHandler::SetMetaData(
       (*meta_data_)[it.first] = it.second;
   }
 
-  FireGenericDoneCallback(callback, true, "");
+  FireGenericDoneCallback(std::move(callback), true, "");
 }
 
 bool WebRtcTextLogHandler::StartLogging(WebRtcLogUploader* log_uploader,
-                                        const GenericDoneCallback& callback) {
+                                        GenericDoneCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
 
   if (channel_is_closing_) {
-    FireGenericDoneCallback(callback, false, "The renderer is closing.");
+    FireGenericDoneCallback(std::move(callback), false,
+                            "The renderer is closing.");
     return false;
   }
 
   if (logging_state_ != CLOSED) {
-    FireGenericDoneCallback(callback, false, "A log is already open.");
+    FireGenericDoneCallback(std::move(callback), false,
+                            "A log is already open.");
     return false;
   }
 
   if (!log_uploader->ApplyForStartLogging()) {
-    FireGenericDoneCallback(callback, false,
+    FireGenericDoneCallback(std::move(callback), false,
                             "Cannot start, maybe the maximum number of "
                             "simultaneuos logs has been reached.");
     return false;
@@ -211,12 +221,12 @@ bool WebRtcTextLogHandler::StartLogging(WebRtcLogUploader* log_uploader,
   return true;
 }
 
-void WebRtcTextLogHandler::StartDone(const GenericDoneCallback& callback) {
+void WebRtcTextLogHandler::StartDone(GenericDoneCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
 
   if (channel_is_closing_) {
-    FireGenericDoneCallback(callback, false,
+    FireGenericDoneCallback(std::move(callback), false,
                             "Failed to start log. Renderer is closing.");
     return;
   }
@@ -227,29 +237,29 @@ void WebRtcTextLogHandler::StartDone(const GenericDoneCallback& callback) {
 
   logging_started_time_ = base::Time::Now();
   logging_state_ = STARTED;
-  FireGenericDoneCallback(callback, true, "");
+  FireGenericDoneCallback(std::move(callback), true, "");
 }
 
-bool WebRtcTextLogHandler::StopLogging(const GenericDoneCallback& callback) {
+bool WebRtcTextLogHandler::StopLogging(GenericDoneCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!callback.is_null());
 
   if (channel_is_closing_) {
-    FireGenericDoneCallback(callback, false,
+    FireGenericDoneCallback(std::move(callback), false,
                             "Can't stop log. Renderer is closing.");
     return false;
   }
 
   if (logging_state_ != STARTED) {
-    FireGenericDoneCallback(callback, false, "Logging not started.");
+    FireGenericDoneCallback(std::move(callback), false, "Logging not started.");
     return false;
   }
 
-  stop_callback_ = callback;
+  stop_callback_ = std::move(callback);
   logging_state_ = STOPPING;
 
-  base::PostTask(FROM_HERE, {content::BrowserThread::IO},
-                 base::BindOnce(&content::WebRtcLog::ClearLogMessageCallback,
+  content::GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&content::WebRtcLog::ClearLogMessageCallback,
                                 render_process_id_));
   return true;
 }
@@ -259,7 +269,7 @@ void WebRtcTextLogHandler::StopDone() {
   DCHECK(stop_callback_);
 
   if (channel_is_closing_) {
-    FireGenericDoneCallback(stop_callback_, false,
+    FireGenericDoneCallback(std::move(stop_callback_), false,
                             "Failed to stop log. Renderer is closing.");
     return;
   }
@@ -272,16 +282,15 @@ void WebRtcTextLogHandler::StopDone() {
   if (logging_state_ == STOPPING) {
     logging_started_time_ = base::Time();
     logging_state_ = STOPPED;
-    FireGenericDoneCallback(stop_callback_, true, "");
-    stop_callback_.Reset();
+    FireGenericDoneCallback(std::move(stop_callback_), true, "");
   }
 }
 
 void WebRtcTextLogHandler::ChannelClosing() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (logging_state_ == STARTING || logging_state_ == STARTED) {
-    base::PostTask(FROM_HERE, {content::BrowserThread::IO},
-                   base::BindOnce(&content::WebRtcLog::ClearLogMessageCallback,
+    content::GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE, base::BindOnce(&content::WebRtcLog::ClearLogMessageCallback,
                                   render_process_id_));
   }
   channel_is_closing_ = true;
@@ -346,10 +355,10 @@ void WebRtcTextLogHandler::LogWebRtcLoggingMessage(
 }
 
 bool WebRtcTextLogHandler::ExpectLoggingStateStopped(
-    const GenericDoneCallback& callback) {
+    GenericDoneCallback* callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (logging_state_ != STOPPED) {
-    FireGenericDoneCallback(callback, false,
+    FireGenericDoneCallback(std::move(*callback), false,
                             "Logging not stopped or no log open.");
     return false;
   }
@@ -357,7 +366,7 @@ bool WebRtcTextLogHandler::ExpectLoggingStateStopped(
 }
 
 void WebRtcTextLogHandler::FireGenericDoneCallback(
-    const GenericDoneCallback& callback,
+    GenericDoneCallback callback,
     bool success,
     const std::string& error_message) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -366,7 +375,7 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
   if (error_message.empty()) {
     DCHECK(success);
     base::SequencedTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, success, error_message));
+        FROM_HERE, base::BindOnce(std::move(callback), success, error_message));
     return;
   }
 
@@ -395,7 +404,8 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
                     channel_is_closing_ ? "" : "not ", "closing."});
 
   base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, success, error_message_with_state));
+      FROM_HERE,
+      base::BindOnce(std::move(callback), success, error_message_with_state));
 }
 
 void WebRtcTextLogHandler::SetWebAppId(int web_app_id) {
@@ -404,12 +414,28 @@ void WebRtcTextLogHandler::SetWebAppId(int web_app_id) {
 }
 
 void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
-    const GenericDoneCallback& callback,
+    GenericDoneCallback callback,
     const base::Optional<net::NetworkInterfaceList>& networks) {
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+  // Hop to a background thread to get the distro string, which can block.
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock()}, base::BindOnce(&base::GetLinuxDistro),
+      base::BindOnce(&WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish,
+                     weak_factory_.GetWeakPtr(), std::move(callback),
+                     networks));
+#else
+  OnGetNetworkInterfaceListFinish(std::move(callback), networks, "");
+#endif
+}
+
+void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
+    GenericDoneCallback callback,
+    const base::Optional<net::NetworkInterfaceList>& networks,
+    const std::string& linux_distro) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (logging_state_ != STARTING || channel_is_closing_) {
-    FireGenericDoneCallback(callback, false, "Logging cancelled.");
+    FireGenericDoneCallback(std::move(callback), false, "Logging cancelled.");
     return;
   }
 
@@ -428,15 +454,19 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
   }
 
   // Chrome version
+#if !defined(TOOLKIT_QT)
   LogToCircularBuffer("Chrome version: " + version_info::GetVersionNumber() +
                       " " + chrome::GetChannelName());
+#else
+  LogToCircularBuffer("Chrome version: " + version_info::GetVersionNumber());
+#endif
 
   // OS
   LogToCircularBuffer(base::SysInfo::OperatingSystemName() + " " +
                       base::SysInfo::OperatingSystemVersion() + " " +
                       base::SysInfo::OperatingSystemArchitecture());
-#if defined(OS_LINUX)
-  LogToCircularBuffer("Linux distribution: " + base::GetLinuxDistro());
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+  { LogToCircularBuffer("Linux distribution: " + linux_distro); }
 #endif
 
   // CPU
@@ -450,7 +480,7 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
 
   // Computer model
   std::string computer_model = "Not available";
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   computer_model = base::mac::GetModelIdentifier();
 #elif defined(OS_CHROMEOS)
   chromeos::system::StatisticsProvider::GetInstance()->GetMachineStatistic(
@@ -476,21 +506,23 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
   auto enabled_or_disabled_feature_string = [](auto& feature) {
     return base::FeatureList::IsEnabled(feature) ? "enabled" : "disabled";
   };
+#if !defined(TOOLKIT_QT)
   auto enabled_or_disabled_bool_string = [](bool value) {
     return value ? "enabled" : "disabled";
   };
+#endif
   LogToCircularBuffer(base::StrCat(
       {"AudioService: OutOfProcess=",
        enabled_or_disabled_feature_string(features::kAudioServiceOutOfProcess),
        ", LaunchOnStartup=",
        enabled_or_disabled_feature_string(
            features::kAudioServiceLaunchOnStartup),
+#if !defined(TOOLKIT_QT)
        ", Sandbox=",
-       enabled_or_disabled_bool_string(
-           service_manager::IsAudioSandboxEnabled()),
-       ", ApmInAudioService=",
-       enabled_or_disabled_bool_string(
-           media::IsWebRtcApmInAudioServiceEnabled())}));
+       enabled_or_disabled_bool_string(IsAudioServiceSandboxEnabled())}));
+#else
+       ""}));
+#endif // !defined(TOOLKIT_QT)
 
   // Audio manager
   // On some platforms, this can vary depending on build flags and failure
@@ -516,7 +548,7 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
         net::NetworkChangeNotifier::ConnectionTypeToString(network.type));
   }
 
-  StartDone(callback);
+  StartDone(std::move(callback));
 
   // After the above data has been written, tell the browser to enable logging.
   // TODO(terelius): Once we have moved over to Mojo, we could tell the
@@ -528,10 +560,10 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceList(
 
   auto log_message_callback = base::BindRepeating(
       &ForwardMessageViaTaskRunner, base::SequencedTaskRunnerHandle::Get(),
-      base::Bind(&WebRtcTextLogHandler::LogMessage,
-                 weak_factory_.GetWeakPtr()));
-  base::PostTask(
-      FROM_HERE, {content::BrowserThread::IO},
+      base::BindRepeating(&WebRtcTextLogHandler::LogMessage,
+                          weak_factory_.GetWeakPtr()));
+  content::GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&content::WebRtcLog::SetLogMessageCallback,
                      render_process_id_, std::move(log_message_callback)));
 }

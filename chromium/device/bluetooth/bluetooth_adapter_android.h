@@ -39,39 +39,38 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
   //
   // The BluetoothAdapterAndroid instance will indirectly hold a Java reference
   // to |bluetooth_adapter_wrapper|.
-  static base::WeakPtr<BluetoothAdapterAndroid> Create(
+  static scoped_refptr<BluetoothAdapterAndroid> Create(
       const base::android::JavaRef<jobject>&
           bluetooth_adapter_wrapper);  // Java Type: bluetoothAdapterWrapper
 
   // BluetoothAdapter:
+  void Initialize(base::OnceClosure callback) override;
   std::string GetAddress() const override;
   std::string GetName() const override;
   void SetName(const std::string& name,
-               const base::Closure& callback,
-               const ErrorCallback& error_callback) override;
+               base::OnceClosure callback,
+               ErrorCallback error_callback) override;
   bool IsInitialized() const override;
   bool IsPresent() const override;
   bool IsPowered() const override;
   bool IsDiscoverable() const override;
   void SetDiscoverable(bool discoverable,
-                       const base::Closure& callback,
-                       const ErrorCallback& error_callback) override;
+                       base::OnceClosure callback,
+                       ErrorCallback error_callback) override;
   bool IsDiscovering() const override;
   UUIDList GetUUIDs() const override;
-  void CreateRfcommService(
-      const BluetoothUUID& uuid,
-      const ServiceOptions& options,
-      const CreateServiceCallback& callback,
-      const CreateServiceErrorCallback& error_callback) override;
-  void CreateL2capService(
-      const BluetoothUUID& uuid,
-      const ServiceOptions& options,
-      const CreateServiceCallback& callback,
-      const CreateServiceErrorCallback& error_callback) override;
+  void CreateRfcommService(const BluetoothUUID& uuid,
+                           const ServiceOptions& options,
+                           CreateServiceCallback callback,
+                           CreateServiceErrorCallback error_callback) override;
+  void CreateL2capService(const BluetoothUUID& uuid,
+                          const ServiceOptions& options,
+                          CreateServiceCallback callback,
+                          CreateServiceErrorCallback error_callback) override;
   void RegisterAdvertisement(
       std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data,
-      const CreateAdvertisementCallback& callback,
-      const AdvertisementErrorCallback& error_callback) override;
+      CreateAdvertisementCallback callback,
+      AdvertisementErrorCallback error_callback) override;
   BluetoothLocalGattService* GetGattService(
       const std::string& identifier) const override;
 
@@ -104,8 +103,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterAndroid final
       const base::android::JavaParamRef<jintArray>&
           manufacturer_data_keys,  // Java Type: int[]
       const base::android::JavaParamRef<jobjectArray>&
-          manufacturer_data_values  // Java Type: byte[]
-  );
+          manufacturer_data_values,  // Java Type: byte[]
+      int32_t advertisement_flags);
 
  protected:
   BluetoothAdapterAndroid();

@@ -21,12 +21,14 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/stop_find_action.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/web_view/web_view_constants.h"
 #include "extensions/browser/guest_view/web_view/web_view_content_script_manager.h"
 #include "extensions/common/api/web_view_internal.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "extensions/common/script_constants.h"
 #include "extensions/common/user_script.h"
 
 using content::WebContents;
@@ -192,8 +194,13 @@ std::unique_ptr<extensions::UserScript> ParseContentScript(
   }
 
   // match_about_blank:
-  if (script_value.match_about_blank)
-    script->set_match_about_blank(*script_value.match_about_blank);
+  if (script_value.match_about_blank) {
+    script->set_match_origin_as_fallback(
+        *script_value.match_about_blank
+            ? extensions::MatchOriginAsFallbackBehavior::
+                  kMatchForAboutSchemeAndClimbTree
+            : extensions::MatchOriginAsFallbackBehavior::kNever);
+  }
 
   // css:
   if (script_value.css) {
@@ -314,9 +321,9 @@ WebViewInternalCaptureVisibleRegionFunction::Run() {
 
   return RespondNow(Error(GetErrorMessage(capture_result)));
 }
-bool WebViewInternalCaptureVisibleRegionFunction::IsScreenshotEnabled() const {
-  // TODO(wjmaclean): Is it ok to always return true here?
-  return true;
+bool WebViewInternalCaptureVisibleRegionFunction::IsScreenshotEnabled(
+    content::WebContents* web_contents) const {
+  return !ExtensionsBrowserClient::Get()->IsScreenshotRestricted(web_contents);
 }
 
 bool WebViewInternalCaptureVisibleRegionFunction::ClientAllowsTransparency() {
@@ -353,8 +360,7 @@ std::string WebViewInternalCaptureVisibleRegionFunction::GetErrorMessage(
       reason_description = "view is invisible";
       break;
     case FAILURE_REASON_SCREEN_SHOTS_DISABLED:
-      NOTREACHED() << "WebViewInternalCaptureVisibleRegionFunction always have "
-                      "screenshots enabled";
+      reason_description = "screenshot has been disabled";
       break;
     case OK:
       NOTREACHED()
@@ -424,6 +430,10 @@ bool WebViewInternalExecuteCodeFunction::ShouldInsertCSS() const {
   return false;
 }
 
+bool WebViewInternalExecuteCodeFunction::ShouldRemoveCSS() const {
+  return false;
+}
+
 bool WebViewInternalExecuteCodeFunction::CanExecuteScriptOnPage(
     std::string* error) {
   return true;
@@ -470,7 +480,7 @@ bool WebViewInternalExecuteCodeFunction::LoadFile(const std::string& file,
   if (!extension()) {
     if (LoadFileForWebUI(
             *details_->file,
-            base::Bind(
+            base::BindOnce(
                 &WebViewInternalExecuteCodeFunction::DidLoadAndLocalizeFile,
                 this, file)))
       return true;
@@ -519,7 +529,7 @@ WebViewInternalAddContentScriptsFunction::Run() {
       ParseContentScripts(params->content_script_list, extension(), host_id,
                           incognito_enabled, owner_base_url, &error);
   if (!result)
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   WebViewContentScriptManager* manager =
       WebViewContentScriptManager::Get(browser_context());
@@ -786,11 +796,12 @@ WebViewInternalLoadDataWithBaseUrlFunction::Run() {
       params->virtual_url ? *params->virtual_url : params->data_url;
 
   std::string error;
-  bool successful = guest_->LoadDataWithBaseURL(
-      params->data_url, params->base_url, virtual_url, &error);
+  bool successful = guest_->LoadDataWithBaseURL(GURL(params->data_url),
+                                                GURL(params->base_url),
+                                                GURL(virtual_url), &error);
   if (successful)
     return RespondNow(NoArguments());
-  return RespondNow(Error(error));
+  return RespondNow(Error(std::move(error)));
 }
 
 WebViewInternalGoFunction::WebViewInternalGoFunction() {

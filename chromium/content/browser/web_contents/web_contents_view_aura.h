@@ -24,6 +24,8 @@
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "content/public/common/drop_data.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "third_party/blink/public/mojom/choosers/popup_menu.mojom.h"
 #include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
@@ -106,10 +108,8 @@ class CONTENT_EXPORT WebContentsViewAura
 
   ~WebContentsViewAura() override;
 
-  void SizeChangedCommon(const gfx::Size& size);
-
   void EndDrag(base::WeakPtr<RenderWidgetHostImpl> source_rwh_weak_ptr,
-               blink::WebDragOperationsMask ops);
+               blink::DragOperationsMask ops);
 
   void InstallOverscrollControllerDelegate(RenderWidgetHostViewAura* view);
 
@@ -137,8 +137,7 @@ class CONTENT_EXPORT WebContentsViewAura
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
   gfx::NativeWindow GetTopLevelNativeWindow() const override;
-  void GetContainerBounds(gfx::Rect* out) const override;
-  void SizeContents(const gfx::Size& size) override;
+  gfx::Rect GetContainerBounds() const override;
   void Focus() override;
   void SetInitialFocus() override;
   void StoreFocus() override;
@@ -161,12 +160,12 @@ class CONTENT_EXPORT WebContentsViewAura
   void ShowContextMenu(RenderFrameHost* render_frame_host,
                        const ContextMenuParams& params) override;
   void StartDragging(const DropData& drop_data,
-                     blink::WebDragOperationsMask operations,
+                     blink::DragOperationsMask operations,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info,
+                     const blink::mojom::DragEventSourceInfo& event_info,
                      RenderWidgetHostImpl* source_rwh) override;
-  void UpdateDragCursor(blink::WebDragOperation operation) override;
+  void UpdateDragCursor(blink::DragOperation operation) override;
   void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
   void LostFocus(RenderWidgetHostImpl* render_widget_host) override;
   void TakeFocus(bool reverse) override;
@@ -174,16 +173,16 @@ class CONTENT_EXPORT WebContentsViewAura
   int GetBottomControlsHeight() const override;
   bool DoBrowserControlsShrinkRendererSize() const override;
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
-  void ShowPopupMenu(RenderFrameHost* render_frame_host,
-                     const gfx::Rect& bounds,
-                     int item_height,
-                     double item_font_size,
-                     int selected_item,
-                     const std::vector<MenuItem>& items,
-                     bool right_aligned,
-                     bool allow_multiple_selection) override;
-
-  void HidePopupMenu() override;
+  void ShowPopupMenu(
+      RenderFrameHost* render_frame_host,
+      mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
+      const gfx::Rect& bounds,
+      int item_height,
+      double item_font_size,
+      int selected_item,
+      std::vector<blink::mojom::MenuItemPtr> menu_items,
+      bool right_aligned,
+      bool allow_multiple_selection) override;
 #endif
 
   // Overridden from aura::WindowDelegate:
@@ -204,8 +203,8 @@ class CONTENT_EXPORT WebContentsViewAura
   void OnWindowDestroying(aura::Window* window) override;
   void OnWindowDestroyed(aura::Window* window) override;
   void OnWindowTargetVisibilityChanged(bool visible) override;
-  void OnWindowOcclusionChanged(aura::Window::OcclusionState occlusion_state,
-                                const SkRegion&) override;
+  void OnWindowOcclusionChanged(
+      aura::Window::OcclusionState occlusion_state) override;
   bool HasHitTestMask() const override;
   void GetHitTestMask(SkPath* mask) const override;
 
@@ -291,7 +290,7 @@ class CONTENT_EXPORT WebContentsViewAura
 
   std::unique_ptr<WebContentsViewDelegate> delegate_;
 
-  blink::WebDragOperationsMask current_drag_op_;
+  blink::DragOperationsMask current_drag_op_;
 
   std::unique_ptr<DropData> current_drop_data_;
 

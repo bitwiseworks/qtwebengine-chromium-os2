@@ -308,6 +308,13 @@ _NAMED_TYPE_INFO = {
       'GL_UNPACK_SKIP_IMAGES',
       'GL_UNPACK_SKIP_PIXELS',
       'GL_UNPACK_SKIP_ROWS',
+      'GL_BLEND_EQUATION_RGB',
+      'GL_BLEND_EQUATION_ALPHA',
+      'GL_BLEND_SRC_RGB',
+      'GL_BLEND_SRC_ALPHA',
+      'GL_BLEND_DST_RGB',
+      'GL_BLEND_DST_ALPHA',
+      'GL_COLOR_WRITEMASK',
       # GL_VERTEX_ARRAY_BINDING is the same as GL_VERTEX_ARRAY_BINDING_OES
       # 'GL_VERTEX_ARRAY_BINDING',
     ],
@@ -324,6 +331,13 @@ _NAMED_TYPE_INFO = {
       'GL_UNIFORM_BUFFER_BINDING',
       'GL_UNIFORM_BUFFER_SIZE',
       'GL_UNIFORM_BUFFER_START',
+      'GL_BLEND_EQUATION_RGB',
+      'GL_BLEND_EQUATION_ALPHA',
+      'GL_BLEND_SRC_RGB',
+      'GL_BLEND_SRC_ALPHA',
+      'GL_BLEND_DST_RGB',
+      'GL_BLEND_DST_ALPHA',
+      'GL_COLOR_WRITEMASK',
     ],
     'invalid': [
       'GL_FOG_HINT',
@@ -370,6 +384,21 @@ _NAMED_TYPE_INFO = {
     ]
   },
   'TextureTarget': {
+    'type': 'GLenum',
+    'valid': [
+      'GL_TEXTURE_2D',
+      'GL_TEXTURE_CUBE_MAP_POSITIVE_X',
+      'GL_TEXTURE_CUBE_MAP_NEGATIVE_X',
+      'GL_TEXTURE_CUBE_MAP_POSITIVE_Y',
+      'GL_TEXTURE_CUBE_MAP_NEGATIVE_Y',
+      'GL_TEXTURE_CUBE_MAP_POSITIVE_Z',
+      'GL_TEXTURE_CUBE_MAP_NEGATIVE_Z',
+    ],
+    'invalid': [
+      'GL_PROXY_TEXTURE_CUBE_MAP',
+    ]
+  },
+  'TextureFboTarget': {
     'type': 'GLenum',
     'valid': [
       'GL_TEXTURE_2D',
@@ -1578,6 +1607,7 @@ _NAMED_TYPE_INFO = {
     'type': 'GLenum',
     'is_complete': True,
     'valid': [
+      'GL_SHARED_IMAGE_ACCESS_MODE_OVERLAY_CHROMIUM',
       'GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM',
       'GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM',
     ],
@@ -1828,6 +1858,11 @@ _FUNCTION_INFO = {
     'no_gl': True,
     'expectation': False,
   },
+  'ColorMaskiOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'unit_test': False,
+    'extension': 'OES_draw_buffers_indexed',
+  },
   'ContextVisibilityHintCHROMIUM': {
     'decoder_func': 'DoContextVisibilityHintCHROMIUM',
     'extension': 'CHROMIUM_context_visibility_hint',
@@ -1954,6 +1989,15 @@ _FUNCTION_INFO = {
       '0': 'GL_FUNC_SUBTRACT'
     },
   },
+  'BlendEquationiOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'unit_test': False,
+    'extension': 'OES_draw_buffers_indexed',
+    'valid_args': {
+      '1': 'GL_FUNC_SUBTRACT',
+      '2': 'GL_FUNC_SUBTRACT'
+    },
+  },
   'BlendEquationSeparate': {
     'type': 'StateSet',
     'state': 'BlendEquation',
@@ -1961,13 +2005,32 @@ _FUNCTION_INFO = {
       '0': 'GL_FUNC_SUBTRACT'
     },
   },
+  'BlendEquationSeparateiOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'unit_test': False,
+    'extension': 'OES_draw_buffers_indexed',
+    'valid_args': {
+      '1': 'GL_FUNC_SUBTRACT',
+      '2': 'GL_FUNC_SUBTRACT'
+    },
+  },
   'BlendFunc': {
     'type': 'StateSetRGBAlpha',
     'state': 'BlendFunc',
   },
+  'BlendFunciOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'unit_test': False,
+    'extension': 'OES_draw_buffers_indexed',
+  },
   'BlendFuncSeparate': {
     'type': 'StateSet',
     'state': 'BlendFunc',
+  },
+  'BlendFuncSeparateiOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'unit_test': False,
+    'extension': 'OES_draw_buffers_indexed',
   },
   'BlendBarrierKHR': {
     'gl_test_func': 'glBlendBarrierKHR',
@@ -2079,6 +2142,13 @@ _FUNCTION_INFO = {
     'impl_func': False,
     'client_test': False,
   },
+  'DisableiOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'extension': 'OES_draw_buffers_indexed',
+    'decoder_func': 'DoDisableiOES',
+    'impl_func': False,
+    'unit_test': False,
+  },
   'DisableVertexAttribArray': {
     'decoder_func': 'DoDisableVertexAttribArray',
     'impl_func': False,
@@ -2138,6 +2208,13 @@ _FUNCTION_INFO = {
     'decoder_func': 'DoEnable',
     'impl_func': False,
     'client_test': False,
+  },
+  'EnableiOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'extension': 'OES_draw_buffers_indexed',
+    'decoder_func': 'DoEnableiOES',
+    'impl_func': False,
+    'unit_test': False,
   },
   'EnableVertexAttribArray': {
     'decoder_func': 'DoEnableVertexAttribArray',
@@ -2324,6 +2401,15 @@ _FUNCTION_INFO = {
     'result': ['SizedResult<GLboolean>'],
     'decoder_func': 'DoGetBooleanv',
     'gl_test_func': 'glGetIntegerv',
+  },
+  'GetBooleani_v': {
+    'type': 'GETn',
+    'result': ['SizedResult<GLboolean>'],
+    'decoder_func': 'DoGetBooleani_v',
+    'shadowed': True,
+    'client_test': False,
+    'unit_test': False,
+    'es3': True
   },
   'GetBufferParameteri64v': {
     'type': 'GETn',
@@ -2721,6 +2807,16 @@ _FUNCTION_INFO = {
     'impl_func': False,
     'expectation': False,
   },
+  'IsEnablediOES': {
+    'extension_flag': 'oes_draw_buffers_indexed',
+    'unit_test': False,
+    'extension': 'OES_draw_buffers_indexed',
+    'type': 'Is',
+    'decoder_func': 'DoIsEnablediOES',
+    'client_test': False,
+    'impl_func': False,
+    'expectation': False,
+  },
   'IsFramebuffer': {
     'type': 'Is',
     'decoder_func': 'DoIsFramebuffer',
@@ -2997,12 +3093,6 @@ _FUNCTION_INFO = {
     'type': 'NoCommand',
     'extension': 'WEBGL_multi_draw_instanced_base_vertex_base_instance',
     'extension_flag': 'webgl_multi_draw_instanced_base_vertex_base_instance',
-  },
-  'OverlayPromotionHintCHROMIUM': {
-    'decoder_func': 'DoOverlayPromotionHintCHROMIUM',
-    'extension': "CHROMIUM_uniform_stream_texture_matrix",
-    'unit_test': False,
-    'client_test': False,
   },
   'PauseTransformFeedback': {
     'decoder_func': 'DoPauseTransformFeedback',
@@ -3406,14 +3496,6 @@ _FUNCTION_INFO = {
     'count': 16,
     'decoder_func': 'DoUniformMatrix4fv',
     'unit_test': False,
-  },
-  'UniformMatrix4fvStreamTextureMatrixCHROMIUM': {
-    'type': 'PUT',
-    'count': 16,
-    'decoder_func': 'DoUniformMatrix4fvStreamTextureMatrixCHROMIUM',
-    'extension': "CHROMIUM_uniform_stream_texture_matrix",
-    'unit_test': False,
-    'client_test': False,
   },
   'UniformMatrix4x2fv': {
     'type': 'PUTn',

@@ -12,6 +12,7 @@
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkImageInfo.h"
 #include "include/private/SkTArray.h"
+#include "include/private/SkTemplates.h"
 
 #include "src/core/SkImageFilterTypes.h"
 
@@ -413,7 +414,7 @@ private:
     CropRect fCropRect;
     uint32_t fUniqueID; // Globally unique
 
-    typedef SkImageFilter INHERITED;
+    using INHERITED = SkImageFilter;
 };
 
 static inline SkImageFilter_Base* as_IFB(SkImageFilter* filter) {

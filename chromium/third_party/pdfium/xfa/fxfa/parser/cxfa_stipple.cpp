@@ -6,10 +6,9 @@
 
 #include "xfa/fxfa/parser/cxfa_stipple.h"
 
-#include "core/fxge/render_defines.h"
 #include "fxjs/xfa/cjx_node.h"
-#include "third_party/base/ptr_util.h"
 #include "xfa/fxfa/parser/cxfa_color.h"
+#include "xfa/fxfa/parser/cxfa_document.h"
 
 namespace {
 
@@ -35,7 +34,9 @@ CXFA_Stipple::CXFA_Stipple(CXFA_Document* doc, XFA_PacketType packet)
                 XFA_Element::Stipple,
                 kStipplePropertyData,
                 kStippleAttributeData,
-                pdfium::MakeUnique<CJX_Node>(this)) {}
+                cppgc::MakeGarbageCollected<CJX_Node>(
+                    doc->GetHeap()->GetAllocationHandle(),
+                    this)) {}
 
 CXFA_Stipple::~CXFA_Stipple() = default;
 
@@ -67,6 +68,6 @@ void CXFA_Stipple::Draw(CXFA_Graphics* pGS,
 
   pGS->SaveGraphState();
   pGS->SetFillColor(CXFA_GEColor(cr));
-  pGS->FillPath(fillPath, FXFILL_WINDING, &matrix);
+  pGS->FillPath(fillPath, CFX_FillRenderOptions::FillType::kWinding, &matrix);
   pGS->RestoreGraphState();
 }

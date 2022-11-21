@@ -17,6 +17,7 @@
 #include "content/common/content_export.h"
 #include "net/base/completion_repeating_callback.h"
 #include "storage/browser/quota/quota_client.h"
+#include "storage/browser/quota/quota_client_type.h"
 #include "storage/browser/quota/quota_task.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom-forward.h"
 #include "url/origin.h"
@@ -39,22 +40,20 @@ class AppCacheQuotaClient : public storage::QuotaClient {
   explicit AppCacheQuotaClient(base::WeakPtr<AppCacheServiceImpl> service);
 
   // QuotaClient method overrides
-  ID id() const override;
   void OnQuotaManagerDestroyed() override;
   void GetOriginUsage(const url::Origin& origin,
                       blink::mojom::StorageType type,
-                      GetUsageCallback callback) override;
+                      GetOriginUsageCallback callback) override;
   void GetOriginsForType(blink::mojom::StorageType type,
-                         GetOriginsCallback callback) override;
+                         GetOriginsForTypeCallback callback) override;
   void GetOriginsForHost(blink::mojom::StorageType type,
                          const std::string& host,
-                         GetOriginsCallback callback) override;
+                         GetOriginsForHostCallback callback) override;
   void DeleteOriginData(const url::Origin& origin,
                         blink::mojom::StorageType type,
-                        DeletionCallback callback) override;
+                        DeleteOriginDataCallback callback) override;
   void PerformStorageCleanup(blink::mojom::StorageType type,
-                             base::OnceClosure callback) override;
-  bool DoesSupport(blink::mojom::StorageType type) const override;
+                             PerformStorageCleanupCallback callback) override;
 
  private:
   friend class content::AppCacheQuotaClientTest;
@@ -64,9 +63,8 @@ class AppCacheQuotaClient : public storage::QuotaClient {
   ~AppCacheQuotaClient() override;
 
   void DidDeleteAppCachesForOrigin(int rv);
-  void GetOriginsHelper(blink::mojom::StorageType type,
-                        const std::string& opt_host,
-                        GetOriginsCallback callback);
+  void GetOriginsHelper(const std::string& opt_host,
+                        GetOriginsForTypeCallback callback);
   void ProcessPendingRequests();
   void DeletePendingRequests();
   net::CancelableCompletionRepeatingCallback* GetServiceDeleteCallback();
@@ -76,13 +74,13 @@ class AppCacheQuotaClient : public storage::QuotaClient {
   CONTENT_EXPORT void NotifyAppCacheDestroyed();
 
   // Prior to appcache service being ready, we have to queue
-  // up reqeusts and defer acting on them until we're ready.
+  // up requests and defer acting on them until we're ready.
   RequestQueue pending_batch_requests_;
   RequestQueue pending_serial_requests_;
 
   // And once it's ready, we can only handle one delete request at a time,
   // so we queue up additional requests while one is in already in progress.
-  DeletionCallback current_delete_request_callback_;
+  DeleteOriginDataCallback current_delete_request_callback_;
   std::unique_ptr<net::CancelableCompletionRepeatingCallback>
       service_delete_callback_;
 

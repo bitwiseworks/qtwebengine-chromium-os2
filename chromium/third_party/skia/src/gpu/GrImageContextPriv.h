@@ -27,7 +27,6 @@ public:
 
     GrImageContext* asImageContext() { return fContext->asImageContext(); }
     GrRecordingContext* asRecordingContext() { return fContext->asRecordingContext(); }
-    GrContext* asDirectContext() { return fContext->asDirectContext(); }
 
     // from GrImageContext
     GrProxyProvider* proxyProvider() { return fContext->proxyProvider(); }
@@ -38,10 +37,12 @@ public:
     /** This is only useful for debug purposes */
     SkDEBUGCODE(GrSingleOwner* singleOwner() const { return fContext->singleOwner(); } )
 
+    GrImageContextPriv(GrImageContextPriv&&) = default;
+
 private:
     explicit GrImageContextPriv(GrImageContext* context) : fContext(context) {}
-    GrImageContextPriv(const GrImageContextPriv&); // unimpl
-    GrImageContextPriv& operator=(const GrImageContextPriv&); // unimpl
+    GrImageContextPriv(const GrImageContextPriv&) = delete;
+    GrImageContextPriv& operator=(const GrImageContextPriv&) = delete;
 
     // No taking addresses of this type.
     const GrImageContextPriv* operator&() const;
@@ -54,7 +55,7 @@ private:
 
 inline GrImageContextPriv GrImageContext::priv() { return GrImageContextPriv(this); }
 
-inline const GrImageContextPriv GrImageContext::priv () const {
+inline const GrImageContextPriv GrImageContext::priv () const {  // NOLINT(readability-const-return-type)
     return GrImageContextPriv(const_cast<GrImageContext*>(this));
 }
 

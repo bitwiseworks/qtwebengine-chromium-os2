@@ -20,7 +20,7 @@ namespace compiler {
 
 class Node;
 
-}
+}  // namespace compiler
 
 struct UntaggedT {};
 
@@ -77,6 +77,12 @@ struct IntPtrT : WordT {
 };
 struct UintPtrT : WordT {
   static constexpr MachineType kMachineType = MachineType::UintPtr();
+};
+
+struct ExternalPointerT : UntaggedT {
+  static const MachineRepresentation kMachineRepresentation =
+      MachineType::PointerRepresentation();
+  static constexpr MachineType kMachineType = MachineType::Pointer();
 };
 
 struct Float32T : UntaggedT {
@@ -183,6 +189,11 @@ template <typename T>
 constexpr bool IsMachineRepresentationOf(MachineRepresentation r) {
   return MachineRepresentationOf<T>::value == r;
 }
+
+template <class T>
+constexpr MachineRepresentation PhiMachineRepresentationOf =
+    std::is_base_of<Word32T, T>::value ? MachineRepresentation::kWord32
+                                       : MachineRepresentationOf<T>::value;
 
 template <class T>
 struct is_valid_type_tag {
@@ -349,7 +360,7 @@ class TNode {
     return *this;
   }
 
-  bool is_null() { return node_ == nullptr; }
+  bool is_null() const { return node_ == nullptr; }
 
   operator compiler::Node*() const { return node_; }
 

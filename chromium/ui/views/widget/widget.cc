@@ -8,9 +8,10 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/check_op.h"
 #include "base/containers/adapters.h"
-#include "base/logging.h"
 #include "base/macros.h"
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/base/cursor/cursor.h"
@@ -92,23 +93,16 @@ bool Widget::g_disable_activation_change_handling_ = false;
 // WidgetDelegate is supplied.
 class DefaultWidgetDelegate : public WidgetDelegate {
  public:
-  explicit DefaultWidgetDelegate(Widget* widget) : widget_(widget) {}
-  ~DefaultWidgetDelegate() override = default;
-
-  // WidgetDelegate:
-  void DeleteDelegate() override { delete this; }
-  Widget* GetWidget() override { return widget_; }
-  const Widget* GetWidget() const override { return widget_; }
-  bool ShouldAdvanceFocusToTopLevelWidget() const override {
+  DefaultWidgetDelegate() {
     // In most situations where a Widget is used without a delegate the Widget
     // is used as a container, so that we want focus to advance to the top-level
     // widget. A good example of this is the find bar.
-    return true;
+    SetOwnedByWidget(true);
+    SetFocusTraversesOut(true);
   }
+  ~DefaultWidgetDelegate() override = default;
 
  private:
-  Widget* widget_;
-
   DISALLOW_COPY_AND_ASSIGN(DefaultWidgetDelegate);
 };
 
@@ -162,10 +156,8 @@ ui::ZOrderLevel Widget::InitParams::EffectiveZOrderLevel() const {
   switch (type) {
     case TYPE_MENU:
       return ui::ZOrderLevel::kFloatingWindow;
-      break;
     case TYPE_DRAG:
       return ui::ZOrderLevel::kFloatingUIElement;
-      break;
     default:
       return ui::ZOrderLevel::kNormal;
   }
@@ -181,6 +173,8 @@ Widget::Widget(InitParams params) {
 }
 
 Widget::~Widget() {
+  if (widget_delegate_)
+    widget_delegate_->WidgetDestroying();
   DestroyRootView();
   if (ownership_ == InitParams::WIDGET_OWNS_NATIVE_WIDGET) {
     delete native_widget_;
@@ -251,6 +245,12 @@ void Widget::GetAllOwnedWidgets(gfx::NativeView native_view, Widgets* owned) {
 void Widget::ReparentNativeView(gfx::NativeView native_view,
                                 gfx::NativeView new_parent) {
   internal::NativeWidgetPrivate::ReparentNativeView(native_view, new_parent);
+
+  Widget* child_widget = GetWidgetForNativeView(native_view);
+  Widget* parent_widget =
+      new_parent ? GetWidgetForNativeView(new_parent) : nullptr;
+  if (child_widget)
+    child_widget->parent_ = parent_widget;
 }
 
 // static
@@ -288,6 +288,8 @@ void Widget::Init(InitParams params) {
       params.delegate->GetContentsView())
     params.name = params.delegate->GetContentsView()->GetClassName();
 
+  parent_ = params.parent ? GetWidgetForNativeView(params.parent) : nullptr;
+
   params.child |= (params.type == InitParams::TYPE_CONTROL);
   is_top_level_ = !params.child;
 
@@ -300,8 +302,7 @@ void Widget::Init(InitParams params) {
     // ViewsDelegate::OnBeforeWidgetInit() may change `params.delegate` either
     // by setting it to null or assigning a different value to it, so handle
     // both cases.
-    auto default_widget_delegate =
-        std::make_unique<DefaultWidgetDelegate>(this);
+    auto default_widget_delegate = std::make_unique<DefaultWidgetDelegate>();
     widget_delegate_ =
         params.delegate ? params.delegate : default_widget_delegate.get();
 
@@ -324,6 +325,9 @@ void Widget::Init(InitParams params) {
   // Henceforth, ensure the delegate outlives the Widget.
   widget_delegate_->can_delete_this_ = false;
 
+  if (params.delegate)
+    params.delegate->WidgetInitializing(this);
+
   ownership_ = params.ownership;
   native_widget_ = CreateNativeWidget(params, this)->AsNativeWidgetPrivate();
   root_view_.reset(CreateRootView());
@@ -338,11 +342,9 @@ void Widget::Init(InitParams params) {
   if (type == InitParams::TYPE_MENU)
     is_mouse_button_pressed_ = native_widget_->IsMouseButtonDown();
   if (RequiresNonClientView(type)) {
-    non_client_view_ = new NonClientView;
+    non_client_view_ =
+        new NonClientView(widget_delegate_->CreateClientView(this));
     non_client_view_->SetFrameView(CreateNonClientFrameView());
-    // Create the ClientView, add it to the NonClientView and add the
-    // NonClientView to the RootView. This will cause everything to be parented.
-    non_client_view_->set_client_view(widget_delegate_->CreateClientView(this));
     non_client_view_->SetOverlayView(widget_delegate_->CreateOverlayView());
 
     // Bypass the Layout() that happens in Widget::SetContentsView(). Layout()
@@ -370,7 +372,7 @@ void Widget::Init(InitParams params) {
       saved_show_state_ = ui::SHOW_STATE_MINIMIZED;
     }
   } else if (delegate) {
-    SetContentsView(delegate->GetContentsView());
+    SetContentsView(delegate->TransferOwnershipOfContentsView());
     SetInitialBoundsForFramelessWindow(bounds);
   }
 
@@ -379,7 +381,7 @@ void Widget::Init(InitParams params) {
   native_widget_->OnWidgetInitDone();
 
   if (delegate)
-    delegate->OnWidgetInitialized();
+    delegate->WidgetInitialized();
 
   internal::AnyWidgetObserverSingleton::GetInstance()->OnAnyWidgetInitialized(
       this);
@@ -480,6 +482,14 @@ void Widget::SetContentsView(View* view) {
   if (view == GetContentsView())
     return;
 
+  // |non_client_view_| can only be non-null here if RequiresNonClientView() was
+  // true when the widget was initialized. Creating widgets with non-client
+  // views and then setting the contents view can cause subtle problems on
+  // Windows, where the native widget thinks there is still a
+  // |non_client_view_|. If you get this error, either use a different type when
+  // initializing the widget, or don't call SetContentsView().
+  DCHECK(!non_client_view_);
+
   root_view_->SetContentsView(view);
 
   // Force a layout now, since the attached hierarchy won't be ready for the
@@ -487,17 +497,6 @@ void Widget::SetContentsView(View* view) {
   // calling the widget's size changed handler, since the RootView's bounds may
   // not have changed, which will cause the Layout not to be done otherwise.
   root_view_->Layout();
-
-  if (non_client_view_ != view) {
-    // |non_client_view_| can only be non-NULL here if RequiresNonClientView()
-    // was true when the widget was initialized. Creating widgets with non
-    // client views and then setting the contents view can cause subtle
-    // problems on Windows, where the native widget thinks there is still a
-    // |non_client_view_|. If you get this error, either use a different type
-    // when initializing the widget, or don't call SetContentsView().
-    DCHECK(!non_client_view_);
-    non_client_view_ = nullptr;
-  }
 }
 
 View* Widget::GetContentsView() {
@@ -585,7 +584,8 @@ void Widget::CloseWithReason(ClosedReason closed_reason) {
   if (block_close_) {
     return;
   }
-  if (non_client_view_ && !non_client_view_->CanClose())
+  if (non_client_view_ && non_client_view_->OnWindowCloseRequested() ==
+                              CloseRequestResult::kCannotClose)
     return;
 
   // This is the last chance to cancel closing.
@@ -724,7 +724,10 @@ void Widget::SetFullscreen(bool fullscreen) {
   if (IsFullscreen() == fullscreen)
     return;
 
+  auto weak_ptr = GetWeakPtr();
   native_widget_->SetFullscreen(fullscreen);
+  if (!weak_ptr)
+    return;
 
   if (non_client_view_)
     non_client_view_->InvalidateLayout();
@@ -769,7 +772,7 @@ bool Widget::IsVisible() const {
 const ui::ThemeProvider* Widget::GetThemeProvider() const {
   const Widget* root_widget = GetTopLevelWidget();
   return (root_widget && root_widget != this) ? root_widget->GetThemeProvider()
-                                              : &default_theme_provider_;
+                                              : nullptr;
 }
 
 FocusManager* Widget::GetFocusManager() {
@@ -802,7 +805,7 @@ void Widget::RunShellDrag(View* view,
                           std::unique_ptr<ui::OSExchangeData> data,
                           const gfx::Point& location,
                           int operation,
-                          ui::DragDropTypes::DragEventSource source) {
+                          ui::mojom::DragEventSource source) {
   dragged_view_ = view;
   OnDragWillStart();
 
@@ -900,9 +903,8 @@ void Widget::ClearNativeFocus() {
   native_widget_->ClearNativeFocus();
 }
 
-NonClientFrameView* Widget::CreateNonClientFrameView() {
-  NonClientFrameView* frame_view =
-      widget_delegate_->CreateNonClientFrameView(this);
+std::unique_ptr<NonClientFrameView> Widget::CreateNonClientFrameView() {
+  auto frame_view = widget_delegate_->CreateNonClientFrameView(this);
   if (!frame_view)
     frame_view = native_widget_->CreateNonClientFrameView();
   if (!frame_view) {
@@ -912,9 +914,7 @@ NonClientFrameView* Widget::CreateNonClientFrameView() {
   if (frame_view)
     return frame_view;
 
-  CustomFrameView* custom_frame_view = new CustomFrameView;
-  custom_frame_view->Init(this);
-  return custom_frame_view;
+  return std::make_unique<CustomFrameView>(this);
 }
 
 bool Widget::ShouldUseNativeFrame() const {
@@ -1040,12 +1040,17 @@ std::string Widget::GetName() const {
   return native_widget_->GetName();
 }
 
+std::unique_ptr<Widget::PaintAsActiveCallbackList::Subscription>
+Widget::RegisterPaintAsActiveChangedCallback(
+    PaintAsActiveCallbackList::CallbackType callback) {
+  return paint_as_active_callbacks_.Add(std::move(callback));
+}
+
 std::unique_ptr<Widget::PaintAsActiveLock> Widget::LockPaintAsActive() {
   const bool was_paint_as_active = ShouldPaintAsActive();
   ++paint_as_active_refcount_;
-  const bool paint_as_active = ShouldPaintAsActive();
-  if (paint_as_active != was_paint_as_active)
-    UpdatePaintAsActiveState(paint_as_active);
+  if (ShouldPaintAsActive() != was_paint_as_active)
+    paint_as_active_callbacks_.Notify();
   return std::make_unique<PaintAsActiveLockImpl>(
       weak_ptr_factory_.GetWeakPtr());
 }
@@ -1094,9 +1099,8 @@ bool Widget::OnNativeWidgetActivationChanged(bool active) {
 
   const bool was_paint_as_active = ShouldPaintAsActive();
   native_widget_active_ = active;
-  const bool paint_as_active = ShouldPaintAsActive();
-  if (paint_as_active != was_paint_as_active)
-    UpdatePaintAsActiveState(paint_as_active);
+  if (ShouldPaintAsActive() != was_paint_as_active)
+    paint_as_active_callbacks_.Notify();
 
   return true;
 }
@@ -1164,6 +1168,8 @@ gfx::Size Widget::GetMaximumSize() const {
 }
 
 void Widget::OnNativeWidgetMove() {
+  TRACE_EVENT0("ui", "Widget::OnNativeWidgetMove");
+
   widget_delegate_->OnWidgetMove();
   NotifyCaretBoundsChanged(GetInputMethod());
 
@@ -1172,6 +1178,8 @@ void Widget::OnNativeWidgetMove() {
 }
 
 void Widget::OnNativeWidgetSizeChanged(const gfx::Size& new_size) {
+  TRACE_EVENT0("ui", "Widget::OnNativeWidgetSizeChanged");
+
   View* root = GetRootView();
   if (root)
     root->SetSize(new_size);
@@ -1231,6 +1239,8 @@ void Widget::OnKeyEvent(ui::KeyEvent* event) {
 //                   RootView from anywhere in Widget. Use
 //                   SendEventToSink() instead. See crbug.com/348087.
 void Widget::OnMouseEvent(ui::MouseEvent* event) {
+  TRACE_EVENT0("ui", "Widget::OnMouseEvent");
+
   View* root_view = GetRootView();
   switch (event->type()) {
     case ui::ET_MOUSE_PRESSED: {
@@ -1474,9 +1484,11 @@ View* Widget::GetFocusTraversableParentView() {
 // Widget, ui::NativeThemeObserver implementation:
 
 void Widget::OnNativeThemeUpdated(ui::NativeTheme* observed_theme) {
+  TRACE_EVENT0("ui", "Widget::OnNativeThemeUpdated");
+
   DCHECK(observer_manager_.IsObserving(observed_theme));
 
-#if defined(OS_MACOSX) || defined(OS_WIN)
+#if defined(OS_APPLE) || defined(OS_WIN)
   ui::NativeTheme* current_native_theme = observed_theme;
 #else
   ui::NativeTheme* current_native_theme = GetNativeTheme();
@@ -1594,22 +1606,17 @@ bool Widget::GetSavedWindowPlacement(gfx::Rect* bounds,
   // a window is restored from maximized state, so we can't more accurately
   // track maximized state independently of sizing information.
 
-  // Restore the window's placement from the controller.
-  if (widget_delegate_->GetSavedWindowPlacement(this, bounds, show_state)) {
-    if (!widget_delegate_->ShouldRestoreWindowSize()) {
-      bounds->set_size(non_client_view_->GetPreferredSize());
-    } else {
-      gfx::Size minimum_size = GetMinimumSize();
-      // Make sure the bounds are at least the minimum size.
-      if (bounds->width() < minimum_size.width())
-        bounds->set_width(minimum_size.width());
+  if (!widget_delegate_->GetSavedWindowPlacement(this, bounds, show_state))
+    return false;
 
-      if (bounds->height() < minimum_size.height())
-        bounds->set_height(minimum_size.height());
-    }
-    return true;
-  }
-  return false;
+  gfx::Size minimum_size = GetMinimumSize();
+  // Make sure the bounds are at least the minimum size.
+  if (bounds->width() < minimum_size.width())
+    bounds->set_width(minimum_size.width());
+
+  if (bounds->height() < minimum_size.height())
+    bounds->set_height(minimum_size.height());
+  return true;
 }
 
 const View::Views& Widget::GetViewsWithLayers() {
@@ -1625,17 +1632,8 @@ void Widget::UnlockPaintAsActive() {
   const bool was_paint_as_active = ShouldPaintAsActive();
   DCHECK_GT(paint_as_active_refcount_, 0U);
   --paint_as_active_refcount_;
-  const bool paint_as_active = ShouldPaintAsActive();
-  if (paint_as_active != was_paint_as_active)
-    UpdatePaintAsActiveState(paint_as_active);
-}
-
-void Widget::UpdatePaintAsActiveState(bool paint_as_active) {
-  if (non_client_view_)
-    non_client_view_->frame_view()->PaintAsActiveChanged(paint_as_active);
-
-  for (WidgetObserver& observer : observers_)
-    observer.OnWidgetPaintAsActiveChanged(this, paint_as_active);
+  if (ShouldPaintAsActive() != was_paint_as_active)
+    paint_as_active_callbacks_.Notify();
 }
 
 void Widget::ClearFocusFromWidget() {

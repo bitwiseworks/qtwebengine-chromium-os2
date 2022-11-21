@@ -17,6 +17,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/sessions/core/live_tab_context.h"
 #include "components/sessions/core/serialized_navigation_entry.h"
+#include "components/sessions/core/serialized_user_agent_override.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/session_types.h"
 #include "components/sessions/core/sessions_export.h"
@@ -68,7 +69,9 @@ class SESSIONS_EXPORT TabRestoreService : public KeyedService {
     // The type of the entry.
     const Type type;
 
-    // The time when the window or tab was closed.
+    // The time when the window or tab was closed. Not always set - can be
+    // nullptr or 0 in cases where a timestamp isn't available at entry
+    // creation.
     base::Time timestamp;
 
     // Is this entry from the last session? This is set to true for entries that
@@ -119,7 +122,7 @@ class SESSIONS_EXPORT TabRestoreService : public KeyedService {
     std::unique_ptr<PlatformSpecificTabData> platform_data;
 
     // The user agent override used for the tab's navigations (if applicable).
-    std::string user_agent_override;
+    SerializedUserAgentOverride user_agent_override;
 
     // The group the tab belonged to, if any.
     base::Optional<tab_groups::TabGroupId> group;
@@ -149,6 +152,9 @@ class SESSIONS_EXPORT TabRestoreService : public KeyedService {
 
     // If an application window, the name of the app.
     std::string app_name;
+
+    // User-set title of the window, if there is one.
+    std::string user_title;
 
     // Where and how the window is displayed.
     gfx::Rect bounds;

@@ -128,8 +128,8 @@ HTMLPlugInElement::HTMLPlugInElement(
       should_prefer_plug_ins_for_images_(prefer_plug_ins_for_images_option ==
                                          kShouldPreferPlugInsForImages) {
   SetHasCustomStyleCallbacks();
-  if (doc.GetScheduler()) {
-    doc.GetScheduler()->RegisterStickyFeature(
+  if (auto* context = doc.GetExecutionContext()) {
+    context->GetScheduler()->RegisterStickyFeature(
         SchedulingPolicy::Feature::kContainsPlugins,
         {SchedulingPolicy::RecordMetricsForBackForwardCache()});
   }
@@ -140,7 +140,7 @@ HTMLPlugInElement::~HTMLPlugInElement() {
   DCHECK(!is_delaying_load_event_);
 }
 
-void HTMLPlugInElement::Trace(Visitor* visitor) {
+void HTMLPlugInElement::Trace(Visitor* visitor) const {
   visitor->Trace(image_loader_);
   visitor->Trace(persisted_plugin_);
   HTMLFrameOwnerElement::Trace(visitor);
@@ -272,8 +272,7 @@ bool HTMLPlugInElement::ShouldAccelerate() const {
   return plugin && plugin->CcLayer();
 }
 
-ParsedFeaturePolicy HTMLPlugInElement::ConstructContainerPolicy(
-    Vector<String>*) const {
+ParsedFeaturePolicy HTMLPlugInElement::ConstructContainerPolicy() const {
   // Plugin elements (<object> and <embed>) are not allowed to enable the
   // fullscreen feature. Add an empty allowlist for the fullscreen feature so
   // that the nested browsing context is unable to use the API, regardless of
@@ -281,8 +280,7 @@ ParsedFeaturePolicy HTMLPlugInElement::ConstructContainerPolicy(
   // https://fullscreen.spec.whatwg.org/#model
   ParsedFeaturePolicy container_policy;
   ParsedFeaturePolicyDeclaration allowlist(
-      mojom::blink::FeaturePolicyFeature::kFullscreen,
-      mojom::blink::PolicyValueType::kBool);
+      mojom::blink::FeaturePolicyFeature::kFullscreen);
   container_policy.push_back(allowlist);
   return container_policy;
 }
@@ -483,7 +481,7 @@ bool HTMLPlugInElement::IsKeyboardFocusable() const {
   if (HTMLFrameOwnerElement::IsKeyboardFocusable())
     return true;
   return GetDocument().IsActive() && PluginEmbeddedContentView() &&
-         PluginEmbeddedContentView()->SupportsKeyboardFocus();
+         PluginEmbeddedContentView()->SupportsKeyboardFocus() && IsFocusable();
 }
 
 bool HTMLPlugInElement::HasCustomFocusLogic() const {
@@ -566,7 +564,7 @@ LayoutEmbeddedObject* HTMLPlugInElement::GetLayoutEmbeddedObject() const {
 bool HTMLPlugInElement::AllowedToLoadFrameURL(const String& url) {
   KURL complete_url = GetDocument().CompleteURL(url);
   return !(ContentFrame() && complete_url.ProtocolIsJavaScript() &&
-           !GetDocument().GetSecurityOrigin()->CanAccess(
+           !GetExecutionContext()->GetSecurityOrigin()->CanAccess(
                ContentFrame()->GetSecurityContext()->GetSecurityOrigin()));
 }
 
@@ -712,9 +710,9 @@ bool HTMLPlugInElement::AllowedToLoadObject(const KURL& url,
     return false;
 
   AtomicString declared_mime_type = FastGetAttribute(html_names::kTypeAttr);
-  if (!GetDocument().GetContentSecurityPolicy()->AllowObjectFromSource(url) ||
-      !GetDocument().GetContentSecurityPolicy()->AllowPluginTypeForDocument(
-          GetDocument(), mime_type, declared_mime_type, url)) {
+  auto* csp = GetExecutionContext()->GetContentSecurityPolicy();
+  if (!csp->AllowObjectFromSource(url) ||
+      !csp->AllowPluginType(mime_type, declared_mime_type, url)) {
     if (auto* layout_object = GetLayoutEmbeddedObject()) {
       plugin_is_available_ = false;
       layout_object->SetPluginAvailability(
@@ -727,19 +725,23 @@ bool HTMLPlugInElement::AllowedToLoadObject(const KURL& url,
   return (!mime_type.IsEmpty() && url.IsEmpty()) ||
          !MixedContentChecker::ShouldBlockFetch(
              frame, mojom::RequestContextType::OBJECT, url,
-             ResourceRequest::RedirectStatus::kNoRedirect, url);
+             ResourceRequest::RedirectStatus::kNoRedirect, url,
+             /* devtools_id= */ base::nullopt, ReportingDisposition::kReport,
+             GetDocument().Loader()->GetContentSecurityNotifier());
 }
 
 bool HTMLPlugInElement::AllowedToLoadPlugin(const KURL& url,
                                             const String& mime_type) {
-  if (GetDocument().IsSandboxed(mojom::blink::WebSandboxFlags::kPlugins)) {
-    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-        mojom::ConsoleMessageSource::kSecurity,
-        mojom::ConsoleMessageLevel::kError,
-        "Failed to load '" + url.ElidedString() +
-            "' as a plugin, because the "
-            "frame into which the plugin "
-            "is loading is sandboxed."));
+  if (GetExecutionContext()->IsSandboxed(
+          network::mojom::blink::WebSandboxFlags::kPlugins)) {
+    GetExecutionContext()->AddConsoleMessage(
+        MakeGarbageCollected<ConsoleMessage>(
+            mojom::blink::ConsoleMessageSource::kSecurity,
+            mojom::blink::ConsoleMessageLevel::kError,
+            "Failed to load '" + url.ElidedString() +
+                "' as a plugin, because the "
+                "frame into which the plugin "
+                "is loading is sandboxed."));
     return false;
   }
   return true;

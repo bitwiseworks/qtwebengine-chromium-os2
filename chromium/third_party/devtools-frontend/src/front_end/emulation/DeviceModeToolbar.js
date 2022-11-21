@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as MobileThrottling from '../mobile_throttling/mobile_throttling.js';
 import * as UI from '../ui/ui.js';
 
 import {defaultMobileScaleFactor, DeviceModeModel, Type, UA} from './DeviceModeModel.js';
-import {EmulatedDevice, EmulatedDevicesList, Events, Horizontal, Mode, Vertical} from './EmulatedDevices.js';  // eslint-disable-line no-unused-vars
+import {EmulatedDevice, EmulatedDevicesList, Events, Horizontal, HorizontalSpanned, Mode, Vertical, VerticalSpanned} from './EmulatedDevices.js';  // eslint-disable-line no-unused-vars
 
 /**
  * @unrestricted
@@ -21,8 +24,14 @@ export class DeviceModeToolbar {
    */
   constructor(model, showMediaInspectorSetting, showRulersSetting) {
     this._model = model;
+    const device = model.device();
+    if (device) {
+      this._recordDeviceChange(device, null);
+    }
     this._showMediaInspectorSetting = showMediaInspectorSetting;
     this._showRulersSetting = showRulersSetting;
+
+    this._experimentDualScreenSupport = Root.Runtime.experiments.isEnabled('dualScreenSupport');
 
     this._deviceOutlineSetting = this._model.deviceOutlineSetting();
     this._showDeviceScaleFactorSetting =
@@ -38,7 +47,8 @@ export class DeviceModeToolbar {
     /** @type {!Map<!EmulatedDevice, !Mode>} */
     this._lastMode = new Map();
 
-    this._element = createElementWithClass('div', 'device-mode-toolbar');
+    this._element = document.createElement('div');
+    this._element.classList.add('device-mode-toolbar');
 
     const leftContainer = this._element.createChild('div', 'device-mode-toolbar-spacer');
     leftContainer.createChild('div', 'device-mode-toolbar-spacer');
@@ -83,14 +93,34 @@ export class DeviceModeToolbar {
   }
 
   /**
+   * @param {!EmulatedDevice} device
+   * @param {?EmulatedDevice} oldDevice
+   */
+  _recordDeviceChange(device, oldDevice) {
+    if (device !== oldDevice && device && device.isDualScreen) {
+      // When we start emulating a device, whether we start a new emulation session, or switch to
+      // a new device, if the device is dual screen, we count this once.
+      Host.userMetrics.dualScreenDeviceEmulated(Host.UserMetrics.DualScreenDeviceEmulated.DualScreenDeviceSelected);
+    }
+  }
+
+  /**
+   * @return {!Element}
+   */
+  _createEmptyToolbarElement() {
+    const element = document.createElement('div');
+    element.classList.add('device-mode-empty-toolbar-element');
+    return element;
+  }
+
+  /**
    * @param {!UI.Toolbar.Toolbar} toolbar
    */
   _fillLeftToolbar(toolbar) {
-    toolbar.appendToolbarItem(
-        this._wrapToolbarItem(createElementWithClass('div', 'device-mode-empty-toolbar-element')));
+    toolbar.appendToolbarItem(this._wrapToolbarItem(this._createEmptyToolbarElement()));
     this._deviceSelectItem = new UI.Toolbar.ToolbarMenuButton(this._appendDeviceMenuItems.bind(this));
     this._deviceSelectItem.setGlyph('');
-    this._deviceSelectItem.turnIntoSelect(95);
+    this._deviceSelectItem.turnIntoSelect();
     this._deviceSelectItem.setDarkText();
     toolbar.appendToolbarItem(this._deviceSelectItem);
   }
@@ -108,7 +138,8 @@ export class DeviceModeToolbar {
     this._widthItem = this._wrapToolbarItem(widthInput);
     toolbar.appendToolbarItem(this._widthItem);
 
-    const xElement = createElementWithClass('div', 'device-mode-x');
+    const xElement = document.createElement('div');
+    xElement.classList.add('device-mode-x');
     xElement.textContent = '×';
     this._xItem = this._wrapToolbarItem(xElement);
     toolbar.appendToolbarItem(this._xItem);
@@ -153,8 +184,7 @@ export class DeviceModeToolbar {
    * @param {!UI.Toolbar.Toolbar} toolbar
    */
   _fillRightToolbar(toolbar) {
-    toolbar.appendToolbarItem(
-        this._wrapToolbarItem(createElementWithClass('div', 'device-mode-empty-toolbar-element')));
+    toolbar.appendToolbarItem(this._wrapToolbarItem(this._createEmptyToolbarElement()));
     this._scaleItem = new UI.Toolbar.ToolbarMenuButton(this._appendScaleMenuItems.bind(this));
     this._scaleItem.setTitle(Common.UIString.UIString('Zoom'));
     this._scaleItem.setGlyph('');
@@ -162,8 +192,7 @@ export class DeviceModeToolbar {
     this._scaleItem.setDarkText();
     toolbar.appendToolbarItem(this._scaleItem);
 
-    toolbar.appendToolbarItem(
-        this._wrapToolbarItem(createElementWithClass('div', 'device-mode-empty-toolbar-element')));
+    toolbar.appendToolbarItem(this._wrapToolbarItem(this._createEmptyToolbarElement()));
     this._deviceScaleItem = new UI.Toolbar.ToolbarMenuButton(this._appendDeviceScaleMenuItems.bind(this));
     this._deviceScaleItem.setVisible(this._showDeviceScaleFactorSetting.get());
     this._deviceScaleItem.setTitle(Common.UIString.UIString('Device pixel ratio'));
@@ -172,8 +201,7 @@ export class DeviceModeToolbar {
     this._deviceScaleItem.setDarkText();
     toolbar.appendToolbarItem(this._deviceScaleItem);
 
-    toolbar.appendToolbarItem(
-        this._wrapToolbarItem(createElementWithClass('div', 'device-mode-empty-toolbar-element')));
+    toolbar.appendToolbarItem(this._wrapToolbarItem(this._createEmptyToolbarElement()));
     this._uaItem = new UI.Toolbar.ToolbarMenuButton(this._appendUserAgentMenuItems.bind(this));
     this._uaItem.setVisible(this._showUserAgentTypeSetting.get());
     this._uaItem.setTitle(Common.UIString.UIString('Device type'));
@@ -191,19 +219,47 @@ export class DeviceModeToolbar {
    * @param {!UI.Toolbar.Toolbar} toolbar
    */
   _fillModeToolbar(toolbar) {
-    toolbar.appendToolbarItem(
-        this._wrapToolbarItem(createElementWithClass('div', 'device-mode-empty-toolbar-element')));
+    toolbar.appendToolbarItem(this._wrapToolbarItem(this._createEmptyToolbarElement()));
     this._modeButton = new UI.Toolbar.ToolbarButton('', 'largeicon-rotate-screen');
     this._modeButton.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, this._modeMenuClicked, this);
     toolbar.appendToolbarItem(this._modeButton);
+
+    if (this._experimentDualScreenSupport) {
+      this._spanButton = new UI.Toolbar.ToolbarButton('', 'largeicon-dual-screen');
+      this._spanButton.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, this._spanClicked, this);
+      toolbar.appendToolbarItem(this._spanButton);
+
+      this._createExperimentalButton(toolbar);
+    }
+  }
+
+  /**
+   * @param {!UI.Toolbar.Toolbar} toolbar
+   */
+  _createExperimentalButton(toolbar) {
+    toolbar.appendToolbarItem(new UI.Toolbar.ToolbarSeparator(true));
+
+    const title = (this._model.webPlatformExperimentalFeaturesEnabled()) ?
+        Common.UIString.UIString('\"Experimental Web Platform Feature\" flag is enabled. Click to disable it.') :
+        Common.UIString.UIString('\"Experimental Web Platform Feature\" flag is disabled. Click to enable it.');
+    this._experimentalButton = new UI.Toolbar.ToolbarToggle(title, 'largeicon-experimental-api');
+    this._experimentalButton.setToggled(this._model.webPlatformExperimentalFeaturesEnabled());
+    this._experimentalButton.setEnabled(true);
+    this._experimentalButton.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, this._experimentalClicked, this);
+
+    toolbar.appendToolbarItem(this._experimentalButton);
+  }
+
+  _experimentalClicked() {
+    Host.InspectorFrontendHost.InspectorFrontendHostInstance.openInNewTab(
+        'chrome://flags/#enable-experimental-web-platform-features');
   }
 
   /**
    * @param {!UI.Toolbar.Toolbar} toolbar
    */
   _fillOptionsToolbar(toolbar) {
-    toolbar.appendToolbarItem(
-        this._wrapToolbarItem(createElementWithClass('div', 'device-mode-empty-toolbar-element')));
+    toolbar.appendToolbarItem(this._wrapToolbarItem(this._createEmptyToolbarElement()));
     const moreOptionsButton = new UI.Toolbar.ToolbarMenuButton(this._appendOptionsMenuItems.bind(this));
     moreOptionsButton.setTitle(Common.UIString.UIString('More options'));
     toolbar.appendToolbarItem(moreOptionsButton);
@@ -363,6 +419,7 @@ export class DeviceModeToolbar {
    */
   _emulateDevice(device) {
     const scale = this._autoAdjustScaleSetting.get() ? undefined : this._model.scaleSetting().get();
+    this._recordDeviceChange(device, this._model.device());
     this._model.emulate(Type.Device, device, this._lastMode.get(device) || device.modes[0], scale);
   }
 
@@ -462,6 +519,26 @@ export class DeviceModeToolbar {
   /**
    * @param {!Common.EventTarget.EventTargetEvent} event
    */
+  _spanClicked(event) {
+    const device = this._model.device();
+
+    if (!device.isDualScreen) {
+      return;
+    }
+
+    Host.userMetrics.dualScreenDeviceEmulated(Host.UserMetrics.DualScreenDeviceEmulated.SpanButtonClicked);
+    const scale = this._autoAdjustScaleSetting.get() ? undefined : this._model.scaleSetting().get();
+    const newMode = device.getSpanPartner(this._model.mode());
+    if (!newMode) {
+      return;
+    }
+    this._model.emulate(this._model.type(), device, newMode, scale);
+    return;
+  }
+
+  /**
+   * @param {!Common.EventTarget.EventTargetEvent} event
+   */
   _modeMenuClicked(event) {
     const device = this._model.device();
     const model = this._model;
@@ -478,10 +555,10 @@ export class DeviceModeToolbar {
       return;
     }
 
-    if (device.modes.length === 2 && device.modes[0].orientation !== device.modes[1].orientation) {
+    if ((device.isDualScreen || device.modes.length === 2) &&
+        device.modes[0].orientation !== device.modes[1].orientation) {
       const scale = autoAdjustScaleSetting.get() ? undefined : model.scaleSetting().get();
-      model.emulate(
-          model.type(), model.device(), model.mode() === device.modes[0] ? device.modes[1] : device.modes[0], scale);
+      model.emulate(model.type(), model.device(), device.getRotationPartner(model.mode()), scale);
       return;
     }
 
@@ -541,6 +618,7 @@ export class DeviceModeToolbar {
       this._heightInput.disabled = this._model.type() !== Type.Responsive;
       this._deviceScaleItem.setEnabled(this._model.type() === Type.Responsive);
       this._uaItem.setEnabled(this._model.type() === Type.Responsive);
+
       if (this._model.type() === Type.Responsive) {
         this._modeButton.setEnabled(true);
         this._modeButton.setTitle(ls`Rotate`);
@@ -587,9 +665,22 @@ export class DeviceModeToolbar {
         const modeCount = device ? device.modes.length : 0;
         this._modeButton.setEnabled(modeCount >= 2);
         this._modeButton.setTitle(
-            modeCount === 2 ? Common.UIString.UIString('Rotate') : Common.UIString.UIString('Screen options'));
+            modeCount === 2 ? Common.UIString.UIString('Rotate') :
+                              Common.UIString.UIString('Screen orientation options'));
       }
       this._cachedModelDevice = device;
+    }
+
+    if (this._experimentDualScreenSupport) {
+      const device = this._model.device();
+      if (device && device.isDualScreen) {
+        this._spanButton.setEnabled(true);
+        this._experimentalButton.setVisible(true);
+      } else {
+        this._spanButton.setEnabled(false);
+        this._experimentalButton.setVisible(false);
+      }
+      this._spanButton.setTitle(Common.UIString.UIString('Toggle dual-screen mode'));
     }
 
     if (this._model.type() === Type.Device) {

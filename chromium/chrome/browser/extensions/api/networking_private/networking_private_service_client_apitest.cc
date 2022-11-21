@@ -15,6 +15,7 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "components/wifi/fake_wifi_service.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/networking_private/networking_private_delegate_factory.h"
 #include "extensions/browser/api/networking_private/networking_private_event_router.h"
@@ -51,18 +52,18 @@ class TestNetworkingCastPrivateDelegate
   ~TestNetworkingCastPrivateDelegate() override = default;
 
   void VerifyDestination(std::unique_ptr<Credentials> credentials,
-                         const VerifiedCallback& success_callback,
-                         const FailureCallback& failure_callback) override {
+                         VerifiedCallback success_callback,
+                         FailureCallback failure_callback) override {
     AssertCredentials(*credentials);
-    success_callback.Run(true);
+    std::move(success_callback).Run(true);
   }
 
   void VerifyAndEncryptData(const std::string& data,
                             std::unique_ptr<Credentials> credentials,
-                            const DataCallback& success_callback,
-                            const FailureCallback& failure_callback) override {
+                            DataCallback success_callback,
+                            FailureCallback failure_callback) override {
     AssertCredentials(*credentials);
-    success_callback.Run("encrypted_data");
+    std::move(success_callback).Run("encrypted_data");
   }
 
  private:
@@ -94,9 +95,9 @@ class NetworkingPrivateServiceClientApiTest
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     extensions::ExtensionApiTest::SetUpCommandLine(command_line);
-    // Whitelist the extension ID of the test extension.
+    // Allowlist the extension ID of the test extension.
     command_line->AppendSwitchASCII(
-        extensions::switches::kWhitelistedExtensionID,
+        extensions::switches::kAllowlistedExtensionID,
         "epcifkihnkjgphfkloaaleeakhpmgdmn");
   }
 
@@ -110,9 +111,9 @@ class NetworkingPrivateServiceClientApiTest
 
   void SetUp() override {
     networking_cast_delegate_factory_ =
-        base::Bind(&NetworkingPrivateServiceClientApiTest::
-                       CreateNetworkingCastPrivateDelegate,
-                   base::Unretained(this));
+        base::BindRepeating(&NetworkingPrivateServiceClientApiTest::
+                                CreateNetworkingCastPrivateDelegate,
+                            base::Unretained(this));
     ChromeNetworkingCastPrivateDelegate::SetFactoryCallbackForTest(
         &networking_cast_delegate_factory_);
     extensions::ExtensionApiTest::SetUp();

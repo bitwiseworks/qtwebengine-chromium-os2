@@ -12,6 +12,7 @@
 #include "base/command_line.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -29,7 +30,6 @@
 #include "chrome/grit/extensions_resources.h"
 #include "chrome/grit/extensions_resources_map.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/google/core/common/google_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
@@ -40,6 +40,8 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_urls.h"
+#include "extensions/grit/extensions_browser_resources.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -111,8 +113,7 @@ content::WebUIDataSource* CreateMdExtensionsSource(Profile* profile,
     {"toolbarTitle", IDS_EXTENSIONS_TOOLBAR_TITLE},
     {"mainMenu", IDS_EXTENSIONS_MENU_BUTTON_LABEL},
     {"search", IDS_EXTENSIONS_SEARCH},
-    // TODO(dpapad): Use a single merged string resource for "Clear search".
-    {"clearSearch", IDS_DOWNLOAD_CLEAR_SEARCH},
+    {"clearSearch", IDS_CLEAR_SEARCH},
     {"sidebarExtensions", IDS_EXTENSIONS_SIDEBAR_EXTENSIONS},
     {"appsTitle", IDS_EXTENSIONS_APPS_TITLE},
     {"noExtensionsOrApps", IDS_EXTENSIONS_NO_INSTALLED_ITEMS},
@@ -171,6 +172,7 @@ content::WebUIDataSource* CreateMdExtensionsSource(Profile* profile,
      IDS_EXTENSIONS_ACTIVITY_LOG_STREAM_TAB_HEADING},
     {"startActivityStream", IDS_EXTENSIONS_START_ACTIVITY_STREAM},
     {"stopActivityStream", IDS_EXTENSIONS_STOP_ACTIVITY_STREAM},
+    {"parentDisabledPermissions", IDS_EXTENSIONS_PERMISSIONS_OFF},
     {"emptyStreamStarted", IDS_EXTENSIONS_EMPTY_STREAM_STARTED},
     {"emptyStreamStopped", IDS_EXTENSIONS_EMPTY_STREAM_STOPPED},
     {"activityArgumentsHeading", IDS_EXTENSIONS_ACTIVITY_ARGUMENTS_HEADING},
@@ -262,6 +264,7 @@ content::WebUIDataSource* CreateMdExtensionsSource(Profile* profile,
     {"viewIncognito", IDS_EXTENSIONS_VIEW_INCOGNITO},
     {"viewInactive", IDS_EXTENSIONS_VIEW_INACTIVE},
     {"viewIframe", IDS_EXTENSIONS_VIEW_IFRAME},
+    {"viewServiceWorker", IDS_EXTENSIONS_SERVICE_WORKER_BACKGROUND},
 
 #if defined(OS_CHROMEOS)
     {"manageKioskApp", IDS_EXTENSIONS_MANAGE_KIOSK_APP},
@@ -381,7 +384,8 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
 
   // Need to allow <object> elements so that the <extensionoptions> browser
   // plugin can be loaded within chrome://extensions.
-  source->OverrideContentSecurityPolicyObjectSrc("object-src 'self';");
+  source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::ObjectSrc, "object-src 'self';");
 
   content::WebUIDataSource::Add(profile, source);
 
@@ -390,8 +394,8 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
   // GetVisibleURL() because the load hasn't committed and this check isn't used
   // for a security decision, however a stronger check will be implemented if we
   // decide to invest more in this experiment.
-  if (web_ui->GetWebContents()->GetVisibleURL().query_piece().starts_with(
-          "checkup")) {
+  if (base::StartsWith(web_ui->GetWebContents()->GetVisibleURL().query_piece(),
+                       "checkup")) {
     ExtensionPrefs::Get(profile)->SetUserHasSeenExtensionsCheckupOnStartup(
         true);
   }

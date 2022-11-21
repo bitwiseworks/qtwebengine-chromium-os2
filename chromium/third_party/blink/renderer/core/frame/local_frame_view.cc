@@ -30,6 +30,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
@@ -38,17 +39,18 @@
 #include "cc/layers/picture_layer.h"
 #include "cc/tiles/frame_viewer_instrumentation.h"
 #include "cc/trees/layer_tree_host.h"
+#include "components/paint_preview/common/paint_preview_tracker.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_rect.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_into_view_options.h"
-#include "third_party/blink/renderer/core/accessibility/apply_dark_mode.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/animation/document_animations.h"
 #include "third_party/blink/renderer/core/css/font_face_set_document.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
 #include "third_party/blink/renderer/core/editing/compute_layer_selection.h"
 #include "third_party/blink/renderer/core/editing/drag_caret.h"
@@ -60,6 +62,7 @@
 #include "third_party/blink/renderer/core/frame/find_in_page.h"
 #include "third_party/blink/renderer/core/frame/frame_overlay.h"
 #include "third_party/blink/renderer/core/frame/frame_view_auto_size_info.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame_ukm_aggregator.h"
@@ -75,6 +78,7 @@
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_element.h"
 #include "third_party/blink/renderer/core/html/html_plugin_element.h"
+#include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder.h"
 #include "third_party/blink/renderer/core/html/portal/document_portals.h"
 #include "third_party/blink/renderer/core/html/portal/html_portal_element.h"
@@ -116,10 +120,10 @@
 #include "third_party/blink/renderer/core/paint/block_paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/compositing/composited_layer_mapping.h"
 #include "third_party/blink/renderer/core/paint/compositing/compositing_inputs_updater.h"
-#include "third_party/blink/renderer/core/paint/compositing/graphics_layer_tree_as_text.h"
 #include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
 #include "third_party/blink/renderer/core/paint/frame_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/paint/paint_timing.h"
 #include "third_party/blink/renderer/core/paint/paint_timing_detector.h"
@@ -141,6 +145,7 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
 #include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
+#include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/foreign_layer_display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/graphics_layer_display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
@@ -155,7 +160,7 @@
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/cursor/cursor.h"
-#include "ui/base/mojom/cursor_type.mojom-blink.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-blink.h"
 
 // Used to check for dirty layouts violating document lifecycle rules.
 // If arg evaluates to true, the program will continue. If arg evaluates to
@@ -193,22 +198,12 @@ void LogCursorSizeCounter(LocalFrame* frame, const ui::Cursor& cursor) {
   }
 }
 
-// Default value and parameter name for how long we want to delay the
-// compositor commit beyond the start of document lifdecycle updates to avoid
+// Default value for how long we want to delay the
+// compositor commit beyond the start of document lifecycle updates to avoid
 // flash between navigations. The delay should be small enough so that it won't
 // confuse users expecting a new page to appear after navigation and the omnibar
 // has updated the url display.
-constexpr int kPaintHoldingCommitDelayDefaultInMs = 500;  // 30 frames @ 60hz
-constexpr char kPaintHoldingCommitDelayParameterName[] = "commit_delay";
-
-// Get the field trial parameter value for Paint Holding.
-base::TimeDelta GetCommitDelayForPaintHolding() {
-  DCHECK(base::FeatureList::IsEnabled(blink::features::kPaintHolding));
-  return base::TimeDelta::FromMilliseconds(
-      base::GetFieldTrialParamByFeatureAsInt(
-          blink::features::kPaintHolding, kPaintHoldingCommitDelayParameterName,
-          kPaintHoldingCommitDelayDefaultInMs));
-}
+constexpr int kCommitDelayDefaultInMs = 500;  // 30 frames @ 60hz
 
 }  // namespace
 
@@ -230,7 +225,6 @@ LocalFrameView::LocalFrameView(LocalFrame& frame, const IntSize& initial_size)
 LocalFrameView::LocalFrameView(LocalFrame& frame, IntRect frame_rect)
     : FrameView(frame_rect),
       frame_(frame),
-      display_mode_(blink::mojom::DisplayMode::kBrowser),
       can_have_scrollbars_(true),
       has_pending_layout_(false),
       layout_scheduling_enabled_(true),
@@ -271,7 +265,7 @@ LocalFrameView::LocalFrameView(LocalFrame& frame, IntRect frame_rect)
       forced_layout_start_time_(base::TimeTicks()),
       paint_frame_count_(0),
       unique_id_(NewUniqueObjectId()),
-      layout_shift_tracker_(std::make_unique<LayoutShiftTracker>(this)),
+      layout_shift_tracker_(MakeGarbageCollected<LayoutShiftTracker>(this)),
       paint_timing_detector_(MakeGarbageCollected<PaintTimingDetector>(this))
 #if DCHECK_IS_ON()
       ,
@@ -290,7 +284,7 @@ LocalFrameView::~LocalFrameView() {
 #endif
 }
 
-void LocalFrameView::Trace(Visitor* visitor) {
+void LocalFrameView::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(fragment_anchor_);
   visitor->Trace(scrollable_areas_);
@@ -301,8 +295,10 @@ void LocalFrameView::Trace(Visitor* visitor) {
   visitor->Trace(viewport_scrollable_area_);
   visitor->Trace(anchoring_adjustment_queue_);
   visitor->Trace(scroll_event_queue_);
+  visitor->Trace(layout_shift_tracker_);
   visitor->Trace(paint_timing_detector_);
   visitor->Trace(lifecycle_observers_);
+  visitor->Trace(fullscreen_video_elements_);
 }
 
 template <typename Function>
@@ -362,10 +358,8 @@ void LocalFrameView::ForAllNonThrottledLocalFrameViews(
 // updated, consider updating |ForAllNonThrottledLocalFrameViews| too.
 template <typename Function>
 void LocalFrameView::ForAllThrottledLocalFrameViews(const Function& function) {
-  if (!ShouldThrottleRendering())
-    return;
-
-  function(*this);
+  if (ShouldThrottleRendering())
+    function(*this);
 
   for (Frame* child = frame_->Tree().FirstChild(); child;
        child = child->Tree().NextSibling()) {
@@ -373,8 +367,14 @@ void LocalFrameView::ForAllThrottledLocalFrameViews(const Function& function) {
     if (!child_local_frame)
       continue;
     if (LocalFrameView* child_view = child_local_frame->View())
-      child_view->ForAllNonThrottledLocalFrameViews(function);
+      child_view->ForAllThrottledLocalFrameViews(function);
   }
+}
+
+void LocalFrameView::ForAllThrottledLocalFrameViewsForTesting(
+    base::RepeatingCallback<void(LocalFrameView&)> callback) {
+  ForAllThrottledLocalFrameViews(
+      [&callback](LocalFrameView& view) { callback.Run(view); });
 }
 
 template <typename Function>
@@ -458,8 +458,8 @@ bool LocalFrameView::LifecycleUpdatesActive() const {
   return !lifecycle_updates_throttled_;
 }
 
-void LocalFrameView::SetLifecycleUpdatesThrottledForTesting() {
-  lifecycle_updates_throttled_ = true;
+void LocalFrameView::SetLifecycleUpdatesThrottledForTesting(bool throttled) {
+  lifecycle_updates_throttled_ = throttled;
 }
 
 void LocalFrameView::InvalidateRect(const IntRect& rect) {
@@ -639,11 +639,37 @@ void LocalFrameView::PerformPreLayoutTasks() {
 
   Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
 
-  if (was_resized)
+  if (was_resized) {
     document->ClearResizedForViewportUnits();
+
+    // Mark all of writing-mode roots for layout, as the ICB size has changed.
+    MarkOrthogonalWritingModeRootsForLayout();
+  }
 }
 
-void LocalFrameView::LayoutFromRootObject(LayoutObject& root) {
+bool LocalFrameView::LayoutFromRootObject(LayoutObject& root) {
+  if (!root.NeedsLayout())
+    return false;
+
+  if (auto* locked_ancestor =
+          DisplayLockUtilities::LockedAncestorPreventingLayout(root)) {
+    // Note that since we're preventing the layout on a layout root, we have to
+    // mark its ancestor chain for layout. The reason for this is that we will
+    // clear the layout roots whether or not we have finished laying them out,
+    // so the fact that this root still needs layout will be lost if we don't
+    // mark its container chain.
+    //
+    // Also, since we know that this root has a layout-blocking ancestor, the
+    // layout bit propagation will stop there.
+    //
+    // TODO(vmpstr): Note that an alternative to this approach is to keep `root`
+    // as a layout root in `layout_subtree_root_list_`. It would mean that we
+    // will keep it in the list while the display-lock prevents layout. We need
+    // to investigate which of these approaches is better.
+    root.MarkContainerChainForLayout();
+    return false;
+  }
+
   LayoutState layout_state(root);
   if (scrollable_areas_) {
     for (auto& scrollable_area : *scrollable_areas_) {
@@ -653,7 +679,8 @@ void LocalFrameView::LayoutFromRootObject(LayoutObject& root) {
     }
   }
 
-  root.UpdateLayout();
+  ToLayoutBox(root).LayoutSubtreeRoot();
+  return true;
 }
 
 void LocalFrameView::PrepareLayoutAnalyzer() {
@@ -730,9 +757,8 @@ void LocalFrameView::PerformLayout(bool in_subtree_layout) {
                              layout_subtree_root_list_.size());
       }
       for (auto& root : layout_subtree_root_list_.Ordered()) {
-        if (!root->NeedsLayout())
+        if (!LayoutFromRootObject(*root))
           continue;
-        LayoutFromRootObject(*root);
 
         root->PaintingLayer()->UpdateLayerPositionsAfterLayout();
 
@@ -853,9 +879,8 @@ void LocalFrameView::UpdateLayout() {
         mojom::blink::ScrollbarMode v_mode;
         GetLayoutView()->CalculateScrollbarModes(h_mode, v_mode);
         if (v_mode == mojom::blink::ScrollbarMode::kAuto) {
-          GetLayoutView()
-              ->GetScrollableArea()
-              ->ForceVerticalScrollbarForFirstLayout();
+          if (auto* scrollable_area = GetLayoutView()->GetScrollableArea())
+            scrollable_area->ForceVerticalScrollbarForFirstLayout();
         }
       }
 
@@ -922,8 +947,6 @@ void LocalFrameView::UpdateLayout() {
       TRACE_DISABLED_BY_DEFAULT("blink.debug.layout.trees"), "LayoutTree", this,
       TracedLayoutObject::Create(*GetLayoutView(), true));
 
-  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
-    GetLayoutView()->Compositor()->DidLayout();
   layout_count_for_testing_++;
 
   if (AXObjectCache* cache = document->ExistingAXObjectCache()) {
@@ -996,6 +1019,20 @@ void LocalFrameView::DidFinishForcedLayout(DocumentUpdateReason reason) {
   }
 }
 
+void LocalFrameView::MarkFirstEligibleToPaint() {
+  if (frame_ && frame_->GetDocument()) {
+    PaintTiming& timing = PaintTiming::From(*frame_->GetDocument());
+    timing.MarkFirstEligibleToPaint();
+  }
+}
+
+void LocalFrameView::MarkIneligibleToPaint() {
+  if (frame_ && frame_->GetDocument()) {
+    PaintTiming& timing = PaintTiming::From(*frame_->GetDocument());
+    timing.MarkIneligibleToPaint();
+  }
+}
+
 void LocalFrameView::SetNeedsPaintPropertyUpdate() {
   if (auto* layout_view = GetLayoutView())
     layout_view->SetNeedsPaintPropertyUpdate();
@@ -1039,14 +1076,9 @@ FloatSize LocalFrameView::ViewportSizeForViewportUnits() const {
 }
 
 FloatSize LocalFrameView::ViewportSizeForMediaQueries() const {
-  FloatSize viewport_size(layout_size_);
-  if (!frame_->GetDocument()->Printing()) {
-    float zoom = GetFrame().PageZoomFactor();
-    viewport_size.SetWidth(
-        AdjustForAbsoluteZoom::AdjustInt(layout_size_.Width(), zoom));
-    viewport_size.SetHeight(
-        AdjustForAbsoluteZoom::AdjustInt(layout_size_.Height(), zoom));
-  }
+  FloatSize viewport_size(GetLayoutSize());
+  if (!frame_->GetDocument() || !frame_->GetDocument()->Printing())
+    viewport_size.Scale(1 / GetFrame().PageZoomFactor());
   return viewport_size;
 }
 
@@ -1064,19 +1096,21 @@ void LocalFrameView::RunIntersectionObserverSteps() {
 #if DCHECK_IS_ON()
   bool was_dirty = NeedsLayout();
 #endif
-  if (ShouldThrottleRendering() || Lifecycle().LifecyclePostponed() ||
-      !frame_->GetDocument()->IsActive()) {
+  if ((intersection_observation_state_ < kRequired &&
+       ShouldThrottleRendering()) ||
+      Lifecycle().LifecyclePostponed() || !frame_->GetDocument()->IsActive()) {
     return;
   }
 
   if (frame_->IsMainFrame()) {
     EnsureOverlayInterstitialAdDetector().MaybeFireDetection(frame_.Get());
+    EnsureStickyAdDetector().MaybeFireDetection(frame_.Get());
 
     // Report the main frame's document intersection with itself.
     LayoutObject* layout_object = GetLayoutView();
     IntRect main_frame_dimensions =
         ToLayoutBox(layout_object)->PixelSnappedLayoutOverflowRect();
-    GetFrame().Client()->OnMainFrameDocumentIntersectionChanged(WebRect(
+    GetFrame().Client()->OnMainFrameIntersectionChanged(WebRect(
         0, 0, main_frame_dimensions.Width(), main_frame_dimensions.Height()));
   }
 
@@ -1085,11 +1119,7 @@ void LocalFrameView::RunIntersectionObserverSteps() {
   SCOPED_UMA_AND_UKM_TIMER(EnsureUkmAggregator(),
                            LocalFrameUkmAggregator::kIntersectionObservation);
 
-  unsigned flags = 0;
-  if (frame_->CanSkipStickyFrameTracking())
-    flags |= IntersectionObservation::kCanSkipStickyFrameTracking;
-
-  bool needs_occlusion_tracking = UpdateViewportIntersectionsForSubtree(flags);
+  bool needs_occlusion_tracking = UpdateViewportIntersectionsForSubtree(0);
   if (FrameOwner* owner = frame_->Owner())
     owner->SetNeedsOcclusionTracking(needs_occlusion_tracking);
 #if DCHECK_IS_ON()
@@ -1181,30 +1211,6 @@ void LocalFrameView::AddPartToUpdate(LayoutEmbeddedObject& object) {
   part_update_set_.insert(&object);
 }
 
-void LocalFrameView::SetDisplayMode(blink::mojom::DisplayMode mode) {
-  if (mode == display_mode_)
-    return;
-
-  display_mode_ = mode;
-
-  if (frame_->GetDocument()) {
-    frame_->GetDocument()->MediaQueryAffectingValueChanged(
-        MediaValueChange::kOther);
-  }
-}
-
-void LocalFrameView::SetDisplayShape(DisplayShape display_shape) {
-  if (display_shape == display_shape_)
-    return;
-
-  display_shape_ = display_shape;
-
-  if (frame_->GetDocument()) {
-    frame_->GetDocument()->MediaQueryAffectingValueChanged(
-        MediaValueChange::kOther);
-  }
-}
-
 void LocalFrameView::SetMediaType(const AtomicString& media_type) {
   DCHECK(frame_->GetDocument());
   media_type_ = media_type;
@@ -1230,11 +1236,6 @@ void LocalFrameView::AdjustMediaTypeForPrinting(bool printing) {
       SetMediaType(media_type_when_not_printing_);
     media_type_when_not_printing_ = g_null_atom;
   }
-
-  frame_->GetDocument()->GetStyleEngine().MarkViewportStyleDirty();
-  frame_->GetDocument()->GetStyleEngine().MarkAllElementsForStyleRecalc(
-      StyleChangeReasonForTracing::Create(
-          style_change_reason::kStyleSheetChange));
 }
 
 void LocalFrameView::AddBackgroundAttachmentFixedObject(LayoutObject* object) {
@@ -1279,16 +1280,35 @@ bool LocalFrameView::RequiresMainThreadScrollingForBackgroundAttachmentFixed()
   return true;
 }
 
-void LocalFrameView::AddViewportConstrainedObject(LayoutObject& object) {
+void LocalFrameView::AddViewportConstrainedObject(
+    LayoutObject& object,
+    ViewportConstrainedType constrained_reason) {
   if (!viewport_constrained_objects_)
     viewport_constrained_objects_ = std::make_unique<ObjectSet>();
 
-  viewport_constrained_objects_->insert(&object);
+  auto result = viewport_constrained_objects_->insert(&object);
+  if (constrained_reason == ViewportConstrainedType::kSticky) {
+    if (result.is_new_entry) {
+      sticky_position_object_count_++;
+    }
+    DCHECK_LE(sticky_position_object_count_,
+              viewport_constrained_objects_->size());
+  }
 }
 
-void LocalFrameView::RemoveViewportConstrainedObject(LayoutObject& object) {
-  if (viewport_constrained_objects_)
-    viewport_constrained_objects_->erase(&object);
+void LocalFrameView::RemoveViewportConstrainedObject(
+    LayoutObject& object,
+    ViewportConstrainedType constrained_reason) {
+  if (viewport_constrained_objects_) {
+    auto it = viewport_constrained_objects_->find(&object);
+    if (it != viewport_constrained_objects_->end()) {
+      viewport_constrained_objects_->erase(it);
+      if (constrained_reason == ViewportConstrainedType::kSticky) {
+        DCHECK_GT(sticky_position_object_count_, 0U);
+        sticky_position_object_count_--;
+      }
+    }
+  }
 }
 
 void LocalFrameView::ViewportSizeChanged(bool width_changed,
@@ -1309,7 +1329,8 @@ void LocalFrameView::ViewportSizeChanged(bool width_changed,
     // clamp the scroll offset here.
     if (GetFrame().IsMainFrame()) {
       layout_view->Layer()->UpdateSize();
-      layout_view->GetScrollableArea()->ClampScrollOffsetAfterOverflowChange();
+      if (auto* scrollable_area = layout_view->GetScrollableArea())
+        scrollable_area->ClampScrollOffsetAfterOverflowChange();
     }
 
     // TODO(pdr): |UsesCompositing()| will be false with CompositeAfterPaint but
@@ -1401,8 +1422,11 @@ bool LocalFrameView::InvalidateViewportConstrainedObjects() {
     DCHECK(layout_object->HasLayer());
     PaintLayer* layer = ToLayoutBoxModelObject(layout_object)->Layer();
 
-    if (layer->IsPaintInvalidationContainer())
-      continue;
+    if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+      DisableCompositingQueryAsserts disabler;
+      if (layer->IsPaintInvalidationContainer())
+        continue;
+    }
 
     // If the layer has no visible content, then we shouldn't invalidate; but
     // if we're not compositing-inputs-clean, then we can't query
@@ -1410,6 +1434,7 @@ bool LocalFrameView::InvalidateViewportConstrainedObjects() {
     layout_object->SetSubtreeShouldCheckForPaintInvalidation();
     if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
         !layer->SelfOrDescendantNeedsRepaint()) {
+      DisableCompositingQueryAsserts disabler;
       // Paint properties of the layer relative to its containing graphics
       // layer may change if the paint properties escape the graphics layer's
       // property state. Need to check raster invalidation for relative paint
@@ -1438,8 +1463,8 @@ void LocalFrameView::ProcessUrlFragment(const KURL& url,
                                         bool should_scroll) {
   // We want to create the anchor even if we don't need to scroll. This ensures
   // all the side effects like setting CSS :target are correctly set.
-  FragmentAnchor* anchor = FragmentAnchor::TryCreate(
-      url, *frame_, same_document_navigation, should_scroll);
+  FragmentAnchor* anchor =
+      FragmentAnchor::TryCreate(url, *frame_, should_scroll);
 
   if (anchor) {
     fragment_anchor_ = anchor;
@@ -1623,6 +1648,17 @@ void LocalFrameView::ScheduleOrthogonalWritingModeRootsForLayout() {
   }
 }
 
+void LocalFrameView::MarkOrthogonalWritingModeRootsForLayout() {
+  for (auto& root : orthogonal_writing_mode_root_list_.Ordered()) {
+    // OOF-positioned objects don't depend on the ICB size.
+    if (root->NeedsLayout() || root->IsOutOfFlowPositioned())
+      continue;
+
+    root->SetNeedsLayoutAndIntrinsicWidthsRecalc(
+        layout_invalidation_reason::kSizeChanged);
+  }
+}
+
 bool LocalFrameView::CheckLayoutInvalidationIsAllowed() const {
 #if DCHECK_IS_ON()
   if (allows_layout_invalidation_after_layout_clean_)
@@ -1635,6 +1671,52 @@ bool LocalFrameView::CheckLayoutInvalidationIsAllowed() const {
 
 #endif
   return true;
+}
+
+bool LocalFrameView::RunPostLayoutIntersectionObserverSteps() {
+  DCHECK(frame_->IsLocalRoot());
+  DCHECK(Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean);
+
+  ComputePostLayoutIntersections(0);
+
+  bool needs_more_lifecycle_steps = false;
+  ForAllNonThrottledLocalFrameViews(
+      [&needs_more_lifecycle_steps](LocalFrameView& frame_view) {
+        if (auto* controller = frame_view.GetFrame()
+                                   .GetDocument()
+                                   ->GetIntersectionObserverController()) {
+          controller->DeliverNotifications(
+              IntersectionObserver::kDeliverDuringPostLayoutSteps);
+        }
+        // If the lifecycle state changed as a result of the notifications, we
+        // should run the lifecycle again.
+        needs_more_lifecycle_steps |= frame_view.Lifecycle().GetState() <
+                                      DocumentLifecycle::kPrePaintClean;
+      });
+
+  return needs_more_lifecycle_steps;
+}
+
+void LocalFrameView::ComputePostLayoutIntersections(unsigned parent_flags) {
+  if (ShouldThrottleRendering())
+    return;
+
+  unsigned flags = GetIntersectionObservationFlags(parent_flags) |
+                   IntersectionObservation::kPostLayoutDeliveryOnly;
+
+  if (auto* controller =
+          GetFrame().GetDocument()->GetIntersectionObserverController()) {
+    controller->ComputeIntersections(flags);
+  }
+
+  for (Frame* child = frame_->Tree().FirstChild(); child;
+       child = child->Tree().NextSibling()) {
+    auto* child_local_frame = DynamicTo<LocalFrame>(child);
+    if (!child_local_frame)
+      continue;
+    if (LocalFrameView* child_view = child_local_frame->View())
+      child_view->ComputePostLayoutIntersections(flags);
+  }
 }
 
 void LocalFrameView::ScheduleRelayout() {
@@ -1666,6 +1748,7 @@ void LocalFrameView::ScheduleRelayout() {
 
 void LocalFrameView::ScheduleRelayoutOfSubtree(LayoutObject* relayout_root) {
   DCHECK(frame_->View() == this);
+  DCHECK(relayout_root->IsBox());
 
   // TODO(crbug.com/590856): It's still broken when we choose not to crash when
   // the check fails.
@@ -1694,7 +1777,8 @@ void LocalFrameView::ScheduleRelayoutOfSubtree(LayoutObject* relayout_root) {
     if (!ShouldThrottleRendering())
       GetPage()->Animator().ScheduleVisualUpdate(frame_.Get());
 
-    Lifecycle().EnsureStateAtMost(DocumentLifecycle::kStyleClean);
+    if (GetPage()->Animator().IsServicingAnimations())
+      Lifecycle().EnsureStateAtMost(DocumentLifecycle::kStyleClean);
   }
   TRACE_EVENT_INSTANT1(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"),
                        "InvalidateLayout", TRACE_EVENT_SCOPE_THREAD, "data",
@@ -1738,14 +1822,17 @@ void LocalFrameView::SetNeedsLayout() {
   layout_view->SetNeedsLayout(layout_invalidation_reason::kUnknown);
 }
 
-bool LocalFrameView::HasOpaqueBackground() const {
-  return !base_background_color_.HasAlpha();
+bool LocalFrameView::ShouldUseColorAdjustBackground() const {
+  return use_color_adjust_background_ == UseColorAdjustBackground::kYes ||
+         (use_color_adjust_background_ ==
+              UseColorAdjustBackground::kIfBaseNotTransparent &&
+          base_background_color_ != Color::kTransparent);
 }
 
 Color LocalFrameView::BaseBackgroundColor() const {
-  if (use_dark_scheme_background_ &&
-      base_background_color_ != Color::kTransparent) {
-    return Color::kBlack;
+  if (ShouldUseColorAdjustBackground()) {
+    DCHECK(frame_->GetDocument());
+    return frame_->GetDocument()->GetStyleEngine().ColorAdjustBackgroundColor();
   }
   return base_background_color_;
 }
@@ -1755,15 +1842,19 @@ void LocalFrameView::SetBaseBackgroundColor(const Color& background_color) {
     return;
 
   base_background_color_ = background_color;
-  if (auto* layout_view = GetLayoutView()) {
-    if (layout_view->Layer()->HasCompositedLayerMapping()) {
-      CompositedLayerMapping* composited_layer_mapping =
-          layout_view->Layer()->GetCompositedLayerMapping();
-      composited_layer_mapping->UpdateContentsOpaque();
-      if (composited_layer_mapping->MainGraphicsLayer())
-        composited_layer_mapping->MainGraphicsLayer()->SetNeedsDisplay();
-      if (composited_layer_mapping->ScrollingContentsLayer())
-        composited_layer_mapping->ScrollingContentsLayer()->SetNeedsDisplay();
+
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+    DisableCompositingQueryAsserts disabler;
+    if (auto* layout_view = GetLayoutView()) {
+      if (layout_view->Layer()->HasCompositedLayerMapping()) {
+        CompositedLayerMapping* composited_layer_mapping =
+            layout_view->Layer()->GetCompositedLayerMapping();
+        composited_layer_mapping->UpdateContentsOpaque();
+        if (composited_layer_mapping->MainGraphicsLayer())
+          composited_layer_mapping->MainGraphicsLayer()->SetNeedsDisplay();
+        if (composited_layer_mapping->ScrollingContentsLayer())
+          composited_layer_mapping->ScrollingContentsLayer()->SetNeedsDisplay();
+      }
     }
   }
 
@@ -1771,13 +1862,19 @@ void LocalFrameView::SetBaseBackgroundColor(const Color& background_color) {
     GetPage()->Animator().ScheduleVisualUpdate(frame_.Get());
 }
 
-void LocalFrameView::SetUseDarkSchemeBackground(bool dark_scheme) {
-  if (use_dark_scheme_background_ == dark_scheme)
+void LocalFrameView::SetUseColorAdjustBackground(UseColorAdjustBackground use,
+                                                 bool color_scheme_changed) {
+  if (use_color_adjust_background_ == use && !color_scheme_changed)
     return;
 
-  use_dark_scheme_background_ = dark_scheme;
+  use_color_adjust_background_ = use;
   if (auto* layout_view = GetLayoutView())
     layout_view->SetBackgroundNeedsFullPaintInvalidation();
+}
+
+bool LocalFrameView::ShouldPaintBaseBackgroundColor() const {
+  return ShouldUseColorAdjustBackground() ||
+         frame_->GetDocument()->IsInMainFrame();
 }
 
 void LocalFrameView::UpdateBaseBackgroundColorRecursively(
@@ -2114,16 +2211,20 @@ bool LocalFrameView::UpdateAllLifecyclePhases(DocumentUpdateReason reason) {
 }
 
 // TODO(schenney): add a scrolling update lifecycle phase.
-// TODO(schenney): Pass a LifecycleUpdateReason in here
 bool LocalFrameView::UpdateLifecycleToCompositingCleanPlusScrolling(
     DocumentUpdateReason reason) {
   if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
     return UpdateAllLifecyclePhasesExceptPaint(reason);
   return GetFrame().LocalFrameRoot().View()->UpdateLifecyclePhases(
-      DocumentLifecycle::kCompositingClean, reason);
+      DocumentLifecycle::kCompositingAssignmentsClean, reason);
 }
 
-// TODO(schenney): Pass a LifecycleUpdateReason in here
+bool LocalFrameView::UpdateLifecycleToPrePaintClean(
+    DocumentUpdateReason reason) {
+  return GetFrame().LocalFrameRoot().View()->UpdateLifecyclePhases(
+      DocumentLifecycle::kPrePaintClean, reason);
+}
+
 bool LocalFrameView::UpdateLifecycleToCompositingInputsClean(
     DocumentUpdateReason reason) {
   if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
@@ -2132,17 +2233,17 @@ bool LocalFrameView::UpdateLifecycleToCompositingInputsClean(
       DocumentLifecycle::kCompositingInputsClean, reason);
 }
 
-// TODO(schenney): Pass a LifecycleUpdateReason in here
 bool LocalFrameView::UpdateAllLifecyclePhasesExceptPaint(
     DocumentUpdateReason reason) {
   return GetFrame().LocalFrameRoot().View()->UpdateLifecyclePhases(
-      DocumentLifecycle::kPrePaintClean, reason);
+      DocumentLifecycle::kCompositingAssignmentsClean, reason);
 }
 
 void LocalFrameView::UpdateLifecyclePhasesForPrinting() {
   auto* local_frame_view_root = GetFrame().LocalFrameRoot().View();
   local_frame_view_root->UpdateLifecyclePhases(
-      DocumentLifecycle::kPrePaintClean, DocumentUpdateReason::kPrinting);
+      DocumentLifecycle::kCompositingAssignmentsClean,
+      DocumentUpdateReason::kPrinting);
 
   auto* detached_frame_view = this;
   while (detached_frame_view->IsAttached() &&
@@ -2159,11 +2260,11 @@ void LocalFrameView::UpdateLifecyclePhasesForPrinting() {
   // was not reached in some phases during during |local_frame_view_root->
   // UpdateLifecyclePhasesnormal()|. We need the subtree to be ready for
   // painting.
-  detached_frame_view->UpdateLifecyclePhases(DocumentLifecycle::kPrePaintClean,
-                                             DocumentUpdateReason::kPrinting);
+  detached_frame_view->UpdateLifecyclePhases(
+      DocumentLifecycle::kCompositingAssignmentsClean,
+      DocumentUpdateReason::kPrinting);
 }
 
-// TODO(schenney): Pass a LifecycleUpdateReason in here
 bool LocalFrameView::UpdateLifecycleToLayoutClean(DocumentUpdateReason reason) {
   return GetFrame().LocalFrameRoot().View()->UpdateLifecyclePhases(
       DocumentLifecycle::kLayoutClean, reason);
@@ -2171,15 +2272,16 @@ bool LocalFrameView::UpdateLifecycleToLayoutClean(DocumentUpdateReason reason) {
 
 void LocalFrameView::ScheduleVisualUpdateForPaintInvalidationIfNeeded() {
   LocalFrame& local_frame_root = GetFrame().LocalFrameRoot();
+  // We need a full lifecycle update to clear pending paint invalidations.
   if (local_frame_root.View()->current_update_lifecycle_phases_target_state_ <
-          DocumentLifecycle::kPrePaintClean ||
+          DocumentLifecycle::kPaintClean ||
       Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean) {
     // Schedule visual update to process the paint invalidation in the next
     // cycle.
     local_frame_root.ScheduleVisualUpdateUnlessThrottled();
   }
-  // Otherwise the paint invalidation will be handled in the pre-paint
-  // phase of this cycle.
+  // Otherwise the paint invalidation will be handled in the pre-paint and paint
+  // phase of this full lifecycle update.
 }
 
 bool LocalFrameView::NotifyResizeObservers(
@@ -2191,34 +2293,33 @@ bool LocalFrameView::NotifyResizeObservers(
     return false;
 
   // Controller exists only if ResizeObserver was created.
-  if (!GetFrame().GetDocument()->GetResizeObserverController())
+  ResizeObserverController* resize_controller =
+      ResizeObserverController::FromIfExists(*GetFrame().DomWindow());
+  if (!resize_controller)
     return false;
-
-  ResizeObserverController& resize_controller =
-      frame_->GetDocument()->EnsureResizeObserverController();
 
   DCHECK(Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean);
 
-  size_t min_depth = resize_controller.GatherObservations();
+  size_t min_depth = resize_controller->GatherObservations();
 
   if (min_depth != ResizeObserverController::kDepthBottom) {
-    resize_controller.DeliverObservations();
+    resize_controller->DeliverObservations();
   } else {
     // Observation depth limit reached
-    if (resize_controller.SkippedObservations()) {
-      resize_controller.ClearObservations();
+    if (resize_controller->SkippedObservations() &&
+        !resize_controller->IsLoopLimitErrorDispatched()) {
+      resize_controller->ClearObservations();
       ErrorEvent* error = ErrorEvent::Create(
           "ResizeObserver loop limit exceeded",
-          SourceLocation::Capture(frame_->GetDocument()->ToExecutionContext()),
-          nullptr);
+          SourceLocation::Capture(frame_->DomWindow()), nullptr);
       // We're using |SanitizeScriptErrors::kDoNotSanitize| as the error is made
       // by blink itself.
       // TODO(yhirano): Reconsider this.
-      frame_->GetDocument()->ToExecutionContext()->DispatchErrorEvent(
+      frame_->DomWindow()->DispatchErrorEvent(
           error, SanitizeScriptErrors::kDoNotSanitize);
       // Ensure notifications will get delivered in next cycle.
       ScheduleAnimation();
-      DCHECK(Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean);
+      resize_controller->SetLoopLimitErrorDispatched(true);
     }
     if (Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean)
       return false;
@@ -2242,8 +2343,7 @@ bool LocalFrameView::UpdateLifecyclePhases(
 
   // Prevent reentrance.
   // TODO(vmpstr): Should we just have a DCHECK instead here?
-  if (UNLIKELY(current_update_lifecycle_phases_target_state_ !=
-               DocumentLifecycle::kUninitialized)) {
+  if (UNLIKELY(IsUpdatingLifecycle())) {
     NOTREACHED()
         << "LocalFrameView::updateLifecyclePhasesInternal() reentrance";
     return false;
@@ -2258,7 +2358,7 @@ bool LocalFrameView::UpdateLifecyclePhases(
   DCHECK(target_state == DocumentLifecycle::kLayoutClean ||
          target_state == DocumentLifecycle::kAccessibilityClean ||
          target_state == DocumentLifecycle::kCompositingInputsClean ||
-         target_state == DocumentLifecycle::kCompositingClean ||
+         target_state == DocumentLifecycle::kCompositingAssignmentsClean ||
          target_state == DocumentLifecycle::kPrePaintClean ||
          target_state == DocumentLifecycle::kPaintClean);
   lifecycle_update_count_for_testing_++;
@@ -2297,32 +2397,39 @@ bool LocalFrameView::UpdateLifecyclePhases(
   lifecycle_data_.start_time = base::TimeTicks::Now();
   ++lifecycle_data_.count;
 
-  {
-    TRACE_EVENT0("blink", "LocalFrameView::WillStartLifecycleUpdate");
+  ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+    frame_view.Lifecycle().EnsureStateAtMost(
+        DocumentLifecycle::kVisualUpdatePending);
+  });
 
-    ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
-      auto lifecycle_observers = frame_view.lifecycle_observers_;
-      for (auto& observer : lifecycle_observers)
-        observer->WillStartLifecycleUpdate(frame_view);
-    });
-  }
+  if (target_state == DocumentLifecycle::kPaintClean) {
+    {
+      TRACE_EVENT0("blink", "LocalFrameView::WillStartLifecycleUpdate");
 
-  {
-    TRACE_EVENT0(
-        "blink",
-        "LocalFrameView::UpdateLifecyclePhases - start of lifecycle tasks");
-    ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
-      WTF::Vector<base::OnceClosure> tasks;
-      frame_view.start_of_lifecycle_tasks_.swap(tasks);
-      for (auto& task : tasks)
-        std::move(task).Run();
-    });
+      ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+        auto lifecycle_observers = frame_view.lifecycle_observers_;
+        for (auto& observer : lifecycle_observers)
+          observer->WillStartLifecycleUpdate(frame_view);
+      });
+    }
+
+    {
+      TRACE_EVENT0(
+          "blink",
+          "LocalFrameView::UpdateLifecyclePhases - start of lifecycle tasks");
+      ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+        WTF::Vector<base::OnceClosure> tasks;
+        frame_view.start_of_lifecycle_tasks_.swap(tasks);
+        for (auto& task : tasks)
+          std::move(task).Run();
+      });
+    }
   }
 
   // Run the lifecycle updates.
   UpdateLifecyclePhasesInternal(target_state);
 
-  {
+  if (target_state == DocumentLifecycle::kPaintClean) {
     TRACE_EVENT0("blink", "LocalFrameView::DidFinishLifecycleUpdate");
 
     ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
@@ -2351,6 +2458,9 @@ void LocalFrameView::UpdateLifecyclePhasesInternal(
   // the potential to dirty layout (until loop limit is reached) and therefore
   // the above lifecycle phases need to be re-run until the limit is reached
   // or no layout is pending.
+  // Note that after ResizeObserver has settled, we also run intersection
+  // observations that need to be delievered in post-layout. This process can
+  // also dirty layout, which will run this loop again.
   while (true) {
     bool run_more_lifecycle_phases =
         RunStyleAndLayoutLifecyclePhases(target_state);
@@ -2382,7 +2492,8 @@ void LocalFrameView::UpdateLifecyclePhasesInternal(
       TRACE_EVENT1("devtools.timeline", "UpdateLayerTree", "data",
                    inspector_update_layer_tree_event::Data(frame_.Get()));
 
-      run_more_lifecycle_phases = RunCompositingLifecyclePhase(target_state);
+      run_more_lifecycle_phases =
+          RunCompositingInputsLifecyclePhase(target_state);
       if (!run_more_lifecycle_phases)
         return;
 
@@ -2393,12 +2504,36 @@ void LocalFrameView::UpdateLifecyclePhasesInternal(
              Lifecycle().GetState() >= DocumentLifecycle::kPrePaintClean);
       if (!run_more_lifecycle_phases)
         return;
+
+      run_more_lifecycle_phases =
+          RunCompositingAssignmentsLifecyclePhase(target_state);
+      if (!run_more_lifecycle_phases) {
+        return;
+      }
     }
 
-    run_more_lifecycle_phases = RunResizeObserverSteps(target_state);
-    if (!run_more_lifecycle_phases)
+    // ResizeObserver and post-layout IntersectionObserver observation
+    // deliveries may dirty style and layout. RunResizeObserverSteps will return
+    // true if any observer ran that may have dirtied style or layout;
+    // RunPostLayoutIntersectionObserverSteps will return true if any
+    // observations led to content-visibility intersection changing visibility
+    // state synchronously (which happens on the first intersection
+    // observeration of a context).
+    bool needs_to_repeat_lifecycle = RunResizeObserverSteps(target_state);
+    // Only run the rest of the steps here if resize observer is done.
+    if (needs_to_repeat_lifecycle)
+      continue;
+
+    needs_to_repeat_lifecycle = RunPostLayoutIntersectionObserverSteps();
+    if (!needs_to_repeat_lifecycle)
       break;
   }
+
+  // Once we exit the ResizeObserver / IntersectionObserver loop above, we need
+  // to clear the resize observer limits so that next time we run this, we can
+  // deliver more observations.
+  ClearResizeObserverLimit();
+
   // Layout invalidation scope was disabled for resize observer
   // re-enable it for subsequent steps
 #if DCHECK_IS_ON()
@@ -2431,14 +2566,16 @@ bool LocalFrameView::RunResizeObserverSteps(
           re_run_lifecycles = re_run_lifecycles || result;
         });
   }
-  if (!re_run_lifecycles) {
-    ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
-      ResizeObserverController& resize_controller =
-          frame_view.frame_->GetDocument()->EnsureResizeObserverController();
-      resize_controller.ClearMinDepth();
-    });
-  }
   return re_run_lifecycles;
+}
+
+void LocalFrameView::ClearResizeObserverLimit() {
+  ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+    ResizeObserverController* resize_controller =
+        ResizeObserverController::From(*frame_view.frame_->DomWindow());
+    resize_controller->ClearMinDepth();
+    resize_controller->SetLoopLimitErrorDispatched(false);
+  });
 }
 
 bool LocalFrameView::RunStyleAndLayoutLifecyclePhases(
@@ -2454,8 +2591,7 @@ bool LocalFrameView::RunStyleAndLayoutLifecyclePhases(
 
   // PerformRootScrollerSelection can dirty layout if an effective root
   // scroller is changed so make sure we get back to LayoutClean.
-  if (RuntimeEnabledFeatures::ImplicitRootScrollerEnabled() ||
-      RuntimeEnabledFeatures::SetRootScrollerEnabled()) {
+  if (RuntimeEnabledFeatures::ImplicitRootScrollerEnabled()) {
     ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
       if (frame_view.NeedsLayout())
         frame_view.UpdateLayout();
@@ -2500,20 +2636,55 @@ bool LocalFrameView::RunStyleAndLayoutLifecyclePhases(
   return Lifecycle().GetState() >= DocumentLifecycle::kLayoutClean;
 }
 
-bool LocalFrameView::RunCompositingLifecyclePhase(
+bool LocalFrameView::RunCompositingInputsLifecyclePhase(
     DocumentLifecycle::LifecycleState target_state) {
   TRACE_EVENT0("blink,benchmark",
-               "LocalFrameView::RunCompositingLifecyclePhase");
+               "LocalFrameView::RunCompositingInputsLifecyclePhase");
   auto* layout_view = GetLayoutView();
   DCHECK(layout_view);
 
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
     SCOPED_UMA_AND_UKM_TIMER(EnsureUkmAggregator(),
-                             LocalFrameUkmAggregator::kCompositing);
-    layout_view->Compositor()->UpdateIfNeededRecursive(target_state);
+                             LocalFrameUkmAggregator::kCompositingInputs);
+    layout_view->Compositor()->UpdateInputsIfNeededRecursive(target_state);
+  } else {
+    ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+      frame_view.Lifecycle().AdvanceTo(
+          DocumentLifecycle::kCompositingInputsClean);
+    });
   }
 
-  return target_state > DocumentLifecycle::kCompositingClean;
+  return target_state > DocumentLifecycle::kCompositingInputsClean;
+}
+
+bool LocalFrameView::RunCompositingAssignmentsLifecyclePhase(
+    DocumentLifecycle::LifecycleState target_state) {
+  TRACE_EVENT0("blink,benchmark",
+               "LocalFrameView::RunCompositingAssignmentsLifecyclePhase");
+  auto* layout_view = GetLayoutView();
+  DCHECK(layout_view);
+
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+    SCOPED_UMA_AND_UKM_TIMER(EnsureUkmAggregator(),
+                             LocalFrameUkmAggregator::kCompositingAssignments);
+    layout_view->Compositor()->UpdateAssignmentsIfNeededRecursive(target_state);
+  } else {
+    ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+      frame_view.Lifecycle().AdvanceTo(
+          DocumentLifecycle::kCompositingAssignmentsClean);
+    });
+  }
+
+  UpdateCompositedSelectionIfNeeded();
+
+  frame_->GetPage()->GetValidationMessageClient().UpdatePrePaint();
+  ForAllNonThrottledLocalFrameViews([](LocalFrameView& view) {
+    view.frame_->UpdateFrameColorOverlayPrePaint();
+  });
+  if (auto* web_local_frame_impl = WebLocalFrameImpl::FromFrame(frame_))
+    web_local_frame_impl->UpdateDevToolsOverlaysPrePaint();
+
+  return target_state > DocumentLifecycle::kCompositingAssignmentsClean;
 }
 
 bool LocalFrameView::RunPrePaintLifecyclePhase(
@@ -2560,28 +2731,11 @@ bool LocalFrameView::RunPrePaintLifecyclePhase(
     GetPage()->GetLinkHighlight().UpdateAfterPrePaint();
   }
 
-  UpdateCompositedSelectionIfNeeded();
-
-  frame_->GetPage()->GetValidationMessageClient().UpdatePrePaint();
-  ForAllNonThrottledLocalFrameViews([](LocalFrameView& view) {
-    view.frame_->UpdateFrameColorOverlayPrePaint();
-  });
-  if (auto* web_local_frame_impl = WebLocalFrameImpl::FromFrame(frame_))
-    web_local_frame_impl->UpdateDevToolsOverlaysPrePaint();
-
   ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
     frame_view.Lifecycle().AdvanceTo(DocumentLifecycle::kPrePaintClean);
   });
 
   return target_state > DocumentLifecycle::kPrePaintClean;
-}
-
-template <typename Function>
-static void ForAllGraphicsLayers(GraphicsLayer& layer,
-                                 const Function& function) {
-  function(layer);
-  for (auto* child : layer.Children())
-    ForAllGraphicsLayers(*child, function);
 }
 
 void LocalFrameView::RunPaintLifecyclePhase() {
@@ -2590,8 +2744,9 @@ void LocalFrameView::RunPaintLifecyclePhase() {
   // is done into a special canvas. There is no point doing a normal paint step
   // (or animations update) when in this mode.
   bool is_capturing_layout = frame_->GetDocument()->IsCapturingLayout();
+  HashSet<const GraphicsLayer*> repainted_layers;
   if (!is_capturing_layout)
-    PaintTree();
+    PaintTree(repainted_layers);
 
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
     if (GetLayoutView()->Compositor()->InCompositingMode()) {
@@ -2602,19 +2757,23 @@ void LocalFrameView::RunPaintLifecyclePhase() {
   if (!is_capturing_layout) {
     bool needed_update = !paint_artifact_compositor_ ||
                          paint_artifact_compositor_->NeedsUpdate();
-    PushPaintArtifactToCompositor();
+    PushPaintArtifactToCompositor(repainted_layers);
     ForAllNonThrottledLocalFrameViews([this](LocalFrameView& frame_view) {
-      frame_view.GetScrollableArea()->UpdateCompositorScrollAnimations();
+      if (auto* scrollable_area = frame_view.GetScrollableArea())
+        scrollable_area->UpdateCompositorScrollAnimations();
       if (const auto* animating_scrollable_areas =
               frame_view.AnimatingScrollableAreas()) {
         for (PaintLayerScrollableArea* area : *animating_scrollable_areas)
           area->UpdateCompositorScrollAnimations();
       }
-      frame_view.GetLayoutView()
-          ->GetDocument()
-          .GetDocumentAnimations()
-          .UpdateAnimations(DocumentLifecycle::kPaintClean,
-                            paint_artifact_compositor_.get());
+      {
+        ScriptForbiddenScope forbid_script;
+        frame_view.GetLayoutView()
+            ->GetDocument()
+            .GetDocumentAnimations()
+            .UpdateAnimations(DocumentLifecycle::kPaintClean,
+                              paint_artifact_compositor_.get());
+      }
     });
 
     // Initialize animation properties in the newly created paint property
@@ -2632,29 +2791,27 @@ void LocalFrameView::RunPaintLifecyclePhase() {
 
     // Notify the controller that the artifact has been pushed and some
     // lifecycle state can be freed (such as raster invalidations).
-    if (paint_controller_)
+    if (paint_controller_) {
       paint_controller_->FinishCycle();
+      paint_controller_->ClearPropertyTreeChangedStateTo(
+          PropertyTreeState::Root());
+    }
 
     if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
-      // Property tree changed state is typically cleared through
-      // |PaintController::FinishCycle| but that will be a no-op because
-      // the paint controller is transient, so force the changed state to be
-      // cleared here.
-      if (paint_controller_) {
-        paint_controller_->ClearPropertyTreeChangedStateTo(
-            PropertyTreeState::Root());
-      }
       auto* root = GetLayoutView()->Compositor()->PaintRootGraphicsLayer();
       if (root) {
-        ForAllGraphicsLayers(*root, [](GraphicsLayer& layer) {
-          if (layer.PaintsContentOrHitTest() && layer.HasLayerState()) {
-            layer.GetPaintController().ClearPropertyTreeChangedStateTo(
-                layer.GetPropertyTreeState());
-          }
+        ForAllPaintingGraphicsLayers(*root, [](GraphicsLayer& layer) {
+          // Notify the paint controller that the artifact has been pushed and
+          // some lifecycle state can be freed (such as raster invalidations).
+          layer.GetPaintController().FinishCycle();
+          layer.GetPaintController().ClearPropertyTreeChangedStateTo(
+              layer.GetPropertyTreeState());
         });
       }
     }
   }
+  if (GetPage())
+    GetPage()->Animator().ReportFrameAnimations(GetCompositorAnimationHost());
 }
 
 bool LocalFrameView::RunAccessibilityLifecyclePhase(
@@ -2715,84 +2872,40 @@ void LocalFrameView::EnqueueScrollEvents() {
   });
 }
 
-template <typename MainLayerFunction, typename ContentsLayerFunction>
-static void ForAllDrawableGraphicsLayers(
-    const GraphicsLayer* layer,
-    const MainLayerFunction& main_layer_function,
-    const ContentsLayerFunction& contents_layer_function) {
-  if (!layer || layer->Client().ShouldThrottleRendering() ||
-      layer->Client().IsUnderSVGHiddenContainer()) {
-    return;
-  }
-
-  if (layer->Client().PaintBlockedByDisplayLockIncludingAncestors(
-          DisplayLockContextLifecycleTarget::kSelf)) {
-    // If we skip the layer, then we need to ensure to notify the
-    // display-lock, since we need to force recollect the layers when we commit.
-    layer->Client().NotifyDisplayLockNeedsGraphicsLayerCollection();
-    return;
-  }
-
-  // We need to collect all layers that draw content, as well as some layers
-  // that don't for the purposes of hit testing. For example, an empty div
-  // will not draw content but needs to create a layer to ensure scroll events
-  // do not pass through it.
-  if (layer->PaintsContentOrHitTest() || layer->GetHitTestable())
-    main_layer_function(layer);
-
-  if (auto* contents_layer = layer->ContentsLayer())
-    contents_layer_function(layer, contents_layer);
-
-  for (const auto* child : layer->Children()) {
-    ForAllDrawableGraphicsLayers(child, main_layer_function,
-                                 contents_layer_function);
-  }
-  ForAllDrawableGraphicsLayers(layer->MaskLayer(), main_layer_function,
-                               contents_layer_function);
-}
-
-static void CollectDrawableLayersForLayerListRecursively(
+static void CollectGraphicsLayersForLayerListRecursively(
     GraphicsContext& context,
-    const GraphicsLayer* root) {
-  ForAllDrawableGraphicsLayers(
+    const GraphicsLayer& root) {
+  ForAllActiveGraphicsLayers(
       root,
-      [&](const GraphicsLayer* layer) { RecordGraphicsLayer(context, *layer); },
-      [&](const GraphicsLayer* layer, cc::Layer* contents_layer) {
+      [&](const GraphicsLayer& layer) { RecordGraphicsLayer(context, layer); },
+      [&](const GraphicsLayer& layer, cc::Layer& contents_layer) {
         RecordForeignLayer(
-            context, *layer, DisplayItem::kForeignLayerContentsWrapper,
-            contents_layer,
-            FloatPoint(layer->GetContentsOffsetFromTransformNode()),
-            &layer->GetContentsPropertyTreeState());
+            context, layer, DisplayItem::kForeignLayerContentsWrapper,
+            &contents_layer, layer.GetContentsOffsetFromTransformNode(),
+            &layer.GetContentsPropertyTreeState());
       });
 }
 
-static void UpdateLayerDebugInfoRecursively(const GraphicsLayer* root) {
-  ForAllDrawableGraphicsLayers(
+static void UpdateLayerDebugInfoRecursively(const GraphicsLayer& root) {
+  ForAllActiveGraphicsLayers(
       root,
-      [](const GraphicsLayer* layer) {
+      [](const GraphicsLayer& layer) {
         PaintArtifactCompositor::UpdateLayerDebugInfo(
-            layer->CcLayer(),
-            PaintChunk::Id(*layer, DisplayItem::kGraphicsLayerWrapper),
-            layer->GetCompositingReasons(),
-            layer->GetRasterInvalidationTracking());
+            layer.CcLayer(),
+            PaintChunk::Id(layer, DisplayItem::kGraphicsLayerWrapper),
+            layer.GetCompositingReasons(),
+            layer.GetRasterInvalidationTracking());
       },
-      [](const GraphicsLayer* layer, cc::Layer* contents_layer) {
+      [](const GraphicsLayer& layer, cc::Layer& contents_layer) {
         PaintArtifactCompositor::UpdateLayerDebugInfo(
             contents_layer,
-            PaintChunk::Id(*layer, DisplayItem::kForeignLayerContentsWrapper),
-            layer->GetCompositingReasons(), nullptr);
+            PaintChunk::Id(layer, DisplayItem::kForeignLayerContentsWrapper),
+            layer.GetCompositingReasons(), nullptr);
       });
 }
 
-static bool PaintGraphicsLayerRecursively(GraphicsLayer* layer) {
-  bool painted = layer->PaintRecursively();
-#if DCHECK_IS_ON()
-  VerboseLogGraphicsLayerTree(layer);
-#endif
-  return painted;
-}
-
-void LocalFrameView::PaintTree() {
+void LocalFrameView::PaintTree(
+    HashSet<const GraphicsLayer*>& repainted_layers) {
   SCOPED_UMA_AND_UKM_TIMER(EnsureUkmAggregator(),
                            LocalFrameUkmAggregator::kPaint);
 
@@ -2802,8 +2915,13 @@ void LocalFrameView::PaintTree() {
   DCHECK(layout_view);
   paint_frame_count_++;
   ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
+    frame_view.MarkFirstEligibleToPaint();
     frame_view.Lifecycle().AdvanceTo(DocumentLifecycle::kInPaint);
   });
+  ForAllThrottledLocalFrameViews(
+      [](LocalFrameView& frame_view) { frame_view.MarkIneligibleToPaint(); });
+
+  bool needs_clear_repaint_flags = false;
 
   if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
     if (!paint_controller_)
@@ -2820,34 +2938,51 @@ void LocalFrameView::PaintTree() {
     } else {
       GraphicsContext graphics_context(*paint_controller_);
       if (Settings* settings = frame_->GetSettings()) {
-        graphics_context.SetDarkMode(
-            BuildDarkModeSettings(*settings, *GetLayoutView()));
+        graphics_context.SetDarkModeEnabled(
+            settings->GetForceDarkModeEnabled() &&
+            !GetLayoutView()->StyleRef().DarkColorScheme());
       }
 
-      PaintInternal(graphics_context, kGlobalPaintNormalPhase,
-                    CullRect::Infinite());
+      bool painted_full_screen_overlay = false;
+      if (frame_->IsMainFrame()) {
+        PaintLayer* full_screen_layer = GetFullScreenOverlayLayer();
+        if (full_screen_layer) {
+          PaintLayerPainter(*full_screen_layer)
+              .Paint(graphics_context, CullRect::Infinite(),
+                     kGlobalPaintNormalPhase, 0);
+          painted_full_screen_overlay = true;
+          visual_viewport_needs_repaint_ = false;
+        }
+      }
 
+      if (!painted_full_screen_overlay) {
+        PaintInternal(graphics_context, kGlobalPaintNormalPhase,
+                      CullRect::Infinite());
+
+        GetPage()->GetValidationMessageClient().PaintOverlay(graphics_context);
+        ForAllNonThrottledLocalFrameViews(
+            [&graphics_context](LocalFrameView& view) {
+              view.frame_->PaintFrameColorOverlay(graphics_context);
+            });
+
+        // Devtools overlays query the inspected page's paint data so this
+        // update needs to be after other paintings.
+        if (has_dev_tools_overlays)
+          web_local_frame_impl->PaintDevToolsOverlays(graphics_context);
+
+        if (frame_->IsMainFrame()) {
+          frame_->GetPage()->GetVisualViewport().Paint(graphics_context);
+          visual_viewport_needs_repaint_ = false;
+        }
+      }
+
+      // Link highlights paint after all other paintings.
       GetPage()->GetLinkHighlight().Paint(graphics_context);
 
-      GetPage()->GetValidationMessageClient().PaintOverlay(graphics_context);
-      ForAllNonThrottledLocalFrameViews(
-          [&graphics_context](LocalFrameView& view) {
-            view.frame_->PaintFrameColorOverlay(graphics_context);
-          });
-
-      // Devtools overlays query the inspected page's paint data so this update
-      // needs to be after other paintings.
-      if (has_dev_tools_overlays)
-        web_local_frame_impl->PaintDevToolsOverlays(graphics_context);
-
-      if (frame_->IsMainFrame()) {
-        frame_->GetPage()->GetVisualViewport().Paint(graphics_context);
-        visual_viewport_needs_repaint_ = false;
-      } else {
-        DCHECK(!visual_viewport_needs_repaint_);
-      }
+      DCHECK(!visual_viewport_needs_repaint_);
 
       paint_controller_->CommitNewDisplayItems();
+      needs_clear_repaint_flags = true;
     }
   } else {
     // A null graphics layer can occur for painting of SVG images that are not
@@ -2856,22 +2991,28 @@ void LocalFrameView::PaintTree() {
     // the host page and will be painted during painting of the host page.
     if (GraphicsLayer* root_graphics_layer =
             layout_view->Compositor()->PaintRootGraphicsLayer()) {
-      bool painted = PaintGraphicsLayerRecursively(root_graphics_layer);
-      if (painted) {
+      root_graphics_layer->PaintRecursively(repainted_layers);
+      if (!repainted_layers.IsEmpty()) {
         // If the painted result changed, the recorded hit test data may have
         // changed which will affect the mapped hit test geometry.
         if (GetScrollingCoordinator())
           GetScrollingCoordinator()->NotifyGeometryChanged(this);
+        needs_clear_repaint_flags = true;
       }
+    } else {
+      needs_clear_repaint_flags = true;
     }
   }
 
-  ForAllNonThrottledLocalFrameViews([](LocalFrameView& frame_view) {
-    frame_view.Lifecycle().AdvanceTo(DocumentLifecycle::kPaintClean);
-    if (auto* layout_view = frame_view.GetLayoutView())
-      layout_view->Layer()->ClearNeedsRepaintRecursively();
-    frame_view.GetPaintTimingDetector().NotifyPaintFinished();
-  });
+  ForAllNonThrottledLocalFrameViews(
+      [needs_clear_repaint_flags](LocalFrameView& frame_view) {
+        frame_view.Lifecycle().AdvanceTo(DocumentLifecycle::kPaintClean);
+        if (needs_clear_repaint_flags) {
+          if (auto* layout_view = frame_view.GetLayoutView())
+            layout_view->Layer()->ClearNeedsRepaintRecursively();
+        }
+        frame_view.GetPaintTimingDetector().NotifyPaintFinished();
+      });
 
   PaintController::ReportUMACounts();
 }
@@ -2881,7 +3022,8 @@ const cc::Layer* LocalFrameView::RootCcLayer() const {
                                     : nullptr;
 }
 
-void LocalFrameView::PushPaintArtifactToCompositor() {
+void LocalFrameView::PushPaintArtifactToCompositor(
+    const HashSet<const GraphicsLayer*>& repainted_layers) {
   TRACE_EVENT0("blink", "LocalFrameView::pushPaintArtifactToCompositor");
   if (!frame_->GetSettings()->GetAcceleratedCompositingEnabled())
     return;
@@ -2902,13 +3044,17 @@ void LocalFrameView::PushPaintArtifactToCompositor() {
 
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
       layer_debug_info_enabled_) {
-    UpdateLayerDebugInfoRecursively(
-        GetLayoutView()->Compositor()->PaintRootGraphicsLayer());
+    if (auto* root = GetLayoutView()->Compositor()->PaintRootGraphicsLayer())
+      UpdateLayerDebugInfoRecursively(*root);
   }
 
   // Skip updating property trees, pushing cc::Layers, and issuing raster
   // invalidations if possible.
-  if (!paint_artifact_compositor_->NeedsUpdate()) {
+  // TODO(paint-team): In CompositeAfterPaint mode, repainted_layers will always
+  // be empty, even if painted output has changed. We need an equivalent signal
+  // to indicate that PAC doesn't need to run the layerization algorithm, but it
+  // does need to update properties on layers that depend on painted output.
+  if (!paint_artifact_compositor_->NeedsUpdate() && !repainted_layers.size()) {
     DCHECK(paint_controller_);
     return;
   }
@@ -2940,10 +3086,6 @@ void LocalFrameView::PushPaintArtifactToCompositor() {
     }
   }
 
-  PaintArtifactCompositor::Settings settings;
-  settings.prefer_compositing_to_lcd_text =
-      page->GetSettings().GetPreferCompositingToLCDTextEnabled();
-
   if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
       (!paint_controller_ || visual_viewport_needs_repaint_)) {
     // Before CompositeAfterPaint, we need a transient PaintController to
@@ -2951,12 +3093,14 @@ void LocalFrameView::PushPaintArtifactToCompositor() {
     // affect caching status of DisplayItemClients because FinishCycle() is
     // not synchronized with other PaintControllers. This may live across frame
     // updates until SetForeignLayerListNeedsUpdate() is called.
+    paint_artifact_compositor_->SetNeedsUpdate();
     paint_controller_ =
         std::make_unique<PaintController>(PaintController::kTransient);
 
     GraphicsContext context(*paint_controller_);
     auto* root = GetLayoutView()->Compositor()->PaintRootGraphicsLayer();
-    CollectDrawableLayersForLayerListRecursively(context, root);
+    if (root)
+      CollectGraphicsLayersForLayerListRecursively(context, *root);
 
     if (frame_->IsMainFrame()) {
       if (root == GetLayoutView()->Compositor()->RootGraphicsLayer())
@@ -2972,9 +3116,18 @@ void LocalFrameView::PushPaintArtifactToCompositor() {
     paint_controller_->CommitNewDisplayItems();
   }
 
+  WTF::Vector<const TransformPaintPropertyNode*> scroll_translation_nodes;
+  if (RuntimeEnabledFeatures::ScrollUnificationEnabled()) {
+    ForAllNonThrottledLocalFrameViews(
+        [&scroll_translation_nodes](LocalFrameView& frame_view) {
+          scroll_translation_nodes.AppendVector(
+              frame_view.GetScrollTranslationNodes());
+        });
+  }
+
   paint_artifact_compositor_->Update(
       paint_controller_->GetPaintArtifactShared(), viewport_properties,
-      settings);
+      scroll_translation_nodes, repainted_layers);
 
   probe::LayerTreePainted(&GetFrame());
 }
@@ -2982,12 +3135,9 @@ void LocalFrameView::PushPaintArtifactToCompositor() {
 std::unique_ptr<JSONObject> LocalFrameView::CompositedLayersAsJSON(
     LayerTreeFlags flags) {
   auto* root_frame_view = GetFrame().LocalFrameRoot().View();
-  if (root_frame_view->GetPaintController()) {
-    return root_frame_view->paint_artifact_compositor_->GetLayersAsJSON(
-        flags, &root_frame_view->GetPaintController()->GetPaintArtifact());
-  } else {
-    return std::make_unique<JSONObject>();
-  }
+  if (root_frame_view->GetPaintController())
+    return root_frame_view->paint_artifact_compositor_->GetLayersAsJSON(flags);
+  return std::make_unique<JSONObject>();
 }
 
 void LocalFrameView::UpdateStyleAndLayoutIfNeededRecursive() {
@@ -3083,7 +3233,7 @@ void LocalFrameView::UpdateStyleAndLayoutIfNeededRecursive() {
   // Ensure that we become visually non-empty eventually.
   // TODO(esprehn): This should check isRenderingReady() instead.
   if (GetFrame().GetDocument()->HasFinishedParsing() &&
-      GetFrame().Loader().StateMachine()->CommittedFirstRealDocumentLoad())
+      !GetFrame().GetDocument()->IsInitialEmptyDocument())
     is_visually_non_empty_ = true;
 
   GetFrame().Selection().UpdateStyleAndLayoutIfNeeded();
@@ -3209,60 +3359,6 @@ void LocalFrameView::ForceLayoutForPagination(
   AdjustViewSizeAndLayout();
 }
 
-IntRect LocalFrameView::ConvertFromLayoutObject(
-    const LayoutObject& layout_object,
-    const IntRect& layout_object_rect) const {
-  // Convert from page ("absolute") to LocalFrameView coordinates.
-  return PixelSnappedIntRect(
-      layout_object.LocalToAbsoluteRect(PhysicalRect(layout_object_rect)));
-}
-
-IntRect LocalFrameView::ConvertToLayoutObject(const LayoutObject& layout_object,
-                                              const IntRect& frame_rect) const {
-  return PixelSnappedIntRect(
-      layout_object.AbsoluteToLocalRect(PhysicalRect(frame_rect)));
-}
-
-IntPoint LocalFrameView::ConvertFromLayoutObject(
-    const LayoutObject& layout_object,
-    const IntPoint& layout_object_point) const {
-  return RoundedIntPoint(ConvertFromLayoutObject(
-      layout_object, PhysicalOffset(layout_object_point)));
-}
-
-IntPoint LocalFrameView::ConvertToLayoutObject(
-    const LayoutObject& layout_object,
-    const IntPoint& frame_point) const {
-  return RoundedIntPoint(
-      ConvertToLayoutObject(layout_object, PhysicalOffset(frame_point)));
-}
-
-PhysicalOffset LocalFrameView::ConvertFromLayoutObject(
-    const LayoutObject& layout_object,
-    const PhysicalOffset& layout_object_offset) const {
-  return layout_object.LocalToAbsolutePoint(layout_object_offset);
-}
-
-PhysicalOffset LocalFrameView::ConvertToLayoutObject(
-    const LayoutObject& layout_object,
-    const PhysicalOffset& frame_offset) const {
-  return PhysicalOffset::FromFloatPointRound(
-      ConvertToLayoutObject(layout_object, FloatPoint(frame_offset)));
-}
-
-FloatPoint LocalFrameView::ConvertToLayoutObject(
-    const LayoutObject& layout_object,
-    const FloatPoint& frame_point) const {
-  return layout_object.AbsoluteToLocalFloatPoint(frame_point);
-}
-
-IntPoint LocalFrameView::ConvertSelfToChild(const EmbeddedContentView& child,
-                                            const IntPoint& point) const {
-  IntPoint new_point(point);
-  new_point.MoveBy(-child.Location());
-  return new_point;
-}
-
 IntRect LocalFrameView::RootFrameToDocument(const IntRect& rect_in_root_frame) {
   IntPoint offset = RootFrameToDocument(rect_in_root_frame.Location());
   IntRect local_rect = rect_in_root_frame;
@@ -3353,7 +3449,7 @@ PhysicalRect LocalFrameView::FrameToDocument(
 
 IntRect LocalFrameView::ConvertToContainingEmbeddedContentView(
     const IntRect& local_rect) const {
-  if (LocalFrameView* parent = ParentFrameView()) {
+  if (ParentFrameView()) {
     auto* layout_object = GetLayoutEmbeddedContent();
     if (!layout_object)
       return local_rect;
@@ -3363,7 +3459,8 @@ IntRect LocalFrameView::ConvertToContainingEmbeddedContentView(
     rect.Move(
         (layout_object->BorderLeft() + layout_object->PaddingLeft()).ToInt(),
         (layout_object->BorderTop() + layout_object->PaddingTop()).ToInt());
-    return parent->ConvertFromLayoutObject(*layout_object, rect);
+    return PixelSnappedIntRect(
+        layout_object->LocalToAbsoluteRect(PhysicalRect(rect)));
   }
 
   return local_rect;
@@ -3371,19 +3468,17 @@ IntRect LocalFrameView::ConvertToContainingEmbeddedContentView(
 
 IntRect LocalFrameView::ConvertFromContainingEmbeddedContentView(
     const IntRect& parent_rect) const {
-  if (LocalFrameView* parent = ParentFrameView()) {
+  if (ParentFrameView()) {
     IntRect local_rect = parent_rect;
-    local_rect.SetLocation(
-        parent->ConvertSelfToChild(*this, local_rect.Location()));
+    local_rect.MoveBy(-Location());
     return local_rect;
   }
-
   return parent_rect;
 }
 
 PhysicalOffset LocalFrameView::ConvertToContainingEmbeddedContentView(
     const PhysicalOffset& local_offset) const {
-  if (LocalFrameView* parent = ParentFrameView()) {
+  if (ParentFrameView()) {
     auto* layout_object = GetLayoutEmbeddedContent();
     if (!layout_object)
       return local_offset;
@@ -3394,7 +3489,7 @@ PhysicalOffset LocalFrameView::ConvertToContainingEmbeddedContentView(
     point += PhysicalOffset(
         layout_object->BorderLeft() + layout_object->PaddingLeft(),
         layout_object->BorderTop() + layout_object->PaddingTop());
-    return parent->ConvertFromLayoutObject(*layout_object, point);
+    return layout_object->LocalToAbsolutePoint(point);
   }
 
   return local_offset;
@@ -3432,14 +3527,14 @@ FloatPoint LocalFrameView::ConvertFromContainingEmbeddedContentView(
 
 DoublePoint LocalFrameView::ConvertFromContainingEmbeddedContentView(
     const DoublePoint& parent_point) const {
-  if (LocalFrameView* parent = ParentFrameView()) {
+  if (ParentFrameView()) {
     // Get our layoutObject in the parent view
     auto* layout_object = GetLayoutEmbeddedContent();
     if (!layout_object)
       return parent_point;
 
-    DoublePoint point = DoublePoint(parent->ConvertToLayoutObject(
-        *layout_object, FloatPoint(parent_point)));
+    DoublePoint point(
+        layout_object->AbsoluteToLocalFloatPoint(FloatPoint(parent_point)));
     // Subtract borders and padding
     point.Move(
         (-layout_object->BorderLeft() - layout_object->PaddingLeft())
@@ -3472,14 +3567,12 @@ void LocalFrameView::SetTracksRasterInvalidations(
       continue;
     if (auto* layout_view = local_frame->ContentLayoutObject()) {
       is_tracking_raster_invalidations_ = track_raster_invalidations;
-      if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
-        if (paint_artifact_compositor_) {
-          paint_artifact_compositor_->SetTracksRasterInvalidations(
-              track_raster_invalidations);
-        }
-      } else {
-        layout_view->Compositor()->UpdateTrackingRasterInvalidations();
+      if (paint_artifact_compositor_) {
+        paint_artifact_compositor_->SetTracksRasterInvalidations(
+            track_raster_invalidations);
       }
+      if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+        layout_view->Compositor()->UpdateTrackingRasterInvalidations();
     }
   }
 
@@ -3789,10 +3882,50 @@ IntPoint LocalFrameView::SoonToBeRemovedUnscaledViewportToContents(
   return ConvertFromRootFrame(point_in_root_frame);
 }
 
+bool LocalFrameView::CapturePaintPreview(GraphicsContext& context,
+                                         const IntSize& paint_offset) const {
+  base::Optional<base::UnguessableToken> maybe_embedding_token =
+      GetFrame().GetEmbeddingToken();
+
+  // Avoid crashing if a local frame doesn't have an embedding token.
+  // e.g. it was unloaded or hasn't finished loading (crbug/1103157).
+  if (!maybe_embedding_token.has_value())
+    return false;
+
+  // Ensure a recording canvas is properly created.
+  DrawingRecorder recorder(context, *GetFrame().OwnerLayoutObject(),
+                           DisplayItem::kDocumentBackground);
+  context.Save();
+  context.Translate(paint_offset.Width(), paint_offset.Height());
+  DCHECK(context.Canvas());
+
+  auto* tracker = context.Canvas()->GetPaintPreviewTracker();
+  DCHECK(tracker);  // |tracker| must exist or there is a bug upstream.
+
+  // Create a placeholder ID that maps to an embedding token.
+  context.Canvas()->recordCustomData(tracker->CreateContentForRemoteFrame(
+      FrameRect(), maybe_embedding_token.value()));
+  context.Restore();
+
+  // Send a request to the browser to trigger a capture of the frame.
+  GetFrame().GetLocalFrameHostRemote().CapturePaintPreviewOfSubframe(
+      FrameRect(), tracker->Guid());
+  return true;
+}
+
 void LocalFrameView::Paint(GraphicsContext& context,
                            const GlobalPaintFlags global_paint_flags,
                            const CullRect& cull_rect,
                            const IntSize& paint_offset) const {
+  // When capturing a Paint Preview we want to capture scrollable embedded
+  // content separately. Paint should stop here and ask the browser to
+  // coordinate painting such frames as a separate task.
+  if (context.IsPaintingPreview() && LayoutViewport()->ScrollsOverflow()) {
+    // If capture fails we should fallback to capturing inline if possible.
+    if (CapturePaintPreview(context, paint_offset))
+      return;
+  }
+
   // |paint_offset| is not used because paint properties of the contents will
   // ensure the correct location.
   PaintInternal(context, global_paint_flags, cull_rect);
@@ -4055,8 +4188,7 @@ bool LocalFrameView::UpdateViewportIntersectionsForSubtree(
     intersection_observation_state_ = kNotNeeded;
   }
 
-  if (UpdateViewportIntersection(flags, needs_occlusion_tracking))
-    flags |= IntersectionObservation::kCanSkipStickyFrameTracking;
+  UpdateViewportIntersection(flags, needs_occlusion_tracking);
 
   for (Frame* child = frame_->Tree().FirstChild(); child;
        child = child->Tree().NextSibling()) {
@@ -4104,8 +4236,13 @@ void LocalFrameView::CrossOriginToMainFrameChanged() {
 }
 
 void LocalFrameView::CrossOriginToParentFrameChanged() {
-  if (auto* owner = frame_->DeprecatedLocalOwner())
-    owner->FrameCrossOriginToParentFrameChanged();
+  if (base::FeatureList::IsEnabled(
+          blink::features::kCompositeCrossOriginIframes)) {
+    if (LayoutView* layout_view = GetLayoutView()) {
+      if (PaintLayer* root_layer = layout_view->Layer())
+        root_layer->SetNeedsCompositingInputsUpdate();
+    }
+  }
 }
 
 void LocalFrameView::VisibilityForThrottlingChanged() {
@@ -4167,7 +4304,17 @@ void LocalFrameView::InvalidateForThrottlingChange() {
     // the frame was throttled.
     layout_view->AddSubtreePaintPropertyUpdateReason(
         SubtreePaintPropertyUpdateReason::kPreviouslySkipped);
+
+    if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+      // PaintLayerCompositor::CanBeComposited returns an incorrect visibility
+      // value for throttled frames, and it needs to be recomputed when the
+      // frame becomes unthrottled again.
+      layout_view->Layer()->SetNeedsCompositingInputsUpdate();
+    }
   }
+  // Ensure we'll recompute viewport intersection for the frame subtree during
+  // the scheduled visual update.
+  SetIntersectionObservationState(kRequired);
 }
 
 void LocalFrameView::SetNeedsForcedCompositingUpdate() {
@@ -4181,6 +4328,16 @@ void LocalFrameView::SetIntersectionObservationState(
   if (intersection_observation_state_ >= state)
     return;
   intersection_observation_state_ = state;
+
+  // If an intersection observation is required, force all ancestors to update.
+  // Otherwise, an update could stop at a throttled frame before reaching this.
+  if (state == kRequired) {
+    Frame* parent_frame = frame_->Tree().Parent();
+    if (auto* parent_local_frame = DynamicTo<LocalFrame>(parent_frame)) {
+      if (parent_local_frame->View())
+        parent_local_frame->View()->SetIntersectionObservationState(kRequired);
+    }
+  }
 }
 
 void LocalFrameView::SetPaintArtifactCompositorNeedsUpdate() {
@@ -4235,9 +4392,6 @@ unsigned LocalFrameView::GetIntersectionObservationFlags(
   // applies to the entire frame tree.
   flags |= (parent_flags & IntersectionObservation::kIgnoreDelay);
 
-  flags |=
-      (parent_flags & IntersectionObservation::kCanSkipStickyFrameTracking);
-
   return flags;
 }
 
@@ -4291,9 +4445,11 @@ void LocalFrameView::BeginLifecycleUpdates() {
   // Avoid pumping frames for the initially empty document.
   // TODO(schenney): This seems pointless because main frame updates do occur
   // for pages like about:blank, at least according to log messages.
-  if (!GetFrame().Loader().StateMachine()->CommittedFirstRealDocumentLoad())
+  if (GetFrame().GetDocument()->IsInitialEmptyDocument())
     return;
   lifecycle_updates_throttled_ = false;
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+    SetForeignLayerListNeedsUpdate();
   if (auto* owner = GetLayoutEmbeddedContent())
     owner->SetShouldCheckForPaintInvalidation();
 
@@ -4320,17 +4476,15 @@ void LocalFrameView::BeginLifecycleUpdates() {
   // updates start. Doing so allows us to update the page lifecycle but not
   // present the results to screen until we see first contentful paint is
   // available or until a timer expires.
-  // This is enabled only if kAvoidFlashBetweenNavigation is enabled, and
-  // the document loading is regular HTML served over HTTP/HTTPs.
-  // And only defer commits once. This method gets called multiple times,
-  // and we do not want to defer a second time if we have already done
-  // so once and resumed commits already.
+  // This is enabled only when the document loading is regular HTML served
+  // over HTTP/HTTPs. And only defer commits once. This method gets called
+  // multiple times, and we do not want to defer a second time if we have
+  // already done so once and resumed commits already.
   if (document &&
-      base::FeatureList::IsEnabled(blink::features::kPaintHolding) &&
       document->DeferredCompositorCommitIsAllowed() &&
       !have_deferred_commits_) {
-    chrome_client.StartDeferringCommits(GetFrame(),
-                                        GetCommitDelayForPaintHolding());
+    chrome_client.StartDeferringCommits(
+        GetFrame(), base::TimeDelta::FromMilliseconds(kCommitDelayDefaultInMs));
     have_deferred_commits_ = true;
   }
 
@@ -4447,19 +4601,26 @@ bool LocalFrameView::MapToVisualRectInRemoteRootFrame(
     return true;
   bool result = rect.InclusiveIntersect(PhysicalRect(
       apply_overflow_clip ? frame_->RemoteViewportIntersection()
-                          : frame_->RemoteMainFrameDocumentIntersection()));
-  if (result)
-    rect.Move(PhysicalOffset(GetFrame().RemoteViewportOffset()));
+                          : frame_->RemoteMainFrameIntersection()));
+  if (result) {
+    if (LayoutView* layout_view = GetLayoutView()) {
+      rect = layout_view->LocalToAncestorRect(
+          rect, nullptr,
+          kTraverseDocumentBoundaries | kApplyRemoteMainFrameTransform);
+    }
+  }
   return result;
 }
 
-void LocalFrameView::MapLocalToRemoteRootFrame(
+void LocalFrameView::MapLocalToRemoteMainFrame(
     TransformState& transform_state) {
   DCHECK(frame_->IsLocalRoot());
   // This is the top-level frame, so no mapping necessary.
   if (frame_->IsMainFrame())
     return;
-  transform_state.Move(PhysicalOffset(frame_->RemoteViewportOffset()));
+  transform_state.ApplyTransform(
+      TransformationMatrix(GetFrame().RemoteMainFrameTransform().matrix()),
+      TransformState::kAccumulateTransform);
 }
 
 LayoutUnit LocalFrameView::CaretWidth() const {
@@ -4494,6 +4655,21 @@ void LocalFrameView::UnregisterFromLifecycleNotifications(
 
 void LocalFrameView::EnqueueStartOfLifecycleTask(base::OnceClosure closure) {
   start_of_lifecycle_tasks_.push_back(std::move(closure));
+}
+
+void LocalFrameView::NotifyVideoIsDominantVisibleStatus(
+    HTMLVideoElement* element,
+    bool is_dominant) {
+  if (is_dominant) {
+    fullscreen_video_elements_.insert(element);
+    return;
+  }
+
+  fullscreen_video_elements_.erase(element);
+}
+
+bool LocalFrameView::HasDominantVideoElement() const {
+  return !fullscreen_video_elements_.IsEmpty();
 }
 
 #if DCHECK_IS_ON()
@@ -4543,6 +4719,101 @@ LocalFrameView::EnsureOverlayInterstitialAdDetector() {
         std::make_unique<OverlayInterstitialAdDetector>();
   }
   return *overlay_interstitial_ad_detector_.get();
+}
+
+WTF::Vector<const TransformPaintPropertyNode*>
+LocalFrameView::GetScrollTranslationNodes() {
+  WTF::Vector<const TransformPaintPropertyNode*> scroll_translation_nodes;
+  for (auto area : *ScrollableAreas()) {
+    const auto* paint_properties =
+        area->GetLayoutBox()->FirstFragment().PaintProperties();
+    if (paint_properties && paint_properties->Scroll()) {
+      scroll_translation_nodes.push_back(paint_properties->ScrollTranslation());
+    }
+  }
+  return scroll_translation_nodes;
+}
+
+StickyAdDetector& LocalFrameView::EnsureStickyAdDetector() {
+  if (!sticky_ad_detector_) {
+    sticky_ad_detector_ = std::make_unique<StickyAdDetector>();
+  }
+  return *sticky_ad_detector_.get();
+}
+
+static PaintLayer* GetFullScreenOverlayVideoLayer(Document& document) {
+  // Recursively find the document that is in fullscreen.
+  Document* content_document = &document;
+  Element* fullscreen_element =
+      Fullscreen::FullscreenElementFrom(*content_document);
+  while (auto* frame_owner =
+             DynamicTo<HTMLFrameOwnerElement>(fullscreen_element)) {
+    content_document = frame_owner->contentDocument();
+    if (!content_document)
+      return nullptr;
+    fullscreen_element = Fullscreen::FullscreenElementFrom(*content_document);
+  }
+  auto* video_element = DynamicTo<HTMLVideoElement>(fullscreen_element);
+  if (!video_element || !video_element->UsesOverlayFullscreenVideo())
+    return nullptr;
+  return video_element->GetLayoutBoxModelObject()->Layer();
+}
+
+static PaintLayer* GetXrOverlayLayer(Document& document) {
+  // immersive-ar DOM overlay mode is very similar to fullscreen video, using
+  // the AR camera image instead of a video element as a background that's
+  // separately composited in the browser. The fullscreened DOM content is shown
+  // on top of that, same as HTML video controls.
+  if (!document.IsXrOverlay())
+    return nullptr;
+
+  // When DOM overlay mode is active in iframe content, the parent frame's
+  // document will also be marked as being in DOM overlay mode, with the iframe
+  // element being in fullscreen mode. Find the innermost reachable fullscreen
+  // element to use as the XR overlay layer. This is the overlay element for
+  // same-process iframes, or an iframe element for OOPIF if the overlay element
+  // is in another process.
+  Document* content_document = &document;
+  Element* fullscreen_element =
+      Fullscreen::FullscreenElementFrom(*content_document);
+  while (auto* frame_owner =
+             DynamicTo<HTMLFrameOwnerElement>(fullscreen_element)) {
+    content_document = frame_owner->contentDocument();
+    if (!content_document) {
+      // This is an OOPIF iframe, treat it as the fullscreen element.
+      break;
+    }
+    fullscreen_element = Fullscreen::FullscreenElementFrom(*content_document);
+  }
+
+  if (!fullscreen_element)
+    return nullptr;
+
+  const auto* object = fullscreen_element->GetLayoutBoxModelObject();
+  if (!object) {
+    // Currently, only HTML fullscreen elements are supported for this mode,
+    // not others such as SVG or MathML.
+    DVLOG(1) << "no LayoutBoxModelObject for element " << fullscreen_element;
+    return nullptr;
+  }
+
+  return object->Layer();
+}
+
+PaintLayer* LocalFrameView::GetFullScreenOverlayLayer() const {
+  Document* doc = frame_->GetDocument();
+  DCHECK(doc);
+
+  // For WebXR DOM Overlay, the fullscreen overlay layer comes from either the
+  // overlay element itself, or from an iframe element if the overlay element is
+  // in an OOPIF. This layer is needed even for non-main-frame scenarios to
+  // ensure the background remains transparent.
+  if (doc->IsXrOverlay())
+    return GetXrOverlayLayer(*doc);
+
+  // Fullscreen overlay video layers are only used for the main frame.
+  DCHECK(frame_->IsMainFrame());
+  return GetFullScreenOverlayVideoLayer(*doc);
 }
 
 }  // namespace blink

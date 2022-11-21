@@ -88,7 +88,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadResponseHandler
   std::vector<GURL> url_chain_;
   std::string method_;
   GURL referrer_;
-  net::URLRequest::ReferrerPolicy referrer_policy_;
+  net::ReferrerPolicy referrer_policy_;
   bool is_transient_;
   bool fetch_error_body_;
   network::mojom::RedirectMode cross_origin_redirects_;
@@ -99,7 +99,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadResponseHandler
   net::CertStatus cert_status_;
   bool has_strong_validators_;
   base::Optional<url::Origin> request_initiator_;
-  net::NetworkIsolationKey network_isolation_key_;
   bool is_partial_request_;
   bool completed_;
 

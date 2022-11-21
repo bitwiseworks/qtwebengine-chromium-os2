@@ -63,7 +63,12 @@ struct CC_EXPORT ScrollNode {
 
   base::Optional<SnapContainerData> snap_container_data;
 
+  bool is_composited : 1;
+
+#if DCHECK_IS_ON()
   bool operator==(const ScrollNode& other) const;
+#endif
+
   void AsValueInto(base::trace_event::TracedValue* value) const;
 };
 

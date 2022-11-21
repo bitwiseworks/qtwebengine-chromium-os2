@@ -7,9 +7,9 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -29,11 +29,10 @@
 namespace net {
 
 URLRequestRedirectJob::URLRequestRedirectJob(URLRequest* request,
-                                             NetworkDelegate* network_delegate,
                                              const GURL& redirect_destination,
                                              ResponseCode response_code,
                                              const std::string& redirect_reason)
-    : URLRequestJob(request, network_delegate),
+    : URLRequestJob(request),
       redirect_destination_(redirect_destination),
       response_code_(response_code),
       redirect_reason_(redirect_reason) {

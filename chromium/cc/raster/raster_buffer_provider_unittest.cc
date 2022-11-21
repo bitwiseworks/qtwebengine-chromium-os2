@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -17,10 +18,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/cancelable_callback.h"
+#include "base/check.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_base.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -79,7 +81,9 @@ class TestRasterTaskImpl : public TileTask {
                      unsigned id,
                      std::unique_ptr<RasterBuffer> raster_buffer,
                      TileTask::Vector* dependencies)
-      : TileTask(true, dependencies),
+      : TileTask(TileTask::SupportsConcurrentExecution::kYes,
+                 TileTask::SupportsBackgroundThreadPriority::kYes,
+                 dependencies),
         completion_handler_(completion_handler),
         id_(id),
         raster_buffer_(std::move(raster_buffer)),

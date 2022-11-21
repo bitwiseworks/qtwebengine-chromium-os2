@@ -13,7 +13,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
-#include "gpu/command_buffer/service/gl_stream_texture_image.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/stream_texture_shared_image_interface.h"
 #include "gpu/command_buffer/service/texture_owner.h"
@@ -80,14 +79,6 @@ class StreamTexture : public StreamTextureSharedImageInterface,
   std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
   GetAHardwareBuffer() override;
 
-  // gpu::gles2::GLStreamTextureMatrix implementation
-  void GetTextureMatrix(float xform[16]) override;
-  void NotifyPromotionHint(bool promotion_hint,
-                           int display_x,
-                           int display_y,
-                           int display_width,
-                           int display_height) override;
-
   // gpu::StreamTextureSharedImageInterface implementation.
   void ReleaseResources() override {}
   bool IsUsingGpuMemory() const override;
@@ -102,6 +93,7 @@ class StreamTexture : public StreamTextureSharedImageInterface,
 
   void UpdateTexImage(BindingsMode bindings_mode);
   void EnsureBoundIfNeeded(BindingsMode mode);
+  gpu::Mailbox CreateSharedImage(const gfx::Size& coded_size);
 
   // Called when a new frame is available for the SurfaceOwner.
   void OnFrameAvailable();
@@ -112,19 +104,14 @@ class StreamTexture : public StreamTextureSharedImageInterface,
   // IPC message handlers:
   void OnStartListening();
   void OnForwardForSurfaceRequest(const base::UnguessableToken& request_token);
-  void OnCreateSharedImage(const gpu::Mailbox& mailbox,
-                           const gfx::Size& size,
-                           uint32_t release_id);
+  void OnUpdateRotatedVisibleSize(const gfx::Size& natural_size);
   void OnDestroy();
 
   // The TextureOwner which receives frames.
   scoped_refptr<TextureOwner> texture_owner_;
 
-  // Current transform matrix of the surface owner.
-  float current_matrix_[16];
-
-  // Current size of the surface owner.
-  gfx::Size size_;
+  // Current visible size from media player, includes rotation.
+  gfx::Size rotated_visible_size_;
 
   // Whether a new frame is available that we should update to.
   bool has_pending_frame_;
@@ -136,9 +123,8 @@ class StreamTexture : public StreamTextureSharedImageInterface,
   SequenceId sequence_;
   scoped_refptr<gpu::SyncPointClientState> sync_point_client_state_;
 
-  // This indicates whether ycbcr info is already sent from gpu process to the
-  // renderer.
-  bool ycbcr_info_sent_ = false;
+  gfx::Size coded_size_;
+  gfx::Rect visible_rect_;
 
   base::WeakPtrFactory<StreamTexture> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(StreamTexture);

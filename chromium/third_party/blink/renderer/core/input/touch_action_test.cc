@@ -29,8 +29,8 @@
  */
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/input/web_coalesced_input_event.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
-#include "third_party/blink/public/platform/web_coalesced_input_event.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_frame.h"
@@ -54,6 +54,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_tree_as_text.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
@@ -62,31 +63,47 @@ using blink::test::RunPendingTasks;
 
 namespace blink {
 
-class TouchActionTrackingWebWidgetClient
-    : public frame_test_helpers::TestWebWidgetClient {
+class TouchActionWidgetInputHandlerHost
+    : public frame_test_helpers::TestWidgetInputHandlerHost {
  public:
-  TouchActionTrackingWebWidgetClient()
-      : action_set_count_(0), action_(TouchAction::kAuto) {}
-
-  // WebWidgetClient methods
-  void SetTouchAction(TouchAction touch_action) override {
+  void SetTouchActionFromMain(TouchAction touch_action) override {
     action_set_count_++;
     action_ = touch_action;
   }
 
-  // Local methods
-  void Reset() {
+  void ResetTouchAction() {
     action_set_count_ = 0;
     action_ = TouchAction::kAuto;
   }
 
-  int TouchActionSetCount() { return action_set_count_; }
+  int action_set_count() const { return action_set_count_; }
 
-  TouchAction LastTouchAction() { return action_; }
+  TouchAction action() const { return action_; }
 
  private:
-  int action_set_count_;
-  TouchAction action_;
+  int action_set_count_ = 0;
+  TouchAction action_ = TouchAction::kAuto;
+};
+
+class TouchActionTrackingWebWidgetClient
+    : public frame_test_helpers::TestWebWidgetClient {
+ public:
+  TouchActionTrackingWebWidgetClient() = default;
+
+  frame_test_helpers::TestWidgetInputHandlerHost* GetInputHandlerHost()
+      override {
+    return &input_handler_host_;
+  }
+
+  // Local methods
+  void Reset() { input_handler_host_.ResetTouchAction(); }
+
+  int TouchActionSetCount() { return input_handler_host_.action_set_count(); }
+
+  TouchAction LastTouchAction() { return input_handler_host_.action(); }
+
+ private:
+  TouchActionWidgetInputHandlerHost input_handler_host_;
 };
 
 class TouchActionTest : public testing::Test {
@@ -222,11 +239,19 @@ WebViewImpl* TouchActionTest::SetupTest(
   return web_view;
 }
 
+static const LayoutBoxModelObject& EnclosingCompositedContainer(
+    const LayoutObject& layout_object) {
+  DCHECK(!RuntimeEnabledFeatures::CompositeAfterPaintEnabled());
+  return layout_object.PaintingLayer()
+      ->EnclosingLayerForPaintInvalidationCrossingFrameBoundaries()
+      ->GetLayoutObject();
+}
+
 IntRect WindowClipRect(const LocalFrameView& frame_view) {
   PhysicalRect clip_rect(PhysicalOffset(), PhysicalSize(frame_view.Size()));
   frame_view.GetLayoutView()->MapToVisualRectInAncestorSpace(
-      &frame_view.GetLayoutView()->ContainerForPaintInvalidation(), clip_rect,
-      0, kDefaultVisualRectFlags);
+      &EnclosingCompositedContainer(*frame_view.GetLayoutView()), clip_rect, 0,
+      kDefaultVisualRectFlags);
   return EnclosingIntRect(clip_rect);
 }
 
@@ -270,6 +295,8 @@ void TouchActionTest::RunTestOnTree(
     // debugging).
     Persistent<DOMRectList> rects = element->getClientRects();
     ASSERT_GE(rects->length(), 0u) << failure_context.ToString();
+    if (!rects->length())
+      continue;
     Persistent<DOMRect> r = rects->item(0);
     FloatRect client_float_rect =
         FloatRect(r->left(), r->top(), r->width(), r->height());
@@ -335,7 +362,8 @@ void TouchActionTest::RunTestOnTree(
           << ExternalRepresentation(root->GetDocument().GetFrame()).Utf8();
 
       // Now send the touch event and check any touch action result.
-      SendTouchEvent(web_view, WebInputEvent::kPointerDown, window_point);
+      SendTouchEvent(web_view, WebInputEvent::Type::kPointerDown, window_point);
+      RunPendingTasks();
 
       AtomicString expected_action = element->getAttribute("expected-action");
       // Should have received exactly one touch action, even for auto.
@@ -367,7 +395,8 @@ void TouchActionTest::RunTestOnTree(
 
       // Reset webview touch state.
       client.Reset();
-      SendTouchEvent(web_view, WebInputEvent::kPointerCancel, window_point);
+      SendTouchEvent(web_view, WebInputEvent::Type::kPointerCancel,
+                     window_point);
       EXPECT_EQ(0, client.TouchActionSetCount());
     }
   }
@@ -375,8 +404,8 @@ void TouchActionTest::RunTestOnTree(
 void TouchActionTest::SendTouchEvent(WebView* web_view,
                                      WebInputEvent::Type type,
                                      IntPoint client_point) {
-  ASSERT_TRUE(type == WebInputEvent::kPointerDown ||
-              type == WebInputEvent::kPointerCancel);
+  ASSERT_TRUE(type == WebInputEvent::Type::kPointerDown ||
+              type == WebInputEvent::Type::kPointerCancel);
 
   WebPointerEvent event(
       type,
@@ -385,10 +414,13 @@ void TouchActionTest::SendTouchEvent(WebView* web_view,
                            gfx::PointF(client_point.X(), client_point.Y()),
                            gfx::PointF(client_point.X(), client_point.Y())),
       10.0f, 10.0f);
-  if (type == WebInputEvent::kPointerCancel)
-    event.dispatch_type = WebInputEvent::kEventNonBlocking;
+  if (type == WebInputEvent::Type::kPointerCancel)
+    event.dispatch_type = WebInputEvent::DispatchType::kEventNonBlocking;
+  else
+    event.touch_start_or_first_touch_move = true;
 
-  web_view->MainFrameWidget()->HandleInputEvent(WebCoalescedInputEvent(event));
+  web_view->MainFrameWidget()->ProcessInputEventSynchronouslyForTesting(
+      WebCoalescedInputEvent(event, ui::LatencyInfo()), base::DoNothing());
   web_view->MainFrameWidget()->DispatchBufferedTouchEvents();
   RunPendingTasks();
 }

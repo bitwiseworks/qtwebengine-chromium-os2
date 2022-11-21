@@ -34,8 +34,8 @@ namespace trace_processor {
 //    overhead.
 // 2. Ergonomics: having to convert back and forth from/to SqlValue causes
 //    signifcant clutter in parts of the code which can already be quite hard
-//    to follow (e.g. trackers like StackProfileTracker which perform cross
-//    checking of various ids).
+//    to follow (e.g. trackers like SequenceStackProfileTracker which perform
+//    cross checking of various ids).
 //
 // Implementation:
 // TypedColumn is implemented as a memberless subclass of Column. This allows
@@ -66,24 +66,13 @@ struct TypedColumn : public Column {
   using Serializer = tc_internal::Serializer<non_optional_type>;
 
  public:
-  // The type which should be stored in the SparseVector.
-  // Used by the macro code when actually constructing the SparseVectors.
+  // The type which should be stored in the NullableVector.
+  // Used by the macro code when actually constructing the NullableVectors.
   using serialized_type = typename Serializer::serialized_type;
 
-  // Returns the data in the column at index |row|.
-  // Function chosen when TH::is_optional == true.
-  template <bool is_optional = TH::is_optional>
-  typename std::enable_if<is_optional, get_type>::type operator[](
-      uint32_t row) const {
-    return Serializer::Deserialize(sparse_vector().Get(row_map().Get(row)));
-  }
-
-  // Function chosen when TH::is_optional == false.
-  template <bool is_optional = TH::is_optional>
-  typename std::enable_if<!is_optional, get_type>::type operator[](
-      uint32_t row) const {
+  get_type operator[](uint32_t row) const {
     return Serializer::Deserialize(
-        sparse_vector().GetNonNull(row_map().Get(row)));
+        TH::Get(nullable_vector(), row_map().Get(row)));
   }
 
   // Special function only for string types to allow retrieving the string
@@ -91,18 +80,18 @@ struct TypedColumn : public Column {
   template <bool is_string = TH::is_string>
   typename std::enable_if<is_string, NullTermStringView>::type GetString(
       uint32_t row) const {
-    return string_pool().Get((*this)[row]);
+    return string_pool().Get(nullable_vector().GetNonNull(row_map().Get(row)));
   }
 
   // Sets the data in the column at index |row|.
   void Set(uint32_t row, non_optional_type v) {
     auto serialized = Serializer::Serialize(v);
-    mutable_sparse_vector()->Set(row_map().Get(row), serialized);
+    mutable_nullable_vector()->Set(row_map().Get(row), serialized);
   }
 
   // Inserts the value at the end of the column.
   void Append(T v) {
-    mutable_sparse_vector()->Append(Serializer::Serialize(v));
+    mutable_nullable_vector()->Append(Serializer::Serialize(v));
   }
 
   // Returns the row containing the given value in the Column.
@@ -145,7 +134,8 @@ struct TypedColumn : public Column {
         (column->IsNullable() == TH::is_optional) && !column->IsId()) {
       return reinterpret_cast<const TypedColumn<T>*>(column);
     } else {
-      PERFETTO_FATAL("Unsafe to convert Column to TypedColumn.");
+      PERFETTO_FATAL("Unsafe to convert Column TypedColumn (%s)",
+                     column->name());
     }
   }
 
@@ -157,11 +147,11 @@ struct TypedColumn : public Column {
     return SqlValue::String(value.c_str());
   }
 
-  const SparseVector<serialized_type>& sparse_vector() const {
-    return Column::sparse_vector<serialized_type>();
+  const NullableVector<serialized_type>& nullable_vector() const {
+    return Column::nullable_vector<serialized_type>();
   }
-  SparseVector<serialized_type>* mutable_sparse_vector() {
-    return Column::mutable_sparse_vector<serialized_type>();
+  NullableVector<serialized_type>* mutable_nullable_vector() {
+    return Column::mutable_nullable_vector<serialized_type>();
   }
 };
 
@@ -173,6 +163,17 @@ struct IdColumn : public Column {
   Id operator[](uint32_t row) const { return Id(row_map().Get(row)); }
   base::Optional<uint32_t> IndexOf(Id id) const {
     return row_map().IndexOf(id.value);
+  }
+
+  // Reinterpret cast a Column to IdColumn or crash if that is likely to be
+  // unsafe.
+  static const IdColumn<Id>* FromColumn(const Column* column) {
+    if (column->IsId()) {
+      return reinterpret_cast<const IdColumn<Id>*>(column);
+    } else {
+      PERFETTO_FATAL("Unsafe to convert Column to IdColumn (%s)",
+                     column->name());
+    }
   }
 
   // Helper functions to create constraints for the given value.

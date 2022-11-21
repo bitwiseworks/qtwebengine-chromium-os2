@@ -30,9 +30,6 @@ CSSSelectorList CSSSelectorParser::ParseSelector(
     return CSSSelectorList();
 
   parser.RecordUsageAndDeprecations(result);
-
-  if (result.RequiresExpansion())
-    return result.TransformForListExpansion();
   return result;
 }
 
@@ -46,9 +43,6 @@ CSSSelectorList CSSSelectorParser::ConsumeSelector(
   stream.ConsumeWhitespace();
   CSSSelectorList result = parser.ConsumeComplexSelectorList(stream, observer);
   parser.RecordUsageAndDeprecations(result);
-
-  if (result.RequiresExpansion())
-    return result.TransformForListExpansion();
   return result;
 }
 
@@ -286,7 +280,8 @@ bool IsSimpleSelectorValidAfterPseudoElement(
       return true;
     case CSSSelector::kPseudoAfter:
     case CSSSelector::kPseudoBefore:
-      if (simple_selector.GetPseudoType() == CSSSelector::kPseudoMarker)
+      if (simple_selector.GetPseudoType() == CSSSelector::kPseudoMarker &&
+          RuntimeEnabledFeatures::CSSMarkerNestedPseudoElementEnabled())
         return true;
       break;
     case CSSSelector::kPseudoContent:
@@ -553,11 +548,20 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumePseudo(
         context_->Count(WebFeature::kHasBeforeOrAfterPseudoElement);
         break;
       case CSSSelector::kPseudoMarker:
-        context_->Count(WebFeature::kHasMarkerPseudoElement);
-        if (!RuntimeEnabledFeatures::CSSMarkerPseudoElementEnabled())
-          return nullptr;
+        if (context_->Mode() != kUASheetMode) {
+          context_->Count(WebFeature::kHasMarkerPseudoElement);
+          if (!RuntimeEnabledFeatures::CSSMarkerPseudoElementEnabled())
+            return nullptr;
+        }
         break;
-      default:;
+      case CSSSelector::kPseudoShadow:
+      case CSSSelector::kPseudoContent:
+        if (disallow_shadow_dom_v0_)
+          return nullptr;
+        disallow_nested_complex_ = true;
+        break;
+      default:
+        break;
     }
   }
 
@@ -581,6 +585,9 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumePseudo(
     case CSSSelector::kPseudoIs: {
       if (!RuntimeEnabledFeatures::CSSPseudoIsEnabled())
         break;
+      if (disallow_nested_complex_)
+        return nullptr;
+      disallow_shadow_dom_v0_ = true;
 
       DisallowPseudoElementsScope scope(this);
 
@@ -595,6 +602,9 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumePseudo(
     case CSSSelector::kPseudoWhere: {
       if (!RuntimeEnabledFeatures::CSSPseudoWhereEnabled())
         break;
+      if (disallow_nested_complex_)
+        return nullptr;
+      disallow_shadow_dom_v0_ = true;
 
       DisallowPseudoElementsScope scope(this);
 
@@ -615,8 +625,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumePseudo(
       std::unique_ptr<CSSSelectorList> selector_list =
           std::make_unique<CSSSelectorList>();
       *selector_list = ConsumeCompoundSelectorList(block);
-      if (!selector_list->IsValid() || !block.AtEnd() ||
-          selector_list->HasPseudoIs() || selector_list->HasPseudoWhere())
+      if (!selector_list->IsValid() || !block.AtEnd())
         return nullptr;
       selector->SetSelectorList(std::move(selector_list));
       return selector;
@@ -727,6 +736,10 @@ CSSSelector::RelationType CSSSelectorParser::ConsumeCombinator(
       const CSSParserToken& slash = range.ConsumeIncludingWhitespace();
       if (slash.GetType() != kDelimiterToken || slash.Delimiter() != '/')
         failed_parsing_ = true;
+      if (disallow_shadow_dom_v0_)
+        failed_parsing_ = true;
+      else
+        disallow_nested_complex_ = true;
       return context_->IsLiveProfile() ? CSSSelector::kShadowDeepAsDescendant
                                        : CSSSelector::kShadowDeep;
     }

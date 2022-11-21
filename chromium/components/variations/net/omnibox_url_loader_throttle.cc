@@ -5,6 +5,7 @@
 #include "components/variations/net/omnibox_url_loader_throttle.h"
 
 #include "components/variations/net/omnibox_http_headers.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace variations {
@@ -41,7 +42,8 @@ void OmniboxURLLoaderThrottle::WillRedirectRequest(
     const network::mojom::URLResponseHead& response_head,
     bool* defer,
     std::vector<std::string>* to_be_removed_headers,
-    net::HttpRequestHeaders* modified_headers) {
+    net::HttpRequestHeaders* modified_headers,
+    net::HttpRequestHeaders* modified_cors_exempt_headers) {
   // Note: No need to check the kReportOmniboxOnDeviceSuggestionsHeader feature
   // state here, as this class is only instantiated when the feature is enabled.
   if (!ShouldAppendHeader(redirect_info->new_url))

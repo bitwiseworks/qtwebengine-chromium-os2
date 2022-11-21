@@ -85,31 +85,64 @@ uint32_t TimeToNextReadTickMs(DataSourceInstanceID ds_id, uint32_t period_ms) {
   return period_ms - ((now_ms - ds_period_offset) % period_ms);
 }
 
-bool ShouldRejectDueToFilter(pid_t pid, const TargetFilter& filter) {
-  bool reject_cmd = false;
+bool ShouldRejectDueToFilter(pid_t pid,
+                             base::FlatSet<std::string>* additional_cmdlines,
+                             const TargetFilter& filter) {
+  PERFETTO_CHECK(additional_cmdlines);
   std::string cmdline;
-  if (GetCmdlineForPID(pid, &cmdline)) {  // normalized form
-    // reject if absent from non-empty whitelist, or present in blacklist
-    reject_cmd = (filter.cmdlines.size() && !filter.cmdlines.count(cmdline)) ||
-                 filter.exclude_cmdlines.count(cmdline);
-  } else {
+  bool have_cmdline = GetCmdlineForPID(pid, &cmdline);  // normalized form
+  if (!have_cmdline) {
     PERFETTO_DLOG("Failed to look up cmdline for pid [%d]",
                   static_cast<int>(pid));
-    // reject only if there's a whitelist present
-    reject_cmd = filter.cmdlines.size() > 0;
   }
 
-  bool reject_pid = (filter.pids.size() && !filter.pids.count(pid)) ||
-                    filter.exclude_pids.count(pid);
-
-  if (reject_cmd || reject_pid) {
-    PERFETTO_DLOG(
-        "Rejecting samples for pid [%d] due to cmdline(%d) or pid(%d)",
-        static_cast<int>(pid), reject_cmd, reject_pid);
-
+  if (have_cmdline && filter.exclude_cmdlines.count(cmdline)) {
+    PERFETTO_DLOG("Explicitly rejecting samples for pid [%d] due to cmdline",
+                  static_cast<int>(pid));
     return true;
   }
-  return false;
+  if (filter.exclude_pids.count(pid)) {
+    PERFETTO_DLOG("Explicitly rejecting samples for pid [%d] due to pid",
+                  static_cast<int>(pid));
+    return true;
+  }
+
+  if (have_cmdline && filter.cmdlines.count(cmdline)) {
+    return false;
+  }
+  if (filter.pids.count(pid)) {
+    return false;
+  }
+  if (!filter.cmdlines.size() && !filter.pids.size() &&
+      !filter.additional_cmdline_count) {
+    // If no filters are set allow everything.
+    return false;
+  }
+
+  // If we didn't read the command line that's a good prediction we will not be
+  // able to profile either.
+  if (have_cmdline) {
+    if (additional_cmdlines->count(cmdline)) {
+      return false;
+    }
+    if (additional_cmdlines->size() < filter.additional_cmdline_count) {
+      additional_cmdlines->insert(cmdline);
+      return false;
+    }
+  }
+
+  PERFETTO_DLOG("Rejecting samples for pid [%d]", static_cast<int>(pid));
+  return true;
+}
+
+void MaybeReleaseAllocatorMemToOS() {
+#if defined(__BIONIC__)
+  // TODO(b/152414415): libunwindstack's volume of small allocations is
+  // adverarial to scudo, which doesn't automatically release small
+  // allocation regions back to the OS. Forceful purge does reclaim all size
+  // classes.
+  mallopt(M_PURGE, 0);
+#endif
 }
 
 protos::pbzero::Profiling::CpuMode ToCpuModeEnum(uint16_t perf_cpu_mode) {
@@ -220,16 +253,22 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
       std::forward_as_tuple(event_config.value(), std::move(writer),
                             std::move(per_cpu_readers)));
   PERFETTO_CHECK(inserted);
+  DataSourceState& ds = ds_it->second;
 
   // Write out a packet to initialize the incremental state for this sequence.
   InterningOutputTracker::WriteFixedInterningsPacket(
       ds_it->second.trace_writer.get());
 
-  // Inform unwinder of the new data source instance.
+  // Inform unwinder of the new data source instance, and optionally start a
+  // periodic task to clear its cached state.
   unwinding_worker_->PostStartDataSource(instance_id);
+  if (ds.event_config.unwind_state_clear_period_ms()) {
+    unwinding_worker_->PostClearCachedStatePeriodic(
+        instance_id, ds.event_config.unwind_state_clear_period_ms());
+  }
 
   // Kick off periodic read task.
-  auto tick_period_ms = ds_it->second.event_config.read_tick_period_ms();
+  auto tick_period_ms = ds.event_config.read_tick_period_ms();
   auto weak_this = weak_factory_.GetWeakPtr();
   task_runner_->PostDelayedTask(
       [weak_this, instance_id] {
@@ -285,6 +324,40 @@ void PerfProducer::Flush(FlushRequestID flush_id,
   }
   if (should_ack_flush)
     endpoint_->NotifyFlushComplete(flush_id);
+}
+
+void PerfProducer::ClearIncrementalState(
+    const DataSourceInstanceID* data_source_ids,
+    size_t num_data_sources) {
+  for (size_t i = 0; i < num_data_sources; i++) {
+    auto ds_id = data_source_ids[i];
+    PERFETTO_DLOG("ClearIncrementalState(%zu)", static_cast<size_t>(ds_id));
+
+    if (metatrace_writers_.find(ds_id) != metatrace_writers_.end())
+      continue;
+
+    auto ds_it = data_sources_.find(ds_id);
+    if (ds_it == data_sources_.end()) {
+      PERFETTO_DLOG("ClearIncrementalState(%zu): did not find matching entry",
+                    static_cast<size_t>(ds_id));
+      continue;
+    }
+    DataSourceState& ds = ds_it->second;
+
+    // Forget which incremental state we've emitted before.
+    ds.interning_output.ClearHistory();
+    InterningOutputTracker::WriteFixedInterningsPacket(ds.trace_writer.get());
+
+    // Drop the cross-datasource callstack interning trie. This is not
+    // necessary for correctness (the preceding step is sufficient). However,
+    // incremental clearing is likely to be used in ring buffer traces, where
+    // it makes sense to reset the trie's size periodically, and this is a
+    // reasonable point to do so. The trie keeps the monotonic interning IDs,
+    // so there is no confusion for other concurrent data sources. We do not
+    // bother with clearing concurrent sources' interning output trackers as
+    // their footprint should be trivial.
+    callstack_trie_.ClearTrie();
+  }
 }
 
 void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
@@ -377,9 +450,9 @@ bool PerfProducer::ReadAndParsePerCpuBuffer(EventReader* reader,
       PERFETTO_DLOG("New pid: [%d]", static_cast<int>(pid));
 
       // Check whether samples for this new process should be
-      // dropped due to the target whitelist/blacklist.
+      // dropped due to the target filtering.
       const TargetFilter& filter = ds->event_config.filter();
-      if (ShouldRejectDueToFilter(pid, filter)) {
+      if (ShouldRejectDueToFilter(pid, &ds->additional_cmdlines, filter)) {
         process_state = ProcessTrackingStatus::kRejected;
         continue;
       }
@@ -653,13 +726,7 @@ void PerfProducer::FinishDataSourceStop(DataSourceInstanceID ds_id) {
   // Clean up resources if there are no more active sources.
   if (data_sources_.empty()) {
     callstack_trie_.ClearTrie();  // purge internings
-#if defined(__BIONIC__)
-    // TODO(b/152414415): libunwindstack's volume of small allocations is
-    // adverarial to scudo, which doesn't automatically release small
-    // allocation regions back to the OS. Forceful purge does reclaim all size
-    // classes.
-    mallopt(M_PURGE, 0);
-#endif
+    MaybeReleaseAllocatorMemToOS();
   }
 }
 
@@ -712,6 +779,7 @@ void PerfProducer::OnConnect() {
     // linux.perf
     DataSourceDescriptor desc;
     desc.set_name(kDataSourceName);
+    desc.set_handles_incremental_state_clear(true);
     desc.set_will_notify_on_stop(true);
     endpoint_->RegisterDataSource(desc);
   }

@@ -15,6 +15,7 @@
 #include "base/callback.h"
 #include "base/optional.h"
 #include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
 #include "services/device/generic_sensor/platform_sensor_reader_win_base.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
 #include "ui/gfx/geometry/angle_conversions.h"
@@ -74,7 +75,7 @@ class PlatformSensorReaderWinrtBase : public PlatformSensorReaderWinBase {
 
  protected:
   PlatformSensorReaderWinrtBase();
-  virtual ~PlatformSensorReaderWinrtBase();
+  virtual ~PlatformSensorReaderWinrtBase() { StopSensor(); }
 
   // Derived classes should implement this function to handle sensor specific
   // parsing of the sensor reading.
@@ -95,7 +96,7 @@ class PlatformSensorReaderWinrtBase : public PlatformSensorReaderWinBase {
   // threads by PlatformSensorWin.
   base::Lock lock_;
   // Null if there is no client to notify, non-null otherwise.
-  Client* client_;
+  Client* client_ GUARDED_BY(lock_);
 
   // Always report the first sample received after starting the sensor.
   bool has_received_first_sample_ = false;

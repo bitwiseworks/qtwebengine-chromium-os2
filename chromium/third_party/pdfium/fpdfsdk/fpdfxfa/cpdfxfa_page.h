@@ -19,12 +19,12 @@ class CFX_RenderDevice;
 class CPDF_Dictionary;
 class CPDF_Document;
 class CPDFSDK_Annot;
+class CPDFSDK_PageView;
 class CXFA_FFPageView;
 
 class CPDFXFA_Page final : public IPDF_Page {
  public:
-  template <typename T, typename... Args>
-  friend RetainPtr<T> pdfium::MakeRetain(Args&&... args);
+  CONSTRUCT_VIA_MAKE_RETAIN;
 
   // IPDF_Page:
   CPDF_Page* AsPDFPage() override;
@@ -48,6 +48,8 @@ class CPDFXFA_Page final : public IPDF_Page {
   void SetXFAPageViewIndex(int index) { m_iPageIndex = index; }
   CXFA_FFPageView* GetXFAPageView() const;
   CPDFSDK_Annot* GetNextXFAAnnot(CPDFSDK_Annot* pSDKAnnot, bool bNext);
+  CPDFSDK_Annot* GetFirstOrLastXFAAnnot(CPDFSDK_PageView* page_view,
+                                        bool last) const;
   int HasFormFieldAtPoint(const CFX_PointF& point) const;
   void DrawFocusAnnot(CFX_RenderDevice* pDevice,
                       CPDFSDK_Annot* pAnnot,

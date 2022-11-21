@@ -8,12 +8,13 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -1198,13 +1199,6 @@ void TransportClientSocketPool::HandOutSocket(
     net_log.AddEventWithIntParams(
         NetLogEventType::SOCKET_POOL_REUSED_AN_EXISTING_SOCKET, "idle_ms",
         static_cast<int>(idle_time.InMilliseconds()));
-  }
-
-  if (reuse_type != ClientSocketHandle::UNUSED) {
-    // The socket being handed out is no longer considered idle, but was
-    // considered idle until just before this method was called.
-    UMA_HISTOGRAM_CUSTOM_COUNTS("Net.Socket.NumIdleSockets",
-                                idle_socket_count_ + 1, 1, 256, 50);
   }
 
   net_log.AddEventReferencingSource(

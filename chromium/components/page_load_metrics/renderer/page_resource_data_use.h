@@ -7,8 +7,8 @@
 
 #include "base/macros.h"
 #include "components/page_load_metrics/common/page_load_metrics.mojom.h"
-#include "content/public/common/previews_state.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/blink/public/common/loader/previews_state.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "url/origin.h"
 
@@ -31,8 +31,7 @@ class PageResourceDataUse {
   void DidStartResponse(const GURL& response_url,
                         int resource_id,
                         const network::mojom::URLResponseHead& response_head,
-                        network::mojom::RequestDestination request_destination,
-                        content::PreviewsState previews_state);
+                        network::mojom::RequestDestination request_destination);
 
   // Updates received bytes.
   void DidReceiveTransferSizeUpdate(int received_data_length);

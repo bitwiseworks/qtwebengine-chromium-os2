@@ -19,13 +19,12 @@ CFFL_RadioButton::CFFL_RadioButton(CPDFSDK_FormFillEnvironment* pApp,
                                    CPDFSDK_Widget* pWidget)
     : CFFL_Button(pApp, pWidget) {}
 
-CFFL_RadioButton::~CFFL_RadioButton() {}
+CFFL_RadioButton::~CFFL_RadioButton() = default;
 
 std::unique_ptr<CPWL_Wnd> CFFL_RadioButton::NewPWLWindow(
     const CPWL_Wnd::CreateParams& cp,
     std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData) {
-  auto pWnd =
-      pdfium::MakeUnique<CPWL_RadioButton>(cp, std::move(pAttachedData));
+  auto pWnd = std::make_unique<CPWL_RadioButton>(cp, std::move(pAttachedData));
   pWnd->Realize();
   pWnd->SetCheck(m_pWidget->IsChecked());
   return std::move(pWnd);
@@ -59,7 +58,7 @@ bool CFFL_RadioButton::OnChar(CPDFSDK_Annot* pAnnot,
 
       CFFL_FormFiller::OnChar(pAnnot, nChar, nFlags);
       CPWL_RadioButton* pWnd = GetRadioButton(pPageView, true);
-      if (pWnd)
+      if (pWnd && !pWnd->IsReadOnly())
         pWnd->SetCheck(true);
       return CommitData(pPageView, nFlags);
     }

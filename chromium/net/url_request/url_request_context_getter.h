@@ -16,10 +16,6 @@ namespace base {
 class SingleThreadTaskRunner;
 }  // namespace base
 
-namespace content {
-class WebSocketManager;
-}
-
 #if defined(OS_IOS)
 namespace web {
 class NetworkContextOwner;
@@ -69,11 +65,9 @@ class NET_EXPORT URLRequestContextGetter
   void NotifyContextShuttingDown();
 
  private:
-  // AddObserver and RemoveObserver are deprecated. Friend URLFetcherCore,
-  // content::WebSocketManager, and web::NetworkContextOwner to restrict
-  // visibility.
+  // AddObserver and RemoveObserver are deprecated. Friend URLFetcherCore and
+  // web::NetworkContextOwner to restrict visibility.
   friend class URLFetcherCore;
-  friend class content::WebSocketManager;
 
 #if defined(OS_IOS)
   friend class web::NetworkContextOwner;
@@ -98,29 +92,6 @@ struct URLRequestContextGetterTraits {
   static void Destruct(const URLRequestContextGetter* context_getter) {
     context_getter->OnDestruct();
   }
-};
-
-// For use in shimming a URLRequestContext into a URLRequestContextGetter.
-class NET_EXPORT TrivialURLRequestContextGetter
-    : public URLRequestContextGetter {
- public:
-  TrivialURLRequestContextGetter(
-      URLRequestContext* context,
-      const scoped_refptr<base::SingleThreadTaskRunner>& main_task_runner);
-
- // URLRequestContextGetter implementation:
- URLRequestContext* GetURLRequestContext() override;
-
-  scoped_refptr<base::SingleThreadTaskRunner> GetNetworkTaskRunner()
-      const override;
-
- private:
-  ~TrivialURLRequestContextGetter() override;
-
-  URLRequestContext* context_;
-  const scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(TrivialURLRequestContextGetter);
 };
 
 }  // namespace net

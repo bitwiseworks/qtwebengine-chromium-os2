@@ -118,10 +118,10 @@ static const AVOption options[] = {
         { "hflip",         "flip horizontally",                              0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_HFLIP       }, .flags=FLAGS, .unit = "transpose" },
         { "vflip",         "flip vertically",                                0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_VFLIP       }, .flags=FLAGS, .unit = "transpose" },
 
-    { "cw",   "set the width crop area expression",   OFFSET(cw), AV_OPT_TYPE_STRING, { .str = "iw" }, CHAR_MIN, CHAR_MAX, FLAGS },
-    { "ch",   "set the height crop area expression",  OFFSET(ch), AV_OPT_TYPE_STRING, { .str = "ih" }, CHAR_MIN, CHAR_MAX, FLAGS },
-    { "cx",   "set the x crop area expression",       OFFSET(cx), AV_OPT_TYPE_STRING, { .str = "(in_w-out_w)/2" }, CHAR_MIN, CHAR_MAX, FLAGS },
-    { "cy",   "set the y crop area expression",       OFFSET(cy), AV_OPT_TYPE_STRING, { .str = "(in_h-out_h)/2" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "cw",   "set the width crop area expression",   OFFSET(cw), AV_OPT_TYPE_STRING, { .str = "iw" }, 0, 0, FLAGS },
+    { "ch",   "set the height crop area expression",  OFFSET(ch), AV_OPT_TYPE_STRING, { .str = "ih" }, 0, 0, FLAGS },
+    { "cx",   "set the x crop area expression",       OFFSET(cx), AV_OPT_TYPE_STRING, { .str = "(in_w-out_w)/2" }, 0, 0, FLAGS },
+    { "cy",   "set the y crop area expression",       OFFSET(cy), AV_OPT_TYPE_STRING, { .str = "(in_h-out_h)/2" }, 0, 0, FLAGS },
 
     { "w",      "Output video width",  OFFSET(ow), AV_OPT_TYPE_STRING, { .str="cw" }, 0, 255, .flags = FLAGS },
     { "width",  "Output video width",  OFFSET(ow), AV_OPT_TYPE_STRING, { .str="cw" }, 0, 255, .flags = FLAGS },
@@ -489,7 +489,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *picref)
 static int query_formats(AVFilterContext *ctx)
 {
     int ret;
-    AVFilterFormats *in_fmts, *out_fmts;
     static const enum AVPixelFormat in_pix_fmts[] = {
         AV_PIX_FMT_YUV420P,
         AV_PIX_FMT_NV12,
@@ -505,16 +504,12 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_NONE
     };
 
-    in_fmts  = ff_make_format_list(in_pix_fmts);
-    out_fmts = ff_make_format_list(out_pix_fmts);
-    ret = ff_formats_ref(in_fmts, &ctx->inputs[0]->out_formats);
+    ret = ff_formats_ref(ff_make_format_list(in_pix_fmts),
+                         &ctx->inputs[0]->out_formats);
     if (ret < 0)
         return ret;
-    ret = ff_formats_ref(out_fmts, &ctx->outputs[0]->in_formats);
-    if (ret < 0)
-        return ret;
-
-    return 0;
+    return ff_formats_ref(ff_make_format_list(out_pix_fmts),
+                          &ctx->outputs[0]->in_formats);
 }
 
 static av_cold void vpp_uninit(AVFilterContext *ctx)

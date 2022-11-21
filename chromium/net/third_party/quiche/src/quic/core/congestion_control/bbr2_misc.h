@@ -77,7 +77,8 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
 
   // The gain for both CWND and PacingRate at startup.
   // TODO(wub): Maybe change to the newly derived value of 2.773 (4 * ln(2)).
-  float startup_gain = 2.885;
+  float startup_cwnd_gain = 2.885;
+  float startup_pacing_gain = 2.885;
 
   // Full bandwidth is declared if the total bandwidth growth is less than
   // |startup_full_bw_threshold| times in the last |startup_full_bw_rounds|
@@ -171,12 +172,20 @@ struct QUIC_EXPORT_PRIVATE Bbr2Params {
   bool flexible_app_limited = false;
 
   // Can be disabled by connection option 'B2NA'.
-  bool add_ack_height_to_queueing_threshold =
-      GetQuicReloadableFlag(quic_bbr2_add_ack_height_to_queueing_threshold);
+  bool add_ack_height_to_queueing_threshold = true;
 
   // Can be disabled by connection option 'B2RP'.
-  bool avoid_unnecessary_probe_rtt =
-      GetQuicReloadableFlag(quic_bbr2_avoid_unnecessary_probe_rtt);
+  bool avoid_unnecessary_probe_rtt = true;
+
+  // Can be disabled by connection option 'B2CL'.
+  bool avoid_too_low_probe_bw_cwnd =
+      GetQuicReloadableFlag(quic_bbr2_avoid_too_low_probe_bw_cwnd);
+
+  // Can be enabled by connection option 'B2LO'.
+  bool ignore_inflight_lo = false;
+
+  // Can be enabled by connection optoin 'B2HI'.
+  bool limit_inflight_hi_by_cwnd = false;
 };
 
 class QUIC_EXPORT_PRIVATE RoundTripCounter {
@@ -317,10 +326,8 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
                                const Bbr2CongestionEvent& congestion_event);
 
   // Update the model without a congestion event.
-  // Max bandwidth is updated if |bandwidth| is larger than existing max
-  // bandwidth. Min rtt is updated if |rtt| is non-zero and smaller than
-  // existing min rtt.
-  void UpdateNetworkParameters(QuicBandwidth bandwidth, QuicTime::Delta rtt);
+  // Min rtt is updated if |rtt| is non-zero and smaller than existing min rtt.
+  void UpdateNetworkParameters(QuicTime::Delta rtt);
 
   // Update inflight/bandwidth short-term lower bounds.
   void AdaptLowerBounds(const Bbr2CongestionEvent& congestion_event);
@@ -358,6 +365,10 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
 
   void EnableOverestimateAvoidance() {
     bandwidth_sampler_.EnableOverestimateAvoidance();
+  }
+
+  bool IsBandwidthOverestimateAvoidanceEnabled() const {
+    return bandwidth_sampler_.IsOverestimateAvoidanceEnabled();
   }
 
   void OnPacketNeutered(QuicPacketNumber packet_number) {
@@ -420,11 +431,7 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
     return std::numeric_limits<QuicByteCount>::max();
   }
   void clear_inflight_lo() { inflight_lo_ = inflight_lo_default(); }
-  void cap_inflight_lo(QuicByteCount cap) {
-    if (inflight_lo_ != inflight_lo_default() && inflight_lo_ > cap) {
-      inflight_lo_ = cap;
-    }
-  }
+  void cap_inflight_lo(QuicByteCount cap);
 
   QuicByteCount inflight_hi_with_headroom() const;
   QuicByteCount inflight_hi() const { return inflight_hi_; }
@@ -472,9 +479,6 @@ class QUIC_EXPORT_PRIVATE Bbr2NetworkModel {
 
   float cwnd_gain_;
   float pacing_gain_;
-
-  const bool fix_zero_bw_on_loss_only_event_ =
-      GetQuicReloadableFlag(quic_bbr_fix_zero_bw_on_loss_only_event);
 };
 
 enum class Bbr2Mode : uint8_t {

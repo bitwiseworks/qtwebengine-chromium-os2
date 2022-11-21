@@ -30,9 +30,6 @@ is encouraged, but there are some gotchas:
 
 ### Lambdas and Method References
  * These are syntactic sugar for creating anonymous inner classes.
-   * Furthermore, stateless lambdas 
-     [become singletons](https://stackoverflow.com/questions/27524445/does-a-lambda-expression-create-an-object-on-the-heap-every-time-its-executed)
-     and so do not result in new instances when used in loops.
  * Use them only where the cost of an extra class & method definition is
    justified.
 
@@ -124,7 +121,8 @@ Custom finalizers:
 * causes additional garbage collector jank.
 
 Classes that need destructor logic should provide an explicit `destroy()`
-method.
+method. Use [LifetimeAssert](https://chromium.googlesource.com/chromium/src/+/master/base/android/java/src/org/chromium/base/LifetimeAssert.java)
+to ensure in debug builds and tests that `destroy()` is called.
 
 ### Other Android Support Library Annotations
 * Use them! They are [documented here](https://developer.android.com/studio/write/annotations).
@@ -215,6 +213,13 @@ This is the order of the import groups:
 1. org.chromium
 1. java
 1. javax
+
+## Test-only Code
+Functions used only for testing should be restricted to test-only usages
+with the testing suffixes supported [PRESUMBIT.py](https://chromium.googlesource.com/chromium/src/+/master/PRESUBMIT.py).
+`ForTesting` is the conventional suffix although similar patterns, such as
+`ForTest`, are also accepted. These suffixes are checked at presubmit time
+to ensure the functions are called only by test files.
 
 ## Location
 "Top level directories" are defined as directories with a GN file, such as

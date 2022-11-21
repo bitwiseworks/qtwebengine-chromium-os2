@@ -41,7 +41,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
-#include "components/content_settings/core/common/features.h"
+#include "components/content_settings/core/common/cookie_controls_enforcement.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/google/core/common/google_util.h"
 #include "components/policy/core/common/policy_service.h"
@@ -68,7 +68,7 @@
 #include "chromeos/strings/grit/chromeos_strings.h"
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "chrome/browser/platform_util.h"
 #endif
 
@@ -97,8 +97,8 @@ SkColor GetThemeColor(const ui::ThemeProvider& tp, int id) {
   // If web contents are being inverted because the system is in high-contrast
   // mode, any system theme colors we use must be inverted too to cancel out.
   return ui::NativeTheme::GetInstanceForNativeUi()
-                     ->GetHighContrastColorScheme() ==
-                 ui::NativeTheme::HighContrastColorScheme::kDark
+                     ->GetPlatformHighContrastColorScheme() ==
+                 ui::NativeTheme::PlatformHighContrastColorScheme::kDark
              ? color_utils::InvertColor(color)
              : color;
 }
@@ -172,7 +172,6 @@ NTPResourceCache::NTPResourceCache(Profile* profile)
   profile_pref_change_registrar_.Add(prefs::kNtpShownPage, callback);
   profile_pref_change_registrar_.Add(prefs::kHideWebStoreIcon, callback);
   profile_pref_change_registrar_.Add(prefs::kCookieControlsMode, callback);
-  profile_pref_change_registrar_.Add(prefs::kBlockThirdPartyCookies, callback);
 
   theme_observer_.Add(ui::NativeTheme::GetInstanceForNativeUi());
 
@@ -185,10 +184,10 @@ NTPResourceCache::NTPResourceCache(Profile* profile)
                           base::Unretained(this)));
 }
 
-NTPResourceCache::~NTPResourceCache() {}
+NTPResourceCache::~NTPResourceCache() = default;
 
 bool NTPResourceCache::NewTabHTMLNeedsRefresh() {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   // Invalidate if the current value is different from the cached value.
   bool is_enabled = platform_util::IsSwipeTrackingFromScrollEventsEnabled();
   if (is_enabled != is_swipe_tracking_from_scroll_events_enabled_) {
@@ -294,6 +293,13 @@ void NTPResourceCache::CreateNewTabIncognitoHTML() {
           ? "true"
           : "false";
 
+  // Ensure passing off-the-record profile; |profile_| is not an OTR profile.
+  DCHECK(!profile_->IsOffTheRecord());
+  DCHECK(profile_->HasPrimaryOTRProfile());
+  CookieControlsService* cookie_controls_service =
+      CookieControlsServiceFactory::GetForProfile(
+          profile_->GetPrimaryOTRProfile());
+
   replacements["incognitoTabDescription"] =
       l10n_util::GetStringUTF8(IDS_NEW_TAB_OTR_SUBTITLE);
   replacements["incognitoTabHeading"] =
@@ -306,30 +312,17 @@ void NTPResourceCache::CreateNewTabIncognitoHTML() {
       l10n_util::GetStringUTF8(IDS_NEW_TAB_OTR_NOT_SAVED);
   replacements["learnMoreLink"] = kLearnMoreIncognitoUrl;
   replacements["title"] = l10n_util::GetStringUTF8(IDS_NEW_TAB_TITLE);
-  replacements["hideCookieControls"] =
-      CookieControlsServiceFactory::GetForProfile(profile_)
-              ->ShouldHideCookieControlsUI()
-          ? "hidden"
-          : "";
   replacements["cookieControlsTitle"] =
       l10n_util::GetStringUTF8(IDS_NEW_TAB_OTR_THIRD_PARTY_COOKIE);
   replacements["cookieControlsDescription"] =
       l10n_util::GetStringUTF8(IDS_NEW_TAB_OTR_THIRD_PARTY_COOKIE_SUBLABEL);
-  // Ensure passing off-the-record profile; |profile_| might not be incognito.
-  DCHECK(profile_->HasOffTheRecordProfile());
   replacements["cookieControlsToggleChecked"] =
-      CookieControlsServiceFactory::GetForProfile(
-          profile_->GetOffTheRecordProfile())
-              ->GetToggleCheckedValue()
-          ? "checked"
-          : "";
+      cookie_controls_service->GetToggleCheckedValue() ? "checked" : "";
   replacements["hideTooltipIcon"] =
-      CookieControlsServiceFactory::GetForProfile(profile_)
-              ->ShouldEnforceCookieControls()
-          ? ""
-          : "hidden";
+      cookie_controls_service->ShouldEnforceCookieControls() ? "" : "hidden";
   replacements["cookieControlsToolTipIcon"] =
-      CookieControlsHandler::GetEnforcementIcon(profile_);
+      CookieControlsHandler::GetEnforcementIcon(
+          cookie_controls_service->GetCookieControlsEnforcement());
   replacements["cookieControlsTooltipText"] = l10n_util::GetStringUTF8(
       IDS_NEW_TAB_OTR_COOKIE_CONTROLS_CONTROLLED_TOOLTIP_TEXT);
 
@@ -539,7 +532,7 @@ void NTPResourceCache::CreateNewTabHTML() {
 
 void NTPResourceCache::CreateNewTabIncognitoCSS() {
   const ui::ThemeProvider& tp = ThemeService::GetThemeProviderForProfile(
-      profile_->GetOffTheRecordProfile());
+      profile_->GetPrimaryOTRProfile());
 
   // Generate the replacements.
   ui::TemplateReplacements substitutions;

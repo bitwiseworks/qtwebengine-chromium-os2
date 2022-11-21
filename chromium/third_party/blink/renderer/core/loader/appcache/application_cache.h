@@ -39,9 +39,8 @@ class ExceptionState;
 class LocalFrame;
 
 class ApplicationCache final : public EventTargetWithInlineData,
-                               public DOMWindowClient {
+                               public ExecutionContextClient {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(ApplicationCache);
 
  public:
   explicit ApplicationCache(LocalFrame*);
@@ -68,7 +67,7 @@ class ApplicationCache final : public EventTargetWithInlineData,
 
   static const AtomicString& ToEventType(mojom::AppCacheEventID);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   void RecordAPIUseType() const;

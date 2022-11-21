@@ -32,7 +32,6 @@
 #include "third_party/blink/renderer/modules/peerconnection/mock_rtc_peer_connection_handler_platform.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
-#include "third_party/blink/renderer/platform/peerconnection/rtc_peer_connection_handler_platform.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_receiver_platform.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_sender_platform.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_session_description_platform.h"
@@ -381,11 +380,12 @@ class RTCPeerConnectionTest : public testing::Test {
  public:
   RTCPeerConnection* CreatePC(
       V8TestingScope& scope,
-      const String& sdpSemantics = String(),
+      const base::Optional<String>& sdp_semantics = base::nullopt,
       bool force_encoded_audio_insertable_streams = false,
       bool force_encoded_video_insertable_streams = false) {
     RTCConfiguration* config = RTCConfiguration::Create();
-    config->setSdpSemantics(sdpSemantics);
+    if (sdp_semantics)
+      config->setSdpSemantics(sdp_semantics.value());
     config->setForceEncodedAudioInsertableStreams(
         force_encoded_audio_insertable_streams);
     config->setForceEncodedVideoInsertableStreams(
@@ -403,7 +403,7 @@ class RTCPeerConnectionTest : public testing::Test {
                                      scope.GetExceptionState());
   }
 
-  virtual std::unique_ptr<RTCPeerConnectionHandlerPlatform>
+  virtual std::unique_ptr<RTCPeerConnectionHandler>
   CreateRTCPeerConnectionHandler() {
     return std::make_unique<MockRTCPeerConnectionHandlerPlatform>();
   }
@@ -655,7 +655,7 @@ TEST_F(RTCPeerConnectionTest, CheckInsertableStreamsConfig) {
     for (bool force_encoded_video_insertable_streams : {true, false}) {
       V8TestingScope scope;
       Persistent<RTCPeerConnection> pc =
-          CreatePC(scope, String(), force_encoded_audio_insertable_streams,
+          CreatePC(scope, base::nullopt, force_encoded_audio_insertable_streams,
                    force_encoded_video_insertable_streams);
       EXPECT_EQ(pc->force_encoded_audio_insertable_streams(),
                 force_encoded_audio_insertable_streams);
@@ -775,8 +775,8 @@ class FakeRTCPeerConnectionHandlerPlatform
 //
 class RTCPeerConnectionCallSetupStateTest : public RTCPeerConnectionTest {
  public:
-  std::unique_ptr<RTCPeerConnectionHandlerPlatform>
-  CreateRTCPeerConnectionHandler() override {
+  std::unique_ptr<RTCPeerConnectionHandler> CreateRTCPeerConnectionHandler()
+      override {
     auto handler = std::make_unique<FakeRTCPeerConnectionHandlerPlatform>();
     handler_ = handler.get();
     return handler;
@@ -1150,72 +1150,31 @@ TEST(DeduceSdpUsageCategory, ComplexSdpIsSafeIfMatchingExplicitSdpSemantics) {
                                    true, webrtc::SdpSemantics::kUnifiedPlan));
 }
 
-// This test was originally extracted out of [1], so that core/ does not need
-// to depend on mobules/.
-//
-// [1] core/scheduler_integration_tests/scheduler_affecting_features_test.cc
-//
-// TODO(crbug.com/787254): Consider factorying
-// SchedulingAffectingWebRTCFeaturesTest out to avoid the code duplication.
-class SchedulingAffectingWebRTCFeaturesTest : public SimTest {
- public:
-  PageScheduler* PageScheduler() {
-    return MainFrameScheduler()->GetPageScheduler();
-  }
+TEST_F(RTCPeerConnectionTest, MediaStreamTrackStopsThrottling) {
+  V8TestingScope scope;
 
-  FrameScheduler* MainFrameScheduler() { return MainFrame().Scheduler(); }
+  auto* scheduler = scope.GetFrame().GetFrameScheduler()->GetPageScheduler();
+  EXPECT_FALSE(scheduler->OptedOutFromAggressiveThrottlingForTest());
 
-  // Some features (e.g. document.load) are expected to appear in almost
-  // any output. Filter them out to make most of the tests simpler.
-  Vector<SchedulingPolicy::Feature> GetNonTrivialMainFrameFeatures() {
-    Vector<SchedulingPolicy::Feature> result;
-    for (SchedulingPolicy::Feature feature :
-         MainFrameScheduler()
-             ->GetActiveFeaturesTrackedForBackForwardCacheMetrics()) {
-      if (feature != SchedulingPolicy::Feature::kWebRTC)
-        continue;
-      result.push_back(feature);
-    }
-    return result;
-  }
+  // Creating the RTCPeerConnection doesn't disable throttling.
+  RTCPeerConnection* pc = CreatePC(scope);
+  EXPECT_EQ("", GetExceptionMessage(scope));
+  ASSERT_TRUE(pc);
+  EXPECT_FALSE(scheduler->OptedOutFromAggressiveThrottlingForTest());
 
-  std::unique_ptr<RTCPeerConnectionHandlerPlatform>
-  CreateRTCPeerConnectionHandler() {
-    return std::make_unique<MockRTCPeerConnectionHandlerPlatform>();
-  }
-};
+  // But creating a media stream track does.
+  MediaStreamTrack* track =
+      CreateTrack(scope, MediaStreamSource::kTypeAudio, "audioTrack");
+  HeapVector<Member<MediaStreamTrack>> tracks;
+  tracks.push_back(track);
+  MediaStream* stream =
+      MediaStream::Create(scope.GetExecutionContext(), tracks);
+  ASSERT_TRUE(stream);
+  EXPECT_TRUE(scheduler->OptedOutFromAggressiveThrottlingForTest());
 
-TEST_F(SchedulingAffectingWebRTCFeaturesTest, WebRTCStopsThrottling) {
-  ScopedTestingPlatformSupport<TestingPlatformSupport> platform;
-
-  RTCPeerConnection::SetRtcPeerConnectionHandlerFactoryForTesting(
-      base::BindRepeating(&SchedulingAffectingWebRTCFeaturesTest::
-                              CreateRTCPeerConnectionHandler,
-                          base::Unretained(this)));
-
-  SimRequest main_resource("https://example.com/", "text/html");
-
-  LoadURL("https://example.com/");
-
-  EXPECT_FALSE(PageScheduler()->OptedOutFromAggressiveThrottlingForTest());
-  EXPECT_THAT(GetNonTrivialMainFrameFeatures(),
-              testing::UnorderedElementsAre());
-
-  main_resource.Complete(
-      "<script>"
-      "  var data_channel = new RTCPeerConnection();"
-      "</script>");
-
-  EXPECT_TRUE(PageScheduler()->OptedOutFromAggressiveThrottlingForTest());
-  EXPECT_THAT(
-      GetNonTrivialMainFrameFeatures(),
-      testing::UnorderedElementsAre(SchedulingPolicy::Feature::kWebRTC));
-
-  MainFrame().ExecuteScript(WebString("data_channel.close();"));
-
-  EXPECT_FALSE(PageScheduler()->OptedOutFromAggressiveThrottlingForTest());
-  EXPECT_THAT(GetNonTrivialMainFrameFeatures(),
-              testing::UnorderedElementsAre());
+  // Stopping the track disables the opt-out.
+  track->stopTrack(scope.GetExecutionContext());
+  EXPECT_FALSE(scheduler->OptedOutFromAggressiveThrottlingForTest());
 }
 
 }  // namespace blink

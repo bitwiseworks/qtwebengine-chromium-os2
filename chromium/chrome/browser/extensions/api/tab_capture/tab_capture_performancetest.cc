@@ -19,6 +19,7 @@
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/tracing.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/common/switches.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -50,7 +51,7 @@ constexpr char kEventCapture[] = "Capture";
 constexpr char kEventSuffixFailRate[] = "FailRate";
 constexpr char kEventSuffixLatency[] = "Latency";
 constexpr char kEventCommitAndDrawCompositorFrame[] =
-    "RenderWidget::DidCommitAndDrawCompositorFrame";
+    "WidgetBase::DidCommitAndDrawCompositorFrame";
 const std::unordered_map<std::string, std::string> kEventToMetricMap(
     {{kEventCapture, kMetricCaptureMs},
      {std::string(kEventCapture) + kEventSuffixFailRate,

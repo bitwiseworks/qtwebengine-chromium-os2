@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/url_pattern_index/url_pattern_index.h"
@@ -25,16 +26,14 @@ bool IsExtraHeadersMatcherInternal(
 
   // We only support removing a subset of extra headers currently. If that
   // changes, the implementation here should change as well.
-  // TODO(crbug.com/947591): Modify this method for
-  // flat::ActionType_modify_headers.
-  static_assert(flat::ActionType_count == 7,
+  static_assert(flat::ActionType_count == 6,
                 "Modify this method to ensure IsExtraHeadersMatcherInternal is "
                 "updated as new actions are added.");
 
   return std::any_of(regex_list->begin(), regex_list->end(),
                      [](const flat::RegexRule* regex_rule) {
                        return regex_rule->action_type() ==
-                              flat::ActionType_remove_headers;
+                              flat::ActionType_modify_headers;
                      });
 }
 
@@ -65,7 +64,6 @@ bool IsBeforeRequestAction(flat::ActionType action_type) {
     case flat::ActionType_upgrade_scheme:
     case flat::ActionType_allow_all_requests:
       return true;
-    case flat::ActionType_remove_headers:
     case flat::ActionType_modify_headers:
       return false;
     case flat::ActionType_count:
@@ -85,12 +83,11 @@ RegexRuleInfo::RegexRuleInfo(const flat::RegexRule* regex_rule,
 RegexRuleInfo::RegexRuleInfo(const RegexRuleInfo& info) = default;
 RegexRuleInfo& RegexRuleInfo::operator=(const RegexRuleInfo& info) = default;
 
-RegexRulesMatcher::RegexRulesMatcher(
-    const ExtensionId& extension_id,
-    api::declarative_net_request::SourceType source_type,
-    const RegexRulesList* regex_list,
-    const ExtensionMetadataList* metadata_list)
-    : RulesetMatcherBase(extension_id, source_type),
+RegexRulesMatcher::RegexRulesMatcher(const ExtensionId& extension_id,
+                                     RulesetID ruleset_id,
+                                     const RegexRulesList* regex_list,
+                                     const ExtensionMetadataList* metadata_list)
+    : RulesetMatcherBase(extension_id, ruleset_id),
       regex_list_(regex_list),
       metadata_list_(metadata_list),
       is_extra_headers_matcher_(IsExtraHeadersMatcherInternal(regex_list)) {
@@ -99,43 +96,27 @@ RegexRulesMatcher::RegexRulesMatcher(
 
 RegexRulesMatcher::~RegexRulesMatcher() = default;
 
-uint8_t RegexRulesMatcher::GetRemoveHeadersMask(
+std::vector<RequestAction> RegexRulesMatcher::GetModifyHeadersActions(
     const RequestParams& params,
-    uint8_t excluded_remove_headers_mask,
-    std::vector<RequestAction>* remove_headers_actions) const {
-  DCHECK(remove_headers_actions);
-
+    base::Optional<uint64_t> min_priority) const {
   const std::vector<RegexRuleInfo>& potential_matches =
       GetPotentialMatches(params);
 
-  // Subtracts |mask2| from |mask1|.
-  auto subtract_mask = [](uint8_t mask1, uint8_t mask2) {
-    return mask1 & (~mask2);
-  };
-
-  uint8_t mask = 0;
+  std::vector<const flat_rule::UrlRule*> rules;
   for (const RegexRuleInfo& info : potential_matches) {
-    if (info.regex_rule->action_type() != flat::ActionType_remove_headers)
-      continue;
+    // Check for the rule's priority iff |min_priority| is specified.
+    bool has_sufficient_priority =
+        !min_priority ||
+        info.regex_rule->url_rule()->priority() > *min_priority;
 
-    // The current rule won't be responsible for any headers already removed (in
-    // |mask|) or any headers to be ignored (in |excluded_remove_headers_mask|).
-    uint8_t effective_mask_for_rule =
-        subtract_mask(info.regex_rule->remove_headers_mask(),
-                      excluded_remove_headers_mask | mask);
-    if (!effective_mask_for_rule)
-      continue;
-
-    if (!re2::RE2::PartialMatch(params.url->spec(), *info.regex))
-      continue;
-
-    mask |= effective_mask_for_rule;
-    remove_headers_actions->push_back(GetRemoveHeadersActionForMask(
-        *info.regex_rule->url_rule(), effective_mask_for_rule));
+    if (has_sufficient_priority &&
+        info.regex_rule->action_type() == flat::ActionType_modify_headers &&
+        re2::RE2::PartialMatch(params.url->spec(), *info.regex)) {
+      rules.push_back(info.regex_rule->url_rule());
+    }
   }
 
-  DCHECK(!(mask & excluded_remove_headers_mask));
-  return mask;
+  return GetModifyHeadersActionsFromMetadata(params, rules, *metadata_list_);
 }
 
 base::Optional<RequestAction> RegexRulesMatcher::GetAllowAllRequestsAction(
@@ -187,7 +168,6 @@ RegexRulesMatcher::GetBeforeRequestActionIgnoringAncestors(
       return CreateUpgradeAction(params, rule);
     case flat::ActionType_allow_all_requests:
       return CreateAllowAllRequestsAction(params, rule);
-    case flat::ActionType_remove_headers:
     case flat::ActionType_modify_headers:
     case flat::ActionType_count:
       NOTREACHED();

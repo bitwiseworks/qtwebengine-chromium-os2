@@ -6,6 +6,7 @@
 
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
+#include "base/notreached.h"
 #include "ipc/ipc_mojo_handle_attachment.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
@@ -14,7 +15,7 @@
 #include "ipc/ipc_platform_file_attachment_posix.h"
 #endif
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
 #include "ipc/mach_port_attachment_mac.h"
 #endif
 
@@ -64,7 +65,7 @@ mojo::ScopedHandle MessageAttachment::TakeMojoHandle() {
     }
 #endif  // defined(OS_POSIX) || defined(OS_FUCHSIA)
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
     case Type::MACH_PORT: {
       auto* attachment = static_cast<internal::MachPortAttachmentMac*>(this);
       MojoPlatformHandle platform_handle = {
@@ -125,7 +126,7 @@ scoped_refptr<MessageAttachment> MessageAttachment::CreateFromMojoHandle(
   }
 #endif  // defined(OS_POSIX) || defined(OS_FUCHSIA)
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   if (type == Type::MACH_PORT) {
     mach_port_t mach_port = MACH_PORT_NULL;
     if (platform_handle.type == MOJO_PLATFORM_HANDLE_TYPE_MACH_PORT)

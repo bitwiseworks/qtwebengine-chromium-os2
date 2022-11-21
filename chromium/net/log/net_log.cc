@@ -4,7 +4,9 @@
 
 #include "net/log/net_log.h"
 
+#include "base/check_op.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "net/log/net_log_values.h"
@@ -196,11 +198,11 @@ const char* NetLog::EventTypeToString(NetLogEventType event) {
 
 // static
 base::Value NetLog::GetEventTypesAsValue() {
-  base::DictionaryValue dict;
+  base::Value dict(base::Value::Type::DICTIONARY);
   for (int i = 0; i < static_cast<int>(NetLogEventType::COUNT); ++i) {
-    dict.SetInteger(EventTypeToString(static_cast<NetLogEventType>(i)), i);
+    dict.SetIntKey(EventTypeToString(static_cast<NetLogEventType>(i)), i);
   }
-  return std::move(dict);
+  return dict;
 }
 
 // static
@@ -219,11 +221,11 @@ const char* NetLog::SourceTypeToString(NetLogSourceType source) {
 
 // static
 base::Value NetLog::GetSourceTypesAsValue() {
-  base::DictionaryValue dict;
+  base::Value dict(base::Value::Type::DICTIONARY);
   for (int i = 0; i < static_cast<int>(NetLogSourceType::COUNT); ++i) {
-    dict.SetInteger(SourceTypeToString(static_cast<NetLogSourceType>(i)), i);
+    dict.SetIntKey(SourceTypeToString(static_cast<NetLogSourceType>(i)), i);
   }
-  return std::move(dict);
+  return dict;
 }
 
 // static

@@ -55,7 +55,7 @@ def callback_function_context(callback_function):
         'idl_type':
         idl_type_str,
         'is_treat_non_object_as_null':
-        'TreatNonObjectAsNull' in callback_function.extended_attributes,
+        'LegacyTreatNonObjectAsNull' in callback_function.extended_attributes,
         'native_value_traits_tag':
         v8_types.idl_type_to_native_value_traits_tag(idl_type),
         'return_cpp_type':
@@ -104,14 +104,14 @@ def arguments_context(arguments):
         }
 
     def argument_cpp_type(argument):
-        cpp_type = argument.idl_type.callback_cpp_type
-        if argument.is_variadic:
-            if argument.idl_type.is_traceable:
-                return 'const HeapVector<%s>&' % cpp_type
-            else:
-                return 'const Vector<%s>&' % cpp_type
-        else:
-            return cpp_type
+        if argument.idl_type.is_dictionary:
+            return 'const %s*' % argument.idl_type.implemented_as
+
+        return argument.idl_type.cpp_type_args(
+            extended_attributes=argument.extended_attributes,
+            raw_type=False,
+            used_as_rvalue_type=True,
+            used_as_variadic_argument=argument.is_variadic)
 
     argument_declarations = [
         'bindings::V8ValueOrScriptWrappableAdapter callback_this_value'

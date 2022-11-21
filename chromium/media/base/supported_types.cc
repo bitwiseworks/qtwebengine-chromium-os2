@@ -5,7 +5,9 @@
 #include "media/base/supported_types.h"
 
 #include "base/feature_list.h"
+#include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 #include "media/base/media.h"
 #include "media/base/media_client.h"
@@ -30,6 +32,25 @@
 #endif
 
 namespace media {
+
+namespace {
+
+bool IsSupportedHdrMetadata(const gl::HdrMetadataType& hdr_metadata_type) {
+  switch (hdr_metadata_type) {
+    case gl::HdrMetadataType::kNone:
+      return true;
+
+    case gl::HdrMetadataType::kSmpteSt2086:
+    case gl::HdrMetadataType::kSmpteSt2094_10:
+    case gl::HdrMetadataType::kSmpteSt2094_40:
+      return false;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
+}  // namespace
 
 bool IsSupportedAudioType(const AudioType& type) {
   MediaClient* media_client = GetMediaClient();
@@ -182,6 +203,9 @@ bool IsAudioCodecProprietary(AudioCodec codec) {
     case kUnknownAudioCodec:
       return false;
   }
+
+  NOTREACHED();
+  return false;
 }
 
 bool IsDefaultSupportedAudioType(const AudioType& type) {
@@ -252,11 +276,17 @@ bool IsVideoCodecProprietary(VideoCodec codec) {
     case kCodecAV1:
       return false;
   }
+
+  NOTREACHED();
+  return false;
 }
 
 // TODO(chcunningham): Add platform specific logic for Android (move from
 // MimeUtilIntenral).
 bool IsDefaultSupportedVideoType(const VideoType& type) {
+  if (!IsSupportedHdrMetadata(type.hdr_metadata_type))
+    return false;
+
 #if !BUILDFLAG(USE_PROPRIETARY_CODECS)
   if (IsVideoCodecProprietary(type.codec))
     return false;

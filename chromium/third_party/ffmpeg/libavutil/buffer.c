@@ -44,8 +44,7 @@ AVBufferRef *av_buffer_create(uint8_t *data, int size,
 
     atomic_init(&buf->refcount, 1);
 
-    if (flags & AV_BUFFER_FLAG_READONLY)
-        buf->flags |= BUFFER_FLAG_READONLY;
+    buf->flags = flags;
 
     ref = av_mallocz(sizeof(*ref));
     if (!ref) {
@@ -171,6 +170,7 @@ int av_buffer_realloc(AVBufferRef **pbuf, int size)
 {
     AVBufferRef *buf = *pbuf;
     uint8_t *tmp;
+    int ret;
 
     if (!buf) {
         /* allocate a new buffer with av_realloc(), so it will be reallocatable
@@ -185,21 +185,21 @@ int av_buffer_realloc(AVBufferRef **pbuf, int size)
             return AVERROR(ENOMEM);
         }
 
-        buf->buffer->flags |= BUFFER_FLAG_REALLOCATABLE;
+        buf->buffer->flags_internal |= BUFFER_FLAG_REALLOCATABLE;
         *pbuf = buf;
 
         return 0;
     } else if (buf->size == size)
         return 0;
 
-    if (!(buf->buffer->flags & BUFFER_FLAG_REALLOCATABLE) ||
+    if (!(buf->buffer->flags_internal & BUFFER_FLAG_REALLOCATABLE) ||
         !av_buffer_is_writable(buf) || buf->data != buf->buffer->data) {
         /* cannot realloc, allocate a new reallocable buffer and copy data */
         AVBufferRef *new = NULL;
 
-        av_buffer_realloc(&new, size);
-        if (!new)
-            return AVERROR(ENOMEM);
+        ret = av_buffer_realloc(&new, size);
+        if (ret < 0)
+            return ret;
 
         memcpy(new->data, buf->data, FFMIN(size, buf->size));
 
@@ -229,6 +229,7 @@ AVBufferPool *av_buffer_pool_init2(int size, void *opaque,
     pool->size      = size;
     pool->opaque    = opaque;
     pool->alloc2    = alloc;
+    pool->alloc     = av_buffer_alloc; // fallback
     pool->pool_free = pool_free;
 
     atomic_init(&pool->refcount, 1);
@@ -309,6 +310,8 @@ static AVBufferRef *pool_alloc_buffer(AVBufferPool *pool)
 {
     BufferPoolEntry *buf;
     AVBufferRef     *ret;
+
+    av_assert0(pool->alloc || pool->alloc2);
 
     ret = pool->alloc2 ? pool->alloc2(pool->opaque, pool->size) :
                          pool->alloc(pool->size);

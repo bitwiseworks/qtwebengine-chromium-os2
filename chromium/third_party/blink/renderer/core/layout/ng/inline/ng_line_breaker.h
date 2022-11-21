@@ -63,11 +63,17 @@ class CORE_EXPORT NGLineBreaker {
   // Create an NGInlineBreakToken for the last line returned by NextLine().
   scoped_refptr<NGInlineBreakToken> CreateBreakToken(const NGLineInfo&) const;
 
+  void PropagateBreakToken(scoped_refptr<const NGBlockBreakToken>);
+  Vector<scoped_refptr<const NGBlockBreakToken>>& PropagatedBreakTokens() {
+    return propagated_break_tokens_;
+  }
+
   // Computing |NGLineBreakerMode::kMinContent| with |MaxSizeCache| caches
   // information that can help computing |kMaxContent|. It is recommended to set
   // this when computing both |kMinContent| and |kMaxContent|.
   using MaxSizeCache = Vector<LayoutUnit, 64>;
-  void SetMaxSizeCache(MaxSizeCache* max_size_cache);
+  void SetIntrinsicSizeOutputs(MaxSizeCache* max_size_cache,
+                               bool* depends_on_percentage_block_size_out);
 
   // Compute NGInlineItemResult for an open tag item.
   // Returns true if this item has edge and may have non-zero inline size.
@@ -151,6 +157,7 @@ class CORE_EXPORT NGLineBreaker {
                                        unsigned start,
                                        unsigned end);
 
+  void HandleTrailingSpacesIfNeeded(NGLineInfo*);
   void HandleTrailingSpaces(const NGInlineItem&, NGLineInfo*);
   void HandleTrailingSpaces(const NGInlineItem&,
                             const ShapeResult&,
@@ -187,6 +194,7 @@ class CORE_EXPORT NGLineBreaker {
                                            NGLineInfo*) const;
   void SetCurrentStyle(const ComputedStyle&);
 
+  bool IsPreviousItemOfType(NGInlineItem::NGInlineItemType);
   void MoveToNextOf(const NGInlineItem&);
   void MoveToNextOf(const NGInlineItemResult&);
 
@@ -204,6 +212,8 @@ class CORE_EXPORT NGLineBreaker {
   }
   bool CanFitOnLine() const { return position_ <= AvailableWidthToFit(); }
   LayoutUnit ComputeAvailableWidth() const;
+
+  void ClearNeedsLayout(const NGInlineItem& item);
 
   // Represents the current offset of the input.
   LineBreakState state_;
@@ -260,6 +270,9 @@ class CORE_EXPORT NGLineBreaker {
   // between images, and between text and images.
   bool sticky_images_quirk_ = false;
 
+  // True if the resultant line contains a RubyRun with inline-end overhang.
+  bool maybe_have_end_overhang_ = false;
+
   const NGInlineItemsData& items_data_;
 
   // The text content of this node. This is same as |items_data_.text_content|
@@ -294,6 +307,8 @@ class CORE_EXPORT NGLineBreaker {
   // Cache for computing |MinMaxSize|. See |MaxSizeCache|.
   MaxSizeCache* max_size_cache_ = nullptr;
 
+  bool* depends_on_percentage_block_size_out_ = nullptr;
+
   // Keep the last item |HandleTextForFastMinContent()| has handled. This is
   // used to fallback the last word to |HandleText()|.
   const NGInlineItem* fast_min_content_item_ = nullptr;
@@ -302,6 +317,8 @@ class CORE_EXPORT NGLineBreaker {
   // This is copied from NGInlineNode, then updated after each forced line break
   // if 'unicode-bidi: plaintext'.
   TextDirection base_direction_;
+
+  Vector<scoped_refptr<const NGBlockBreakToken>> propagated_break_tokens_;
 
 #if DCHECK_IS_ON()
   // These fields are to detect rewind-loop.

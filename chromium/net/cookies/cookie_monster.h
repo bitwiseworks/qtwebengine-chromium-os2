@@ -31,6 +31,7 @@
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_delegate.h"
 #include "net/cookies/cookie_constants.h"
+#include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_monster_change_dispatcher.h"
 #include "net/cookies/cookie_store.h"
 #include "net/log/net_log_with_source.h"
@@ -123,6 +124,9 @@ class NET_EXPORT CookieMonster : public CookieStore {
   static const size_t kMaxCookies;
   static const size_t kPurgeCookies;
 
+  // Max number of keys to store for domains that have been purged.
+  static const size_t kMaxDomainPurgedKeys;
+
   // Quota for cookies with {low, medium, high} priorities within a domain.
   static const size_t kDomainCookiesQuotaLow;
   static const size_t kDomainCookiesQuotaMedium;
@@ -158,7 +162,7 @@ class NET_EXPORT CookieMonster : public CookieStore {
 
   // CookieStore implementation.
   void SetCanonicalCookieAsync(std::unique_ptr<CanonicalCookie> cookie,
-                               std::string source_scheme,
+                               const GURL& source_url,
                                const CookieOptions& options,
                                SetCookiesCallback callback) override;
   void GetCookieListWithOptionsAsync(const GURL& url,
@@ -214,6 +218,10 @@ class NET_EXPORT CookieMonster : public CookieStore {
   // well as for PersistentCookieStore::LoadCookiesForKey. See comment on keys
   // before the CookieMap typedef.
   static std::string GetKey(base::StringPiece domain);
+
+  // Triggers immediate recording of stats that are typically reported
+  // periodically.
+  bool DoRecordPeriodicStatsForTesting() { return DoRecordPeriodicStats(); }
 
  private:
   // For garbage collection constants.
@@ -318,14 +326,14 @@ class NET_EXPORT CookieMonster : public CookieStore {
   static const int kRecordStatisticsIntervalSeconds = 10 * 60;
 
   // Sets a canonical cookie, deletes equivalents and performs garbage
-  // collection.  |source_scheme| indicates what scheme the cookie is being set
+  // collection.  |source_url| indicates what URL the cookie is being set
   // from; secure cookies cannot be altered from insecure schemes, and some
   // schemes may not be authorized.
   //
   // |options| indicates if this setting operation is allowed
   // to affect http_only or same-site cookies.
   void SetCanonicalCookie(std::unique_ptr<CanonicalCookie> cookie,
-                          std::string source_scheme,
+                          const GURL& source_url,
                           const CookieOptions& options,
                           SetCookiesCallback callback);
 
@@ -406,8 +414,8 @@ class NET_EXPORT CookieMonster : public CookieStore {
   void FilterCookiesWithOptions(const GURL url,
                                 const CookieOptions options,
                                 std::vector<CanonicalCookie*>* cookie_ptrs,
-                                CookieStatusList* included_cookies,
-                                CookieStatusList* excluded_cookies);
+                                CookieAccessResultList* included_cookies,
+                                CookieAccessResultList* excluded_cookies);
 
   // Possibly delete an existing cookie equivalent to |cookie_being_set| (same
   // path, domain, and name).
@@ -440,7 +448,7 @@ class NET_EXPORT CookieMonster : public CookieStore {
       bool skip_httponly,
       bool already_expired,
       base::Time* creation_date_to_inherit,
-      CanonicalCookie::CookieInclusionStatus* status);
+      CookieInclusionStatus* status);
 
   // This is only used if the RecentCreationTimeGrantsLegacyCookieSemantics
   // feature is enabled. It finds an equivalent cookie (based on name, domain,
@@ -452,9 +460,11 @@ class NET_EXPORT CookieMonster : public CookieStore {
 
   // Inserts |cc| into cookies_. Returns an iterator that points to the inserted
   // cookie in cookies_. Guarantee: all iterators to cookies_ remain valid.
-  CookieMap::iterator InternalInsertCookie(const std::string& key,
-                                           std::unique_ptr<CanonicalCookie> cc,
-                                           bool sync_to_store);
+  CookieMap::iterator InternalInsertCookie(
+      const std::string& key,
+      std::unique_ptr<CanonicalCookie> cc,
+      bool sync_to_store,
+      const CookieAccessResult& access_result);
 
   // Sets all cookies from |list| after deleting any equivalent cookie.
   // For data gathering purposes, this routine is treated as if it is
@@ -574,7 +584,11 @@ class NET_EXPORT CookieMonster : public CookieStore {
   // statistics if a sufficient time period has passed.
   void RecordPeriodicStats(const base::Time& current_time);
 
-  // Initialize the above variables; should only be called from
+  // Records the aforementioned stats if we have already finished loading all
+  // cookies. Returns whether stats were recorded.
+  bool DoRecordPeriodicStats();
+
+  // Initialize the histogram_* variables below; should only be called from
   // the constructor.
   void InitializeHistograms();
 
@@ -594,7 +608,7 @@ class NET_EXPORT CookieMonster : public CookieStore {
 
   void SetCanonicalCookieAsyncAndFiltered_helper(
       std::unique_ptr<CanonicalCookie> cookie,
-      std::string source_scheme,
+      const GURL& url,
       const CookieOptions& options,
       SetCookiesCallback callback,
       bool allowed);
@@ -612,6 +626,15 @@ class NET_EXPORT CookieMonster : public CookieStore {
   base::HistogramBase* histogram_cookie_type_;
   base::HistogramBase* histogram_cookie_source_scheme_;
   base::HistogramBase* histogram_time_blocked_on_load_;
+
+  // Set of keys (eTLD+1's) for which non-expired cookies have
+  // been evicted for hitting the per-domain max. The size of this set is
+  // histogrammed periodically. The size is limited to |kMaxDomainPurgedKeys|.
+  std::set<std::string> domain_purged_keys_;
+
+  // The number of distinct keys (eTLD+1's) currently present in the |cookies_|
+  // multimap. This is histogrammed periodically.
+  size_t num_keys_;
 
   CookieMap cookies_;
 

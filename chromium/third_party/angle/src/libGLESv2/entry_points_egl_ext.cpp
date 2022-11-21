@@ -1513,6 +1513,31 @@ EGLClientBuffer EGLAPIENTRY EGL_GetNativeClientBufferANDROID(const struct AHardw
     return egl::Display::GetNativeClientBuffer(buffer);
 }
 
+EGLClientBuffer EGLAPIENTRY EGL_CreateNativeClientBufferANDROID(const EGLint *attrib_list)
+{
+    ANGLE_SCOPED_GLOBAL_LOCK();
+    FUNC_EVENT("const EGLint *attrib_list = 0x%016" PRIxPTR, (uintptr_t)attrib_list);
+
+    Thread *thread = egl::GetCurrentThread();
+    ANGLE_EGL_TRY_RETURN(thread,
+                         (attrib_list == nullptr || attrib_list[0] == EGL_NONE)
+                             ? egl::EglBadParameter() << "invalid attribute list."
+                             : NoError(),
+                         "eglCreateNativeClientBufferANDROID", nullptr, nullptr);
+
+    const AttributeMap &attribMap = AttributeMap::CreateFromIntArray(attrib_list);
+    ANGLE_EGL_TRY_RETURN(thread, ValidateCreateNativeClientBufferANDROID(attribMap),
+                         "eglCreateNativeClientBufferANDROID", nullptr, nullptr);
+
+    EGLClientBuffer eglClientBuffer = nullptr;
+    ANGLE_EGL_TRY_RETURN(thread,
+                         egl::Display::CreateNativeClientBuffer(attribMap, &eglClientBuffer),
+                         "eglCreateNativeClientBufferANDROID", nullptr, nullptr);
+
+    thread->setSuccess();
+    return eglClientBuffer;
+}
+
 EGLint EGLAPIENTRY EGL_DupNativeFenceFDANDROID(EGLDisplay dpy, EGLSyncKHR sync)
 {
     ANGLE_SCOPED_GLOBAL_LOCK();
@@ -1560,4 +1585,57 @@ EGLBoolean EGLAPIENTRY EGL_SwapBuffersWithFrameTokenANGLE(EGLDisplay dpy,
     thread->setSuccess();
     return EGL_TRUE;
 }
+
+void EGLAPIENTRY EGL_ReleaseHighPowerGPUANGLE(EGLDisplay dpy, EGLContext ctx)
+{
+    ANGLE_SCOPED_GLOBAL_LOCK();
+    FUNC_EVENT("EGLDisplay dpy = 0x%016" PRIxPTR ", EGLContext ctx = 0x%016" PRIxPTR,
+               (uintptr_t)dpy, (uintptr_t)ctx);
+    Thread *thread = egl::GetCurrentThread();
+
+    egl::Display *display = static_cast<egl::Display *>(dpy);
+    gl::Context *context  = static_cast<gl::Context *>(ctx);
+
+    ANGLE_EGL_TRY(thread, ValidateContext(display, context), "eglReleaseHighPowerGPUANGLE",
+                  GetDisplayIfValid(display));
+    ANGLE_EGL_TRY(thread, context->releaseHighPowerGPU(), "eglReleaseHighPowerGPUANGLE",
+                  GetDisplayIfValid(display));
+
+    thread->setSuccess();
+}
+
+void EGLAPIENTRY EGL_ReacquireHighPowerGPUANGLE(EGLDisplay dpy, EGLContext ctx)
+{
+    ANGLE_SCOPED_GLOBAL_LOCK();
+    FUNC_EVENT("EGLDisplay dpy = 0x%016" PRIxPTR ", EGLContext ctx = 0x%016" PRIxPTR,
+               (uintptr_t)dpy, (uintptr_t)ctx);
+    Thread *thread = egl::GetCurrentThread();
+
+    egl::Display *display = static_cast<egl::Display *>(dpy);
+    gl::Context *context  = static_cast<gl::Context *>(ctx);
+
+    ANGLE_EGL_TRY(thread, ValidateContext(display, context), "eglReacquireHighPowerGPUANGLE",
+                  GetDisplayIfValid(display));
+    ANGLE_EGL_TRY(thread, context->reacquireHighPowerGPU(), "eglReacquireHighPowerGPUANGLE",
+                  GetDisplayIfValid(display));
+
+    thread->setSuccess();
+}
+
+void EGLAPIENTRY EGL_HandleGPUSwitchANGLE(EGLDisplay dpy)
+{
+    ANGLE_SCOPED_GLOBAL_LOCK();
+    FUNC_EVENT("EGLDisplay dpy = 0x%016" PRIxPTR, (uintptr_t)dpy);
+    Thread *thread = egl::GetCurrentThread();
+
+    egl::Display *display = static_cast<egl::Display *>(dpy);
+
+    ANGLE_EGL_TRY(thread, ValidateDisplay(display), "eglHandleGPUSwitchANGLE",
+                  GetDisplayIfValid(display));
+    ANGLE_EGL_TRY(thread, display->handleGPUSwitch(), "eglHandleGPUSwitchANGLE",
+                  GetDisplayIfValid(display));
+
+    thread->setSuccess();
+}
+
 }  // extern "C"

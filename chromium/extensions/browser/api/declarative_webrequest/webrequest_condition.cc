@@ -5,7 +5,6 @@
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition.h"
 
 #include "base/bind.h"
-#include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -147,7 +146,8 @@ std::unique_ptr<WebRequestCondition> WebRequestCondition::Create(
     const base::Value& condition_attribute_value = iter.value();
     if (condition_attribute_name == keys::kInstanceTypeKey ||
         condition_attribute_name ==
-            keys::kDeprecatedFirstPartyForCookiesUrlKey) {
+            keys::kDeprecatedFirstPartyForCookiesUrlKey ||
+        condition_attribute_name == keys::kDeprecatedThirdPartyKey) {
       // Skip this.
     } else if (condition_attribute_name == keys::kUrlKey) {
       const base::DictionaryValue* dict = NULL;

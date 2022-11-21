@@ -5,8 +5,9 @@
 #include "services/device/public/cpp/hid/hid_report_descriptor_item.h"
 
 #include <stdlib.h>
+#include <string.h>
 
-#include "base/logging.h"
+#include "base/check.h"
 
 namespace device {
 
@@ -25,8 +26,8 @@ HidReportDescriptorItem::HidReportDescriptorItem(
     size_t size,
     HidReportDescriptorItem* previous)
     : previous_(previous),
-      next_(NULL),
-      parent_(NULL),
+      next_(nullptr),
+      parent_(nullptr),
       shortData_(0),
       payload_size_(0) {
   Header* header = (Header*)&bytes[0];

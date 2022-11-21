@@ -12,12 +12,7 @@
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
 
-namespace blink {
-class WebLocalFrame;
-}
-
 namespace content {
-
 class RenderView;
 class RenderViewImpl;
 
@@ -27,12 +22,11 @@ class CONTENT_EXPORT RenderViewObserver : public IPC::Listener,
                                           public IPC::Sender {
  public:
   // A subclass can use this to delete itself. If it does not, the subclass must
-  // always null-check each call to render_view() becase the RenderView can
+  // always null-check each call to render_view() because the RenderView can
   // go away at any time.
   virtual void OnDestruct() = 0;
 
   // These match the WebKit API notifications
-  virtual void DidClearWindowObject(blink::WebLocalFrame* frame) {}
   virtual void DidCommitCompositorFrame() {}
   virtual void DidUpdateMainFrameLayout() {}
 

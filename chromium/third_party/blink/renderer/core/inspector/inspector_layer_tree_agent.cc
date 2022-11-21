@@ -261,7 +261,7 @@ InspectorLayerTreeAgent::InspectorLayerTreeAgent(
 
 InspectorLayerTreeAgent::~InspectorLayerTreeAgent() = default;
 
-void InspectorLayerTreeAgent::Trace(Visitor* visitor) {
+void InspectorLayerTreeAgent::Trace(Visitor* visitor) const {
   visitor->Trace(inspected_frames_);
   InspectorBaseAgent::Trace(visitor);
 }
@@ -314,16 +314,13 @@ InspectorLayerTreeAgent::BuildLayerTree() {
 
   auto layers = std::make_unique<protocol::Array<protocol::LayerTree::Layer>>();
   auto* root_frame = inspected_frames_->Root();
-  auto* layer_for_scrolling =
-      root_frame->View()->LayoutViewport()->LayerForScrolling();
-  int scrolling_layer_id = layer_for_scrolling ? layer_for_scrolling->id() : 0;
   bool have_blocking_wheel_event_handlers =
       root_frame->GetChromeClient().EventListenerProperties(
           root_frame, cc::EventListenerClass::kMouseWheel) ==
       cc::EventListenerProperties::kBlocking;
 
   GatherLayers(root_layer, layers, have_blocking_wheel_event_handlers,
-               scrolling_layer_id);
+               root_layer->layer_tree_host()->OuterViewportScrollElementId());
   return layers;
 }
 
@@ -331,18 +328,18 @@ void InspectorLayerTreeAgent::GatherLayers(
     const cc::Layer* layer,
     std::unique_ptr<Array<protocol::LayerTree::Layer>>& layers,
     bool has_wheel_event_handlers,
-    int scrolling_layer_id) {
+    CompositorElementId outer_viewport_scroll_element_id) {
   if (client_->IsInspectorLayer(layer))
     return;
   if (layer->layer_tree_host()->is_hud_layer(layer))
     return;
-  int layer_id = layer->id();
   layers->emplace_back(BuildObjectForLayer(
       RootLayer(), layer,
-      has_wheel_event_handlers && layer_id == scrolling_layer_id));
+      has_wheel_event_handlers &&
+          layer->element_id() == outer_viewport_scroll_element_id));
   for (auto child : layer->children()) {
     GatherLayers(child.get(), layers, has_wheel_event_handlers,
-                 scrolling_layer_id);
+                 outer_viewport_scroll_element_id);
   }
 }
 
@@ -351,6 +348,8 @@ const cc::Layer* InspectorLayerTreeAgent::RootLayer() {
 }
 
 static const cc::Layer* FindLayerById(const cc::Layer* root, int layer_id) {
+  if (!root)
+    return nullptr;
   if (root->id() == layer_id)
     return root;
   for (auto child : root->children()) {

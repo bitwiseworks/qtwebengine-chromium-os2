@@ -17,8 +17,11 @@
 #include <memory>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/clang_profiling_buildflags.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
+#include "base/strings/string_util.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -27,11 +30,11 @@
 #include <cxxabi.h>
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #include <AvailabilityMacros.h>
 #endif
 
-#if defined(OS_MACOSX) || defined(OS_BSD)
+#if defined(OS_APPLE) || defined(OS_BSD)
 #include <sys/sysctl.h>
 #endif
 
@@ -46,11 +49,11 @@
 
 #include <ostream>
 
+#include "base/check.h"
 #include "base/debug/alias.h"
 #include "base/debug/debugging_buildflags.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
-#include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
@@ -67,7 +70,7 @@
 namespace base {
 namespace debug {
 
-#if defined(OS_MACOSX) || defined(OS_BSD)
+#if defined(OS_APPLE) || defined(OS_BSD)
 
 // Based on Apple's recommended method as described in
 // http://developer.apple.com/qa/qa2004/qa1361.html
@@ -150,7 +153,8 @@ void VerifyDebugger() {
 #endif
 }
 
-#elif defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_AIX)
+#elif defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID) || \
+    defined(OS_AIX)
 
 // We can look in /proc/self/status for TracerPid.  We are likely used in crash
 // handling, so we are careful not to use the heap or have side effects.
@@ -281,14 +285,14 @@ void VerifyDebugger() {}
 #define DEBUG_BREAK_ASM() asm("int3")
 #endif
 
-#if defined(NDEBUG) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(NDEBUG) && !defined(OS_APPLE) && !defined(OS_ANDROID)
 #define DEBUG_BREAK() abort()
 #elif defined(OS_NACL)
 // The NaCl verifier doesn't let use use int3.  For now, we call abort().  We
 // should ask for advice from some NaCl experts about the optimum thing here.
 // http://code.google.com/p/nativeclient/issues/detail?id=645
 #define DEBUG_BREAK() abort()
-#elif !defined(OS_MACOSX)
+#elif !defined(OS_APPLE)
 // Though Android has a "helpful" process called debuggerd to catch native
 // signals on the general assumption that they are fatal errors. If no debugger
 // is attached, we call abort since Breakpad needs SIGABRT to create a dump.

@@ -28,6 +28,7 @@ class TextureNULL : public TextureImpl
                            GLenum format,
                            GLenum type,
                            const gl::PixelUnpackState &unpack,
+                           gl::Buffer *unpackBuffer,
                            const uint8_t *pixels) override;
     angle::Result setSubImage(const gl::Context *context,
                               const gl::ImageIndex &index,
@@ -68,7 +69,7 @@ class TextureNULL : public TextureImpl
                               const gl::ImageIndex &index,
                               GLenum internalFormat,
                               GLenum type,
-                              size_t sourceLevel,
+                              GLint sourceLevel,
                               bool unpackFlipY,
                               bool unpackPremultiplyAlpha,
                               bool unpackUnmultiplyAlpha,
@@ -76,7 +77,7 @@ class TextureNULL : public TextureImpl
     angle::Result copySubTexture(const gl::Context *context,
                                  const gl::ImageIndex &index,
                                  const gl::Offset &destOffset,
-                                 size_t sourceLevel,
+                                 GLint sourceLevel,
                                  const gl::Box &sourceBox,
                                  bool unpackFlipY,
                                  bool unpackPremultiplyAlpha,
@@ -98,7 +99,9 @@ class TextureNULL : public TextureImpl
                                            GLenum internalFormat,
                                            const gl::Extents &size,
                                            gl::MemoryObject *memoryObject,
-                                           GLuint64 offset) override;
+                                           GLuint64 offset,
+                                           GLbitfield createFlags,
+                                           GLbitfield usageFlags) override;
 
     angle::Result setEGLImageTarget(const gl::Context *context,
                                     gl::TextureType type,
@@ -117,7 +120,8 @@ class TextureNULL : public TextureImpl
     angle::Result releaseTexImage(const gl::Context *context) override;
 
     angle::Result syncState(const gl::Context *context,
-                            const gl::Texture::DirtyBits &dirtyBits) override;
+                            const gl::Texture::DirtyBits &dirtyBits,
+                            gl::Command source) override;
 
     angle::Result setStorageMultisample(const gl::Context *context,
                                         gl::TextureType type,

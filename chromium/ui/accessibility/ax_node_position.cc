@@ -18,7 +18,7 @@ AXEmbeddedObjectBehavior g_ax_embedded_object_behavior =
     AXEmbeddedObjectBehavior::kExposeCharacter;
 #else
     AXEmbeddedObjectBehavior::kSuppressCharacter;
-#endif
+#endif  // defined(OS_WIN)
 
 // static
 AXNodePosition::AXPositionInstance AXNodePosition::CreatePosition(
@@ -29,9 +29,10 @@ AXNodePosition::AXPositionInstance AXNodePosition::CreatePosition(
     return CreateNullPosition();
 
   AXTreeID tree_id = node.tree()->GetAXTreeID();
-  if (node.IsText())
+  if (node.IsText()) {
     return CreateTextPosition(tree_id, node.id(), child_index_or_text_offset,
                               affinity);
+  }
 
   return CreateTreePosition(tree_id, node.id(), child_index_or_text_offset);
 }
@@ -96,6 +97,14 @@ int AXNodePosition::AnchorUnignoredChildCount() const {
 
 int AXNodePosition::AnchorIndexInParent() const {
   return GetAnchor() ? int(GetAnchor()->index_in_parent()) : INVALID_INDEX;
+}
+
+int AXNodePosition::AnchorSiblingCount() const {
+  AXNode* parent = GetAnchor()->GetUnignoredParent();
+  if (parent)
+    return static_cast<int>(parent->GetUnignoredChildCount());
+
+  return 0;
 }
 
 base::stack<AXNode*> AXNodePosition::GetAncestorAnchors() const {
@@ -260,6 +269,19 @@ int AXNodePosition::MaxTextOffset() const {
   return text_length;
 }
 
+bool AXNodePosition::IsEmbeddedObjectInParent() const {
+  switch (g_ax_embedded_object_behavior) {
+    case AXEmbeddedObjectBehavior::kSuppressCharacter:
+      return false;
+    case AXEmbeddedObjectBehavior::kExposeCharacter:
+      // We don't need to expose an "embedded object character" for textual
+      // nodes and nodes that are invisible to platform APIs. Textual nodes are
+      // represented by their actual text.
+      return !IsNullPosition() && !GetAnchor()->IsText() &&
+             GetAnchor()->IsChildOfLeaf();
+  }
+}
+
 bool AXNodePosition::IsInLineBreakingObject() const {
   if (IsNullPosition())
     return false;
@@ -269,11 +291,15 @@ bool AXNodePosition::IsInLineBreakingObject() const {
          !GetAnchor()->IsInListMarker();
 }
 
-ax::mojom::Role AXNodePosition::GetRole() const {
+ax::mojom::Role AXNodePosition::GetAnchorRole() const {
   if (IsNullPosition())
     return ax::mojom::Role::kNone;
   DCHECK(GetAnchor());
-  return GetAnchor()->data().role;
+  return GetRole(GetAnchor());
+}
+
+ax::mojom::Role AXNodePosition::GetRole(AXNode* node) const {
+  return node->data().role;
 }
 
 AXNodeTextStyles AXNodePosition::GetTextStyles() const {
@@ -299,23 +325,8 @@ std::vector<int32_t> AXNodePosition::GetWordStartOffsets() const {
   if (IsEmptyObjectReplacedByCharacter())
     return {0};
 
-  std::vector<int32_t> offsets = GetAnchor()->data().GetIntListAttribute(
+  return GetAnchor()->data().GetIntListAttribute(
       ax::mojom::IntListAttribute::kWordStarts);
-  if (!offsets.empty() ||
-      GetAnchor()
-          ->data()
-          .GetIntListAttribute(ax::mojom::IntListAttribute::kCharacterOffsets)
-          .empty() ||
-      IsInWhiteSpace()) {
-    return offsets;
-  }
-
-  // When the position is on a node that has character offsets but has no word
-  // boundary, treat the entire node content as a word. This can happen when
-  // the node contains only "skippable words", like whitespaces, punctuation or
-  // other special characters. E.g., "•" or any emoji.
-  // TODO: This should not be needed once https://crbug.com/1028830 is fixed.
-  return {0};
 }
 
 std::vector<int32_t> AXNodePosition::GetWordEndOffsets() const {
@@ -332,23 +343,8 @@ std::vector<int32_t> AXNodePosition::GetWordEndOffsets() const {
   if (IsEmptyObjectReplacedByCharacter())
     return {1};
 
-  std::vector<int32_t> offsets = GetAnchor()->data().GetIntListAttribute(
+  return GetAnchor()->data().GetIntListAttribute(
       ax::mojom::IntListAttribute::kWordEnds);
-  if (!offsets.empty() ||
-      GetAnchor()
-          ->data()
-          .GetIntListAttribute(ax::mojom::IntListAttribute::kCharacterOffsets)
-          .empty() ||
-      IsInWhiteSpace()) {
-    return offsets;
-  }
-
-  // When the position is on a node that has character offsets but has no word
-  // boundary, treat the entire node content as a word. This can happen when
-  // the node contains only "skippable words", like whitespaces, punctuation or
-  // other special characters. E.g., "•" or any emoji.
-  // TODO: This should not be needed once https://crbug.com/1028830 is fixed.
-  return {MaxTextOffset()};
 }
 
 AXNode::AXID AXNodePosition::GetNextOnLineID(AXNode::AXID node_id) const {

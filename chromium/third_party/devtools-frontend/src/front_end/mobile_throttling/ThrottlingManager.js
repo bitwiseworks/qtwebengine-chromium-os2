@@ -11,10 +11,16 @@ import {MobileThrottlingSelector} from './MobileThrottlingSelector.js';
 import {NetworkThrottlingSelector} from './NetworkThrottlingSelector.js';
 import {Conditions, ConditionsList, cpuThrottlingPresets, CPUThrottlingRates, CustomConditions, MobileThrottlingConditionsGroup, NetworkThrottlingConditionsGroup} from './ThrottlingPresets.js';  // eslint-disable-line no-unused-vars
 
+/** @type {!ThrottlingManager} */
+let throttlingManagerInstance;
+
 /**
  * @implements {SDK.SDKModel.SDKModelObserver<!SDK.EmulationModel.EmulationModel>}
  */
 export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
+  /**
+   * @private
+   */
   constructor() {
     super();
     /** @type {!CPUThrottlingRates} */
@@ -29,21 +35,34 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
     /** @type {!SDK.NetworkManager.Conditions} */
     this._lastNetworkThrottlingConditions;
 
-    self.SDK.multitargetNetworkManager.addEventListener(
+    SDK.NetworkManager.MultitargetNetworkManager.instance().addEventListener(
         SDK.NetworkManager.MultitargetNetworkManager.Events.ConditionsChanged, () => {
           this._lastNetworkThrottlingConditions = this._currentNetworkThrottlingConditions;
-          this._currentNetworkThrottlingConditions = self.SDK.multitargetNetworkManager.networkConditions();
+          this._currentNetworkThrottlingConditions =
+              SDK.NetworkManager.MultitargetNetworkManager.instance().networkConditions();
         });
 
     SDK.SDKModel.TargetManager.instance().observeModels(SDK.EmulationModel.EmulationModel, this);
   }
 
+  /**
+   * @param {{forceNew: ?boolean}} opts
+   */
+  static instance(opts = {forceNew: null}) {
+    const {forceNew} = opts;
+    if (!throttlingManagerInstance || forceNew) {
+      throttlingManagerInstance = new ThrottlingManager();
+    }
+
+    return throttlingManagerInstance;
+  }
 
   /**
    * @param {!HTMLSelectElement} selectElement
    * @return {!NetworkThrottlingSelector}
    */
   decorateSelectWithNetworkThrottling(selectElement) {
+    /** @type {!Array<?SDK.NetworkManager.Conditions>} */
     let options = [];
     const selector = new NetworkThrottlingSelector(populate, select, this._customNetworkConditionsSetting);
     selectElement.addEventListener('change', optionSelected, false);
@@ -58,7 +77,7 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
       options = [];
       for (let i = 0; i < groups.length; ++i) {
         const group = groups[i];
-        const groupElement = selectElement.createChild('optgroup');
+        const groupElement = /** @type {!HTMLOptGroupElement} */ (selectElement.createChild('optgroup'));
         groupElement.label = group.title;
         for (const conditions of group.items) {
           const title = conditions.title;
@@ -81,7 +100,10 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
       if (selectElement.selectedIndex === selectElement.options.length - 1) {
         selector.revealAndUpdate();
       } else {
-        selector.optionSelected(options[selectElement.selectedIndex]);
+        const option = options[selectElement.selectedIndex];
+        if (option) {
+          selector.optionSelected(option);
+        }
       }
     }
 
@@ -102,25 +124,29 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
     const checkbox = new UI.Toolbar.ToolbarCheckbox(
         Common.UIString.UIString('Offline'), Common.UIString.UIString('Force disconnected from network'),
         forceOffline.bind(this));
-    self.SDK.multitargetNetworkManager.addEventListener(
+    SDK.NetworkManager.MultitargetNetworkManager.instance().addEventListener(
         SDK.NetworkManager.MultitargetNetworkManager.Events.ConditionsChanged, networkConditionsChanged);
     checkbox.setChecked(
-        self.SDK.multitargetNetworkManager.networkConditions() === SDK.NetworkManager.OfflineConditions);
+        SDK.NetworkManager.MultitargetNetworkManager.instance().networkConditions() ===
+        SDK.NetworkManager.OfflineConditions);
 
     /**
      * @this {!ThrottlingManager}
      */
     function forceOffline() {
       if (checkbox.checked()) {
-        self.SDK.multitargetNetworkManager.setNetworkConditions(SDK.NetworkManager.OfflineConditions);
+        SDK.NetworkManager.MultitargetNetworkManager.instance().setNetworkConditions(
+            SDK.NetworkManager.OfflineConditions);
       } else {
-        self.SDK.multitargetNetworkManager.setNetworkConditions(this._lastNetworkThrottlingConditions);
+        SDK.NetworkManager.MultitargetNetworkManager.instance().setNetworkConditions(
+            this._lastNetworkThrottlingConditions);
       }
     }
 
     function networkConditionsChanged() {
       checkbox.setChecked(
-          self.SDK.multitargetNetworkManager.networkConditions() === SDK.NetworkManager.OfflineConditions);
+          SDK.NetworkManager.MultitargetNetworkManager.instance().networkConditions() ===
+          SDK.NetworkManager.OfflineConditions);
     }
 
     return checkbox;
@@ -181,8 +207,11 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
      */
     function select(index) {
       selectedIndex = index;
-      button.setText(options[index].title);
-      button.setTitle(options[index].description);
+      const option = options[index];
+      if (option) {
+        button.setText(option.title);
+        button.setTitle(option.description);
+      }
     }
   }
 
@@ -211,7 +240,7 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
     for (const control of this._cpuThrottlingControls) {
       control.setSelectedIndex(index);
     }
-    self.UI.inspectorView.setPanelIcon('timeline', icon);
+    UI.InspectorView.InspectorView.instance().setPanelIcon('timeline', icon);
     this.dispatchEventToListeners(Events.RateChanged, this._cpuThrottlingRate);
   }
 
@@ -237,7 +266,9 @@ export class ThrottlingManager extends Common.ObjectWrapper.ObjectWrapper {
    */
   createCPUThrottlingSelector() {
     const control = new UI.Toolbar.ToolbarComboBox(
-        event => this.setCPUThrottlingRate(this._cpuThrottlingRates[event.target.selectedIndex]), ls`CPU throttling`);
+        event => this.setCPUThrottlingRate(
+            this._cpuThrottlingRates[/** @type {!HTMLSelectElement} */ (event.target).selectedIndex]),
+        ls`CPU throttling`);
     this._cpuThrottlingControls.add(control);
     const currentRate = this._cpuThrottlingRate;
 
@@ -272,19 +303,21 @@ export class ActionDelegate {
    */
   handleAction(context, actionId) {
     if (actionId === 'network-conditions.network-online') {
-      self.SDK.multitargetNetworkManager.setNetworkConditions(SDK.NetworkManager.NoThrottlingConditions);
+      SDK.NetworkManager.MultitargetNetworkManager.instance().setNetworkConditions(
+          SDK.NetworkManager.NoThrottlingConditions);
       return true;
     }
     if (actionId === 'network-conditions.network-low-end-mobile') {
-      self.SDK.multitargetNetworkManager.setNetworkConditions(SDK.NetworkManager.Slow3GConditions);
+      SDK.NetworkManager.MultitargetNetworkManager.instance().setNetworkConditions(SDK.NetworkManager.Slow3GConditions);
       return true;
     }
     if (actionId === 'network-conditions.network-mid-tier-mobile') {
-      self.SDK.multitargetNetworkManager.setNetworkConditions(SDK.NetworkManager.Fast3GConditions);
+      SDK.NetworkManager.MultitargetNetworkManager.instance().setNetworkConditions(SDK.NetworkManager.Fast3GConditions);
       return true;
     }
     if (actionId === 'network-conditions.network-offline') {
-      self.SDK.multitargetNetworkManager.setNetworkConditions(SDK.NetworkManager.OfflineConditions);
+      SDK.NetworkManager.MultitargetNetworkManager.instance().setNetworkConditions(
+          SDK.NetworkManager.OfflineConditions);
       return true;
     }
     return false;
@@ -295,5 +328,5 @@ export class ActionDelegate {
  * @return {!ThrottlingManager}
  */
 export function throttlingManager() {
-  return self.singleton(ThrottlingManager);
+  return ThrottlingManager.instance();
 }

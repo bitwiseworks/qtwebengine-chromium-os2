@@ -66,9 +66,6 @@ class QUIC_EXPORT_PRIVATE UberQuicStreamIdManager {
   bool OnStreamsBlockedFrame(const QuicStreamsBlockedFrame& frame,
                              std::string* error_details);
 
-  // Return true if |id| is peer initiated.
-  bool IsIncomingStream(QuicStreamId id) const;
-
   // Returns true if |id| is still available.
   bool IsAvailableStream(QuicStreamId id) const;
 
@@ -90,10 +87,14 @@ class QUIC_EXPORT_PRIVATE UberQuicStreamIdManager {
   QuicStreamCount advertised_max_incoming_bidirectional_streams() const;
   QuicStreamCount advertised_max_incoming_unidirectional_streams() const;
 
+  QuicStreamCount outgoing_bidirectional_stream_count() const;
+  QuicStreamCount outgoing_unidirectional_stream_count() const;
+
  private:
   friend class test::QuicSessionPeer;
   friend class test::UberQuicStreamIdManagerPeer;
 
+  ParsedQuicVersion version_;
   // Manages stream IDs of bidirectional streams.
   QuicStreamIdManager bidirectional_stream_id_manager_;
 

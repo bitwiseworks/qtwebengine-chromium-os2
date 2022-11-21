@@ -39,13 +39,6 @@ enum NotificationType {
   // DEPRECATED: Use extensions::InstallObserver::OnFinishCrxInstall()
   NOTIFICATION_CRX_INSTALLER_DONE = NOTIFICATION_EXTENSIONS_START,
 
-  // Sent when the known installed extensions have all been loaded.  In
-  // testing scenarios this can happen multiple times if extensions are
-  // unloaded and reloaded. The source is a BrowserContext*.
-  //
-  // DEPRECATED: Use ExtensionSystem::Get(browser_context)->ready().Post().
-  NOTIFICATION_EXTENSIONS_READY_DEPRECATED,
-
   // An error occurred while attempting to load an extension. The details are a
   // string with details about why the load failed.
   // DEPRECATED: Use extensions::LoadErrorReporter::OnLoadFailure()
@@ -69,7 +62,7 @@ enum NotificationType {
   NOTIFICATION_EXTENSION_UNINSTALL_NOT_ALLOWED,
 
   // Sent when an Extension object is removed from ExtensionService. This
-  // can happen when an extension is uninstalled, upgraded, or blacklisted,
+  // can happen when an extension is uninstalled, upgraded, or blocklisted,
   // including all cases when the Extension is deleted. The details are an
   // Extension, and the source is a BrowserContext*.
   NOTIFICATION_EXTENSION_REMOVED,
@@ -105,17 +98,6 @@ enum NotificationType {
 
   // Sent when a background page is ready so other components can load.
   NOTIFICATION_EXTENSION_BACKGROUND_PAGE_READY,
-
-  // Sent when an extension command has been removed. The source is the
-  // BrowserContext* and the details is an ExtensionCommandRemovedDetails
-  // consisting of std::strings representing an extension ID, the name of the
-  // command being removed, and the accelerator associated with the command.
-  NOTIFICATION_EXTENSION_COMMAND_REMOVED,
-
-  // Sent when an extension command has been added. The source is the
-  // BrowserContext* and the details is a std::pair of two std::string objects
-  // (an extension ID and the name of the command being added).
-  NOTIFICATION_EXTENSION_COMMAND_ADDED,
 
   // Sent by an extension to notify the browser about the results of a unit
   // test.
@@ -166,16 +148,6 @@ enum NotificationType {
   // DEPRECATED: Use extensions::UserScriptLoader::Observer::OnScriptsLoaded()
   NOTIFICATION_USER_SCRIPTS_UPDATED,
   NOTIFICATION_EXTENSIONS_END
-};
-
-struct ExtensionCommandRemovedDetails {
-  ExtensionCommandRemovedDetails(const std::string& extension_id,
-                                 const std::string& command_name,
-                                 const std::string& accelerator);
-
-  std::string extension_id;
-  std::string command_name;
-  std::string accelerator;
 };
 
 // **

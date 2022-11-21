@@ -62,7 +62,7 @@ protected:
         }
         const GrCaps& caps = *this->getGpu()->caps();
         return GrSurface::ComputeSize(caps, this->backendFormat(), this->dimensions(),
-                                      numColorSamples, GrMipMapped::kNo);
+                                      numColorSamples, GrMipmapped::kNo);
     }
 
     id<MTLTexture> fColorTexture;
@@ -81,7 +81,7 @@ private:
 
     bool completeStencilAttachment() override;
 
-    typedef GrRenderTarget INHERITED;
+    using INHERITED = GrRenderTarget;
 };
 
 

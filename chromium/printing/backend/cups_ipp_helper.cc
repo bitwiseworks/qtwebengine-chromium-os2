@@ -13,14 +13,14 @@
 #include "base/logging.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "printing/backend/cups_connection.h"
 #include "printing/backend/cups_ipp_constants.h"
 #include "printing/backend/cups_printer.h"
 #include "printing/backend/print_backend_consts.h"
+#include "printing/mojom/print.mojom.h"
+#include "printing/printing_utils.h"
 #include "printing/units.h"
 
 #if defined(OS_CHROMEOS)
@@ -39,152 +39,68 @@ constexpr int kPinMinimumLength = 4;
 
 namespace {
 
-constexpr int kMicronsPerMM = 1000;
 constexpr double kMMPerInch = 25.4;
-constexpr double kMicronsPerInch = kMMPerInch * kMicronsPerMM;
 constexpr double kCmPerInch = kMMPerInch * 0.1;
-
-// Defines two prefixes of a special breed of media sizes not meant for
-// users' eyes. CUPS incidentally returns these IPP values to us, but
-// we have no use for them.
-constexpr base::StringPiece kMediaCustomMinPrefix = "custom_min";
-constexpr base::StringPiece kMediaCustomMaxPrefix = "custom_max";
-
-enum Unit {
-  INCHES,
-  MILLIMETERS,
-};
 
 struct ColorMap {
   const char* color;
-  ColorModel model;
+  mojom::ColorModel model;
 };
 
 struct DuplexMap {
   const char* name;
-  DuplexMode mode;
+  mojom::DuplexMode mode;
 };
 
 const ColorMap kColorList[]{
-    {CUPS_PRINT_COLOR_MODE_COLOR, COLORMODE_COLOR},
-    {CUPS_PRINT_COLOR_MODE_MONOCHROME, COLORMODE_MONOCHROME},
+    {CUPS_PRINT_COLOR_MODE_COLOR, mojom::ColorModel::kColorModeColor},
+    {CUPS_PRINT_COLOR_MODE_MONOCHROME, mojom::ColorModel::kColorModeMonochrome},
 };
 
 const DuplexMap kDuplexList[]{
-    {CUPS_SIDES_ONE_SIDED, SIMPLEX},
-    {CUPS_SIDES_TWO_SIDED_PORTRAIT, LONG_EDGE},
-    {CUPS_SIDES_TWO_SIDED_LANDSCAPE, SHORT_EDGE},
+    {CUPS_SIDES_ONE_SIDED, mojom::DuplexMode::kSimplex},
+    {CUPS_SIDES_TWO_SIDED_PORTRAIT, mojom::DuplexMode::kLongEdge},
+    {CUPS_SIDES_TWO_SIDED_LANDSCAPE, mojom::DuplexMode::kShortEdge},
 };
 
-ColorModel ColorModelFromIppColor(base::StringPiece ippColor) {
+mojom::ColorModel ColorModelFromIppColor(base::StringPiece ippColor) {
   for (const ColorMap& color : kColorList) {
     if (ippColor.compare(color.color) == 0) {
       return color.model;
     }
   }
 
-  return UNKNOWN_COLOR_MODEL;
+  return mojom::ColorModel::kUnknownColorModel;
 }
 
-DuplexMode DuplexModeFromIpp(base::StringPiece ipp_duplex) {
+mojom::DuplexMode DuplexModeFromIpp(base::StringPiece ipp_duplex) {
   for (const DuplexMap& entry : kDuplexList) {
     if (base::EqualsCaseInsensitiveASCII(ipp_duplex, entry.name))
       return entry.mode;
   }
-  return UNKNOWN_DUPLEX_MODE;
+  return mojom::DuplexMode::kUnknownDuplexMode;
 }
 
-gfx::Size DimensionsToMicrons(base::StringPiece value) {
-  Unit unit;
-  base::StringPiece dims;
-  size_t unit_position;
-  if ((unit_position = value.find("mm")) != base::StringPiece::npos) {
-    unit = MILLIMETERS;
-    dims = value.substr(0, unit_position);
-  } else if ((unit_position = value.find("in")) != base::StringPiece::npos) {
-    unit = INCHES;
-    dims = value.substr(0, unit_position);
-  } else {
-    LOG(WARNING) << "Could not parse paper dimensions";
-    return {0, 0};
-  }
-
-  double width;
-  double height;
-  std::vector<std::string> pieces = base::SplitString(
-      dims, "x", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  if (pieces.size() != 2 || !base::StringToDouble(pieces[0], &width) ||
-      !base::StringToDouble(pieces[1], &height)) {
-    return {0, 0};
-  }
-
-  int width_microns;
-  int height_microns;
-  switch (unit) {
-    case MILLIMETERS:
-      width_microns = width * kMicronsPerMM;
-      height_microns = height * kMicronsPerMM;
-      break;
-    case INCHES:
-      width_microns = width * kMicronsPerInch;
-      height_microns = height * kMicronsPerInch;
-      break;
-    default:
-      NOTREACHED();
-      break;
-  }
-
-  return gfx::Size{width_microns, height_microns};
-}
-
-// We read the media name expressed by |value| and return a Paper
-// with the vendor_id and size_um members populated.
-// We don't handle l10n here. We do populate the display_name member
-// with the prettified vendor ID, but fully expect the caller to clobber
-// this if a better localization exists.
-PrinterSemanticCapsAndDefaults::Paper ParsePaper(base::StringPiece value) {
-  // <name>_<width>x<height>{in,mm}
-  // e.g. na_letter_8.5x11in, iso_a4_210x297mm
-
-  std::vector<base::StringPiece> pieces = base::SplitStringPiece(
-      value, "_", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  // We expect at least a display string and a dimension string.
-  // Additionally, we drop the "custom_min*" and "custom_max*" special
-  // "sizes" (not for users' eyes).
-  if (pieces.size() < 2 || value.starts_with(kMediaCustomMinPrefix) ||
-      value.starts_with(kMediaCustomMaxPrefix))
-    return PrinterSemanticCapsAndDefaults::Paper();
-
-  base::StringPiece dimensions = pieces.back();
-
-  PrinterSemanticCapsAndDefaults::Paper paper;
-  paper.vendor_id = value.as_string();
-  paper.size_um = DimensionsToMicrons(dimensions);
-  // Omits the final token describing the media dimensions.
-  pieces.pop_back();
-  paper.display_name = base::JoinString(pieces, " ");
-
-  return paper;
-}
-
-ColorModel DefaultColorModel(const CupsOptionProvider& printer) {
+mojom::ColorModel DefaultColorModel(const CupsOptionProvider& printer) {
   // default color
   ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppColor);
   if (!attr)
-    return UNKNOWN_COLOR_MODEL;
+    return mojom::ColorModel::kUnknownColorModel;
 
-  return ColorModelFromIppColor(ippGetString(attr, 0, nullptr));
+  const char* const value = ippGetString(attr, 0, nullptr);
+  return value ? ColorModelFromIppColor(value)
+               : mojom::ColorModel::kUnknownColorModel;
 }
 
-std::vector<ColorModel> SupportedColorModels(
+std::vector<mojom::ColorModel> SupportedColorModels(
     const CupsOptionProvider& printer) {
-  std::vector<ColorModel> colors;
+  std::vector<mojom::ColorModel> colors;
 
   std::vector<base::StringPiece> color_modes =
       printer.GetSupportedOptionValueStrings(kIppColor);
   for (base::StringPiece color : color_modes) {
-    ColorModel color_model = ColorModelFromIppColor(color);
-    if (color_model != UNKNOWN_COLOR_MODEL) {
+    mojom::ColorModel color_model = ColorModelFromIppColor(color);
+    if (color_model != mojom::ColorModel::kUnknownColorModel) {
       colors.push_back(color_model);
     }
   }
@@ -194,18 +110,18 @@ std::vector<ColorModel> SupportedColorModels(
 
 void ExtractColor(const CupsOptionProvider& printer,
                   PrinterSemanticCapsAndDefaults* printer_info) {
-  printer_info->bw_model = UNKNOWN_COLOR_MODEL;
-  printer_info->color_model = UNKNOWN_COLOR_MODEL;
+  printer_info->bw_model = mojom::ColorModel::kUnknownColorModel;
+  printer_info->color_model = mojom::ColorModel::kUnknownColorModel;
 
   // color and b&w
-  std::vector<ColorModel> color_models = SupportedColorModels(printer);
-  for (ColorModel color : color_models) {
+  std::vector<mojom::ColorModel> color_models = SupportedColorModels(printer);
+  for (mojom::ColorModel color : color_models) {
     switch (color) {
-      case COLORMODE_COLOR:
-        printer_info->color_model = COLORMODE_COLOR;
+      case mojom::ColorModel::kColorModeColor:
+        printer_info->color_model = mojom::ColorModel::kColorModeColor;
         break;
-      case COLORMODE_MONOCHROME:
-        printer_info->bw_model = COLORMODE_MONOCHROME;
+      case mojom::ColorModel::kColorModeMonochrome:
+        printer_info->bw_model = mojom::ColorModel::kColorModeMonochrome;
         break;
       default:
         // value not needed
@@ -215,11 +131,12 @@ void ExtractColor(const CupsOptionProvider& printer,
 
   // changeable
   printer_info->color_changeable =
-      (printer_info->color_model != UNKNOWN_COLOR_MODEL &&
-       printer_info->bw_model != UNKNOWN_COLOR_MODEL);
+      (printer_info->color_model != mojom::ColorModel::kUnknownColorModel &&
+       printer_info->bw_model != mojom::ColorModel::kUnknownColorModel);
 
   // default color
-  printer_info->color_default = DefaultColorModel(printer) == COLORMODE_COLOR;
+  printer_info->color_default =
+      DefaultColorModel(printer) == mojom::ColorModel::kColorModeColor;
 }
 
 void ExtractDuplexModes(const CupsOptionProvider& printer,
@@ -227,14 +144,21 @@ void ExtractDuplexModes(const CupsOptionProvider& printer,
   std::vector<base::StringPiece> duplex_modes =
       printer.GetSupportedOptionValueStrings(kIppDuplex);
   for (base::StringPiece duplex : duplex_modes) {
-    DuplexMode duplex_mode = DuplexModeFromIpp(duplex);
-    if (duplex_mode != UNKNOWN_DUPLEX_MODE)
+    mojom::DuplexMode duplex_mode = DuplexModeFromIpp(duplex);
+    if (duplex_mode != mojom::DuplexMode::kUnknownDuplexMode)
       printer_info->duplex_modes.push_back(duplex_mode);
   }
+
   ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppDuplex);
-  printer_info->duplex_default =
-      attr ? DuplexModeFromIpp(ippGetString(attr, 0, nullptr))
-           : UNKNOWN_DUPLEX_MODE;
+  if (!attr) {
+    printer_info->duplex_default = mojom::DuplexMode::kUnknownDuplexMode;
+    return;
+  }
+
+  const char* const attr_str = ippGetString(attr, 0, nullptr);
+  printer_info->duplex_default = attr_str
+                                     ? DuplexModeFromIpp(attr_str)
+                                     : mojom::DuplexMode::kUnknownDuplexMode;
 }
 
 void CopiesRange(const CupsOptionProvider& printer,
@@ -327,8 +251,8 @@ bool CollateDefault(const CupsOptionProvider& printer) {
   if (!attr)
     return false;
 
-  base::StringPiece name = ippGetString(attr, 0, nullptr);
-  return name.compare(kCollated) == 0;
+  const char* const name = ippGetString(attr, 0, nullptr);
+  return name && !base::StringPiece(name).compare(kCollated);
 }
 
 #if defined(OS_CHROMEOS)

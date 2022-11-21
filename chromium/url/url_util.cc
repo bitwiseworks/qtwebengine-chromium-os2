@@ -8,8 +8,8 @@
 #include <string.h>
 #include <atomic>
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
@@ -50,6 +50,12 @@ struct SchemeRegistry {
   };
 
   // Schemes that are allowed for referrers.
+  //
+  // WARNING: Adding (1) a non-"standard" scheme or (2) a scheme whose URLs have
+  // opaque origins could lead to surprising behavior in some of the referrer
+  // generation logic. In order to avoid surprises, be sure to have adequate
+  // test coverage in each of the multiple code locations that compute
+  // referrers.
   std::vector<SchemeWithType> referrer_schemes = {
       {kHttpsScheme, SCHEME_WITH_HOST_PORT_AND_USER_INFORMATION},
       {kHttpScheme, SCHEME_WITH_HOST_PORT_AND_USER_INFORMATION},

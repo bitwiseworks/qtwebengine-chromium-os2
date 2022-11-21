@@ -15,6 +15,7 @@
 #include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 
 class GURL;
@@ -26,7 +27,7 @@ namespace base {
 class FilePath;
 class TickClock;
 class TimeDelta;
-}
+}  // namespace base
 
 namespace net {
 class HttpResponseHeaders;
@@ -215,11 +216,11 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoader {
   // SimpleURLLoader will stream the response body to
   // SimpleURLLoaderStreamConsumer on the current thread. Destroying the
   // SimpleURLLoader will cancel the request, and prevent any subsequent
-  // methods from being invoked on the Handler. The SimpleURLLoader may also be
-  // destroyed in any of the Handler's callbacks.
+  // methods from being invoked on the Consumer. The SimpleURLLoader may also be
+  // destroyed in any of the Consumer's callbacks.
   //
-  // |stream_handler| must remain valid until either the SimpleURLLoader is
-  // deleted, or the handler's OnComplete() method has been invoked by the
+  // |stream_consumer| must remain valid until either the SimpleURLLoader is
+  // deleted, or the consumer's OnComplete() method has been invoked by the
   // SimpleURLLoader.
   virtual void DownloadAsStream(
       mojom::URLLoaderFactory* url_loader_factory,
@@ -347,6 +348,12 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoader {
   // was never received. May only be called once the loader has informed the
   // caller of completion.
   virtual const mojom::URLResponseHead* ResponseInfo() const = 0;
+
+  // The URLLoaderCompletionStatus for the request. Will be nullopt if the
+  // response never completed. May only be called once the loader has informed
+  // the caller of completion.
+  virtual const base::Optional<URLLoaderCompletionStatus>& CompletionStatus()
+      const = 0;
 
   // Returns the URL that this loader is processing. May only be called once the
   // loader has informed the caller of completion.

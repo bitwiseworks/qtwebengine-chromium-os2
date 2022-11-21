@@ -9,7 +9,6 @@
 #include <limits>
 #include <ostream>
 
-#include "base/logging.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -2221,6 +2220,21 @@ TEST(XFormTest, verifyIsApproximatelyIdentityOrTranslation) {
   // Exact pure translation.
   A.MakeIdentity();
 
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
+
+  // Set translate values to integer values other than 0 or 1.
+  matrix.set(0, 3, 3);
+  matrix.set(1, 3, 4);
+  matrix.set(2, 3, 5);
+
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
+
   // Set translate values to values other than 0 or 1.
   matrix.set(0, 3, 3.4f);
   matrix.set(1, 3, 4.4f);
@@ -2228,15 +2242,37 @@ TEST(XFormTest, verifyIsApproximatelyIdentityOrTranslation) {
 
   EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(0));
   EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
 
   // Approximately pure translation.
   InitializeApproxIdentityMatrix(&A);
+
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(0));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
 
   // Some values must be exact.
   matrix.set(3, 0, 0);
   matrix.set(3, 1, 0);
   matrix.set(3, 2, 0);
   matrix.set(3, 3, 1);
+
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
+
+  // Set translate values to values other than 0 or 1.
+  matrix.set(0, 3, matrix.get(0, 3) + 3);
+  matrix.set(1, 3, matrix.get(1, 3) + 4);
+  matrix.set(2, 3, matrix.get(2, 3) + 5);
+
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_TRUE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
 
   // Set translate values to values other than 0 or 1.
   matrix.set(0, 3, 3.4f);
@@ -2245,6 +2281,8 @@ TEST(XFormTest, verifyIsApproximatelyIdentityOrTranslation) {
 
   EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(0));
   EXPECT_TRUE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
 
   // Not approximately pure translation.
   InitializeApproxIdentityMatrix(&A);
@@ -2262,6 +2300,8 @@ TEST(XFormTest, verifyIsApproximatelyIdentityOrTranslation) {
 
   EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(0));
   EXPECT_FALSE(A.IsApproximatelyIdentityOrTranslation(kApproxZero));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(0));
+  EXPECT_FALSE(A.IsApproximatelyIdentityOrIntegerTranslation(kApproxZero));
 }
 
 TEST(XFormTest, verifyIsScaleOrTranslation) {

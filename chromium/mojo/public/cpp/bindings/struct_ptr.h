@@ -10,7 +10,7 @@
 #include <memory>
 #include <new>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "mojo/public/cpp/bindings/lib/hash_util.h"
@@ -35,6 +35,10 @@ class StructPtr {
  public:
   using Struct = S;
 
+  // Exposing StructPtr<S>::element_type allows gmock's Pointee matcher to
+  // dereference StructPtr's.
+  using element_type = S;
+
   StructPtr() = default;
   StructPtr(std::nullptr_t) {}
 
@@ -56,8 +60,13 @@ class StructPtr {
       : ptr_(new Struct(std::forward<Args>(args)...)) {}
 
   template <typename U>
-  U To() const {
+  U To() const& {
     return TypeConverter<U, StructPtr>::Convert(*this);
+  }
+
+  template <typename U>
+  U To() && {
+    return TypeConverter<U, StructPtr>::Convert(std::move(*this));
   }
 
   void reset() { ptr_.reset(); }
@@ -116,6 +125,10 @@ template <typename S>
 class InlinedStructPtr {
  public:
   using Struct = S;
+
+  // Exposing InlinedStructPtr<S>::element_type allows gmock's Pointee matcher
+  // to dereference InlinedStructPtr's.
+  using element_type = S;
 
   InlinedStructPtr() = default;
   InlinedStructPtr(std::nullptr_t) {}
@@ -272,7 +285,7 @@ bool operator!=(const Ptr& lhs, const Ptr& rhs) {
 template <typename Ptr, std::enable_if_t<IsStructPtrV<Ptr>>* = nullptr>
 bool operator<(const Ptr& lhs, const Ptr& rhs) {
   if (!lhs || !rhs)
-    return bool{lhs} < bool{rhs};
+    return !!lhs < !!rhs;
   return *lhs < *rhs;
 }
 

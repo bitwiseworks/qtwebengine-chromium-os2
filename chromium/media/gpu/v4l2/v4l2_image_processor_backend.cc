@@ -126,11 +126,13 @@ V4L2ImageProcessorBackend::V4L2ImageProcessorBackend(
     v4l2_memory input_memory_type,
     v4l2_memory output_memory_type,
     OutputMode output_mode,
+    VideoRotation relative_rotation,
     size_t num_buffers,
     ErrorCB error_cb)
     : ImageProcessorBackend(input_config,
                             output_config,
                             output_mode,
+                            relative_rotation,
                             std::move(error_cb),
                             std::move(backend_task_runner)),
       input_memory_type_(input_memory_type),
@@ -144,6 +146,7 @@ V4L2ImageProcessorBackend::V4L2ImageProcessorBackend(
           base::SingleThreadTaskRunnerThreadMode::DEDICATED)) {
   DVLOGF(2);
   DETACH_FROM_SEQUENCE(poll_sequence_checker_);
+  DCHECK_NE(output_memory_type_, V4L2_MEMORY_USERPTR);
 
   backend_weak_this_ = backend_weak_this_factory_.GetWeakPtr();
   poll_weak_this_ = poll_weak_this_factory_.GetWeakPtr();
@@ -228,12 +231,13 @@ std::unique_ptr<ImageProcessorBackend> V4L2ImageProcessorBackend::Create(
     const PortConfig& input_config,
     const PortConfig& output_config,
     const std::vector<OutputMode>& preferred_output_modes,
+    VideoRotation relative_rotation,
     ErrorCB error_cb,
     scoped_refptr<base::SequencedTaskRunner> backend_task_runner) {
   for (const auto& output_mode : preferred_output_modes) {
     auto image_processor = V4L2ImageProcessorBackend::CreateWithOutputMode(
-        device, num_buffers, input_config, output_config, output_mode, error_cb,
-        backend_task_runner);
+        device, num_buffers, input_config, output_config, output_mode,
+        relative_rotation, error_cb, backend_task_runner);
     if (image_processor)
       return image_processor;
   }
@@ -249,6 +253,7 @@ V4L2ImageProcessorBackend::CreateWithOutputMode(
     const PortConfig& input_config,
     const PortConfig& output_config,
     const OutputMode& output_mode,
+    VideoRotation relative_rotation,
     ErrorCB error_cb,
     scoped_refptr<base::SequencedTaskRunner> backend_task_runner) {
   VLOGF(2);
@@ -280,7 +285,7 @@ V4L2ImageProcessorBackend::CreateWithOutputMode(
   VideoFrame::StorageType output_storage_type = VideoFrame::STORAGE_UNKNOWN;
   for (auto output_type : output_config.preferred_storage_types) {
     v4l2_memory v4l2_memory_type = InputStorageTypeToV4L2Memory(output_type);
-    if (v4l2_memory_type == V4L2_MEMORY_USERPTR ||
+    if (v4l2_memory_type == V4L2_MEMORY_MMAP ||
         v4l2_memory_type == V4L2_MEMORY_DMABUF) {
       output_storage_type = output_type;
       break;
@@ -305,6 +310,12 @@ V4L2ImageProcessorBackend::CreateWithOutputMode(
 
   if (!device->IsImageProcessingSupported()) {
     VLOGF(1) << "V4L2ImageProcessorBackend not supported in this platform";
+    return nullptr;
+  }
+
+  // V4L2IP now doesn't support rotation case, so return nullptr.
+  if (relative_rotation != VIDEO_ROTATION_0) {
+    VLOGF(1) << "Currently V4L2IP doesn't support rotation";
     return nullptr;
   }
 
@@ -390,8 +401,8 @@ V4L2ImageProcessorBackend::CreateWithOutputMode(
           PortConfig(output_config.fourcc, negotiated_output_size,
                      output_planes, output_config.visible_rect,
                      {output_storage_type}),
-          input_memory_type, output_memory_type, output_mode, num_buffers,
-          std::move(error_cb)));
+          input_memory_type, output_memory_type, output_mode, relative_rotation,
+          num_buffers, std::move(error_cb)));
 
   // Initialize at |backend_task_runner_|.
   bool success = false;
@@ -574,6 +585,33 @@ void V4L2ImageProcessorBackend::ProcessJobsTask() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(backend_sequence_checker_);
 
   while (!input_job_queue_.empty()) {
+    if (!input_queue_->IsStreaming()) {
+      const VideoFrame& input_frame =
+          *(input_job_queue_.front()->input_frame.get());
+      const gfx::Size input_buffer_size(input_frame.stride(0),
+                                        input_frame.coded_size().height());
+      if (!ReconfigureV4L2Format(input_buffer_size, input_frame.visible_rect(),
+                                 V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)) {
+        NotifyError();
+        return;
+      }
+    }
+
+    if (input_job_queue_.front()
+            ->output_frame &&  // output_frame is nullptr in ALLOCATE mode.
+        !output_queue_->IsStreaming()) {
+      const VideoFrame& output_frame =
+          *(input_job_queue_.front()->output_frame.get());
+      const gfx::Size output_buffer_size(output_frame.stride(0),
+                                         output_frame.coded_size().height());
+      if (!ReconfigureV4L2Format(output_buffer_size,
+                                 output_frame.visible_rect(),
+                                 V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)) {
+        NotifyError();
+        return;
+      }
+    }
+
     // We need one input and one output buffer to schedule the job
     auto input_buffer = input_queue_->GetFreeBuffer();
     auto output_buffer = output_queue_->GetFreeBuffer();
@@ -639,6 +677,39 @@ bool V4L2ImageProcessorBackend::ApplyCrop(const gfx::Rect& visible_rect,
     return false;
   }
   return true;
+}
+
+bool V4L2ImageProcessorBackend::ReconfigureV4L2Format(
+    const gfx::Size& size,
+    const gfx::Rect& visible_rect,
+    enum v4l2_buf_type type) {
+  v4l2_format format{};
+  format.type = type;
+  if (device_->Ioctl(VIDIOC_G_FMT, &format) != 0) {
+    VPLOGF(1) << "ioctl() failed: VIDIOC_G_FMT";
+    return false;
+  }
+
+  if (static_cast<int>(format.fmt.pix_mp.width) == size.width() &&
+      static_cast<int>(format.fmt.pix_mp.height) == size.height()) {
+    return true;
+  }
+  format.fmt.pix_mp.width = size.width();
+  format.fmt.pix_mp.height = size.height();
+  if (device_->Ioctl(VIDIOC_S_FMT, &format) != 0) {
+    VPLOGF(1) << "ioctl() failed: VIDIOC_S_FMT";
+    return false;
+  }
+  if (!ApplyCrop(visible_rect, type)) {
+    return false;
+  }
+
+  auto queue = device_->GetQueue(type);
+  const size_t num_buffers = queue->AllocatedBuffersCount();
+  const v4l2_memory memory_type = queue->GetMemoryType();
+  DCHECK_GT(num_buffers, 0u);
+  return queue->DeallocateBuffers() &&
+         AllocateV4L2Buffers(queue.get(), num_buffers, memory_type);
 }
 
 bool V4L2ImageProcessorBackend::CreateInputBuffers() {

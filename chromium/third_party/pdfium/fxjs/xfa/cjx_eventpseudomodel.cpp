@@ -53,7 +53,7 @@ CJX_EventPseudoModel::CJX_EventPseudoModel(CScript_EventPseudoModel* model)
   DefineMethods(MethodSpecs);
 }
 
-CJX_EventPseudoModel::~CJX_EventPseudoModel() {}
+CJX_EventPseudoModel::~CJX_EventPseudoModel() = default;
 
 bool CJX_EventPseudoModel::DynamicTypeIs(TypeTag eType) const {
   return eType == static_type__ || ParentType__::DynamicTypeIs(eType);
@@ -185,7 +185,7 @@ CJS_Result CJX_EventPseudoModel::emit(
   if (!pWidgetHandler)
     return CJS_Result::Success();
 
-  pWidgetHandler->ProcessEvent(pEventParam->m_pTarget.Get(), pEventParam);
+  pWidgetHandler->ProcessEvent(pEventParam->m_pTarget, pEventParam);
   return CJS_Result::Success();
 }
 

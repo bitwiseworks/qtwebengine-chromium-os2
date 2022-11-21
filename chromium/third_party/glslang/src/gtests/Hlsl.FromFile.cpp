@@ -129,7 +129,7 @@ TEST_P(HlslLegalDebugTest, FromFile)
 }
 
 // clang-format off
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslCompileTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.amend.frag", "f1"},
@@ -227,6 +227,7 @@ INSTANTIATE_TEST_CASE_P(
         {"hlsl.hull.3.tesc", "main"},
         {"hlsl.hull.4.tesc", "main"},
         {"hlsl.hull.5.tesc", "main"},
+        {"hlsl.hull.6.tesc", "main"},
         {"hlsl.hull.void.tesc", "main"},
         {"hlsl.hull.ctrlpt-1.tesc", "main"},
         {"hlsl.hull.ctrlpt-2.tesc", "main"},
@@ -238,6 +239,7 @@ INSTANTIATE_TEST_CASE_P(
         {"hlsl.implicitBool.frag", "main"},
         {"hlsl.inf.vert", "main"},
         {"hlsl.inoutquals.frag", "main"},
+        {"hlsl.inoutquals.negative.frag", "main"},
         {"hlsl.init.frag", "ShaderFunction"},
         {"hlsl.init2.frag", "main"},
         {"hlsl.isfinite.frag", "main"},
@@ -277,6 +279,7 @@ INSTANTIATE_TEST_CASE_P(
         {"hlsl.logical.unary.frag", "main"},
         {"hlsl.loopattr.frag", "main"},
         {"hlsl.matpack-pragma.frag", "main"},
+        {"hlsl.matpack-pragma-global.frag", "main"},
         {"hlsl.mip.operator.frag", "main"},
         {"hlsl.mip.negative.frag", "main"},
         {"hlsl.mip.negative2.frag", "main"},
@@ -427,7 +430,7 @@ INSTANTIATE_TEST_CASE_P(
 // clang-format on
 
 // clang-format off
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslVulkan1_1CompileTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.wavebroadcast.comp", "CSMain"},
@@ -445,7 +448,7 @@ INSTANTIATE_TEST_CASE_P(
 // clang-format on
 
 // clang-format off
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslCompileAndFlattenTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.array.flatten.frag", "main"},
@@ -457,7 +460,7 @@ INSTANTIATE_TEST_CASE_P(
 
 #if ENABLE_OPT
 // clang-format off
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslLegalizeTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.aliasOpaque.frag", "main"},
@@ -475,7 +478,7 @@ INSTANTIATE_TEST_CASE_P(
 #endif
 
 // clang-format off
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslDebugTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.pp.line2.frag", "MainPs"}
@@ -483,7 +486,7 @@ INSTANTIATE_TEST_CASE_P(
     FileNameAsCustomTestSuffix
 );
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslDX9CompatibleTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.sample.dx9.frag", "main"},
@@ -493,7 +496,7 @@ INSTANTIATE_TEST_CASE_P(
 );
 
 // clang-format off
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ToSpirv, HlslLegalDebugTest,
     ::testing::ValuesIn(std::vector<FileNameEntryPointPair>{
         {"hlsl.pp.line4.frag", "MainPs"}

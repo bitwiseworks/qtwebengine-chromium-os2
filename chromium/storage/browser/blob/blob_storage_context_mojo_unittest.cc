@@ -18,6 +18,7 @@
 #include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_restrictions.h"
+#include "components/services/storage/public/mojom/blob_storage_context.mojom.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -26,7 +27,6 @@
 #include "net/base/net_errors.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_impl.h"
-#include "storage/browser/blob/mojom/blob_storage_context.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom.h"
@@ -122,9 +122,7 @@ class BlobStorageContextMojoTest : public testing::Test {
                   std::string data,
                   base::Optional<base::Time> modification_time) {
     base::ScopedAllowBlockingForTesting allow_blocking;
-    int size = base::WriteFile(path, data.data(), data.size());
-    ASSERT_GE(size, 0);
-    EXPECT_EQ(size, static_cast<int>(data.size()));
+    EXPECT_TRUE(base::WriteFile(path, data));
     if (modification_time) {
       ASSERT_TRUE(base::TouchFile(path, modification_time.value(),
                                   modification_time.value()));
@@ -196,7 +194,7 @@ TEST_F(BlobStorageContextMojoTest, SaveBlobToFile) {
   base::TimeDelta difference = file_info.last_modified - last_modified;
   EXPECT_LT(difference.magnitude(), base::TimeDelta::FromSeconds(1));
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -225,7 +223,7 @@ TEST_F(BlobStorageContextMojoTest, SaveBlobToFileNoDate) {
   EXPECT_TRUE(base::ReadFileToString(file_path, &file_contents));
   EXPECT_EQ(file_contents, kData);
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -264,7 +262,7 @@ TEST_F(BlobStorageContextMojoTest, SaveEmptyBlobToFile) {
   base::TimeDelta difference = file_info.last_modified - last_modified;
   EXPECT_LT(difference.magnitude(), base::TimeDelta::FromSeconds(1));
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -316,7 +314,7 @@ TEST_F(BlobStorageContextMojoTest, FileCopyOptimization) {
   base::TimeDelta difference = file_info.last_modified - modification_time;
   EXPECT_LT(difference.magnitude(), base::TimeDelta::FromSeconds(1));
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -369,7 +367,7 @@ TEST_F(BlobStorageContextMojoTest, FileCopyOptimizationOffsetSize) {
   base::TimeDelta difference = file_info.last_modified - modification_time;
   EXPECT_LT(difference.magnitude(), base::TimeDelta::FromSeconds(1));
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -421,7 +419,7 @@ TEST_F(BlobStorageContextMojoTest, FileCopyEmptyFile) {
   base::TimeDelta difference = file_info.last_modified - modification_time;
   EXPECT_LT(difference.magnitude(), base::TimeDelta::FromSeconds(1));
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -460,7 +458,7 @@ TEST_F(BlobStorageContextMojoTest, InvalidInputFileSize) {
   loop.Run();
 
   base::ThreadRestrictions::SetIOAllowed(true);
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -501,7 +499,7 @@ TEST_F(BlobStorageContextMojoTest, InvalidInputFileTimeModified) {
   loop.Run();
 
   base::ThreadRestrictions::SetIOAllowed(true);
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 
@@ -677,7 +675,7 @@ TEST_F(BlobStorageContextMojoTest, SaveOptimizedBlobNoFileSize) {
   EXPECT_TRUE(base::ReadFileToString(file_path, &file_contents));
   EXPECT_EQ(file_contents, kData);
 
-  base::DeleteFile(file_path, false);
+  base::DeleteFile(file_path);
   ASSERT_TRUE(temp_dir_.Delete());
 }
 

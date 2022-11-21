@@ -39,7 +39,6 @@
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "net/cert_net/cert_net_fetcher_url_request.h"
-#include "net/cert_net/nss_ocsp_session_url_request.h"
 #include "net/der/input.h"
 #include "net/der/parser.h"
 #include "net/log/test_net_log.h"
@@ -51,6 +50,7 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/gtest_util.h"
+#include "net/test/revocation_builder.h"
 #include "net/test/test_certificate_data.h"
 #include "net/test/test_data_directory.h"
 #include "net/url_request/url_request_context.h"
@@ -60,16 +60,13 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/mem.h"
 
-#if defined(USE_NSS_CERTS)
-#include "net/cert/cert_verify_proc_nss.h"
-#include "net/cert_net/nss_ocsp.h"
-#elif defined(OS_ANDROID)
+#if defined(OS_ANDROID)
 #include "base/android/build_info.h"
 #include "net/cert/cert_verify_proc_android.h"
 #elif defined(OS_IOS)
 #include "base/ios/ios_util.h"
 #include "net/cert/cert_verify_proc_ios.h"
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 #include "base/mac/mac_util.h"
 #include "net/cert/cert_verify_proc_mac.h"
 #include "net/cert/internal/trust_store_mac.h"
@@ -146,7 +143,6 @@ int MockCertVerifyProc::VerifyInternal(
 // The type is erased by CreateCertVerifyProc(), however needs to be known for
 // some of the test expectations.
 enum CertVerifyProcType {
-  CERT_VERIFY_PROC_NSS,
   CERT_VERIFY_PROC_ANDROID,
   CERT_VERIFY_PROC_IOS,
   CERT_VERIFY_PROC_MAC,
@@ -156,7 +152,7 @@ enum CertVerifyProcType {
 
 // Wrapper for base::mac::IsAtLeastOS10_12() to avoid littering ifdefs.
 bool IsMacAtLeastOS10_12() {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   return base::mac::IsAtLeastOS10_12();
 #else
   return false;
@@ -169,8 +165,6 @@ bool IsMacAtLeastOS10_12() {
 std::string VerifyProcTypeToName(
     const testing::TestParamInfo<CertVerifyProcType>& params) {
   switch (params.param) {
-    case CERT_VERIFY_PROC_NSS:
-      return "CertVerifyProcNSS";
     case CERT_VERIFY_PROC_ANDROID:
       return "CertVerifyProcAndroid";
     case CERT_VERIFY_PROC_IOS:
@@ -190,16 +184,13 @@ scoped_refptr<CertVerifyProc> CreateCertVerifyProc(
     CertVerifyProcType type,
     scoped_refptr<CertNetFetcher> cert_net_fetcher) {
   switch (type) {
-#if defined(USE_NSS_CERTS)
-    case CERT_VERIFY_PROC_NSS:
-      return new CertVerifyProcNSS();
-#elif defined(OS_ANDROID)
+#if defined(OS_ANDROID)
     case CERT_VERIFY_PROC_ANDROID:
       return new CertVerifyProcAndroid(std::move(cert_net_fetcher));
 #elif defined(OS_IOS)
     case CERT_VERIFY_PROC_IOS:
       return new CertVerifyProcIOS();
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
     case CERT_VERIFY_PROC_MAC:
       return new CertVerifyProcMac();
 #elif defined(OS_WIN)
@@ -222,17 +213,15 @@ scoped_refptr<CertVerifyProc> CreateCertVerifyProc(
 // now this is gated on having CertVerifyProcBuiltin understand the roots added
 // via TestRootCerts.
 const std::vector<CertVerifyProcType> kAllCertVerifiers = {
-#if defined(USE_NSS_CERTS)
-    CERT_VERIFY_PROC_NSS, CERT_VERIFY_PROC_BUILTIN
-#elif defined(OS_ANDROID)
+#if defined(OS_ANDROID)
     CERT_VERIFY_PROC_ANDROID
 #elif defined(OS_IOS)
     CERT_VERIFY_PROC_IOS
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
     CERT_VERIFY_PROC_MAC, CERT_VERIFY_PROC_BUILTIN
 #elif defined(OS_WIN)
     CERT_VERIFY_PROC_WIN
-#elif defined(OS_FUCHSIA)
+#elif defined(OS_FUCHSIA) || defined(OS_LINUX) || defined(OS_CHROMEOS)
     CERT_VERIFY_PROC_BUILTIN
 #else
 #error Unsupported platform
@@ -245,7 +234,6 @@ const std::vector<CertVerifyProcType> kAllCertVerifiers = {
 bool ScopedTestRootCanTrustTargetCert(CertVerifyProcType verify_proc_type) {
   return verify_proc_type == CERT_VERIFY_PROC_MAC ||
          verify_proc_type == CERT_VERIFY_PROC_IOS ||
-         verify_proc_type == CERT_VERIFY_PROC_NSS ||
          verify_proc_type == CERT_VERIFY_PROC_ANDROID;
 }
 
@@ -256,7 +244,6 @@ bool ScopedTestRootCanTrustIntermediateCert(
     CertVerifyProcType verify_proc_type) {
   return verify_proc_type == CERT_VERIFY_PROC_MAC ||
          verify_proc_type == CERT_VERIFY_PROC_IOS ||
-         verify_proc_type == CERT_VERIFY_PROC_NSS ||
          verify_proc_type == CERT_VERIFY_PROC_BUILTIN ||
          verify_proc_type == CERT_VERIFY_PROC_ANDROID;
 }
@@ -356,7 +343,7 @@ class CertVerifyProcInternalTest
         base::ios::IsRunningOnIOS13OrLater()) {
       return size < 2048;
     }
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
     // Beginning with macOS 10.15, the minimum key size for RSA/DSA algorithms
     // is 2048 bits. See https://support.apple.com/en-us/HT210176
     if (verify_proc_type() == CERT_VERIFY_PROC_MAC &&
@@ -377,7 +364,7 @@ class CertVerifyProcInternalTest
       // distinguish between weak and invalid key sizes.
       return IsWeakRsaDsaKeySize(size);
     }
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
     // Starting with Mac OS 10.12, certs with keys < 1024 are invalid.
     if (verify_proc_type() == CERT_VERIFY_PROC_MAC &&
         base::mac::IsAtLeastOS10_12()) {
@@ -432,36 +419,31 @@ class CertVerifyProcInternalTest
   }
 
   bool SupportsCRLSet() const {
-    return verify_proc_type() == CERT_VERIFY_PROC_NSS ||
-           verify_proc_type() == CERT_VERIFY_PROC_WIN ||
+    return verify_proc_type() == CERT_VERIFY_PROC_WIN ||
            verify_proc_type() == CERT_VERIFY_PROC_MAC ||
            verify_proc_type() == CERT_VERIFY_PROC_BUILTIN;
   }
 
   bool SupportsCRLSetsInPathBuilding() const {
     return verify_proc_type() == CERT_VERIFY_PROC_WIN ||
-           verify_proc_type() == CERT_VERIFY_PROC_NSS ||
            verify_proc_type() == CERT_VERIFY_PROC_BUILTIN;
   }
 
   bool SupportsEV() const {
     // TODO(crbug.com/117478): Android and iOS do not support EV.
-    return verify_proc_type() == CERT_VERIFY_PROC_NSS ||
-           verify_proc_type() == CERT_VERIFY_PROC_WIN ||
+    return verify_proc_type() == CERT_VERIFY_PROC_WIN ||
            verify_proc_type() == CERT_VERIFY_PROC_MAC ||
            verify_proc_type() == CERT_VERIFY_PROC_BUILTIN;
   }
 
   bool SupportsSoftFailRevChecking() const {
-    return verify_proc_type() == CERT_VERIFY_PROC_NSS ||
-           verify_proc_type() == CERT_VERIFY_PROC_WIN ||
+    return verify_proc_type() == CERT_VERIFY_PROC_WIN ||
            verify_proc_type() == CERT_VERIFY_PROC_MAC ||
            verify_proc_type() == CERT_VERIFY_PROC_BUILTIN;
   }
 
   bool SupportsRevCheckingRequiredLocalAnchors() const {
-    return verify_proc_type() == CERT_VERIFY_PROC_NSS ||
-           verify_proc_type() == CERT_VERIFY_PROC_WIN ||
+    return verify_proc_type() == CERT_VERIFY_PROC_WIN ||
            verify_proc_type() == CERT_VERIFY_PROC_BUILTIN;
   }
 
@@ -479,46 +461,46 @@ INSTANTIATE_TEST_SUITE_P(All,
 // Tests that a certificate is recognized as EV, when the valid EV policy OID
 // for the trust anchor is the second candidate EV oid in the target
 // certificate. This is a regression test for crbug.com/705285.
-// Started failing: https://crbug.com/1094358
-TEST_P(CertVerifyProcInternalTest, DISABLED_EVVerificationMultipleOID) {
+TEST_P(CertVerifyProcInternalTest, EVVerificationMultipleOID) {
   if (!SupportsEV()) {
     LOG(INFO) << "Skipping test as EV verification is not yet supported";
     return;
   }
 
-  // TODO(eroman): Update this test to use a synthetic certificate, so the test
-  // does not break in the future. The certificate chain in question expires on
-  // Jun 12 14:33:43 2020 GMT, at which point this test will start failing.
-  if (base::Time::Now() >
-      base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(1591972423)) {
-    FAIL() << "This test uses a certificate chain which is now expired. Please "
-              "disable and file a bug.";
-    return;
-  }
-
-  scoped_refptr<X509Certificate> chain = CreateCertificateChainFromFile(
-      GetTestCertsDirectory(), "login.trustwave.com.pem",
-      X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
-  ASSERT_TRUE(chain);
+  scoped_refptr<X509Certificate> cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "ev-multi-oid.pem");
+  scoped_refptr<X509Certificate> root =
+      ImportCertFromFile(GetTestCertsDirectory(), "root_ca_cert.pem");
+  ASSERT_TRUE(cert);
+  ASSERT_TRUE(root);
+  ScopedTestRoot test_root(root.get());
 
   // Build a CRLSet that covers the target certificate.
   //
   // This way CRLSet coverage will be sufficient for EV revocation checking,
   // so this test does not depend on online revocation checking.
-  ASSERT_GE(chain->intermediate_buffers().size(), 1u);
   base::StringPiece spki;
-  ASSERT_TRUE(
-      asn1::ExtractSPKIFromDERCert(x509_util::CryptoBufferAsStringPiece(
-                                       chain->intermediate_buffers()[0].get()),
-                                   &spki));
+  ASSERT_TRUE(asn1::ExtractSPKIFromDERCert(
+      x509_util::CryptoBufferAsStringPiece(root->cert_buffer()), &spki));
   SHA256HashValue spki_sha256;
   crypto::SHA256HashString(spki, spki_sha256.data, sizeof(spki_sha256.data));
   scoped_refptr<CRLSet> crl_set(
       CRLSet::ForTesting(false, &spki_sha256, "", "", {}));
 
+  // The policies that "ev-multi-oid.pem" target certificate asserts.
+  static const char kOtherTestCertPolicy[] = "2.23.140.1.1";
+  static const char kEVTestCertPolicy[] = "1.2.3.4";
+  // Consider the root of the test chain a valid EV root for the test policy.
+  ScopedTestEVPolicy scoped_test_ev_policy(
+      EVRootCAMetadata::GetInstance(),
+      X509Certificate::CalculateFingerprint256(root->cert_buffer()),
+      kEVTestCertPolicy);
+  ScopedTestEVPolicy scoped_test_other_policy(
+      EVRootCAMetadata::GetInstance(), SHA256HashValue(), kOtherTestCertPolicy);
+
   CertVerifyResult verify_result;
   int flags = 0;
-  int error = Verify(chain.get(), "login.trustwave.com", flags, crl_set.get(),
+  int error = Verify(cert.get(), "127.0.0.1", flags, crl_set.get(),
                      CertificateList(), &verify_result);
   EXPECT_THAT(error, IsOk());
   EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_IS_EV);
@@ -1128,7 +1110,7 @@ class CertVerifyProcInspectSignatureAlgorithmsTest : public ::testing::Test {
     LOG(INFO) << "Skipping test on iOS because certs with mismatched "
                  "algorithms cannot be imported";
     return false;
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
     if (base::mac::IsAtLeastOS10_12()) {
       LOG(INFO) << "Skipping test on macOS >= 10.12 because certs with "
                    "mismatched algorithms cannot be imported";
@@ -1517,6 +1499,9 @@ TEST(CertVerifyProcTest, TestHasTooLongValidity) {
       {"826_days_after_2018_03_01.pem", true},
       {"825_days_1_second_after_2018_03_01.pem", true},
       {"39_months_based_on_last_day.pem", false},
+      {"398_days_after_2020_09_01.pem", false},
+      {"399_days_after_2020_09_01.pem", true},
+      {"398_days_1_second_after_2020_09_01.pem", true},
   };
 
   base::FilePath certs_dir = GetTestCertsDirectory();
@@ -1548,7 +1533,7 @@ TEST_P(CertVerifyProcInternalTest, TestKnownRoot) {
                              << "that date, please disable and file a bug "
                              << "against rsleevi.";
   EXPECT_TRUE(verify_result.is_issued_by_known_root);
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   if (verify_proc_type() == CERT_VERIFY_PROC_BUILTIN) {
     auto* mac_trust_debug_info =
         net::TrustStoreMac::ResultDebugData::Get(&verify_result);
@@ -1650,10 +1635,7 @@ TEST_P(CertVerifyProcInternalTest, WrongKeyPurpose) {
   if (verify_proc_type() != CERT_VERIFY_PROC_BUILTIN)
     EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_INVALID);
 
-  // TODO(wtc): fix http://crbug.com/75520 to get all the certificate errors
-  // from NSS.
-  if (verify_proc_type() != CERT_VERIFY_PROC_NSS &&
-      verify_proc_type() != CERT_VERIFY_PROC_ANDROID) {
+  if (verify_proc_type() != CERT_VERIFY_PROC_ANDROID) {
     // The certificate is issued by an unknown CA.
     EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_AUTHORITY_INVALID);
   }
@@ -2634,15 +2616,9 @@ TEST_P(CertVerifyProcInternalTest, ValidityDayBeforeNotBefore) {
   int error =
       Verify(chain.get(), "www.example.com", flags,
              CRLSet::BuiltinCRLSet().get(), CertificateList(), &verify_result);
-  if (verify_proc_type() == CERT_VERIFY_PROC_NSS) {
-    // NSS seems to give a 24 hour buffer before the notBefore date where it
-    // will accept a certificate that isn't actually valid yet. ¯\_(ツ)_/¯
-    EXPECT_THAT(error, IsOk());
-  } else {
-    // Current time is before certificate's notBefore. Verification should fail.
-    EXPECT_THAT(error, IsError(ERR_CERT_DATE_INVALID));
-    EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_DATE_INVALID);
-  }
+  // Current time is before certificate's notBefore. Verification should fail.
+  EXPECT_THAT(error, IsError(ERR_CERT_DATE_INVALID));
+  EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_DATE_INVALID);
 }
 
 TEST_P(CertVerifyProcInternalTest, ValidityJustBeforeNotBefore) {
@@ -2663,15 +2639,9 @@ TEST_P(CertVerifyProcInternalTest, ValidityJustBeforeNotBefore) {
   int error =
       Verify(chain.get(), "www.example.com", flags,
              CRLSet::BuiltinCRLSet().get(), CertificateList(), &verify_result);
-  if (verify_proc_type() == CERT_VERIFY_PROC_NSS) {
-    // NSS seems to give a 24 hour buffer before the notBefore date where it
-    // will accept a certificate that isn't actually valid yet. ¯\_(ツ)_/¯
-    EXPECT_THAT(error, IsOk());
-  } else {
-    // Current time is before certificate's notBefore. Verification should fail.
-    EXPECT_THAT(error, IsError(ERR_CERT_DATE_INVALID));
-    EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_DATE_INVALID);
-  }
+  // Current time is before certificate's notBefore. Verification should fail.
+  EXPECT_THAT(error, IsError(ERR_CERT_DATE_INVALID));
+  EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_DATE_INVALID);
 }
 
 TEST_P(CertVerifyProcInternalTest, ValidityJustAfterNotBefore) {
@@ -2826,8 +2796,6 @@ class CertVerifyProcNameNormalizationTest : public CertVerifyProcInternalTest {
   std::string HistogramName() const {
     std::string prefix("Net.CertVerifier.NameNormalizationPrivateRoots.");
     switch (verify_proc_type()) {
-      case CERT_VERIFY_PROC_NSS:
-        return prefix + "NSS";
       case CERT_VERIFY_PROC_ANDROID:
         return prefix + "Android";
       case CERT_VERIFY_PROC_IOS:
@@ -2883,7 +2851,6 @@ TEST_P(CertVerifyProcNameNormalizationTest, StringType) {
              CertificateList(), &verify_result);
 
   switch (verify_proc_type()) {
-    case CERT_VERIFY_PROC_NSS:
     case CERT_VERIFY_PROC_IOS:
     case CERT_VERIFY_PROC_MAC:
     case CERT_VERIFY_PROC_WIN:
@@ -2914,7 +2881,6 @@ TEST_P(CertVerifyProcNameNormalizationTest, CaseFolding) {
              CertificateList(), &verify_result);
 
   switch (verify_proc_type()) {
-    case CERT_VERIFY_PROC_NSS:
     case CERT_VERIFY_PROC_WIN:
       EXPECT_THAT(error, IsError(ERR_CERT_AUTHORITY_INVALID));
       break;
@@ -3069,8 +3035,8 @@ class CertVerifyProcInternalWithNetFetchingTest
   GURL CreateAndServeCrl(CertBuilder* crl_issuer,
                          const std::vector<uint64_t>& revoked_serials,
                          DigestAlgorithm digest = DigestAlgorithm::Sha256) {
-    std::string crl =
-        CertBuilder::CreateCrl(crl_issuer, revoked_serials, digest);
+    std::string crl = BuildCrl(crl_issuer->GetSubject(), crl_issuer->GetKey(),
+                               revoked_serials, digest);
     std::string crl_path = MakeRandomPath(".crl");
     return RegisterSimpleTestServerHandler(crl_path, HTTP_OK,
                                            "application/pkix-crl", crl);
@@ -3119,9 +3085,6 @@ class CertVerifyProcInternalWithNetFetchingTest
         std::make_unique<ProxyConfigServiceFixed>(ProxyConfigWithAnnotation()));
     *context = url_request_context_builder.Build();
 
-#if defined(USE_NSS_CERTS)
-    SetURLRequestContextForNSSHttpIO(context->get());
-#endif
     *cert_net_fetcher = base::MakeRefCounted<net::CertNetFetcherURLRequest>();
     (*cert_net_fetcher)->SetURLRequestContext(context->get());
     initialization_complete_event->Signal();
@@ -3130,9 +3093,6 @@ class CertVerifyProcInternalWithNetFetchingTest
   static void ShutdownOnNetworkThread(
       std::unique_ptr<URLRequestContext>* context,
       scoped_refptr<net::CertNetFetcherURLRequest>* cert_net_fetcher) {
-#if defined(USE_NSS_CERTS)
-    SetURLRequestContextForNSSHttpIO(nullptr);
-#endif
     (*cert_net_fetcher)->Shutdown();
     cert_net_fetcher->reset();
     context->reset();
@@ -3489,13 +3449,7 @@ TEST_P(CertVerifyProcInternalWithNetFetchingTest, RevocationHardFailNoCrls) {
       Verify(chain.get(), kHostname, flags, CRLSet::BuiltinCRLSet().get(),
              CertificateList(), &verify_result);
 
-  if (verify_proc_type() == CERT_VERIFY_PROC_NSS) {
-    // NSS doesn't have an error code for lack of revocation methods, it just
-    // gets mapped to REVOKED.
-    EXPECT_THAT(error, IsError(ERR_CERT_REVOKED));
-  } else {
-    EXPECT_THAT(error, IsError(ERR_CERT_NO_REVOCATION_MECHANISM));
-  }
+  EXPECT_THAT(error, IsError(ERR_CERT_NO_REVOCATION_MECHANISM));
   EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_REV_CHECKING_ENABLED);
 }
 
@@ -3692,12 +3646,7 @@ TEST_P(CertVerifyProcInternalWithNetFetchingTest,
              CertificateList(), &verify_result);
 
   // Should fail since no revocation information was available for the leaf.
-  if (verify_proc_type() == CERT_VERIFY_PROC_NSS) {
-    // NSS just returns REVOKED for hard-fail checking errors.
-    EXPECT_THAT(error, IsError(ERR_CERT_REVOKED));
-  } else {
-    EXPECT_THAT(error, IsError(ERR_CERT_UNABLE_TO_CHECK_REVOCATION));
-  }
+  EXPECT_THAT(error, IsError(ERR_CERT_UNABLE_TO_CHECK_REVOCATION));
   EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_REV_CHECKING_ENABLED);
 }
 
@@ -3738,12 +3687,7 @@ TEST_P(CertVerifyProcInternalWithNetFetchingTest,
 
   // Should fail since no revocation information was available for the
   // intermediate.
-  if (verify_proc_type() == CERT_VERIFY_PROC_NSS) {
-    // NSS just returns REVOKED for hard-fail checking errors.
-    EXPECT_THAT(error, IsError(ERR_CERT_REVOKED));
-  } else {
-    EXPECT_THAT(error, IsError(ERR_CERT_UNABLE_TO_CHECK_REVOCATION));
-  }
+  EXPECT_THAT(error, IsError(ERR_CERT_UNABLE_TO_CHECK_REVOCATION));
   EXPECT_TRUE(verify_result.cert_status & CERT_STATUS_REV_CHECKING_ENABLED);
 }
 

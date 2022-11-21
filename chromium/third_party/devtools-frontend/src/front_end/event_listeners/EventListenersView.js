@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as ObjectUI from '../object_ui/object_ui.js';
@@ -16,10 +19,12 @@ import {frameworkEventListeners, FrameworkEventListenersObject} from './EventLis
 export class EventListenersView extends UI.Widget.VBox {
   /**
    * @param {function()} changeCallback
+   * @param {boolean=} enableDefaultTreeFocus
    */
-  constructor(changeCallback) {
+  constructor(changeCallback, enableDefaultTreeFocus = false) {
     super();
     this._changeCallback = changeCallback;
+    this._enableDefaultTreeFocus = enableDefaultTreeFocus;
     this._treeOutline = new UI.TreeOutline.TreeOutlineInShadow();
     this._treeOutline.hideOverflow();
     this._treeOutline.registerRequiredCSS('object_ui/objectValue.css');
@@ -29,7 +34,8 @@ export class EventListenersView extends UI.Widget.VBox {
     this._treeOutline.setShowSelectionOnKeyboardFocus(true);
     this._treeOutline.setFocusable(true);
     this.element.appendChild(this._treeOutline.element);
-    this._emptyHolder = createElementWithClass('div', 'gray-info-message');
+    this._emptyHolder = document.createElement('div');
+    this._emptyHolder.classList.add('gray-info-message');
     this._emptyHolder.textContent = Common.UIString.UIString('No event listeners');
     this._emptyHolder.tabIndex = -1;
     this._linkifier = new Components.Linkifier.Linkifier();
@@ -41,6 +47,9 @@ export class EventListenersView extends UI.Widget.VBox {
    * @override
    */
   focus() {
+    if (!this._enableDefaultTreeFocus) {
+      return;
+    }
     if (!this._emptyHolder.parentNode) {
       this._treeOutline.forceSelect();
     } else {

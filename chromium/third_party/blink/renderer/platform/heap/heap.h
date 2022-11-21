@@ -56,29 +56,31 @@ namespace incremental_marking_test {
 class IncrementalMarkingScopeBase;
 }  // namespace incremental_marking_test
 
-namespace weakness_marking_test {
-class EphemeronCallbacksCounter;
-}  // namespace weakness_marking_test
-
 class ConcurrentMarkingVisitor;
 class ThreadHeapStatsCollector;
 class PageBloomFilter;
 class PagePool;
 class ProcessHeapReporter;
 class RegionTree;
+class MarkingSchedulingOracle;
 
 using MarkingItem = TraceDescriptor;
 using NotFullyConstructedItem = const void*;
-using WeakTableItem = MarkingItem;
 
-struct BackingStoreCallbackItem {
-  const void* backing;
-  MovingObjectCallback callback;
+struct EphemeronPairItem {
+  const void* key;
+  const void* value;
+  TraceCallback value_trace_callback;
 };
 
 struct CustomCallbackItem {
   WeakCallback callback;
   const void* parameter;
+};
+
+struct NotSafeToConcurrentlyTraceItem {
+  TraceDescriptor desc;
+  size_t bailout_size;
 };
 
 using V8Reference = const TraceWrapperV8Reference<v8::Value>*;
@@ -95,12 +97,11 @@ using WeakCallbackWorklist =
 // regressions.
 using MovableReferenceWorklist =
     Worklist<const MovableReference*, 256 /* local entries */>;
-using WeakTableWorklist = Worklist<WeakTableItem, 16 /* local entries */>;
-using BackingStoreCallbackWorklist =
-    Worklist<BackingStoreCallbackItem, 16 /* local entries */>;
+using EphemeronPairsWorklist =
+    Worklist<EphemeronPairItem, 64 /* local entries */>;
 using V8ReferencesWorklist = Worklist<V8Reference, 16 /* local entries */>;
 using NotSafeToConcurrentlyTraceWorklist =
-    Worklist<MarkingItem, 64 /* local entries */>;
+    Worklist<NotSafeToConcurrentlyTraceItem, 64 /* local entries */>;
 
 class PLATFORM_EXPORT HeapAllocHooks {
   STATIC_ONLY(HeapAllocHooks);
@@ -151,6 +152,8 @@ class UntracedMember;
 
 namespace internal {
 
+class LivenessBrokerFactory;
+
 template <typename T, bool = NeedsAdjustPointer<T>::value>
 class ObjectAliveTrait;
 
@@ -173,11 +176,9 @@ class ObjectAliveTrait<T, true> {
   NO_SANITIZE_ADDRESS
   static bool IsHeapObjectAlive(const T* object) {
     static_assert(sizeof(T), "T must be fully defined");
-    const HeapObjectHeader* header = object->GetHeapObjectHeader();
-    if (header == BlinkGC::kNotFullyConstructedObject) {
-      // Objects under construction are always alive.
-      return true;
-    }
+    const HeapObjectHeader* header = HeapObjectHeader::FromPayload(
+        TraceTrait<T>::GetTraceDescriptor(object).base_object_payload);
+    DCHECK(!header->IsInConstruction() || header->IsMarked());
     return header->IsMarked();
   }
 };
@@ -195,40 +196,11 @@ struct IsGarbageCollectedContainer<
 class PLATFORM_EXPORT ThreadHeap {
   USING_FAST_MALLOC(ThreadHeap);
 
+  using EphemeronProcessing = ThreadState::EphemeronProcessing;
+
  public:
   explicit ThreadHeap(ThreadState*);
   ~ThreadHeap();
-
-  template <typename T>
-  static inline bool IsHeapObjectAlive(const T* object) {
-    static_assert(sizeof(T), "T must be fully defined");
-    // The strongification of collections relies on the fact that once a
-    // collection has been strongified, there is no way that it can contain
-    // non-live entries, so no entries will be removed. Since you can't set
-    // the mark bit on a null pointer, that means that null pointers are
-    // always 'alive'.
-    if (!object)
-      return true;
-    // TODO(keishi): some tests create CrossThreadPersistent on non attached
-    // threads.
-    if (!ThreadState::Current())
-      return true;
-    DCHECK(&ThreadState::Current()->Heap() ==
-           &PageFromObject(object)->Arena()->GetThreadState()->Heap());
-    return internal::ObjectAliveTrait<T>::IsHeapObjectAlive(object);
-  }
-  template <typename T>
-  static inline bool IsHeapObjectAlive(const Member<T>& member) {
-    return IsHeapObjectAlive(member.Get());
-  }
-  template <typename T>
-  static inline bool IsHeapObjectAlive(const WeakMember<T>& member) {
-    return IsHeapObjectAlive(member.Get());
-  }
-  template <typename T>
-  static inline bool IsHeapObjectAlive(const UntracedMember<T>& member) {
-    return IsHeapObjectAlive(member.Get());
-  }
 
   MarkingWorklist* GetMarkingWorklist() const {
     return marking_worklist_.get();
@@ -242,6 +214,11 @@ class PLATFORM_EXPORT ThreadHeap {
     return not_fully_constructed_worklist_.get();
   }
 
+  NotFullyConstructedWorklist* GetPreviouslyNotFullyConstructedWorklist()
+      const {
+    return previously_not_fully_constructed_worklist_.get();
+  }
+
   WeakCallbackWorklist* GetWeakCallbackWorklist() const {
     return weak_callback_worklist_.get();
   }
@@ -250,12 +227,12 @@ class PLATFORM_EXPORT ThreadHeap {
     return movable_reference_worklist_.get();
   }
 
-  WeakTableWorklist* GetWeakTableWorklist() const {
-    return weak_table_worklist_.get();
+  EphemeronPairsWorklist* GetDiscoveredEphemeronPairsWorklist() const {
+    return discovered_ephemeron_pairs_worklist_.get();
   }
 
-  BackingStoreCallbackWorklist* GetBackingStoreCallbackWorklist() const {
-    return backing_store_callback_worklist_.get();
+  EphemeronPairsWorklist* GetEphemeronPairsToProcessWorklist() const {
+    return ephemeron_pairs_to_process_worklist_.get();
   }
 
   V8ReferencesWorklist* GetV8ReferencesWorklist() const {
@@ -302,16 +279,25 @@ class PLATFORM_EXPORT ThreadHeap {
   // not need to rely on conservative handling.
   void FlushNotFullyConstructedObjects();
 
+  // Moves ephemeron pairs from |discovered_ephemeron_pairs_worklist_| to
+  // |ephemeron_pairs_to_process_worklist_|
+  void FlushEphemeronPairs(EphemeronProcessing);
+
   // Marks not fully constructed objects.
   void MarkNotFullyConstructedObjects(MarkingVisitor*);
   // Marks the transitive closure including ephemerons.
-  bool AdvanceMarking(MarkingVisitor*, base::TimeTicks deadline);
+  bool AdvanceMarking(MarkingVisitor*, base::TimeTicks, EphemeronProcessing);
   void VerifyMarking();
 
   // Returns true if concurrent markers will have work to steal
   bool HasWorkForConcurrentMarking() const;
+  // Returns the amount of work currently available for stealing (there could be
+  // work remaining even if this is 0).
+  size_t ConcurrentMarkingGlobalWorkSize() const;
   // Returns true if marker is done
-  bool AdvanceConcurrentMarking(ConcurrentMarkingVisitor*, base::TimeTicks);
+  bool AdvanceConcurrentMarking(ConcurrentMarkingVisitor*,
+                                base::JobDelegate*,
+                                MarkingSchedulingOracle* marking_scheduler);
 
   // Conservatively checks whether an address is a pointer in any of the
   // thread heaps.  If so marks the object pointed to as live.
@@ -404,7 +390,9 @@ class PLATFORM_EXPORT ThreadHeap {
   void DestroyMarkingWorklists(BlinkGC::StackState);
   void DestroyCompactionWorklists();
 
-  bool InvokeEphemeronCallbacks(MarkingVisitor*, base::TimeTicks);
+  bool InvokeEphemeronCallbacks(EphemeronProcessing,
+                                MarkingVisitor*,
+                                base::TimeTicks);
 
   bool FlushV8References(base::TimeTicks);
 
@@ -449,11 +437,8 @@ class PLATFORM_EXPORT ThreadHeap {
 
   // Worklist of ephemeron callbacks. Used to pass new callbacks from
   // MarkingVisitor to ThreadHeap.
-  std::unique_ptr<WeakTableWorklist> weak_table_worklist_;
-
-  // This worklist is used to passing backing store callback to HeapCompact.
-  std::unique_ptr<BackingStoreCallbackWorklist>
-      backing_store_callback_worklist_;
+  std::unique_ptr<EphemeronPairsWorklist> discovered_ephemeron_pairs_worklist_;
+  std::unique_ptr<EphemeronPairsWorklist> ephemeron_pairs_to_process_worklist_;
 
   // Worklist for storing the V8 references until ThreadHeap can flush them
   // to V8.
@@ -461,10 +446,6 @@ class PLATFORM_EXPORT ThreadHeap {
 
   std::unique_ptr<NotSafeToConcurrentlyTraceWorklist>
       not_safe_to_concurrently_trace_worklist_;
-
-  // No duplicates allowed for ephemeron callbacks. Hence, we use a hashmap
-  // with the key being the HashTable.
-  WTF::HashMap<const void*, EphemeronCallback> ephemeron_callbacks_;
 
   std::unique_ptr<HeapCompact> compaction_;
 
@@ -474,11 +455,15 @@ class PLATFORM_EXPORT ThreadHeap {
 
   static ThreadHeap* main_thread_heap_;
 
+  static constexpr size_t kStepsBeforeEphemeronPairsFlush = 4u;
+  size_t steps_since_last_ephemeron_pairs_flush_ = 0;
+  static constexpr size_t kStepsBeforeEphemeronProcessing = 16u;
+  size_t steps_since_last_ephemeron_processing_ = 0;
+
   friend class incremental_marking_test::IncrementalMarkingScopeBase;
   template <typename T>
   friend class Member;
   friend class ThreadState;
-  friend class weakness_marking_test::EphemeronCallbacksCounter;
 };
 
 template <typename T>
@@ -588,19 +573,28 @@ struct MakeGarbageCollectedTrait {
   }
 };
 
+template <typename T, typename = void>
+struct PostConstructionHookTrait {
+  static void Call(T*) {}
+};
+
 // Default MakeGarbageCollected: Constructs an instance of T, which is a garbage
 // collected type.
 template <typename T, typename... Args>
 T* MakeGarbageCollected(Args&&... args) {
-  return MakeGarbageCollectedTrait<T>::Call(std::forward<Args>(args)...);
+  T* object = MakeGarbageCollectedTrait<T>::Call(std::forward<Args>(args)...);
+  PostConstructionHookTrait<T>::Call(object);
+  return object;
 }
 
 // Constructs an instance of T, which is a garbage collected type. This special
 // version takes size which enables constructing inline objects.
 template <typename T, typename... Args>
 T* MakeGarbageCollected(AdditionalBytes additional_bytes, Args&&... args) {
-  return MakeGarbageCollectedTrait<T>::Call(additional_bytes,
-                                            std::forward<Args>(args)...);
+  T* object = MakeGarbageCollectedTrait<T>::Call(additional_bytes,
+                                                 std::forward<Args>(args)...);
+  PostConstructionHookTrait<T>::Call(object);
+  return object;
 }
 
 // Assigning class types to their arenas.
@@ -664,23 +658,7 @@ inline void ThreadHeap::SetLastAllocatedRegion(Address start, size_t length) {
   last_allocated_region_.length = length;
 }
 
-template <typename T>
-void Visitor::HandleWeakCell(const WeakCallbackInfo&, const void* object) {
-  WeakMember<T>* weak_member =
-      reinterpret_cast<WeakMember<T>*>(const_cast<void*>(object));
-  if (weak_member->Get()) {
-    if (weak_member->IsHashTableDeletedValue()) {
-      // This can happen when weak fields are deleted while incremental marking
-      // is running. Deleted values need to be preserved to avoid reviving
-      // objects in containers.
-      return;
-    }
-    if (!ThreadHeap::IsHeapObjectAlive(weak_member->Get()))
-      weak_member->Clear();
-  }
-}
-
-class PLATFORM_EXPORT WeakCallbackInfo final {
+class PLATFORM_EXPORT LivenessBroker final {
  public:
   template <typename T>
   bool IsHeapObjectAlive(const T*) const;
@@ -690,26 +668,64 @@ class PLATFORM_EXPORT WeakCallbackInfo final {
   bool IsHeapObjectAlive(const UntracedMember<T>&) const;
 
  private:
-  WeakCallbackInfo() = default;
-  friend class ThreadHeap;
+  LivenessBroker() = default;
+  friend class internal::LivenessBrokerFactory;
 };
 
 template <typename T>
-bool WeakCallbackInfo::IsHeapObjectAlive(const T* object) const {
-  return ThreadHeap::IsHeapObjectAlive(object);
+bool LivenessBroker::IsHeapObjectAlive(const T* object) const {
+  static_assert(sizeof(T), "T must be fully defined");
+  // The strongification of collections relies on the fact that once a
+  // collection has been strongified, there is no way that it can contain
+  // non-live entries, so no entries will be removed. Since you can't set
+  // the mark bit on a null pointer, that means that null pointers are
+  // always 'alive'.
+  if (!object)
+    return true;
+  // TODO(keishi): some tests create CrossThreadPersistent on non attached
+  // threads.
+  if (!ThreadState::Current())
+    return true;
+  DCHECK(&ThreadState::Current()->Heap() ==
+         &PageFromObject(object)->Arena()->GetThreadState()->Heap());
+  return internal::ObjectAliveTrait<T>::IsHeapObjectAlive(object);
 }
 
 template <typename T>
-bool WeakCallbackInfo::IsHeapObjectAlive(
-    const WeakMember<T>& weak_member) const {
-  return ThreadHeap::IsHeapObjectAlive(weak_member);
+bool LivenessBroker::IsHeapObjectAlive(const WeakMember<T>& weak_member) const {
+  return IsHeapObjectAlive(weak_member.Get());
 }
 
 template <typename T>
-bool WeakCallbackInfo::IsHeapObjectAlive(
+bool LivenessBroker::IsHeapObjectAlive(
     const UntracedMember<T>& untraced_member) const {
-  return ThreadHeap::IsHeapObjectAlive(untraced_member.Get());
+  return IsHeapObjectAlive(untraced_member.Get());
 }
+
+template <typename T>
+void Visitor::HandleWeakCell(const LivenessBroker& broker, const void* object) {
+  WeakMember<T>* weak_member =
+      reinterpret_cast<WeakMember<T>*>(const_cast<void*>(object));
+  if (weak_member->Get()) {
+    if (weak_member->IsHashTableDeletedValue()) {
+      // This can happen when weak fields are deleted while incremental marking
+      // is running. Deleted values need to be preserved to avoid reviving
+      // objects in containers.
+      return;
+    }
+    if (!broker.IsHeapObjectAlive(weak_member->Get()))
+      weak_member->Clear();
+  }
+}
+
+namespace internal {
+
+class LivenessBrokerFactory final {
+ public:
+  static LivenessBroker Create() { return LivenessBroker(); }
+};
+
+}  // namespace internal
 
 }  // namespace blink
 

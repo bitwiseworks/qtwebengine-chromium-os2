@@ -19,51 +19,13 @@ def parse_args():
     parser.add_argument('gn_path', help='path to GN. (e.g. out/Release)')
     parser.add_argument('test', help='test name. (e.g. angle_end2end_tests)')
     parser.add_argument('os_dim', help='OS dimension. (e.g. Windows-10)')
-    parser.add_argument('gpu_dim', help='GPU dimension. (e.g. intel-hd-630-win10-stable)')
     parser.add_argument('-s', '--shards', default=1, help='number of shards', type=int)
     parser.add_argument('-p', '--pool', default='Chrome-GPU', help='swarming pool')
+    parser.add_argument('-g', '--gpu', help='GPU dimension. (e.g. intel-hd-630-win10-stable)')
+    parser.add_argument('-t', '--device-type', help='Android device type (e.g. bullhead)')
+    parser.add_argument('-o', '--device-os', help='Android OS.')
+
     return parser.parse_known_args()
-
-
-# Taken from:
-# https://chromium.googlesource.com/chromium/src/tools/mb/+/2192df66cd0ed214bcfbfd387ad0c5c8c0a21eb1/mb.py#586
-def add_base_software(swarming_args):
-    # HACK(iannucci): These packages SHOULD NOT BE HERE.
-    # Remove method once Swarming Pool Task Templates are implemented.
-    # crbug.com/812428
-
-    # Add in required base software. This should be kept in sync with the
-    # `chromium_swarming` recipe module in build.git. All references to
-    # `swarming_module` below are purely due to this.
-    cipd_packages = [
-        ('infra/python/cpython/${platform}', 'version:2.7.15.chromium14'),
-        ('infra/tools/luci/logdog/butler/${platform}',
-         'git_revision:e1abc57be62d198b5c2f487bfb2fa2d2eb0e867c'),
-        ('infra/tools/luci/vpython-native/${platform}',
-         'git_revision:e317c7d2c17d4c3460ee37524dfce4e1dee4306a'),
-        ('infra/tools/luci/vpython/${platform}',
-         'git_revision:e317c7d2c17d4c3460ee37524dfce4e1dee4306a'),
-    ]
-
-    for pkg, vers in cipd_packages:
-        swarming_args.append('--cipd-package=.swarming_module:%s=%s' % (pkg, vers))
-
-    # Add packages to $PATH
-    swarming_args.extend([
-        '--env-prefix',
-        'PATH=.swarming_module',
-        '--env-prefix',
-        'PATH=.swarming_module/bin',
-    ])
-
-    # Add cache directives for vpython.
-    vpython_cache_path = '.swarming_module_cache/vpython'
-    swarming_args.extend([
-        '--named-cache',
-        'swarming_module_cache_vpython=' + vpython_cache_path,
-        '--env-prefix',
-        'VPYTHON_VIRTUALENV_ROOT=' + vpython_cache_path,
-    ])
 
 
 def main():
@@ -93,10 +55,17 @@ def main():
     swarming_args = [
         swarming_script_path, 'trigger', '-S', 'chromium-swarm.appspot.com', '-I',
         'https://isolateserver.appspot.com', '-d', 'os=' + args.os_dim, '-d', 'pool=' + args.pool,
-        '-d', 'gpu=' + args.gpu_dim, '-s', sha
+        '-s', sha
     ]
 
-    add_base_software(swarming_args)
+    if args.gpu:
+        swarming_args += ['-d', 'gpu=' + args.gpu]
+
+    if args.device_type:
+        swarming_args += ['-d', 'device_type=' + args.device_type]
+
+    if args.device_os:
+        swarming_args += ['-d', 'device_os=' + args.device_os]
 
     for i in range(args.shards):
         shard_args = swarming_args[:]

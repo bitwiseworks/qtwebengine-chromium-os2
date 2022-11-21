@@ -33,7 +33,6 @@ public:
              const GrVkExtensions& extensions, GrProtected isProtected = GrProtected::kNo);
 
     bool isFormatSRGB(const GrBackendFormat&) const override;
-    SkImage::CompressionType compressionType(const GrBackendFormat&) const override;
 
     bool isFormatTexturable(const GrBackendFormat&) const override;
     bool isVkFormatTexturable(VkFormat) const;
@@ -76,12 +75,6 @@ public:
         return SkToBool(FormatInfo::kBlitSrc_Flag & flags);
     }
 
-    // On Adreno vulkan, they do not respect the imageOffset parameter at least in
-    // copyImageToBuffer. This flag says that we must do the copy starting from the origin always.
-    bool mustDoCopiesFromOrigin() const {
-        return fMustDoCopiesFromOrigin;
-    }
-
     // Sometimes calls to QueueWaitIdle return before actually signalling the fences
     // on the command buffers even though they have completed. This causes an assert to fire when
     // destroying the command buffers. Therefore we add a sleep to make sure the fence signals.
@@ -104,6 +97,22 @@ public:
      */
     const StencilFormat& preferredStencilFormat() const {
         return fPreferredStencilFormat;
+    }
+
+    // Returns total number of bits used by stencil + depth + padding
+    static int GetStencilFormatTotalBitCount(VkFormat format) {
+        switch (format) {
+        case VK_FORMAT_S8_UINT:
+            return 8;
+        case VK_FORMAT_D24_UNORM_S8_UINT:
+            return 32;
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
+            // can optionally have 24 unused bits at the end so we assume the total bits is 64.
+            return 64;
+        default:
+            SkASSERT(false);
+            return 0;
+        }
     }
 
     // Returns whether the device supports VK_KHR_Swapchain. Internally Skia never uses any of the
@@ -147,6 +156,14 @@ public:
         return fPreferPrimaryOverSecondaryCommandBuffers;
     }
 
+    int maxPerPoolCachedSecondaryCommandBuffers() const {
+        return fMaxPerPoolCachedSecondaryCommandBuffers;
+    }
+
+    uint32_t maxInputAttachmentDescriptors() const { return fMaxInputAttachmentDescriptors; }
+
+    bool preferCachedCpuMemory() const { return fPreferCachedCpuMemory; }
+
     bool mustInvalidatePrimaryCmdBufferStateAfterClearAttachments() const {
         return fMustInvalidatePrimaryCmdBufferStateAfterClearAttachments;
     }
@@ -166,9 +183,6 @@ public:
     bool canCopyAsResolve(VkFormat dstConfig, int dstSampleCnt, bool dstHasYcbcr,
                           VkFormat srcConfig, int srcSamplecnt, bool srcHasYcbcr) const;
 
-    GrColorType getYUVAColorTypeFromBackendFormat(const GrBackendFormat&,
-                                                  bool isAlphaChannel) const override;
-
     GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const override;
 
     VkFormat getFormatFromColorType(GrColorType colorType) const {
@@ -176,7 +190,6 @@ public:
         return fColorTypeToFormatTable[idx];
     }
 
-    GrSwizzle getReadSwizzle(const GrBackendFormat&, GrColorType) const override;
     GrSwizzle getWriteSwizzle(const GrBackendFormat&, GrColorType) const override;
 
     uint64_t computeFormatKey(const GrBackendFormat&) const override;
@@ -188,7 +201,9 @@ public:
                             GrSamplerState,
                             const GrBackendFormat&) const override;
 
-    GrProgramDesc makeDesc(const GrRenderTarget*, const GrProgramInfo&) const override;
+    GrProgramDesc makeDesc(GrRenderTarget*, const GrProgramInfo&) const override;
+
+    GrInternalSurfaceFlags getExtraSurfaceFlagsForDeferredRT() const override;
 
 #if GR_TEST_UTILS
     std::vector<TestFormatColorTypeCombination> getTestingCombinations() const override;
@@ -229,6 +244,10 @@ private:
 
     SupportedRead onSupportedReadPixelsColorType(GrColorType, const GrBackendFormat&,
                                                  GrColorType) const override;
+
+    GrSwizzle onGetReadSwizzle(const GrBackendFormat&, GrColorType) const override;
+
+    GrDstSampleType onGetDstSampleTypeForProxy(const GrRenderTargetProxy*) const override;
 
     // ColorTypeInfo for a specific format
     struct ColorTypeInfo {
@@ -294,7 +313,6 @@ private:
 
     SkSTArray<1, GrVkYcbcrConversionInfo> fYcbcrInfos;
 
-    bool fMustDoCopiesFromOrigin = false;
     bool fMustSleepOnTearDown = false;
     bool fShouldAlwaysUseDedicatedImageMemory = false;
 
@@ -320,7 +338,16 @@ private:
     bool fPreferPrimaryOverSecondaryCommandBuffers = true;
     bool fMustInvalidatePrimaryCmdBufferStateAfterClearAttachments = false;
 
-    typedef GrCaps INHERITED;
+    // We default this to 100 since we already cap the max render tasks at 100 before doing a
+    // submission in the GrDrawingManager, so we shouldn't be going over 100 secondary command
+    // buffers per primary anyways.
+    int fMaxPerPoolCachedSecondaryCommandBuffers = 100;
+
+    uint32_t fMaxInputAttachmentDescriptors = 0;
+
+    bool fPreferCachedCpuMemory = true;
+
+    using INHERITED = GrCaps;
 };
 
 #endif

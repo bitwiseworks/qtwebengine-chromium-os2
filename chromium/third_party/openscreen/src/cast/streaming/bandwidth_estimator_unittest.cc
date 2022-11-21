@@ -4,20 +4,18 @@
 
 #include "cast/streaming/bandwidth_estimator.h"
 
+#include <chrono>
 #include <limits>
 #include <random>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "platform/api/time.h"
+#include "util/chrono_helpers.h"
 
 namespace openscreen {
 namespace cast {
 namespace {
-
-using std::chrono::duration_cast;
-using std::chrono::milliseconds;
-using std::chrono::seconds;
 
 using openscreen::operator<<;  // For std::chrono::duration gtest pretty-print.
 
@@ -201,18 +199,20 @@ TEST_F(BandwidthEstimatorTest, ClampsEstimateToMaxInt) {
   // arrival times, individual buckets in BandwidthEstimator::FlowTracker will
   // occassionally be clamped too.
   Clock::time_point now = kStartTime;
-  for (int bytes_received_per_timeslice = 1;
-       bytes_received_per_timeslice > 0 /* not overflowed past INT_MAX */;
+  for (unsigned int bytes_received_per_timeslice = 1;
+       // Not overflowed past INT_MAX.
+       static_cast<int>(bytes_received_per_timeslice) > 0;
        bytes_received_per_timeslice *= 2) {
-    SCOPED_TRACE(testing::Message() << "bytes_received_per_timeslice="
-                                    << bytes_received_per_timeslice);
+    int int_bytes = static_cast<int>(bytes_received_per_timeslice);
+    SCOPED_TRACE(testing::Message()
+                 << "bytes_received_per_timeslice=" << int_bytes);
 
     const Clock::time_point end = now + estimator()->history_window() / 4;
     for (; now < end; now += kTimesliceDuration) {
       estimator()->OnBurstComplete(kPacketsPerBurst, now);
       const Clock::time_point rtcp_arrival_time = AddFuzz(now + kRoundTripTime);
-      estimator()->OnPayloadReceived(bytes_received_per_timeslice,
-                                     rtcp_arrival_time, kRoundTripTime);
+      estimator()->OnPayloadReceived(int_bytes, rtcp_arrival_time,
+                                     kRoundTripTime);
       estimator()->OnRtcpReceived(rtcp_arrival_time, kRoundTripTime);
     }
     now = end;

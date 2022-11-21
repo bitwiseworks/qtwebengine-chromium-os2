@@ -12,7 +12,6 @@
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/app/content_main.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -28,10 +27,6 @@
 #include "net/http/http_util.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "ui/events/devices/device_data_manager.h"
-
-#if defined(USE_NSS_CERTS)
-#include "net/cert_net/nss_ocsp.h"
-#endif
 
 namespace headless {
 
@@ -54,7 +49,7 @@ HeadlessBrowserImpl::CreateBrowserContextBuilder() {
 
 scoped_refptr<base::SingleThreadTaskRunner>
 HeadlessBrowserImpl::BrowserMainThread() const {
-  return base::CreateSingleThreadTaskRunner({content::BrowserThread::UI});
+  return content::GetUIThreadTaskRunner({});
 }
 
 void HeadlessBrowserImpl::Shutdown() {
@@ -65,8 +60,8 @@ void HeadlessBrowserImpl::Shutdown() {
   auto tmp = std::move(browser_contexts_);
   tmp.clear();
   if (system_request_context_manager_) {
-    base::DeleteSoon(FROM_HERE, {content::BrowserThread::IO},
-                     system_request_context_manager_.release());
+    content::GetIOThreadTaskRunner({})->DeleteSoon(
+        FROM_HERE, system_request_context_manager_.release());
   }
   browser_main_parts_->QuitMainMessageLoop();
 }

@@ -17,13 +17,15 @@
 #include "config/av1_rtcd.h"
 
 #include "aom_dsp/blend.h"
+#include "aom_dsp/x86/mem_sse2.h"
 #include "aom_dsp/x86/synonyms.h"
 
 #include "aom_ports/mem.h"
 
+#include "av1/common/av1_common_int.h"
 #include "av1/common/filter.h"
-#include "av1/common/onyxc_int.h"
 #include "av1/common/reconinter.h"
+#include "av1/encoder/reconinter_enc.h"
 
 unsigned int aom_get_mb_ss_sse2(const int16_t *src) {
   __m128i vsum = _mm_setzero_si128();
@@ -41,8 +43,8 @@ unsigned int aom_get_mb_ss_sse2(const int16_t *src) {
 }
 
 static INLINE __m128i load4x2_sse2(const uint8_t *const p, const int stride) {
-  const __m128i p0 = _mm_cvtsi32_si128(*(const uint32_t *)(p + 0 * stride));
-  const __m128i p1 = _mm_cvtsi32_si128(*(const uint32_t *)(p + 1 * stride));
+  const __m128i p0 = _mm_cvtsi32_si128(loadu_uint32(p + 0 * stride));
+  const __m128i p1 = _mm_cvtsi32_si128(loadu_uint32(p + 1 * stride));
   return _mm_unpacklo_epi8(_mm_unpacklo_epi32(p0, p1), _mm_setzero_si128());
 }
 
@@ -507,68 +509,24 @@ void aom_upsampled_pred_sse2(MACROBLOCKD *xd, const struct AV1Common *const cm,
     const int is_scaled = av1_is_scaled(sf);
 
     if (is_scaled) {
-      // Note: This is mostly a copy from the >=8X8 case in
-      // build_inter_predictors() function, with some small tweaks.
-
-      // Some assumptions.
-      const int plane = 0;
-
-      // Get pre-requisites.
+      int plane = 0;
+      const int mi_x = mi_col * MI_SIZE;
+      const int mi_y = mi_row * MI_SIZE;
       const struct macroblockd_plane *const pd = &xd->plane[plane];
-      const int ssx = pd->subsampling_x;
-      const int ssy = pd->subsampling_y;
-      assert(ssx == 0 && ssy == 0);
       const struct buf_2d *const dst_buf = &pd->dst;
       const struct buf_2d *const pre_buf =
           is_intrabc ? dst_buf : &pd->pre[ref_num];
-      const int mi_x = mi_col * MI_SIZE;
-      const int mi_y = mi_row * MI_SIZE;
-
-      // Calculate subpel_x/y and x/y_step.
-      const int row_start = 0;  // Because ss_y is 0.
-      const int col_start = 0;  // Because ss_x is 0.
-      const int pre_x = (mi_x + MI_SIZE * col_start) >> ssx;
-      const int pre_y = (mi_y + MI_SIZE * row_start) >> ssy;
-      int orig_pos_y = pre_y << SUBPEL_BITS;
-      orig_pos_y += mv->row * (1 << (1 - ssy));
-      int orig_pos_x = pre_x << SUBPEL_BITS;
-      orig_pos_x += mv->col * (1 << (1 - ssx));
-      int pos_y = sf->scale_value_y(orig_pos_y, sf);
-      int pos_x = sf->scale_value_x(orig_pos_x, sf);
-      pos_x += SCALE_EXTRA_OFF;
-      pos_y += SCALE_EXTRA_OFF;
-
-      const int top = -AOM_LEFT_TOP_MARGIN_SCALED(ssy);
-      const int left = -AOM_LEFT_TOP_MARGIN_SCALED(ssx);
-      const int bottom = (pre_buf->height + AOM_INTERP_EXTEND)
-                         << SCALE_SUBPEL_BITS;
-      const int right = (pre_buf->width + AOM_INTERP_EXTEND)
-                        << SCALE_SUBPEL_BITS;
-      pos_y = clamp(pos_y, top, bottom);
-      pos_x = clamp(pos_x, left, right);
-
-      const uint8_t *const pre =
-          pre_buf->buf0 + (pos_y >> SCALE_SUBPEL_BITS) * pre_buf->stride +
-          (pos_x >> SCALE_SUBPEL_BITS);
 
       InterPredParams inter_pred_params;
-      const SubpelParams subpel_params = { sf->x_step_q4, sf->y_step_q4,
-                                           pos_x & SCALE_SUBPEL_MASK,
-                                           pos_y & SCALE_SUBPEL_MASK };
-
-      // Get convolve parameters.
       inter_pred_params.conv_params = get_conv_params(0, plane, xd->bd);
       const int_interpfilters filters =
           av1_broadcast_interp_filter(EIGHTTAP_REGULAR);
       av1_init_inter_params(
           &inter_pred_params, width, height, mi_y >> pd->subsampling_y,
           mi_x >> pd->subsampling_x, pd->subsampling_x, pd->subsampling_y,
-          xd->bd, is_cur_buf_hbd(xd), mi->use_intrabc, sf, pre_buf, filters);
-
-      // Get the inter predictor.
-      av1_make_inter_predictor(pre, pre_buf->stride, comp_pred, width,
-                               &inter_pred_params, &subpel_params);
-
+          xd->bd, is_cur_buf_hbd(xd), is_intrabc, sf, pre_buf, filters);
+      av1_enc_build_one_inter_predictor(comp_pred, width, mv,
+                                        &inter_pred_params);
       return;
     }
   }
@@ -796,5 +754,100 @@ void aom_highbd_comp_mask_pred_sse2(uint8_t *comp_pred8, const uint8_t *pred8,
       comp_pred += width;
       i += 1;
     } while (i < height);
+  }
+}
+
+uint64_t aom_mse_4xh_16bit_sse2(uint8_t *dst, int dstride, uint16_t *src,
+                                int sstride, int h) {
+  uint64_t sum = 0;
+  __m128i dst0_8x8, dst1_8x8, dst_16x8;
+  __m128i src0_16x4, src1_16x4, src_16x8;
+  __m128i res0_32x4, res1_32x4, res0_64x4, res1_64x4, res2_64x4, res3_64x4;
+  __m128i sub_result_16x8;
+  const __m128i zeros = _mm_setzero_si128();
+  __m128i square_result = _mm_setzero_si128();
+  for (int i = 0; i < h; i += 2) {
+    dst0_8x8 = _mm_cvtsi32_si128(*(uint32_t const *)(&dst[(i + 0) * dstride]));
+    dst1_8x8 = _mm_cvtsi32_si128(*(uint32_t const *)(&dst[(i + 1) * dstride]));
+    dst_16x8 = _mm_unpacklo_epi8(_mm_unpacklo_epi32(dst0_8x8, dst1_8x8), zeros);
+
+    src0_16x4 = _mm_loadl_epi64((__m128i const *)(&src[(i + 0) * sstride]));
+    src1_16x4 = _mm_loadl_epi64((__m128i const *)(&src[(i + 1) * sstride]));
+    src_16x8 = _mm_unpacklo_epi64(src0_16x4, src1_16x4);
+
+    sub_result_16x8 = _mm_sub_epi16(src_16x8, dst_16x8);
+
+    res0_32x4 = _mm_unpacklo_epi16(sub_result_16x8, zeros);
+    res1_32x4 = _mm_unpackhi_epi16(sub_result_16x8, zeros);
+
+    res0_32x4 = _mm_madd_epi16(res0_32x4, res0_32x4);
+    res1_32x4 = _mm_madd_epi16(res1_32x4, res1_32x4);
+
+    res0_64x4 = _mm_unpacklo_epi32(res0_32x4, zeros);
+    res1_64x4 = _mm_unpackhi_epi32(res0_32x4, zeros);
+    res2_64x4 = _mm_unpacklo_epi32(res1_32x4, zeros);
+    res3_64x4 = _mm_unpackhi_epi32(res1_32x4, zeros);
+
+    square_result = _mm_add_epi64(
+        square_result,
+        _mm_add_epi64(
+            _mm_add_epi64(_mm_add_epi64(res0_64x4, res1_64x4), res2_64x4),
+            res3_64x4));
+  }
+  const __m128i sum_1x64 =
+      _mm_add_epi64(square_result, _mm_srli_si128(square_result, 8));
+  xx_storel_64(&sum, sum_1x64);
+  return sum;
+}
+
+uint64_t aom_mse_8xh_16bit_sse2(uint8_t *dst, int dstride, uint16_t *src,
+                                int sstride, int h) {
+  uint64_t sum = 0;
+  __m128i dst_8x8, dst_16x8;
+  __m128i src_16x8;
+  __m128i res0_32x4, res1_32x4, res0_64x4, res1_64x4, res2_64x4, res3_64x4;
+  __m128i sub_result_16x8;
+  const __m128i zeros = _mm_setzero_si128();
+  __m128i square_result = _mm_setzero_si128();
+
+  for (int i = 0; i < h; i++) {
+    dst_8x8 = _mm_loadl_epi64((__m128i const *)(&dst[(i + 0) * dstride]));
+    dst_16x8 = _mm_unpacklo_epi8(dst_8x8, zeros);
+
+    src_16x8 = _mm_loadu_si128((__m128i *)&src[i * sstride]);
+
+    sub_result_16x8 = _mm_sub_epi16(src_16x8, dst_16x8);
+
+    res0_32x4 = _mm_unpacklo_epi16(sub_result_16x8, zeros);
+    res1_32x4 = _mm_unpackhi_epi16(sub_result_16x8, zeros);
+
+    res0_32x4 = _mm_madd_epi16(res0_32x4, res0_32x4);
+    res1_32x4 = _mm_madd_epi16(res1_32x4, res1_32x4);
+
+    res0_64x4 = _mm_unpacklo_epi32(res0_32x4, zeros);
+    res1_64x4 = _mm_unpackhi_epi32(res0_32x4, zeros);
+    res2_64x4 = _mm_unpacklo_epi32(res1_32x4, zeros);
+    res3_64x4 = _mm_unpackhi_epi32(res1_32x4, zeros);
+
+    square_result = _mm_add_epi64(
+        square_result,
+        _mm_add_epi64(
+            _mm_add_epi64(_mm_add_epi64(res0_64x4, res1_64x4), res2_64x4),
+            res3_64x4));
+  }
+  const __m128i sum_1x64 =
+      _mm_add_epi64(square_result, _mm_srli_si128(square_result, 8));
+  xx_storel_64(&sum, sum_1x64);
+  return sum;
+}
+
+uint64_t aom_mse_wxh_16bit_sse2(uint8_t *dst, int dstride, uint16_t *src,
+                                int sstride, int w, int h) {
+  assert((w == 8 || w == 4) && (h == 8 || h == 4) &&
+         "w=8/4 and h=8/4 must satisfy");
+  switch (w) {
+    case 4: return aom_mse_4xh_16bit_sse2(dst, dstride, src, sstride, h);
+    case 8: return aom_mse_8xh_16bit_sse2(dst, dstride, src, sstride, h);
+    default: assert(0 && "unsupported width"); return -1;
   }
 }

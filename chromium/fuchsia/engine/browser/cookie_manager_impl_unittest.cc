@@ -17,6 +17,7 @@
 #include "fuchsia/base/result_receiver.h"
 #include "fuchsia/engine/browser/cookie_manager_impl.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/cookies/cookie_access_result.h"
 #include "services/network/network_service.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -32,7 +33,7 @@ const char kCookieValue1[] = "Eats";
 const char kCookieValue2[] = "Cookies";
 const char kCookieValue3[] = "Nyom nyom nyom";
 
-// Creates a CanonicalCookie with |name| and |value|, for kTestCookieUrlHost.
+// Creates a CanonicalCookie with |name| and |value|, for kTestCookieUrl.
 std::unique_ptr<net::CanonicalCookie> CreateCookie(base::StringPiece name,
                                                    base::StringPiece value) {
   return net::CanonicalCookie::CreateSanitizedCookie(
@@ -66,20 +67,20 @@ class CookieManagerImplTest : public testing::Test {
     return network_context_.get();
   }
 
-  // Adds the specified cookie under kTestCookieUrlHost.
+  // Adds the specified cookie under kTestCookieUrl.
   void CreateAndSetCookieAsync(base::StringPiece name,
                                base::StringPiece value) {
     EnsureMojoCookieManager();
 
     net::CookieOptions options;
     mojo_cookie_manager_->SetCanonicalCookie(
-        *CreateCookie(name, value), "https", options,
-        base::BindOnce([](net::CanonicalCookie::CookieInclusionStatus status) {
-          EXPECT_TRUE(status.IsInclude());
+        *CreateCookie(name, value), GURL(kTestCookieUrl), options,
+        base::BindOnce([](net::CookieAccessResult result) {
+          EXPECT_TRUE(result.status.IsInclude());
         }));
   }
 
-  // Removes the specified cookie from under kTestCookieUrlHost.
+  // Removes the specified cookie from under kTestCookieUrl.
   void DeleteCookieAsync(base::StringPiece name, base::StringPiece value) {
     EnsureMojoCookieManager();
 

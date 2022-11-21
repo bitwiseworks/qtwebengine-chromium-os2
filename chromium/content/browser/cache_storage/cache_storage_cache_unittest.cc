@@ -15,10 +15,10 @@
 #include "base/callback_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
@@ -36,9 +36,6 @@
 #include "content/browser/cache_storage/legacy/legacy_cache_storage_cache.h"
 #include "content/common/background_fetch/background_fetch_types.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/storage_partition.h"
-#include "content/public/common/content_features.h"
-#include "content/public/common/referrer.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_utils.h"
@@ -50,10 +47,6 @@
 #include "net/base/test_completion_callback.h"
 #include "net/base/url_util.h"
 #include "net/disk_cache/disk_cache.h"
-#include "storage/browser/blob/blob_data_builder.h"
-#include "storage/browser/blob/blob_data_handle.h"
-#include "storage/browser/blob/blob_data_snapshot.h"
-#include "storage/browser/blob/blob_impl.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/test/blob_test_utils.h"
@@ -67,7 +60,6 @@
 using blink::FetchAPIRequestHeadersMap;
 using blink::mojom::CacheStorageError;
 using blink::mojom::CacheStorageVerboseErrorPtr;
-using storage::BlobDataItem;
 
 namespace content {
 namespace cache_storage_cache_unittest {
@@ -671,13 +663,17 @@ class CacheStorageCacheTest : public testing::Test {
         network::mojom::FetchResponseSource::kUnspecified,
         base::flat_map<std::string, std::string>(kHeaders.cbegin(),
                                                  kHeaders.cend()),
+        base::nullopt /* mime_type */, net::HttpRequestHeaders::kGetMethod,
         nullptr /* blob */, blink::mojom::ServiceWorkerResponseError::kUnknown,
         response_time_, std::string() /* cache_storage_cache_name */,
         std::vector<std::string>() /* cors_exposed_header_names */,
         nullptr /* side_data_blob */,
         nullptr /* side_data_blob_for_cache_put */,
-        std::vector<network::mojom::ContentSecurityPolicyPtr>(),
-        false /* loaded_with_credentials */);
+        network::mojom::ParsedHeaders::New(),
+        net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN,
+        "unknown" /* alpn_negotiated_protocol */,
+        false /* loaded_with_credentials */, false /* was_fetched_via_spdy */,
+        false /* has_range_requested */);
   }
 
   void CopySideDataToResponse(const std::string& uuid,
@@ -718,7 +714,6 @@ class CacheStorageCacheTest : public testing::Test {
   void CheckOpHistograms(base::HistogramTester& histogram_tester,
                          const char* op_name) {
     std::string base("ServiceWorkerCache.Cache.Scheduler.");
-    histogram_tester.ExpectTotalCount(base + "IsOperationSlow." + op_name, 1);
     histogram_tester.ExpectTotalCount(base + "OperationDuration2." + op_name,
                                       1);
     histogram_tester.ExpectTotalCount(base + "QueueDuration2." + op_name, 1);
@@ -2260,7 +2255,7 @@ TEST_F(CacheStorageCacheTest, VerifyOpaqueSizePadding) {
   EXPECT_NE(opaque_padding, current_padding);
 
   // Now reset opaque side data back to zero.
-  const std::string expected_side_data2 = "";
+  const std::string expected_side_data2;
   scoped_refptr<net::IOBuffer> buffer2 =
       base::MakeRefCounted<net::StringIOBuffer>(expected_side_data2);
   EXPECT_TRUE(WriteSideData(opaque_request->url, response_time, buffer2,

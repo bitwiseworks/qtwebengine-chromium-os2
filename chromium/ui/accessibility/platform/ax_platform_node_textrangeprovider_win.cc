@@ -8,7 +8,9 @@
 #include <vector>
 
 #include "base/i18n/string_search.h"
+#include "base/win/scoped_safearray.h"
 #include "base/win/scoped_variant.h"
+#include "base/win/variant_vector.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 
@@ -123,6 +125,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Clone(ITextRangeProvider** clone) {
 HRESULT AXPlatformNodeTextRangeProviderWin::Compare(ITextRangeProvider* other,
                                                     BOOL* result) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_COMPARE);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_COMPARE);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_IN_1_OUT(other, result);
 
   Microsoft::WRL::ComPtr<AXPlatformNodeTextRangeProviderWin> other_provider;
@@ -142,6 +145,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::CompareEndpoints(
     TextPatternRangeEndpoint other_endpoint,
     int* result) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_COMPAREENDPOINTS);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_COMPAREENDPOINTS);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_IN_1_OUT(other, result);
 
   Microsoft::WRL::ComPtr<AXPlatformNodeTextRangeProviderWin> other_provider;
@@ -172,6 +176,12 @@ HRESULT AXPlatformNodeTextRangeProviderWin::CompareEndpoints(
 HRESULT AXPlatformNodeTextRangeProviderWin::ExpandToEnclosingUnit(
     TextUnit unit) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_EXPANDTOENCLOSINGUNIT);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_EXPANDTOENCLOSINGUNIT);
+  return ExpandToEnclosingUnitImpl(unit);
+}
+
+HRESULT AXPlatformNodeTextRangeProviderWin::ExpandToEnclosingUnitImpl(
+    TextUnit unit) {
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL();
   NormalizeTextRange();
 
@@ -213,20 +223,27 @@ HRESULT AXPlatformNodeTextRangeProviderWin::ExpandToEnclosingUnit(
       end_ = start_->CreateNextFormatEndPosition(
           AXBoundaryBehavior::StopIfAlreadyAtBoundary);
       break;
-    case TextUnit_Word:
+    case TextUnit_Word: {
+      AXPositionInstance start_backup = start_->Clone();
       start_ = start_->CreatePreviousWordStartPosition(
           AXBoundaryBehavior::StopIfAlreadyAtBoundary);
+      // Since we use AXBoundaryBehavior::StopIfAlreadyAtBoundary, the only case
+      // possible where CreatePreviousWordStartPosition can return a
+      // NullPosition is when it's called on a node before the first word
+      // boundary. This can happen when the document starts with nodes that have
+      // no word boundaries, like whitespaces and punctuation. When it happens,
+      // move the position back to the start of the document.
+      if (start_->IsNullPosition())
+        start_ = start_backup->CreatePositionAtStartOfDocument();
+
       // Since start_ is already located at a word boundary, we need to cross it
-      // in order to move to the next one (stopping at the last anchor's end).
+      // in order to move to the next one. Because Windows ATs behave
+      // undesirably when the start and end endpoints are not in the same anchor
+      // (for character and word navigation), stop at anchor boundary.
       end_ = start_->CreateNextWordStartPosition(
-          AXBoundaryBehavior::StopAtLastAnchorBoundary);
-      // Because Windows ATs behave undesirably when the start and end endpoints
-      // are not in the same anchor (for character and word navigation), make
-      // sure to bring back the end endpoint to the end of the start's anchor.
-      if (start_->anchor_id() != end_->anchor_id()) {
-        end_ = start_->CreatePositionAtEndOfAnchor();
-      }
+          AXBoundaryBehavior::StopAtAnchorBoundary);
       break;
+    }
     case TextUnit_Line:
       start_ = start_->CreateBoundaryStartPosition(
           AXBoundaryBehavior::StopIfAlreadyAtBoundary,
@@ -265,6 +282,8 @@ HRESULT AXPlatformNodeTextRangeProviderWin::ExpandToEnclosingUnit(
     default:
       return UIA_E_NOTSUPPORTED;
   }
+  DCHECK(!start_->IsNullPosition());
+  DCHECK(!end_->IsNullPosition());
   return S_OK;
 }
 
@@ -302,6 +321,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::FindAttribute(
   //    match the attribute and value and there is a previously matched range.
   //    The previously matched range is the final match we found.
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_FINDATTRIBUTE);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_FINDATTRIBUTE);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(result);
   NormalizeTextRange();
 
@@ -371,13 +391,14 @@ HRESULT AXPlatformNodeTextRangeProviderWin::FindAttributeRange(
     current_platform_node = static_cast<AXPlatformNodeWin*>(
         delegate->GetFromNodeID(current_start->GetAnchor()->id()));
 
-    base::win::ScopedVariant current_attribute_value;
+    base::win::VariantVector current_attribute_value;
     if (FAILED(current_platform_node->GetTextAttributeValue(
-            text_attribute_id, current_attribute_value.Receive())))
+            text_attribute_id, current_start->text_offset(),
+            current_end->text_offset(), &current_attribute_value))) {
       return E_FAIL;
+    }
 
-    if (VARCMP_EQ == VarCmp(&attribute_val, current_attribute_value.AsInput(),
-                            LOCALE_USER_DEFAULT, 0)) {
+    if (!current_attribute_value.Compare(attribute_val)) {
       // When we encounter an AXRange instance that matches the attribute
       // and its value which we are looking for and no previously matched text
       // range exists, we expand or initialize the matched range.
@@ -399,6 +420,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::FindText(
     BOOL ignore_case,
     ITextRangeProvider** result) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_FINDTEXT);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_FINDTEXT);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_IN_1_OUT(string, result);
 
   base::string16 search_string(string);
@@ -452,13 +474,15 @@ HRESULT AXPlatformNodeTextRangeProviderWin::GetAttributeValue(
     TEXTATTRIBUTEID attribute_id,
     VARIANT* value) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_GETATTRIBUTEVALUE);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_GETATTRIBUTEVALUE);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(value);
   NormalizeTextRange();
 
-  base::win::ScopedVariant attribute_value_variant;
+  base::win::VariantVector attribute_value;
 
   // The range is inclusive, so advance our endpoint to the next position
-  auto end = end_->AsLeafTextPosition()->CreateNextAnchorPosition();
+  const auto end_leaf_text_position = end_->AsLeafTextPosition();
+  auto end = end_leaf_text_position->CreateNextAnchorPosition();
 
   // Iterate over anchor positions
   for (auto it = start_->AsLeafTextPosition();
@@ -486,31 +510,41 @@ HRESULT AXPlatformNodeTextRangeProviderWin::GetAttributeValue(
       DCHECK(platform_node);
     }
 
-    base::win::ScopedVariant current_variant;
+    base::win::VariantVector current_value;
+    const bool at_end_leaf_text_anchor =
+        it->anchor_id() == end_leaf_text_position->anchor_id() &&
+        it->tree_id() == end_leaf_text_position->tree_id();
+    const base::Optional<int> start_offset =
+        it->IsTextPosition() ? base::make_optional(it->text_offset())
+                             : base::nullopt;
+    const base::Optional<int> end_offset =
+        at_end_leaf_text_anchor
+            ? base::make_optional(end_leaf_text_position->text_offset())
+            : base::nullopt;
     HRESULT hr = platform_node->GetTextAttributeValue(
-        attribute_id, current_variant.Receive());
+        attribute_id, start_offset, end_offset, &current_value);
     if (FAILED(hr))
       return E_FAIL;
 
-    if (attribute_value_variant.type() == VT_EMPTY) {
-      attribute_value_variant.Reset(current_variant);
-      if (attribute_value_variant.type() == VT_UNKNOWN) {
-        *value = attribute_value_variant.Release();
-        return S_OK;
-      }
-    } else if (attribute_value_variant.Compare(current_variant)) {
+    if (attribute_value.Type() == VT_EMPTY) {
+      attribute_value = std::move(current_value);
+    } else if (attribute_value != current_value) {
       V_VT(value) = VT_UNKNOWN;
       return ::UiaGetReservedMixedAttributeValue(&V_UNKNOWN(value));
     }
   }
 
-  *value = attribute_value_variant.Release();
+  if (ShouldReleaseTextAttributeAsSafearray(attribute_id, attribute_value))
+    *value = attribute_value.ReleaseAsSafearrayVariant();
+  else
+    *value = attribute_value.ReleaseAsScalarVariant();
   return S_OK;
 }
 
 HRESULT AXPlatformNodeTextRangeProviderWin::GetBoundingRectangles(
     SAFEARRAY** screen_physical_pixel_rectangles) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_GETBOUNDINGRECTANGLES);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_GETBOUNDINGRECTANGLES);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(screen_physical_pixel_rectangles);
 
   *screen_physical_pixel_rectangles = nullptr;
@@ -555,6 +589,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::GetBoundingRectangles(
 HRESULT AXPlatformNodeTextRangeProviderWin::GetEnclosingElement(
     IRawElementProviderSimple** element) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_GETENCLOSINGELEMENT);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_GETENCLOSINGELEMENT);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(element);
 
   AXPlatformNodeWin* enclosing_node = GetLowestAccessibleCommonPlatformNode();
@@ -562,7 +597,8 @@ HRESULT AXPlatformNodeTextRangeProviderWin::GetEnclosingElement(
     return UIA_E_ELEMENTNOTAVAILABLE;
 
   while (enclosing_node->GetData().IsIgnored() ||
-         enclosing_node->GetData().role == ax::mojom::Role::kInlineTextBox) {
+         enclosing_node->GetData().role == ax::mojom::Role::kInlineTextBox ||
+         enclosing_node->IsChildOfLeaf()) {
     AXPlatformNodeWin* parent = static_cast<AXPlatformNodeWin*>(
         AXPlatformNode::FromNativeViewAccessible(enclosing_node->GetParent()));
     DCHECK(parent);
@@ -578,6 +614,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::GetEnclosingElement(
 
 HRESULT AXPlatformNodeTextRangeProviderWin::GetText(int max_count, BSTR* text) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_GETTEXT);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_GETTEXT);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(text);
 
   // -1 is a valid value that signifies that the caller wants complete text.
@@ -603,6 +640,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Move(TextUnit unit,
                                                  int count,
                                                  int* units_moved) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_MOVE);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_MOVE);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(units_moved);
 
   // Per MSDN, move with zero count has no effect.
@@ -617,8 +655,8 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Move(TextUnit unit,
   // Move the start of the text range forward or backward in the document by the
   // requested number of text unit boundaries.
   int start_units_moved = 0;
-  HRESULT hr = MoveEndpointByUnit(TextPatternRangeEndpoint_Start, unit, count,
-                                  &start_units_moved);
+  HRESULT hr = MoveEndpointByUnitImpl(TextPatternRangeEndpoint_Start, unit,
+                                      count, &start_units_moved);
 
   bool succeeded_move = SUCCEEDED(hr) && start_units_moved != 0;
   if (succeeded_move) {
@@ -630,8 +668,8 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Move(TextUnit unit,
         // by one text unit to expand the text range from the degenerate range
         // state.
         int current_start_units_moved = 0;
-        hr = MoveEndpointByUnit(TextPatternRangeEndpoint_Start, unit, -1,
-                                &current_start_units_moved);
+        hr = MoveEndpointByUnitImpl(TextPatternRangeEndpoint_Start, unit, -1,
+                                    &current_start_units_moved);
         start_units_moved -= 1;
         succeeded_move = SUCCEEDED(hr) && current_start_units_moved == -1 &&
                          start_units_moved > 0;
@@ -640,8 +678,8 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Move(TextUnit unit,
         // forward by one text unit to expand the text range from the degenerate
         // state.
         int end_units_moved = 0;
-        hr = MoveEndpointByUnit(TextPatternRangeEndpoint_End, unit, 1,
-                                &end_units_moved);
+        hr = MoveEndpointByUnitImpl(TextPatternRangeEndpoint_End, unit, 1,
+                                    &end_units_moved);
         succeeded_move = SUCCEEDED(hr) && end_units_moved == 1;
       }
 
@@ -650,7 +688,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Move(TextUnit unit,
       // sure to bring back the end endpoint to the end of the start's anchor.
       if (start_->anchor_id() != end_->anchor_id() &&
           (unit == TextUnit_Character || unit == TextUnit_Word)) {
-        ExpandToEnclosingUnit(unit);
+        ExpandToEnclosingUnitImpl(unit);
       }
     }
   }
@@ -673,6 +711,15 @@ HRESULT AXPlatformNodeTextRangeProviderWin::MoveEndpointByUnit(
     int count,
     int* units_moved) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_MOVEENDPOINTBYUNIT);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_MOVEENDPOINTBYUNIT);
+  return MoveEndpointByUnitImpl(endpoint, unit, count, units_moved);
+}
+
+HRESULT AXPlatformNodeTextRangeProviderWin::MoveEndpointByUnitImpl(
+    TextPatternRangeEndpoint endpoint,
+    TextUnit unit,
+    int count,
+    int* units_moved) {
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(units_moved);
 
   // Per MSDN, MoveEndpointByUnit with zero count has no effect.
@@ -737,6 +784,8 @@ HRESULT AXPlatformNodeTextRangeProviderWin::MoveEndpointByRange(
     ITextRangeProvider* other,
     TextPatternRangeEndpoint other_endpoint) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_MOVEENPOINTBYRANGE);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_MOVEENPOINTBYRANGE);
+
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_IN(other);
 
   Microsoft::WRL::ComPtr<AXPlatformNodeTextRangeProviderWin> other_provider;
@@ -764,7 +813,37 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Select() {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_SELECT);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL();
 
-  AXNodeRange new_selection_range(start_->Clone(), end_->Clone());
+  AXPositionInstance selection_start = start_->Clone();
+  AXPositionInstance selection_end = end_->Clone();
+
+  // Blink only supports selections within a single tree. So if start_ and  end_
+  // are in different trees, we can't directly pass them to the render process
+  // for selection.
+  if (selection_start->tree_id() != selection_end->tree_id()) {
+    // Prioritize the end position's tree, as a selection's focus object is the
+    // end of a selection.
+    selection_start = selection_end->CreatePositionAtStartOfAXTree();
+  }
+
+  DCHECK(!selection_start->IsNullPosition());
+  DCHECK(!selection_end->IsNullPosition());
+  DCHECK_EQ(selection_start->tree_id(), selection_end->tree_id());
+
+  // TODO(crbug.com/1124051): Blink does not support selection on the list
+  // markers. So if |selection_start| or |selection_end| are in list markers, we
+  // don't perform selection and return success. Remove this check once this bug
+  // is fixed.
+  if (selection_start->GetAnchor()->IsInListMarker() ||
+      selection_end->GetAnchor()->IsInListMarker()) {
+    return S_OK;
+  }
+
+  AXPlatformNodeDelegate* delegate =
+      GetDelegate(selection_start->tree_id(), selection_start->anchor_id());
+  DCHECK(delegate);
+
+  AXNodeRange new_selection_range(std::move(selection_start),
+                                  std::move(selection_end));
   RemoveFocusFromPreviousSelectionIfNeeded(new_selection_range);
 
   AXActionData action_data;
@@ -773,19 +852,22 @@ HRESULT AXPlatformNodeTextRangeProviderWin::Select() {
   action_data.focus_node_id = new_selection_range.focus()->anchor_id();
   action_data.focus_offset = new_selection_range.focus()->text_offset();
   action_data.action = ax::mojom::Action::kSetSelection;
-  owner()->GetDelegate()->AccessibilityPerformAction(action_data);
+
+  delegate->AccessibilityPerformAction(action_data);
   return S_OK;
 }
 
 HRESULT AXPlatformNodeTextRangeProviderWin::AddToSelection() {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_ADDTOSELECTION);
-  return UIA_E_INVALIDOPERATION;  // not supporting disjoint text selections
+  // Blink does not support disjoint text selections.
+  return UIA_E_INVALIDOPERATION;
 }
 
 HRESULT
 AXPlatformNodeTextRangeProviderWin::RemoveFromSelection() {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_REMOVEFROMSELECTION);
-  return UIA_E_INVALIDOPERATION;  // not supporting disjoint text selections
+  // Blink does not support disjoint text selections.
+  return UIA_E_INVALIDOPERATION;
 }
 
 HRESULT AXPlatformNodeTextRangeProviderWin::ScrollIntoView(BOOL align_to_top) {
@@ -868,6 +950,7 @@ HRESULT AXPlatformNodeTextRangeProviderWin::ScrollIntoView(BOOL align_to_top) {
 
 HRESULT AXPlatformNodeTextRangeProviderWin::GetChildren(SAFEARRAY** children) {
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXTRANGE_GETCHILDREN);
+  WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(UMA_API_TEXTRANGE_GETCHILDREN);
   UIA_VALIDATE_TEXTRANGEPROVIDER_CALL_1_OUT(children);
 
   std::vector<gfx::NativeViewAccessible> descendants;
@@ -932,6 +1015,7 @@ AXPlatformNodeTextRangeProviderWin::GetNextTextBoundaryPosition(
     AXBoundaryBehavior boundary_behavior,
     ax::mojom::MoveDirection boundary_direction) {
   // Override At[Start|End]OfLinePredicate for behavior specific to UIA.
+  DCHECK_NE(boundary_type, ax::mojom::TextBoundary::kNone);
   switch (boundary_type) {
     case ax::mojom::TextBoundary::kLineStart:
       return position->CreateBoundaryStartPosition(
@@ -1113,13 +1197,14 @@ void AXPlatformNodeTextRangeProviderWin::NormalizeTextRange() {
   // first snap them both to be unignored positions.
   NormalizeAsUnignoredTextRange();
 
-  // Do not normalize text ranges when a cursor or selection is visible. ATs
-  // may depend on the specific position that the caret or selection is at.
-  AXPlatformNodeDelegate* start_delegate = GetDelegate(start_.get());
-  AXPlatformNodeDelegate* end_delegate = GetDelegate(end_.get());
-  if ((start_delegate && start_delegate->HasVisibleCaretOrSelection()) ||
-      (start_delegate && end_delegate->HasVisibleCaretOrSelection()))
+  // When carets are visible or selections are occurring, the precise state of
+  // the TextPattern must be preserved so that the UIA client can handle
+  // scenarios such as determining which characters were deleted. So
+  // normalization must be bypassed.
+  if (HasCaretOrSelectionInPlainTextField(start_) ||
+      HasCaretOrSelectionInPlainTextField(end_)) {
     return;
+  }
 
   AXPositionInstance normalized_start =
       start_->AsLeafTextPositionBeforeCharacter();
@@ -1255,6 +1340,69 @@ AXPlatformNodeTextRangeProviderWin::GetLowestAccessibleCommonPlatformNode()
   DCHECK(platform_node);
 
   return platform_node->GetLowestAccessibleElement();
+}
+
+bool AXPlatformNodeTextRangeProviderWin::HasCaretOrSelectionInPlainTextField(
+    const AXPositionInstance& position) const {
+  // This condition fixes issues when the caret is inside a plain text field,
+  // but causes more issues when used inside of a rich text field. For this
+  // reason, if we have a caret or a selection inside of an editable node,
+  // restrict this to a plain text field as we gain nothing from using it in a
+  // rich text field.
+  AXPlatformNodeDelegate* delegate = GetDelegate(position.get());
+  if (delegate && delegate->HasVisibleCaretOrSelection()) {
+    if (!delegate->GetData().HasState(ax::mojom::State::kEditable) ||
+        (delegate->GetData().IsPlainTextField() ||
+         delegate->IsChildOfPlainTextField())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// static
+bool AXPlatformNodeTextRangeProviderWin::TextAttributeIsArrayType(
+    TEXTATTRIBUTEID attribute_id) {
+  // https://docs.microsoft.com/en-us/windows/win32/winauto/uiauto-textattribute-ids
+  return attribute_id == UIA_AnnotationTypesAttributeId ||
+         attribute_id == UIA_TabsAttributeId;
+}
+
+// static
+bool AXPlatformNodeTextRangeProviderWin::TextAttributeIsUiaReservedValue(
+    const base::win::VariantVector& vector) {
+  // Reserved values are always IUnknown.
+  if (vector.Type() != VT_UNKNOWN)
+    return false;
+
+  base::win::ScopedVariant mixed_attribute_value_variant;
+  {
+    Microsoft::WRL::ComPtr<IUnknown> mixed_attribute_value;
+    HRESULT hr = ::UiaGetReservedMixedAttributeValue(&mixed_attribute_value);
+    DCHECK(SUCCEEDED(hr));
+    mixed_attribute_value_variant.Set(mixed_attribute_value.Get());
+  }
+
+  base::win::ScopedVariant not_supported_value_variant;
+  {
+    Microsoft::WRL::ComPtr<IUnknown> not_supported_value;
+    HRESULT hr = ::UiaGetReservedNotSupportedValue(&not_supported_value);
+    DCHECK(SUCCEEDED(hr));
+    not_supported_value_variant.Set(not_supported_value.Get());
+  }
+
+  return !vector.Compare(mixed_attribute_value_variant) ||
+         !vector.Compare(not_supported_value_variant);
+}
+
+// static
+bool AXPlatformNodeTextRangeProviderWin::ShouldReleaseTextAttributeAsSafearray(
+    TEXTATTRIBUTEID attribute_id,
+    const base::win::VariantVector& attribute_value) {
+  // |vector| may be pre-populated with a UIA reserved value. In such a case, we
+  // must release as a scalar variant.
+  return TextAttributeIsArrayType(attribute_id) &&
+         !TextAttributeIsUiaReservedValue(attribute_value);
 }
 
 }  // namespace ui

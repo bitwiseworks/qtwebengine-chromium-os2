@@ -9,8 +9,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "core/fxge/render_defines.h"
-#include "third_party/base/ptr_util.h"
+#include "third_party/base/stl_util.h"
 #include "xfa/fde/cfde_textout.h"
 #include "xfa/fgas/font/cfgas_fontmgr.h"
 #include "xfa/fgas/font/cfgas_gefont.h"
@@ -51,18 +50,18 @@ void CFWL_WidgetTP::DrawText(const CFWL_ThemeText& pParams) {
   m_pTextOut->SetMatrix(matrix);
   m_pTextOut->DrawLogicText(pGraphics->GetRenderDevice(),
                             WideStringView(pParams.m_wsText.c_str(), iLen),
-                            pParams.m_rtPart);
+                            pParams.m_PartRect);
 }
 
 const RetainPtr<CFGAS_GEFont>& CFWL_WidgetTP::GetFont() const {
-  return m_pFDEFont;
+  return m_pFGASFont;
 }
 
 void CFWL_WidgetTP::InitializeArrowColorData() {
   if (m_pColorData)
     return;
 
-  m_pColorData = pdfium::MakeUnique<CColorData>();
+  m_pColorData = std::make_unique<CColorData>();
   m_pColorData->clrBorder[0] = ArgbEncode(255, 202, 216, 249);
   m_pColorData->clrBorder[1] = ArgbEncode(255, 171, 190, 233);
   m_pColorData->clrBorder[2] = ArgbEncode(255, 135, 147, 219);
@@ -85,9 +84,9 @@ void CFWL_WidgetTP::EnsureTTOInitialized() {
   if (m_pTextOut)
     return;
 
-  m_pFDEFont = CFWL_FontManager::GetInstance()->FindFont(L"Helvetica", 0, 0);
-  m_pTextOut = pdfium::MakeUnique<CFDE_TextOut>();
-  m_pTextOut->SetFont(m_pFDEFont);
+  m_pFGASFont = CFWL_FontManager::GetInstance()->FindFont(L"Helvetica", 0, 0);
+  m_pTextOut = std::make_unique<CFDE_TextOut>();
+  m_pTextOut->SetFont(m_pFGASFont);
   m_pTextOut->SetFontSize(FWLTHEME_CAPACITY_FontSize);
   m_pTextOut->SetTextColor(FWLTHEME_CAPACITY_TextColor);
 }
@@ -104,7 +103,8 @@ void CFWL_WidgetTP::DrawBorder(CXFA_Graphics* pGraphics,
                     rect.height - 2);
   pGraphics->SaveGraphState();
   pGraphics->SetFillColor(CXFA_GEColor(ArgbEncode(255, 0, 0, 0)));
-  pGraphics->FillPath(&path, FXFILL_ALTERNATE, &matrix);
+  pGraphics->FillPath(&path, CFX_FillRenderOptions::FillType::kEvenOdd,
+                      &matrix);
   pGraphics->RestoreGraphState();
 }
 
@@ -125,7 +125,8 @@ void CFWL_WidgetTP::FillSolidRect(CXFA_Graphics* pGraphics,
   path.AddRectangle(rect.left, rect.top, rect.width, rect.height);
   pGraphics->SaveGraphState();
   pGraphics->SetFillColor(CXFA_GEColor(fillColor));
-  pGraphics->FillPath(&path, FXFILL_WINDING, &matrix);
+  pGraphics->FillPath(&path, CFX_FillRenderOptions::FillType::kWinding,
+                      &matrix);
   pGraphics->RestoreGraphState();
 }
 
@@ -140,7 +141,7 @@ void CFWL_WidgetTP::DrawFocus(CXFA_Graphics* pGraphics,
   pGraphics->SaveGraphState();
   pGraphics->SetStrokeColor(CXFA_GEColor(0xFF000000));
   static constexpr float kDashPattern[2] = {1, 1};
-  pGraphics->SetLineDash(0.0f, kDashPattern, FX_ArraySize(kDashPattern));
+  pGraphics->SetLineDash(0.0f, kDashPattern, pdfium::size(kDashPattern));
   pGraphics->StrokePath(&path, &matrix);
   pGraphics->RestoreGraphState();
 }
@@ -194,7 +195,8 @@ void CFWL_WidgetTP::DrawArrow(CXFA_Graphics* pGraphics,
     }
   }
   pGraphics->SetFillColor(CXFA_GEColor(argSign));
-  pGraphics->FillPath(&path, FXFILL_WINDING, &matrix);
+  pGraphics->FillPath(&path, CFX_FillRenderOptions::FillType::kWinding,
+                      &matrix);
 }
 
 void CFWL_WidgetTP::DrawBtn(CXFA_Graphics* pGraphics,
@@ -222,7 +224,7 @@ void CFWL_WidgetTP::DrawArrowBtn(CXFA_Graphics* pGraphics,
 
 CFWL_FontData::CFWL_FontData() : m_dwStyles(0), m_dwCodePage(0) {}
 
-CFWL_FontData::~CFWL_FontData() {}
+CFWL_FontData::~CFWL_FontData() = default;
 
 bool CFWL_FontData::Equal(WideStringView wsFontFamily,
                           uint32_t dwFontStyles,
@@ -237,15 +239,10 @@ bool CFWL_FontData::LoadFont(WideStringView wsFontFamily,
   m_wsFamily = wsFontFamily;
   m_dwStyles = dwFontStyles;
   m_dwCodePage = dwCodePage;
-  if (!m_pFontMgr) {
-    m_pFontMgr = pdfium::MakeUnique<CFGAS_FontMgr>();
-    if (!m_pFontMgr->EnumFonts())
-      m_pFontMgr = nullptr;
-  }
 
   // TODO(tsepez): check usage of c_str() below.
   m_pFont = CFGAS_GEFont::LoadFont(wsFontFamily.unterminated_c_str(),
-                                   dwFontStyles, dwCodePage, m_pFontMgr.get());
+                                   dwFontStyles, dwCodePage);
   return !!m_pFont;
 }
 
@@ -275,11 +272,10 @@ RetainPtr<CFGAS_GEFont> CFWL_FontManager::FindFont(WideStringView wsFontFamily,
     if (pData->Equal(wsFontFamily, dwFontStyles, wCodePage))
       return pData->GetFont();
   }
-  auto pFontData = pdfium::MakeUnique<CFWL_FontData>();
+  auto pFontData = std::make_unique<CFWL_FontData>();
   if (!pFontData->LoadFont(wsFontFamily, dwFontStyles, wCodePage))
     return nullptr;
 
   m_FontsArray.push_back(std::move(pFontData));
   return m_FontsArray.back()->GetFont();
 }
-

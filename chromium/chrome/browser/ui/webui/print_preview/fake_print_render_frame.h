@@ -26,12 +26,15 @@ class FakePrintRenderFrame : public mojom::PrintRenderFrame {
   // printing::mojom::PrintRenderFrame:
   void PrintRequestedPages() override;
   void PrintForSystemDialog() override;
+  void SetPrintPreviewUI(
+      mojo::PendingAssociatedRemote<mojom::PrintPreviewUI> preview) override;
   void InitiatePrintPreview(
       mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer,
       bool has_selection) override;
   void PrintPreview(base::Value settings) override;
   void OnPrintPreviewDialogClosed() override;
-  void PrintFrameContent(mojom::PrintFrameContentParamsPtr params) override;
+  void PrintFrameContent(mojom::PrintFrameContentParamsPtr params,
+                         PrintFrameContentCallback callback) override;
   void PrintingDone(bool success) override;
   void SetPrintingEnabled(bool enabled) override;
   void PrintNodeUnderContextMenu() override;

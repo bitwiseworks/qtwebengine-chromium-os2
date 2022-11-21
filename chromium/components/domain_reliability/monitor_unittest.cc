@@ -15,17 +15,15 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/strings/string_piece.h"
-#include "base/test/test_simple_task_runner.h"
+#include "base/test/task_environment.h"
 #include "components/domain_reliability/baked_in_configs.h"
 #include "components/domain_reliability/beacon.h"
 #include "components/domain_reliability/config.h"
 #include "components/domain_reliability/google_configs.h"
 #include "components/domain_reliability/test_util.h"
-#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
-#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -54,14 +52,11 @@ class DomainReliabilityMonitorTest : public testing::Test {
   typedef DomainReliabilityMonitor::RequestInfo RequestInfo;
 
   DomainReliabilityMonitorTest()
-      : network_task_runner_(new base::TestSimpleTaskRunner()),
-        url_request_context_getter_(
-            new net::TestURLRequestContextGetter(network_task_runner_)),
-        time_(new MockTime()),
-        monitor_("test-reporter",
+      : time_(new MockTime()),
+        monitor_(&url_request_context_,
+                 "test-reporter",
                  DomainReliabilityContext::UploadAllowedCallback(),
                  std::unique_ptr<MockableTime>(time_)) {
-    monitor_.InitURLRequestContext(url_request_context_getter_);
     monitor_.SetDiscardUploads(false);
   }
 
@@ -79,7 +74,7 @@ class DomainReliabilityMonitorTest : public testing::Test {
     request.response_info.was_cached = false;
     request.response_info.network_accessed = true;
     request.response_info.was_fetched_via_proxy = false;
-    request.load_flags = 0;
+    request.allow_credentials = true;
     request.upload_depth = 0;
     return request;
   }
@@ -108,8 +103,8 @@ class DomainReliabilityMonitorTest : public testing::Test {
     return monitor_.AddContextForTesting(std::move(config));
   }
 
-  scoped_refptr<base::TestSimpleTaskRunner> network_task_runner_;
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
+  net::TestURLRequestContext url_request_context_;
   MockTime* time_;
   DomainReliabilityMonitor monitor_;
   DomainReliabilityMonitor::RequestInfo request_;
@@ -178,13 +173,13 @@ TEST_F(DomainReliabilityMonitorTest, DidNotAccessNetwork) {
   EXPECT_EQ(0u, CountQueuedBeacons(context));
 }
 
-// Make sure the monitor does not log requests that don't send cookies.
+// Make sure the monitor does not log requests that don't send credentials.
 TEST_F(DomainReliabilityMonitorTest, DoNotSendCookies) {
   const DomainReliabilityContext* context = CreateAndAddContext();
 
   RequestInfo request = MakeRequestInfo();
   request.url = GURL("http://example/");
-  request.load_flags = net::LOAD_DO_NOT_SEND_COOKIES;
+  request.allow_credentials = false;
   OnRequestLegComplete(request);
 
   EXPECT_EQ(0u, CountQueuedBeacons(context));
@@ -257,15 +252,14 @@ TEST_F(DomainReliabilityMonitorTest, NoCachedIPFromFailedRevalidationRequest) {
   EXPECT_TRUE(beacons[0]->server_ip.empty());
 }
 
-// Make sure the monitor does log uploads, even though they have
-// LOAD_DO_NOT_SEND_COOKIES.
+// Make sure the monitor does log uploads, even when credentials are not
+// allowed.
 TEST_F(DomainReliabilityMonitorTest, Upload) {
   const DomainReliabilityContext* context = CreateAndAddContext();
 
   RequestInfo request = MakeRequestInfo();
   request.url = GURL("http://example/");
-  request.load_flags =
-      net::LOAD_DO_NOT_SAVE_COOKIES | net::LOAD_DO_NOT_SEND_COOKIES;
+  request.allow_credentials = false;
   request.net_error = net::ERR_CONNECTION_RESET;
   request.upload_depth = 1;
   OnRequestLegComplete(request);

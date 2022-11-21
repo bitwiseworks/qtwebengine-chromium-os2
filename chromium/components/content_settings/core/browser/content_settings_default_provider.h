@@ -40,11 +40,13 @@ class DefaultProvider : public ObservableProvider {
       const ResourceIdentifier& resource_identifier,
       bool incognito) const override;
 
-  bool SetWebsiteSetting(const ContentSettingsPattern& primary_pattern,
-                         const ContentSettingsPattern& secondary_pattern,
-                         ContentSettingsType content_type,
-                         const ResourceIdentifier& resource_identifier,
-                         std::unique_ptr<base::Value>&& value) override;
+  bool SetWebsiteSetting(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsType content_type,
+      const ResourceIdentifier& resource_identifier,
+      std::unique_ptr<base::Value>&& value,
+      const ContentSettingConstraints& constraint = {}) override;
 
   void ClearAllContentSettingsRules(ContentSettingsType content_type) override;
 
@@ -73,7 +75,7 @@ class DefaultProvider : public ObservableProvider {
   void OnPreferenceChanged(const std::string& pref_name);
 
   // Clean up the obsolete preferences from the user's profile.
-  void DiscardObsoletePreferences();
+  void DiscardOrMigrateObsoletePreferences();
 
   // Copies of the pref data, so that we can read it on the IO thread.
   std::map<ContentSettingsType, std::unique_ptr<base::Value>> default_settings_;

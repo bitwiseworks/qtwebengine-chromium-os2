@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as DataGrid from '../data_grid/data_grid.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
 
@@ -63,7 +67,8 @@ export class BackgroundServiceView extends UI.Widget.VBox {
 
     /** @const {!UI.Action.Action} */
     this._recordAction =
-        /** @type {!UI.Action.Action} */ (self.UI.actionRegistry.action('background-service.toggle-recording'));
+        /** @type {!UI.Action.Action} */ (
+            UI.ActionRegistry.ActionRegistry.instance().action('background-service.toggle-recording'));
     /** @type {?UI.Toolbar.ToolbarButton} */
     this._recordButton = null;
 
@@ -180,7 +185,13 @@ export class BackgroundServiceView extends UI.Widget.VBox {
     }
 
     this._recordButton.setToggled(state.isRecording);
+    this._updateRecordButtonTooltip();
     this._showPreview(this._selectedEventNode);
+  }
+
+  _updateRecordButtonTooltip() {
+    const buttonTooltip = this._recordButton.toggled() ? ls`Stop recording events` : ls`Start recording events`;
+    this._recordButton.setTitle(buttonTooltip, 'background-service.toggle-recording');
   }
 
   /**
@@ -344,9 +355,11 @@ export class BackgroundServiceView extends UI.Widget.VBox {
     } else {
       const landingRecordButton = UI.Toolbar.Toolbar.createActionButton(this._recordAction);
 
-      const recordKey = createElementWithClass('b', 'background-service-shortcut');
-      recordKey.textContent =
-          self.UI.shortcutRegistry.shortcutDescriptorsForAction('background-service.toggle-recording')[0].name;
+      const recordKey = document.createElement('b');
+      recordKey.classList.add('background-service-shortcut');
+      recordKey.textContent = UI.ShortcutRegistry.ShortcutRegistry.instance()
+                                  .shortcutsForAction('background-service.toggle-recording')[0]
+                                  .title();
 
       const inlineButton = UI.UIUtils.createInlineButton(landingRecordButton);
       inlineButton.classList.add('background-service-record-inline-button');
@@ -363,7 +376,7 @@ export class BackgroundServiceView extends UI.Widget.VBox {
    * Saves all currently displayed events in a file (JSON format).
    */
   async _saveToFile() {
-    const fileName = `${this._serviceName}-${new Date().toISO8601Compact()}.json`;
+    const fileName = `${this._serviceName}-${Platform.DateUtilities.toISO8601Compact(new Date())}.json`;
     const stream = new Bindings.FileUtils.FileOutputStream();
 
     const accepted = await stream.open(fileName);
@@ -397,7 +410,8 @@ export class EventDataNode extends DataGrid.DataGrid.DataGridNode {
     preview.element.classList.add('background-service-metadata');
 
     for (const entry of this._eventMetadata) {
-      const div = createElementWithClass('div', 'background-service-metadata-entry');
+      const div = document.createElement('div');
+      div.classList.add('background-service-metadata-entry');
       div.createChild('div', 'background-service-metadata-name').textContent = entry.key + ': ';
       if (entry.value) {
         div.createChild('div', 'background-service-metadata-value source-code').textContent = entry.value;
@@ -409,7 +423,8 @@ export class EventDataNode extends DataGrid.DataGrid.DataGridNode {
     }
 
     if (!preview.element.children.length) {
-      const div = createElementWithClass('div', 'background-service-metadata-entry');
+      const div = document.createElement('div');
+      div.classList.add('background-service-metadata-entry');
       div.createChild('div', 'background-service-metadata-name').textContent = ls`No metadata for this event`;
       preview.element.appendChild(div);
     }

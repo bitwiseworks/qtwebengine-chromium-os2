@@ -154,6 +154,8 @@ class CONTENT_EXPORT WebUI {
   GetHandlersForTesting() = 0;
 
  private:
+  template <typename T>
+  static T GetValue(const base::Value& value);
 
   template <typename Is, typename... Args>
   struct Call;
@@ -169,6 +171,22 @@ class CONTENT_EXPORT WebUI {
     }
   };
 };
+
+template <>
+inline bool WebUI::GetValue<bool>(const base::Value& value) {
+  return value.GetBool();
+}
+
+template <>
+inline int WebUI::GetValue<int>(const base::Value& value) {
+  return value.GetInt();
+}
+
+template <>
+inline const std::string& WebUI::GetValue<const std::string&>(
+    const base::Value& value) {
+  return value.GetString();
+}
 
 }  // namespace content
 

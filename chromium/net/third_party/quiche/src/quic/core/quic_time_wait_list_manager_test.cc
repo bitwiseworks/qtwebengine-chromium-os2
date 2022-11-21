@@ -113,8 +113,8 @@ class MockAlarmFactory : public QuicAlarmFactory {
     return QuicArenaScopedPtr<MockAlarm>(
         new MockAlarm(std::move(delegate), alarm_index_++, this));
   }
-  MOCK_METHOD2(OnAlarmSet, void(int, QuicTime));
-  MOCK_METHOD1(OnAlarmCancelled, void(int));
+  MOCK_METHOD(void, OnAlarmSet, (int, QuicTime), ());
+  MOCK_METHOD(void, OnAlarmCancelled, (int), ());
 
  private:
   int alarm_index_ = 0;
@@ -153,8 +153,8 @@ class QuicTimeWaitListManagerTest : public QuicTest {
     termination_packets.push_back(std::unique_ptr<QuicEncryptedPacket>(
         new QuicEncryptedPacket(nullptr, 0, false)));
     time_wait_list_manager_.AddConnectionIdToTimeWait(
-        connection_id, false, QuicTimeWaitListManager::SEND_TERMINATION_PACKETS,
-        ENCRYPTION_INITIAL, &termination_packets);
+        connection_id, QuicTimeWaitListManager::SEND_TERMINATION_PACKETS,
+        TimeWaitConnectionInfo(false, &termination_packets));
   }
 
   void AddConnectionId(
@@ -163,8 +163,9 @@ class QuicTimeWaitListManagerTest : public QuicTest {
       QuicTimeWaitListManager::TimeWaitAction action,
       std::vector<std::unique_ptr<QuicEncryptedPacket>>* packets) {
     time_wait_list_manager_.AddConnectionIdToTimeWait(
-        connection_id, VersionHasIetfInvariantHeader(version.transport_version),
-        action, ENCRYPTION_INITIAL, packets);
+        connection_id, action,
+        TimeWaitConnectionInfo(
+            VersionHasIetfInvariantHeader(version.transport_version), packets));
   }
 
   bool IsConnectionIdInTimeWait(QuicConnectionId connection_id) {
@@ -323,7 +324,7 @@ TEST_F(QuicTimeWaitListManagerTest, SendConnectionClose) {
       std::unique_ptr<QuicEncryptedPacket>(new QuicEncryptedPacket(
           new char[kConnectionCloseLength], kConnectionCloseLength, true)));
   AddConnectionId(connection_id_, QuicVersionMax(),
-                  QuicTimeWaitListManager::SEND_TERMINATION_PACKETS,
+                  QuicTimeWaitListManager::SEND_CONNECTION_CLOSE_PACKETS,
                   &termination_packets);
   EXPECT_CALL(writer_, WritePacket(_, kConnectionCloseLength,
                                    self_address_.host(), peer_address_, _))
@@ -343,7 +344,7 @@ TEST_F(QuicTimeWaitListManagerTest, SendTwoConnectionCloses) {
       std::unique_ptr<QuicEncryptedPacket>(new QuicEncryptedPacket(
           new char[kConnectionCloseLength], kConnectionCloseLength, true)));
   AddConnectionId(connection_id_, QuicVersionMax(),
-                  QuicTimeWaitListManager::SEND_TERMINATION_PACKETS,
+                  QuicTimeWaitListManager::SEND_CONNECTION_CLOSE_PACKETS,
                   &termination_packets);
   EXPECT_CALL(writer_, WritePacket(_, kConnectionCloseLength,
                                    self_address_.host(), peer_address_, _))
@@ -629,17 +630,37 @@ TEST_F(QuicTimeWaitListManagerTest,
   termination_packets.push_back(
       std::unique_ptr<QuicEncryptedPacket>(new QuicEncryptedPacket(
           new char[kConnectionCloseLength], kConnectionCloseLength, true)));
-  // Add an ENCRYPTION_INITIAL termination packet.
   time_wait_list_manager_.AddConnectionIdToTimeWait(
-      connection_id_, /*ietf_quic=*/true,
-      QuicTimeWaitListManager::SEND_TERMINATION_PACKETS, ENCRYPTION_INITIAL,
-      &termination_packets);
+      connection_id_, QuicTimeWaitListManager::SEND_TERMINATION_PACKETS,
+      TimeWaitConnectionInfo(/*ietf_quic=*/true, &termination_packets));
 
   // Termination packet is not encrypted, instead, send stateless reset.
   EXPECT_CALL(writer_,
               WritePacket(_, _, self_address_.host(), peer_address_, _))
       .With(Args<0, 1>(PublicResetPacketEq(connection_id_)))
       .WillOnce(Return(WriteResult(WRITE_STATUS_OK, 0)));
+  // Processes IETF short header packet.
+  time_wait_list_manager_.ProcessPacket(
+      self_address_, peer_address_, connection_id_,
+      IETF_QUIC_SHORT_HEADER_PACKET, std::make_unique<QuicPerPacketContext>());
+}
+
+TEST_F(QuicTimeWaitListManagerTest,
+       SendConnectionClosePacketsInResponseToShortHeaders) {
+  const size_t kConnectionCloseLength = 100;
+  EXPECT_CALL(visitor_, OnConnectionAddedToTimeWaitList(connection_id_));
+  std::vector<std::unique_ptr<QuicEncryptedPacket>> termination_packets;
+  termination_packets.push_back(
+      std::unique_ptr<QuicEncryptedPacket>(new QuicEncryptedPacket(
+          new char[kConnectionCloseLength], kConnectionCloseLength, true)));
+  // Add a CONNECTION_CLOSE termination packet.
+  time_wait_list_manager_.AddConnectionIdToTimeWait(
+      connection_id_, QuicTimeWaitListManager::SEND_CONNECTION_CLOSE_PACKETS,
+      TimeWaitConnectionInfo(/*ietf_quic=*/true, &termination_packets));
+  EXPECT_CALL(writer_, WritePacket(_, kConnectionCloseLength,
+                                   self_address_.host(), peer_address_, _))
+      .WillOnce(Return(WriteResult(WRITE_STATUS_OK, 1)));
+
   // Processes IETF short header packet.
   time_wait_list_manager_.ProcessPacket(
       self_address_, peer_address_, connection_id_,

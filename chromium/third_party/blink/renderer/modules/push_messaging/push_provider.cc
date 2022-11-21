@@ -13,6 +13,8 @@
 #include "third_party/blink/renderer/modules/push_messaging/push_messaging_utils.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_subscription.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_subscription_options.h"
+#include "third_party/blink/renderer/modules/push_messaging/push_type_converter.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
@@ -22,7 +24,8 @@ namespace blink {
 const char PushProvider::kSupplementName[] = "PushProvider";
 
 PushProvider::PushProvider(ServiceWorkerRegistration& registration)
-    : Supplement<ServiceWorkerRegistration>(registration) {}
+    : Supplement<ServiceWorkerRegistration>(registration),
+      push_messaging_manager_(registration.GetExecutionContext()) {}
 
 // static
 PushProvider* PushProvider::From(ServiceWorkerRegistration* registration) {
@@ -41,9 +44,11 @@ PushProvider* PushProvider::From(ServiceWorkerRegistration* registration) {
 
 // static
 mojom::blink::PushMessaging* PushProvider::GetPushMessagingRemote() {
-  if (!push_messaging_manager_) {
+  if (!push_messaging_manager_.is_bound()) {
     Platform::Current()->GetBrowserInterfaceBroker()->GetInterface(
-        push_messaging_manager_.BindNewPipeAndPassReceiver());
+        push_messaging_manager_.BindNewPipeAndPassReceiver(
+            GetSupplementable()->GetExecutionContext()->GetTaskRunner(
+                TaskType::kMiscPlatformAPI)));
   }
 
   return push_messaging_manager_.get();
@@ -56,7 +61,7 @@ void PushProvider::Subscribe(
   DCHECK(callbacks);
 
   mojom::blink::PushSubscriptionOptionsPtr content_options_ptr =
-      ConvertSubscriptionOptionPointer(options);
+      mojo::ConvertTo<mojom::blink::PushSubscriptionOptionsPtr>(options);
 
   GetPushMessagingRemote()->Subscribe(
       GetSupplementable()->RegistrationId(), std::move(content_options_ptr),
@@ -120,6 +125,11 @@ void PushProvider::GetSubscription(
       GetSupplementable()->RegistrationId(),
       WTF::Bind(&PushProvider::DidGetSubscription, WrapPersistent(this),
                 WTF::Passed(std::move(callbacks))));
+}
+
+void PushProvider::Trace(Visitor* visitor) const {
+  visitor->Trace(push_messaging_manager_);
+  Supplement::Trace(visitor);
 }
 
 void PushProvider::DidGetSubscription(

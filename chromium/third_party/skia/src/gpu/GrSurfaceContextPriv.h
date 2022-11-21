@@ -17,13 +17,14 @@ class GrSurfaceContextPriv {
 public:
     GrRecordingContext* getContext() { return fSurfaceContext->fContext; }
 
+    GrSurfaceContextPriv(GrSurfaceContextPriv&&) = default;
 private:
     explicit GrSurfaceContextPriv(GrSurfaceContext* surfaceContext)
         : fSurfaceContext(surfaceContext) {
     }
 
-    GrSurfaceContextPriv(const GrSurfaceContextPriv&) {} // unimpl
-    GrSurfaceContextPriv& operator=(const GrSurfaceContextPriv&); // unimpl
+    GrSurfaceContextPriv(const GrSurfaceContextPriv&) = delete;
+    GrSurfaceContextPriv& operator=(const GrSurfaceContextPriv&) = delete;
 
     // No taking addresses of this type.
     const GrSurfaceContextPriv* operator&() const;
@@ -38,7 +39,7 @@ inline GrSurfaceContextPriv GrSurfaceContext::surfPriv() {
     return GrSurfaceContextPriv(this);
 }
 
-inline const GrSurfaceContextPriv GrSurfaceContext::surfPriv() const {
+inline const GrSurfaceContextPriv GrSurfaceContext::surfPriv() const {  // NOLINT(readability-const-return-type)
     return GrSurfaceContextPriv(const_cast<GrSurfaceContext*>(this));
 }
 

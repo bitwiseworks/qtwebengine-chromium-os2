@@ -40,6 +40,7 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayMode {
   ~ManagedDisplayMode();
   ManagedDisplayMode(const ManagedDisplayMode& other);
   ManagedDisplayMode& operator=(const ManagedDisplayMode& other);
+  bool operator==(const ManagedDisplayMode& other) const;
 
   // Returns the size in DIP which is visible to the user.
   gfx::Size GetSizeInDIP() const;
@@ -65,15 +66,6 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayMode {
   bool native_ = false;         // True if mode is native mode of the display.
   float device_scale_factor_ = 1.0f;  // The device scale factor of the mode.
 };
-
-inline bool operator==(const ManagedDisplayMode& lhs,
-                       const ManagedDisplayMode& rhs) {
-  return lhs.size() == rhs.size() &&
-         lhs.is_interlaced() == rhs.is_interlaced() &&
-         lhs.refresh_rate() == rhs.refresh_rate() &&
-         lhs.native() == rhs.native() &&
-         lhs.device_scale_factor() == rhs.device_scale_factor();
-}
 
 inline bool operator!=(const ManagedDisplayMode& lhs,
                        const ManagedDisplayMode& rhs) {
@@ -382,6 +374,10 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
 // Resets the synthesized display id for testing. This
 // is necessary to avoid overflowing the output index.
 void DISPLAY_MANAGER_EXPORT ResetDisplayIdForTest();
+
+// Generates a fake, synthesized display ID that will be used when the
+// |kInvalidDisplayId| is passed to |ManagedDisplayInfo| constructor.
+int64_t DISPLAY_MANAGER_EXPORT GetNextSynthesizedDisplayId(int64_t id);
 
 }  // namespace display
 

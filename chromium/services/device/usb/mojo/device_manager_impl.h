@@ -70,6 +70,8 @@ class DeviceManagerImpl : public mojom::UsbDeviceManager,
                    CheckAccessCallback callback) override;
 
   void OpenFileDescriptor(const std::string& guid,
+                          uint32_t drop_privileges_mask,
+                          mojo::PlatformHandle lifeline_fd,
                           OpenFileDescriptorCallback callback) override;
 
   void OnOpenFileDescriptor(OpenFileDescriptorCallback callback,

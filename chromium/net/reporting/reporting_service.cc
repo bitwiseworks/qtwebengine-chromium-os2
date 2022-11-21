@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/json/json_reader.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/tick_clock.h"
@@ -71,34 +72,33 @@ class ReportingServiceImpl : public ReportingService {
 
     // base::Unretained is safe because the callback is stored in
     // |task_backlog_| which will not outlive |this|.
-    DoOrBacklogTask(base::BindOnce(&ReportingServiceImpl::DoQueueReport,
-                                   base::Unretained(this),
-                                   std::move(sanitized_url), user_agent, group,
-                                   type, std::move(body), depth, queued_ticks));
+    // TODO(chlily): Get NetworkIsolationKey from caller.
+    NetworkIsolationKey network_isolation_key = NetworkIsolationKey::Todo();
+    DoOrBacklogTask(base::BindOnce(
+        &ReportingServiceImpl::DoQueueReport, base::Unretained(this),
+        network_isolation_key, std::move(sanitized_url), user_agent, group,
+        type, std::move(body), depth, queued_ticks));
   }
 
   void ProcessHeader(const GURL& url,
                      const std::string& header_string) override {
-    if (header_string.size() > kMaxJsonSize) {
-      ReportingHeaderParser::RecordHeaderDiscardedForJsonTooBig();
+    if (header_string.size() > kMaxJsonSize)
       return;
-    }
 
     std::unique_ptr<base::Value> header_value =
         base::JSONReader::ReadDeprecated("[" + header_string + "]",
                                          base::JSON_PARSE_RFC, kMaxJsonDepth);
-    if (!header_value) {
-      ReportingHeaderParser::RecordHeaderDiscardedForJsonInvalid();
+    if (!header_value)
       return;
-    }
 
     DVLOG(1) << "Received Reporting policy for " << url.GetOrigin();
-    DoOrBacklogTask(base::BindOnce(&ReportingServiceImpl::DoProcessHeader,
-                                   base::Unretained(this), url,
-                                   std::move(header_value)));
+    // TODO(chlily): Get the proper NetworkIsolationKey from the caller.
+    DoOrBacklogTask(base::BindOnce(
+        &ReportingServiceImpl::DoProcessHeader, base::Unretained(this),
+        NetworkIsolationKey::Todo(), url, std::move(header_value)));
   }
 
-  void RemoveBrowsingData(int data_type_mask,
+  void RemoveBrowsingData(uint64_t data_type_mask,
                           const base::RepeatingCallback<bool(const GURL&)>&
                               origin_filter) override {
     DoOrBacklogTask(base::BindOnce(&ReportingServiceImpl::DoRemoveBrowsingData,
@@ -106,7 +106,7 @@ class ReportingServiceImpl : public ReportingService {
                                    origin_filter));
   }
 
-  void RemoveAllBrowsingData(int data_type_mask) override {
+  void RemoveAllBrowsingData(uint64_t data_type_mask) override {
     DoOrBacklogTask(
         base::BindOnce(&ReportingServiceImpl::DoRemoveAllBrowsingData,
                        base::Unretained(this), data_type_mask));
@@ -148,7 +148,8 @@ class ReportingServiceImpl : public ReportingService {
     std::move(task).Run();
   }
 
-  void DoQueueReport(GURL sanitized_url,
+  void DoQueueReport(const NetworkIsolationKey& network_isolation_key,
+                     GURL sanitized_url,
                      const std::string& user_agent,
                      const std::string& group,
                      const std::string& type,
@@ -156,27 +157,28 @@ class ReportingServiceImpl : public ReportingService {
                      int depth,
                      base::TimeTicks queued_ticks) {
     DCHECK(initialized_);
-    context_->cache()->AddReport(sanitized_url, user_agent, group, type,
-                                 std::move(body), depth, queued_ticks,
-                                 0 /* attempts */);
+    context_->cache()->AddReport(network_isolation_key, sanitized_url,
+                                 user_agent, group, type, std::move(body),
+                                 depth, queued_ticks, 0 /* attempts */);
   }
 
-  void DoProcessHeader(const GURL& url,
+  void DoProcessHeader(const NetworkIsolationKey& network_isolation_key,
+                       const GURL& url,
                        std::unique_ptr<base::Value> header_value) {
     DCHECK(initialized_);
-    ReportingHeaderParser::ParseHeader(context_.get(), url,
-                                       std::move(header_value));
+    ReportingHeaderParser::ParseHeader(context_.get(), network_isolation_key,
+                                       url, std::move(header_value));
   }
 
   void DoRemoveBrowsingData(
-      int data_type_mask,
+      uint64_t data_type_mask,
       const base::RepeatingCallback<bool(const GURL&)>& origin_filter) {
     DCHECK(initialized_);
     ReportingBrowsingDataRemover::RemoveBrowsingData(
         context_->cache(), data_type_mask, origin_filter);
   }
 
-  void DoRemoveAllBrowsingData(int data_type_mask) {
+  void DoRemoveAllBrowsingData(uint64_t data_type_mask) {
     DCHECK(initialized_);
     ReportingBrowsingDataRemover::RemoveAllBrowsingData(context_->cache(),
                                                         data_type_mask);

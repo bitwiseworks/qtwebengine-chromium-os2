@@ -169,25 +169,37 @@ int TransitionArray::SearchNameForTesting(Name name, int* out_insertion_index) {
   return SearchName(name, out_insertion_index);
 }
 
+Map TransitionArray::SearchAndGetTargetForTesting(
+    PropertyKind kind, Name name, PropertyAttributes attributes) {
+  return SearchAndGetTarget(kind, name, attributes);
+}
+
 int TransitionArray::SearchSpecial(Symbol symbol, int* out_insertion_index) {
   return SearchName(symbol, out_insertion_index);
 }
 
 int TransitionArray::SearchName(Name name, int* out_insertion_index) {
   DCHECK(name.IsUniqueName());
+  // The name is taken from DescriptorArray, so it must already has a computed
+  // hash.
+  DCHECK(name.HasHashCode());
   return internal::Search<ALL_ENTRIES>(this, name, number_of_entries(),
                                        out_insertion_index);
 }
 
 TransitionsAccessor::TransitionsAccessor(Isolate* isolate, Map map,
                                          DisallowHeapAllocation* no_gc)
-    : isolate_(isolate), map_(map) {
+    : isolate_(isolate), map_(map), concurrent_access_(false) {
   Initialize();
   USE(no_gc);
 }
 
-TransitionsAccessor::TransitionsAccessor(Isolate* isolate, Handle<Map> map)
-    : isolate_(isolate), map_handle_(map), map_(*map) {
+TransitionsAccessor::TransitionsAccessor(Isolate* isolate, Handle<Map> map,
+                                         bool concurrent_access)
+    : isolate_(isolate),
+      map_handle_(map),
+      map_(*map),
+      concurrent_access_(concurrent_access) {
   Initialize();
 }
 
@@ -196,6 +208,8 @@ void TransitionsAccessor::Reload() {
   map_ = *map_handle_;
   Initialize();
 }
+
+int TransitionsAccessor::Capacity() { return transitions().Capacity(); }
 
 void TransitionsAccessor::Initialize() {
   raw_transitions_ = map_.raw_transitions(isolate_);

@@ -24,6 +24,7 @@
 #include "dawn_native/ComputePipeline.h"
 #include "dawn_native/Device.h"
 #include "dawn_native/PipelineLayout.h"
+#include "dawn_native/QuerySet.h"
 #include "dawn_native/Queue.h"
 #include "dawn_native/RenderPipeline.h"
 #include "dawn_native/RingBufferAllocator.h"
@@ -45,10 +46,11 @@ namespace dawn_native { namespace null {
     using ComputePipeline = ComputePipelineBase;
     class Device;
     using PipelineLayout = PipelineLayoutBase;
+    class QuerySet;
     class Queue;
     using RenderPipeline = RenderPipelineBase;
     using Sampler = SamplerBase;
-    using ShaderModule = ShaderModuleBase;
+    class ShaderModule;
     class SwapChain;
     using Texture = TextureBase;
     using TextureView = TextureViewBase;
@@ -62,6 +64,7 @@ namespace dawn_native { namespace null {
         using ComputePipelineType = ComputePipeline;
         using DeviceType = Device;
         using PipelineLayoutType = PipelineLayout;
+        using QuerySetType = QuerySet;
         using QueueType = Queue;
         using RenderPipelineType = RenderPipeline;
         using SamplerType = Sampler;
@@ -83,15 +86,14 @@ namespace dawn_native { namespace null {
 
     class Device : public DeviceBase {
       public:
-        Device(Adapter* adapter, const DeviceDescriptor* descriptor);
-        ~Device();
+        static ResultOrError<Device*> Create(Adapter* adapter, const DeviceDescriptor* descriptor);
+        ~Device() override;
+
+        MaybeError Initialize();
 
         CommandBufferBase* CreateCommandBuffer(CommandEncoder* encoder,
                                                const CommandBufferDescriptor* descriptor) override;
 
-        Serial GetCompletedCommandSerial() const final override;
-        Serial GetLastSubmittedCommandSerial() const final override;
-        Serial GetPendingCommandSerial() const override;
         MaybeError TickImpl() override;
 
         void AddPendingOperation(std::unique_ptr<PendingOperation> operation);
@@ -103,21 +105,32 @@ namespace dawn_native { namespace null {
                                            BufferBase* destination,
                                            uint64_t destinationOffset,
                                            uint64_t size) override;
+        MaybeError CopyFromStagingToTexture(const StagingBufferBase* source,
+                                            const TextureDataLayout& src,
+                                            TextureCopy* dst,
+                                            const Extent3D& copySizePixels) override;
 
-        MaybeError IncrementMemoryUsage(size_t bytes);
-        void DecrementMemoryUsage(size_t bytes);
+        MaybeError IncrementMemoryUsage(uint64_t bytes);
+        void DecrementMemoryUsage(uint64_t bytes);
+
+        uint32_t GetOptimalBytesPerRowAlignment() const override;
+        uint64_t GetOptimalBufferToTextureCopyOffsetAlignment() const override;
 
       private:
+        using DeviceBase::DeviceBase;
+
         ResultOrError<BindGroupBase*> CreateBindGroupImpl(
             const BindGroupDescriptor* descriptor) override;
         ResultOrError<BindGroupLayoutBase*> CreateBindGroupLayoutImpl(
             const BindGroupLayoutDescriptor* descriptor) override;
-        ResultOrError<BufferBase*> CreateBufferImpl(const BufferDescriptor* descriptor) override;
+        ResultOrError<Ref<BufferBase>> CreateBufferImpl(
+            const BufferDescriptor* descriptor) override;
         ResultOrError<ComputePipelineBase*> CreateComputePipelineImpl(
             const ComputePipelineDescriptor* descriptor) override;
         ResultOrError<PipelineLayoutBase*> CreatePipelineLayoutImpl(
             const PipelineLayoutDescriptor* descriptor) override;
-        ResultOrError<QueueBase*> CreateQueueImpl() override;
+        ResultOrError<QuerySetBase*> CreateQuerySetImpl(
+            const QuerySetDescriptor* descriptor) override;
         ResultOrError<RenderPipelineBase*> CreateRenderPipelineImpl(
             const RenderPipelineDescriptor* descriptor) override;
         ResultOrError<SamplerBase*> CreateSamplerImpl(const SamplerDescriptor* descriptor) override;
@@ -129,26 +142,27 @@ namespace dawn_native { namespace null {
             Surface* surface,
             NewSwapChainBase* previousSwapChain,
             const SwapChainDescriptor* descriptor) override;
-        ResultOrError<TextureBase*> CreateTextureImpl(const TextureDescriptor* descriptor) override;
+        ResultOrError<Ref<TextureBase>> CreateTextureImpl(
+            const TextureDescriptor* descriptor) override;
         ResultOrError<TextureViewBase*> CreateTextureViewImpl(
             TextureBase* texture,
             const TextureViewDescriptor* descriptor) override;
 
-        void Destroy() override;
+        ExecutionSerial CheckAndUpdateCompletedSerials() override;
+
+        void ShutDownImpl() override;
         MaybeError WaitForIdleForDestruction() override;
 
-        Serial mCompletedSerial = 0;
-        Serial mLastSubmittedSerial = 0;
         std::vector<std::unique_ptr<PendingOperation>> mPendingOperations;
 
-        static constexpr size_t kMaxMemoryUsage = 256 * 1024 * 1024;
+        static constexpr uint64_t kMaxMemoryUsage = 256 * 1024 * 1024;
         size_t mMemoryUsage = 0;
     };
 
     class Adapter : public AdapterBase {
       public:
         Adapter(InstanceBase* instance);
-        virtual ~Adapter();
+        ~Adapter() override;
 
         // Used for the tests that intend to use an adapter without all extensions enabled.
         void SetSupportedExtensions(const std::vector<const char*>& requiredExtensions);
@@ -169,65 +183,82 @@ namespace dawn_native { namespace null {
 
     // We don't have the complexity of placement-allocation of bind group data in
     // the Null backend. This class, keeps the binding data in a separate allocation for simplicity.
-    class BindGroup : private BindGroupDataHolder, public BindGroupBase {
+    class BindGroup final : private BindGroupDataHolder, public BindGroupBase {
       public:
         BindGroup(DeviceBase* device, const BindGroupDescriptor* descriptor);
+
+      private:
         ~BindGroup() override = default;
     };
 
-    class Buffer : public BufferBase {
+    class Buffer final : public BufferBase {
       public:
         Buffer(Device* device, const BufferDescriptor* descriptor);
-        ~Buffer();
 
-        void MapOperationCompleted(uint32_t serial, void* ptr, bool isWrite);
         void CopyFromStaging(StagingBufferBase* staging,
                              uint64_t sourceOffset,
                              uint64_t destinationOffset,
                              uint64_t size);
 
+        void DoWriteBuffer(uint64_t bufferOffset, const void* data, size_t size);
+
       private:
-        // Dawn API
-        MaybeError SetSubDataImpl(uint32_t start, uint32_t count, const void* data) override;
-        MaybeError MapReadAsyncImpl(uint32_t serial) override;
-        MaybeError MapWriteAsyncImpl(uint32_t serial) override;
+        ~Buffer() override;
+        MaybeError MapAsyncImpl(wgpu::MapMode mode, size_t offset, size_t size) override;
         void UnmapImpl() override;
         void DestroyImpl() override;
-
-        bool IsMapWritable() const override;
-        MaybeError MapAtCreationImpl(uint8_t** mappedPointer) override;
-        void MapAsyncImplCommon(uint32_t serial, bool isWrite);
+        bool IsCPUWritableAtCreation() const override;
+        MaybeError MapAtCreationImpl() override;
+        void* GetMappedPointerImpl() override;
 
         std::unique_ptr<uint8_t[]> mBackingData;
     };
 
-    class CommandBuffer : public CommandBufferBase {
+    class CommandBuffer final : public CommandBufferBase {
       public:
         CommandBuffer(CommandEncoder* encoder, const CommandBufferDescriptor* descriptor);
-        ~CommandBuffer();
-
-      private:
-        CommandIterator mCommands;
     };
 
-    class Queue : public QueueBase {
+    class QuerySet final : public QuerySetBase {
+      public:
+        QuerySet(Device* device, const QuerySetDescriptor* descriptor);
+
+      private:
+        ~QuerySet() override;
+
+        void DestroyImpl() override;
+    };
+
+    class Queue final : public QueueBase {
       public:
         Queue(Device* device);
-        ~Queue();
 
       private:
+        ~Queue() override;
         MaybeError SubmitImpl(uint32_t commandCount, CommandBufferBase* const* commands) override;
+        MaybeError WriteBufferImpl(BufferBase* buffer,
+                                   uint64_t bufferOffset,
+                                   const void* data,
+                                   size_t size) override;
     };
 
-    class SwapChain : public NewSwapChainBase {
+    class ShaderModule final : public ShaderModuleBase {
+      public:
+        using ShaderModuleBase::ShaderModuleBase;
+
+        MaybeError Initialize();
+    };
+
+    class SwapChain final : public NewSwapChainBase {
       public:
         SwapChain(Device* device,
                   Surface* surface,
                   NewSwapChainBase* previousSwapChain,
                   const SwapChainDescriptor* descriptor);
-        ~SwapChain() override;
 
       private:
+        ~SwapChain() override;
+
         Ref<Texture> mTexture;
 
         MaybeError PresentImpl() override;
@@ -235,14 +266,14 @@ namespace dawn_native { namespace null {
         void DetachFromSurfaceImpl() override;
     };
 
-    class OldSwapChain : public OldSwapChainBase {
+    class OldSwapChain final : public OldSwapChainBase {
       public:
         OldSwapChain(Device* device, const SwapChainDescriptor* descriptor);
-        ~OldSwapChain();
 
       protected:
+        ~OldSwapChain() override;
         TextureBase* GetNextTextureImpl(const TextureDescriptor* descriptor) override;
-        MaybeError OnBeforePresent(TextureBase*) override;
+        MaybeError OnBeforePresent(TextureViewBase*) override;
     };
 
     class NativeSwapChainImpl {

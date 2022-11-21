@@ -118,7 +118,8 @@ DEF_TEST(Skottie_Properties, reporter) {
                                                     "f": "test_font",
                                                     "s": 100,
                                                     "t": "inline_text",
-                                                    "lh": 120
+                                                    "lh": 120,
+                                                    "ls": 12
                                                   }
                                                 }
                                              ]
@@ -317,6 +318,7 @@ DEF_TEST(Skottie_Properties, reporter) {
       100,
       0,
       120,
+      12,
       0,
       SkTextUtils::kLeft_Align,
       Shaper::VAlign::kTopBaseline,
@@ -324,6 +326,7 @@ DEF_TEST(Skottie_Properties, reporter) {
       SkRect::MakeEmpty(),
       SK_ColorTRANSPARENT,
       SK_ColorTRANSPARENT,
+      TextPaintOrder::kFillStroke,
       false,
       false
     }));
@@ -382,6 +385,9 @@ DEF_TEST(Skottie_Annotations, reporter) {
             .make(&stream);
 
     REPORTER_ASSERT(reporter, animation);
+    REPORTER_ASSERT(reporter, animation->duration() == 10);
+    REPORTER_ASSERT(reporter, animation->inPoint()  == 0.0);
+    REPORTER_ASSERT(reporter, animation->outPoint() == 100.0);
 
     REPORTER_ASSERT(reporter, observer->fMarkers.size() == 2ul);
     REPORTER_ASSERT(reporter, std::get<0>(observer->fMarkers[0]) == "marker_1");
@@ -464,6 +470,7 @@ DEF_TEST(Skottie_Shaper_HAlign, reporter) {
                 tsize.text_size,
                 tsize.text_size,
                 0,
+                0,
                 talign.align,
                 skottie::Shaper::VAlign::kTopBaseline,
                 skottie::Shaper::ResizePolicy::kNone,
@@ -530,6 +537,7 @@ DEF_TEST(Skottie_Shaper_VAlign, reporter) {
                 tsize.text_size,
                 tsize.text_size,
                 0,
+                0,
                 SkTextUtils::Align::kCenter_Align,
                 talign.align,
                 skottie::Shaper::ResizePolicy::kNone,
@@ -566,6 +574,7 @@ DEF_TEST(Skottie_Shaper_FragmentGlyphs, reporter) {
         SkTypeface::MakeDefault(),
         18,
         18,
+         0,
          0,
         SkTextUtils::Align::kCenter_Align,
         Shaper::VAlign::kTop,
@@ -662,6 +671,7 @@ DEF_TEST(Skottie_Shaper_ExplicitFontMgr, reporter) {
         18,
         18,
          0,
+         0,
         SkTextUtils::Align::kCenter_Align,
         Shaper::VAlign::kTop,
         Shaper::ResizePolicy::kNone,
@@ -705,7 +715,7 @@ DEF_TEST(Skottie_Image_Loading, reporter) {
     private:
         sk_sp<ImageAsset> loadImageAsset(const char path[],
                                          const char name[],
-                                         const char id[]) const {
+                                         const char id[]) const override {
             return strcmp(id, "single_frame")
                     ? fMultiFrameAsset
                     : fSingleFrameAsset;

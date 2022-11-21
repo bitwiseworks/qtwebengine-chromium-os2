@@ -7,7 +7,7 @@
 #include <windows.h>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,7 +24,7 @@ HANDLE CreatePowerRequest(POWER_REQUEST_TYPE type,
     return INVALID_HANDLE_VALUE;
   }
 
-  base::string16 wide_description = base::ASCIIToUTF16(description);
+  std::wstring wide_description = base::ASCIIToWide(description);
   REASON_CONTEXT context = {0};
   context.Version = POWER_REQUEST_CONTEXT_VERSION;
   context.Flags = POWER_REQUEST_CONTEXT_SIMPLE_STRING;

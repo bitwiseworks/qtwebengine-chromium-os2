@@ -12,9 +12,16 @@ import("//testing/test.gni")
 import("//tools/grit/grit_rule.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
 
-if (is_linux) {
+if (is_linux || is_chromeos) {
   import("//build/linux/extract_symbols.gni")
 }
+
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
 
 assert(enable_extensions)
 
@@ -72,14 +79,15 @@ source_set("app_shell_lib") {
 
   # TODO(michaelpg): remove Mac support and always use aura.
   if (use_aura) {
-    deps += [
-      "//ui/aura",
-      "//ui/views",
-    ]
+    deps += [ "//ui/aura" ]
 
     if (use_x11) {
       deps += [ "//ui/events/devices/x11" ]
     }
+  }
+
+  if (toolkit_views) {
+    deps += [ "//ui/views" ]
   }
 
   sources = [
@@ -183,7 +191,8 @@ source_set("app_shell_lib") {
       "browser/shell_native_app_window_aura.h",
     ]
     deps += [
-      "//ui/base/mojom:cursor_type",
+      "//ui/base/cursor",
+      "//ui/base/cursor/mojom:cursor_type",
       "//ui/platform_window",
       "//ui/wm",
       "//ui/wm/public",
@@ -244,7 +253,7 @@ source_set("app_shell_lib") {
       "//ppapi/shared_impl:shared_impl",
     ]
 
-    if (is_linux) {
+    if (is_linux || is_chromeos) {
       deps += [ "//components/nacl/loader:nacl_helper" ]
 
       if (enable_nacl_nonsfi) {
@@ -262,7 +271,7 @@ executable("app_shell") {
   deps = [
     ":app_shell_lib",
     "//build/win:default_exe_manifest",
-    "//content/public/app:both",
+    "//content/public/app",
     "//extensions:shell_and_test_pak",
   ]
 
@@ -274,6 +283,8 @@ executable("app_shell") {
 }
 
 test("app_shell_unittests") {
+  use_xvfb = use_xvfb_in_this_config
+
   sources = [
     "../test/extensions_unittests_main.cc",
     "browser/api/identity/identity_api_unittest.cc",

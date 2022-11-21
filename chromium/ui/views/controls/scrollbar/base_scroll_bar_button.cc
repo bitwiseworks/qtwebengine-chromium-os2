@@ -11,10 +11,12 @@
 
 namespace views {
 
-BaseScrollBarButton::BaseScrollBarButton(ButtonListener* listener)
+BaseScrollBarButton::BaseScrollBarButton(ButtonListener* listener,
+                                         const base::TickClock* tick_clock)
     : Button(listener),
       repeater_(base::BindRepeating(&BaseScrollBarButton::RepeaterNotifyClick,
-                                    base::Unretained(this))) {}
+                                    base::Unretained(this)),
+                tick_clock) {}
 
 BaseScrollBarButton::~BaseScrollBarButton() = default;
 
@@ -42,8 +44,7 @@ void BaseScrollBarButton::RepeaterNotifyClick() {
   Button::NotifyClick(event);
 }
 
-BEGIN_METADATA(BaseScrollBarButton)
-METADATA_PARENT_CLASS(Button)
-END_METADATA()
+BEGIN_METADATA(BaseScrollBarButton, Button)
+END_METADATA
 
 }  // namespace views

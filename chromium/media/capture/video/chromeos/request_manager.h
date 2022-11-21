@@ -17,6 +17,7 @@
 #include "media/capture/mojom/image_capture.mojom.h"
 #include "media/capture/video/chromeos/camera_app_device_impl.h"
 #include "media/capture/video/chromeos/camera_device_delegate.h"
+#include "media/capture/video/chromeos/capture_metadata_dispatcher.h"
 #include "media/capture/video/chromeos/mojom/camera3.mojom.h"
 #include "media/capture/video/chromeos/mojom/camera_app.mojom.h"
 #include "media/capture/video/chromeos/request_builder.h"
@@ -44,32 +45,6 @@ constexpr int32_t kMinConfiguredStreams = 1;
 // Maximum configured streams could contain two optional YUV streams.
 constexpr int32_t kMaxConfiguredStreams = 4;
 
-// Interface that provides API to let Camera3AController to update the metadata
-// that will be sent with capture request.
-class CAPTURE_EXPORT CaptureMetadataDispatcher {
- public:
-  class ResultMetadataObserver {
-   public:
-    virtual ~ResultMetadataObserver() {}
-    virtual void OnResultMetadataAvailable(
-        const cros::mojom::CameraMetadataPtr&) = 0;
-  };
-
-  virtual ~CaptureMetadataDispatcher() {}
-  virtual void AddResultMetadataObserver(ResultMetadataObserver* observer) = 0;
-  virtual void RemoveResultMetadataObserver(
-      ResultMetadataObserver* observer) = 0;
-  virtual void SetCaptureMetadata(cros::mojom::CameraMetadataTag tag,
-                                  cros::mojom::EntryType type,
-                                  size_t count,
-                                  std::vector<uint8_t> value) = 0;
-  virtual void SetRepeatingCaptureMetadata(cros::mojom::CameraMetadataTag tag,
-                                           cros::mojom::EntryType type,
-                                           size_t count,
-                                           std::vector<uint8_t> value) = 0;
-  virtual void UnsetRepeatingCaptureMetadata(
-      cros::mojom::CameraMetadataTag tag) = 0;
-};
 
 // RequestManager is responsible for managing the flow for sending capture
 // requests and receiving capture results. Having RequestBuilder to build
@@ -119,6 +94,9 @@ class CAPTURE_EXPORT RequestManager final
     cros::mojom::Effect reprocess_effect;
     // The input buffer id for this capture request.
     base::Optional<uint64_t> input_buffer_id;
+    // The orientation which is stored at the time the request is prepared. It
+    // can be used to construct the reprocess job info when the result is back.
+    int32_t orientation;
   };
 
   RequestManager(mojo::PendingReceiver<cros::mojom::Camera3CallbackOps>
@@ -207,17 +185,20 @@ class CAPTURE_EXPORT RequestManager final
   struct ReprocessJobInfo {
     ReprocessJobInfo(ReprocessTaskQueue queue,
                      cros::mojom::CameraMetadataPtr metadata,
-                     uint64_t timestamp);
+                     uint64_t timestamp,
+                     int32_t orientation);
     ReprocessJobInfo(ReprocessJobInfo&& info);
     ~ReprocessJobInfo();
 
     ReprocessTaskQueue task_queue;
     cros::mojom::CameraMetadataPtr metadata;
     uint64_t shutter_timestamp;
+    int32_t orientation;
   };
 
   // Puts Jpeg orientation information into the metadata.
-  void SetJpegOrientation(cros::mojom::CameraMetadataPtr* settings);
+  void SetJpegOrientation(cros::mojom::CameraMetadataPtr* settings,
+                          int32_t orientation);
 
   // Puts sensor timestamp into the metadata for reprocess request.
   void SetSensorTimestamp(cros::mojom::CameraMetadataPtr* settings,

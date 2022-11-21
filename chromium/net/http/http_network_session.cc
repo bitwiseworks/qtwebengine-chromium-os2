@@ -9,8 +9,9 @@
 #include <utility>
 
 #include "base/atomic_sequence_num.h"
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -87,10 +88,11 @@ HttpNetworkSession::Params::Params()
       enable_http2(true),
       spdy_session_max_recv_window_size(kSpdySessionMaxRecvWindowSize),
       spdy_session_max_queued_capped_frames(kSpdySessionMaxQueuedCappedFrames),
+      http2_end_stream_with_data_frame(false),
       time_func(&base::TimeTicks::Now),
       enable_http2_alternative_service(false),
       enable_websocket_over_http2(false),
-      enable_quic(false),
+      enable_quic(true),
       enable_quic_proxies_for_https_urls(false),
       disable_idle_sockets_close_on_memory_pressure(false),
       key_auth_cache_server_entries_by_network_isolation_key(false) {
@@ -109,6 +111,7 @@ HttpNetworkSession::Context::Context()
       transport_security_state(nullptr),
       cert_transparency_verifier(nullptr),
       ct_policy_enforcer(nullptr),
+      sct_auditing_delegate(nullptr),
       proxy_resolution_service(nullptr),
       proxy_delegate(nullptr),
       http_user_agent_settings(nullptr),
@@ -152,7 +155,8 @@ HttpNetworkSession::HttpNetworkSession(const Params& params,
                           context.transport_security_state,
                           context.cert_transparency_verifier,
                           context.ct_policy_enforcer,
-                          &ssl_client_session_cache_),
+                          &ssl_client_session_cache_,
+                          context.sct_auditing_delegate),
       push_delegate_(nullptr),
       quic_stream_factory_(context.net_log,
                            context.host_resolver,
@@ -165,6 +169,7 @@ HttpNetworkSession::HttpNetworkSession(const Params& params,
                            context.ct_policy_enforcer,
                            context.transport_security_state,
                            context.cert_transparency_verifier,
+                           context.sct_auditing_delegate,
                            context.socket_performance_watcher_factory,
                            context.quic_crypto_client_stream_factory,
                            context.quic_context),
@@ -180,6 +185,7 @@ HttpNetworkSession::HttpNetworkSession(const Params& params,
                          params.spdy_session_max_queued_capped_frames,
                          AddDefaultHttp2Settings(params.http2_settings),
                          params.greased_http2_frame,
+                         params.http2_end_stream_with_data_frame,
                          params.time_func,
                          context.network_quality_estimator),
       http_stream_factory_(std::make_unique<HttpStreamFactory>(this)),
@@ -208,9 +214,9 @@ HttpNetworkSession::HttpNetworkSession(const Params& params,
       context.quic_context->params()->max_server_configs_stored_in_properties);
 
   if (!params_.disable_idle_sockets_close_on_memory_pressure) {
-    memory_pressure_listener_.reset(
-        new base::MemoryPressureListener(base::BindRepeating(
-            &HttpNetworkSession::OnMemoryPressure, base::Unretained(this))));
+    memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
+        FROM_HERE, base::BindRepeating(&HttpNetworkSession::OnMemoryPressure,
+                                       base::Unretained(this)));
   }
 }
 
@@ -283,8 +289,6 @@ std::unique_ptr<base::Value> HttpNetworkSession::QuicInfoToValue() const {
                    quic_params->reduced_ping_timeout.InSeconds());
   dict->SetBoolean("retry_without_alt_svc_on_quic_errors",
                    quic_params->retry_without_alt_svc_on_quic_errors);
-  dict->SetBoolean("race_cert_verification",
-                   quic_params->race_cert_verification);
   dict->SetBoolean("disable_bidirectional_streams",
                    quic_params->disable_bidirectional_streams);
   dict->SetBoolean("close_sessions_on_ip_change",

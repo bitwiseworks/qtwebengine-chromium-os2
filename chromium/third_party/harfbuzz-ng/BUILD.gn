@@ -19,7 +19,16 @@ if (use_system_harfbuzz) {
     ]
     packages = [
       "harfbuzz",
+      "harfbuzz-subset",
     ]
+  }
+} else if (use_qt_harfbuzz) {
+  config("harfbuzz_from_qt") {
+    visibility = [
+      "//third_party:freetype_harfbuzz",
+      "//third_party/freetype:freetype_source",
+    ]
+    include_dirs = [ qt_harfbuzz_includes ]
   }
 } else {
   config("harfbuzz_config") {
@@ -62,7 +71,6 @@ if (use_system_harfbuzz) {
     ]
 
     sources = [
-      "src/src/hb-aat-fdsc-table.hh",
       "src/src/hb-aat-layout-ankr-table.hh",
       "src/src/hb-aat-layout-bsln-table.hh",
       "src/src/hb-aat-layout-feat-table.hh",
@@ -237,6 +245,7 @@ if (use_system_harfbuzz) {
       "HAVE_INTEL_ATOMIC_PRIMITIVES",
       "HAVE_ROUNDF",
       "HB_NO_MMAP",
+      "HB_NO_RESOURCE_FORK",
 
       # Size reductions by disabling parts that we do not currently require:
 
@@ -281,9 +290,11 @@ if (use_system_harfbuzz) {
     }
 
     if (use_system_freetype) {
-      configs += [ "//build/linux:freetype_from_pkgconfig" ]
+      configs += [ "//third_party/freetype:freetype_from_pkgconfig" ]
+    } else if (use_qt_freetype) {
+      configs += [ "//third_party/freetype:freetype_from_qt" ]
     } else {
-      configs += [ "//third_party/freetype:freetype_config" ]
+      configs += [ "//third_party/freetype:freetype_component_config" ]
     }
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [

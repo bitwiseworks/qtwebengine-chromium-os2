@@ -11,17 +11,31 @@
 
 namespace WTF {
 
-TEST(NewLinkedHashSetTest, CopyConstructAndAssignInt) {
-  NewLinkedHashSet<int> set1;
+static_assert(!WTF::IsTraceable<LinkedHashSet<int>>::value,
+              "LinkedHashSet must not be traceable.");
+static_assert(!WTF::IsTraceable<LinkedHashSet<String>>::value,
+              "LinkedHashSet must not be traceable.");
+
+template <typename T>
+int* const ValueInstanceCount<T>::kDeletedValue =
+    reinterpret_cast<int*>(static_cast<uintptr_t>(-1));
+
+TEST(LinkedHashSetTest, CopyConstructAndAssignInt) {
+  using Set = LinkedHashSet<ValueInstanceCount<int>>;
+  // Declare the counters before the set, because they have to outlive teh set.
+  int counter1 = 0;
+  int counter2 = 0;
+  int counter3 = 0;
+  Set set1;
   EXPECT_EQ(set1.size(), 0u);
   EXPECT_TRUE(set1.IsEmpty());
-  set1.insert(1);
-  set1.insert(2);
-  set1.insert(3);
+  set1.insert(ValueInstanceCount<int>(&counter1, 1));
+  set1.insert(ValueInstanceCount<int>(&counter2, 2));
+  set1.insert(ValueInstanceCount<int>(&counter3, 3));
   EXPECT_EQ(set1.size(), 3u);
-  NewLinkedHashSet<int> set2(set1);
+  Set set2(set1);
   EXPECT_EQ(set2.size(), 3u);
-  NewLinkedHashSet<int> set3;
+  Set set3;
   EXPECT_EQ(set3.size(), 0u);
   set3 = set2;
   EXPECT_EQ(set3.size(), 3u);
@@ -29,17 +43,24 @@ TEST(NewLinkedHashSetTest, CopyConstructAndAssignInt) {
   auto it2 = set2.begin();
   auto it3 = set3.begin();
   for (int i = 0; i < 3; i++) {
-    EXPECT_EQ(*it1, i + 1);
-    EXPECT_EQ(*it2, i + 1);
-    EXPECT_EQ(*it3, i + 1);
+    EXPECT_EQ(it1->Value(), i + 1);
+    EXPECT_EQ(it2->Value(), i + 1);
+    EXPECT_EQ(it3->Value(), i + 1);
     ++it1;
     ++it2;
     ++it3;
   }
+
+  // Each object is now in all 3 sets.
+  // Count 2x because each set uses hash map and vector.
+  EXPECT_EQ(counter1, 6);
+  EXPECT_EQ(counter2, 6);
+  EXPECT_EQ(counter3, 6);
 }
 
-TEST(NewLinkedHashSetTest, CopyConstructAndAssignIntPtr) {
-  NewLinkedHashSet<int*> set1;
+TEST(LinkedHashSetTest, CopyConstructAndAssignIntPtr) {
+  using Set = LinkedHashSet<int*>;
+  Set set1;
   EXPECT_EQ(set1.size(), 0u);
   EXPECT_TRUE(set1.IsEmpty());
   std::unique_ptr<int> int1 = std::make_unique<int>(1);
@@ -49,9 +70,9 @@ TEST(NewLinkedHashSetTest, CopyConstructAndAssignIntPtr) {
   set1.insert(int2.get());
   set1.insert(int3.get());
   EXPECT_EQ(set1.size(), 3u);
-  NewLinkedHashSet<int*> set2(set1);
+  Set set2(set1);
   EXPECT_EQ(set2.size(), 3u);
-  NewLinkedHashSet<int*> set3;
+  Set set3;
   EXPECT_EQ(set3.size(), 0u);
   set3 = set2;
   EXPECT_EQ(set3.size(), 3u);
@@ -67,6 +88,7 @@ TEST(NewLinkedHashSetTest, CopyConstructAndAssignIntPtr) {
     ++it3;
   }
 
+  // Changing the pointed values in one set should change it in all sets.
   for (int* ptr : set1)
     *ptr += 1000;
   it1 = set1.begin();
@@ -82,17 +104,18 @@ TEST(NewLinkedHashSetTest, CopyConstructAndAssignIntPtr) {
   }
 }
 
-TEST(NewLinkedHashSetTest, CopyConstructAndAssignString) {
-  NewLinkedHashSet<String> set1;
+TEST(LinkedHashSetTest, CopyConstructAndAssignString) {
+  using Set = LinkedHashSet<String>;
+  Set set1;
   EXPECT_EQ(set1.size(), 0u);
   EXPECT_TRUE(set1.IsEmpty());
   set1.insert("1");
   set1.insert("2");
   set1.insert("3");
   EXPECT_EQ(set1.size(), 3u);
-  NewLinkedHashSet<String> set2(set1);
+  Set set2(set1);
   EXPECT_EQ(set2.size(), 3u);
-  NewLinkedHashSet<String> set3;
+  Set set3;
   EXPECT_EQ(set3.size(), 0u);
   set3 = set2;
   EXPECT_EQ(set3.size(), 3u);
@@ -107,22 +130,40 @@ TEST(NewLinkedHashSetTest, CopyConstructAndAssignString) {
     ++it2;
     ++it3;
   }
+
+  // Changing one set should not affect the others.
+  set1.clear();
+  set1.insert("11");
+  set1.insert("12");
+  set1.insert("13");
+  it1 = set1.begin();
+  it2 = set2.begin();
+  it3 = set3.begin();
+  for (int i = 0; i < 3; i++) {
+    EXPECT_EQ(*it1, String(Vector<UChar>({'1', '1' + i})));
+    EXPECT_EQ(*it2, String(Vector<UChar>({'1' + i})));
+    EXPECT_EQ(*it3, String(Vector<UChar>({'1' + i})));
+    ++it1;
+    ++it2;
+    ++it3;
+  }
 }
 
-TEST(NewLinkedHashSetTest, MoveConstructAndAssignInt) {
-  NewLinkedHashSet<ValueInstanceCount<int>> set1;
-  EXPECT_EQ(set1.size(), 0u);
-  EXPECT_TRUE(set1.IsEmpty());
+TEST(LinkedHashSetTest, MoveConstructAndAssignInt) {
+  using Set = LinkedHashSet<ValueInstanceCount<int>>;
   int counter1 = 0;
   int counter2 = 0;
   int counter3 = 0;
+  Set set1;
+  EXPECT_EQ(set1.size(), 0u);
+  EXPECT_TRUE(set1.IsEmpty());
   set1.insert(ValueInstanceCount<int>(&counter1, 1));
   set1.insert(ValueInstanceCount<int>(&counter2, 2));
   set1.insert(ValueInstanceCount<int>(&counter3, 3));
   EXPECT_EQ(set1.size(), 3u);
-  NewLinkedHashSet<ValueInstanceCount<int>> set2(std::move(set1));
+  Set set2(std::move(set1));
   EXPECT_EQ(set2.size(), 3u);
-  NewLinkedHashSet<ValueInstanceCount<int>> set3;
+  Set set3;
   EXPECT_EQ(set3.size(), 0u);
   set3 = std::move(set2);
   EXPECT_EQ(set3.size(), 3u);
@@ -138,27 +179,28 @@ TEST(NewLinkedHashSetTest, MoveConstructAndAssignInt) {
   EXPECT_EQ(counter2, 2);
   EXPECT_EQ(counter3, 2);
 
-  NewLinkedHashSet<ValueInstanceCount<int>> set4(set3);
+  Set set4(set3);
   // Copy constructor was used, each object is in set3 and set4.
   EXPECT_EQ(counter1, 4);
   EXPECT_EQ(counter2, 4);
   EXPECT_EQ(counter3, 4);
 }
 
-TEST(NewLinkedHashSetTest, MoveConstructAndAssignString) {
-  NewLinkedHashSet<ValueInstanceCount<String>> set1;
-  EXPECT_EQ(set1.size(), 0u);
-  EXPECT_TRUE(set1.IsEmpty());
+TEST(LinkedHashSetTest, MoveConstructAndAssignString) {
+  using Set = LinkedHashSet<ValueInstanceCount<String>>;
   int counter1 = 0;
   int counter2 = 0;
   int counter3 = 0;
+  Set set1;
+  EXPECT_EQ(set1.size(), 0u);
+  EXPECT_TRUE(set1.IsEmpty());
   set1.insert(ValueInstanceCount<String>(&counter1, "1"));
   set1.insert(ValueInstanceCount<String>(&counter2, "2"));
   set1.insert(ValueInstanceCount<String>(&counter3, "3"));
   EXPECT_EQ(set1.size(), 3u);
-  NewLinkedHashSet<ValueInstanceCount<String>> set2(std::move(set1));
+  Set set2(std::move(set1));
   EXPECT_EQ(set2.size(), 3u);
-  NewLinkedHashSet<ValueInstanceCount<String>> set3;
+  Set set3;
   EXPECT_EQ(set3.size(), 0u);
   set3 = std::move(set2);
   EXPECT_EQ(set3.size(), 3u);
@@ -174,22 +216,22 @@ TEST(NewLinkedHashSetTest, MoveConstructAndAssignString) {
   EXPECT_EQ(counter2, 2);
   EXPECT_EQ(counter3, 2);
 
-  NewLinkedHashSet<ValueInstanceCount<String>> set4(set3);
+  Set set4(set3);
   // Copy constructor was used, each object is in set3 and set4.
   EXPECT_EQ(counter1, 4);
   EXPECT_EQ(counter2, 4);
   EXPECT_EQ(counter3, 4);
 }
 
-TEST(NewLinkedHashSetTest, Iterator) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, Iterator) {
+  using Set = LinkedHashSet<int>;
   Set set;
   EXPECT_TRUE(set.begin() == set.end());
   EXPECT_TRUE(set.rbegin() == set.rend());
 }
 
-TEST(NewLinkedHashSetTest, FrontAndBack) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, FrontAndBack) {
+  using Set = LinkedHashSet<int>;
   Set set;
   EXPECT_EQ(set.size(), 0u);
   EXPECT_TRUE(set.IsEmpty());
@@ -215,8 +257,8 @@ TEST(NewLinkedHashSetTest, FrontAndBack) {
   EXPECT_EQ(set.back(), 1);
 }
 
-TEST(NewLinkedHashSetTest, FindAndContains) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, FindAndContains) {
+  using Set = LinkedHashSet<int>;
   Set set;
   set.insert(2);
   set.AppendOrMoveToLast(2);
@@ -247,8 +289,8 @@ TEST(NewLinkedHashSetTest, FindAndContains) {
   EXPECT_FALSE(set.Contains(10));
 }
 
-TEST(NewLinkedHashSetTest, Insert) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, Insert) {
+  using Set = LinkedHashSet<int>;
   Set set;
   Set::AddResult result = set.insert(1);
   EXPECT_TRUE(result.is_new_entry);
@@ -280,8 +322,8 @@ TEST(NewLinkedHashSetTest, Insert) {
   EXPECT_TRUE(it == set.end());
 }
 
-TEST(NewLinkedHashSetTest, InsertBefore) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, InsertBefore) {
+  using Set = LinkedHashSet<int>;
   Set set;
 
   set.InsertBefore(set.begin(), 1);
@@ -307,8 +349,8 @@ TEST(NewLinkedHashSetTest, InsertBefore) {
   EXPECT_TRUE(it == set.end());
 }
 
-TEST(NewLinkedHashSetTest, AppendOrMoveToLast) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, AppendOrMoveToLast) {
+  using Set = LinkedHashSet<int>;
   Set set;
   Set::AddResult result = set.AppendOrMoveToLast(1);
   EXPECT_TRUE(result.is_new_entry);
@@ -334,8 +376,8 @@ TEST(NewLinkedHashSetTest, AppendOrMoveToLast) {
   EXPECT_EQ(*it, 3);
 }
 
-TEST(NewLinkedHashSetTest, PrependOrMoveToFirst) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, PrependOrMoveToFirst) {
+  using Set = LinkedHashSet<int>;
   Set set;
   Set::AddResult result = set.PrependOrMoveToFirst(1);
   EXPECT_TRUE(result.is_new_entry);
@@ -361,8 +403,8 @@ TEST(NewLinkedHashSetTest, PrependOrMoveToFirst) {
   EXPECT_EQ(*it, 2);
 }
 
-TEST(NewLinkedHashSetTest, Erase) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, Erase) {
+  using Set = LinkedHashSet<int>;
   Set set;
   set.insert(1);
   set.insert(2);
@@ -372,7 +414,9 @@ TEST(NewLinkedHashSetTest, Erase) {
 
   Set::const_iterator it = set.begin();
   ++it;
+  EXPECT_TRUE(set.Contains(2));
   set.erase(it);
+  EXPECT_FALSE(set.Contains(2));
   it = set.begin();
   EXPECT_EQ(*it, 1);
   ++it;
@@ -382,7 +426,9 @@ TEST(NewLinkedHashSetTest, Erase) {
   ++it;
   EXPECT_EQ(*it, 5);
 
+  EXPECT_TRUE(set.Contains(3));
   set.erase(3);
+  EXPECT_FALSE(set.Contains(3));
   it = set.begin();
   EXPECT_EQ(*it, 1);
   ++it;
@@ -401,8 +447,8 @@ TEST(NewLinkedHashSetTest, Erase) {
   EXPECT_EQ(*it, 6);
 }
 
-TEST(NewLinkedHashSetTest, RemoveFirst) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, RemoveFirst) {
+  using Set = LinkedHashSet<int>;
   Set set;
   set.insert(1);
   set.insert(2);
@@ -422,8 +468,8 @@ TEST(NewLinkedHashSetTest, RemoveFirst) {
   EXPECT_TRUE(set.begin() == set.end());
 }
 
-TEST(NewLinkedHashSetTest, pop_back) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, pop_back) {
+  using Set = LinkedHashSet<int>;
   Set set;
   set.insert(1);
   set.insert(2);
@@ -443,8 +489,8 @@ TEST(NewLinkedHashSetTest, pop_back) {
   EXPECT_TRUE(set.begin() == set.end());
 }
 
-TEST(NewLinkedHashSetTest, Clear) {
-  using Set = NewLinkedHashSet<int>;
+TEST(LinkedHashSetTest, Clear) {
+  using Set = LinkedHashSet<int>;
   Set set;
   set.insert(1);
   set.insert(2);
@@ -458,6 +504,60 @@ TEST(NewLinkedHashSetTest, Clear) {
   EXPECT_EQ(*it, 1);
   ++it;
   EXPECT_TRUE(it == set.end());
+}
+
+// A unit type that has empty std::string value.
+struct EmptyString {
+  EmptyString() = default;
+  explicit EmptyString(WTF::HashTableDeletedValueType) : deleted_(true) {}
+  ~EmptyString() { CHECK(ok_); }
+
+  bool operator==(const EmptyString& other) const {
+    return str_ == other.str_ && deleted_ == other.deleted_ &&
+           empty_ == other.empty_;
+  }
+
+  bool IsHashTableDeletedValue() const { return deleted_; }
+
+  std::string str_;
+  bool ok_ = true;
+  bool deleted_ = false;
+  bool empty_ = false;
+};
+
+template <>
+struct HashTraits<EmptyString> : SimpleClassHashTraits<EmptyString> {
+  static const bool kEmptyValueIsZero = false;
+
+  // This overrides SimpleClassHashTraits<EmptyString>::EmptyValue() which
+  // returns EmptyString().
+  static EmptyString EmptyValue() {
+    EmptyString empty;
+    empty.empty_ = true;
+    return empty;
+  }
+};
+
+template <>
+struct DefaultHash<EmptyString> {
+  struct Hash {
+    static unsigned GetHash(const EmptyString&) { return 0; }
+    static bool Equal(const EmptyString& value1, const EmptyString& value2) {
+      return value1 == value2;
+    }
+    static const bool safe_to_compare_to_empty_or_deleted = true;
+  };
+};
+
+// This ensures that LinkedHashSet can store a struct that needs
+// HashTraits<>::kEmptyValueIsZero set to false. The default EmptyValue() of
+// SimpleClassHashTraits<> returns a value created with the default constructor,
+// so a custom HashTraits that sets kEmptyValueIsZero to false and also
+// overrides EmptyValue() to provide another empty value is needed.
+TEST(LinkedHashSetEmptyTest, EmptyString) {
+  using Set = LinkedHashSet<EmptyString>;
+  Set set;
+  set.insert(EmptyString());
 }
 
 }  // namespace WTF

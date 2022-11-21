@@ -17,7 +17,8 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/components/app_registrar.h"
-#include "chrome/browser/web_applications/components/app_shortcut_manager.h"
+#include "chrome/browser/web_applications/components/install_finalizer.h"
+#include "chrome/browser/web_applications/components/os_integration_manager.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "chrome/browser/web_applications/components/web_app_provider_base.h"
 #include "chrome/browser/web_applications/test/test_web_app_ui_manager.h"
@@ -25,6 +26,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/browser/api/management/management_api.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_registry.h"
@@ -35,6 +37,7 @@
 #include "extensions/test/result_catcher.h"
 #include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 using extensions::Extension;
 using extensions::Manifest;
@@ -127,14 +130,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, NoPermission) {
   ASSERT_TRUE(RunExtensionSubtest("management/no_permission", "test.html"));
 }
 
-// Disabled: http://crbug.com/174411
-#if defined(OS_WIN)
-#define MAYBE_Uninstall DISABLED_Uninstall
-#else
-#define MAYBE_Uninstall Uninstall
-#endif
-
-IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, MAYBE_Uninstall) {
+IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, Uninstall) {
   LoadExtensions();
   // Confirmation dialog will be shown for uninstallations except for self.
   extensions::ScopedTestDialogAutoConfirm auto_confirm(
@@ -200,8 +196,8 @@ class InstallReplacementWebAppApiTest : public ExtensionManagementApiTest {
     ASSERT_TRUE(https_test_server_.Start());
 
     web_app::WebAppProviderBase::GetProviderBase(profile())
-        ->shortcut_manager()
-        .SuppressShortcutsForTesting();
+        ->os_integration_manager()
+        .SuppressOsHooksForTesting();
   }
 
   void RunTest(const char* manifest,
@@ -240,9 +236,12 @@ class InstallReplacementWebAppApiTest : public ExtensionManagementApiTest {
     chrome::SetAutoAcceptPWAInstallConfirmationForTesting(true);
     const GURL start_url = https_test_server_.GetURL(web_app_start_url);
     web_app::AppId web_app_id = web_app::GenerateAppIdFromURL(start_url);
-
     auto* provider =
         web_app::WebAppProviderBase::GetProviderBase(browser()->profile());
+    // Async legacy finalizer install was causing this test to be flaky (see
+    // crbug.com/1094616).
+    provider->install_finalizer().RemoveLegacyInstallFinalizerForTesting();
+
     EXPECT_FALSE(provider->registrar().IsLocallyInstalled(start_url));
     EXPECT_EQ(0, static_cast<int>(
                      provider->ui_manager().GetNumWindowsForApp(web_app_id)));
@@ -294,9 +293,10 @@ IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, NotWebstore) {
     chrome.test.notifyPass();
   });)";
 
-  RunTest(kManifest,
-          "/management/install_replacement_web_app/good_web_app/index.html",
-          kBackground, false /* from_webstore */);
+  RunTest(
+      kManifest,
+      "/management/install_replacement_web_app/acceptable_web_app/index.html",
+      kBackground, false /* from_webstore */);
 }
 
 IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, NoGesture) {
@@ -307,9 +307,10 @@ IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, NoGesture) {
     chrome.test.notifyPass();
   });)";
 
-  RunTest(kManifest,
-          "/management/install_replacement_web_app/good_web_app/index.html",
-          kBackground, true /* from_webstore */);
+  RunTest(
+      kManifest,
+      "/management/install_replacement_web_app/acceptable_web_app/index.html",
+      kBackground, true /* from_webstore */);
 }
 
 IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, NotInstallableWebApp) {
@@ -329,7 +330,7 @@ IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, NotInstallableWebApp) {
 
 IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, InstallableWebApp) {
   static constexpr char kGoodWebAppURL[] =
-      "/management/install_replacement_web_app/good_web_app/index.html";
+      "/management/install_replacement_web_app/acceptable_web_app/index.html";
 
   RunInstallableWebAppTest(kManifest, kGoodWebAppURL, kGoodWebAppURL);
 }
@@ -339,10 +340,12 @@ IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest, InstallableWebApp) {
 IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest,
                        InstallableWebAppWithStartUrl) {
   static constexpr char kGoodWebAppUrl[] =
-      "/management/install_replacement_web_app/good_web_app_with_start_url/"
+      "/management/install_replacement_web_app/"
+      "acceptable_web_app_with_start_url/"
       "index.html";
   static constexpr char kGoodWebAppStartUrl[] =
-      "/management/install_replacement_web_app/good_web_app_with_start_url/"
+      "/management/install_replacement_web_app/"
+      "acceptable_web_app_with_start_url/"
       "pwa_start_url.html";
 
   RunInstallableWebAppTest(kManifest, kGoodWebAppUrl, kGoodWebAppStartUrl);
@@ -351,20 +354,13 @@ IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest,
 IN_PROC_BROWSER_TEST_F(InstallReplacementWebAppApiTest,
                        InstallableWebAppInPlatformApp) {
   static constexpr char kGoodWebAppURL[] =
-      "/management/install_replacement_web_app/good_web_app/index.html";
+      "/management/install_replacement_web_app/acceptable_web_app/index.html";
 
   RunInstallableWebAppTest(kAppManifest, kGoodWebAppURL, kGoodWebAppURL);
 }
 
-// Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
-#define MAYBE_ManagementPolicyAllowed DISABLED_ManagementPolicyAllowed
-#else
-#define MAYBE_ManagementPolicyAllowed ManagementPolicyAllowed
-#endif  // defined(OS_WIN)
 // Tests actions on extensions when no management policy is in place.
-IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest,
-                       MAYBE_ManagementPolicyAllowed) {
+IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, ManagementPolicyAllowed) {
   LoadExtensions();
   extensions::ScopedTestDialogAutoConfirm auto_confirm(
       extensions::ScopedTestDialogAutoConfirm::ACCEPT);
@@ -385,15 +381,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest,
                                  extensions::ExtensionRegistry::EVERYTHING));
 }
 
-// Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
-#define MAYBE_ManagementPolicyProhibited DISABLED_ManagementPolicyProhibited
-#else
-#define MAYBE_ManagementPolicyProhibited ManagementPolicyProhibited
-#endif  // defined(OS_WIN)
 // Tests actions on extensions when management policy prohibits those actions.
-IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest,
-                       MAYBE_ManagementPolicyProhibited) {
+IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, ManagementPolicyProhibited) {
   LoadExtensions();
   extensions::ExtensionRegistry* registry =
       extensions::ExtensionRegistry::Get(browser()->profile());
@@ -462,15 +451,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, LaunchPanelApp) {
   ASSERT_TRUE(app_browser->is_type_app());
 }
 
-// Disabled: crbug.com/230165, crbug.com/915339, crbug.com/979399
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
-    defined(OS_CHROMEOS)
-#define MAYBE_LaunchTabApp DISABLED_LaunchTabApp
-#else
-#define MAYBE_LaunchTabApp LaunchTabApp
-#endif
-
-IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, MAYBE_LaunchTabApp) {
+IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, LaunchTabApp) {
   // Load an extension that calls launchApp() on any app that gets
   // installed.
   ExtensionTestMessageListener launcher_loaded("launcher loaded", false);
@@ -519,7 +500,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiTest, MAYBE_LaunchTabApp) {
 }
 
 // Flaky on MacOS: crbug.com/915339
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #define MAYBE_LaunchType DISABLED_LaunchType
 #else
 #define MAYBE_LaunchType LaunchType

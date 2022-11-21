@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/atomicops.h"
+#include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -101,6 +102,7 @@ class COMPONENT_EXPORT(TRACING_CPP) ProducerClient
   void ActivateTriggers(const std::vector<std::string>&) override;
   size_t shared_buffer_page_size_kb() const override;
   bool IsShmemProvidedByProducer() const override;
+  void Sync(std::function<void()> callback) override;
 
   void BindClientAndHostPipesForTesting(
       mojo::PendingReceiver<mojom::ProducerClient>,

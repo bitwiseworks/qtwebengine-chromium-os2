@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/logging.h"
 #include "base/win/win_util.h"
 #include "ui/base/win/shell.h"
 #include "ui/gfx/geometry/rect.h"
@@ -71,6 +70,7 @@ void FullscreenHandler::SetFullscreenImpl(bool fullscreen) {
 
   fullscreen_ = fullscreen;
 
+  auto ref = weak_ptr_factory_.GetWeakPtr();
   if (fullscreen_) {
     // Set new window style and size.
     SetWindowLong(hwnd_, GWL_STYLE,
@@ -103,6 +103,8 @@ void FullscreenHandler::SetFullscreenImpl(bool fullscreen) {
                  new_rect.height(),
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
   }
+  if (!ref)
+    return;
 
   MarkFullscreen(fullscreen);
 }

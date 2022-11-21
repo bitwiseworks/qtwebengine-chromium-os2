@@ -4,7 +4,6 @@
 
 #include "ui/views/controls/resize_area.h"
 
-#include "base/logging.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/cursor/cursor.h"
@@ -78,8 +77,7 @@ void ResizeArea::SetInitialPosition(int event_x) {
   initial_position_ = point.x();
 }
 
-BEGIN_METADATA(ResizeArea)
-METADATA_PARENT_CLASS(View)
-END_METADATA()
+BEGIN_METADATA(ResizeArea, View)
+END_METADATA
 
 }  // namespace views

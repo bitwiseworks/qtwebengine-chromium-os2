@@ -119,7 +119,7 @@ void CookiesEventRouter::OnCookieChange(bool otr,
                    change.cause != net::CookieChangeCause::INSERTED);
 
   Profile* profile =
-      otr ? profile_->GetOffTheRecordProfile() : profile_->GetOriginalProfile();
+      otr ? profile_->GetPrimaryOTRProfile() : profile_->GetOriginalProfile();
   api::cookies::Cookie cookie = cookies_helpers::CreateCookie(
       change.cookie, cookies_helpers::GetStoreIdFromProfile(profile));
   dict->Set(cookies_api_constants::kCookieKey, cookie.ToValue());
@@ -175,8 +175,8 @@ void CookiesEventRouter::MaybeStartListening() {
   DCHECK(profile_);
 
   Profile* original_profile = profile_->GetOriginalProfile();
-  Profile* otr_profile = original_profile->HasOffTheRecordProfile()
-                             ? original_profile->GetOffTheRecordProfile()
+  Profile* otr_profile = original_profile->HasPrimaryOTRProfile()
+                             ? original_profile->GetPrimaryOTRProfile()
                              : nullptr;
 
   if (!receiver_.is_bound())
@@ -233,7 +233,7 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
   // Read/validate input parameters.
   std::string error;
   if (!ParseUrl(extension(), parsed_args_->details.url, &url_, true, &error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   std::string store_id =
       parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
@@ -241,7 +241,7 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
     parsed_args_->details.store_id.reset(new std::string(store_id));
@@ -256,16 +256,17 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
 }
 
 void CookiesGetFunction::GetCookieListCallback(
-    const net::CookieStatusList& cookie_status_list,
-    const net::CookieStatusList& excluded_cookies) {
+    const net::CookieAccessResultList& cookie_list,
+    const net::CookieAccessResultList& excluded_cookies) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  for (const net::CookieWithStatus& cookie_with_status : cookie_status_list) {
+  for (const net::CookieWithAccessResult& cookie_with_access_result :
+       cookie_list) {
     // Return the first matching cookie. Relies on the fact that the
     // CookieManager interface returns them in canonical order (longest path,
     // then earliest creation time).
-    if (cookie_with_status.cookie.Name() == parsed_args_->details.name) {
+    if (cookie_with_access_result.cookie.Name() == parsed_args_->details.name) {
       api::cookies::Cookie api_cookie = cookies_helpers::CreateCookie(
-          cookie_with_status.cookie, *parsed_args_->details.store_id);
+          cookie_with_access_result.cookie, *parsed_args_->details.store_id);
       Respond(ArgumentList(api::cookies::Get::Results::Create(api_cookie)));
       return;
     }
@@ -289,7 +290,7 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
   if (parsed_args_->details.url.get() &&
       !ParseUrl(extension(), *parsed_args_->details.url, &url_, false,
                 &error)) {
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
   }
 
   std::string store_id =
@@ -298,7 +299,7 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
     parsed_args_->details.store_id.reset(new std::string(store_id));
@@ -336,14 +337,14 @@ void CookiesGetAllFunction::GetAllCookiesCallback(
 }
 
 void CookiesGetAllFunction::GetCookieListCallback(
-    const net::CookieStatusList& cookie_status_list,
-    const net::CookieStatusList& excluded_cookies) {
+    const net::CookieAccessResultList& cookie_list,
+    const net::CookieAccessResultList& excluded_cookies) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   ResponseValue response;
   if (extension()) {
     std::vector<api::cookies::Cookie> match_vector;
-    cookies_helpers::AppendMatchingCookiesFromCookieStatusListToVector(
-        cookie_status_list, &parsed_args_->details, extension(), &match_vector);
+    cookies_helpers::AppendMatchingCookiesFromCookieAccessResultListToVector(
+        cookie_list, &parsed_args_->details, extension(), &match_vector);
 
     response =
         ArgumentList(api::cookies::GetAll::Results::Create(match_vector));
@@ -367,7 +368,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
   // Read/validate input parameters.
   std::string error;
   if (!ParseUrl(extension(), parsed_args_->details.url, &url_, true, &error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   std::string store_id =
       parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
@@ -375,7 +376,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
     parsed_args_->details.store_id.reset(new std::string(store_id));
@@ -437,7 +438,8 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
     // is generated.
     success_ = false;
     state_ = SET_COMPLETED;
-    GetCookieListCallback(net::CookieStatusList(), net::CookieStatusList());
+    GetCookieListCallback(net::CookieAccessResultList(),
+                          net::CookieAccessResultList());
     return AlreadyResponded();
   }
 
@@ -450,7 +452,7 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
       net::CookieOptions::SameSiteCookieContext::MakeInclusive());
   DCHECK(!url_.is_empty() && url_.is_valid());
   cookie_manager->SetCanonicalCookie(
-      *cc, url_.scheme(), options,
+      *cc, url_, options,
       base::BindOnce(&CookiesSetFunction::SetCanonicalCookieCallback, this));
   cookies_helpers::GetCookieListFromManager(
       cookie_manager, url_,
@@ -461,16 +463,16 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
 }
 
 void CookiesSetFunction::SetCanonicalCookieCallback(
-    net::CanonicalCookie::CookieInclusionStatus set_cookie_result) {
+    net::CookieAccessResult set_cookie_result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(NO_RESPONSE, state_);
   state_ = SET_COMPLETED;
-  success_ = set_cookie_result.IsInclude();
+  success_ = set_cookie_result.status.IsInclude();
 }
 
 void CookiesSetFunction::GetCookieListCallback(
-    const net::CookieStatusList& cookie_list,
-    const net::CookieStatusList& excluded_cookies) {
+    const net::CookieAccessResultList& cookie_list,
+    const net::CookieAccessResultList& excluded_cookies) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(SET_COMPLETED, state_);
   state_ = GET_COMPLETED;
@@ -485,16 +487,17 @@ void CookiesSetFunction::GetCookieListCallback(
   }
 
   ResponseValue value;
-  for (const net::CookieWithStatus& cookie_with_status : cookie_list) {
+  for (const net::CookieWithAccessResult& cookie_with_access_result :
+       cookie_list) {
     // Return the first matching cookie. Relies on the fact that the
     // CookieMonster returns them in canonical order (longest path, then
     // earliest creation time).
     std::string name =
         parsed_args_->details.name.get() ? *parsed_args_->details.name
                                          : std::string();
-    if (cookie_with_status.cookie.Name() == name) {
+    if (cookie_with_access_result.cookie.Name() == name) {
       api::cookies::Cookie api_cookie = cookies_helpers::CreateCookie(
-          cookie_with_status.cookie, *parsed_args_->details.store_id);
+          cookie_with_access_result.cookie, *parsed_args_->details.store_id);
       value = ArgumentList(api::cookies::Set::Results::Create(api_cookie));
       break;
     }
@@ -516,7 +519,7 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
   // Read/validate input parameters.
   std::string error;
   if (!ParseUrl(extension(), parsed_args_->details.url, &url_, true, &error))
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   std::string store_id =
       parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
@@ -524,7 +527,7 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
-    return RespondNow(Error(error));
+    return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
     parsed_args_->details.store_id.reset(new std::string(store_id));
@@ -560,8 +563,8 @@ ExtensionFunction::ResponseAction CookiesGetAllCookieStoresFunction::Run() {
   Profile* incognito_profile = NULL;
   std::unique_ptr<base::ListValue> incognito_tab_ids;
   if (include_incognito_information() &&
-      original_profile->HasOffTheRecordProfile()) {
-    incognito_profile = original_profile->GetOffTheRecordProfile();
+      original_profile->HasPrimaryOTRProfile()) {
+    incognito_profile = original_profile->GetPrimaryOTRProfile();
     if (incognito_profile)
       incognito_tab_ids.reset(new base::ListValue());
   }

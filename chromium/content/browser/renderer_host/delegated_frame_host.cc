@@ -23,6 +23,7 @@
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/public/common/content_switches.h"
+#include "third_party/blink/public/mojom/page/record_content_to_visible_time_request.mojom.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/dip_util.h"
@@ -79,7 +80,7 @@ void DelegatedFrameHost::RemoveObserverForTesting(Observer* observer) {
 void DelegatedFrameHost::WasShown(
     const viz::LocalSurfaceId& new_local_surface_id,
     const gfx::Size& new_dip_size,
-    const base::Optional<RecordContentToVisibleTimeRequest>&
+    blink::mojom::RecordContentToVisibleTimeRequestPtr
         record_tab_switch_time_request) {
   // Cancel any pending frame eviction and unpause it if paused.
   SetFrameEvictionStateAndNotifyObservers(FrameEvictionState::kNotStarted);
@@ -88,8 +89,8 @@ void DelegatedFrameHost::WasShown(
   if (record_tab_switch_time_request && compositor_) {
     compositor_->RequestPresentationTimeForNextFrame(
         tab_switch_time_recorder_.TabWasShown(
-            true /* has_saved_frames */, record_tab_switch_time_request.value(),
-            base::TimeTicks::Now()));
+            true /* has_saved_frames */,
+            std::move(record_tab_switch_time_request), base::TimeTicks::Now()));
   }
 
   // Use the default deadline to synchronize web content with browser UI.
@@ -148,10 +149,15 @@ void DelegatedFrameHost::CopyFromCompositingSurfaceInternal(
     const gfx::Size& output_size,
     viz::CopyOutputRequest::ResultFormat format,
     viz::CopyOutputRequest::CopyOutputRequestCallback callback) {
-  DCHECK(CanCopyFromCompositingSurface());
 
   auto request =
       std::make_unique<viz::CopyOutputRequest>(format, std::move(callback));
+
+  // It is possible for us to not have a valid surface to copy from. Such as
+  // if a navigation fails to complete. In such a case do not attempt to request
+  // a copy.
+  if (!CanCopyFromCompositingSurface())
+    return;
 
   if (!src_subrect.IsEmpty()) {
     request->set_area(
@@ -218,6 +224,16 @@ void DelegatedFrameHost::EmbedSurface(
   local_surface_id_ = new_local_surface_id;
   surface_dip_size_ = new_dip_size;
 
+  // The embedding of a new surface completes the navigation process.
+  pre_navigation_local_surface_id_ = viz::LocalSurfaceId();
+
+  // Navigations performed while hidden delay embedding until transitioning to
+  // becoming visible. So we may not have a valid surace when DidNavigate is
+  // called. Cache the first surface here so we have the correct oldest surface
+  // to fallback to.
+  if (!first_local_surface_id_after_navigation_.is_valid())
+    first_local_surface_id_after_navigation_ = local_surface_id_;
+
   viz::SurfaceId new_primary_surface_id(frame_sink_id_, local_surface_id_);
 
   if (!client_->DelegatedFrameHostIsVisible()) {
@@ -242,7 +258,7 @@ void DelegatedFrameHost::EmbedSurface(
 
   if (!primary_surface_id ||
       primary_surface_id->local_surface_id() != local_surface_id_) {
-#if defined(OS_WIN) || defined(USE_X11)
+#if defined(OS_WIN) || (defined(OS_LINUX) && !defined(OS_CHROMEOS))
     // On Windows and Linux, we would like to produce new content as soon as
     // possible or the OS will create an additional black gutter. Until we can
     // block resize on surface synchronization on these platforms, we will not
@@ -294,8 +310,17 @@ void DelegatedFrameHost::ResetFallbackToFirstNavigationSurface() {
     return;
   }
 
+  // We never completed navigation, evict our surfaces.
+  if (pre_navigation_local_surface_id_.is_valid() &&
+      !first_local_surface_id_after_navigation_.is_valid()) {
+    EvictDelegatedFrame();
+  }
+
   client_->DelegatedFrameHostGetLayer()->SetOldestAcceptableFallback(
-      viz::SurfaceId(frame_sink_id_, first_local_surface_id_after_navigation_));
+      first_local_surface_id_after_navigation_.is_valid()
+          ? viz::SurfaceId(frame_sink_id_,
+                           first_local_surface_id_after_navigation_)
+          : viz::SurfaceId());
 }
 
 void DelegatedFrameHost::EvictDelegatedFrame() {
@@ -375,13 +400,20 @@ void DelegatedFrameHost::ContinueDelegatedFrameEviction() {
   if (!HasSavedFrame())
     return;
 
-  DCHECK(!client_->DelegatedFrameHostIsVisible());
   std::vector<viz::SurfaceId> surface_ids = {
       client_->CollectSurfaceIdsForEviction()};
+
+  // If we have a surface from before a navigation, evict it as well.
+  if (pre_navigation_local_surface_id_.is_valid()) {
+    viz::SurfaceId id(frame_sink_id_, pre_navigation_local_surface_id_);
+    surface_ids.push_back(id);
+  }
+
   // This list could be empty if this frame is not in the frame tree (can happen
   // during navigation, construction, destruction, or in unit tests).
   if (!surface_ids.empty()) {
-    DCHECK(std::find(surface_ids.begin(), surface_ids.end(),
+    DCHECK(!GetCurrentSurfaceId().is_valid() ||
+           std::find(surface_ids.begin(), surface_ids.end(),
                      GetCurrentSurfaceId()) != surface_ids.end());
     DCHECK(host_frame_sink_manager_);
     host_frame_sink_manager_->EvictSurfaces(surface_ids);
@@ -423,6 +455,18 @@ void DelegatedFrameHost::DetachFromCompositor() {
 
 void DelegatedFrameHost::DidNavigate() {
   first_local_surface_id_after_navigation_ = local_surface_id_;
+}
+
+void DelegatedFrameHost::OnNavigateToNewPage() {
+  // We are navigating to a different page, so the current |local_surface_id_|
+  // and the fallback option of |first_local_surface_id_after_navigation_| are
+  // no longer valid, as they represent older content from a different source.
+  //
+  // Cache the current |local_surface_id_| so that if navigation fails we can
+  // evict it when transitioning to becoming visible.
+  pre_navigation_local_surface_id_ = local_surface_id_;
+  first_local_surface_id_after_navigation_ = viz::LocalSurfaceId();
+  local_surface_id_ = viz::LocalSurfaceId();
 }
 
 void DelegatedFrameHost::WindowTitleChanged(const std::string& title) {

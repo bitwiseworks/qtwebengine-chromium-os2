@@ -38,11 +38,17 @@
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_ax_enums.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
+#include "ui/accessibility/ax_mode.h"
 
 class SkMatrix44;
 
 namespace gfx {
 class Point;
+class RectF;
+}
+
+namespace ui {
+struct AXNodeData;
 }
 
 namespace blink {
@@ -53,7 +59,6 @@ class WebNode;
 class WebDocument;
 class WebString;
 class WebURL;
-struct WebFloatRect;
 struct WebRect;
 struct WebSize;
 
@@ -63,8 +68,6 @@ class BLINK_EXPORT WebAXSparseAttributeClient {
   virtual ~WebAXSparseAttributeClient() = default;
 
   virtual void AddBoolAttribute(WebAXBoolAttribute, bool) = 0;
-  virtual void AddIntAttribute(WebAXIntAttribute, int32_t) = 0;
-  virtual void AddUIntAttribute(WebAXUIntAttribute, uint32_t) = 0;
   virtual void AddStringAttribute(WebAXStringAttribute, const WebString&) = 0;
   virtual void AddObjectAttribute(WebAXObjectAttribute, const WebAXObject&) = 0;
   virtual void AddObjectVectorAttribute(WebAXObjectVectorAttribute,
@@ -90,9 +93,16 @@ class WebAXObject {
   BLINK_EXPORT bool operator>(const WebAXObject& other) const;
   BLINK_EXPORT bool operator>=(const WebAXObject& other) const;
   BLINK_EXPORT static WebAXObject FromWebNode(const WebNode&);
-  BLINK_EXPORT static WebAXObject FromWebDocument(const WebDocument&);
+  BLINK_EXPORT static WebAXObject FromWebDocument(
+      const WebDocument&,
+      bool update_layout_if_necessary = true);
   BLINK_EXPORT static WebAXObject FromWebDocumentByID(const WebDocument&, int);
-  BLINK_EXPORT static WebAXObject FromWebDocumentFocused(const WebDocument&);
+  BLINK_EXPORT static WebAXObject FromWebDocumentFocused(
+      const WebDocument&,
+      bool update_layout_if_necessary = true);
+  BLINK_EXPORT static bool MaybeUpdateLayoutAndCheckValidity(
+      const WebDocument&);
+  BLINK_EXPORT static void UpdateLayout(const WebDocument&);
 
   BLINK_EXPORT void Reset();
   BLINK_EXPORT void Assign(const WebAXObject&);
@@ -109,11 +119,15 @@ class WebAXObject {
   // tree.
   BLINK_EXPORT int GenerateAXID() const;
 
-  // Update layout if necessary on the underlying tree, and return true if this
-  // object is still valid (not detached). Note that calling this method can
-  // cause other WebAXObjects to become invalid, too, so always call isDetached
-  // if any other blink/renderer/core code has run.
-  BLINK_EXPORT bool UpdateLayoutAndCheckValidity();
+  // Update layout if necessary on the underlying tree and return true if the
+  // object is valid. Note that calling this and other methods can cause other
+  // WebAXObjects to become invalid, so always check validity of an object
+  // before using it.
+  BLINK_EXPORT bool MaybeUpdateLayoutAndCheckValidity();
+
+  // Return true if this object is still valid (not detached) and has updated
+  // layout.
+  BLINK_EXPORT bool CheckValidity();
 
   BLINK_EXPORT unsigned ChildCount() const;
 
@@ -126,27 +140,28 @@ class WebAXObject {
   // that apply to this object.
   BLINK_EXPORT void GetSparseAXAttributes(WebAXSparseAttributeClient&) const;
 
+  // Serialize the properties of this node into |node_data|.
+  //
+  // TODO(crbug.com/1068668): AX onion soup - finish migrating
+  // BlinkAXTreeSource::SerializeNode into AXObject::Serialize and removing
+  // the unneeded WebAXObject interfaces below.
+  BLINK_EXPORT void Serialize(ui::AXNodeData* node_data,
+                              ui::AXMode accessibility_mode) const;
+
   BLINK_EXPORT bool IsAnchor() const;
-  BLINK_EXPORT bool IsAutofillAvailable() const;
   BLINK_EXPORT ax::mojom::CheckedState CheckedState() const;
   BLINK_EXPORT bool IsCheckable() const;
   BLINK_EXPORT bool IsClickable() const;
   BLINK_EXPORT bool IsControl() const;
-  BLINK_EXPORT bool IsDefault() const;
-  BLINK_EXPORT WebAXExpanded IsExpanded() const;
   BLINK_EXPORT bool IsFocused() const;
-  BLINK_EXPORT WebAXGrabbedState IsGrabbed() const;
-  BLINK_EXPORT bool IsHovered() const;
   BLINK_EXPORT bool IsLineBreakingObject() const;
   BLINK_EXPORT bool IsLinked() const;
   BLINK_EXPORT bool IsModal() const;
-  BLINK_EXPORT bool IsMultiSelectable() const;
+  // Returns true if this object is an input element of a text field type, such
+  // as type="text" or type="tel", or a textarea.
+  BLINK_EXPORT bool IsNativeTextControl() const;
   BLINK_EXPORT bool IsOffScreen() const;
-  BLINK_EXPORT bool IsPasswordField() const;
-  BLINK_EXPORT bool IsRequired() const;
-  BLINK_EXPORT WebAXSelectedState IsSelected() const;
   BLINK_EXPORT bool IsSelectedOptionActive() const;
-  BLINK_EXPORT bool IsVisible() const;
   BLINK_EXPORT bool IsVisited() const;
 
   BLINK_EXPORT bool HasAriaAttribute() const;
@@ -154,7 +169,6 @@ class WebAXObject {
   BLINK_EXPORT unsigned BackgroundColor() const;
   BLINK_EXPORT bool CanPress() const;
   BLINK_EXPORT bool CanSetValueAttribute() const;
-  BLINK_EXPORT bool CanSetFocusAttribute() const;
   BLINK_EXPORT unsigned GetColor() const;
   // Deprecated.
   BLINK_EXPORT void ColorValue(int& r, int& g, int& b) const;
@@ -162,11 +176,8 @@ class WebAXObject {
   BLINK_EXPORT WebAXObject AriaActiveDescendant() const;
   BLINK_EXPORT WebString AutoComplete() const;
   BLINK_EXPORT ax::mojom::AriaCurrentState AriaCurrentState() const;
-  BLINK_EXPORT ax::mojom::HasPopup HasPopup() const;
   BLINK_EXPORT bool IsEditableRoot() const;
   BLINK_EXPORT bool IsEditable() const;
-  BLINK_EXPORT bool IsMultiline() const;
-  BLINK_EXPORT bool IsRichlyEditable() const;
   BLINK_EXPORT bool AriaOwns(WebVector<WebAXObject>& owns_elements) const;
   BLINK_EXPORT WebString FontFamily() const;
   BLINK_EXPORT float FontSize() const;
@@ -175,7 +186,6 @@ class WebAXObject {
   BLINK_EXPORT WebAXObject ErrorMessage() const;
   // If this is an image, returns the image (scaled to maxSize) as a data url.
   BLINK_EXPORT WebString ImageDataUrl(const WebSize& max_size) const;
-  BLINK_EXPORT WebAXRestriction Restriction() const;
   BLINK_EXPORT ax::mojom::InvalidState InvalidState() const;
   // Only used when invalidState() returns WebAXInvalidStateOther.
   BLINK_EXPORT WebString AriaInvalidValue() const;
@@ -187,12 +197,11 @@ class WebAXObject {
   BLINK_EXPORT WebString KeyboardShortcut() const;
   BLINK_EXPORT WebString Language() const;
   BLINK_EXPORT WebAXObject InPageLinkTarget() const;
-  BLINK_EXPORT WebAXOrientation Orientation() const;
   BLINK_EXPORT WebVector<WebAXObject> RadioButtonsInGroup() const;
   BLINK_EXPORT ax::mojom::Role Role() const;
   BLINK_EXPORT WebString StringValue() const;
   BLINK_EXPORT ax::mojom::ListStyle GetListStyle() const;
-  BLINK_EXPORT ax::mojom::TextDirection GetTextDirection() const;
+  BLINK_EXPORT ax::mojom::WritingDirection GetTextDirection() const;
   BLINK_EXPORT ax::mojom::TextPosition GetTextPosition() const;
   BLINK_EXPORT void GetTextStyleAndTextDecorationStyle(
       int32_t* text_style,
@@ -272,7 +281,6 @@ class WebAXObject {
   BLINK_EXPORT WebString ContainerLiveRegionStatus() const;
 
   BLINK_EXPORT bool SupportsRangeValue() const;
-  BLINK_EXPORT WebString ValueDescription() const;
   BLINK_EXPORT bool ValueForRange(float* out_value) const;
   BLINK_EXPORT bool MaxValueForRange(float* out_value) const;
   BLINK_EXPORT bool MinValueForRange(float* out_value) const;
@@ -322,10 +330,6 @@ class WebAXObject {
   BLINK_EXPORT bool ScrollToGlobalPoint(const gfx::Point&) const;
 
   // For a table
-  BLINK_EXPORT int AriaColumnCount() const;
-  BLINK_EXPORT unsigned AriaColumnIndex() const;
-  BLINK_EXPORT int AriaRowCount() const;
-  BLINK_EXPORT unsigned AriaRowIndex() const;
   BLINK_EXPORT unsigned ColumnCount() const;
   BLINK_EXPORT unsigned RowCount() const;
   BLINK_EXPORT WebAXObject CellForColumnAndRow(unsigned column,
@@ -387,19 +391,22 @@ class WebAXObject {
   // If the container clips its children, for example with overflow:hidden
   // or similar, set |clips_children| to true.
   BLINK_EXPORT void GetRelativeBounds(WebAXObject& offset_container,
-                                      WebFloatRect& bounds_in_container,
+                                      gfx::RectF& bounds_in_container,
                                       SkMatrix44& container_transform,
                                       bool* clips_children = nullptr) const;
 
-  // Blink-internal DOM Node ID. Currently used for PDF exporting.
-  BLINK_EXPORT int GetDOMNodeId() const;
+  // Retrieves a vector of all WebAXObjects in this document whose
+  // bounding boxes may have changed since the last query. Can be called
+  // on any object.
+  BLINK_EXPORT void GetAllObjectsWithChangedBounds(
+      WebVector<WebAXObject>& out_changed_bounds_objects) const;
 
   // Exchanges a WebAXObject with another.
   BLINK_EXPORT void Swap(WebAXObject& other);
 
   // Returns a brief description of the object, suitable for debugging. E.g. its
   // role and name.
-  BLINK_EXPORT WebString ToString() const;
+  BLINK_EXPORT WebString ToString(bool verbose = false) const;
 
   BLINK_EXPORT void HandleAutofillStateChanged(
       const WebAXAutofillState state) const;

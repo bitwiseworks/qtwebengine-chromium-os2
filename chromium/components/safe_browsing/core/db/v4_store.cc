@@ -10,6 +10,7 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -37,6 +38,8 @@ const char kReadFromDisk[] = "SafeBrowsing.V4ReadFromDisk";
 const char kApplyUpdate[] = ".ApplyUpdate";
 const char kDecodeAdditions[] = ".DecodeAdditions";
 const char kDecodeRemovals[] = ".DecodeRemovals";
+const char kAdditionsHashesCount[] = ".AdditionsHashesCount";
+const char kRemovalsHashesCount[] = ".RemovalsHashesCount";
 // Part 3: Represent the unit of value being measured and logged.
 const char kResult[] = ".Result";
 // Part 4 (optional): Represent the name of the list for which the metric is
@@ -53,47 +56,37 @@ const uint32_t kFileVersion = 9;
 // The maximum store file size, as of today, is about 6MB.
 constexpr size_t kMaxStoreSizeBytes = 50 * 1000 * 1000;
 
+// The maximum size of additions hashes in a single update response.
+const int32_t ADDITIONS_HASHES_COUNT_MAX = 10000;
+// The maximum size of removals hashes in a single update response.
+const int32_t REMOVALS_HASHES_COUNT_MAX = 10000;
+
 void RecordEnumWithAndWithoutSuffix(const std::string& metric,
                                     int32_t value,
                                     int32_t maximum,
                                     const base::FilePath& file_path) {
-  // The histograms below are an expansion of the UMA_HISTOGRAM_ENUMERATION
-  // macro adapted to allow for a dynamically suffixed histogram name.
-  // Note: The factory creates and owns the histogram.
-  base::HistogramBase* histogram = base::LinearHistogram::FactoryGet(
-      metric + kResult, 1, maximum, maximum + 1,
-      base::HistogramBase::kUmaTargetedHistogramFlag);
-  if (histogram) {
-    histogram->Add(value);
-  }
-
+  base::UmaHistogramExactLinear(metric + kResult, value, maximum);
   std::string suffix = GetUmaSuffixForStore(file_path);
-  base::HistogramBase* histogram_suffix = base::LinearHistogram::FactoryGet(
-      metric + kResult + suffix, 1, maximum, maximum + 1,
-      base::HistogramBase::kUmaTargetedHistogramFlag);
-  if (histogram_suffix) {
-    histogram_suffix->Add(value);
-  }
+  base::UmaHistogramExactLinear(metric + kResult + suffix, value, maximum);
 }
 
 void RecordBooleanWithAndWithoutSuffix(const std::string& metric,
                                        bool value,
                                        const base::FilePath& file_path) {
-  // The histograms below are an expansion of the UMA_HISTOGRAM_BOOLEAN
-  // macro adapted to allow for a dynamically suffixed histogram name.
-  // Note: The factory creates and owns the histogram.
-  base::HistogramBase* histogram = base::BooleanHistogram::FactoryGet(
-      metric, base::HistogramBase::kUmaTargetedHistogramFlag);
-  if (histogram) {
-    histogram->Add(value);
-  }
-
+  base::UmaHistogramBoolean(metric, value);
   std::string suffix = GetUmaSuffixForStore(file_path);
-  base::HistogramBase* histogram_suffix = base::BooleanHistogram::FactoryGet(
-      metric + suffix, base::HistogramBase::kUmaTargetedHistogramFlag);
-  if (histogram_suffix) {
-    histogram_suffix->Add(value);
-  }
+  base::UmaHistogramBoolean(metric + suffix, value);
+}
+
+void RecordCountWithAndWithoutSuffix(const std::string& metric,
+                                     int32_t value,
+                                     int32_t maximum,
+                                     const base::FilePath& file_path) {
+  base::UmaHistogramCustomCounts(metric, value, /*min=*/1, maximum,
+                                 /*buckets=*/50);
+  std::string suffix = GetUmaSuffixForStore(file_path);
+  base::UmaHistogramCustomCounts(metric + suffix, value, /*min=*/1, maximum,
+                                 /*buckets=*/50);
 }
 
 void RecordApplyUpdateResult(const std::string& base_metric,
@@ -115,6 +108,20 @@ void RecordDecodeRemovalsResult(const std::string& base_metric,
                                 const base::FilePath& file_path) {
   RecordEnumWithAndWithoutSuffix(base_metric + kDecodeRemovals, result,
                                  DECODE_RESULT_MAX, file_path);
+}
+
+void RecordAdditionsHashesCount(const std::string& base_metric,
+                                int32_t count,
+                                const base::FilePath& file_path) {
+  RecordCountWithAndWithoutSuffix(base_metric + kAdditionsHashesCount, count,
+                                  ADDITIONS_HASHES_COUNT_MAX, file_path);
+}
+
+void RecordRemovalsHashesCount(const std::string& base_metric,
+                               int32_t count,
+                               const base::FilePath& file_path) {
+  RecordCountWithAndWithoutSuffix(base_metric + kRemovalsHashesCount, count,
+                                  REMOVALS_HASHES_COUNT_MAX, file_path);
 }
 
 void RecordStoreReadResult(StoreReadResult result) {
@@ -278,6 +285,9 @@ ApplyUpdateResult V4Store::ProcessUpdate(
       return UNEXPECTED_COMPRESSION_TYPE_REMOVALS_FAILURE;
     }
   }
+  if (raw_removals) {
+    RecordRemovalsHashesCount(metric, raw_removals->size(), store_path_);
+  }
 
   HashPrefixMap hash_prefix_map;
   ApplyUpdateResult apply_update_result = UpdateHashPrefixMapFromAdditions(
@@ -388,6 +398,7 @@ ApplyUpdateResult V4Store::UpdateHashPrefixMapFromAdditions(
       } else {
         char* raw_hashes_start = reinterpret_cast<char*>(raw_hashes.data());
         size_t raw_hashes_size = sizeof(uint32_t) * raw_hashes.size();
+        RecordAdditionsHashesCount(metric, raw_hashes_size, store_path_);
 
         // Rice-Golomb encoding is used to send compressed compressed 4-byte
         // hash prefixes. Hash prefixes longer than 4 bytes will not be
@@ -707,12 +718,12 @@ StoreWriteResult V4Store::WriteToDisk(const Checksum& checksum) {
                                    file_format_string.size());
 
   if (file_format_string.size() != written) {
-    base::DeleteFile(new_filename, /*recursive=*/false);
+    base::DeleteFile(new_filename);
     return UNEXPECTED_BYTES_WRITTEN_FAILURE;
   }
 
   if (!base::Move(new_filename, store_path_)) {
-    base::DeleteFile(new_filename, /*recursive=*/false);
+    base::DeleteFile(new_filename);
     return UNABLE_TO_RENAME_FAILURE;
   }
 
@@ -805,14 +816,8 @@ bool V4Store::VerifyChecksum() {
 
 int64_t V4Store::RecordAndReturnFileSize(const std::string& base_metric) {
   std::string suffix = GetUmaSuffixForStore(store_path_);
-  // Histogram properties as in UMA_HISTOGRAM_COUNTS_1M macro.
-  base::HistogramBase* histogram = base::Histogram::FactoryGet(
-      base_metric + suffix, 1, 1000000, 50,
-      base::HistogramBase::kUmaTargetedHistogramFlag);
-  if (histogram) {
-    const int64_t file_size_kilobytes = file_size_ / 1024;
-    histogram->Add(file_size_kilobytes);
-  }
+  const int64_t file_size_kilobytes = file_size_ / 1024;
+  base::UmaHistogramCounts1M(base_metric + suffix, file_size_kilobytes);
   return file_size_;
 }
 

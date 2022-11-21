@@ -13,14 +13,18 @@ const base::Feature kAdvancedPpdAttributes{"AdvancedPpdAttributes",
                                            base::FEATURE_ENABLED_BY_DEFAULT};
 #endif  // defined(OS_CHROMEOS)
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 // Use the CUPS IPP printing backend instead of the original CUPS backend that
 // calls the deprecated PPD API.
 const base::Feature kCupsIppPrintingBackend{"CupsIppPrintingBackend",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
-#endif  // defined(OS_MACOSX)
+#endif  // defined(OS_MAC)
 
 #if defined(OS_WIN)
+// When using GDI printing, avoid rasterization if possible.
+const base::Feature kPrintWithReducedRasterization{
+    "PrintWithReducedRasterization", base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Use XPS for printing instead of GDI.
 const base::Feature kUseXpsForPrinting{"UseXpsForPrinting",
                                        base::FEATURE_DISABLED_BY_DEFAULT};
@@ -43,10 +47,14 @@ bool ShouldPrintUsingXps(bool source_is_pdf) {
 }
 #endif  // defined(OS_WIN)
 
-// When enabled, PrintRenderFrameHelper uses a frame-associated
-// URLLoaderFactory rather than renderer-associated one.
-const base::Feature kUseFrameAssociatedLoaderFactory{
-    "UseFrameAssociatedLoaderFactory", base::FEATURE_ENABLED_BY_DEFAULT};
+#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) || \
+    defined(OS_CHROMEOS)
+// Enables printing interactions with the operating system to be performed
+// out-of-process.
+const base::Feature kEnableOopPrintDrivers{"EnableOopPrintDrivers",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
+#endif  // defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) ||
+        // defined(OS_CHROMEOS)
 
 }  // namespace features
 }  // namespace printing

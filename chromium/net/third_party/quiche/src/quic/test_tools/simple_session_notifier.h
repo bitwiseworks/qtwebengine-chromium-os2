@@ -78,6 +78,7 @@ class SimpleSessionNotifier : public SessionNotifierInterface {
   bool IsFrameOutstanding(const QuicFrame& frame) const override;
   bool HasUnackedCryptoData() const override;
   bool HasUnackedStreamData() const override;
+  bool HasLostStreamData() const;
 
  private:
   struct StreamState {
@@ -101,7 +102,7 @@ class SimpleSessionNotifier : public SessionNotifierInterface {
 
   friend std::ostream& operator<<(std::ostream& os, const StreamState& s);
 
-  using StreamMap = QuicUnorderedMap<QuicStreamId, StreamState>;
+  using StreamMap = QuicHashMap<QuicStreamId, StreamState>;
 
   void OnStreamDataConsumed(QuicStreamId id,
                             QuicStreamOffset offset,
@@ -123,8 +124,6 @@ class SimpleSessionNotifier : public SessionNotifierInterface {
   bool IsControlFrameOutstanding(const QuicFrame& frame) const;
 
   bool HasBufferedControlFrames() const;
-
-  bool HasLostStreamData() const;
 
   bool StreamHasBufferedData(QuicStreamId id) const;
 

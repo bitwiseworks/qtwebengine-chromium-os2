@@ -17,33 +17,53 @@
 
 namespace paint_preview {
 
+using CompositorPtr =
+    std::unique_ptr<mojo::Remote<mojom::PaintPreviewCompositor>,
+                    base::OnTaskRunnerDeleter>;
+
+// The implementation of the PaintPreviewCompositorClient class.
+// The public interface should be invoked only on the |default_task_runner_|
+// which is the the runner returned by base::SequencedTaskRunnerHandle::Get()
+// when this is constructed.
 class PaintPreviewCompositorClientImpl : public PaintPreviewCompositorClient {
  public:
   using OnCompositorCreatedCallback =
       base::OnceCallback<void(const base::UnguessableToken&)>;
 
   explicit PaintPreviewCompositorClientImpl(
+      scoped_refptr<base::SequencedTaskRunner> compositor_task_runner,
       base::WeakPtr<PaintPreviewCompositorServiceImpl> service);
   ~PaintPreviewCompositorClientImpl() override;
 
   // PaintPreviewCompositorClient implementation.
   const base::Optional<base::UnguessableToken>& Token() const override;
   void SetDisconnectHandler(base::OnceClosure closure) override;
-  void BeginComposite(
+  void BeginSeparatedFrameComposite(
       mojom::PaintPreviewBeginCompositeRequestPtr request,
-      mojom::PaintPreviewCompositor::BeginCompositeCallback callback) override;
-  void BitmapForFrame(
+      mojom::PaintPreviewCompositor::BeginSeparatedFrameCompositeCallback
+          callback) override;
+  void BitmapForSeparatedFrame(
       const base::UnguessableToken& frame_guid,
       const gfx::Rect& clip_rect,
       float scale_factor,
-      mojom::PaintPreviewCompositor::BitmapForFrameCallback callback) override;
+      mojom::PaintPreviewCompositor::BitmapForSeparatedFrameCallback callback)
+      override;
+  void BeginMainFrameComposite(
+      mojom::PaintPreviewBeginCompositeRequestPtr request,
+      mojom::PaintPreviewCompositor::BeginMainFrameCompositeCallback callback)
+      override;
+  void BitmapForMainFrame(
+      const gfx::Rect& clip_rect,
+      float scale_factor,
+      mojom::PaintPreviewCompositor::BitmapForMainFrameCallback callback)
+      override;
   void SetRootFrameUrl(const GURL& url) override;
 
   // Exposes underlying BindNewPipeAndPassReceiver method of |compositor_|.
   mojo::PendingReceiver<mojom::PaintPreviewCompositor>
   BindNewPipeAndPassReceiver();
 
-  bool IsBoundAndConnected() const;
+  void IsBoundAndConnected(base::OnceCallback<void(bool)> callback);
 
   OnCompositorCreatedCallback BuildCompositorCreatedCallback(
       base::OnceClosure user_closure,
@@ -63,9 +83,12 @@ class PaintPreviewCompositorClientImpl : public PaintPreviewCompositorClient {
 
   void DisconnectHandler();
 
-  base::Optional<base::UnguessableToken> token_;
+  scoped_refptr<base::SequencedTaskRunner> compositor_task_runner_;
+  scoped_refptr<base::SequencedTaskRunner> default_task_runner_;
   base::WeakPtr<PaintPreviewCompositorServiceImpl> service_;
-  mojo::Remote<mojom::PaintPreviewCompositor> compositor_;
+  CompositorPtr compositor_;
+
+  base::Optional<base::UnguessableToken> token_;
   base::OnceClosure user_disconnect_closure_;
 
   base::WeakPtrFactory<PaintPreviewCompositorClientImpl> weak_ptr_factory_{

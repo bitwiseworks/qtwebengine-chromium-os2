@@ -4,11 +4,14 @@
 
 #include "components/viz/common/gpu/dawn_context_provider.h"
 
-#include <dawn/dawn_proc.h>
+#include <memory>
+#include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
+#include "third_party/dawn/src/include/dawn/dawn_proc.h"
 
 namespace viz {
 
@@ -17,7 +20,7 @@ namespace {
 dawn_native::BackendType GetDefaultBackendType() {
 #if defined(OS_WIN)
   return dawn_native::BackendType::D3D12;
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_CHROMEOS)
   return dawn_native::BackendType::Vulkan;
 #else
   NOTREACHED();
@@ -41,7 +44,7 @@ DawnContextProvider::DawnContextProvider() {
   // MTLCreateSystemDefaultDevice().
   device_ = CreateDevice(GetDefaultBackendType());
   if (device_)
-    gr_context_ = GrContext::MakeDawn(device_);
+    gr_context_ = GrDirectContext::MakeDawn(device_);
 }
 
 DawnContextProvider::~DawnContextProvider() = default;
@@ -51,10 +54,16 @@ wgpu::Device DawnContextProvider::CreateDevice(dawn_native::BackendType type) {
   DawnProcTable backend_procs = dawn_native::GetProcs();
   dawnProcSetProcs(&backend_procs);
 
+  // Disable validation in non-DCHECK builds.
+  dawn_native::DeviceDescriptor descriptor;
+#if !DCHECK_IS_ON()
+  descriptor.forceEnabledToggles = {"skip_validation"};
+#endif
+
   std::vector<dawn_native::Adapter> adapters = instance_.GetAdapters();
   for (dawn_native::Adapter adapter : adapters) {
     if (adapter.GetBackendType() == type)
-      return adapter.CreateDevice();
+      return adapter.CreateDevice(&descriptor);
   }
   return nullptr;
 }

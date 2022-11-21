@@ -5,6 +5,8 @@
 #include "third_party/blink/renderer/modules/remote_objects/remote_object_gateway_impl.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/modules/remote_objects/remote_object.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
@@ -68,16 +70,23 @@ RemoteObjectGatewayImpl::RemoteObjectGatewayImpl(
         object_gateway_receiver,
     mojo::PendingRemote<mojom::blink::RemoteObjectHost> object_host_remote)
     : Supplement<LocalFrame>(frame),
-      receiver_(this, std::move(object_gateway_receiver)),
-      object_host_(std::move(object_host_remote)) {}
+      receiver_(this, frame.DomWindow()),
+      object_host_(frame.DomWindow()) {
+  receiver_.Bind(std::move(object_gateway_receiver),
+                 frame.GetTaskRunner(TaskType::kMiscPlatformAPI));
+  object_host_.Bind(std::move(object_host_remote),
+                    frame.GetTaskRunner(TaskType::kMiscPlatformAPI));
+}
 
 void RemoteObjectGatewayImpl::OnClearWindowObjectInMainWorld() {
   for (const auto& pair : named_objects_)
     InjectNamed(pair.key, pair.value);
 }
 
-void RemoteObjectGatewayImpl::Dispose() {
-  receiver_.reset();
+void RemoteObjectGatewayImpl::Trace(Visitor* visitor) const {
+  visitor->Trace(receiver_);
+  visitor->Trace(object_host_);
+  Supplement<LocalFrame>::Trace(visitor);
 }
 
 void RemoteObjectGatewayImpl::AddNamedObject(const WTF::String& name,
@@ -99,6 +108,16 @@ void RemoteObjectGatewayImpl::BindRemoteObjectReceiver(
     int32_t object_id,
     mojo::PendingReceiver<mojom::blink::RemoteObject> receiver) {
   object_host_->GetObject(object_id, std::move(receiver));
+}
+
+void RemoteObjectGatewayImpl::ReleaseObject(int32_t object_id) {
+  object_host_->ReleaseObject(object_id);
+  for (const auto& pair : named_objects_) {
+    if (pair.value == object_id) {
+      named_objects_.erase(pair.key);
+      break;
+    }
+  }
 }
 
 // static

@@ -132,7 +132,7 @@ RtpSenderFrameEncryptionConfig CreateFrameEncryptionConfig(
   return frame_encryption_config;
 }
 
-RtpSenderObservers CreateObservers(CallStats* call_stats,
+RtpSenderObservers CreateObservers(RtcpRttStats* call_stats,
                                    EncoderRtcpFeedback* encoder_feedback,
                                    SendStatisticsProxy* stats_proxy,
                                    SendDelayStats* send_delay_stats) {
@@ -188,7 +188,7 @@ VideoSendStreamImpl::VideoSendStreamImpl(
     Clock* clock,
     SendStatisticsProxy* stats_proxy,
     rtc::TaskQueue* worker_queue,
-    CallStats* call_stats,
+    RtcpRttStats* call_stats,
     RtpTransportControllerSendInterface* transport,
     BitrateAllocatorInterface* bitrate_allocator,
     SendDelayStats* send_delay_stats,
@@ -209,7 +209,6 @@ VideoSendStreamImpl::VideoSendStreamImpl(
       config_(config),
       worker_queue_(worker_queue),
       timed_out_(false),
-      call_stats_(call_stats),
       transport_(transport),
       bitrate_allocator_(bitrate_allocator),
       disable_padding_(true),
@@ -244,7 +243,6 @@ VideoSendStreamImpl::VideoSendStreamImpl(
   encoder_feedback_.SetRtpVideoSender(rtp_video_sender_);
 
   RTC_DCHECK(!config_->rtp.ssrcs.empty());
-  RTC_DCHECK(call_stats_);
   RTC_DCHECK(transport_);
   RTC_DCHECK_NE(initial_encoder_max_bitrate, 0);
 
@@ -302,17 +300,6 @@ VideoSendStreamImpl::VideoSendStreamImpl(
 
   video_stream_encoder_->SetStartBitrate(
       bitrate_allocator_->GetStartBitrate(this));
-
-  // Only request rotation at the source when we positively know that the remote
-  // side doesn't support the rotation extension. This allows us to prepare the
-  // encoder in the expectation that rotation is supported - which is the common
-  // case.
-  bool rotation_applied = absl::c_none_of(
-      config_->rtp.extensions, [](const RtpExtension& extension) {
-        return extension.uri == RtpExtension::kVideoRotationUri;
-      });
-
-  video_stream_encoder_->SetSink(this, rotation_applied);
 }
 
 VideoSendStreamImpl::~VideoSendStreamImpl() {
@@ -325,6 +312,21 @@ VideoSendStreamImpl::~VideoSendStreamImpl() {
 
 void VideoSendStreamImpl::RegisterProcessThread(
     ProcessThread* module_process_thread) {
+  // Called on libjingle's worker thread (not worker_queue_), as part of the
+  // initialization steps. That's also the correct thread/queue for setting the
+  // state for |video_stream_encoder_|.
+
+  // Only request rotation at the source when we positively know that the remote
+  // side doesn't support the rotation extension. This allows us to prepare the
+  // encoder in the expectation that rotation is supported - which is the common
+  // case.
+  bool rotation_applied = absl::c_none_of(
+      config_->rtp.extensions, [](const RtpExtension& extension) {
+        return extension.uri == RtpExtension::kVideoRotationUri;
+      });
+
+  video_stream_encoder_->SetSink(this, rotation_applied);
+
   rtp_video_sender_->RegisterProcessThread(module_process_thread);
 }
 
@@ -560,8 +562,7 @@ void VideoSendStreamImpl::OnEncoderConfigurationChanged(
 
 EncodedImageCallback::Result VideoSendStreamImpl::OnEncodedImage(
     const EncodedImage& encoded_image,
-    const CodecSpecificInfo* codec_specific_info,
-    const RTPFragmentationHeader* fragmentation) {
+    const CodecSpecificInfo* codec_specific_info) {
   // Encoded is called on whatever thread the real encoder implementation run
   // on. In the case of hardware encoders, there might be several encoders
   // running in parallel on different threads.
@@ -584,8 +585,8 @@ EncodedImageCallback::Result VideoSendStreamImpl::OnEncodedImage(
   }
 
   EncodedImageCallback::Result result(EncodedImageCallback::Result::OK);
-  result = rtp_video_sender_->OnEncodedImage(encoded_image, codec_specific_info,
-                                             fragmentation);
+  result =
+      rtp_video_sender_->OnEncodedImage(encoded_image, codec_specific_info);
   // Check if there's a throttled VideoBitrateAllocation that we should try
   // sending.
   rtc::WeakPtr<VideoSendStreamImpl> send_stream = weak_ptr_;

@@ -50,14 +50,9 @@ mojom::blink::CookieChangeSubscriptionPtr ToBackendSubscription(
     backend_subscription->url = default_cookie_url;
   }
 
-  if (subscription->matchType() == "starts-with") {
-    backend_subscription->match_type =
-        network::mojom::blink::CookieMatchType::STARTS_WITH;
-  } else {
-    DCHECK_EQ(subscription->matchType(), WTF::String("equals"));
-    backend_subscription->match_type =
-        network::mojom::blink::CookieMatchType::EQUALS;
-  }
+  // TODO(crbug.com/1124499): Cleanup matchType after re-evaluation.
+  backend_subscription->match_type =
+      network::mojom::blink::CookieMatchType::EQUALS;
 
   if (subscription->hasName()) {
     backend_subscription->name = subscription->name();
@@ -77,20 +72,8 @@ CookieStoreGetOptions* ToCookieChangeSubscription(
   CookieStoreGetOptions* subscription = CookieStoreGetOptions::Create();
   subscription->setUrl(backend_subscription.url);
 
-  if (backend_subscription.match_type !=
-          network::mojom::blink::CookieMatchType::STARTS_WITH ||
-      !backend_subscription.name.IsEmpty()) {
+  if (!backend_subscription.name.IsEmpty())
     subscription->setName(backend_subscription.name);
-  }
-
-  switch (backend_subscription.match_type) {
-    case network::mojom::blink::CookieMatchType::STARTS_WITH:
-      subscription->setMatchType(WTF::String("starts-with"));
-      break;
-    case network::mojom::blink::CookieMatchType::EQUALS:
-      subscription->setMatchType(WTF::String("equals"));
-      break;
-  }
 
   return subscription;
 }
@@ -104,15 +87,14 @@ KURL DefaultCookieURL(ServiceWorkerRegistration* registration) {
 
 CookieStoreManager::CookieStoreManager(
     ServiceWorkerRegistration* registration,
-    mojo::Remote<mojom::blink::CookieStore> backend)
+    HeapMojoRemote<mojom::blink::CookieStore,
+                   HeapMojoWrapperMode::kWithoutContextObserver> backend)
     : registration_(registration),
       backend_(std::move(backend)),
       default_cookie_url_(DefaultCookieURL(registration)) {
   DCHECK(registration_);
-  DCHECK(backend_);
+  DCHECK(backend_.is_bound());
 }
-
-CookieStoreManager::~CookieStoreManager() = default;
 
 ScriptPromise CookieStoreManager::subscribe(
     ScriptState* script_state,
@@ -181,8 +163,9 @@ ScriptPromise CookieStoreManager::getSubscriptions(
   return resolver->Promise();
 }
 
-void CookieStoreManager::Trace(Visitor* visitor) {
+void CookieStoreManager::Trace(Visitor* visitor) const {
   visitor->Trace(registration_);
+  visitor->Trace(backend_);
   ScriptWrappable::Trace(visitor);
 }
 

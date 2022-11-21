@@ -21,6 +21,7 @@ namespace blink {
 
 class DOMArrayBuffer;
 class RTCEncodedAudioFrameDelegate;
+class RTCEncodedAudioFrameMetadata;
 
 class MODULES_EXPORT RTCEncodedAudioFrame final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
@@ -36,6 +37,7 @@ class MODULES_EXPORT RTCEncodedAudioFrame final : public ScriptWrappable {
   // rtc_encoded_audio_frame.idl implementation.
   uint64_t timestamp() const;
   DOMArrayBuffer* data() const;
+  RTCEncodedAudioFrameMetadata* getMetadata() const;
   DOMArrayBuffer* additionalData() const;
   void setData(DOMArrayBuffer*);
   uint32_t synchronizationSource() const;
@@ -50,7 +52,7 @@ class MODULES_EXPORT RTCEncodedAudioFrame final : public ScriptWrappable {
   // backed by that internal WebRTC frame.
   std::unique_ptr<webrtc::TransformableFrameInterface> PassWebRtcFrame();
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   scoped_refptr<RTCEncodedAudioFrameDelegate> delegate_;

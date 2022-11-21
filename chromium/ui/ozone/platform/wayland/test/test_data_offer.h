@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include <wayland-server-protocol-core.h>
+#include <wayland-server-protocol.h>
 
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
@@ -33,8 +33,7 @@ class TestDataOffer : public ServerObject {
   ~TestDataOffer() override;
 
   void Receive(const std::string& mime_type, base::ScopedFD fd);
-  void OnOffer(const std::string& mime_type,
-               const ui::PlatformClipboard::Data& data);
+  void OnOffer(const std::string& mime_type, ui::PlatformClipboard::Data data);
 
  private:
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;

@@ -12,15 +12,13 @@ import org.chromium.weblayer_private.interfaces.ICrashReporterController;
 import org.chromium.weblayer_private.interfaces.IObjectWrapper;
 import org.chromium.weblayer_private.interfaces.IProfile;
 import org.chromium.weblayer_private.interfaces.IRemoteFragmentClient;
+import org.chromium.weblayer_private.interfaces.IMediaRouteDialogFragment;
+import org.chromium.weblayer_private.interfaces.ISiteSettingsFragment;
 import org.chromium.weblayer_private.interfaces.IWebLayerClient;
 
 interface IWebLayer {
-  // Deprecated, use loadAsync().
-  void loadAsyncV80(in IObjectWrapper appContext,
-                    in IObjectWrapper loadedCallback) = 1;
-
-  // Deprecated, use loadSync().
-  void loadSyncV80(in IObjectWrapper appContext) = 2;
+  // ID 1 was loadAsyncV80 and was removed in M86.
+  // ID 2 was loadSyncV80 and was removed in M86.
 
   // Creates the WebLayer counterpart to a BrowserFragment - a BrowserFragmentImpl
   //
@@ -40,9 +38,7 @@ interface IWebLayer {
   // Returns whether or not the DevTools remote debugging server is enabled.
   boolean isRemoteDebuggingEnabled() = 6;
 
-  // Deprecated, use getCrashReporterController().
-  ICrashReporterController getCrashReporterControllerV80(
-      in IObjectWrapper appContext) = 7;
+  // ID 7 was getCrashReporterControllerV80 and was removed in M86.
 
   // Initializes WebLayer and starts loading.
   //
@@ -70,12 +66,43 @@ interface IWebLayer {
       in IObjectWrapper appContext,
       in IObjectWrapper remoteContext) = 10;
 
-  // Forwards download intent notifications to the implementation.
-  void onReceivedDownloadNotification(in IObjectWrapper appContext, in Intent intent) = 11;
+  // Forwards broadcast from a notification to the implementation.
+  void onReceivedBroadcast(in IObjectWrapper appContext, in Intent intent) = 11;
 
   // Added in Version 82.
   void enumerateAllProfileNames(in IObjectWrapper valueCallback) = 12;
 
   // Added in Version 83.
   void setClient(in IWebLayerClient client) = 13;
+
+  // Added in Version 84.
+  String getUserAgentString() = 14;
+
+  // Added in Version 84.
+  void registerExternalExperimentIDs(in String trialName, in int[] experimentIds) = 15;
+
+  // Creates the WebLayer counterpart to a SiteSettingsFragment - a SiteSettingsFragmentImpl
+  //
+  // @param fragmentClient Representative of the Fragment on the client side through which
+  // WebLayer can call methods on Fragment.
+  // @param fragmentArgs Bundle of arguments with which the Fragment was created on the client side
+  // (see Fragment#setArguments).
+  // Added in Version 84.
+  ISiteSettingsFragment createSiteSettingsFragmentImpl(
+      in IRemoteFragmentClient remoteFragmentClient,
+      in IObjectWrapper fragmentArgs) = 16;
+
+  // Added in Version 85.
+  void onMediaSessionServiceStarted(in IObjectWrapper sessionService, in Intent intent) = 17;
+  void onMediaSessionServiceDestroyed() = 18;
+
+  // Added in Version 86.
+  IBinder initializeImageDecoder(in IObjectWrapper appContext,
+                                 in IObjectWrapper remoteContext) = 19;
+
+  // Added in Version 87.
+  IObjectWrapper getApplicationContext() = 20;
+  IMediaRouteDialogFragment createMediaRouteDialogFragmentImpl(
+      in IRemoteFragmentClient remoteFragmentClient) = 21;
+  IProfile getIncognitoProfile(in String profileName) = 24;
 }

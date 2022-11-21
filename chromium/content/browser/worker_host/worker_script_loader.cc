@@ -10,7 +10,7 @@
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/service_worker/service_worker_main_resource_handle.h"
 #include "content/browser/service_worker/service_worker_main_resource_handle_core.h"
-#include "content/browser/service_worker/service_worker_request_handler.h"
+#include "content/browser/service_worker/service_worker_main_resource_loader_interceptor.h"
 #include "content/browser/worker_host/worker_script_fetch_initiator.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -21,6 +21,7 @@ namespace content {
 
 WorkerScriptLoader::WorkerScriptLoader(
     int process_id,
+    const DedicatedOrSharedWorkerToken& worker_token,
     int32_t routing_id,
     int32_t request_id,
     uint32_t options,
@@ -42,14 +43,14 @@ WorkerScriptLoader::WorkerScriptLoader(
       traffic_annotation_(traffic_annotation) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  std::unique_ptr<NavigationLoaderInterceptor> service_worker_interceptor;
   if (!service_worker_handle_) {
     // The DedicatedWorkerHost or SharedWorkerHost is already destroyed.
     Abort();
     return;
   }
-  service_worker_interceptor = ServiceWorkerRequestHandler::CreateForWorker(
-      resource_request_, process_id, service_worker_handle_);
+  auto service_worker_interceptor =
+      ServiceWorkerMainResourceLoaderInterceptor::CreateForWorker(
+          resource_request_, process_id, worker_token, service_worker_handle_);
 
   if (service_worker_interceptor)
     interceptors_.push_back(std::move(service_worker_interceptor));
@@ -168,6 +169,7 @@ void WorkerScriptLoader::LoadFromNetwork(bool reset_subresource_loader_params) {
 void WorkerScriptLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
+    const net::HttpRequestHeaders& modified_cors_exempt_headers,
     const base::Optional<GURL>& new_url) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!new_url.has_value()) << "Redirect with modified URL was not "
@@ -181,6 +183,9 @@ void WorkerScriptLoader::FollowRedirect(
       resource_request_.url, resource_request_.method, *redirect_info_,
       removed_headers, modified_headers, &resource_request_.headers,
       &should_clear_upload);
+  resource_request_.cors_exempt_headers.MergeFrom(modified_cors_exempt_headers);
+  for (const std::string& name : removed_headers)
+    resource_request_.cors_exempt_headers.RemoveHeader(name);
 
   resource_request_.url = redirect_info_->new_url;
   resource_request_.method = redirect_info_->new_method;
@@ -300,8 +305,9 @@ bool WorkerScriptLoader::MaybeCreateLoaderForResponse(
             resource_request_, response_head, response_body,
             response_url_loader, response_client_receiver, url_loader,
             &skip_other_interceptors, &will_return_unsafe_redirect)) {
-      // Both ServiceWorkerRequestHandler and AppCacheRequestHandler don't set
-      // skip_other_interceptors nor will_return_unsafe_redirect.
+      // Both ServiceWorkerMainResourceLoaderInterceptor and
+      // AppCacheRequestHandler don't set skip_other_interceptors nor
+      // will_return_unsafe_redirect.
       DCHECK(!skip_other_interceptors);
       DCHECK(!will_return_unsafe_redirect);
       subresource_loader_params_ =

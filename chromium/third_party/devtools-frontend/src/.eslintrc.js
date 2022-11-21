@@ -13,6 +13,7 @@ module.exports = {
     '@typescript-eslint',
     'mocha',
     'rulesdir',
+    'import',
   ],
 
   'parserOptions': {'ecmaVersion': 9, 'sourceType': 'module'},
@@ -23,7 +24,7 @@ module.exports = {
      * All available rules: http://eslint.org/docs/rules/
      *
      * Rules take the following form:
-     *   "rule-name", [severity, { opts }]
+     *   'rule-name', [severity, { opts }]
      * Severity: 2 == error, 1 == warning, 0 == off.
      */
   'rules': {
@@ -57,6 +58,7 @@ module.exports = {
     'no-duplicate-case': 2,
     'no-else-return': [2, {'allowElseIf': false}],
     'no-empty-character-class': 2,
+    'no-global-assign': 2,
     'no-implied-eval': 2,
     'no-labels': 2,
     'no-multi-str': 2,
@@ -72,6 +74,7 @@ module.exports = {
     'prefer-const': 2,
     'radix': 2,
     'valid-typeof': 2,
+    'no-return-assign': [2, 'always'],
 
     // es2015 features
     'require-yield': 2,
@@ -120,26 +123,35 @@ module.exports = {
     // no-implicit-globals will prevent accidental globals
     'no-implicit-globals': [0],
 
-    '@typescript-eslint/interface-name-prefix': [2, {'prefixWithI': 'never'}],
+    // forbids interfaces starting with an I prefix.
+    '@typescript-eslint/naming-convention':
+        [2, {'selector': 'interface', 'format': ['PascalCase'], 'custom': {'regex': '^I[A-Z]', 'match': false}}],
     '@typescript-eslint/explicit-member-accessibility': [0],
+    '@typescript-eslint/no-explicit-any': 2,
 
     // errors on it('test') with no body
     'mocha/no-pending-tests': 2,
     // errors on {describe, it}.only
     'mocha/no-exclusive-tests': 2,
 
+    // Closure does not properly typecheck default exports
+    'import/no-default-export': 2,
+
     // DevTools specific rules
     'rulesdir/es_modules_import': 2,
     'rulesdir/check_license_header': 2,
+    'rulesdir/check_test_definitions': 2,
+    'rulesdir/avoid_assert_equal': 2,
+    'rulesdir/no_repeated_tests': 2,
   },
   'overrides': [{
     'files': ['*.ts'],
     'rules': {
-      '@typescript-eslint/explicit-member-accessibility': [2, {'accessibility': 'explicit'}],
+      '@typescript-eslint/explicit-member-accessibility': [2, {'accessibility': 'no-public'}],
       'comma-dangle': [2, 'always-multiline'],
       // run just the TypeScript unused-vars rule, else we get duplicate errors
       'no-unused-vars': 0,
-      '@typescript-eslint/no-unused-vars': [2],
+      '@typescript-eslint/no-unused-vars': [2, {'argsIgnorePattern': '^_'}],
     }
   }]
 };

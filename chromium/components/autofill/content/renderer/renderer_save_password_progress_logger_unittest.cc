@@ -8,6 +8,7 @@
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
+#include "components/autofill/core/common/renderer_id.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -49,10 +50,7 @@ class FakeContentPasswordManagerDriver : public mojom::PasswordManagerDriver {
 
   void PasswordFormSubmitted(const autofill::FormData& form_data) override {}
 
-  void ShowManualFallbackForSaving(
-      const autofill::FormData& form_data) override {}
-
-  void HideManualFallbackForSaving() override {}
+  void InformAboutUserInput(const autofill::FormData& form_data) override {}
 
   void SameDocumentNavigation(autofill::mojom::SubmissionIndicatorEvent
                                   submission_indication_event) override {}
@@ -71,7 +69,7 @@ class FakeContentPasswordManagerDriver : public mojom::PasswordManagerDriver {
 
   void UserModifiedPasswordField() override {}
 
-  void UserModifiedNonPasswordField(uint32_t renderer_id,
+  void UserModifiedNonPasswordField(autofill::FieldRendererId renderer_id,
                                     const base::string16& value) override {}
 
   void CheckSafeBrowsingReputation(const GURL& form_action,
@@ -79,7 +77,7 @@ class FakeContentPasswordManagerDriver : public mojom::PasswordManagerDriver {
 
   void FocusedInputChanged(
       autofill::mojom::FocusedFieldType focused_field_type) override {}
-  void LogFirstFillingResult(uint32_t form_renderer_id,
+  void LogFirstFillingResult(autofill::FormRendererId form_renderer_id,
                              int32_t result) override {}
 
   // Records whether RecordSavePasswordProgress() gets called.

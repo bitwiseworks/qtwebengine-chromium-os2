@@ -10,6 +10,7 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/renderer/platform/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mojo/features.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 
 namespace blink {
@@ -18,8 +19,8 @@ namespace blink {
 // garbage-collected object. Blink is expected to use HeapMojoRemote by
 // default. HeapMojoRemote must be associated with context.
 // HeapMojoRemote's constructor takes context as a mandatory parameter.
-// HeapMojoRemote resets the mojo connection when 1) the owner object is
-// garbage-collected and 2) the associated ExecutionContext is detached.
+// HeapMojoRemote resets the mojo connection when the associated
+// ExecutionContext is detached.
 
 // TODO(crbug.com/1058076) HeapMojoWrapperMode should be removed once we ensure
 // that the interface is not used after ContextDestroyed().
@@ -31,6 +32,10 @@ class HeapMojoRemote {
  public:
   explicit HeapMojoRemote(ContextLifecycleNotifier* notifier)
       : wrapper_(MakeGarbageCollected<Wrapper>(notifier)) {}
+  HeapMojoRemote(const HeapMojoRemote&) = delete;
+  HeapMojoRemote& operator=(const HeapMojoRemote&) = delete;
+  HeapMojoRemote(HeapMojoRemote&&) = default;
+  HeapMojoRemote& operator=(HeapMojoRemote&&) = default;
 
   // Methods to redirect to mojo::Remote.
   using Proxy = typename Interface::Proxy_;
@@ -39,8 +44,15 @@ class HeapMojoRemote {
   bool is_bound() const { return wrapper_->remote().is_bound(); }
   bool is_connected() const { return wrapper_->remote().is_connected(); }
   void reset() { wrapper_->remote().reset(); }
+  void ResetWithReason(uint32_t custom_reason, const std::string& description) {
+    wrapper_->remote().ResetWithReason(custom_reason, description);
+  }
   void set_disconnect_handler(base::OnceClosure handler) {
     wrapper_->remote().set_disconnect_handler(std::move(handler));
+  }
+  void set_disconnect_with_reason_handler(
+      mojo::ConnectionErrorWithReasonCallback handler) {
+    wrapper_->remote().set_disconnect_with_reason_handler(std::move(handler));
   }
   mojo::PendingReceiver<Interface> BindNewPipeAndPassReceiver(
       scoped_refptr<base::SequencedTaskRunner> task_runner) WARN_UNUSED_RESULT {
@@ -53,33 +65,38 @@ class HeapMojoRemote {
     DCHECK(task_runner);
     wrapper_->remote().Bind(std::move(pending_remote), std::move(task_runner));
   }
+  void PauseReceiverUntilFlushCompletes(mojo::PendingFlush flush) {
+    wrapper_->remote().PauseReceiverUntilFlushCompletes(std::move(flush));
+  }
+  mojo::PendingFlush FlushAsync() { return wrapper_->remote().FlushAsync(); }
   void FlushForTesting() { return wrapper_->remote().FlushForTesting(); }
 
-  void Trace(Visitor* visitor) { visitor->Trace(wrapper_); }
+  void Trace(Visitor* visitor) const { visitor->Trace(wrapper_); }
 
  private:
-  // Garbage collected wrapper class to add a prefinalizer.
+  // Garbage collected wrapper class to add ContextLifecycleObserver.
   class Wrapper final : public GarbageCollected<Wrapper>,
                         public ContextLifecycleObserver {
-    USING_PRE_FINALIZER(Wrapper, Dispose);
-    USING_GARBAGE_COLLECTED_MIXIN(Wrapper);
-
    public:
     explicit Wrapper(ContextLifecycleNotifier* notifier) {
       SetContextLifecycleNotifier(notifier);
     }
+    Wrapper(const Wrapper&) = delete;
+    Wrapper& operator=(const Wrapper&) = delete;
+    Wrapper(Wrapper&&) = default;
+    Wrapper& operator=(Wrapper&&) = default;
 
-    void Trace(Visitor* visitor) override {
+    void Trace(Visitor* visitor) const override {
       ContextLifecycleObserver::Trace(visitor);
     }
-
-    void Dispose() { remote_.reset(); }
 
     mojo::Remote<Interface>& remote() { return remote_; }
 
     // ContextLifecycleObserver methods
     void ContextDestroyed() override {
-      if (Mode == HeapMojoWrapperMode::kWithContextObserver)
+      if (Mode == HeapMojoWrapperMode::kWithContextObserver ||
+          (Mode == HeapMojoWrapperMode::kWithoutContextObserver &&
+           base::FeatureList::IsEnabled(kHeapMojoUseContextObserver)))
         remote_.reset();
     }
 

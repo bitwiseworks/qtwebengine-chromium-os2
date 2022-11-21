@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
 
+#include "cc/layers/layer.h"
 #include "cc/paint/display_item_list.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_chunks_to_cc_layer.h"
@@ -12,18 +13,6 @@
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 
 namespace blink {
-
-namespace {
-
-// For PaintArtifact::AppendDebugDrawing().
-class DebugDrawingClient final : public DisplayItemClient {
- public:
-  DebugDrawingClient() { Invalidate(PaintInvalidationReason::kUncacheable); }
-  String DebugName() const final { return "DebugDrawing"; }
-  IntRect VisualRect() const final { return LayoutRect::InfiniteIntRect(); }
-};
-
-}  // namespace
 
 PaintArtifact::PaintArtifact() : display_item_list_(0) {}
 
@@ -54,23 +43,6 @@ size_t PaintArtifact::ApproximateUnsharedMemoryUsage() const {
   return total_size;
 }
 
-void PaintArtifact::AppendDebugDrawing(
-    sk_sp<const PaintRecord> record,
-    const PropertyTreeState& property_tree_state) {
-  DEFINE_STATIC_LOCAL(DebugDrawingClient, debug_drawing_client, ());
-
-  DCHECK(!RuntimeEnabledFeatures::CompositeAfterPaintEnabled());
-  auto& display_item =
-      display_item_list_.AllocateAndConstruct<DrawingDisplayItem>(
-          debug_drawing_client, DisplayItem::kDebugDrawing, std::move(record));
-
-  // Create a PaintChunk for the debug drawing.
-  chunks_.emplace_back(display_item_list_.size() - 1, display_item_list_.size(),
-                       display_item.GetId(), property_tree_state);
-  chunks_.back().bounds = chunks_.back().drawable_bounds =
-      display_item_list_.Last().VisualRect();
-}
-
 void PaintArtifact::Replay(GraphicsContext& graphics_context,
                            const PropertyTreeState& replay_state,
                            const IntPoint& offset) const {
@@ -94,29 +66,44 @@ sk_sp<PaintRecord> PaintArtifact::GetPaintRecord(
       ->ReleaseAsRecord();
 }
 
-SkColor PaintArtifact::SafeOpaqueBackgroundColor(
-    const PaintChunkSubset& chunks) const {
-  // Find the background color from the first drawing display item.
-  for (const auto& chunk : chunks) {
-    for (const auto& item : display_item_list_.ItemsInPaintChunk(chunk)) {
-      if (item.IsDrawing() && item.DrawsContent())
-        return static_cast<const DrawingDisplayItem&>(item).BackgroundColor();
+// The heuristic for picking a checkerboarding color works as follows:
+//   - During paint, PaintChunker will look for background color display items,
+//     and annotates the chunk with the index of the display item that paints
+//     the largest area background color (ties are broken by selecting the
+//     display item that paints last).
+//   - After layer allocation, the paint chunks assigned to a layer are
+//     examined for a background color annotation. The chunk with the largest
+//     background color annotation is selected.
+//   - If the area of the selected background color is at least half the size
+//     of the layer, then it is set as the layer's background color.
+//   - The same color is used for the layer's safe opaque background color, but
+//     without the size requirement, as safe opaque background color should
+//     always get a value if possible.
+void PaintArtifact::UpdateBackgroundColor(
+    cc::Layer* layer,
+    const PaintChunkSubset& paint_chunks) const {
+  SkColor color = SK_ColorTRANSPARENT;
+  uint64_t area = 0;
+  for (const auto& chunk : paint_chunks) {
+    if (chunk.background_color != Color::kTransparent &&
+        chunk.background_color_area >= area) {
+      color = chunk.background_color.Rgb();
+      area = chunk.background_color_area;
     }
   }
-  return SK_ColorTRANSPARENT;
+
+  layer->SetSafeOpaqueBackgroundColor(color);
+
+  base::ClampedNumeric<uint64_t> layer_area = layer->bounds().width();
+  layer_area *= layer->bounds().height();
+  if (area < static_cast<uint64_t>(layer_area) / 2)
+    color = SK_ColorTRANSPARENT;
+  layer->SetBackgroundColor(color);
 }
 
 void PaintArtifact::FinishCycle() {
-  // Until CompositeAfterPaint, PaintController::ClearPropertyTreeChangedStateTo
-  // is used for clearing the property tree changed state at the end of paint
-  // instead of in FinishCycle. See: LocalFrameView::RunPaintLifecyclePhase.
-  bool clear_property_tree_changed =
-      RuntimeEnabledFeatures::CompositeAfterPaintEnabled();
-  for (auto& chunk : chunks_) {
+  for (auto& chunk : chunks_)
     chunk.client_is_just_created = false;
-    if (clear_property_tree_changed)
-      chunk.properties.ClearChangedToRoot();
-  }
 }
 
 }  // namespace blink

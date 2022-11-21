@@ -390,7 +390,15 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         events.insert(GroupAndName("kmem", "rss_stat"));
         events.insert(GroupAndName("kmem", "ion_heap_grow"));
         events.insert(GroupAndName("kmem", "ion_heap_shrink"));
+        // ion_stat supersedes ion_heap_grow / shrink for kernel 4.19+
+        events.insert(GroupAndName("ion", "ion_stat"));
         events.insert(GroupAndName("mm_event", "mm_event_record"));
+        continue;
+      }
+
+      if (category == "thermal") {
+        events.insert(GroupAndName("thermal", "thermal_temperature"));
+        events.insert(GroupAndName("thermal", "cdev_update"));
         continue;
       }
     }

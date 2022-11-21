@@ -24,7 +24,9 @@ export class SegmentedButton extends HBox {
   addSegment(label, value, tooltip) {
     const button = this.contentElement.createChild('button', 'segmented-button-segment');
     button.textContent = label;
-    button.title = tooltip;
+    if (tooltip) {
+      button.title = tooltip;
+    }
     this._buttons.set(value, button);
     button.addEventListener('click', () => this.select(value));
   }
@@ -37,8 +39,8 @@ export class SegmentedButton extends HBox {
       return;
     }
     this._selected = value;
-    for (const key of this._buttons.keys()) {
-      this._buttons.get(key).classList.toggle('segmented-button-segment-selected', key === this._selected);
+    for (const [key, button] of this._buttons) {
+      button.classList.toggle('segmented-button-segment-selected', key === this._selected);
     }
   }
 

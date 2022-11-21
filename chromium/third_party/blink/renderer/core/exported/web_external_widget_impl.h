@@ -7,6 +7,9 @@
 
 #include "third_party/blink/public/web/web_external_widget.h"
 
+#include "build/build_config.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_context.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/page/widget.mojom-blink.h"
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -28,27 +31,88 @@ class WebExternalWidgetImpl : public WebExternalWidget,
   ~WebExternalWidgetImpl() override;
 
   // WebWidget overrides:
-  void SetCompositorHosts(cc::LayerTreeHost*, cc::AnimationHost*) override;
+  cc::LayerTreeHost* InitializeCompositing(
+      scheduler::WebThreadScheduler* main_thread_scheduler,
+      cc::TaskGraphRunner* task_graph_runner,
+      bool for_child_local_root_frame,
+      const ScreenInfo& screen_info,
+      std::unique_ptr<cc::UkmRecorderFactory> ukm_recorder_factory,
+      const cc::LayerTreeSettings* settings) override;
   void SetCompositorVisible(bool visible) override;
-  void UpdateVisualState() override;
-  void WillBeginCompositorFrame() override;
-  WebHitTestResult HitTestResultAt(const gfx::Point&) override;
+  void Close(
+      scoped_refptr<base::SingleThreadTaskRunner> cleanup_runner) override;
+  WebHitTestResult HitTestResultAt(const gfx::PointF&) override;
   WebURL GetURLForDebugTrace() override;
   WebSize Size() override;
   void Resize(const WebSize& size) override;
   WebInputEventResult HandleInputEvent(
       const WebCoalescedInputEvent& coalesced_event) override;
   WebInputEventResult DispatchBufferedTouchEvents() override;
+  scheduler::WebRenderWidgetSchedulingState* RendererWidgetSchedulingState()
+      override;
+  void SetCursor(const ui::Cursor& cursor) override;
+  bool HandlingInputEvent() override;
+  void SetHandlingInputEvent(bool handling) override;
+  bool ImeCompositionReplacement() override;
+  void ProcessInputEventSynchronouslyForTesting(const WebCoalescedInputEvent&,
+                                                HandledEventCallback) override;
+  void DidOverscrollForTesting(
+      const gfx::Vector2dF& overscroll_delta,
+      const gfx::Vector2dF& accumulated_overscroll,
+      const gfx::PointF& position_in_viewport,
+      const gfx::Vector2dF& velocity_in_viewport) override;
+  void UpdateTextInputState() override;
+  void UpdateSelectionBounds() override;
+  void ShowVirtualKeyboard() override;
+  bool HasFocus() override;
+  void SetFocus(bool focus) override;
+  void RequestMouseLock(
+      bool has_transient_user_activation,
+      bool priviledged,
+      bool request_unadjusted_movement,
+      base::OnceCallback<
+          void(mojom::blink::PointerLockResult,
+               CrossVariantMojoRemote<
+                   mojom::blink::PointerLockContextInterfaceBase>)>) override;
+#if defined(OS_ANDROID)
+  SynchronousCompositorRegistry* GetSynchronousCompositorRegistry() override;
+#endif
+  void ApplyVisualProperties(
+      const VisualProperties& visual_properties) override;
+  const ScreenInfo& GetScreenInfo() override;
+  gfx::Rect WindowRect() override;
+  gfx::Rect ViewRect() override;
+  void SetScreenRects(const gfx::Rect& widget_screen_rect,
+                      const gfx::Rect& window_screen_rect) override;
+  gfx::Size VisibleViewportSizeInDIPs() override;
+  void SetPendingWindowRect(const gfx::Rect* window_screen_rect) override;
+  bool IsHidden() const override;
 
   // WebExternalWidget overrides:
   void SetRootLayer(scoped_refptr<cc::Layer>) override;
 
   // WidgetBaseClient overrides:
-  void DispatchRafAlignedInput(base::TimeTicks frame_time) override {}
   void BeginMainFrame(base::TimeTicks last_frame_time) override {}
   void RecordTimeToFirstActivePaint(base::TimeDelta duration) override;
   void UpdateLifecycle(WebLifecycleUpdate requested_update,
                        DocumentUpdateReason reason) override {}
+  void RequestNewLayerTreeFrameSink(
+      LayerTreeFrameSinkCallback callback) override;
+  void DidCommitAndDrawCompositorFrame() override;
+  bool WillHandleGestureEvent(const WebGestureEvent& event) override;
+  bool WillHandleMouseEvent(const WebMouseEvent& event) override;
+  void ObserveGestureEventAndResult(
+      const WebGestureEvent& gesture_event,
+      const gfx::Vector2dF& unused_delta,
+      const cc::OverscrollBehavior& overscroll_behavior,
+      bool event_processed) override;
+  bool SupportsBufferedTouchEvents() override;
+  void FlushInputProcessedCallback() override;
+  void CancelCompositionForPepper() override;
+  void UpdateVisualProperties(
+      const VisualProperties& visual_properties) override;
+  const ScreenInfo& GetOriginalScreenInfo() override;
+  gfx::Rect ViewportVisibleRect() override;
 
  private:
   WebExternalWidgetClient* const client_;

@@ -14,14 +14,17 @@
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkSpriteBlitter.h"
 
+extern bool gUseSkVMBlitter;
+
 SkSpriteBlitter::SkSpriteBlitter(const SkPixmap& source)
     : fSource(source) {}
 
-void SkSpriteBlitter::setup(const SkPixmap& dst, int left, int top, const SkPaint& paint) {
+bool SkSpriteBlitter::setup(const SkPixmap& dst, int left, int top, const SkPaint& paint) {
     fDst = dst;
     fLeft = left;
     fTop = top;
     fPaint = &paint;
+    return true;
 }
 
 void SkSpriteBlitter::blitH(int x, int y, int width) {
@@ -93,7 +96,7 @@ public:
     }
 
 private:
-    typedef SkSpriteBlitter INHERITED;
+    using INHERITED = SkSpriteBlitter;
 };
 
 class SkRasterPipelineSpriteBlitter : public SkSpriteBlitter {
@@ -107,7 +110,7 @@ public:
         , fClipShader(std::move(clipShader))
     {}
 
-    void setup(const SkPixmap& dst, int left, int top, const SkPaint& paint) override {
+    bool setup(const SkPixmap& dst, int left, int top, const SkPaint& paint) override {
         fDst  = dst;
         fLeft = left;
         fTop  = top;
@@ -132,7 +135,7 @@ public:
                                             : kPremul_SkAlphaType;
             fAlloc->make<SkColorSpaceXformSteps>(srcCS, srcAT,
                                                  dstCS, kPremul_SkAlphaType)
-                ->apply(&p, fSource.colorType());
+                ->apply(&p);
         }
         if (fPaintColor.fA != 1.0f) {
             p.append(SkRasterPipeline::scale_1_float, &fPaintColor.fA);
@@ -140,6 +143,7 @@ public:
 
         bool is_opaque = fSource.isOpaque() && fPaintColor.fA == 1.0f;
         fBlitter = SkCreateRasterPipelineBlitter(fDst, paint, p, is_opaque, fAlloc, fClipShader);
+        return fBlitter != nullptr;
     }
 
     void blitRect(int x, int y, int width, int height) override {
@@ -163,7 +167,7 @@ private:
     SkColor4f                  fPaintColor;
     sk_sp<SkShader>            fClipShader;
 
-    typedef SkSpriteBlitter INHERITED;
+    using INHERITED = SkSpriteBlitter;
 };
 
 // returning null means the caller will call SkBlitter::Choose() and
@@ -181,6 +185,10 @@ SkBlitter* SkBlitter::ChooseSprite(const SkPixmap& dst, const SkPaint& paint,
         (which does respect soft edges).
     */
     SkASSERT(alloc != nullptr);
+
+    if (gUseSkVMBlitter) {
+        return SkCreateSkVMSpriteBlitter(dst, paint, source,left,top, alloc, std::move(clipShader));
+    }
 
     // TODO: in principle SkRasterPipelineSpriteBlitter could be made to handle this.
     if (source.alphaType() == kUnpremul_SkAlphaType) {
@@ -213,8 +221,9 @@ SkBlitter* SkBlitter::ChooseSprite(const SkPixmap& dst, const SkPaint& paint,
         blitter = alloc->make<SkRasterPipelineSpriteBlitter>(source, alloc, clipShader);
     }
 
-    if (blitter) {
-        blitter->setup(dst, left, top, paint);
+    if (blitter && blitter->setup(dst, left,top, paint)) {
+        return blitter;
     }
-    return blitter;
+
+    return SkCreateSkVMSpriteBlitter(dst, paint, source,left,top, alloc, std::move(clipShader));
 }

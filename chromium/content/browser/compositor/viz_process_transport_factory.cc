@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task/post_task.h"
 #include "cc/mojo_embedder/async_layer_tree_frame_sink.h"
 #include "cc/raster/single_thread_task_graph_runner.h"
 #include "components/viz/common/features.h"
@@ -169,7 +168,8 @@ void VizProcessTransportFactory::ConnectHostFrameSinkManager() {
     // process.
     auto connect_on_io_thread =
         [](mojo::PendingReceiver<viz::mojom::FrameSinkManager> receiver,
-           mojo::PendingRemote<viz::mojom::FrameSinkManagerClient> client) {
+           mojo::PendingRemote<viz::mojom::FrameSinkManagerClient> client,
+           const viz::DebugRendererSettings& debug_renderer_settings) {
           // There should always be a GpuProcessHost instance, and GPU process,
           // for running the compositor thread. The exception is during shutdown
           // the GPU process won't be restarted and GpuProcessHost::Get() can
@@ -177,13 +177,16 @@ void VizProcessTransportFactory::ConnectHostFrameSinkManager() {
           auto* gpu_process_host = GpuProcessHost::Get();
           if (gpu_process_host) {
             gpu_process_host->gpu_host()->ConnectFrameSinkManager(
-                std::move(receiver), std::move(client));
+                std::move(receiver), std::move(client),
+                debug_renderer_settings);
           }
         };
-    base::PostTask(FROM_HERE, {BrowserThread::IO},
-                   base::BindOnce(connect_on_io_thread,
-                                  std::move(frame_sink_manager_receiver),
-                                  std::move(frame_sink_manager_client)));
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(connect_on_io_thread,
+                       std::move(frame_sink_manager_receiver),
+                       std::move(frame_sink_manager_client),
+                       GetHostFrameSinkManager()->debug_renderer_settings()));
   } else {
     DCHECK(!viz_compositor_thread_);
 
@@ -305,7 +308,7 @@ void VizProcessTransportFactory::DisableGpuCompositing(
     LOG(FATAL) << "Software compositing fallback is unavailable. Goodbye.";
   }
 
-  DLOG(ERROR) << "Switching to software compositing.";
+  DVLOG(1) << "Switching to software compositing.";
 
   is_gpu_compositing_disabled_ = true;
 
@@ -432,6 +435,12 @@ void VizProcessTransportFactory::OnEstablishedGpuChannel(
 
   root_params->use_preferred_interval_for_video =
       features::IsUsingPreferredIntervalForVideo();
+  root_params->num_of_frames_to_toggle_interval =
+      features::NumOfFramesToToggleInterval();
+#if defined(OS_WIN)
+  root_params->set_present_duration_allowed =
+      features::ShouldUseSetPresentDuration();
+#endif  // OS_WIN
 
   // Connects the viz process end of CompositorFrameSink message pipes. The
   // browser compositor may request a new CompositorFrameSink on context loss,
@@ -457,6 +466,17 @@ void VizProcessTransportFactory::OnEstablishedGpuChannel(
     compositor->SetExternalBeginFrameController(
         compositor_data.external_begin_frame_controller.get());
   }
+
+#if defined(OS_WIN)
+  // Windows using the ANGLE D3D backend for compositing needs to disable swap
+  // on resize to avoid D3D scaling the framebuffer texture. This isn't a
+  // problem with software compositing or ANGLE D3D with direct composition.
+  bool using_angle_d3d_compositing =
+      gpu_compositing && !GpuDataManagerImpl::GetInstance()
+                              ->GetGPUInfo()
+                              .overlay_info.direct_composition;
+  compositor->SetShouldDisableSwapUntilResize(using_angle_d3d_compositing);
+#endif
 }
 
 gpu::ContextResult

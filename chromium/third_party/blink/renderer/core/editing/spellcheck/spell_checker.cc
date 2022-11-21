@@ -48,11 +48,12 @@
 #include "third_party/blink/renderer/core/editing/spellcheck/text_checking_paragraph.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/editing/visible_units.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
-#include "third_party/blink/renderer/core/layout/layout_text_control.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
@@ -100,11 +101,18 @@ WebTextCheckClient* SpellChecker::GetTextCheckerClient() const {
   return GetFrame().Client()->GetTextCheckerClient();
 }
 
-SpellChecker::SpellChecker(LocalFrame& frame)
-    : frame_(&frame),
-      spell_check_requester_(MakeGarbageCollected<SpellCheckRequester>(frame)),
+SpellChecker::SpellChecker(LocalDOMWindow& window)
+    : window_(&window),
+      spell_check_requester_(MakeGarbageCollected<SpellCheckRequester>(window)),
       idle_spell_check_controller_(
-          MakeGarbageCollected<IdleSpellCheckController>(frame)) {}
+          MakeGarbageCollected<IdleSpellCheckController>(
+              window,
+              *spell_check_requester_)) {}
+
+LocalFrame& SpellChecker::GetFrame() const {
+  DCHECK(window_->GetFrame());
+  return *window_->GetFrame();
+}
 
 bool SpellChecker::IsSpellCheckingEnabled() const {
   if (WebTextCheckClient* client = GetTextCheckerClient())
@@ -412,7 +420,8 @@ void SpellChecker::RemoveSpellingAndGrammarMarkers(const HTMLElement& element,
                                                    ElementsType elements_type) {
   // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
   // needs to be audited.  See http://crbug.com/590369 for more details.
-  GetFrame().GetDocument()->UpdateStyleAndLayoutTreeForNode(&element);
+  if (elements_type == ElementsType::kOnlyNonEditable)
+    GetFrame().GetDocument()->UpdateStyleAndLayoutTreeForNode(&element);
 
   for (Node& node : NodeTraversal::InclusiveDescendantsOf(element)) {
     auto* text_node = DynamicTo<Text>(node);
@@ -542,20 +551,21 @@ void SpellChecker::RemoveSpellingMarkersUnderWords(
 
 static Node* FindFirstMarkable(Node* node) {
   while (node) {
-    if (!node->GetLayoutObject())
+    LayoutObject* layout_object = node->GetLayoutObject();
+    if (!layout_object)
       return nullptr;
-    if (node->GetLayoutObject()->IsText())
+    if (layout_object->IsText())
       return node;
-    if (auto* text_control =
-            DynamicTo<LayoutTextControl>(node->GetLayoutObject()))
-      node = text_control->GetTextControlElement()
+    if (layout_object->IsTextControlIncludingNG()) {
+      node = To<TextControlElement>(node)
                  ->VisiblePositionForIndex(1)
                  .DeepEquivalent()
                  .AnchorNode();
-    else if (node->hasChildren())
+    } else if (node->hasChildren()) {
       node = node->firstChild();
-    else
+    } else {
       node = node->nextSibling();
+    }
   }
 
   return nullptr;
@@ -598,12 +608,8 @@ void SpellChecker::RemoveMarkers(const EphemeralRange& range,
   GetFrame().GetDocument()->Markers().RemoveMarkersInRange(range, marker_types);
 }
 
-void SpellChecker::DidAttachDocument(Document* document) {
-  idle_spell_check_controller_->DidAttachDocument(document);
-}
-
-void SpellChecker::Trace(Visitor* visitor) {
-  visitor->Trace(frame_);
+void SpellChecker::Trace(Visitor* visitor) const {
+  visitor->Trace(window_);
   visitor->Trace(spell_check_requester_);
   visitor->Trace(idle_spell_check_controller_);
 }

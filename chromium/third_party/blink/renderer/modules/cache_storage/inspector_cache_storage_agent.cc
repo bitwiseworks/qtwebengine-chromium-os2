@@ -20,15 +20,16 @@
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_vector.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader_client.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/inspected_frames.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -94,11 +95,7 @@ ProtocolResponse GetExecutionContext(InspectedFrames* frames,
     return ProtocolResponse::ServerError(msg.Utf8());
   }
 
-  blink::Document* document = frame->GetDocument();
-  if (!document)
-    return ProtocolResponse::ServerError("No execution context found");
-
-  *context = document->ToExecutionContext();
+  *context = frame->DomWindow();
 
   return ProtocolResponse::Success();
 }
@@ -262,12 +259,11 @@ class ResponsesAccumulator : public RefCounted<ResponsesAccumulator> {
     for (auto& request : requests) {
       // All FetchAPIRequests in cache_storage code are supposed to not contain
       // a body.
-      DCHECK(!request->blob && !request->body);
+      DCHECK(!request->blob && request->body.IsEmpty());
       auto request_clone_without_body = mojom::blink::FetchAPIRequest::New(
-          request->mode, request->is_main_resource_load,
-          request->request_context_type, request->destination,
+          request->mode, request->is_main_resource_load, request->destination,
           request->frame_type, request->url, request->method, request->headers,
-          nullptr /* blob */, nullptr /* body */, request->referrer.Clone(),
+          nullptr /* blob */, ResourceRequestBody(), request->referrer.Clone(),
           request->credentials_mode, request->cache_mode,
           request->redirect_mode, request->integrity, request->priority,
           request->fetch_window_id, request->keepalive, request->is_reload,
@@ -504,7 +500,7 @@ InspectorCacheStorageAgent::InspectorCacheStorageAgent(InspectedFrames* frames)
 
 InspectorCacheStorageAgent::~InspectorCacheStorageAgent() = default;
 
-void InspectorCacheStorageAgent::Trace(Visitor* visitor) {
+void InspectorCacheStorageAgent::Trace(Visitor* visitor) const {
   visitor->Trace(frames_);
   InspectorBaseAgent::Trace(visitor);
 }

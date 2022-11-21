@@ -36,11 +36,10 @@ def EnsureEmptyDir(path):
 
 def BuildForArch(arch):
   build_dir = 'out/release-' + arch
-  Run('scripts/fx', '--dir', build_dir, 'set', 'core.qemu-' + arch,
-      '--with-base=//sdk/bundles:tools', '--args=is_debug=false',
-      '--args=build_sdk_archives=true')
-  Run('scripts/fx', 'build', 'topaz/public/sdk:fuchsia_dart', 'sdk',
-      'build/images')
+  Run('scripts/fx', '--dir', build_dir, 'set', 'terminal.qemu-' + arch,
+      '--args=cache_package_labels+=["//sdk/bundles:tools"]',
+      '--args=is_debug=false', '--args=build_sdk_archives=true')
+  Run('scripts/fx', 'build', 'sdk', 'build/images')
 
 
 def _CopyFilesIntoExistingDirectory(src, dst):
@@ -94,7 +93,7 @@ def main(args):
 
     arch_output_dir = os.path.join(fuchsia_root, 'out', 'release-' + arch)
 
-    sdk_tarballs = ['core.tar.gz', 'fuchsia_dart.tar.gz']
+    sdk_tarballs = ['core.tar.gz']
 
     for sdk_tar in sdk_tarballs:
       sdk_tar_path = os.path.join(arch_output_dir, 'sdk', 'archive', sdk_tar)

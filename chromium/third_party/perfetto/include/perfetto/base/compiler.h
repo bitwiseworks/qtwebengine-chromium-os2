@@ -19,6 +19,8 @@
 
 #include <type_traits>
 
+#include "perfetto/base/build_config.h"
+
 #if defined(__GNUC__) || defined(__clang__)
 #define PERFETTO_LIKELY(_x) __builtin_expect(!!(_x), 1)
 #define PERFETTO_UNLIKELY(_x) __builtin_expect(!!(_x), 0)
@@ -58,6 +60,32 @@
 #else
 #define PERFETTO_PRINTF_FORMAT(x, y)
 #endif
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_IOS)
+// TODO(b/158814068): For iOS builds, thread_local is only supported since iOS
+// 8. We'd have to use pthread for thread local data instead here. For now, just
+// define it to nothing since we don't support running perfetto or the client
+// lib on iOS right now.
+#define PERFETTO_THREAD_LOCAL
+#else
+#define PERFETTO_THREAD_LOCAL thread_local
+#endif
+
+#if defined(__clang__)
+#if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#include <cstddef>
+extern "C" void __asan_poison_memory_region(void const volatile*, size_t);
+extern "C" void __asan_unpoison_memory_region(void const volatile*, size_t);
+#define PERFETTO_ASAN_POISON(a, s) __asan_poison_memory_region((a), (s))
+#define PERFETTO_ASAN_UNPOISON(a, s) __asan_unpoison_memory_region((a), (s))
+#else
+#define PERFETTO_ASAN_POISON(addr, size)
+#define PERFETTO_ASAN_UNPOISON(addr, size)
+#endif  // __has_feature(address_sanitizer)
+#else
+#define PERFETTO_ASAN_POISON(addr, size)
+#define PERFETTO_ASAN_UNPOISON(addr, size)
+#endif  // __clang__
 
 namespace perfetto {
 namespace base {

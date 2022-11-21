@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/metrics/call_stack_profile_encoding.h"
+#include "base/notreached.h"
 
 namespace metrics {
 
@@ -18,6 +19,8 @@ Process ToExecutionContextProcess(CallStackProfileParams::Process process) {
       return GPU_PROCESS;
     case CallStackProfileParams::UTILITY_PROCESS:
       return UTILITY_PROCESS;
+    case CallStackProfileParams::NETWORK_SERVICE_PROCESS:
+      return NETWORK_SERVICE_PROCESS;
     case CallStackProfileParams::ZYGOTE_PROCESS:
       return ZYGOTE_PROCESS;
     case CallStackProfileParams::SANDBOX_HELPER_PROCESS:

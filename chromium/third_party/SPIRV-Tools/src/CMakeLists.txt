@@ -40,7 +40,7 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
   set(SPIRV_TIMER_ENABLED ${SPIRV_ALLOW_TIMERS})
 elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "Emscripten")
     add_definitions(-DSPIRV_EMSCRIPTEN)
-elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
+elseif("${CMAKE_SYSTEM_NAME}" MATCHES "Windows")
   add_definitions(-DSPIRV_WINDOWS)
 elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "CYGWIN")
   add_definitions(-DSPIRV_WINDOWS)
@@ -78,6 +78,8 @@ if(SPIRV_BUILD_COMPRESSION)
   message(FATAL_ERROR "SPIR-V compression codec has been removed from SPIR-V tools. "
           "Please remove SPIRV_BUILD_COMPRESSION from your build options.")
 endif(SPIRV_BUILD_COMPRESSION)
+
+option(SPIRV_BUILD_FUZZER "Build spirv-fuzz" OFF)
 
 option(SPIRV_WERROR "Enable error on warning" ON)
 if(("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU") OR (("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang") AND (NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")))
@@ -249,7 +251,7 @@ endif()
 
 # Precompiled header macro. Parameters are source file list and filename for pch cpp file.
 macro(spvtools_pch SRCS PCHPREFIX)
-  if(MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio")
+  if(MSVC AND CMAKE_GENERATOR MATCHES "^Visual Studio" AND NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
     set(PCH_NAME "$(IntDir)\\${PCHPREFIX}.pch")
     # make source files use/depend on PCH_NAME
     set_source_files_properties(${${SRCS}} PROPERTIES COMPILE_FLAGS "/Yu${PCHPREFIX}.h /FI${PCHPREFIX}.h /Fp${PCH_NAME} /Zm300" OBJECT_DEPENDS "${PCH_NAME}")

@@ -30,16 +30,17 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   QuicUnackedPacketMap& operator=(const QuicUnackedPacketMap&) = delete;
   ~QuicUnackedPacketMap();
 
-  // Adds |serialized_packet| to the map and marks it as sent at |sent_time|.
+  // Adds |mutable_packet| to the map and marks it as sent at |sent_time|.
   // Marks the packet as in flight if |set_in_flight| is true.
   // Packets marked as in flight are expected to be marked as missing when they
   // don't arrive, indicating the need for retransmission.
-  // Any AckNotifierWrappers in |serialized_packet| are swapped from the
-  // serialized packet into the QuicTransmissionInfo.
-  void AddSentPacket(SerializedPacket* serialized_packet,
+  // Any retransmittible_frames in |mutable_packet| are swapped from
+  // |mutable_packet| into the QuicTransmissionInfo.
+  void AddSentPacket(SerializedPacket* mutable_packet,
                      TransmissionType transmission_type,
                      QuicTime sent_time,
-                     bool set_in_flight);
+                     bool set_in_flight,
+                     bool measure_rtt);
 
   // Returns true if the packet |packet_number| is unacked.
   bool IsUnacked(QuicPacketNumber packet_number) const;
@@ -114,10 +115,13 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   typedef std::deque<QuicTransmissionInfo> UnackedPacketMap;
 
   typedef UnackedPacketMap::const_iterator const_iterator;
+  typedef UnackedPacketMap::const_reverse_iterator const_reverse_iterator;
   typedef UnackedPacketMap::iterator iterator;
 
   const_iterator begin() const { return unacked_packets_.begin(); }
   const_iterator end() const { return unacked_packets_.end(); }
+  const_reverse_iterator rbegin() const { return unacked_packets_.rbegin(); }
+  const_reverse_iterator rend() const { return unacked_packets_.rend(); }
   iterator begin() { return unacked_packets_.begin(); }
   iterator end() { return unacked_packets_.end(); }
 
@@ -228,6 +232,12 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
 
   void EnableMultiplePacketNumberSpacesSupport();
 
+  // Returns a bitfield of retransmittable frames of last packet in
+  // unacked_packets_. For example, if the packet contains STREAM_FRAME, content
+  // & (1 << STREAM_FRAME) would be set. Returns max uint32_t if
+  // unacked_packets_ is empty.
+  int32_t GetLastPacketContent() const;
+
   Perspective perspective() const { return perspective_; }
 
   bool supports_multiple_packet_number_spaces() const {
@@ -281,6 +291,9 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   QuicPacketNumber least_unacked_;
 
   QuicByteCount bytes_in_flight_;
+  // Bytes in flight per packet number space.
+  QuicByteCount
+      bytes_in_flight_per_packet_number_space_[NUM_PACKET_NUMBER_SPACES];
   QuicPacketCount packets_in_flight_;
 
   // Time that the last inflight packet was sent.

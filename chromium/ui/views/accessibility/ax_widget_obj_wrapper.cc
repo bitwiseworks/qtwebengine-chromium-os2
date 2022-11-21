@@ -62,7 +62,20 @@ int32_t AXWidgetObjWrapper::GetUniqueId() const {
   return unique_id_.Get();
 }
 
+std::string AXWidgetObjWrapper::ToString() const {
+  return "Widget";
+}
+
 void AXWidgetObjWrapper::OnWidgetDestroying(Widget* widget) {
+  aura_obj_cache_->Remove(widget);
+}
+
+void AXWidgetObjWrapper::OnWidgetDestroyed(Widget* widget) {
+  // Normally this does not run because of OnWidgetDestroying should have
+  // removed |this| from cache. However, some code could trigger a destroying
+  // widget to be created after OnWidgetDestroying. This guards against such
+  // situation and ensures the destroyed widget is removed from cache.
+  // See https://crbug.com/1091545
   aura_obj_cache_->Remove(widget);
 }
 

@@ -37,7 +37,58 @@ grit("resources") {
     "//chromeos/services/machine_learning/public/mojom:mojom_js",
     "//chromeos/services/multidevice_setup/public/mojom:mojom_js",
     "//chromeos/services/network_config/public/mojom:mojom_js",
+    "//chromeos/services/network_health/public/mojom:mojom_js",
   ]
+}
+
+# Resources used by chrome://camera-app.
+grit("camera_app_resources") {
+  source = "../components/camera_app_ui/resources/camera_app_resources.grd"
+
+  outputs = [
+    "grit/chromeos_camera_app_resources.h",
+    "grit/chromeos_camera_app_resources_map.cc",
+    "grit/chromeos_camera_app_resources_map.h",
+    "chromeos_camera_app_resources.pak",
+  ]
+  output_dir = "$root_gen_dir/chromeos"
+
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+  ]
+
+  deps = [
+    "//chromeos/components/camera_app_ui:mojo_bindings_js",
+    "//media/capture/video/chromeos/mojom:cros_camera_js",
+    "//mojo/public/js:bindings_lite",
+    "//third_party/blink/public/mojom:mojom_platform_js",
+  ]
+}
+
+# Resources used by chrome://file-manager
+if (!is_official_build) {
+  grit("file_manager_resources") {
+    source = "../components/file_manager/resources/file_manager_resources.grd"
+
+    outputs = [
+      "grit/chromeos_file_manager_resources.h",
+      "grit/chromeos_file_manager_resources_map.cc",
+      "grit/chromeos_file_manager_resources_map.h",
+      "chromeos_file_manager_resources.pak",
+    ]
+    output_dir = "$root_gen_dir/chromeos"
+
+    grit_flags = [
+      "-E",
+      "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+    ]
+
+    deps = [
+      "//chromeos/components/file_manager:file_manager_mojom_js",
+      "//mojo/public/js:bindings_lite",
+    ]
+  }
 }
 
 # Resources used by chrome://help-app, and parts of the sandboxed app it hosts
@@ -58,15 +109,18 @@ grit("help_app_resources") {
     "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
   ]
 
-  deps = [ "//chromeos/components/help_app_ui:mojo_bindings_js" ]
+  deps = [
+    "//chromeos/components/help_app_ui:mojo_bindings_js",
+    "//chromeos/components/local_search_service/mojom:mojom_js",
+  ]
 }
 
 # Resources automatically served by the chrome://help-app bundle, obtained via DEPS.
 grit("help_app_bundle_resources") {
   if (enable_cros_help_app) {
-    # Obtained via src-internal/DEPS.
+    # Obtained via an internal CIPD package in src/DEPS.
     source =
-        "../components/help_app_ui/resources/app/help_app_bundle_resources.grd"
+        "../components/help_app_ui/resources/prod/help_app_bundle_resources.grd"
   } else {
     source = "../components/help_app_ui/resources/mock/help_app_bundle_mock_resources.grd"
   }
@@ -95,6 +149,27 @@ grit("sample_system_web_app_resources") {
   output_dir = "$root_gen_dir/chromeos"
 }
 
+# Resources used by chrome://telemetry-extension
+grit("telemetry_extension_resources") {
+  source = "../components/telemetry_extension_ui/resources/telemetry_extension_resources.grd"
+
+  deps = [ "../components/telemetry_extension_ui/mojom:mojom_js" ]
+
+  outputs = [
+    "grit/chromeos_telemetry_extension_resources.h",
+    "grit/chromeos_telemetry_extension_resources_map.cc",
+    "grit/chromeos_telemetry_extension_resources_map.h",
+    "chromeos_telemetry_extension_resources.pak",
+  ]
+
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+  ]
+
+  output_dir = "$root_gen_dir/chromeos"
+}
+
 # Resources used by chrome://media-app, and parts of the sandboxed app it hosts
 # that do not come from the app bundle (below).
 grit("media_app_resources") {
@@ -119,8 +194,8 @@ grit("media_app_resources") {
 # Resources automatically served by the chrome://media-app bundle, obtained via DEPS.
 grit("media_app_bundle_resources") {
   if (enable_cros_media_app) {
-    # Obtained via src-internal/DEPS.
-    source = "../components/media_app_ui/resources/pkg/media_app_bundle_resources.grd"
+    # Obtained via an internal CIPD package in src/DEPS.
+    source = "../components/media_app_ui/resources/prod/media_app_bundle_resources.grd"
   } else {
     source = "../components/media_app_ui/resources/mock/media_app_bundle_mock_resources.grd"
   }
@@ -140,13 +215,60 @@ grit("print_management_resources") {
   source =
       "../components/print_management/resources/print_management_resources.grd"
 
-  deps = [ "../components/print_management/resources:polymer3_elements" ]
+  deps = [
+    "../components/print_management/mojom:mojom_js",
+    "../components/print_management/resources:web_components",
+  ]
 
   outputs = [
     "grit/chromeos_print_management_resources.h",
     "grit/chromeos_print_management_resources_map.cc",
     "grit/chromeos_print_management_resources_map.h",
     "chromeos_print_management_resources.pak",
+  ]
+
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+  ]
+
+  output_dir = "$root_gen_dir/chromeos"
+}
+
+grit("scanning_app_resources") {
+  source = "../components/scanning/resources/scanning_app_resources.grd"
+
+  deps = [
+    "../components/scanning/mojom:mojom_js",
+    "../components/scanning/resources:web_components",
+  ]
+
+  outputs = [
+    "chromeos_scanning_app_resources.pak",
+    "grit/chromeos_scanning_app_resources.h",
+    "grit/chromeos_scanning_app_resources_map.cc",
+    "grit/chromeos_scanning_app_resources_map.h",
+  ]
+
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+  ]
+
+  output_dir = "$root_gen_dir/chromeos"
+}
+
+grit("diagnostics_app_resources") {
+  source =
+      "../components/diagnostics_ui/resources/diagnostics_app_resources.grd"
+
+  deps = [ "../components/diagnostics_ui/resources:web_components" ]
+
+  outputs = [
+    "chromeos_diagnostics_app_resources.pak",
+    "grit/chromeos_diagnostics_app_resources.h",
+    "grit/chromeos_diagnostics_app_resources_map.cc",
+    "grit/chromeos_diagnostics_app_resources_map.h",
   ]
 
   grit_flags = [

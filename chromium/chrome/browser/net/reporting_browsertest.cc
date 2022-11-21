@@ -21,6 +21,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/dns/mock_host_resolver.h"
@@ -121,10 +122,10 @@ std::unique_ptr<base::Value> ParseReportUpload(const std::string& payload) {
   // Clear out any non-reproducible fields.
   for (auto& report : parsed_payload->GetList()) {
     report.RemoveKey("age");
-    report.RemovePath({"body", "elapsed_time"});
+    report.RemovePath("body.elapsed_time");
     auto* user_agent =
         report.FindKeyOfType("user_agent", base::Value::Type::STRING);
-    if (user_agent != nullptr)
+    if (user_agent)
       *user_agent = base::Value("Mozilla/1.0");
   }
   return parsed_payload;

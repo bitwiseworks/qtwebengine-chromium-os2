@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_PHYSICAL_CONTAINER_FRAGMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_PHYSICAL_CONTAINER_FRAGMENT_H_
 
+#include <iterator>
+
 #include "base/containers/span.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
@@ -25,25 +27,37 @@ enum class NGOutlineType;
 
 class CORE_EXPORT NGPhysicalContainerFragment : public NGPhysicalFragment {
  public:
-  // Same as |base::span<const NGLink>|, except that each |NGLink| has the
-  // latest generation of post-layout. See
-  // |NGPhysicalFragment::UpdatedFragment()| for more details.
+  // Same as |base::span<const NGLink>|, except that:
+  // * Each |NGLink| has the latest generation of post-layout. See
+  //   |NGPhysicalFragment::UpdatedFragment()| for more details.
+  // * The iterator skips fragments for destroyed or moved |LayoutObject|.
   class PostLayoutChildLinkList {
    public:
     PostLayoutChildLinkList(wtf_size_t count, const NGLink* buffer)
         : count_(count), buffer_(buffer) {}
 
-    class ConstIterator : public std::iterator<std::input_iterator_tag, const NGLink> {
+    class ConstIterator
+        : public std::iterator<std::input_iterator_tag, NGLink> {
       STACK_ALLOCATED();
 
      public:
-      ConstIterator(const NGLink* current) : current_(current) {}
+      using iterator_category = std::bidirectional_iterator_tag;
+      using value_type = NGLink;
+      using difference_type = ptrdiff_t;
+      using pointer = value_type*;
+      using reference = value_type&;
 
-      const NGLink& operator*() const { return *PostLayoutOrCurrent(); }
-      const NGLink* operator->() const { return PostLayoutOrCurrent(); }
+      ConstIterator(const NGLink* current, wtf_size_t size)
+          : current_(current), end_(current + size) {
+        SkipInvalidAndSetPostLayout();
+      }
+
+      const NGLink& operator*() const { return post_layout_; }
+      const NGLink* operator->() const { return &post_layout_; }
 
       ConstIterator& operator++() {
         ++current_;
+        SkipInvalidAndSetPostLayout();
         return *this;
       }
       bool operator==(const ConstIterator& other) const {
@@ -54,28 +68,27 @@ class CORE_EXPORT NGPhysicalContainerFragment : public NGPhysicalFragment {
       }
 
      private:
-      const NGLink* PostLayoutOrCurrent() const {
-        post_layout_.fragment = current_->fragment->PostLayout();
-        if (!post_layout_.fragment)
-          return current_;
-        post_layout_.offset = current_->offset;
-        return &post_layout_;
+      void SkipInvalidAndSetPostLayout() {
+        for (; current_ != end_; ++current_) {
+          const NGPhysicalFragment* fragment = current_->fragment;
+          if (UNLIKELY(fragment->IsLayoutObjectDestroyedOrMoved()))
+            continue;
+          if (const NGPhysicalFragment* post_layout = fragment->PostLayout()) {
+            post_layout_.fragment = post_layout;
+            post_layout_.offset = current_->offset;
+            return;
+          }
+        }
       }
 
       const NGLink* current_;
-      mutable NGLink post_layout_;
+      const NGLink* end_;
+      NGLink post_layout_;
     };
     using const_iterator = ConstIterator;
 
-    const_iterator begin() const { return const_iterator(buffer_); }
-    const_iterator end() const { return const_iterator(buffer_ + count_); }
-
-    const NGLink operator[](wtf_size_t idx) const {
-      CHECK_LT(idx, count_);
-      return buffer_[idx].PostLayout();
-    }
-    const NGLink front() const { return (*this)[0]; }
-    const NGLink back() const { return (*this)[count_ - 1]; }
+    const_iterator begin() const { return const_iterator(buffer_, count_); }
+    const_iterator end() const { return const_iterator(buffer_ + count_, 0); }
 
     wtf_size_t size() const { return count_; }
     bool empty() const { return count_ == 0; }
@@ -116,14 +129,6 @@ class CORE_EXPORT NGPhysicalContainerFragment : public NGPhysicalFragment {
     return has_adjoining_object_descendants_;
   }
 
-  bool HasOrthogonalFlowRoots() const { return has_orthogonal_flow_roots_; }
-
-  // Returns true if we have a descendant within this formatting context, which
-  // is potentially above our block-start edge.
-  bool MayHaveDescendantAboveBlockStart() const {
-    return may_have_descendant_above_block_start_;
-  }
-
   // Returns true if we aren't able to re-use this fragment if the
   // |NGConstraintSpace::PercentageResolutionBlockSize| changes.
   bool DependsOnPercentageBlockSize() const {
@@ -152,12 +157,16 @@ class CORE_EXPORT NGPhysicalContainerFragment : public NGPhysicalFragment {
                               NGFragmentType,
                               unsigned sub_type);
 
+  NGPhysicalContainerFragment(const NGPhysicalContainerFragment& other,
+                              NGLink* buffer);
+
   void AddScrollableOverflowForInlineChild(
       const NGPhysicalBoxFragment& container,
       const ComputedStyle& container_style,
       const NGFragmentItem& line,
       bool has_hanging,
       const NGInlineCursor& cursor,
+      TextHeightType height_type,
       PhysicalRect* overflow) const;
 
   static void AdjustScrollableOverflowForHanging(
@@ -179,6 +188,7 @@ class CORE_EXPORT NGPhysicalContainerFragment : public NGPhysicalFragment {
 
   static bool DependsOnPercentageBlockSize(const NGContainerFragmentBuilder&);
 
+  wtf_size_t num_children_;
   scoped_refptr<const NGBreakToken> break_token_;
   const std::unique_ptr<Vector<NGPhysicalOutOfFlowPositionedNode>>
       oof_positioned_descendants_;
@@ -186,7 +196,6 @@ class CORE_EXPORT NGPhysicalContainerFragment : public NGPhysicalFragment {
   // Because flexible arrays need to be the last member in a class, the actual
   // storage is in the subclass and we just keep a pointer to it here.
   const NGLink* buffer_;
-  wtf_size_t num_children_;
 };
 
 template <>

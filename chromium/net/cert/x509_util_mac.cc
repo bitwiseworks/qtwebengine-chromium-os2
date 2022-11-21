@@ -6,7 +6,7 @@
 
 #include <CommonCrypto/CommonDigest.h>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "net/cert/x509_certificate.h"

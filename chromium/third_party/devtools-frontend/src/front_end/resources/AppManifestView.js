@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as InlineEditor from '../inline_editor/inline_editor.js';
@@ -29,6 +32,7 @@ export class AppManifestView extends UI.Widget.VBox {
     this._emptyView.hideWidget();
 
     this._reportView = new UI.ReportView.ReportView(Common.UIString.UIString('App Manifest'));
+    this._reportView.registerRequiredCSS('resources/appManifestView.css');
     this._reportView.show(this.contentElement);
     this._reportView.hideWidget();
 
@@ -38,6 +42,7 @@ export class AppManifestView extends UI.Widget.VBox {
 
     this._presentationSection = this._reportView.appendSection(Common.UIString.UIString('Presentation'));
     this._iconsSection = this._reportView.appendSection(Common.UIString.UIString('Icons'), 'report-section-icons');
+    this._shortcutSections = [];
 
     this._nameField = this._identitySection.appendField(Common.UIString.UIString('Name'));
     this._shortNameField = this._identitySection.appendField(Common.UIString.UIString('Short name'));
@@ -182,6 +187,11 @@ export class AppManifestView extends UI.Widget.VBox {
     const icons = parsedManifest['icons'] || [];
     this._iconsSection.clearContent();
 
+    const shortcuts = parsedManifest['shortcuts'] || [];
+    for (const shortcutsSection of this._shortcutSections) {
+      shortcutsSection.detach(/* overrideHideOnDetach=*/ true);
+    }
+
     const imageErrors = [];
 
     const setIconMaskedCheckbox =
@@ -211,35 +221,46 @@ export class AppManifestView extends UI.Widget.VBox {
     }
 
     for (const icon of icons) {
-      const iconUrl = Common.ParsedURL.ParsedURL.completeURL(url, icon['src']);
-      const result = await this._loadImage(iconUrl);
-      if (!result) {
-        imageErrors.push(ls`Icon ${iconUrl} failed to load`);
-        continue;
+      const iconErrors = await this._appendIconResourceToSection(url, icon, this._iconsSection);
+      imageErrors.push(...iconErrors);
+    }
+
+    let shortcutIndex = 1;
+    for (const shortcut of shortcuts) {
+      const shortcutSection = this._reportView.appendSection(ls`Shortcut #${shortcutIndex}`);
+      this._shortcutSections.push(shortcutSection);
+
+      shortcutSection.appendFlexedField('Name', shortcut.name);
+      if (shortcut.short_name) {
+        shortcutSection.appendFlexedField('Short name', shortcut.short_name);
       }
-      const {wrapper, image} = result;
-      const sizes = icon['sizes'] ? icon['sizes'].replace('x', '×') + 'px' : '';
-      const title = sizes + '\n' + (icon['type'] || '');
-      const field = this._iconsSection.appendFlexedField(title);
-      if (!icon.sizes) {
-        imageErrors.push(ls`Icon ${iconUrl} does not specify its size in the manifest`);
-      } else if (!/^\d+x\d+$/.test(icon.sizes)) {
-        imageErrors.push(ls`Icon ${iconUrl} should specify its size as \`{width}x{height}\``);
-      } else {
-        const [width, height] = icon.sizes.split('x').map(x => parseInt(x, 10));
-        if (image.naturalWidth !== width && image.naturalHeight !== height) {
-          imageErrors.push(ls`Actual size (${image.naturalWidth}×${image.naturalHeight})px of icon ${
-              iconUrl} does not match specified size (${width}×${height}px)`);
-        } else if (image.naturalWidth !== width) {
-          imageErrors.push(
-              ls
-              `Actual width (${image.naturalWidth}px) of icon ${iconUrl} does not match specified width (${width}px)`);
-        } else if (image.naturalHeight !== height) {
-          imageErrors.push(ls`Actual height (${image.naturalHeight}px) of icon ${
-              iconUrl} does not match specified height (${height}px)`);
+      if (shortcut.description) {
+        shortcutSection.appendFlexedField('Description', shortcut.description);
+      }
+      const urlField = shortcutSection.appendFlexedField('URL');
+      const shortcutUrl = /** @type {string} */ (Common.ParsedURL.ParsedURL.completeURL(url, shortcut.url));
+      const link = Components.Linkifier.Linkifier.linkifyURL(shortcutUrl, {text: shortcut.url});
+      link.tabIndex = 0;
+      urlField.appendChild(link);
+
+      const shortcutIcons = shortcut.icons || [];
+      let hasShorcutIconLargeEnough = false;
+      for (const shortcutIcon of shortcutIcons) {
+        const shortcutIconErrors = await this._appendIconResourceToSection(url, shortcutIcon, shortcutSection);
+        if (shortcutIconErrors.length > 0) {
+          imageErrors.push(...shortcutIconErrors);
+        }
+        if (!hasShorcutIconLargeEnough && shortcutIcon.sizes) {
+          const shortcutIconSize = shortcutIcon.sizes.match(/^(\d+)x(\d+)$/);
+          if (shortcutIconSize && shortcutIconSize[1] >= 96 && shortcutIconSize[2] >= 96) {
+            hasShorcutIconLargeEnough = true;
+          }
         }
       }
-      field.appendChild(wrapper);
+      if (!hasShorcutIconLargeEnough) {
+        imageErrors.push(ls`Shortcut #${shortcutIndex} should include a 96x96 pixel icon`);
+      }
+      shortcutIndex++;
     }
 
     this._installabilitySection.clearContent();
@@ -353,6 +374,14 @@ export class AppManifestView extends UI.Widget.VBox {
         case 'prefer-related-applications':
           errorMessage = ls`Manifest specifies prefer_related_applications: true`;
           break;
+        case 'prefer-related-applications-only-beta-stable':
+          errorMessage =
+              ls`prefer_related_applications is only supported on Chrome Beta and Stable channels on Android.`;
+          break;
+        case 'manifest-display-override-not-supported':
+          errorMessage =
+              ls`Manifest contains 'display_override' field, and the first supported display mode must be one of 'standalone', 'fullscreen', or 'minimal-ui'`;
+          break;
         default:
           console.error(`Installability error id '${installabilityError.errorId}' is not recognized`);
           break;
@@ -385,5 +414,51 @@ export class AppManifestView extends UI.Widget.VBox {
     } catch (e) {
     }
     return null;
+  }
+
+  /**
+   * @param {string} baseUrl
+   * @param {*} icon
+   * @param {!UI.ReportView.Section} section
+   * @return {!Promise<!Array<string>>}
+   */
+  async _appendIconResourceToSection(baseUrl, icon, section) {
+    const iconErrors = [];
+    if (!icon.src) {
+      iconErrors.push(ls`Icon src is not set`);
+      return iconErrors;
+    }
+    const iconUrl = Common.ParsedURL.ParsedURL.completeURL(baseUrl, icon['src']);
+    const result = await this._loadImage(iconUrl);
+    if (!result) {
+      iconErrors.push(ls`Icon ${iconUrl} failed to load`);
+      return iconErrors;
+    }
+    const {wrapper, image} = result;
+    const sizes = icon['sizes'] ? icon['sizes'].replace('x', '×') + 'px' : '';
+    const title = sizes + '\n' + (icon['type'] || '');
+    const field = section.appendFlexedField(title);
+    if (!icon.sizes) {
+      iconErrors.push(ls`Icon ${iconUrl} does not specify its size in the manifest`);
+    } else if (!/^\d+x\d+$/.test(icon.sizes)) {
+      iconErrors.push(ls`Icon ${iconUrl} should specify its size as \`{width}x{height}\``);
+    } else {
+      const [width, height] = icon.sizes.split('x').map(x => parseInt(x, 10));
+      if (width !== height) {
+        iconErrors.push(ls`Icon ${iconUrl} dimensions should be square`);
+      } else if (image.naturalWidth !== width && image.naturalHeight !== height) {
+        iconErrors.push(ls`Actual size (${image.naturalWidth}×${image.naturalHeight})px of icon ${
+            iconUrl} does not match specified size (${width}×${height}px)`);
+      } else if (image.naturalWidth !== width) {
+        iconErrors.push(
+            ls
+            `Actual width (${image.naturalWidth}px) of icon ${iconUrl} does not match specified width (${width}px)`);
+      } else if (image.naturalHeight !== height) {
+        iconErrors.push(ls`Actual height (${image.naturalHeight}px) of icon ${
+            iconUrl} does not match specified height (${height}px)`);
+      }
+    }
+    field.appendChild(wrapper);
+    return iconErrors;
   }
 }

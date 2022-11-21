@@ -13,6 +13,7 @@
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/file_manager/path_util.h"
 #include "chrome/browser/platform_util.h"
+#include "chrome/browser/ui/webui/settings/chromeos/os_settings_features_util.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/disks/disk.h"
 #include "components/arc/arc_features.h"
@@ -66,10 +67,10 @@ StorageHandler::StorageHandler(Profile* profile,
       source_name_(html_source->GetSource()),
       arc_observer_(this),
       special_volume_path_pattern_("[a-z]+://.*") {
-  html_source->AddBoolean(
-      kAndroidEnabled,
-      base::FeatureList::IsEnabled(arc::kUsbStorageUIFeature) &&
-          arc::IsArcPlayStoreEnabledForProfile(profile));
+  // TODO(khorimoto): Set kAndroidEnabled within DeviceSection, and
+  // updates this value accordingly (see OnArcPlayStoreEnabledChanged()).
+  html_source->AddBoolean(kAndroidEnabled,
+                          features::ShouldShowExternalStorageSettings(profile));
 }
 
 StorageHandler::~StorageHandler() {
@@ -131,6 +132,9 @@ int64_t StorageHandler::RoundByteSize(int64_t bytes) {
     NOTREACHED() << "Negative bytes value";
     return -1;
   }
+
+  if (bytes == 0)
+    return 0;
 
   // Subtract one to the original number of bytes.
   bytes--;
@@ -217,7 +221,9 @@ void StorageHandler::UpdateExternalStorages() {
 
 void StorageHandler::OnArcPlayStoreEnabledChanged(bool enabled) {
   auto update = std::make_unique<base::DictionaryValue>();
-  update->SetKey(kAndroidEnabled, base::Value(enabled));
+  update->SetKey(
+      kAndroidEnabled,
+      base::Value(features::ShouldShowExternalStorageSettings(profile_)));
   content::WebUIDataSource::Update(profile_, source_name_, std::move(update));
 }
 

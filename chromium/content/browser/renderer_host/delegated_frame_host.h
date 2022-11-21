@@ -21,9 +21,10 @@
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/renderer_host/dip_util.h"
 #include "content/common/content_export.h"
-#include "content/common/content_to_visible_time_reporter.h"
 #include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
 #include "services/viz/public/mojom/hit_test/hit_test_region_list.mojom.h"
+#include "third_party/blink/public/common/page/content_to_visible_time_reporter.h"
+#include "third_party/blink/public/mojom/page/record_content_to_visible_time_request.mojom-forward.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_observer.h"
 #include "ui/compositor/layer.h"
@@ -107,7 +108,7 @@ class CONTENT_EXPORT DelegatedFrameHost
   // TODO(ccameron): Include device scale factor here.
   void WasShown(const viz::LocalSurfaceId& local_surface_id,
                 const gfx::Size& dip_size,
-                const base::Optional<RecordContentToVisibleTimeRequest>&
+                blink::mojom::RecordContentToVisibleTimeRequestPtr
                     record_tab_switch_time_request);
   void EmbedSurface(const viz::LocalSurfaceId& local_surface_id,
                     const gfx::Size& dip_size,
@@ -151,6 +152,10 @@ class CONTENT_EXPORT DelegatedFrameHost
   }
 
   void DidNavigate();
+  // Navigation to a different page than the current one has begun. Caches the
+  // current LocalSurfaceId information so that old content can be evicted if
+  // navigation fails to complete.
+  void OnNavigateToNewPage();
 
   void WindowTitleChanged(const std::string& title);
 
@@ -218,6 +223,10 @@ class CONTENT_EXPORT DelegatedFrameHost
   std::unique_ptr<viz::FrameEvictor> frame_evictor_;
 
   viz::LocalSurfaceId first_local_surface_id_after_navigation_;
+  // While navigating we have no active |local_surface_id_|. Track the one from
+  // before a navigation, because if the navigation fails to complete, we will
+  // need to evict its surface.
+  viz::LocalSurfaceId pre_navigation_local_surface_id_;
 
   FrameEvictionState frame_eviction_state_ = FrameEvictionState::kNotStarted;
 
@@ -226,7 +235,7 @@ class CONTENT_EXPORT DelegatedFrameHost
   // compositor frame is submitted.
   std::unique_ptr<ui::Layer> stale_content_layer_;
 
-  ContentToVisibleTimeReporter tab_switch_time_recorder_;
+  blink::ContentToVisibleTimeReporter tab_switch_time_recorder_;
 
   base::ObserverList<Observer>::Unchecked observers_;
 

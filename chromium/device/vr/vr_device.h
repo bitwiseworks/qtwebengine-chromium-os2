@@ -6,10 +6,10 @@
 #define DEVICE_VR_VR_DEVICE_H
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "device/vr/public/mojom/isolated_xr_service.mojom.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
-#include "device/vr/vr_export.h"
 
 namespace device {
 
@@ -21,16 +21,16 @@ enum class VrViewerType {
   GVR_DAYDREAM = 2,
   ORIENTATION_SENSOR_DEVICE = 10,
   FAKE_DEVICE = 11,
-  OPENVR_UNKNOWN = 20,
-  OPENVR_VIVE = 21,
-  OPENVR_RIFT_CV1 = 22,
+  // OPENVR_UNKNOWN = 20,
+  // OPENVR_VIVE = 21,
+  // OPENVR_RIFT_CV1 = 22,
   OCULUS_UNKNOWN = 40,                 // Going through Oculus APIs
   WINDOWS_MIXED_REALITY_UNKNOWN = 60,  // Going through WMR APIs
   OPENXR_UNKNOWN = 70,                 // Going through OpenXR APIs
 };
 
-void LogViewerType(VrViewerType);  // Implemented in vr_device_base.cc
-
+// Implemented in vr_device_base.cc
+void COMPONENT_EXPORT(DEVICE_VR_BASE) LogViewerType(VrViewerType);
 }  // namespace device
 
 #endif  // DEVICE_VR_VR_DEVICE_H

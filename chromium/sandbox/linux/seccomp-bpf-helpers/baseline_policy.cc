@@ -11,8 +11,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "base/check_op.h"
 #include "base/clang_profiling_buildflags.h"
-#include "base/logging.h"
 #include "build/build_config.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
@@ -20,6 +20,7 @@
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
 #include "sandbox/linux/seccomp-bpf/sandbox_bpf.h"
 #include "sandbox/linux/services/syscall_wrappers.h"
+#include "sandbox/linux/system_headers/linux_stat.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 
 #if !defined(SO_PEEK_OFF)
@@ -148,12 +149,27 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
     return Allow();
 #endif
 
-  if (sysno == __NR_clock_gettime || sysno == __NR_clock_nanosleep) {
+#if defined(__NR_rseq) && !defined(OS_ANDROID)
+  // See https://crbug.com/1104160. Rseq can only be disabled right before an
+  // execve, because glibc registers it with the kernel and so far it's unclear
+  // whether shared libraries (which, during initialization, may observe that
+  // rseq is already registered) should have to deal with deregistration.
+  if (sysno == __NR_rseq)
+    return Allow();
+#endif
+
+  if (SyscallSets::IsClockApi(sysno)) {
     return RestrictClockID();
   }
 
   if (sysno == __NR_clone) {
     return RestrictCloneToThreadsAndEPERMFork();
+  }
+
+  // clone3 takes a pointer argument which we cannot examine, so return ENOSYS
+  // to force the libc to use clone. See https://crbug.com/1213452.
+  if (sysno == __NR_clone3) {
+    return Error(ENOSYS);
   }
 
   if (sysno == __NR_fcntl)
@@ -246,6 +262,13 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
 
   if (SyscallSets::IsKill(sysno)) {
     return RestrictKillTarget(current_pid, sysno);
+  }
+
+  // The fstatat syscalls are file system syscalls, which will be denied below
+  // with fs_denied_errno. However some allowed fstat syscalls are rewritten by
+  // libc implementations to fstatat syscalls, and we need to rewrite them back.
+  if (sysno == __NR_fstatat_default) {
+    return RewriteFstatatSIGSYS(fs_denied_errno);
   }
 
   if (SyscallSets::IsFileSystem(sysno) ||

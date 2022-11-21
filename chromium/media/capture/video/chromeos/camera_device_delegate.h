@@ -11,6 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
+#include "media/capture/video/chromeos/capture_metadata_dispatcher.h"
 #include "media/capture/video/chromeos/mojom/camera3.mojom.h"
 #include "media/capture/video/chromeos/mojom/camera_common.mojom.h"
 #include "media/capture/video/video_capture_device.h"
@@ -33,6 +34,23 @@ enum class StreamType : uint64_t {
   kYUVInput = 2,
   kYUVOutput = 3,
   kUnknown,
+};
+
+// The metadata might be large so clone a whole metadata might be relatively
+// expensive. We only keep the needed data by this structure.
+struct ResultMetadata {
+  ResultMetadata();
+  ~ResultMetadata();
+
+  base::Optional<uint8_t> awb_mode;
+  base::Optional<int32_t> brightness;
+  base::Optional<int32_t> contrast;
+  base::Optional<int32_t> pan;
+  base::Optional<int32_t> saturation;
+  base::Optional<int32_t> sharpness;
+  base::Optional<int32_t> tilt;
+  base::Optional<int32_t> zoom;
+  base::Optional<gfx::Rect> scaler_crop_region;
 };
 
 // Returns true if the given stream type is an input stream.
@@ -71,7 +89,8 @@ class CAPTURE_EXPORT StreamCaptureInterface {
 // AllocateAndStart of VideoCaptureDeviceArcChromeOS runs on.  All the methods
 // in CameraDeviceDelegate run on |ipc_task_runner_| and hence all the
 // access to member variables is sequenced.
-class CAPTURE_EXPORT CameraDeviceDelegate final {
+class CAPTURE_EXPORT CameraDeviceDelegate final
+    : public CaptureMetadataDispatcher::ResultMetadataObserver {
  public:
   CameraDeviceDelegate(
       VideoCaptureDeviceDescriptor device_descriptor,
@@ -79,7 +98,7 @@ class CAPTURE_EXPORT CameraDeviceDelegate final {
       scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner,
       CameraAppDeviceImpl* camera_app_device);
 
-  ~CameraDeviceDelegate();
+  ~CameraDeviceDelegate() final;
 
   // Delegation methods for the VideoCaptureDevice interface.
   void AllocateAndStart(const VideoCaptureParams& params,
@@ -164,6 +183,8 @@ class CAPTURE_EXPORT CameraDeviceDelegate final {
   void OnGotFpsRange(cros::mojom::CameraMetadataPtr settings,
                      base::Optional<gfx::Range> specified_fps_range);
 
+  gfx::Size GetBlobResolution(base::Optional<gfx::Size> new_blob_resolution);
+
   // StreamCaptureInterface implementations.  These methods are called by
   // |stream_buffer_manager_| on |ipc_task_runner_|.
   void ProcessCaptureRequest(cros::mojom::Camera3CaptureRequestPtr request,
@@ -172,6 +193,19 @@ class CAPTURE_EXPORT CameraDeviceDelegate final {
 
   bool SetPointsOfInterest(
       const std::vector<mojom::Point2DPtr>& points_of_interest);
+
+  // This function gets the TYPE_INT32[3] array of [max, min, step] from static
+  // metadata by |range_name| and current value of |current|.
+  mojom::RangePtr GetControlRangeByVendorTagName(
+      const std::string& range_name,
+      const base::Optional<int32_t>& current);
+
+  // CaptureMetadataDispatcher::ResultMetadataObserver implementation.
+  void OnResultMetadataAvailable(
+      uint32_t frame_number,
+      const cros::mojom::CameraMetadataPtr& result_metadata) final;
+
+  void DoGetPhotoState(VideoCaptureDevice::GetPhotoStateCallback callback);
 
   const VideoCaptureDeviceDescriptor device_descriptor_;
 
@@ -205,6 +239,29 @@ class CAPTURE_EXPORT CameraDeviceDelegate final {
   VideoCaptureDevice::SetPhotoOptionsCallback set_photo_option_callback_;
 
   CameraAppDeviceImpl* camera_app_device_;  // Weak.
+
+  // States of SetPhotoOptions
+  bool is_set_awb_mode_;
+  bool is_set_brightness_;
+  bool is_set_contrast_;
+  bool is_set_pan_;
+  bool is_set_saturation_;
+  bool is_set_sharpness_;
+  bool is_set_tilt_;
+  bool is_set_zoom_;
+
+  std::vector<base::OnceClosure> get_photo_state_queue_;
+  bool use_digital_zoom_;
+  // We reply GetPhotoState when |result_metadata_frame_number_| >
+  // |result_metadata_frame_number_for_photo_state_|. Otherwise javascript API
+  // getSettings() will get non-updated settings.
+  // They call GetPhotoState after SetPhotoOptions, we don't have the related
+  // result metadata that time.
+  uint32_t current_request_frame_number_;
+  uint32_t result_metadata_frame_number_for_photo_state_;
+  uint32_t result_metadata_frame_number_;
+  ResultMetadata result_metadata_;
+  gfx::Rect active_array_size_;
 
   base::WeakPtrFactory<CameraDeviceDelegate> weak_ptr_factory_{this};
 

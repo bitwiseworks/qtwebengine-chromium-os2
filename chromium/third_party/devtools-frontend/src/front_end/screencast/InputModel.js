@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as SDK from '../sdk/sdk.js';
 
 export class InputModel extends SDK.SDKModel.SDKModel {
@@ -20,16 +23,17 @@ export class InputModel extends SDK.SDKModel.SDKModel {
    * @param {!Event} event
    */
   emitKeyEvent(event) {
+    /** @type {!Protocol.Input.DispatchKeyEventRequestType} */
     let type;
     switch (event.type) {
       case 'keydown':
-        type = 'keyDown';
+        type = Protocol.Input.DispatchKeyEventRequestType.KeyDown;
         break;
       case 'keyup':
-        type = 'keyUp';
+        type = Protocol.Input.DispatchKeyEventRequestType.KeyUp;
         break;
       case 'keypress':
-        type = 'char';
+        type = Protocol.Input.DispatchKeyEventRequestType.Char;
         break;
       default:
         return;

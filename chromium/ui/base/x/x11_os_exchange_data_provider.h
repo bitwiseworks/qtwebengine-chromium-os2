@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/pickle.h"
-#include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/base/dragdrop/os_exchange_data_provider.h"
 #include "ui/base/x/selection_owner.h"
 #include "ui/base/x/selection_requestor.h"
 #include "ui/base/x/selection_utils.h"
@@ -23,17 +23,18 @@
 
 namespace ui {
 
-class OSExchangeDataProviderAuraX11Test;
+class OSExchangeDataProviderX11Test;
 
-// Generic OSExchangeData::Provider implementation for X11.  Lacks the event
+// Generic OSExchangeDataProvider implementation for X11.  Lacks the event
 // handling; the subclass should listen for SelectionRequest X events and
 // route them to the |selection_owner_|.
 class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
-    : public OSExchangeData::Provider {
+    : public OSExchangeDataProvider {
  public:
   // |x_window| is the window the cursor is over, and |selection| is the set of
   // data being offered.
-  XOSExchangeDataProvider(XID x_window, const SelectionFormatMap& selection);
+  XOSExchangeDataProvider(x11::Window x_window,
+                          const SelectionFormatMap& selection);
 
   // Creates a Provider for sending drag information. This creates its own,
   // hidden X11 window to own send data.
@@ -50,7 +51,7 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
 
   // Retrieves a list of types we're offering. Noop if we haven't taken the
   // selection.
-  void RetrieveTargets(std::vector<Atom>* targets) const;
+  void RetrieveTargets(std::vector<x11::Atom>* targets) const;
 
   // Makes a copy of the format map currently being offered.
   SelectionFormatMap GetFormatMap() const;
@@ -59,7 +60,8 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
     return file_contents_name_;
   }
 
-  // Overridden from OSExchangeData::Provider:
+  // Overridden from OSExchangeDataProvider:
+  std::unique_ptr<OSExchangeDataProvider> Clone() const override;
   void MarkOriginatedFromRenderer() override;
   bool DidOriginateFromRenderer() const override;
   void SetString(const base::string16& data) override;
@@ -69,7 +71,7 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
   void SetPickledData(const ClipboardFormatType& format,
                       const base::Pickle& pickle) override;
   bool GetString(base::string16* data) const override;
-  bool GetURLAndTitle(OSExchangeData::FilenameToURLPolicy policy,
+  bool GetURLAndTitle(FilenameToURLPolicy policy,
                       GURL* url,
                       base::string16* title) const override;
   bool GetFilename(base::FilePath* path) const override;
@@ -77,9 +79,13 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
   bool GetPickledData(const ClipboardFormatType& format,
                       base::Pickle* pickle) const override;
   bool HasString() const override;
-  bool HasURL(OSExchangeData::FilenameToURLPolicy policy) const override;
+  bool HasURL(FilenameToURLPolicy policy) const override;
   bool HasFile() const override;
   bool HasCustomFormat(const ClipboardFormatType& format) const override;
+#if defined(USE_X11)
+  void SetFileContents(const base::FilePath& filename,
+                       const std::string& file_contents) override;
+#endif
 
   void SetHtml(const base::string16& html, const GURL& base_url) override;
   bool GetHtml(base::string16* html, GURL* base_url) const override;
@@ -90,11 +96,11 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
   gfx::Vector2d GetDragImageOffset() const override;
 
  protected:
-  friend class OSExchangeDataProviderAuraX11Test;
-  typedef std::map<ClipboardFormatType, base::Pickle> PickleData;
+  friend class OSExchangeDataProviderX11Test;
+  using PickleData = std::map<ClipboardFormatType, base::Pickle>;
 
   bool own_window() const { return own_window_; }
-  XID x_window() const { return x_window_; }
+  x11::Window x_window() const { return x_window_; }
   const SelectionFormatMap& format_map() const { return format_map_; }
   void set_format_map(const SelectionFormatMap& format_map) {
     format_map_ = format_map;
@@ -109,10 +115,10 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
   bool GetPlainTextURL(GURL* url) const;
 
   // Returns the targets in |format_map_|.
-  std::vector<Atom> GetTargets() const;
+  std::vector<x11::Atom> GetTargets() const;
 
   // Inserts data into the format map.
-  void InsertData(Atom format,
+  void InsertData(x11::Atom format,
                   const scoped_refptr<base::RefCountedMemory>& data);
 
  private:
@@ -121,8 +127,8 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
   gfx::Vector2d drag_image_offset_;
 
   // Our X11 state.
-  Display* x_display_;
-  XID x_root_window_;
+  x11::Connection* connection_;
+  x11::Window x_root_window_;
 
   // In X11, because the IPC parts of drag operations are implemented by
   // XSelection, we require an x11 window to receive drag messages on. The
@@ -132,7 +138,7 @@ class COMPONENT_EXPORT(UI_BASE_X) XOSExchangeDataProvider
   // our own xwindow just to receive events on it.
   const bool own_window_;
 
-  XID x_window_;
+  x11::Window x_window_;
 
   // A representation of data. This is either passed to us from the other
   // process, or built up through a sequence of Set*() calls. It can be passed

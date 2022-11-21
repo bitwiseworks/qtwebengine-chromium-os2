@@ -16,8 +16,11 @@
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_fetch_context.h"
 #include "url/gurl.h"
 
-namespace content {
+namespace blink {
 class InternetDisconnectedWebURLLoaderFactory;
+}
+
+namespace content {
 class ResourceDispatcher;
 class URLLoaderThrottleProvider;
 class WebSocketHandshakeThrottleProvider;
@@ -52,14 +55,17 @@ class CONTENT_EXPORT ServiceWorkerFetchContextImpl final
           preference_watcher_receiver,
       mojo::PendingReceiver<blink::mojom::SubresourceLoaderUpdater>
           pending_subresource_loader_updater,
-      int32_t service_worker_route_id);
+      int32_t service_worker_route_id,
+      const std::vector<std::string>& cors_exempt_header_list);
 
   // blink::WebServiceWorkerFetchContext implementation:
   void SetTerminateSyncLoadEvent(base::WaitableEvent*) override;
   void InitializeOnWorkerThread(blink::AcceptLanguagesWatcher*) override;
   blink::WebURLLoaderFactory* GetURLLoaderFactory() override;
   std::unique_ptr<blink::WebURLLoaderFactory> WrapURLLoaderFactory(
-      mojo::ScopedMessagePipeHandle url_loader_factory_handle) override;
+      blink::CrossVariantMojoRemote<
+          network::mojom::URLLoaderFactoryInterfaceBase> url_loader_factory)
+      override;
   blink::WebURLLoaderFactory* GetScriptLoaderFactory() override;
   void WillSendRequest(blink::WebURLRequest&) override;
   blink::mojom::ControllerServiceWorkerMode GetControllerServiceWorkerMode()
@@ -70,8 +76,9 @@ class CONTENT_EXPORT ServiceWorkerFetchContextImpl final
   CreateWebSocketHandshakeThrottle(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
   blink::WebString GetAcceptLanguages() const override;
-  mojo::ScopedMessagePipeHandle TakePendingWorkerTimingReceiver(
-      int request_id) override;
+  blink::CrossVariantMojoReceiver<
+      blink::mojom::WorkerTimingContainerInterfaceBase>
+  TakePendingWorkerTimingReceiver(int request_id) override;
   void SetIsOfflineMode(bool) override;
   blink::mojom::SubresourceLoaderUpdater* GetSubresourceLoaderUpdater()
       override;
@@ -108,7 +115,7 @@ class CONTENT_EXPORT ServiceWorkerFetchContextImpl final
   std::unique_ptr<blink::WebURLLoaderFactory> web_url_loader_factory_;
   // Responsible for loads which always fail as INTERNET_DISCONNECTED
   // error, which is used in offline mode.
-  std::unique_ptr<InternetDisconnectedWebURLLoaderFactory>
+  std::unique_ptr<blink::InternetDisconnectedWebURLLoaderFactory>
       internet_disconnected_web_url_loader_factory_;
   // Responsible for script loads from the service worker (i.e., the
   // classic/module main script, module imported scripts, or importScripts()).
@@ -136,6 +143,7 @@ class CONTENT_EXPORT ServiceWorkerFetchContextImpl final
   blink::AcceptLanguagesWatcher* accept_languages_watcher_ = nullptr;
 
   int32_t service_worker_route_id_;
+  std::vector<std::string> cors_exempt_header_list_;
   bool is_offline_mode_ = false;
 };
 

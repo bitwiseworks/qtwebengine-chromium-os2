@@ -231,7 +231,7 @@ IIRFilterNode* IIRFilterNode::Create(BaseAudioContext* context,
   return node;
 }
 
-void IIRFilterNode::Trace(Visitor* visitor) {
+void IIRFilterNode::Trace(Visitor* visitor) const {
   AudioNode::Trace(visitor);
 }
 
@@ -276,9 +276,13 @@ void IIRFilterNode::getFrequencyResponse(
         "frequencyHz length exceeds the maximum supported length");
     return;
   }
-  GetIIRFilterProcessor()->GetFrequencyResponse(
-      frequency_hz_length_as_int, frequency_hz.View()->Data(),
-      mag_response.View()->Data(), phase_response.View()->Data());
+
+  // Nothing to do if the length is 0.
+  if (frequency_hz_length_as_int > 0) {
+    GetIIRFilterProcessor()->GetFrequencyResponse(
+        frequency_hz_length_as_int, frequency_hz.View()->Data(),
+        mag_response.View()->Data(), phase_response.View()->Data());
+  }
 }
 
 void IIRFilterNode::ReportDidCreate() {

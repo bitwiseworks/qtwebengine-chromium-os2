@@ -4,6 +4,8 @@
 
 #include "ui/base/ui_base_features.h"
 
+#include "build/chromeos_buildflags.h"
+
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
@@ -13,7 +15,7 @@ namespace features {
 #if defined(OS_WIN)
 // If enabled, calculate native window occlusion - Windows-only.
 const base::Feature kCalculateNativeWinOcclusion{
-    "CalculateNativeWinOcclusion", base::FEATURE_DISABLED_BY_DEFAULT};
+    "CalculateNativeWinOcclusion", base::FEATURE_ENABLED_BY_DEFAULT};
 #endif  // OW_WIN
 
 // Whether or not to delegate color queries to the color provider.
@@ -67,7 +69,7 @@ bool IsNotificationIndicatorEnabled() {
 
 // Enables GPU rasterization for all UI drawing (where not blacklisted).
 const base::Feature kUiGpuRasterization = {"UiGpuRasterization",
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_FUCHSIA)
+#if defined(OS_APPLE) || defined(OS_CHROMEOS) || defined(OS_FUCHSIA)
                                            base::FEATURE_ENABLED_BY_DEFAULT
 #else
                                            base::FEATURE_DISABLED_BY_DEFAULT
@@ -82,7 +84,7 @@ bool IsUiGpuRasterizationEnabled() {
 const base::Feature kUiCompositorScrollWithLayers = {
     "UiCompositorScrollWithLayers",
 // TODO(https://crbug.com/615948): Use composited scrolling on all platforms.
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
     base::FEATURE_ENABLED_BY_DEFAULT
 #else
     base::FEATURE_DISABLED_BY_DEFAULT
@@ -96,10 +98,19 @@ const base::Feature kCompositorThreadedScrollbarScrolling = {
 
 // Enables the use of a touch fling curve that is based on the behavior of
 // native apps on Windows.
-const base::Feature kExperimentalFlingAnimation{
-    "ExperimentalFlingAnimation", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kExperimentalFlingAnimation {
+  "ExperimentalFlingAnimation",
+#if defined(OS_WIN) || (defined(OS_LINUX) && !defined(OS_CHROMEOS))
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+};
 
 #if defined(OS_WIN)
+const base::Feature kElasticOverscrollWin = {"ElasticOverscrollWin",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Enables InputPane API for controlling on screen keyboard.
 const base::Feature kInputPaneOnScreenKeyboard = {
     "InputPaneOnScreenKeyboard", base::FEATURE_ENABLED_BY_DEFAULT};
@@ -121,7 +132,8 @@ const base::Feature kPrecisionTouchpadLogging{
     "PrecisionTouchpadLogging", base::FEATURE_DISABLED_BY_DEFAULT};
 #endif  // defined(OS_WIN)
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_WIN) || defined(OS_APPLE) || defined(OS_LINUX) || \
+    defined(OS_CHROMEOS)
 // Enables stylus appearing as touch when in contact with digitizer.
 const base::Feature kDirectManipulationStylus = {
     "DirectManipulationStylus",
@@ -131,7 +143,8 @@ const base::Feature kDirectManipulationStylus = {
     base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 };
-#endif  // defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#endif  // defined(OS_WIN) || defined(OS_APPLE) || defined(OS_LINUX) ||
+        // defined(OS_CHROMEOS)
 
 // Enables forced colors mode for web content.
 const base::Feature kForcedColors{"ForcedColors",
@@ -152,13 +165,25 @@ bool IsEyeDropperEnabled() {
          base::FeatureList::IsEnabled(features::kEyeDropper);
 }
 
+// Enable the CSSColorSchemeUARendering feature for Windows, ChromeOS, Linux,
+// and Mac. This feature will be released for Android in later milestones. See
+// crbug.com/1086530 for the Desktop launch bug.
+const base::Feature kCSSColorSchemeUARendering = {
+    "CSSColorSchemeUARendering", base::FEATURE_DISABLED_BY_DEFAULT};
+
+bool IsCSSColorSchemeUARenderingEnabled() {
+  static const bool css_color_scheme_ua_rendering_enabled =
+      base::FeatureList::IsEnabled(features::kCSSColorSchemeUARendering);
+  return css_color_scheme_ua_rendering_enabled;
+}
+
 // Enable the FormControlsRefresh feature for Windows, ChromeOS, Linux, and Mac.
 // This feature will be released for Android in later milestones. See
 // crbug.com/1012106 for the Windows launch bug, and crbug.com/1012108 for the
 // Mac launch bug.
 const base::Feature kFormControlsRefresh = {"FormControlsRefresh",
 #if defined(OS_WIN) || defined(OS_CHROMEOS) || defined(OS_LINUX) || \
-    defined(OS_MACOSX)
+    defined(OS_APPLE)
                                             base::FEATURE_ENABLED_BY_DEFAULT
 #else
                                             base::FEATURE_DISABLED_BY_DEFAULT
@@ -179,20 +204,9 @@ bool IsUseCommonSelectPopupEnabled() {
   return base::FeatureList::IsEnabled(features::kUseCommonSelectPopup);
 }
 
-// Enable WebUI accessibility enhancements for review and testing.
-const base::Feature kWebUIA11yEnhancements{"WebUIA11yEnhancements",
-                                           base::FEATURE_DISABLED_BY_DEFAULT};
-
-const base::Feature kEnableOzoneDrmMojo = {"OzoneDrmMojo",
-                                           base::FEATURE_ENABLED_BY_DEFAULT};
-
-bool IsOzoneDrmMojo() {
-  return base::FeatureList::IsEnabled(kEnableOzoneDrmMojo);
-}
-
 #if defined(OS_CHROMEOS)
 const base::Feature kHandwritingGesture = {"HandwritingGesture",
-                                           base::FEATURE_DISABLED_BY_DEFAULT};
+                                           base::FEATURE_ENABLED_BY_DEFAULT};
 #endif
 
 const base::Feature kSynchronousPageFlipTesting{
@@ -201,5 +215,47 @@ const base::Feature kSynchronousPageFlipTesting{
 bool IsSynchronousPageFlipTestingEnabled() {
   return base::FeatureList::IsEnabled(kSynchronousPageFlipTesting);
 }
+
+#if defined(USE_X11) || defined(USE_OZONE)
+const base::Feature kUseOzonePlatform {
+  "UseOzonePlatform",
+#if defined(USE_X11)
+      base::FEATURE_DISABLED_BY_DEFAULT
+};
+#else
+      base::FEATURE_ENABLED_BY_DEFAULT
+};
+#endif
+
+bool IsUsingOzonePlatform() {
+  // Only allow enabling and disabling the OzonePlatform on USE_X11 && USE_OZONE
+  // builds.
+  static const bool using_ozone_platform =
+#if defined(USE_X11) && defined(USE_OZONE) && !BUILDFLAG(IS_LACROS)
+      base::FeatureList::IsEnabled(kUseOzonePlatform);
+#elif defined(USE_X11) && !defined(USE_OZONE)
+      // This shouldn't be switchable for pure X11 builds.
+      false;
+#else
+      // All the other platforms must use Ozone by default and can't disable
+      // that.
+      true;
+#endif
+  return using_ozone_platform;
+}
+#endif  // defined(USE_X11) || defined(USE_OZONE)
+
+const char kPredictorNameLsq[] = "lsq";
+const char kPredictorNameKalman[] = "kalman";
+const char kPredictorNameLinearFirst[] = "linear_first";
+const char kPredictorNameLinearSecond[] = "linear_second";
+const char kPredictorNameLinearResampling[] = "linear_resampling";
+const char kPredictorNameEmpty[] = "empty";
+
+const char kFilterNameEmpty[] = "empty_filter";
+const char kFilterNameOneEuro[] = "one_euro_filter";
+
+const base::Feature kSwipeToMoveCursor{"SwipeToMoveCursor",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features

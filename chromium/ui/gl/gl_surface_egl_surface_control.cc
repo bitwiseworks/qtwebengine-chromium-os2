@@ -10,6 +10,7 @@
 #include "base/android/build_info.h"
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
 #include "base/bind.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/strings/strcat.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
@@ -37,6 +38,18 @@ gfx::Size GetBufferSize(const AHardwareBuffer* buffer) {
 std::string BuildSurfaceName(const char* suffix) {
   return base::StrCat(
       {base::android::BuildInfo::GetInstance()->package_name(), "/", suffix});
+}
+
+base::TimeTicks GetSignalTime(const base::ScopedFD& fence) {
+  if (!fence.is_valid())
+    return base::TimeTicks();
+
+  base::TimeTicks signal_time;
+  auto status = gfx::GpuFence::GetStatusChangeTime(fence.get(), &signal_time);
+  if (status != gfx::GpuFence::kSignaled)
+    return base::TimeTicks();
+
+  return signal_time;
 }
 
 }  // namespace
@@ -187,7 +200,8 @@ void GLSurfaceEGLSurfaceControl::CommitPendingTransaction(
     LOG(ERROR) << "CommitPendingTransaction failed because surface is lost";
 
     surface_lost_ = true;
-    std::move(completion_callback).Run(gfx::SwapResult::SWAP_FAILED, nullptr);
+    std::move(completion_callback)
+        .Run(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_FAILED));
     std::move(present_callback).Run(gfx::PresentationFeedback::Failure());
     return;
   }
@@ -209,10 +223,11 @@ void GLSurfaceEGLSurfaceControl::CommitPendingTransaction(
   // the next transaction.
   DCHECK_LE(pending_surfaces_count_, surface_list_.size());
   for (size_t i = pending_surfaces_count_; i < surface_list_.size(); ++i) {
-    const auto& surface_state = surface_list_[i];
+    auto& surface_state = surface_list_[i];
     pending_transaction_->SetBuffer(*surface_state.surface, nullptr,
                                     base::ScopedFD());
     pending_transaction_->SetVisibility(*surface_state.surface, false);
+    surface_state.visibility = false;
   }
 
   // TODO(khushalsagar): Consider using the SetDamageRect API for partial
@@ -232,14 +247,12 @@ void GLSurfaceEGLSurfaceControl::CommitPendingTransaction(
   SurfaceControl::Transaction::OnCompleteCb callback = base::BindOnce(
       &GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread,
       weak_factory_.GetWeakPtr(), std::move(completion_callback),
-      std::move(present_callback), std::move(resources_to_release));
+      std::move(present_callback), std::move(resources_to_release),
+      std::move(primary_plane_fences_));
+  primary_plane_fences_.reset();
   pending_transaction_->SetOnCompleteCb(std::move(callback), gpu_task_runner_);
-
-  // Cache only those surfaces which were used in this transaction. The surfaces
-  // removed here are persisted in |resources_to_release| so we can release
-  // them after receiving read fences from the framework.
-  surface_list_.resize(pending_surfaces_count_);
   pending_surfaces_count_ = 0u;
+  frame_rate_update_pending_ = false;
 
   if (transaction_ack_pending_) {
     pending_transaction_queue_.push(std::move(pending_transaction_).value());
@@ -290,6 +303,12 @@ bool GLSurfaceEGLSurfaceControl::ScheduleOverlayPlane(
   pending_surfaces_count_++;
   auto& surface_state = surface_list_.at(pending_surfaces_count_ - 1);
 
+  // Make the surface visible if its hidden or uninitialized..
+  if (uninitialized || !surface_state.visibility) {
+    pending_transaction_->SetVisibility(*surface_state.surface, true);
+    surface_state.visibility = true;
+  }
+
   if (uninitialized || surface_state.z_order != z_order) {
     surface_state.z_order = z_order;
     pending_transaction_->SetZOrder(*surface_state.surface, z_order);
@@ -298,9 +317,21 @@ bool GLSurfaceEGLSurfaceControl::ScheduleOverlayPlane(
   AHardwareBuffer* hardware_buffer = nullptr;
   base::ScopedFD fence_fd;
   auto scoped_hardware_buffer = image->GetAHardwareBuffer();
+  bool is_primary_plane = false;
   if (scoped_hardware_buffer) {
     hardware_buffer = scoped_hardware_buffer->buffer();
     fence_fd = scoped_hardware_buffer->TakeFence();
+
+    // We currently only promote the display compositor's buffer or a video
+    // buffer to an overlay. So if this buffer is not for video then it implies
+    // its the primary plane.
+    is_primary_plane = !scoped_hardware_buffer->is_video();
+    DCHECK(!is_primary_plane || !primary_plane_fences_);
+    if (is_primary_plane) {
+      primary_plane_fences_.emplace();
+      primary_plane_fences_->available_fence =
+          scoped_hardware_buffer->TakeAvailableFence();
+    }
 
     auto* a_surface = surface_state.surface->surface();
     DCHECK_EQ(pending_frame_resources_.count(a_surface), 0u);
@@ -316,11 +347,15 @@ bool GLSurfaceEGLSurfaceControl::ScheduleOverlayPlane(
     surface_state.hardware_buffer = hardware_buffer;
 
     if (gpu_fence && surface_state.hardware_buffer) {
-      auto fence_handle =
-          gfx::CloneHandleForIPC(gpu_fence->GetGpuFenceHandle());
+      auto fence_handle = gpu_fence->GetGpuFenceHandle().Clone();
       DCHECK(!fence_handle.is_null());
-      fence_fd = MergeFDs(std::move(fence_fd),
-                          base::ScopedFD(fence_handle.native_fd.fd));
+      fence_fd =
+          MergeFDs(std::move(fence_fd), std::move(fence_handle.owned_fd));
+    }
+
+    if (is_primary_plane) {
+      primary_plane_fences_->ready_fence =
+          base::ScopedFD(HANDLE_EINTR(dup(fence_fd.get())));
     }
 
     pending_transaction_->SetBuffer(*surface_state.surface,
@@ -329,30 +364,12 @@ bool GLSurfaceEGLSurfaceControl::ScheduleOverlayPlane(
   }
 
   if (hardware_buffer) {
-    gfx::Rect dst = bounds_rect;
-
-    // Get the crop rectangle from the image which is the actual region of valid
-    // pixels. This region could be smaller than the buffer dimensions. Hence
-    // scale the |crop_rect| according to the valid pixel area rather than
-    // buffer dimensions. crbug.com/1027766 for more details.
-    gfx::Rect valid_pixel_rect = image->GetCropRect();
     gfx::Size buffer_size = GetBufferSize(hardware_buffer);
+    gfx::RectF scaled_rect =
+        gfx::ScaleRect(crop_rect, buffer_size.width(), buffer_size.height());
 
-    // If the image doesn't provide a |valid_pixel_rect|, assume the entire
-    // buffer is valid.
-    if (valid_pixel_rect.IsEmpty()) {
-      valid_pixel_rect.set_size(buffer_size);
-    } else {
-      // Clamp the |valid_pixel_rect| to the buffer dimensions to make sure for
-      // some reason it does not overflows.
-      valid_pixel_rect.Intersect(gfx::Rect(buffer_size));
-    }
-    gfx::RectF scaled_rect = gfx::RectF(
-        crop_rect.x() * valid_pixel_rect.width() + valid_pixel_rect.x(),
-        crop_rect.y() * valid_pixel_rect.height() + valid_pixel_rect.y(),
-        crop_rect.width() * valid_pixel_rect.width(),
-        crop_rect.height() * valid_pixel_rect.height());
     gfx::Rect src = gfx::ToEnclosedRect(scaled_rect);
+    gfx::Rect dst = bounds_rect;
 
     if (uninitialized || surface_state.src != src || surface_state.dst != dst ||
         surface_state.transform != transform) {
@@ -375,6 +392,9 @@ bool GLSurfaceEGLSurfaceControl::ScheduleOverlayPlane(
     pending_transaction_->SetColorSpace(*surface_state.surface,
                                         image_color_space);
   }
+
+  if (frame_rate_update_pending_)
+    pending_transaction_->SetFrameRate(*surface_state.surface, frame_rate_);
 
   return true;
 }
@@ -407,6 +427,7 @@ void GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread(
     SwapCompletionCallback completion_callback,
     PresentationCallback presentation_callback,
     ResourceRefs released_resources,
+    base::Optional<PrimaryPlaneFences> primary_plane_fences,
     SurfaceControl::TransactionStats transaction_stats) {
   TRACE_EVENT0("gpu",
                "GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread");
@@ -444,9 +465,15 @@ void GLSurfaceEGLSurfaceControl::OnTransactionAckOnGpuThread(
   released_resources.clear();
 
   // The presentation feedback callback must run after swap completion.
-  std::move(completion_callback).Run(gfx::SwapResult::SWAP_ACK, nullptr);
+  std::move(completion_callback)
+      .Run(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_ACK));
 
   PendingPresentationCallback pending_cb;
+  if (primary_plane_fences) {
+    pending_cb.available_time =
+        GetSignalTime(primary_plane_fences->available_fence);
+    pending_cb.ready_time = GetSignalTime(primary_plane_fences->ready_fence);
+  }
   pending_cb.latch_time = transaction_stats.latch_time;
   pending_cb.present_fence = std::move(transaction_stats.present_fence);
   pending_cb.callback = std::move(presentation_callback);
@@ -470,17 +497,16 @@ void GLSurfaceEGLSurfaceControl::CheckPendingPresentationCallbacks() {
     auto& pending_cb = pending_presentation_callback_queue_.front();
 
     base::TimeTicks signal_time;
-    auto status =
-        pending_cb.present_fence.is_valid()
-            ? GLFenceAndroidNativeFenceSync::GetStatusChangeTimeForFence(
-                  pending_cb.present_fence.get(), &signal_time)
-            : GLFenceAndroidNativeFenceSync::kInvalid;
-    if (status == GLFenceAndroidNativeFenceSync::kNotSignaled)
+    auto status = pending_cb.present_fence.is_valid()
+                      ? gfx::GpuFence::GetStatusChangeTime(
+                            pending_cb.present_fence.get(), &signal_time)
+                      : gfx::GpuFence::kInvalid;
+    if (status == gfx::GpuFence::kNotSignaled)
       break;
 
     auto flags = gfx::PresentationFeedback::kHWCompletion |
                  gfx::PresentationFeedback::kVSync;
-    if (status == GLFenceAndroidNativeFenceSync::kInvalid) {
+    if (status == gfx::GpuFence::kInvalid) {
       signal_time = pending_cb.latch_time;
       flags = 0u;
     }
@@ -491,6 +517,10 @@ void GLSurfaceEGLSurfaceControl::CheckPendingPresentationCallbacks() {
         "presentation_feedback",
         TRACE_EVENT_SCOPE_THREAD);
     gfx::PresentationFeedback feedback(signal_time, base::TimeDelta(), flags);
+    feedback.available_timestamp = pending_cb.available_time;
+    feedback.ready_timestamp = pending_cb.ready_time;
+    feedback.latch_timestamp = pending_cb.latch_time;
+
     std::move(pending_cb.callback).Run(feedback);
     pending_presentation_callback_queue_.pop();
   }
@@ -518,6 +548,14 @@ gfx::SurfaceOrigin GLSurfaceEGLSurfaceControl::GetOrigin() const {
   // GLSurfaceEGLSurfaceControl's y-axis is flipped compare to GL - (0,0) is at
   // top left corner.
   return gfx::SurfaceOrigin::kTopLeft;
+}
+
+void GLSurfaceEGLSurfaceControl::SetFrameRate(float frame_rate) {
+  if (frame_rate_ == frame_rate)
+    return;
+
+  frame_rate_ = frame_rate;
+  frame_rate_update_pending_ = true;
 }
 
 gfx::Rect GLSurfaceEGLSurfaceControl::ApplyDisplayInverse(
@@ -578,5 +616,13 @@ GLSurfaceEGLSurfaceControl::PendingPresentationCallback::
 GLSurfaceEGLSurfaceControl::PendingPresentationCallback&
 GLSurfaceEGLSurfaceControl::PendingPresentationCallback::operator=(
     PendingPresentationCallback&& other) = default;
+
+GLSurfaceEGLSurfaceControl::PrimaryPlaneFences::PrimaryPlaneFences() = default;
+GLSurfaceEGLSurfaceControl::PrimaryPlaneFences::~PrimaryPlaneFences() = default;
+GLSurfaceEGLSurfaceControl::PrimaryPlaneFences::PrimaryPlaneFences(
+    PrimaryPlaneFences&& other) = default;
+GLSurfaceEGLSurfaceControl::PrimaryPlaneFences&
+GLSurfaceEGLSurfaceControl::PrimaryPlaneFences::operator=(
+    PrimaryPlaneFences&& other) = default;
 
 }  // namespace gl

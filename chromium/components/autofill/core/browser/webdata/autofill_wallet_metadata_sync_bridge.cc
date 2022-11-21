@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/optional.h"
 #include "base/pickle.h"
 #include "components/autofill/core/browser/data_model/autofill_metadata.h"
@@ -663,7 +664,10 @@ AutofillWalletMetadataSyncBridge::MergeRemoteChanges(
   if (is_any_local_modified) {
     web_data_backend_->NotifyOfMultipleAutofillChanges();
   }
-  return base::nullopt;
+
+  return static_cast<syncer::SyncMetadataStoreChangeList*>(
+             metadata_change_list.get())
+      ->TakeError();
 }
 
 template <class DataType>

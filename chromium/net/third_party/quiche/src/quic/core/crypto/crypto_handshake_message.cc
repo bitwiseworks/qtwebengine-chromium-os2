@@ -50,6 +50,17 @@ CryptoHandshakeMessage& CryptoHandshakeMessage::operator=(
 CryptoHandshakeMessage& CryptoHandshakeMessage::operator=(
     CryptoHandshakeMessage&& other) = default;
 
+bool CryptoHandshakeMessage::operator==(
+    const CryptoHandshakeMessage& rhs) const {
+  return tag_ == rhs.tag_ && tag_value_map_ == rhs.tag_value_map_ &&
+         minimum_size_ == rhs.minimum_size_;
+}
+
+bool CryptoHandshakeMessage::operator!=(
+    const CryptoHandshakeMessage& rhs) const {
+  return !(*this == rhs);
+}
+
 void CryptoHandshakeMessage::Clear() {
   tag_ = 0;
   tag_value_map_.clear();
@@ -72,7 +83,7 @@ void CryptoHandshakeMessage::SetVersionVector(
     QuicTag tag,
     ParsedQuicVersionVector versions) {
   QuicVersionLabelVector version_labels;
-  for (ParsedQuicVersion version : versions) {
+  for (const ParsedQuicVersion& version : versions) {
     version_labels.push_back(
         quiche::QuicheEndian::HostToNet32(CreateQuicVersionLabel(version)));
   }
@@ -279,7 +290,6 @@ std::string CryptoHandshakeMessage::DebugStringInternal(size_t indent) const {
       case kIRTT:
       case kMIUS:
       case kMIBS:
-      case kSCLS:
       case kTCID:
       case kMAD:
         // uint32_t value

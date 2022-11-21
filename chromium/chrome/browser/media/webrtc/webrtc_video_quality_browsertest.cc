@@ -32,6 +32,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/infobars/core/infobar.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "media/base/media_switches.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -360,7 +361,7 @@ IN_PROC_BROWSER_TEST_P(WebRtcVideoQualityBrowserTest,
 
 // Flaky on mac (crbug.com/754684) and WebRTC's frame_analyzer doesn't build
 // from a Chromium's component build.
-#if defined(OS_MACOSX) || defined(COMPONENT_BUILD)
+#if defined(OS_MAC) || defined(COMPONENT_BUILD)
 #define MAYBE_MANUAL_TestVideoQualityH264 DISABLED_MANUAL_TestVideoQualityH264
 #else
 #define MAYBE_MANUAL_TestVideoQualityH264 MANUAL_TestVideoQualityH264

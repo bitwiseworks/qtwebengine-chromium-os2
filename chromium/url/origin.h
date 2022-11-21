@@ -20,6 +20,7 @@
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "ipc/ipc_param_traits.h"
+#include "url/gurl.h"
 #include "url/scheme_host_port.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
@@ -172,8 +173,8 @@ class COMPONENT_EXPORT(URL) Origin {
   // Copyable and movable.
   Origin(const Origin&);
   Origin& operator=(const Origin&);
-  Origin(Origin&&);
-  Origin& operator=(Origin&&);
+  Origin(Origin&&) noexcept;
+  Origin& operator=(Origin&&) noexcept;
 
   // Creates an Origin from a |scheme|, |host|, and |port|. All the parameters
   // must be valid and canonicalized. Returns nullopt if any parameter is not
@@ -260,6 +261,9 @@ class COMPONENT_EXPORT(URL) Origin {
   // URL (e.g. with a path component).
   GURL GetURL() const;
 
+  GURL GetFullURL() const;
+  void SetFullURL(const GURL &url);
+
   // Same as GURL::DomainIs. If |this| origin is opaque, then returns false.
   bool DomainIs(base::StringPiece canonical_domain) const;
 
@@ -288,7 +292,7 @@ class COMPONENT_EXPORT(URL) Origin {
   // Creates a string representation of the object that can be used for logging
   // and debugging. It serializes the internal state, such as the nonce value
   // and precursor information.
-  std::string GetDebugString() const;
+  std::string GetDebugString(bool include_nonce = true) const;
 
 #if defined(OS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> CreateJavaObject() const;
@@ -319,7 +323,7 @@ class COMPONENT_EXPORT(URL) Origin {
    public:
     // Creates a nonce to hold a newly-generated UnguessableToken. The actual
     // token value will be generated lazily.
-    Nonce();
+    Nonce() noexcept = default;
 
     // Creates a nonce to hold an already-generated UnguessableToken value. This
     // constructor should only be used for IPC serialization and testing --
@@ -338,8 +342,8 @@ class COMPONENT_EXPORT(URL) Origin {
     // moving it does not.
     Nonce(const Nonce&);
     Nonce& operator=(const Nonce&);
-    Nonce(Nonce&&);
-    Nonce& operator=(Nonce&&);
+    Nonce(Nonce&&) noexcept;
+    Nonce& operator=(Nonce&&) noexcept;
 
     // Note that operator<, used by maps type containers, will trigger |token_|
     // lazy-initialization. Equality comparisons do not.
@@ -414,6 +418,8 @@ class COMPONENT_EXPORT(URL) Origin {
   // nonce is preserved when an opaque origin is copied or moved. An Origin
   // is considered opaque if and only if |nonce_| holds a value.
   base::Optional<Nonce> nonce_;
+
+  GURL full_url_;
 };
 
 // Pretty-printers for logging. These expose the internal state of the nonce.

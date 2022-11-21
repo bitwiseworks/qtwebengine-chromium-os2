@@ -42,7 +42,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
 #include "third_party/blink/public/platform/web_theme_engine.h"
 #endif
 
@@ -109,7 +109,7 @@ void ScrollbarTheme::PaintScrollCorner(
     const Scrollbar* vertical_scrollbar,
     const DisplayItemClient& display_item_client,
     const IntRect& corner_rect,
-    WebColorScheme color_scheme) {
+    ColorScheme color_scheme) {
   if (corner_rect.IsEmpty())
     return;
 
@@ -118,8 +118,8 @@ void ScrollbarTheme::PaintScrollCorner(
     return;
 
   DrawingRecorder recorder(context, display_item_client,
-                           DisplayItem::kScrollCorner);
-#if defined(OS_MACOSX)
+                           DisplayItem::kScrollCorner, corner_rect);
+#if defined(OS_MAC)
   context.FillRect(corner_rect, Color::kWhite);
 #else
   Platform::Current()->ThemeEngine()->Paint(
@@ -148,8 +148,8 @@ void ScrollbarTheme::PaintTickmarks(GraphicsContext& context,
           context, scrollbar, DisplayItem::kScrollbarTickmarks))
     return;
 
-  DrawingRecorder recorder(context, scrollbar,
-                           DisplayItem::kScrollbarTickmarks);
+  DrawingRecorder recorder(context, scrollbar, DisplayItem::kScrollbarTickmarks,
+                           rect);
   GraphicsContextStateSaver state_saver(context);
   context.SetShouldAntialias(false);
 
@@ -191,7 +191,7 @@ int ScrollbarTheme::ThumbPosition(const Scrollbar& scrollbar,
       return 0;
     float pos = std::max(0.0f, scroll_position) *
                 (TrackLength(scrollbar) - ThumbLength(scrollbar)) / size;
-    return (pos < 1 && pos > 0) ? 1 : pos;
+    return (pos < 1 && pos > 0) ? 1 : base::saturated_cast<int>(pos);
   }
   return 0;
 }
@@ -242,12 +242,6 @@ IntRect ScrollbarTheme::ThumbRect(const Scrollbar& scrollbar) {
   SplitTrack(scrollbar, track, start_track_rect, thumb_rect, end_track_rect);
 
   return thumb_rect;
-}
-
-int ScrollbarTheme::ThumbThickness(const Scrollbar& scrollbar) {
-  IntRect track = TrackRect(scrollbar);
-  return scrollbar.Orientation() == kHorizontalScrollbar ? track.Height()
-                                                         : track.Width();
 }
 
 void ScrollbarTheme::SplitTrack(const Scrollbar& scrollbar,
@@ -308,8 +302,10 @@ void ScrollbarTheme::PaintTrackAndButtons(GraphicsContext& context,
   if (DrawingRecorder::UseCachedDrawingIfPossible(
           context, scrollbar, DisplayItem::kScrollbarTrackAndButtons))
     return;
+  IntRect visual_rect = scrollbar.FrameRect();
+  visual_rect.MoveBy(offset);
   DrawingRecorder recorder(context, scrollbar,
-                           DisplayItem::kScrollbarTrackAndButtons);
+                           DisplayItem::kScrollbarTrackAndButtons, visual_rect);
 
   if (HasButtons(scrollbar)) {
     IntRect back_button_rect = BackButtonRect(scrollbar);

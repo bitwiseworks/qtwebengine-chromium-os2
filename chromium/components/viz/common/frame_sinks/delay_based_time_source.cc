@@ -9,8 +9,8 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -168,11 +168,11 @@ void DelayBasedTimeSource::AsValueInto(
     base::trace_event::TracedValue* state) const {
   state->SetString("type", TypeString());
   state->SetDouble("last_tick_time_us",
-                   LastTickTime().since_origin().InMicroseconds());
+                   LastTickTime().since_origin().InMicrosecondsF());
   state->SetDouble("next_tick_time_us",
-                   NextTickTime().since_origin().InMicroseconds());
-  state->SetDouble("interval_us", interval_.InMicroseconds());
-  state->SetDouble("timebase_us", timebase_.since_origin().InMicroseconds());
+                   NextTickTime().since_origin().InMicrosecondsF());
+  state->SetDouble("interval_us", interval_.InMicrosecondsF());
+  state->SetDouble("timebase_us", timebase_.since_origin().InMicrosecondsF());
   state->SetBoolean("active", active_);
 }
 

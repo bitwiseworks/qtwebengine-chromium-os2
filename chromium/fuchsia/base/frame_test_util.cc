@@ -48,4 +48,25 @@ base::Optional<base::Value> ExecuteJavaScript(fuchsia::web::Frame* frame,
   return base::JSONReader::Read(result_json);
 }
 
+fuchsia::web::LoadUrlParams CreateLoadUrlParamsWithUserActivation() {
+  fuchsia::web::LoadUrlParams load_url_params;
+  load_url_params.set_was_user_activated(true);
+  return load_url_params;
+}
+
+fuchsia::web::WebMessage CreateWebMessageWithMessagePortRequest(
+    fidl::InterfaceRequest<fuchsia::web::MessagePort> message_port_request,
+    fuchsia::mem::Buffer buffer) {
+  fuchsia::web::OutgoingTransferable outgoing;
+  outgoing.set_message_port(std::move(message_port_request));
+
+  std::vector<fuchsia::web::OutgoingTransferable> outgoing_vector;
+  outgoing_vector.push_back(std::move(outgoing));
+
+  fuchsia::web::WebMessage web_message;
+  web_message.set_outgoing_transfer(std::move(outgoing_vector));
+  web_message.set_data(std::move(buffer));
+  return web_message;
+}
+
 }  // namespace cr_fuchsia

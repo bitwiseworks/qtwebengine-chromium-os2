@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/dummy_histogram.h"
 #include "base/metrics/metrics_hashes.h"
@@ -15,11 +16,12 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/values.h"
 
 namespace {
-constexpr char kHtmlNewLine[] = "<br>";
-constexpr char kAsciiNewLine[] = "\n";
+constexpr char kAsciiNewLine2[] = "\n";
 }  // namespace
 
 namespace base {
@@ -168,25 +170,27 @@ bool SparseHistogram::AddSamplesFromPickle(PickleIterator* iter) {
   return unlogged_samples_->AddFromPickle(iter);
 }
 
-void SparseHistogram::WriteHTMLGraph(std::string* output) const {
-  // Get a local copy of the data so we are consistent.
-  std::unique_ptr<HistogramSamples> snapshot = SnapshotSamples();
-
-  output->append("<PRE>");
-  output->append("<h4>");
-  WriteAsciiHeader(*snapshot, output);
-  output->append("</h4>");
-  WriteAsciiBody(*snapshot, true, kHtmlNewLine, output);
-  output->append("</PRE>");
-}
-
 void SparseHistogram::WriteAscii(std::string* output) const {
   // Get a local copy of the data so we are consistent.
   std::unique_ptr<HistogramSamples> snapshot = SnapshotSamples();
 
   WriteAsciiHeader(*snapshot, output);
-  output->append(kAsciiNewLine);
-  WriteAsciiBody(*snapshot, true, kAsciiNewLine, output);
+  output->append(kAsciiNewLine2);
+  WriteAsciiBody(*snapshot, true, kAsciiNewLine2, output);
+}
+
+base::DictionaryValue SparseHistogram::ToGraphDict() const {
+  std::unique_ptr<HistogramSamples> snapshot = SnapshotSamples();
+  std::string header;
+  std::string body;
+  base::DictionaryValue dict;
+
+  WriteAsciiHeader(*snapshot, &header);
+  WriteAsciiBody(*snapshot, true, kAsciiNewLine2, &body);
+  dict.SetString("header", header);
+  dict.SetString("body", body);
+
+  return dict;
 }
 
 void SparseHistogram::SerializeInfoImpl(Pickle* pickle) const {
@@ -234,13 +238,9 @@ HistogramBase* SparseHistogram::DeserializeInfoImpl(PickleIterator* iter) {
 }
 
 void SparseHistogram::GetParameters(DictionaryValue* params) const {
-  // TODO(kaiwang): Implement. (See HistogramBase::WriteJSON.)
-}
-
-void SparseHistogram::GetCountAndBucketData(Count* count,
-                                            int64_t* sum,
-                                            ListValue* buckets) const {
-  // TODO(kaiwang): Implement. (See HistogramBase::WriteJSON.)
+  // Unlike Histogram::GetParameters, only set the type here, and no other
+  // params. The other params do not make sense for sparse histograms.
+  params->SetString("type", HistogramTypeToString(GetHistogramType()));
 }
 
 void SparseHistogram::WriteAsciiBody(const HistogramSamples& snapshot,

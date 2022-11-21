@@ -75,7 +75,7 @@ FileInputType::FileInputType(HTMLInputElement& element)
       KeyboardClickableInputTypeView(element),
       file_list_(MakeGarbageCollected<FileList>()) {}
 
-void FileInputType::Trace(Visitor* visitor) {
+void FileInputType::Trace(Visitor* visitor) const {
   visitor->Trace(file_list_);
   KeyboardClickableInputTypeView::Trace(visitor);
   InputType::Trace(visitor);
@@ -195,7 +195,7 @@ void FileInputType::HandleDOMActivateEvent(Event& event) {
     params.requestor = document.Url();
 
     UseCounter::Count(
-        document, document.IsSecureContext()
+        document, GetElement().GetExecutionContext()->IsSecureContext()
                       ? WebFeature::kInputTypeFileSecureOriginOpenChooser
                       : WebFeature::kInputTypeFileInsecureOriginOpenChooser);
     chrome_client->OpenFileChooser(document.GetFrame(), NewFileChooser(params));
@@ -205,10 +205,6 @@ void FileInputType::HandleDOMActivateEvent(Event& event) {
 
 void FileInputType::CustomStyleForLayoutObject(ComputedStyle& style) {
   style.SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
-}
-
-bool FileInputType::TypeShouldForceLegacyLayout() const {
-  return !RuntimeEnabledFeatures::LayoutNGForControlsEnabled();
 }
 
 LayoutObject* FileInputType::CreateLayoutObject(const ComputedStyle& style,
@@ -316,11 +312,11 @@ FileList* FileInputType::CreateFileList(const FileChooserFileInfoList& files,
 }
 
 void FileInputType::CountUsage() {
-  Document* document = &GetElement().GetDocument();
-  if (document->IsSecureContext())
-    UseCounter::Count(*document, WebFeature::kInputTypeFileInsecureOrigin);
+  ExecutionContext* context = GetElement().GetExecutionContext();
+  if (context->IsSecureContext())
+    UseCounter::Count(context, WebFeature::kInputTypeFileSecureOrigin);
   else
-    UseCounter::Count(*document, WebFeature::kInputTypeFileSecureOrigin);
+    UseCounter::Count(context, WebFeature::kInputTypeFileInsecureOrigin);
 }
 
 void FileInputType::CreateShadowSubtree() {
@@ -337,7 +333,7 @@ void FileInputType::CreateShadowSubtree() {
                                   : IDS_FORM_FILE_BUTTON_LABEL)));
   button->SetShadowPseudoId(AtomicString("-webkit-file-upload-button"));
   button->setAttribute(html_names::kIdAttr,
-                       shadow_element_names::FileUploadButton());
+                       shadow_element_names::kIdFileUploadButton);
   button->SetActive(GetElement().CanReceiveDroppedFiles());
   GetElement().UserAgentShadowRoot()->AppendChild(button);
 
@@ -353,7 +349,7 @@ void FileInputType::CreateShadowSubtree() {
 
 HTMLInputElement* FileInputType::UploadButton() const {
   Element* element = GetElement().UserAgentShadowRoot()->getElementById(
-      shadow_element_names::FileUploadButton());
+      shadow_element_names::kIdFileUploadButton);
   CHECK(!element || IsA<HTMLInputElement>(element));
   return To<HTMLInputElement>(element);
 }
@@ -430,7 +426,8 @@ void FileInputType::FilesChosen(FileChooserFileInfoList files,
     }
     ++i;
   }
-  SetFilesAndDispatchEvents(CreateFileList(files, base_dir));
+  if (!will_be_destroyed_)
+    SetFilesAndDispatchEvents(CreateFileList(files, base_dir));
   if (HasConnectedFileChooser())
     DisconnectFileChooser();
 }

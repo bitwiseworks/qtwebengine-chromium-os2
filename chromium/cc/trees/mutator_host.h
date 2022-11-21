@@ -6,6 +6,7 @@
 #define CC_TREES_MUTATOR_HOST_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/callback_forward.h"
 #include "base/time/time.h"
@@ -39,7 +40,7 @@ const float kNotScaled = 0;
 // MutatorHostClient interface.
 class MutatorHost {
  public:
-  virtual ~MutatorHost() {}
+  virtual ~MutatorHost() = default;
 
   virtual std::unique_ptr<MutatorHost> CreateImplInstance(
       bool supports_impl_scrolling) const = 0;
@@ -159,16 +160,30 @@ class MutatorHost {
   // the scroller. Otherwise returns an invalid ElementId.
   virtual ElementId ImplOnlyScrollAnimatingElement() const = 0;
 
-  virtual size_t CompositedAnimationsCount() const = 0;
   virtual size_t MainThreadAnimationsCount() const = 0;
   virtual bool HasCustomPropertyAnimations() const = 0;
   virtual bool CurrentFrameHadRAF() const = 0;
   virtual bool NextFrameHasPendingRAF() const = 0;
+  virtual bool HasCanvasInvalidation() const = 0;
+  virtual bool HasJSAnimation() const = 0;
+
+  using TrackedAnimationSequenceId = size_t;
+  struct PendingThroughputTrackerInfo {
+    // Id of a tracked animation sequence.
+    TrackedAnimationSequenceId id = 0u;
+    // True means the tracking for |id| is pending to start and false means
+    // the tracking is pending to stop.
+    bool start = false;
+  };
+  // Takes info of throughput trackers that are pending start or stop.
+  using PendingThroughputTrackerInfos =
+      std::vector<PendingThroughputTrackerInfo>;
+  virtual PendingThroughputTrackerInfos TakePendingThroughputTrackerInfos() = 0;
 };
 
 class MutatorEvents {
  public:
-  virtual ~MutatorEvents() {}
+  virtual ~MutatorEvents() = default;
   virtual bool IsEmpty() const = 0;
 };
 

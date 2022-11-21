@@ -7,9 +7,9 @@
 #include <memory>
 #include <string>
 
+#include "base/check.h"
 #include "base/lazy_instance.h"
-#include "base/logging.h"
-#include "base/macros.h"
+#include "base/notreached.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/user_agent.h"
 #include "extensions/common/core_extensions_api_provider.h"
@@ -27,8 +27,12 @@ namespace {
 // code. For now, this implementation does nothing.
 class ShellPermissionMessageProvider : public PermissionMessageProvider {
  public:
-  ShellPermissionMessageProvider() {}
-  ~ShellPermissionMessageProvider() override {}
+  ShellPermissionMessageProvider() = default;
+  ShellPermissionMessageProvider(const ShellPermissionMessageProvider&) =
+      delete;
+  ShellPermissionMessageProvider& operator=(
+      const ShellPermissionMessageProvider&) = delete;
+  ~ShellPermissionMessageProvider() override = default;
 
   // PermissionMessageProvider implementation.
   PermissionMessages GetPermissionMessages(
@@ -49,9 +53,6 @@ class ShellPermissionMessageProvider : public PermissionMessageProvider {
       Manifest::Type extension_type) const override {
     return PermissionIDSet();
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ShellPermissionMessageProvider);
 };
 
 base::LazyInstance<ShellPermissionMessageProvider>::DestructorAtExit
@@ -93,15 +94,15 @@ void ShellExtensionsClient::FilterHostPermissions(
   NOTIMPLEMENTED();
 }
 
-void ShellExtensionsClient::SetScriptingWhitelist(
-    const ScriptingWhitelist& whitelist) {
-  scripting_whitelist_ = whitelist;
+void ShellExtensionsClient::SetScriptingAllowlist(
+    const ScriptingAllowlist& allowlist) {
+  scripting_allowlist_ = allowlist;
 }
 
-const ExtensionsClient::ScriptingWhitelist&
-ShellExtensionsClient::GetScriptingWhitelist() const {
-  // TODO(jamescook): Real whitelist.
-  return scripting_whitelist_;
+const ExtensionsClient::ScriptingAllowlist&
+ShellExtensionsClient::GetScriptingAllowlist() const {
+  // TODO(jamescook): Real allowlist.
+  return scripting_allowlist_;
 }
 
 URLPatternSet ShellExtensionsClient::GetPermittedChromeSchemeHosts(

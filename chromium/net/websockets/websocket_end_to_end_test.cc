@@ -31,6 +31,7 @@
 #include "net/base/auth.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
+#include "net/base/isolation_info.h"
 #include "net/base/proxy_delegate.h"
 #include "net/base/url_util.h"
 #include "net/http/http_request_headers.h"
@@ -99,8 +100,7 @@ class ConnectTestingEventInterface : public WebSocketEventInterface {
   void OnAddChannelResponse(
       std::unique_ptr<WebSocketHandshakeResponseInfo> response,
       const std::string& selected_subprotocol,
-      const std::string& extensions,
-      int64_t send_flow_control_quota) override;
+      const std::string& extensions) override;
 
   void OnDataFrame(bool fin,
                    WebSocketMessageType type,
@@ -108,7 +108,7 @@ class ConnectTestingEventInterface : public WebSocketEventInterface {
 
   bool HasPendingDataFrames() override { return false; }
 
-  void OnSendFlowControlQuotaAdded(int64_t quota) override;
+  void OnSendDataFrameDone() override;
 
   void OnClosingHandshake() override;
 
@@ -169,8 +169,7 @@ std::string ConnectTestingEventInterface::extensions() const {
 void ConnectTestingEventInterface::OnAddChannelResponse(
     std::unique_ptr<WebSocketHandshakeResponseInfo> response,
     const std::string& selected_subprotocol,
-    const std::string& extensions,
-    int64_t send_flow_control_quota) {
+    const std::string& extensions) {
   selected_subprotocol_ = selected_subprotocol;
   extensions_ = extensions;
   QuitNestedEventLoop();
@@ -181,7 +180,7 @@ void ConnectTestingEventInterface::OnDataFrame(bool fin,
                                                base::span<const char> payload) {
 }
 
-void ConnectTestingEventInterface::OnSendFlowControlQuotaAdded(int64_t quota) {}
+void ConnectTestingEventInterface::OnSendDataFrameDone() {}
 
 void ConnectTestingEventInterface::OnClosingHandshake() {}
 
@@ -293,13 +292,15 @@ class WebSocketEndToEndTest : public TestWithTaskEnvironment {
     url::Origin origin = url::Origin::Create(GURL("http://localhost"));
     net::SiteForCookies site_for_cookies =
         net::SiteForCookies::FromOrigin(origin);
-    net::NetworkIsolationKey network_isolation_key(origin, origin);
+    IsolationInfo isolation_info = IsolationInfo::Create(
+        IsolationInfo::RedirectMode::kUpdateNothing, origin, origin,
+        SiteForCookies::FromOrigin(origin));
     event_interface_ = new ConnectTestingEventInterface();
     channel_ = std::make_unique<WebSocketChannel>(
         base::WrapUnique(event_interface_), &context_);
-    channel_->SendAddChannelRequest(GURL(socket_url), sub_protocols_, origin,
-                                    site_for_cookies, network_isolation_key,
-                                    HttpRequestHeaders());
+    channel_->SendAddChannelRequest(
+        GURL(socket_url), sub_protocols_, origin, site_for_cookies,
+        isolation_info, HttpRequestHeaders(), TRAFFIC_ANNOTATION_FOR_TESTS);
     event_interface_->WaitForResponse();
     return !event_interface_->failed();
   }
@@ -436,7 +437,7 @@ std::unique_ptr<HttpResponse> ProxyPacHandler(const HttpRequest& request) {
 // TODO(ricea): Remove this test if --winhttp-proxy-resolver flag is removed.
 // See crbug.com/644030.
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_WIN) || defined(OS_APPLE)
 #define MAYBE_ProxyPacUsed ProxyPacUsed
 #else
 #define MAYBE_ProxyPacUsed DISABLED_ProxyPacUsed
@@ -465,8 +466,8 @@ TEST_F(WebSocketEndToEndTest, MAYBE_ProxyPacUsed) {
       ProxyConfigWithAnnotation(proxy_config, TRAFFIC_ANNOTATION_FOR_TESTS));
   std::unique_ptr<ProxyResolutionService> proxy_resolution_service(
       ConfiguredProxyResolutionService::CreateUsingSystemProxyResolver(
-          std::move(proxy_config_service), /*quick_check_enabled=*/true,
-          NetLog::Get()));
+          std::move(proxy_config_service), NetLog::Get(),
+          /*quick_check_enabled=*/true));
   ASSERT_EQ(ws_server.host_port_pair().host(), "127.0.0.1");
   context_.set_proxy_resolution_service(proxy_resolution_service.get());
   InitialiseContext();

@@ -12,13 +12,12 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
-#include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
 using base::ScopedCFTypeRef;
 using base::UTF16ToUTF8;
-using autofill::PasswordForm;
 
 namespace password_manager {
 
@@ -103,9 +102,40 @@ TEST_F(LoginDatabaseIOSTest, KeychainStorage) {
   }
 }
 
+TEST_F(LoginDatabaseIOSTest, AddLogin) {
+  ASSERT_EQ(0U, GetKeychainSize());
+
+  PasswordForm form;
+  form.url = GURL("http://0.com");
+  form.signon_realm = "http://www.example.com/";
+  form.action = GURL("http://www.example.com/action");
+  form.password_element = base::ASCIIToUTF16("pwd");
+  form.password_value = base::ASCIIToUTF16("example");
+
+  password_manager::PasswordStoreChangeList changes = login_db_->AddLogin(form);
+  std::string encrypted_password = changes[0].form().encrypted_password;
+  ASSERT_FALSE(encrypted_password.empty());
+  ASSERT_EQ(1U, GetKeychainSize());
+
+  CFStringRef cf_encrypted_password = CFStringCreateWithCString(
+      kCFAllocatorDefault, encrypted_password.c_str(), kCFStringEncodingUTF8);
+
+  ScopedCFTypeRef<CFMutableDictionaryRef> query(
+      CFDictionaryCreateMutable(NULL, 4, &kCFTypeDictionaryKeyCallBacks,
+                                &kCFTypeDictionaryValueCallBacks));
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
+  CFDictionarySetValue(query, kSecAttrAccount, cf_encrypted_password);
+
+  CFTypeRef result;
+  EXPECT_EQ(errSecSuccess, SecItemCopyMatching(query, &result));
+  CFRelease(cf_encrypted_password);
+  CFRelease(result);
+}
+
 TEST_F(LoginDatabaseIOSTest, UpdateLogin) {
   PasswordForm form;
-  form.origin = GURL("http://0.com");
+  form.url = GURL("http://0.com");
   form.signon_realm = "http://www.example.com";
   form.action = GURL("http://www.example.com/action");
   form.password_element = base::ASCIIToUTF16("pwd");
@@ -147,19 +177,19 @@ TEST_F(LoginDatabaseIOSTest, RemoveLogin) {
 
 TEST_F(LoginDatabaseIOSTest, RemoveLoginsCreatedBetween) {
   PasswordForm forms[3];
-  forms[0].origin = GURL("http://0.com");
+  forms[0].url = GURL("http://0.com");
   forms[0].signon_realm = "http://www.example.com";
   forms[0].username_element = base::ASCIIToUTF16("login0");
   forms[0].date_created = base::Time::FromDoubleT(100);
   forms[0].password_value = base::ASCIIToUTF16("pass0");
 
-  forms[1].origin = GURL("http://1.com");
+  forms[1].url = GURL("http://1.com");
   forms[1].signon_realm = "http://www.example.com";
   forms[1].username_element = base::ASCIIToUTF16("login1");
   forms[1].date_created = base::Time::FromDoubleT(200);
   forms[1].password_value = base::ASCIIToUTF16("pass1");
 
-  forms[2].origin = GURL("http://2.com");
+  forms[2].url = GURL("http://2.com");
   forms[2].signon_realm = "http://www.example.com";
   forms[2].username_element = base::ASCIIToUTF16("login2");
   forms[2].date_created = base::Time::FromDoubleT(300);

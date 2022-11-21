@@ -3,13 +3,18 @@
 // found in the LICENSE file.
 
 #include "services/network/origin_policy/origin_policy_manager.h"
+#include "base/optional.h"
 #include "base/test/gtest_util.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/isolation_info.h"
+#include "net/cookies/site_for_cookies.h"
 #include "services/network/network_context.h"
 #include "services/network/network_service.h"
 #include "services/network/public/cpp/origin_policy.h"
+#include "services/network/test/fake_test_cert_verifier_params_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 // Unit tests for OriginPolicyManager.
 //
@@ -26,6 +31,10 @@ class OriginPolicyManagerTest : public testing::Test {
     network_service_ = NetworkService::CreateForTesting();
 
     auto context_params = mojom::NetworkContextParams::New();
+    // Use a dummy CertVerifier that always passes cert verification, since
+    // these unittests don't need to test CertVerifier behavior.
+    context_params->cert_verifier_params =
+        FakeTestCertVerifierParamsFactory::GetCertVerifierParams();
     // Use a fixed proxy config, to avoid dependencies on local network
     // configuration.
     context_params->initial_proxy_config =
@@ -41,7 +50,11 @@ class OriginPolicyManagerTest : public testing::Test {
       const url::Origin& origin,
       const base::Optional<std::string>& header) {
     manager_->RetrieveOriginPolicy(
-        origin, header,
+        origin,
+        net::IsolationInfo::Create(
+            net::IsolationInfo::RedirectMode::kUpdateNothing, origin, origin,
+            net::SiteForCookies()),
+        header,
         base::BindOnce(&OriginPolicyManagerTest::Callback,
                        base::Unretained(this)));
   }

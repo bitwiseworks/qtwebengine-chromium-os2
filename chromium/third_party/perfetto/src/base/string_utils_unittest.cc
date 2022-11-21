@@ -167,6 +167,13 @@ TEST(StringUtilsTest, ToHex) {
   EXPECT_EQ(ToHex("abc123"), "616263313233");
 }
 
+TEST(StringUtilsTest, intToHex) {
+  EXPECT_EQ(IntToHexString(0), "0x00");
+  EXPECT_EQ(IntToHexString(1), "0x01");
+  EXPECT_EQ(IntToHexString(16), "0x10");
+  EXPECT_EQ(IntToHexString(4294967295), "0xffffffff");
+}
+
 TEST(StringUtilsTest, CaseInsensitiveEqual) {
   EXPECT_TRUE(CaseInsensitiveEqual("", ""));
   EXPECT_TRUE(CaseInsensitiveEqual("abc", "abc"));
@@ -239,6 +246,26 @@ TEST(StringUtilsTest, Find) {
   EXPECT_EQ(Find("abcd", "abc"), std::string::npos);
   EXPECT_EQ(Find("a", ""), std::string::npos);
   EXPECT_EQ(Find("abc", ""), std::string::npos);
+}
+
+TEST(StringUtilsTest, ReplaceAll) {
+  EXPECT_EQ(ReplaceAll("", "a", ""), "");
+  EXPECT_EQ(ReplaceAll("", "a", "b"), "");
+  EXPECT_EQ(ReplaceAll("a", "a", "b"), "b");
+  EXPECT_EQ(ReplaceAll("aaaa", "a", "b"), "bbbb");
+  EXPECT_EQ(ReplaceAll("aaaa", "aa", "b"), "bb");
+  EXPECT_EQ(ReplaceAll("aa", "aa", "bb"), "bb");
+  EXPECT_EQ(ReplaceAll("aa", "a", "bb"), "bbbb");
+  EXPECT_EQ(ReplaceAll("abc", "a", "b"), "bbc");
+  EXPECT_EQ(ReplaceAll("abc", "c", "b"), "abb");
+  EXPECT_EQ(ReplaceAll("abc", "c", "bbb"), "abbbb");
+}
+
+TEST(StringUtilsTest, TrimLeading) {
+  EXPECT_EQ(TrimLeading(""), "");
+  EXPECT_EQ(TrimLeading("a"), "a");
+  EXPECT_EQ(TrimLeading(" aaaa"), "aaaa");
+  EXPECT_EQ(TrimLeading(" aaaaa     "), "aaaaa     ");
 }
 
 }  // namespace

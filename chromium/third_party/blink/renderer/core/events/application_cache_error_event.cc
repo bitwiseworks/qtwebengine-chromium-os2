@@ -57,7 +57,6 @@ ApplicationCacheErrorEvent::ApplicationCacheErrorEvent(
     const AtomicString& event_type,
     const ApplicationCacheErrorEventInit* initializer)
     : Event(event_type, initializer), status_(0) {
-  DCHECK(RuntimeEnabledFeatures::AppCacheEnabled());
   if (initializer->hasReason())
     reason_ = initializer->reason();
   if (initializer->hasUrl())
@@ -70,7 +69,7 @@ ApplicationCacheErrorEvent::ApplicationCacheErrorEvent(
 
 ApplicationCacheErrorEvent::~ApplicationCacheErrorEvent() = default;
 
-void ApplicationCacheErrorEvent::Trace(Visitor* visitor) {
+void ApplicationCacheErrorEvent::Trace(Visitor* visitor) const {
   Event::Trace(visitor);
 }
 

@@ -13,7 +13,6 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
 #include "base/strings/pattern.h"
-#include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
@@ -23,6 +22,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/trace_uploader.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -80,8 +80,8 @@ class TracingControllerTestEndpoint
   }
 
   void ReceivedTraceFinalContents() override {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(std::move(done_callback_),
                        std::make_unique<std::string>(std::move(trace_))));
   }
@@ -201,7 +201,7 @@ class TracingControllerTest : public ContentBrowserTest {
 
     {
       base::RunLoop run_loop;
-      TracingController::CompletionCallback callback = base::BindRepeating(
+      TracingController::CompletionCallback callback = base::BindOnce(
           &TracingControllerTest::StopTracingStringDoneCallbackTest,
           base::Unretained(this), run_loop.QuitClosure());
       bool result = controller->StopTracing(
@@ -235,7 +235,7 @@ class TracingControllerTest : public ContentBrowserTest {
 
     {
       base::RunLoop run_loop;
-      TracingController::CompletionCallback callback = base::BindRepeating(
+      TracingController::CompletionCallback callback = base::BindOnce(
           &TracingControllerTest::StopTracingStringDoneCallbackTest,
           base::Unretained(this), run_loop.QuitClosure());
 
@@ -465,7 +465,7 @@ IN_PROC_BROWSER_TEST_F(TracingControllerTest,
       TraceConfig(),
       TracingController::StartTracingDoneCallback()));
   EXPECT_TRUE(controller->StopTracing(
-      TracingControllerImpl::CreateCallbackEndpoint(base::BindRepeating(
+      TracingControllerImpl::CreateCallbackEndpoint(base::BindOnce(
           [](base::OnceClosure quit_closure,
              std::unique_ptr<std::string> trace_str) {
             std::move(quit_closure).Run();

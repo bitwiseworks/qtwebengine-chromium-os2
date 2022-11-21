@@ -4,6 +4,7 @@
 
 #include "ui/views/corewm/tooltip_controller.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/at_exit.h"
@@ -96,7 +97,7 @@ class TooltipControllerTest : public ViewsTestBase {
     }
 #endif
     widget_.reset(CreateWidget(root_window));
-    widget_->SetContentsView(new View);
+    widget_->SetContentsView(std::make_unique<View>());
     view_ = new TooltipTestView;
     widget_->GetContentsView()->AddChildView(view_);
     view_->SetBoundsRect(widget_->GetContentsView()->GetLocalBounds());
@@ -325,6 +326,36 @@ TEST_F(TooltipControllerTest, DontShowEmptyTooltips) {
   EXPECT_FALSE(helper_->IsTooltipVisible());
 }
 
+TEST_F(TooltipControllerTest, TooltipUpdateWhenTooltipDeferTimerIsRunning) {
+  view_->set_tooltip_text(ASCIIToUTF16("Tooltip Text for view 1"));
+  EXPECT_EQ(base::string16(), helper_->GetTooltipText());
+  EXPECT_EQ(nullptr, helper_->GetTooltipWindow());
+
+  TooltipTestView* view2 = PrepareSecondView();
+  view2->set_tooltip_text(ASCIIToUTF16("Tooltip Text for view 2"));
+
+  aura::Window* window = GetWindow();
+
+  // Tooltips show up with delay
+  helper_->SetTooltipShowDelayEnable(true);
+
+  // Tooltip 1 is scheduled and invisibled
+  generator_->MoveMouseRelativeTo(window, view_->bounds().CenterPoint());
+  EXPECT_FALSE(helper_->IsTooltipVisible());
+  EXPECT_FALSE(helper_->IsTooltipShownTimerRunning());
+
+  // Tooltip 2 is scheduled and invisible, the expected tooltip is tooltip 2
+  generator_->MoveMouseRelativeTo(window, view2->bounds().CenterPoint());
+  EXPECT_FALSE(helper_->IsTooltipVisible());
+  EXPECT_FALSE(helper_->IsTooltipShownTimerRunning());
+  base::string16 expected_tooltip = ASCIIToUTF16("Tooltip Text for view 2");
+  EXPECT_EQ(expected_tooltip, wm::GetTooltipText(window));
+  EXPECT_EQ(expected_tooltip, helper_->GetTooltipText());
+  EXPECT_EQ(window, helper_->GetTooltipWindow());
+
+  helper_->SetTooltipShowDelayEnable(false);
+}
+
 TEST_F(TooltipControllerTest, TooltipHidesOnKeyPressAndStaysHiddenUntilChange) {
   view_->set_tooltip_text(ASCIIToUTF16("Tooltip Text for view 1"));
   EXPECT_EQ(base::string16(), helper_->GetTooltipText());
@@ -509,7 +540,7 @@ TEST_F(TooltipControllerTest, MAYBE_Capture) {
   view_->set_tooltip_text(tooltip_text);
 
   std::unique_ptr<views::Widget> widget2(CreateWidget(GetContext()));
-  widget2->SetContentsView(new View);
+  widget2->SetContentsView(std::make_unique<View>());
   TooltipTestView* view2 = new TooltipTestView;
   widget2->GetContentsView()->AddChildView(view2);
   view2->set_tooltip_text(tooltip_text2);
@@ -666,7 +697,7 @@ class TooltipControllerTest3 : public ViewsTestBase {
     aura::Window* root_window = GetContext();
 
     widget_.reset(CreateWidget(root_window));
-    widget_->SetContentsView(new View);
+    widget_->SetContentsView(std::make_unique<View>());
     view_ = new TooltipTestView;
     widget_->GetContentsView()->AddChildView(view_);
     view_->SetBoundsRect(widget_->GetContentsView()->GetLocalBounds());

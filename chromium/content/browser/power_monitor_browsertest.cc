@@ -9,7 +9,6 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/utility_process_host.h"
 #include "content/public/browser/browser_child_process_host.h"
@@ -21,6 +20,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/process_type.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -70,8 +70,8 @@ class MockPowerMonitorMessageBroadcaster : public device::mojom::PowerMonitor {
   ~MockPowerMonitorMessageBroadcaster() override = default;
 
   void Bind(mojo::PendingReceiver<device::mojom::PowerMonitor> receiver) {
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&MockPowerMonitorMessageBroadcaster::BindOnMainThread,
                        base::Unretained(this), std::move(receiver)));
   }
@@ -177,8 +177,8 @@ class PowerMonitorTest : public ContentBrowserTest {
       mojo::Remote<mojom::PowerMonitorTest>* power_monitor_test,
       base::OnceClosure utility_bound_closure) {
     utility_bound_closure_ = std::move(utility_bound_closure);
-    base::PostTask(
-        FROM_HERE, {BrowserThread::IO},
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&StartUtilityProcessOnIOThread,
                        power_monitor_test->BindNewPipeAndPassReceiver()));
   }
@@ -261,8 +261,13 @@ IN_PROC_BROWSER_TEST_F(PowerMonitorTest, TestUtilityProcess) {
   // Verify utility process on_battery_power changed to false.
   VerifyPowerStateInChildProcess(power_monitor_utility.get(), false);
 }
-
-IN_PROC_BROWSER_TEST_F(PowerMonitorTest, TestGpuProcess) {
+// This flakes on Linux TSan: http://crbug.com/1127374
+#if defined(THREAD_SANITIZER)
+#define MAYBE_TestGpuProcess DISABLED_TestGpuProcess
+#else
+#define MAYBE_TestGpuProcess TestGpuProcess
+#endif
+IN_PROC_BROWSER_TEST_F(PowerMonitorTest, MAYBE_TestGpuProcess) {
   // As gpu process is started automatically during the setup period of browser
   // test suite, it may have already started and bound PowerMonitor interface to
   // Device Service before execution of this TestGpuProcess test. So here we
@@ -277,8 +282,8 @@ IN_PROC_BROWSER_TEST_F(PowerMonitorTest, TestGpuProcess) {
   EXPECT_EQ(1, request_count_from_gpu());
 
   mojo::Remote<mojom::PowerMonitorTest> power_monitor_gpu;
-  base::PostTask(
-      FROM_HERE, {BrowserThread::IO},
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&BindInterfaceForGpuOnIOThread,
                      power_monitor_gpu.BindNewPipeAndPassReceiver()));
 

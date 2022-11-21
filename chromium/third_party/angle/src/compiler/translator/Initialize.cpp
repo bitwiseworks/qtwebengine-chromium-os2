@@ -57,6 +57,10 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::NV_shader_framebuffer_fetch] = EBhUndefined;
     }
+    if (resources.NV_shader_noperspective_interpolation)
+    {
+        extBehavior[TExtension::NV_shader_noperspective_interpolation] = EBhUndefined;
+    }
     if (resources.ARM_shader_framebuffer_fetch)
     {
         extBehavior[TExtension::ARM_shader_framebuffer_fetch] = EBhUndefined;
@@ -109,6 +113,22 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::WEBGL_video_texture] = EBhUndefined;
     }
+    if (resources.APPLE_clip_distance)
+    {
+        extBehavior[TExtension::APPLE_clip_distance] = EBhUndefined;
+    }
+    if (resources.OES_texture_cube_map_array)
+    {
+        extBehavior[TExtension::OES_texture_cube_map_array] = EBhUndefined;
+    }
+    if (resources.EXT_texture_cube_map_array)
+    {
+        extBehavior[TExtension::EXT_texture_cube_map_array] = EBhUndefined;
+    }
+    if (resources.EXT_shadow_samplers)
+    {
+        extBehavior[TExtension::EXT_shadow_samplers] = EBhUndefined;
+    }
 }
 
 void ResetExtensionBehavior(const ShBuiltInResources &resources,
@@ -129,8 +149,8 @@ void ResetExtensionBehavior(const ShBuiltInResources &resources,
         else
         {
             // Restore ARB_texture_rectangle in case it was removed during an earlier reset.  As
-            // noted above, it doesn't follow the standard for extension directives and is enabled
-            // by default.
+            // noted above, it doesn't follow the standard for extension directives and is
+            // enabled by default.
             extBehavior[TExtension::ARB_texture_rectangle] = EBhEnable;
         }
     }

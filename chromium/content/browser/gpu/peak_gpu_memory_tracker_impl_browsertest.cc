@@ -6,9 +6,9 @@
 
 #include "base/bind.h"
 #include "base/callback_forward.h"
+#include "base/clang_profiling_buildflags.h"
 #include "base/location.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "components/viz/test/gpu_host_impl_test_api.h"
@@ -99,13 +99,6 @@ class TestGpuService : public viz::mojom::GpuService {
                               const gpu::SyncToken& sync_token) override {}
   void GetVideoMemoryUsageStats(
       GetVideoMemoryUsageStatsCallback callback) override {}
-#if defined(OS_WIN)
-  void RequestCompleteGpuInfo(
-      RequestCompleteGpuInfoCallback callback) override {}
-  void GetGpuSupportedRuntimeVersionAndDevicePerfInfo(
-      GetGpuSupportedRuntimeVersionAndDevicePerfInfoCallback callback)
-      override {}
-#endif
   void RequestHDRStatus(RequestHDRStatusCallback callback) override {}
   void LoadedShader(int32_t client_id,
                     const std::string& key,
@@ -122,9 +115,13 @@ class TestGpuService : public viz::mojom::GpuService {
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel level) override {}
 #endif
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   void BeginCATransaction() override {}
   void CommitCATransaction(CommitCATransactionCallback callback) override {}
+#endif
+#if BUILDFLAG(CLANG_PROFILING_INSIDE_SANDBOX)
+  void WriteClangProfilingProfile(
+      WriteClangProfilingProfileCallback callback) override {}
 #endif
   void Crash() override {}
   void Hang() override {}
@@ -138,8 +135,8 @@ class TestGpuService : public viz::mojom::GpuService {
 // task has ran.
 void PostTaskToIOThreadAndWait(base::OnceClosure task) {
   base::RunLoop run_loop;
-  base::PostTaskAndReply(FROM_HERE, {content::BrowserThread::IO},
-                         std::move(task), run_loop.QuitClosure());
+  content::GetIOThreadTaskRunner({})->PostTaskAndReply(
+      FROM_HERE, std::move(task), run_loop.QuitClosure());
   run_loop.Run();
 }
 

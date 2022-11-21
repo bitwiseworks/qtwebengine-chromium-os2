@@ -39,8 +39,12 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_model_object.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_viewport_container.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
 #include "third_party/blink/renderer/core/svg/animation/smil_time_container.h"
 #include "third_party/blink/renderer/core/svg/svg_angle_tear_off.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_length.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_preserve_aspect_ratio.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_rect.h"
 #include "third_party/blink/renderer/core/svg/svg_document_extensions.h"
 #include "third_party/blink/renderer/core/svg/svg_length_tear_off.h"
 #include "third_party/blink/renderer/core/svg/svg_matrix_tear_off.h"
@@ -318,8 +322,10 @@ bool SVGSVGElement::CheckIntersectionOrEnclosure(
 
   AffineTransform ctm =
       To<SVGGraphicsElement>(element).ComputeCTM(kAncestorScope, this);
-  FloatRect mapped_repaint_rect =
-      ctm.MapRect(layout_object->VisualRectInLocalSVGCoordinates());
+  FloatRect visual_rect = layout_object->VisualRectInLocalSVGCoordinates();
+  SVGLayoutSupport::AdjustWithClipPathAndMask(
+      *layout_object, layout_object->ObjectBoundingBox(), visual_rect);
+  FloatRect mapped_repaint_rect = ctm.MapRect(visual_rect);
 
   bool result = false;
   switch (mode) {
@@ -506,6 +512,7 @@ void SVGSVGElement::AttachLayoutTree(AttachContext& context) {
 
 LayoutObject* SVGSVGElement::CreateLayoutObject(const ComputedStyle&,
                                                 LegacyLayout) {
+  UseCounter::Count(GetDocument(), WebFeature::kLegacyLayoutBySVG);
   if (IsOutermostSVGSVGElement())
     return new LayoutSVGRoot(this);
 
@@ -669,15 +676,9 @@ AffineTransform SVGSVGElement::ViewBoxToViewTransform(float view_width,
       view_height);
   if (!view_spec_ || !view_spec_->Transform())
     return ctm;
-
   const SVGTransformList* transform_list = view_spec_->Transform();
-  if (transform_list->IsEmpty())
-    return ctm;
-
-  AffineTransform transform;
-  if (transform_list->Concatenate(transform))
-    ctm *= transform;
-
+  if (!transform_list->IsEmpty())
+    ctm *= transform_list->Concatenate();
   return ctm;
 }
 
@@ -734,7 +735,7 @@ void SVGSVGElement::FinishParsingChildren() {
   SendSVGLoadEventIfPossible();
 }
 
-void SVGSVGElement::Trace(Visitor* visitor) {
+void SVGSVGElement::Trace(Visitor* visitor) const {
   visitor->Trace(x_);
   visitor->Trace(y_);
   visitor->Trace(width_);

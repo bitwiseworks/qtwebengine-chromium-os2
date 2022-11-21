@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/native_io/native_io.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -16,6 +15,7 @@
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/modules/native_io/native_io_manager.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 
 namespace blink {
@@ -25,8 +25,6 @@ namespace {
 template <typename T>
 class GlobalNativeIOImpl final : public GarbageCollected<GlobalNativeIOImpl<T>>,
                                  public Supplement<T> {
-  USING_GARBAGE_COLLECTED_MIXIN(GlobalNativeIOImpl);
-
  public:
   static const char kSupplementName[];
 
@@ -51,7 +49,7 @@ class GlobalNativeIOImpl final : public GarbageCollected<GlobalNativeIOImpl<T>>,
         return nullptr;
       }
 
-      mojo::Remote<mojom::blink::NativeIOHost> backend;
+      HeapMojoRemote<mojom::blink::NativeIOHost> backend(execution_context);
       execution_context->GetBrowserInterfaceBroker().GetInterface(
           backend.BindNewPipeAndPassReceiver(
               execution_context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
@@ -61,7 +59,7 @@ class GlobalNativeIOImpl final : public GarbageCollected<GlobalNativeIOImpl<T>>,
     return native_io_manager_;
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(native_io_manager_);
     Supplement<T>::Trace(visitor);
   }

@@ -12,21 +12,46 @@
 #include "base/strings/string16.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "content/common/content_export.h"
 
 namespace content {
 
 // Used to store changes in edit fields, required by VoiceOver in order to
 // support character echo and other announcements during editing.
-struct AXTextEdit {
-  AXTextEdit() = default;
-  AXTextEdit(base::string16 inserted_text, base::string16 deleted_text)
-      : inserted_text(inserted_text), deleted_text(deleted_text) {}
+struct CONTENT_EXPORT AXTextEdit {
+  AXTextEdit();
+  AXTextEdit(base::string16 inserted_text,
+             base::string16 deleted_text,
+             id edit_text_marker);
+  AXTextEdit(const AXTextEdit& other);
+  ~AXTextEdit();
 
   bool IsEmpty() const { return inserted_text.empty() && deleted_text.empty(); }
 
   base::string16 inserted_text;
   base::string16 deleted_text;
+  base::scoped_nsprotocol<id> edit_text_marker;
 };
+
+// Returns true if the given object is AXTextMarker object.
+bool IsAXTextMarker(id);
+
+// Returns true if the given object is AXTextMarkerRange object.
+bool IsAXTextMarkerRange(id);
+
+// Returns browser accessibility position for the given AXTextMarker.
+CONTENT_EXPORT BrowserAccessibilityPosition::AXPositionInstance AXTextMarkerToPosition(id);
+
+// Returns browser accessibility range for the given AXTextMarkerRange.
+BrowserAccessibilityPosition::AXRangeType AXTextMarkerRangeToRange(id);
+
+// Returns AXTextMarker for the given browser accessibility position.
+id AXTextMarkerFrom(const BrowserAccessibilityCocoa* anchor,
+                    int offset,
+                    ax::mojom::TextAffinity affinity);
+
+// Returns AXTextMarkerRange for the given browser accessibility positions.
+id AXTextMarkerRangeFrom(id anchor_textmarker, id focus_textmarker);
 
 }  // namespace content
 

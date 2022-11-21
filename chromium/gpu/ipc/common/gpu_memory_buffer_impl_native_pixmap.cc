@@ -16,6 +16,7 @@
 #include "ui/gfx/native_pixmap.h"
 
 #if defined(USE_OZONE)
+#include "ui/base/ui_base_features.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
 #endif
@@ -70,18 +71,20 @@ base::OnceClosure GpuMemoryBufferImplNativePixmap::AllocateForTesting(
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     gfx::GpuMemoryBufferHandle* handle) {
-#if defined(USE_OZONE)
-  scoped_refptr<gfx::NativePixmap> pixmap =
-      ui::OzonePlatform::GetInstance()
-          ->GetSurfaceFactoryOzone()
-          ->CreateNativePixmap(gfx::kNullAcceleratedWidget, VK_NULL_HANDLE,
-                               size, format, usage);
-  handle->native_pixmap_handle = pixmap->ExportHandle();
-#else
-  // TODO(j.isorce): use gbm_bo_create / gbm_bo_get_fd from system libgbm.
   scoped_refptr<gfx::NativePixmap> pixmap;
-  NOTIMPLEMENTED();
+#if defined(USE_OZONE)
+  if (features::IsUsingOzonePlatform()) {
+    pixmap = ui::OzonePlatform::GetInstance()
+                 ->GetSurfaceFactoryOzone()
+                 ->CreateNativePixmap(gfx::kNullAcceleratedWidget,
+                                      VK_NULL_HANDLE, size, format, usage);
+    handle->native_pixmap_handle = pixmap->ExportHandle();
+  } else
 #endif
+  {
+    // TODO(j.isorce): use gbm_bo_create / gbm_bo_get_fd from system libgbm.
+    NOTIMPLEMENTED();
+  }
   handle->type = gfx::NATIVE_PIXMAP;
   return base::BindOnce(&FreeNativePixmapForTesting, pixmap);
 }
@@ -106,8 +109,20 @@ void GpuMemoryBufferImplNativePixmap::Unmap() {
 }
 
 int GpuMemoryBufferImplNativePixmap::stride(size_t plane) const {
-  DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
-  return pixmap_->GetStride(plane);
+  // The caller is responsible for ensuring that |plane| is within bounds.
+  CHECK_LT(plane, handle_.planes.size());
+
+  // |handle_|.planes[plane].stride is a uint32_t. For usages for which we
+  // create a ClientNativePixmapDmaBuf,
+  // ClientNativePixmapDmaBuf::ImportFromDmabuf() ensures that the stride fits
+  // on an int, so this checked_cast shouldn't fail. For usages for which we
+  // create a ClientNativePixmapOpaque, we don't validate the stride, but the
+  // expectation is that either a) the stride() method won't be called, or b)
+  // the stride() method is called on the GPU process and
+  // |handle_|.planes[plane].stride is also set on the GPU process so there's no
+  // need to validate it. Refer to http://crbug.com/1093644#c1 for a more
+  // detailed discussion.
+  return base::checked_cast<int>(handle_.planes[plane].stride);
 }
 
 gfx::GpuMemoryBufferType GpuMemoryBufferImplNativePixmap::GetType() const {

@@ -6,7 +6,7 @@
 
 #include <string>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "components/sessions/content/content_record_password_state.h"
 #include "components/sessions/content/content_serialized_navigation_driver.h"
 #include "components/sessions/content/extended_info_handler.h"
@@ -179,8 +179,6 @@ ContentSerializedNavigationBuilder::ToNavigationEntry(
     extended_info_handler->RestoreExtendedInfo(extended_info_entry.second,
                                                entry.get());
   }
-
-  entry->InitRestoredEntry(browser_context);
 
   // These fields should have default values.
   DCHECK_EQ(SerializedNavigationEntry::STATE_INVALID,

@@ -13,6 +13,7 @@
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/components/account_manager/account_manager.h"
@@ -21,6 +22,7 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_type.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/test_web_ui.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -65,6 +67,17 @@ DeviceAccountInfo GetGaiaDeviceAccountInfo() {
           "primary" /*fullName*/,
           "" /*organization*/,
           user_manager::USER_TYPE_REGULAR /*user_type*/,
+          chromeos::account_manager::AccountType::
+              ACCOUNT_TYPE_GAIA /*account_type*/,
+          "device-account-token" /*token*/};
+}
+
+DeviceAccountInfo GetChildDeviceAccountInfo() {
+  return {supervised_users::kChildAccountSUID /*id*/,
+          "child@example.com" /*email*/,
+          "child" /*fullName*/,
+          "Family Link" /*organization*/,
+          user_manager::USER_TYPE_CHILD /*user_type*/,
           chromeos::account_manager::AccountType::
               ACCOUNT_TYPE_GAIA /*account_type*/,
           "device-account-token" /*token*/};
@@ -119,6 +132,10 @@ class AccountManagerUIHandlerTest
     TestingProfile::Builder profile_builder;
     profile_builder.SetPath(temp_dir_.GetPath().AppendASCII("TestProfile"));
     profile_builder.SetProfileName(GetDeviceAccountInfo().email);
+    if (GetDeviceAccountInfo().user_type ==
+        user_manager::UserType::USER_TYPE_CHILD) {
+      profile_builder.SetSupervisedUserId(GetDeviceAccountInfo().id);
+    }
     profile_ = profile_builder.Build();
 
     const user_manager::User* user;
@@ -129,6 +146,10 @@ class AccountManagerUIHandlerTest
                                             GetDeviceAccountInfo().id),
           true, user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY,
           profile_.get());
+    } else if (GetDeviceAccountInfo().user_type ==
+               user_manager::UserType::USER_TYPE_CHILD) {
+      user = GetFakeUserManager()->AddChildUser(AccountId::FromUserEmailGaiaId(
+          GetDeviceAccountInfo().email, GetDeviceAccountInfo().id));
     } else {
       user = GetFakeUserManager()->AddUserWithAffiliationAndTypeAndProfile(
           AccountId::FromUserEmailGaiaId(GetDeviceAccountInfo().email,
@@ -205,8 +226,9 @@ class AccountManagerUIHandlerTest
   std::unique_ptr<TestingAccountManagerUIHandler> handler_;
 };
 
+// TODO(https://crbug.com/1131834): Re-enable flaky test.
 IN_PROC_BROWSER_TEST_P(AccountManagerUIHandlerTest,
-                       OnGetAccountsNoSecondaryAccounts) {
+                       DISABLED_OnGetAccountsNoSecondaryAccounts) {
   const std::vector<AccountManager::Account> account_manager_accounts =
       GetAccountsFromAccountManager();
   // Only Primary account.
@@ -237,12 +259,21 @@ IN_PROC_BROWSER_TEST_P(AccountManagerUIHandlerTest,
             ValueOrEmpty(device_account.FindStringKey("email")));
   EXPECT_EQ(GetDeviceAccountInfo().id,
             ValueOrEmpty(device_account.FindStringKey("id")));
-  EXPECT_EQ(GetDeviceAccountInfo().organization,
-            ValueOrEmpty(device_account.FindStringKey("organization")));
+  if (GetDeviceAccountInfo().user_type ==
+      user_manager::UserType::USER_TYPE_CHILD) {
+    std::string organization = GetDeviceAccountInfo().organization;
+    base::ReplaceSubstringsAfterOffset(&organization, 0, " ", "&nbsp;");
+    EXPECT_EQ(organization,
+              ValueOrEmpty(device_account.FindStringKey("organization")));
+  } else {
+    EXPECT_EQ(GetDeviceAccountInfo().organization,
+              ValueOrEmpty(device_account.FindStringKey("organization")));
+  }
 }
 
+// TODO(https://crbug.com/1131819): Re-enable flaky test.
 IN_PROC_BROWSER_TEST_P(AccountManagerUIHandlerTest,
-                       OnGetAccountsWithSecondaryAccounts) {
+                       DISABLED_OnGetAccountsWithSecondaryAccounts) {
   UpsertAccount("secondary1@example.com");
   UpsertAccount("secondary2@example.com");
   const std::vector<AccountManager::Account> account_manager_accounts =
@@ -274,8 +305,16 @@ IN_PROC_BROWSER_TEST_P(AccountManagerUIHandlerTest,
             ValueOrEmpty(device_account.FindStringKey("email")));
   EXPECT_EQ(GetDeviceAccountInfo().id,
             ValueOrEmpty(device_account.FindStringKey("id")));
-  EXPECT_EQ(GetDeviceAccountInfo().organization,
-            ValueOrEmpty(device_account.FindStringKey("organization")));
+  if (GetDeviceAccountInfo().user_type ==
+      user_manager::UserType::USER_TYPE_CHILD) {
+    std::string organization = GetDeviceAccountInfo().organization;
+    base::ReplaceSubstringsAfterOffset(&organization, 0, " ", "&nbsp;");
+    EXPECT_EQ(organization,
+              ValueOrEmpty(device_account.FindStringKey("organization")));
+  } else {
+    EXPECT_EQ(GetDeviceAccountInfo().organization,
+              ValueOrEmpty(device_account.FindStringKey("organization")));
+  }
 
   // Check secondary accounts.
   for (const base::Value& account : result) {
@@ -287,8 +326,13 @@ IN_PROC_BROWSER_TEST_P(AccountManagerUIHandlerTest,
         GetAccountByKey(account_manager_accounts,
                         {ValueOrEmpty(account.FindStringKey("id")),
                          account_manager::AccountType::ACCOUNT_TYPE_GAIA});
-    EXPECT_EQ(account_manager()->HasDummyGaiaToken(expected_account.key),
-              account.FindBoolKey("unmigrated").value());
+    if (GetDeviceAccountInfo().user_type ==
+        user_manager::UserType::USER_TYPE_CHILD) {
+      EXPECT_FALSE(account.FindBoolKey("unmigrated").value());
+    } else {
+      EXPECT_EQ(account_manager()->HasDummyGaiaToken(expected_account.key),
+                account.FindBoolKey("unmigrated").value());
+    }
     EXPECT_EQ(expected_account.key.account_type,
               account.FindIntKey("accountType"));
     EXPECT_EQ(expected_account.raw_email,
@@ -312,7 +356,8 @@ INSTANTIATE_TEST_SUITE_P(
     AccountManagerUIHandlerTestSuite,
     AccountManagerUIHandlerTest,
     ::testing::Values(GetActiveDirectoryDeviceAccountInfo(),
-                      GetGaiaDeviceAccountInfo()));
+                      GetGaiaDeviceAccountInfo(),
+                      GetChildDeviceAccountInfo()));
 
 }  // namespace settings
 }  // namespace chromeos

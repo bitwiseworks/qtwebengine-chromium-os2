@@ -6,14 +6,16 @@
 
 #include "platform/api/task_runner.h"
 #include "platform/impl/platform_client_posix.h"
-#include "util/logging.h"
+#include "util/osp_logging.h"
 
 namespace openscreen {
 
 int ScopedWakeLockLinux::reference_count_ = 0;
 
-std::unique_ptr<ScopedWakeLock> ScopedWakeLock::Create() {
-  return std::make_unique<ScopedWakeLockLinux>();
+SerialDeletePtr<ScopedWakeLock> ScopedWakeLock::Create(
+    TaskRunner* task_runner) {
+  return SerialDeletePtr<ScopedWakeLock>(task_runner,
+                                         new ScopedWakeLockLinux());
 }
 
 namespace {
@@ -45,12 +47,12 @@ ScopedWakeLockLinux::~ScopedWakeLockLinux() {
 
 // static
 void ScopedWakeLockLinux::AcquireWakeLock() {
-  OSP_UNIMPLEMENTED();
+  OSP_VLOG << "Acquired wake lock: currently a noop";
 }
 
 // static
 void ScopedWakeLockLinux::ReleaseWakeLock() {
-  OSP_UNIMPLEMENTED();
+  OSP_VLOG << "Released wake lock: currently a noop";
 }
 
 }  // namespace openscreen

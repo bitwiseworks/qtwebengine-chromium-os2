@@ -11,13 +11,10 @@
 
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "printing/mojom/print.mojom.h"
 #include "printing/print_job_constants.h"
 #include "printing/printing_export.h"
 #include "ui/gfx/geometry/size.h"
-
-#if defined(OS_CHROMEOS)
-#include "base/values.h"
-#endif  // defined(OS_CHROMEOS)
 
 namespace base {
 class DictionaryValue;
@@ -65,6 +62,8 @@ struct PRINTING_EXPORT AdvancedCapability {
   AdvancedCapability(const AdvancedCapability& other);
   ~AdvancedCapability();
 
+  enum class Type : uint8_t { kBoolean, kFloat, kInteger, kString };
+
   // IPP identifier of the attribute.
   std::string name;
 
@@ -72,7 +71,7 @@ struct PRINTING_EXPORT AdvancedCapability {
   std::string display_name;
 
   // Attribute type.
-  base::Value::Type type;
+  AdvancedCapability::Type type;
 
   // Default value.
   std::string default_value;
@@ -98,18 +97,20 @@ struct PRINTING_EXPORT PrinterSemanticCapsAndDefaults {
   // |copies_max| should never be < 1.
   int32_t copies_max = 1;
 
-  std::vector<DuplexMode> duplex_modes;
-  DuplexMode duplex_default = UNKNOWN_DUPLEX_MODE;
+  std::vector<mojom::DuplexMode> duplex_modes;
+  mojom::DuplexMode duplex_default = mojom::DuplexMode::kUnknownDuplexMode;
 
   bool color_changeable = false;
   bool color_default = false;
-  ColorModel color_model = UNKNOWN_COLOR_MODEL;
-  ColorModel bw_model = UNKNOWN_COLOR_MODEL;
+  mojom::ColorModel color_model = mojom::ColorModel::kUnknownColorModel;
+  mojom::ColorModel bw_model = mojom::ColorModel::kUnknownColorModel;
 
-  struct Paper {
+  struct PRINTING_EXPORT Paper {
     std::string display_name;
     std::string vendor_id;
     gfx::Size size_um;
+
+    bool operator==(const Paper& other) const;
   };
   using Papers = std::vector<Paper>;
   Papers papers;
@@ -178,11 +179,8 @@ class PRINTING_EXPORT PrintBackend
   // Returns true if printer_name points to a valid printer.
   virtual bool IsValidPrinter(const std::string& printer_name) = 0;
 
-  // Allocates a print backend. If |print_backend_settings| is nullptr, default
-  // settings will be used.
-  static scoped_refptr<PrintBackend> CreateInstance(
-      const base::DictionaryValue* print_backend_settings,
-      const std::string& locale);
+  // Allocates a print backend.
+  static scoped_refptr<PrintBackend> CreateInstance(const std::string& locale);
 
 #if defined(USE_CUPS)
   // TODO(crbug.com/1062136): Remove this static function when Cloud Print is

@@ -6,7 +6,6 @@
 #include <cmath>
 #include <tuple>
 
-#include "base/logging.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/skia_color_space_util.h"
@@ -82,20 +81,115 @@ TEST(ColorSpace, RGBToYUV) {
   }
 }
 
-TEST(ColorSpace, RasterAndBlend) {
+TEST(ColorSpace, RangeAdjust) {
+  const size_t kNumTestYUVs = 2;
+  SkVector4 test_yuvs[kNumTestYUVs] = {
+      SkVector4(1.f, 1.f, 1.f, 1.f),
+      SkVector4(0.f, 0.f, 0.f, 1.f),
+  };
+
+  const size_t kNumBitDepths = 3;
+  int bit_depths[kNumBitDepths] = {8, 10, 12};
+
+  const size_t kNumColorSpaces = 3;
+  ColorSpace color_spaces[kNumColorSpaces] = {
+      ColorSpace::CreateREC601(),
+      ColorSpace::CreateJpeg(),
+      ColorSpace(ColorSpace::PrimaryID::INVALID,
+                 ColorSpace::TransferID::INVALID, ColorSpace::MatrixID::YCOCG,
+                 ColorSpace::RangeID::LIMITED),
+  };
+
+  SkVector4 expected_yuvs[kNumColorSpaces][kNumBitDepths][kNumTestYUVs] = {
+      // REC601
+      {
+          // 8bpc
+          {
+              SkVector4(235.f / 255.f, 239.5f / 255.f, 239.5f / 255.f, 1.0000f),
+              SkVector4(16.f / 255.f, 15.5f / 255.f, 15.5f / 255.f, 1.0000f),
+          },
+          // 10bpc
+          {
+              SkVector4(940.f / 1023.f, 959.5f / 1023.f, 959.5f / 1023.f,
+                        1.0000f),
+              SkVector4(64.f / 1023.f, 63.5f / 1023.f, 63.5f / 1023.f, 1.0000f),
+          },
+          // 12bpc
+          {
+              SkVector4(3760.f / 4095.f, 3839.5f / 4095.f, 3839.5f / 4095.f,
+                        1.0000f),
+              SkVector4(256.f / 4095.f, 255.5f / 4095.f, 255.5f / 4095.f,
+                        1.0000f),
+          },
+      },
+      // Jpeg
+      {
+          // 8bpc
+          {
+              SkVector4(1.0000f, 1.0000f, 1.0000f, 1.0000f),
+              SkVector4(0.0000f, 0.0000f, 0.0000f, 1.0000f),
+          },
+          // 10bpc
+          {
+              SkVector4(1.0000f, 1.0000f, 1.0000f, 1.0000f),
+              SkVector4(0.0000f, 0.0000f, 0.0000f, 1.0000f),
+          },
+          // 12bpc
+          {
+              SkVector4(1.0000f, 1.0000f, 1.0000f, 1.0000f),
+              SkVector4(0.0000f, 0.0000f, 0.0000f, 1.0000f),
+          },
+      },
+      // YCoCg
+      {
+          // 8bpc
+          {
+              SkVector4(235.f / 255.f, 235.f / 255.f, 235.f / 255.f, 1.0000f),
+              SkVector4(16.f / 255.f, 16.f / 255.f, 16.f / 255.f, 1.0000f),
+          },
+          // 10bpc
+          {
+              SkVector4(940.f / 1023.f, 940.f / 1023.f, 940.f / 1023.f,
+                        1.0000f),
+              SkVector4(64.f / 1023.f, 64.f / 1023.f, 64.f / 1023.f, 1.0000f),
+          },
+          // 12bpc
+          {
+              SkVector4(3760.f / 4095.f, 3760.f / 4095.f, 3760.f / 4095.f,
+                        1.0000f),
+              SkVector4(256.f / 4095.f, 256.f / 4095.f, 256.f / 4095.f,
+                        1.0000f),
+          },
+      },
+  };
+
+  for (size_t i = 0; i < kNumColorSpaces; ++i) {
+    for (size_t j = 0; j < kNumBitDepths; ++j) {
+      SkMatrix44 range_adjust;
+      color_spaces[i].GetRangeAdjustMatrix(bit_depths[j], &range_adjust);
+
+      SkMatrix44 range_adjust_inv;
+      range_adjust.invert(&range_adjust_inv);
+
+      for (size_t k = 0; k < kNumTestYUVs; ++k) {
+        SkVector4 yuv = range_adjust_inv * test_yuvs[k];
+        EXPECT_LT(Diff(yuv, expected_yuvs[i][j][k]), kEpsilon);
+      }
+    }
+  }
+}
+
+TEST(ColorSpace, Blending) {
   ColorSpace display_color_space;
 
   // A linear transfer function being used for HDR should be blended using an
   // sRGB-like transfer function.
   display_color_space = ColorSpace::CreateSCRGBLinear();
   EXPECT_FALSE(display_color_space.IsSuitableForBlending());
-  EXPECT_EQ(ColorSpace::CreateDisplayP3D65(),
-            display_color_space.GetRasterColorSpace());
 
   // If not used for HDR, a linear transfer function should be left unchanged.
   display_color_space = ColorSpace::CreateXYZD50();
   EXPECT_TRUE(display_color_space.IsSuitableForBlending());
-  EXPECT_EQ(display_color_space, display_color_space.GetRasterColorSpace());
 }
 
 TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
@@ -121,7 +215,8 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
   sk_sp<SkColorSpace> sk_color_spaces[kNumTests] = {
       SkColorSpace::MakeSRGB(),
       SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kAdobeRGB),
-      SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, SkNamedGamut::kDCIP3),
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear,
+                            SkNamedGamut::kDisplayP3),
       SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kRec2020),
       SkColorSpace::MakeRGB(transfer_fn, primary_matrix),
   };
@@ -144,6 +239,34 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
     EXPECT_TRUE(SkColorSpace::Equals(
         sk_color_spaces[i].get(), from_sk_color_space.ToSkColorSpace().get()));
   }
+}
+
+TEST(ColorSpace, PQToSkColorSpace) {
+  ColorSpace color_space;
+  ColorSpace roundtrip_color_space;
+  float roundtrip_sdr_white_level;
+  const float kEpsilon = 1.e-5f;
+
+  // We expect that when a white point is specified, the conversion from
+  // ColorSpace -> SkColorSpace -> ColorSpace be the identity. Because of
+  // rounding error, this will not quite be the case.
+  color_space = ColorSpace::CreateHDR10(50.f);
+  roundtrip_color_space = ColorSpace(*color_space.ToSkColorSpace());
+  EXPECT_TRUE(
+      roundtrip_color_space.GetPQSDRWhiteLevel(&roundtrip_sdr_white_level));
+  EXPECT_NEAR(50.f, roundtrip_sdr_white_level, kEpsilon);
+  EXPECT_EQ(ColorSpace::TransferID::SMPTEST2084,
+            roundtrip_color_space.GetTransferID());
+
+  // When no white level is specified, we should get an SkColorSpace that
+  // specifies the default white level. Of note is that in the roundtrip, the
+  // value of kDefaultSDRWhiteLevel gets baked in.
+  color_space = ColorSpace::CreateHDR10();
+  roundtrip_color_space = ColorSpace(*color_space.ToSkColorSpace());
+  EXPECT_TRUE(
+      roundtrip_color_space.GetPQSDRWhiteLevel(&roundtrip_sdr_white_level));
+  EXPECT_NEAR(ColorSpace::kDefaultSDRWhiteLevel, roundtrip_sdr_white_level,
+              kEpsilon);
 }
 
 TEST(ColorSpace, MixedInvalid) {
@@ -186,6 +309,57 @@ TEST(ColorSpace, GetsPrimariesTransferMatrixAndRange) {
   EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::BT709);
   EXPECT_EQ(color_space.GetMatrixID(), ColorSpace::MatrixID::BT709);
   EXPECT_EQ(color_space.GetRangeID(), ColorSpace::RangeID::LIMITED);
+}
+
+TEST(ColorSpace, PQWhiteLevel) {
+  constexpr float kCustomWhiteLevel = 200.f;
+
+  ColorSpace color_space = ColorSpace::CreateHDR10(kCustomWhiteLevel);
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::SMPTEST2084);
+  float sdr_white_level;
+  EXPECT_TRUE(color_space.GetPQSDRWhiteLevel(&sdr_white_level));
+  EXPECT_EQ(sdr_white_level, kCustomWhiteLevel);
+
+  color_space = ColorSpace::CreateHDR10();
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::SMPTEST2084);
+  EXPECT_TRUE(color_space.GetPQSDRWhiteLevel(&sdr_white_level));
+  EXPECT_EQ(sdr_white_level, ColorSpace::kDefaultSDRWhiteLevel);
+
+  color_space = color_space.GetWithSDRWhiteLevel(kCustomWhiteLevel);
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::SMPTEST2084);
+  EXPECT_TRUE(color_space.GetPQSDRWhiteLevel(&sdr_white_level));
+  EXPECT_EQ(sdr_white_level, kCustomWhiteLevel);
+
+  constexpr float kCustomWhiteLevel2 = kCustomWhiteLevel * 2;
+  color_space = color_space.GetWithSDRWhiteLevel(kCustomWhiteLevel2);
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::SMPTEST2084);
+  EXPECT_TRUE(color_space.GetPQSDRWhiteLevel(&sdr_white_level));
+  EXPECT_EQ(sdr_white_level, kCustomWhiteLevel2);
+}
+
+TEST(ColorSpace, LinearHDRWhiteLevel) {
+  constexpr float kCustomWhiteLevel = 200.f;
+  constexpr float kCustomSlope =
+      ColorSpace::kDefaultScrgbLinearSdrWhiteLevel / kCustomWhiteLevel;
+
+  ColorSpace color_space = ColorSpace::CreateSCRGBLinear(kCustomWhiteLevel);
+  skcms_TransferFunction fn;
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::CUSTOM_HDR);
+  EXPECT_TRUE(color_space.GetTransferFunction(&fn));
+  EXPECT_EQ(std::make_tuple(fn.g, fn.a, fn.b, fn.c, fn.d, fn.e, fn.f),
+            std::make_tuple(1.f, kCustomSlope, 0.f, 0.f, 0.f, 0.f, 0.f));
+
+  color_space = ColorSpace::CreateSCRGBLinear();
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::LINEAR_HDR);
+  EXPECT_TRUE(color_space.GetTransferFunction(&fn));
+  EXPECT_EQ(std::make_tuple(fn.g, fn.a, fn.b, fn.c, fn.d, fn.e, fn.f),
+            std::make_tuple(1.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f));
+
+  color_space = color_space.GetWithSDRWhiteLevel(kCustomWhiteLevel);
+  EXPECT_EQ(color_space.GetTransferID(), ColorSpace::TransferID::CUSTOM_HDR);
+  EXPECT_TRUE(color_space.GetTransferFunction(&fn));
+  EXPECT_EQ(std::make_tuple(fn.g, fn.a, fn.b, fn.c, fn.d, fn.e, fn.f),
+            std::make_tuple(1.f, kCustomSlope, 0.f, 0.f, 0.f, 0.f, 0.f));
 }
 
 }  // namespace

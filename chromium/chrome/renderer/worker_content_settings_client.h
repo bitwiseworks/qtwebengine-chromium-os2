@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "chrome/common/content_settings_manager.mojom.h"
+#include "components/content_settings/common/content_settings_manager.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "url/gurl.h"
@@ -29,10 +29,7 @@ class WorkerContentSettingsClient : public blink::WebContentSettingsClient {
 
   // WebContentSettingsClient overrides.
   std::unique_ptr<blink::WebContentSettingsClient> Clone() override;
-  bool RequestFileSystemAccessSync() override;
-  bool AllowIndexedDB() override;
-  bool AllowCacheStorage() override;
-  bool AllowWebLocks() override;
+  bool AllowStorageAccessSync(StorageType storage_type) override;
   bool AllowRunningInsecureContent(bool allowed_per_settings,
                                    const blink::WebURL& url) override;
   bool AllowScriptFromSource(bool enabled_per_settings,
@@ -42,8 +39,6 @@ class WorkerContentSettingsClient : public blink::WebContentSettingsClient {
  private:
   explicit WorkerContentSettingsClient(
       const WorkerContentSettingsClient& other);
-  bool AllowStorageAccess(
-      chrome::mojom::ContentSettingsManager::StorageType storage_type);
   void EnsureContentSettingsManager() const;
 
   // Loading document context for this worker.
@@ -60,9 +55,9 @@ class WorkerContentSettingsClient : public blink::WebContentSettingsClient {
   // necessary to lazily bind the |content_settings_manager_| remote. The
   // pending remote is initialized on the parent thread and then the remote is
   // bound when needed on the worker's thread.
-  mutable mojo::PendingRemote<chrome::mojom::ContentSettingsManager>
+  mutable mojo::PendingRemote<content_settings::mojom::ContentSettingsManager>
       pending_content_settings_manager_;
-  mutable mojo::Remote<chrome::mojom::ContentSettingsManager>
+  mutable mojo::Remote<content_settings::mojom::ContentSettingsManager>
       content_settings_manager_;
 
   DISALLOW_ASSIGN(WorkerContentSettingsClient);

@@ -21,8 +21,6 @@ cast_source_set("test_support") {
     "test/frame_generator_for_test.h",
     "test/frame_segmenter_for_test.cc",
     "test/frame_segmenter_for_test.h",
-    "test/mock_cma_backend.cc",
-    "test/mock_cma_backend.h",
     "test/mock_cma_backend_factory.cc",
     "test/mock_cma_backend_factory.h",
     "test/mock_frame_consumer.cc",
@@ -53,6 +51,7 @@ cast_source_set("unittests") {
   testonly = true
   sources = [
     "backend/audio_video_pipeline_device_unittest.cc",
+    "backend/proxy/cma_backend_proxy_unittest.cc",
     "base/balanced_media_task_runner_unittest.cc",
     "base/buffering_controller_unittest.cc",
     "base/buffering_frame_provider_unittest.cc",
@@ -72,6 +71,8 @@ cast_source_set("unittests") {
     "//chromecast/media",
     "//chromecast/media:libcast_media",
     "//chromecast/media/api",
+    "//chromecast/media/api:test_support",
+    "//chromecast/media/cma/backend/proxy",
     "//media",
     "//testing/gmock",
     "//testing/gtest",

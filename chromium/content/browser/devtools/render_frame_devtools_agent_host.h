@@ -93,6 +93,8 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   WebContents* GetWebContents() override;
   std::string GetParentId() override;
   std::string GetOpenerId() override;
+  std::string GetOpenerFrameId() override;
+  bool CanAccessOpener() override;
   std::string GetType() override;
   std::string GetTitle() override;
   std::string GetDescription() override;
@@ -116,7 +118,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   ~RenderFrameDevToolsAgentHost() override;
 
   // DevToolsAgentHostImpl overrides.
-  bool AttachSession(DevToolsSession* session) override;
+  bool AttachSession(DevToolsSession* session, bool acquire_wake_lock) override;
   void DetachSession(DevToolsSession* session) override;
   void InspectElement(RenderFrameHost* frame_host, int x, int y) override;
   void UpdateRendererChannel(bool force) override;
@@ -129,8 +131,6 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
                               RenderFrameHost* new_host) override;
   void FrameDeleted(RenderFrameHost* rfh) override;
   void RenderFrameDeleted(RenderFrameHost* rfh) override;
-  void DidAttachInterstitialPage() override;
-  void DidDetachInterstitialPage() override;
   void OnVisibilityChanged(content::Visibility visibility) override;
   void OnPageScaleFactorChanged(float page_scale_factor) override;
 
@@ -174,6 +174,10 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   DISALLOW_COPY_AND_ASSIGN(RenderFrameDevToolsAgentHost);
 };
+
+// Returns the ancestor FrameTreeNode* for which a RenderFrameDevToolsAgentHost
+// should be created (i.e. the next local root).
+FrameTreeNode* GetFrameTreeNodeAncestor(FrameTreeNode* frame_tree_node);
 
 }  // namespace content
 

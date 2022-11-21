@@ -55,9 +55,6 @@
 #include "libavutil/ffversion.h"
 #include "libavutil/version.h"
 #include "cmdutils.h"
-#if CONFIG_NETWORK
-#include "libavformat/network.h"
-#endif
 #if HAVE_SYS_RESOURCE_H
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -205,13 +202,14 @@ void show_help_options(const OptionDef *options, const char *msg, int req_flags,
 
 void show_help_children(const AVClass *class, int flags)
 {
-    const AVClass *child = NULL;
+    void *iter = NULL;
+    const AVClass *child;
     if (class->option) {
         av_opt_show2(&class, NULL, flags, 0);
         printf("\n");
     }
 
-    while (child = av_opt_child_class_next(class, child))
+    while (child = av_opt_child_class_iterate(class, &iter))
         show_help_children(child, flags);
 }
 
@@ -1423,10 +1421,6 @@ static void print_codec(const AVCodec *c)
         printf("threads ");
     if (c->capabilities & AV_CODEC_CAP_AVOID_PROBING)
         printf("avoidprobe ");
-    if (c->capabilities & AV_CODEC_CAP_INTRA_ONLY)
-        printf("intraonly ");
-    if (c->capabilities & AV_CODEC_CAP_LOSSLESS)
-        printf("lossless ");
     if (c->capabilities & AV_CODEC_CAP_HARDWARE)
         printf("hardware ");
     if (c->capabilities & AV_CODEC_CAP_HYBRID)
@@ -1500,13 +1494,14 @@ static char get_media_type_char(enum AVMediaType type)
     }
 }
 
-static const AVCodec *next_codec_for_id(enum AVCodecID id, const AVCodec *prev,
+static const AVCodec *next_codec_for_id(enum AVCodecID id, void **iter,
                                         int encoder)
 {
-    while ((prev = av_codec_next(prev))) {
-        if (prev->id == id &&
-            (encoder ? av_codec_is_encoder(prev) : av_codec_is_decoder(prev)))
-            return prev;
+    const AVCodec *c;
+    while ((c = av_codec_iterate(iter))) {
+        if (c->id == id &&
+            (encoder ? av_codec_is_encoder(c) : av_codec_is_decoder(c)))
+            return c;
     }
     return NULL;
 }
@@ -1543,11 +1538,12 @@ static unsigned get_codecs_sorted(const AVCodecDescriptor ***rcodecs)
 
 static void print_codecs_for_id(enum AVCodecID id, int encoder)
 {
-    const AVCodec *codec = NULL;
+    void *iter = NULL;
+    const AVCodec *codec;
 
     printf(" (%s: ", encoder ? "encoders" : "decoders");
 
-    while ((codec = next_codec_for_id(id, codec, encoder)))
+    while ((codec = next_codec_for_id(id, &iter, encoder)))
         printf("%s ", codec->name);
 
     printf(")");
@@ -1570,7 +1566,8 @@ int show_codecs(void *optctx, const char *opt, const char *arg)
            " -------\n");
     for (i = 0; i < nb_codecs; i++) {
         const AVCodecDescriptor *desc = codecs[i];
-        const AVCodec *codec = NULL;
+        const AVCodec *codec;
+        void *iter = NULL;
 
         if (strstr(desc->name, "_deprecated"))
             continue;
@@ -1588,14 +1585,14 @@ int show_codecs(void *optctx, const char *opt, const char *arg)
 
         /* print decoders/encoders when there's more than one or their
          * names are different from codec name */
-        while ((codec = next_codec_for_id(desc->id, codec, 0))) {
+        while ((codec = next_codec_for_id(desc->id, &iter, 0))) {
             if (strcmp(codec->name, desc->name)) {
                 print_codecs_for_id(desc->id, 0);
                 break;
             }
         }
-        codec = NULL;
-        while ((codec = next_codec_for_id(desc->id, codec, 1))) {
+        iter = NULL;
+        while ((codec = next_codec_for_id(desc->id, &iter, 1))) {
             if (strcmp(codec->name, desc->name)) {
                 print_codecs_for_id(desc->id, 1);
                 break;
@@ -1626,9 +1623,10 @@ static void print_codecs(int encoder)
            encoder ? "Encoders" : "Decoders");
     for (i = 0; i < nb_codecs; i++) {
         const AVCodecDescriptor *desc = codecs[i];
-        const AVCodec *codec = NULL;
+        const AVCodec *codec;
+        void *iter = NULL;
 
-        while ((codec = next_codec_for_id(desc->id, codec, encoder))) {
+        while ((codec = next_codec_for_id(desc->id, &iter, encoder))) {
             printf(" %c", get_media_type_char(desc->type));
             printf((codec->capabilities & AV_CODEC_CAP_FRAME_THREADS) ? "F" : ".");
             printf((codec->capabilities & AV_CODEC_CAP_SLICE_THREADS) ? "S" : ".");
@@ -1833,9 +1831,10 @@ static void show_help_codec(const char *name, int encoder)
     if (codec)
         print_codec(codec);
     else if ((desc = avcodec_descriptor_get_by_name(name))) {
+        void *iter = NULL;
         int printed = 0;
 
-        while ((codec = next_codec_for_id(desc->id, codec, encoder))) {
+        while ((codec = next_codec_for_id(desc->id, &iter, encoder))) {
             printed = 1;
             print_codec(codec);
         }
@@ -2212,7 +2211,7 @@ double get_rotation(AVStream *st)
     if (fabs(theta - 90*round(theta/90)) > 2)
         av_log(NULL, AV_LOG_WARNING, "Odd rotation angle.\n"
                "If you want to help, upload a sample "
-               "of this file to ftp://upload.ffmpeg.org/incoming/ "
+               "of this file to https://streams.videolan.org/upload/ "
                "and contact the ffmpeg-devel mailing list. (ffmpeg-devel@ffmpeg.org)");
 
     return theta;

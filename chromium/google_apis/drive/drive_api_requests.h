@@ -30,9 +30,9 @@ namespace google_apis {
 
 // Callback used for requests that the server returns TeamDrive data
 // formatted into JSON value.
-typedef base::Callback<void(DriveApiErrorCode error,
-                            std::unique_ptr<TeamDriveList> entry)>
-    TeamDriveListCallback;
+using TeamDriveListCallback =
+    base::OnceCallback<void(DriveApiErrorCode error,
+                            std::unique_ptr<TeamDriveList> entry)>;
 
 // Callback used for requests that the server returns FileList data
 // formatted into JSON value.
@@ -40,17 +40,22 @@ typedef base::Callback<void(DriveApiErrorCode error,
                             std::unique_ptr<FileList> entry)>
     FileListCallback;
 
+// DEPRECATED: Please use ChangeListOnceCallback instead
 // Callback used for requests that the server returns ChangeList data
 // formatted into JSON value.
-typedef base::Callback<void(DriveApiErrorCode error,
-                            std::unique_ptr<ChangeList> entry)>
-    ChangeListCallback;
+using ChangeListCallback =
+    base::OnceCallback<void(DriveApiErrorCode error,
+                            std::unique_ptr<ChangeList> entry)>;
+
+using ChangeListOnceCallback =
+    base::OnceCallback<void(DriveApiErrorCode error,
+                            std::unique_ptr<ChangeList> entry)>;
 
 // Callback used for requests that the server returns StartToken data
 // formatted into JSON value.
 using StartPageTokenCallback =
-    base::RepeatingCallback<void(DriveApiErrorCode error,
-                                 std::unique_ptr<StartPageToken> entry)>;
+    base::OnceCallback<void(DriveApiErrorCode error,
+                            std::unique_ptr<StartPageToken> entry)>;
 
 namespace drive {
 
@@ -458,7 +463,7 @@ class TeamDriveListRequest : public DriveApiDataRequest<TeamDriveList> {
  public:
   TeamDriveListRequest(RequestSender* sender,
                        const DriveApiUrlGenerator& url_generator,
-                       const TeamDriveListCallback& callback);
+                       TeamDriveListCallback callback);
   ~TeamDriveListRequest() override;
 
   // Optional parameter
@@ -493,7 +498,7 @@ class StartPageTokenRequest : public DriveApiDataRequest<StartPageToken> {
  public:
   StartPageTokenRequest(RequestSender* sender,
                         const DriveApiUrlGenerator& url_generator,
-                        const StartPageTokenCallback& callback);
+                        StartPageTokenCallback callback);
   ~StartPageTokenRequest() override;
 
   // Optional parameter
@@ -597,7 +602,7 @@ class FilesDeleteRequest : public EntryActionRequest {
  public:
   FilesDeleteRequest(RequestSender* sender,
                      const DriveApiUrlGenerator& url_generator,
-                     const EntryActionCallback& callback);
+                     EntryActionCallback callback);
   ~FilesDeleteRequest() override;
 
   // Required parameter.
@@ -683,7 +688,7 @@ class ChangesListRequest : public DriveApiDataRequest<ChangeList> {
  public:
   ChangesListRequest(RequestSender* sender,
                      const DriveApiUrlGenerator& url_generator,
-                     const ChangeListCallback& callback);
+                     ChangeListCallback callback);
   ~ChangesListRequest() override;
 
   // Optional parameter
@@ -734,7 +739,7 @@ class ChangesListRequest : public DriveApiDataRequest<ChangeList> {
 class ChangesListNextPageRequest : public DriveApiDataRequest<ChangeList> {
  public:
   ChangesListNextPageRequest(RequestSender* sender,
-                             const ChangeListCallback& callback);
+                             ChangeListCallback callback);
   ~ChangesListNextPageRequest() override;
 
   const GURL& next_link() const { return next_link_; }
@@ -759,7 +764,7 @@ class ChildrenInsertRequest : public EntryActionRequest {
  public:
   ChildrenInsertRequest(RequestSender* sender,
                         const DriveApiUrlGenerator& url_generator,
-                        const EntryActionCallback& callback);
+                        EntryActionCallback callback);
   ~ChildrenInsertRequest() override;
 
   // Required parameter.
@@ -797,7 +802,7 @@ class ChildrenDeleteRequest : public EntryActionRequest {
   // |callback| must not be null.
   ChildrenDeleteRequest(RequestSender* sender,
                         const DriveApiUrlGenerator& url_generator,
-                        const EntryActionCallback& callback);
+                        EntryActionCallback callback);
   ~ChildrenDeleteRequest() override;
 
   // Required parameter.
@@ -961,7 +966,7 @@ class ResumeUploadRequest : public ResumeUploadRequestBase {
                       const std::string& content_type,
                       const base::FilePath& local_file_path,
                       UploadRangeCallback callback,
-                      const ProgressCallback& progress_callback);
+                      ProgressCallback progress_callback);
   ~ResumeUploadRequest() override;
 
  protected:
@@ -1019,7 +1024,7 @@ class MultipartUploadNewFileDelegate : public MultipartUploadRequestBase {
                                  const Properties& properties,
                                  const DriveApiUrlGenerator& url_generator,
                                  FileResourceCallback callback,
-                                 const ProgressCallback& progress_callback);
+                                 ProgressCallback progress_callback);
   ~MultipartUploadNewFileDelegate() override;
 
  protected:
@@ -1043,21 +1048,20 @@ class MultipartUploadExistingFileDelegate : public MultipartUploadRequestBase {
   // |title| should be set.
   // See also the comments of MultipartUploadRequestBase for more details
   // about the other parameters.
-  MultipartUploadExistingFileDelegate(
-      base::SequencedTaskRunner* task_runner,
-      const std::string& title,
-      const std::string& resource_id,
-      const std::string& parent_resource_id,
-      const std::string& content_type,
-      int64_t content_length,
-      const base::Time& modified_date,
-      const base::Time& last_viewed_by_me_date,
-      const base::FilePath& local_file_path,
-      const std::string& etag,
-      const Properties& properties,
-      const DriveApiUrlGenerator& url_generator,
-      FileResourceCallback callback,
-      const ProgressCallback& progress_callback);
+  MultipartUploadExistingFileDelegate(base::SequencedTaskRunner* task_runner,
+                                      const std::string& title,
+                                      const std::string& resource_id,
+                                      const std::string& parent_resource_id,
+                                      const std::string& content_type,
+                                      int64_t content_length,
+                                      const base::Time& modified_date,
+                                      const base::Time& last_viewed_by_me_date,
+                                      const base::FilePath& local_file_path,
+                                      const std::string& etag,
+                                      const Properties& properties,
+                                      const DriveApiUrlGenerator& url_generator,
+                                      FileResourceCallback callback,
+                                      ProgressCallback progress_callback);
   ~MultipartUploadExistingFileDelegate() override;
 
  protected:
@@ -1087,7 +1091,7 @@ class DownloadFileRequest : public DownloadFileRequestBase {
                       const base::FilePath& output_file_path,
                       const DownloadActionCallback& download_action_callback,
                       const GetContentCallback& get_content_callback,
-                      const ProgressCallback& progress_callback);
+                      ProgressCallback progress_callback);
   ~DownloadFileRequest() override;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadFileRequest);
@@ -1117,7 +1121,7 @@ class PermissionsInsertRequest : public EntryActionRequest {
   // See https://developers.google.com/drive/v2/reference/permissions/insert.
   PermissionsInsertRequest(RequestSender* sender,
                            const DriveApiUrlGenerator& url_generator,
-                           const EntryActionCallback& callback);
+                           EntryActionCallback callback);
   ~PermissionsInsertRequest() override;
 
   void set_id(const std::string& id) { id_ = id; }

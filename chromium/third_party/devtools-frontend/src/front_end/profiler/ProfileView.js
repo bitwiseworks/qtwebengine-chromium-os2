@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as DataGrid from '../data_grid/data_grid.js';  // eslint-disable-line no-unused-vars
 import * as Host from '../host/host.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';  // eslint-disable-line no-unused-vars
 import * as UI from '../ui/ui.js';
 
@@ -495,15 +499,16 @@ export class WritableProfileHeader extends ProfileHeader {
    * @param {!Bindings.FileUtils.ChunkedReader} reader
    */
   _onChunkTransferred(reader) {
-    this.updateStatus(
-        Common.UIString.UIString('Loading… %d%%', Number.bytesToString(this._jsonifiedProfile.length)));
+    this.updateStatus(Common.UIString.UIString(
+        'Loading… %d%%', Platform.NumberUtilities.bytesToString(this._jsonifiedProfile.length)));
   }
 
   /**
    * @param {!Bindings.FileUtils.ChunkedReader} reader
    */
   _onError(reader) {
-    this.updateStatus(Common.UIString.UIString('File \'%s\' read error: %s', reader.fileName(), reader.error().message));
+    this.updateStatus(
+        Common.UIString.UIString('File \'%s\' read error: %s', reader.fileName(), reader.error().message));
   }
 
   /**
@@ -550,8 +555,14 @@ export class WritableProfileHeader extends ProfileHeader {
    */
   async saveToFile() {
     const fileOutputStream = new Bindings.FileUtils.FileOutputStream();
-    this._fileName = this._fileName ||
-        `${this.profileType().typeName()}-${new Date().toISO8601Compact()}${this.profileType().fileExtension()}`;
+    if (!this._fileName) {
+      const now = Platform.DateUtilities.toISO8601Compact(new Date());
+      const fileExtension = this.profileType().fileExtension();
+
+      /** @type {string} */
+      this._fileName = `${this.profileType().typeName()}-${now}${fileExtension}`;
+    }
+
     const accepted = await fileOutputStream.open(this._fileName);
     if (!accepted || !this._tempFile) {
       return;

@@ -90,15 +90,11 @@ void WorkerScriptFetcher::Start(
   // workers (https://crbug.com/906991).
   int32_t routing_id = MSG_ROUTING_NONE;
 
-  // Get a unique request id across browser-initiated navigations and navigation
-  // preloads.
-  int request_id = GlobalRequestID::MakeBrowserInitiated().request_id;
-
   url_loader_ = blink::ThrottlingURLLoader::CreateLoaderAndStart(
       std::move(shared_url_loader_factory), std::move(throttles), routing_id,
-      request_id, network::mojom::kURLLoadOptionNone, resource_request_.get(),
-      this, kWorkerScriptLoadTrafficAnnotation,
-      base::ThreadTaskRunnerHandle::Get());
+      GlobalRequestID::MakeBrowserInitiated().request_id,
+      network::mojom::kURLLoadOptionNone, resource_request_.get(), this,
+      kWorkerScriptLoadTrafficAnnotation, base::ThreadTaskRunnerHandle::Get());
 }
 
 void WorkerScriptFetcher::OnReceiveResponse(
@@ -174,7 +170,8 @@ void WorkerScriptFetcher::OnReceiveRedirect(
   redirect_infos_.push_back(redirect_info);
   redirect_response_heads_.push_back(std::move(response_head));
   url_loader_->FollowRedirect({}, /* removed_headers */
-                              {} /* modified_headers */);
+                              {}, /* modified_headers */
+                              {} /* modified_cors_exempt_headers */);
 }
 
 void WorkerScriptFetcher::OnUploadProgress(int64_t current_position,

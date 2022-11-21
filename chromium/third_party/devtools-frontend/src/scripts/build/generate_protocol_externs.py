@@ -84,13 +84,17 @@ def generate_enum(name, json):
     return "\n/** @enum {string} */\n%s = {\n%s\n};\n" % (name, (",\n".join(enum_members)))
 
 
-def param_type(domain_name, param):
+def param_type(domain_name, param, command=None):
+    if "enum" in param and command:
+        return "Protocol.%s.%sRequest%s" % (domain_name,
+                                            to_title_case(command["name"]),
+                                            to_title_case(param_name(param)))
     if "type" in param:
         if param["type"] == "array":
             items = param["items"]
             return "!Array<%s>" % param_type(domain_name, items)
         else:
-            return type_traits[param["type"]]
+            return "Protocol.%s" % param["type"]
     if "$ref" in param:
         type_id = full_qualified_type_id(domain_name, param["$ref"])
         if type_id in ref_types:
@@ -117,6 +121,16 @@ def generate_protocol_externs(output_path, file1, file2):
     load_schema(file1, domains)
     load_schema(file2, domains)
     output_file = open(output_path, "w")
+    output_file.write("var ProtocolProxyApi = {};\n")
+
+    # Add basic types from protocol to closure
+    for protocolName, closureName in type_traits.items():
+        output_file.write("/** @typedef {%s} */\n" % closureName)
+        output_file.write("Protocol.%s;\n" % protocolName)
+
+    # Used for enforcing whether a dispatcher uses an object or not
+    output_file.write("/** @typedef {boolean} */\n")
+    output_file.write("Protocol.UsesObjectNotation;\n")
 
     for domain in domains:
         domain_name = domain["domain"]
@@ -131,25 +145,50 @@ def generate_protocol_externs(output_path, file1, file2):
         output_file.write("Protocol.%s = {};\n" % domain_name)
         output_file.write("\n\n/**\n * @constructor\n*/\n")
         output_file.write("Protocol.%sAgent = function(){};\n" % domain_name)
+        output_file.write("\n\n/**\n * @constructor\n*/\n")
+        output_file.write("ProtocolProxyApi.%sApi = Protocol.%sAgent;\n" % (domain_name, domain_name))
 
         if "commands" in domain:
             for command in domain["commands"]:
-                output_file.write("\n/**\n")
                 params = []
                 in_param_to_type = {}
                 out_param_to_type = {}
                 has_return_value = "returns" in command
+
                 if "parameters" in command:
+                    for param in command["parameters"]:
+                        if "enum" in param:
+                            enum_name = param_type(domain_name, param, command)
+                            output_file.write(generate_enum(enum_name, param))
+
+                output_file.write("\n/**\n")
+
+                if "parameters" in command:
+                    # Only declare trailing optional parameters as optional in
+                    # JSDoc annotations.
+                    trailing_optional = set()
+                    for in_param in reversed(command["parameters"]):
+                        if "optional" not in in_param:
+                            break
+                        trailing_optional.add(param_name(in_param))
+
                     for in_param in command["parameters"]:
                         in_param_name = param_name(in_param)
+                        real_in_param_name = "opt_" + in_param_name if in_param_name in trailing_optional else in_param_name
+                        params.append(real_in_param_name)
                         if "optional" in in_param:
-                            in_param_to_type[in_param_name] = "(%s|undefined)" % param_type(domain_name, in_param)
-                            params.append("opt_%s" % in_param_name)
-                            output_file.write(" * @param {%s=} opt_%s\n" % (param_type(domain_name, in_param), in_param_name))
+                            in_param_to_type[
+                                in_param_name] = "(%s|undefined)" % param_type(
+                                    domain_name, in_param, command)
+                            annotation_suffix = "=" if in_param_name in trailing_optional else "|undefined"
                         else:
-                            in_param_to_type[in_param_name] = param_type(domain_name, in_param)
-                            params.append(in_param_name)
-                            output_file.write(" * @param {%s} %s\n" % (param_type(domain_name, in_param), in_param_name))
+                            in_param_to_type[in_param_name] = param_type(
+                                domain_name, in_param, command)
+                            annotation_suffix = ""
+                        output_file.write(
+                            " * @param {%s%s} %s\n" %
+                            (param_type(domain_name, in_param, command),
+                             annotation_suffix, real_in_param_name))
                 returns = []
                 returns.append("?Protocol.Error")
                 if ("error" in command):
@@ -177,7 +216,8 @@ def generate_protocol_externs(output_path, file1, file2):
                     "Protocol.%sAgent.prototype.%s = function(%s) {};\n" % (domain_name, command["name"], ", ".join(params)))
 
                 request_object_properties = []
-                request_type = "Protocol.%sAgent.%sRequest" % (domain_name, to_title_case(command["name"]))
+                request_type = "Protocol.%s.%sRequest" % (
+                    domain_name, to_title_case(command["name"]))
                 for param in in_param_to_type:
                     request_object_properties.append("%s: %s" % (param, in_param_to_type[param]))
                 if request_object_properties:
@@ -187,7 +227,8 @@ def generate_protocol_externs(output_path, file1, file2):
                 output_file.write("%s;\n" % request_type)
 
                 response_object_properties = []
-                response_type = "Protocol.%sAgent.%sResponse" % (domain_name, to_title_case(command["name"]))
+                response_type = "Protocol.%s.%sResponse" % (
+                    domain_name, to_title_case(command["name"]))
                 for param in out_param_to_type:
                     response_object_properties.append("%s: %s" % (param, out_param_to_type[param]))
                 if response_object_properties:
@@ -197,7 +238,7 @@ def generate_protocol_externs(output_path, file1, file2):
                 output_file.write("%s;\n" % response_type)
 
                 output_file.write("/**\n")
-                output_file.write(" * @param {!%s} obj\n" % request_type)
+                output_file.write(" * @param {!%s=} obj\n" % request_type)
                 output_file.write(" * @return {!Promise<!%s>}" % response_type)
                 output_file.write(" */\n")
                 output_file.write("Protocol.%sAgent.prototype.invoke_%s = function(obj) {};\n" % (domain_name, command["name"]))
@@ -236,6 +277,9 @@ def generate_protocol_externs(output_path, file1, file2):
         else:
             output_file.write("/** @interface */\n")
         output_file.write("Protocol.%sDispatcher = function() {};\n" % domain_name)
+        output_file.write("/** @interface */\n")
+        output_file.write("ProtocolProxyApi.%sDispatcher = function() {};\n" %
+                          domain_name)
         if "events" in domain:
             for event in domain["events"]:
                 params = []
@@ -252,6 +296,33 @@ def generate_protocol_externs(output_path, file1, file2):
                 output_file.write(
                     "Protocol.%sDispatcher.prototype.%s = function(%s) {};\n" % (domain_name, event["name"], ", ".join(params)))
 
+                # Generate a Event typedef that is used in dispatchers
+                if ("parameters" in event):
+                    output_file.write("/**\n")
+                    output_file.write("* @typedef {{")
+                    for param in event["parameters"]:
+                        full_param_type = param_type(domain_name, param)
+                        if ("optional" in param):
+                            full_param_type = "(%s|undefined)" % full_param_type
+                        output_file.write("%s: %s," %
+                                          (param["name"], full_param_type))
+                    output_file.write("}} */\n")
+                else:
+                    output_file.write("/**\n")
+                    output_file.write("* @typedef {Object}")
+                    output_file.write("*/\n")
+                output_file.write("Protocol.%s.%sEvent;\n" %
+                                  (domain_name, to_title_case(event["name"])))
+
+                # Add the interface method to the dispatcher type, which takes 1 event as argument
+                output_file.write("/**\n")
+                output_file.write("@param {!Protocol.%s.%sEvent} request\n" %
+                                  (domain_name, to_title_case(event["name"])))
+                output_file.write("*/\n")
+                output_file.write(
+                    "ProtocolProxyApi.%sDispatcher.prototype.%s = function(request) {};\n"
+                    % (domain_name, event["name"]))
+
     for domain in domains:
         domain_name = domain["domain"]
         uppercase_length = 0
@@ -262,7 +333,9 @@ def generate_protocol_externs(output_path, file1, file2):
         output_file.write("ProtocolClient.TargetBase.prototype.%s = function(){};\n" %
                           (domain_name[:uppercase_length].lower() + domain_name[uppercase_length:] + "Agent"))
 
-        output_file.write("/**\n * @param {!Protocol.%sDispatcher} dispatcher\n */\n" % domain_name)
+        output_file.write(
+            "/**\n * @param {!Protocol.%sDispatcher|!ProtocolProxyApi.%sDispatcher} dispatcher\n */\n"
+            % (domain_name, domain_name))
         output_file.write("ProtocolClient.TargetBase.prototype.register%sDispatcher = function(dispatcher) {}\n" % domain_name)
 
     output_file.close()

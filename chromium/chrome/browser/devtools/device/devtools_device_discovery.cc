@@ -16,7 +16,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -46,8 +45,8 @@ const char kPageReloadCommand[] = "{'method': 'Page.reload', id: 1}";
 const char kWebViewSocketPrefix[] = "webview_devtools_remote";
 
 static void ScheduleTaskDefault(const base::Closure& task) {
-  base::PostDelayedTask(FROM_HERE, {BrowserThread::UI}, task,
-                        base::TimeDelta::FromMilliseconds(kPollingIntervalMs));
+  content::GetUIThreadTaskRunner({})->PostDelayedTask(
+      FROM_HERE, task, base::TimeDelta::FromMilliseconds(kPollingIntervalMs));
 }
 
 // ProtocolCommand ------------------------------------------------------------
@@ -519,8 +518,13 @@ DevToolsDeviceDiscovery::RemotePage::CreateTarget() {
       BuildUniqueTargetId(device_->serial(), browser_id_, dict_);
   std::string target_path = GetTargetPath(dict_);
   std::string type = GetStringProperty(dict_, "type");
+
+  std::string port_num = browser_id_;
+  if (type == "node")
+    port_num = GURL(GetStringProperty(dict_, "webSocketDebuggerUrl")).port();
+
   agent_host_ = AgentHostDelegate::GetOrCreateAgentHost(
-      device_, browser_id_, browser_version_, local_id, target_path, type,
+      device_, port_num, browser_version_, local_id, target_path, type,
       &dict_);
   return agent_host_;
 }

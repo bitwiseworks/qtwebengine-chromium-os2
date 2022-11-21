@@ -14,6 +14,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_renderer_host.h"
 #include "content/test/test_content_browser_client.h"
 #include "content/test/test_web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,7 +39,7 @@ class TestWebDialogViewWebDialogDelegate
   }
 
   // ui::WebDialogDelegate
-  bool CanCloseDialog() const override { return true; }
+  bool OnDialogCloseRequested() override { return true; }
   bool ShouldCloseDialogOnEscape() const override { return close_on_escape_; }
   ui::ModalType GetDialogModalType() const override {
     return ui::MODAL_TYPE_WINDOW;
@@ -127,6 +128,7 @@ class WebDialogViewUnitTest : public views::test::WidgetTest {
   }
 
  private:
+  content::RenderViewHostTestEnabler test_render_host_factories_;
   content::TestContentBrowserClient test_browser_client_;
   std::unique_ptr<content::TestBrowserContext> browser_context_;
   // These are raw pointers (vs unique pointers) because the views

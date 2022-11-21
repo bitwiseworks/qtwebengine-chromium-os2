@@ -4,8 +4,8 @@
 
 #include "content/browser/browsing_instance.h"
 
+#include "base/check_op.h"
 #include "base/command_line.h"
-#include "base/logging.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -22,13 +22,21 @@ namespace content {
 // invalid BrowsingInstanceId value, which is 0 in its underlying IdType32.
 int BrowsingInstance::next_browsing_instance_id_ = 1;
 
-BrowsingInstance::BrowsingInstance(BrowserContext* browser_context)
+BrowsingInstance::BrowsingInstance(
+    BrowserContext* browser_context,
+    bool is_coop_coep_cross_origin_isolated,
+    const base::Optional<url::Origin>& coop_coep_cross_origin_isolated_origin)
     : isolation_context_(
           BrowsingInstanceId::FromUnsafeValue(next_browsing_instance_id_++),
           BrowserOrResourceContext(browser_context)),
       active_contents_count_(0u),
       default_process_(nullptr),
-      default_site_instance_(nullptr) {
+      default_site_instance_(nullptr),
+      is_coop_coep_cross_origin_isolated_(is_coop_coep_cross_origin_isolated),
+      coop_coep_cross_origin_isolated_origin_(
+          coop_coep_cross_origin_isolated_origin) {
+  DCHECK(!is_coop_coep_cross_origin_isolated_ ||
+         coop_coep_cross_origin_isolated_origin_.has_value());
   DCHECK(browser_context);
 }
 
@@ -60,16 +68,15 @@ bool BrowsingInstance::IsSiteInDefaultSiteInstance(const GURL& site_url) const {
   return site_url_set_.find(site_url) != site_url_set_.end();
 }
 
-bool BrowsingInstance::HasSiteInstance(const GURL& url) {
-  std::string site = GetSiteForURL(url).possibly_invalid_spec();
-  return site_instance_map_.find(site) != site_instance_map_.end();
+bool BrowsingInstance::HasSiteInstance(const SiteInfo& site_info) {
+  return site_instance_map_.find(site_info) != site_instance_map_.end();
 }
 
 scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURL(
-    const GURL& url,
+    const UrlInfo& url_info,
     bool allow_default_instance) {
   scoped_refptr<SiteInstanceImpl> site_instance =
-      GetSiteInstanceForURLHelper(url, allow_default_instance);
+      GetSiteInstanceForURLHelper(url_info, allow_default_instance);
 
   if (site_instance)
     return site_instance;
@@ -79,61 +86,54 @@ scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURL(
 
   // Set the site of this new SiteInstance, which will register it with us,
   // unless this URL should leave the SiteInstance's site unassigned.
-  if (SiteInstance::ShouldAssignSiteForURL(url))
-    instance->SetSite(url);
+  if (SiteInstance::ShouldAssignSiteForURL(url_info.url))
+    instance->SetSite(url_info);
   return instance;
 }
 
-void BrowsingInstance::GetSiteAndLockForURL(const GURL& url,
-                                            bool allow_default_instance,
-                                            GURL* site_url,
-                                            GURL* lock_url) {
+SiteInfo BrowsingInstance::GetSiteInfoForURL(const UrlInfo& url_info,
+                                             bool allow_default_instance) {
   scoped_refptr<SiteInstanceImpl> site_instance =
-      GetSiteInstanceForURLHelper(url, allow_default_instance);
+      GetSiteInstanceForURLHelper(url_info, allow_default_instance);
 
-  if (site_instance) {
-    *site_url = site_instance->GetSiteURL();
-    *lock_url = site_instance->lock_url();
-    return;
-  }
+  if (site_instance)
+    return site_instance->GetSiteInfo();
 
-  *site_url = GetSiteForURL(url);
-  *lock_url =
-      SiteInstanceImpl::DetermineProcessLockURL(isolation_context_, url);
+  return ComputeSiteInfoForURL(url_info);
 }
 
 bool BrowsingInstance::TrySettingDefaultSiteInstance(
     SiteInstanceImpl* site_instance,
-    const GURL& url) {
+    const UrlInfo& url_info) {
   DCHECK(!site_instance->HasSite());
-  const GURL site_url = GetSiteForURL(url);
+  const SiteInfo site_info = ComputeSiteInfoForURL(url_info);
   if (default_site_instance_ ||
-      !SiteInstanceImpl::CanBePlacedInDefaultSiteInstance(isolation_context_,
-                                                          url, site_url)) {
+      !SiteInstanceImpl::CanBePlacedInDefaultSiteInstance(
+          isolation_context_, url_info.url, site_info)) {
     return false;
   }
 
   // Note: |default_site_instance_| must be set before SetSite() call to
   // properly trigger default SiteInstance behavior inside that method.
   default_site_instance_ = site_instance;
-  site_instance->SetSite(SiteInstanceImpl::GetDefaultSiteURL());
-  site_url_set_.insert(site_url);
+  site_instance->SetSiteInfoToDefault();
+  site_url_set_.insert(site_info.site_url());
   return true;
 }
 
 scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURLHelper(
-    const GURL& url,
+    const UrlInfo& url_info,
     bool allow_default_instance) {
-  const GURL site_url = GetSiteForURL(url);
-  auto i = site_instance_map_.find(site_url.possibly_invalid_spec());
+  const SiteInfo site_info = ComputeSiteInfoForURL(url_info);
+  auto i = site_instance_map_.find(site_info);
   if (i != site_instance_map_.end())
     return i->second;
 
   // Check to see if we can use the default SiteInstance for sites that don't
   // need to be isolated in their own process.
   if (allow_default_instance &&
-      SiteInstanceImpl::CanBePlacedInDefaultSiteInstance(isolation_context_,
-                                                         url, site_url)) {
+      SiteInstanceImpl::CanBePlacedInDefaultSiteInstance(
+          isolation_context_, url_info.url, site_info)) {
     DCHECK(!default_process_);
     scoped_refptr<SiteInstanceImpl> site_instance = default_site_instance_;
     if (!site_instance) {
@@ -148,12 +148,12 @@ scoped_refptr<SiteInstanceImpl> BrowsingInstance::GetSiteInstanceForURLHelper(
       // calls RegisterSiteInstance().
       default_site_instance_ = site_instance.get();
 
-      site_instance->SetSite(SiteInstanceImpl::GetDefaultSiteURL());
+      site_instance->SetSiteInfoToDefault();
     }
 
     // Add |site_url| to the set so we can keep track of all the sites the
     // the default SiteInstance has been returned for.
-    site_url_set_.insert(site_url);
+    site_url_set_.insert(site_info.site_url());
     return site_instance;
   }
 
@@ -169,17 +169,17 @@ void BrowsingInstance::RegisterSiteInstance(SiteInstanceImpl* site_instance) {
   if (site_instance == default_site_instance_)
     return;
 
-  std::string site = site_instance->GetSiteURL().possibly_invalid_spec();
+  const SiteInfo& site_info = site_instance->GetSiteInfo();
 
   // Only register if we don't have a SiteInstance for this site already.
   // It's possible to have two SiteInstances point to the same site if two
   // tabs are navigated there at the same time.  (We don't call SetSite or
   // register them until DidNavigate.)  If there is a previously existing
   // SiteInstance for this site, we just won't register the new one.
-  auto i = site_instance_map_.find(site);
+  auto i = site_instance_map_.find(site_info);
   if (i == site_instance_map_.end()) {
     // Not previously registered, so register it.
-    site_instance_map_[site] = site_instance;
+    site_instance_map_[site_info] = site_instance;
   }
 }
 
@@ -192,12 +192,10 @@ void BrowsingInstance::UnregisterSiteInstance(SiteInstanceImpl* site_instance) {
     default_site_instance_ = nullptr;
   }
 
-  std::string site = site_instance->GetSiteURL().possibly_invalid_spec();
-
   // Only unregister the SiteInstance if it is the same one that is registered
   // for the site.  (It might have been an unregistered SiteInstance.  See the
   // comments in RegisterSiteInstance.)
-  auto i = site_instance_map_.find(site);
+  auto i = site_instance_map_.find(site_instance->GetSiteInfo());
   if (i != site_instance_map_.end() && i->second == site_instance) {
     // Matches, so erase it.
     site_instance_map_.erase(i);
@@ -224,8 +222,11 @@ BrowsingInstance::~BrowsingInstance() {
   policy->RemoveOptInIsolatedOriginsForBrowsingInstance(isolation_context_);
 }
 
-GURL BrowsingInstance::GetSiteForURL(const GURL& url) const {
-  return SiteInstanceImpl::GetSiteForURL(isolation_context_, url);
+SiteInfo BrowsingInstance::ComputeSiteInfoForURL(
+    const UrlInfo& url_info) const {
+  return SiteInstanceImpl::ComputeSiteInfo(
+      isolation_context_, url_info, is_coop_coep_cross_origin_isolated_,
+      coop_coep_cross_origin_isolated_origin_);
 }
 
 }  // namespace content

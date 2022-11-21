@@ -36,9 +36,9 @@ DeviceMotionEventAcceleration* DeviceMotionEventAcceleration::Create(double x,
 
 DeviceMotionEventAcceleration* DeviceMotionEventAcceleration::Create(
     const DeviceMotionEventAccelerationInit* init) {
-  double x = init->hasX() ? init->x() : NAN;
-  double y = init->hasY() ? init->y() : NAN;
-  double z = init->hasZ() ? init->z() : NAN;
+  double x = init->hasXNonNull() ? init->xNonNull() : NAN;
+  double y = init->hasYNonNull() ? init->yNonNull() : NAN;
+  double z = init->hasZNonNull() ? init->zNonNull() : NAN;
   return DeviceMotionEventAcceleration::Create(x, y, z);
 }
 
@@ -66,21 +66,6 @@ base::Optional<double> DeviceMotionEventAcceleration::y() const {
 base::Optional<double> DeviceMotionEventAcceleration::z() const {
   if (std::isnan(z_))
     return base::nullopt;
-  return z_;
-}
-
-double DeviceMotionEventAcceleration::x(bool& is_null) const {
-  is_null = std::isnan(x_);
-  return x_;
-}
-
-double DeviceMotionEventAcceleration::y(bool& is_null) const {
-  is_null = std::isnan(y_);
-  return y_;
-}
-
-double DeviceMotionEventAcceleration::z(bool& is_null) const {
-  is_null = std::isnan(z_);
   return z_;
 }
 

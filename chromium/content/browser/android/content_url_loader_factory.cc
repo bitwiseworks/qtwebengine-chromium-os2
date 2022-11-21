@@ -15,11 +15,14 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "content/browser/web_package/web_bundle_utils.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/file_url_loader.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_switches.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
@@ -28,6 +31,7 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_util.h"
+#include "services/network/public/cpp/cors/cors.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -108,9 +112,11 @@ class ContentURLLoader : public network::mojom::URLLoader {
   }
 
   // network::mojom::URLLoader:
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_headers,
-                      const base::Optional<GURL>& new_url) override {}
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_headers,
+      const base::Optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
   void PauseReadingBodyFromNet() override {}
@@ -124,8 +130,28 @@ class ContentURLLoader : public network::mojom::URLLoader {
       const network::ResourceRequest& request,
       mojo::PendingReceiver<network::mojom::URLLoader> loader,
       mojo::PendingRemote<network::mojom::URLLoaderClient> client_remote) {
+    bool disable_web_security =
+        base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kDisableWebSecurity);
+    network::mojom::FetchResponseType response_type =
+        network::cors::CalculateResponseType(request.mode,
+                                             disable_web_security);
+
+    // Don't allow content:// requests with kSameOrigin or kCors* unless the
+    // web security is turned off.
+    if ((!disable_web_security &&
+         request.mode == network::mojom::RequestMode::kSameOrigin) ||
+        response_type == network::mojom::FetchResponseType::kCors) {
+      mojo::Remote<network::mojom::URLLoaderClient>(std::move(client_remote))
+          ->OnComplete(
+              network::URLLoaderCompletionStatus(network::CorsErrorStatus(
+                  network::mojom::CorsError::kCorsDisabledScheme)));
+      return;
+    }
+
     auto head = network::mojom::URLResponseHead::New();
     head->request_start = head->response_start = base::TimeTicks::Now();
+    head->response_type = response_type;
     receiver_.Bind(std::move(loader));
     receiver_.set_disconnect_handler(base::BindOnce(
         &ContentURLLoader::OnMojoDisconnect, base::Unretained(this)));
@@ -194,9 +220,8 @@ class ContentURLLoader : public network::mojom::URLLoader {
 
     if (!head->mime_type.empty()) {
       head->headers = base::MakeRefCounted<net::HttpResponseHeaders>("");
-      head->headers->AddHeader(
-          base::StringPrintf("%s: %s", net::HttpRequestHeaders::kContentType,
-                             head->mime_type.c_str()));
+      head->headers->SetHeader(net::HttpRequestHeaders::kContentType,
+                               head->mime_type);
     }
 
     client->OnReceiveResponse(std::move(head));
@@ -272,8 +297,10 @@ class ContentURLLoader : public network::mojom::URLLoader {
 }  // namespace
 
 ContentURLLoaderFactory::ContentURLLoaderFactory(
-    scoped_refptr<base::SequencedTaskRunner> task_runner)
-    : task_runner_(std::move(task_runner)) {}
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory> factory_receiver)
+    : NonNetworkURLLoaderFactoryBase(std::move(factory_receiver)),
+      task_runner_(std::move(task_runner)) {}
 
 ContentURLLoaderFactory::~ContentURLLoaderFactory() = default;
 
@@ -290,9 +317,20 @@ void ContentURLLoaderFactory::CreateLoaderAndStart(
                                 std::move(loader), std::move(client)));
 }
 
-void ContentURLLoaderFactory::Clone(
-    mojo::PendingReceiver<network::mojom::URLLoaderFactory> loader) {
-  receivers_.Add(this, std::move(loader));
+// static
+mojo::PendingRemote<network::mojom::URLLoaderFactory>
+ContentURLLoaderFactory::Create() {
+  mojo::PendingRemote<network::mojom::URLLoaderFactory> pending_remote;
+
+  // The ContentURLLoaderFactory will delete itself when there are no more
+  // receivers - see the NonNetworkURLLoaderFactoryBase::OnDisconnect method.
+  new ContentURLLoaderFactory(
+      base::ThreadPool::CreateSequencedTaskRunner(
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}),
+      pending_remote.InitWithNewPipeAndPassReceiver());
+
+  return pending_remote;
 }
 
 }  // namespace content

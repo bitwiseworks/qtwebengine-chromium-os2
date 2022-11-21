@@ -23,8 +23,8 @@ config("chrome") {
   ldflags = [ "/NATVIS:" + rebase_path(get_path_info("chrome.natvis", "abspath")) ]
 }
 
-config("webkit") {
-  # webkit.natvis listed as an input in
+config("blink") {
+  # blink.natvis listed as an input in
   # //third_party/blink/renderer/platform/wtf to guarantee relinking on changes.
-  ldflags = [ "/NATVIS:" + rebase_path(get_path_info("webkit.natvis", "abspath")) ]
+  ldflags = [ "/NATVIS:" + rebase_path(get_path_info("blink.natvis", "abspath")) ]
 }

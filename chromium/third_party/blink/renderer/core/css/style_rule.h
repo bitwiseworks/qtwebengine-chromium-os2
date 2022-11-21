@@ -48,6 +48,7 @@ class CORE_EXPORT StyleRuleBase : public GarbageCollected<StyleRuleBase> {
     kKeyframes,
     kKeyframe,
     kNamespace,
+    kScrollTimeline,
     kSupports,
     kViewport,
   };
@@ -63,6 +64,7 @@ class CORE_EXPORT StyleRuleBase : public GarbageCollected<StyleRuleBase> {
   bool IsPageRule() const { return GetType() == kPage; }
   bool IsPropertyRule() const { return GetType() == kProperty; }
   bool IsStyleRule() const { return GetType() == kStyle; }
+  bool IsScrollTimelineRule() const { return GetType() == kScrollTimeline; }
   bool IsSupportsRule() const { return GetType() == kSupports; }
   bool IsViewportRule() const { return GetType() == kViewport; }
   bool IsImportRule() const { return GetType() == kImport; }
@@ -73,7 +75,7 @@ class CORE_EXPORT StyleRuleBase : public GarbageCollected<StyleRuleBase> {
   CSSRule* CreateCSSOMWrapper(CSSStyleSheet* parent_sheet = nullptr) const;
   CSSRule* CreateCSSOMWrapper(CSSRule* parent_rule) const;
 
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
   void TraceAfterDispatch(blink::Visitor* visitor) const {}
   void FinalizeGarbageCollectedObject();
 
@@ -195,6 +197,9 @@ class StyleRuleProperty : public StyleRuleBase {
   const CSSPropertyValueSet& Properties() const { return *properties_; }
   MutableCSSPropertyValueSet& MutableProperties();
   const String& GetName() const { return name_; }
+  const CSSValue* GetSyntax() const;
+  const CSSValue* Inherits() const;
+  const CSSValue* GetInitialValue() const;
 
   StyleRuleProperty* Copy() const {
     return MakeGarbageCollected<StyleRuleProperty>(*this);
@@ -205,6 +210,34 @@ class StyleRuleProperty : public StyleRuleBase {
  private:
   String name_;
   Member<CSSPropertyValueSet> properties_;
+};
+
+class CORE_EXPORT StyleRuleScrollTimeline : public StyleRuleBase {
+ public:
+  StyleRuleScrollTimeline(const String& name, const CSSPropertyValueSet*);
+  StyleRuleScrollTimeline(const StyleRuleScrollTimeline&) = default;
+  ~StyleRuleScrollTimeline();
+
+  StyleRuleScrollTimeline* Copy() const {
+    return MakeGarbageCollected<StyleRuleScrollTimeline>(*this);
+  }
+
+  void TraceAfterDispatch(blink::Visitor*) const;
+
+  const String& GetName() const { return name_; }
+  const CSSValue* GetSource() const { return source_; }
+  const CSSValue* GetOrientation() const { return orientation_; }
+  const CSSValue* GetStart() const { return start_; }
+  const CSSValue* GetEnd() const { return end_; }
+  const CSSValue* GetTimeRange() const { return time_range_; }
+
+ private:
+  String name_;
+  Member<const CSSValue> source_;
+  Member<const CSSValue> orientation_;
+  Member<const CSSValue> start_;
+  Member<const CSSValue> end_;
+  Member<const CSSValue> time_range_;
 };
 
 class CORE_EXPORT StyleRuleGroup : public StyleRuleBase {
@@ -334,6 +367,13 @@ template <>
 struct DowncastTraits<StyleRuleProperty> {
   static bool AllowFrom(const StyleRuleBase& rule) {
     return rule.IsPropertyRule();
+  }
+};
+
+template <>
+struct DowncastTraits<StyleRuleScrollTimeline> {
+  static bool AllowFrom(const StyleRuleBase& rule) {
+    return rule.IsScrollTimelineRule();
   }
 };
 

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as Network from '../network/network.js';
@@ -10,17 +13,24 @@ import * as UI from '../ui/ui.js';
 
 import {Events, PageSecurityState, PageVisibleSecurityState, SecurityModel, SecurityStyleExplanation, SummaryMessages,} from './SecurityModel.js';  // eslint-disable-line no-unused-vars
 
+/** @type {!SecurityPanel} */
+let securityPanelInstance;
+
 /**
  * @implements {SDK.SDKModel.SDKModelObserver<!SecurityModel>}
  * @unrestricted
  */
 export class SecurityPanel extends UI.Panel.PanelWithSidebar {
+  /**
+   * @private
+   */
   constructor() {
     super('security');
 
     this._mainView = new SecurityMainView(this);
 
-    const title = createElementWithClass('span', 'title');
+    const title = document.createElement('span');
+    title.classList.add('title');
     title.textContent = Common.UIString.UIString('Overview');
     this._sidebarMainViewElement = new SecurityPanelSidebarTreeElement(
         title, this._setVisibleView.bind(this, this._mainView), 'security-main-view-sidebar-tree-item', 'lock-icon');
@@ -41,11 +51,22 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar {
   }
 
   /**
+   * @param {{forceNew: ?boolean}} opts
+   */
+  static instance(opts = {forceNew: null}) {
+    const {forceNew} = opts;
+    if (!securityPanelInstance || forceNew) {
+      securityPanelInstance = new SecurityPanel();
+    }
+
+    return securityPanelInstance;
+  }
+
+  /**
    * @return {!SecurityPanel}
    */
   static _instance() {
-    return (
-        /** @type {!SecurityPanel} */ (self.runtime.sharedInstance(SecurityPanel)));
+    return SecurityPanel.instance();
   }
 
   /**
@@ -56,7 +77,7 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar {
   static createCertificateViewerButtonForOrigin(text, origin) {
     const certificateButton = UI.UIUtils.createTextButton(text, async e => {
       e.consume();
-      const names = await self.SDK.multitargetNetworkManager.getCertificate(origin);
+      const names = await SDK.NetworkManager.MultitargetNetworkManager.instance().getCertificate(origin);
       if (names.length > 0) {
         Host.InspectorFrontendHost.InspectorFrontendHostInstance.showCertificateViewer(names);
       }
@@ -199,7 +220,7 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar {
    * @param {!Common.EventTarget.EventTargetEvent} event
    */
   _onResponseReceived(event) {
-    const request = /** @type {!SDK.NetworkRequest.NetworkRequest} */ (event.data);
+    const request = /** @type {!SDK.NetworkRequest.NetworkRequest} */ (event.data.request);
     if (request.resourceType() === Common.ResourceType.resourceTypes.Document) {
       this._lastResponseReceivedForLoaderId.set(request.loaderId, request);
     }
@@ -1039,6 +1060,9 @@ export class SecurityMainView extends UI.Widget.VBox {
   refreshExplanations() {
     this._securityExplanationsMain.removeChildren();
     this._securityExplanationsExtra.removeChildren();
+    if (!this._explanations) {
+      return;
+    }
     for (const explanation of this._explanations) {
       if (explanation.securityState === Protocol.Security.SecurityState.Info) {
         this._addExplanation(this._securityExplanationsExtra, explanation);
@@ -1152,6 +1176,7 @@ export class SecurityOriginView extends UI.Widget.VBox {
 
     const originNetworkDiv = titleSection.createChild('div', 'view-network-button');
     const originNetworkLink = originNetworkDiv.createChild('span', 'devtools-link origin-button');
+    originNetworkLink.tabIndex = 0;
     originNetworkLink.textContent = ls`View requests in Network Panel`;
     originNetworkLink.addEventListener('click', e => {
       e.consume();

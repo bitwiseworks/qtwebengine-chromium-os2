@@ -8,8 +8,9 @@
 
 #include <memory>
 
+#include "core/fxge/cfx_fillrenderoptions.h"
+#include "testing/embedder_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/ptr_util.h"
 
 namespace {
 
@@ -17,22 +18,23 @@ constexpr CFX_Matrix kIdentityMatrix;
 
 }  // namespace
 
-class CFX_WindowsRenderDeviceTest : public testing::Test {
+class CFX_WindowsRenderDeviceTest : public EmbedderTest {
  public:
   void SetUp() override {
+    EmbedderTest::SetUp();
+
     // Get a device context with Windows GDI.
     m_hDC = CreateCompatibleDC(nullptr);
     ASSERT_TRUE(m_hDC);
-    CFX_GEModule::Create(nullptr);
-    m_driver = pdfium::MakeUnique<CFX_WindowsRenderDevice>(m_hDC, nullptr);
+    m_driver = std::make_unique<CFX_WindowsRenderDevice>(m_hDC, nullptr);
     m_driver->SaveState();
   }
 
   void TearDown() override {
     m_driver->RestoreState(false);
     m_driver.reset();
-    CFX_GEModule::Destroy();
     DeleteDC(m_hDC);
+    EmbedderTest::TearDown();
   }
 
  protected:
@@ -50,8 +52,8 @@ TEST_F(CFX_WindowsRenderDeviceTest, SimpleClipTriangle) {
   path_data.AppendLine(p2, p3);
   path_data.AppendLine(p3, p1);
   path_data.ClosePath();
-  EXPECT_TRUE(
-      m_driver->SetClip_PathFill(&path_data, &kIdentityMatrix, FXFILL_WINDING));
+  EXPECT_TRUE(m_driver->SetClip_PathFill(
+      &path_data, &kIdentityMatrix, CFX_FillRenderOptions::WindingOptions()));
 }
 
 TEST_F(CFX_WindowsRenderDeviceTest, SimpleClipRect) {
@@ -59,8 +61,8 @@ TEST_F(CFX_WindowsRenderDeviceTest, SimpleClipRect) {
 
   path_data.AppendRect(0.0f, 100.0f, 200.0f, 0.0f);
   path_data.ClosePath();
-  EXPECT_TRUE(
-      m_driver->SetClip_PathFill(&path_data, &kIdentityMatrix, FXFILL_WINDING));
+  EXPECT_TRUE(m_driver->SetClip_PathFill(
+      &path_data, &kIdentityMatrix, CFX_FillRenderOptions::WindingOptions()));
 }
 
 TEST_F(CFX_WindowsRenderDeviceTest, GargantuanClipRect) {
@@ -73,8 +75,8 @@ TEST_F(CFX_WindowsRenderDeviceTest, GargantuanClipRect) {
   // for a clip path should allow IntersectClipRect() to return success;
   // however they do not because the GDI API IntersectClipRect() errors out and
   // affect subsequent imaging.  crbug.com/1019026
-  EXPECT_FALSE(
-      m_driver->SetClip_PathFill(&path_data, &kIdentityMatrix, FXFILL_WINDING));
+  EXPECT_FALSE(m_driver->SetClip_PathFill(
+      &path_data, &kIdentityMatrix, CFX_FillRenderOptions::WindingOptions()));
 }
 
 TEST_F(CFX_WindowsRenderDeviceTest, GargantuanClipRectWithBaseClip) {
@@ -87,6 +89,6 @@ TEST_F(CFX_WindowsRenderDeviceTest, GargantuanClipRectWithBaseClip) {
   path_data.ClosePath();
   // Use of a reasonable base clip ensures that we avoid getting an error back
   // from GDI API IntersectClipRect().
-  EXPECT_TRUE(
-      m_driver->SetClip_PathFill(&path_data, &kIdentityMatrix, FXFILL_WINDING));
+  EXPECT_TRUE(m_driver->SetClip_PathFill(
+      &path_data, &kIdentityMatrix, CFX_FillRenderOptions::WindingOptions()));
 }

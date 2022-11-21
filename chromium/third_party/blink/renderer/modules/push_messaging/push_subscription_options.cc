@@ -82,7 +82,11 @@ PushSubscriptionOptions* PushSubscriptionOptions::FromOptionsInit(
     const PushSubscriptionOptionsInit* options_init,
     ExceptionState& exception_state) {
   Vector<uint8_t> application_server_key;
-  if (options_init->hasApplicationServerKey()) {
+  // TODO(crbug.com/1070871): PushSubscriptionOptionsInit.applicationServerKey
+  // has a default value, but we check |hasApplicationServerKey()| here for
+  // backward compatibility.
+  if (options_init->hasApplicationServerKey() &&
+      !options_init->applicationServerKey().IsNull()) {
     application_server_key.AppendVector(BufferSourceToVector(
         options_init->applicationServerKey(), exception_state));
   }
@@ -99,7 +103,7 @@ PushSubscriptionOptions::PushSubscriptionOptions(
           application_server_key.data(),
           SafeCast<unsigned>(application_server_key.size()))) {}
 
-void PushSubscriptionOptions::Trace(Visitor* visitor) {
+void PushSubscriptionOptions::Trace(Visitor* visitor) const {
   visitor->Trace(application_server_key_);
   ScriptWrappable::Trace(visitor);
 }

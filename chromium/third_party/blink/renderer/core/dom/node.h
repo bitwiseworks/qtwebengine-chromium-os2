@@ -67,6 +67,7 @@ class NodeOrStringOrTrustedScript;
 class NodeRareData;
 class QualifiedName;
 class RegisteredEventListener;
+class ScrollTimeline;
 class SVGQualifiedName;
 class ScrollState;
 class ScrollStateCallback;
@@ -100,8 +101,9 @@ enum class CustomElementState : uint32_t {
   // https://dom.spec.whatwg.org/#concept-element-custom-element-state
   kUncustomized = 0,
   kCustom = 1 << kNodeCustomElementShift,
-  kUndefined = 2 << kNodeCustomElementShift,
-  kFailed = 3 << kNodeCustomElementShift,
+  kPreCustomized = 2 << kNodeCustomElementShift,
+  kUndefined = 3 << kNodeCustomElementShift,
+  kFailed = 4 << kNodeCustomElementShift,
 };
 
 enum class SlotChangeType {
@@ -109,7 +111,7 @@ enum class SlotChangeType {
   kSuppressSlotChangeEvent,
 };
 
-enum class CloneChildrenFlag { kClone, kSkip };
+enum class CloneChildrenFlag { kSkip, kClone, kCloneWithShadows };
 
 // Whether or not to force creation of a legacy layout object (i.e. disallow
 // LayoutNG).
@@ -226,6 +228,8 @@ class CORE_EXPORT Node : public EventTarget {
   void After(const HeapVector<NodeOrStringOrTrustedScript>&, ExceptionState&);
   void ReplaceWith(const HeapVector<NodeOrStringOrTrustedScript>&,
                    ExceptionState&);
+  void ReplaceChildren(const HeapVector<NodeOrStringOrTrustedScript>&,
+                       ExceptionState&);
   void remove(ExceptionState&);
   void remove();
 
@@ -596,7 +600,6 @@ class CORE_EXPORT Node : public EventTarget {
   void SetHasFocusWithin(bool flag);
   virtual void SetDragged(bool flag);
 
-  virtual const Node* FocusDelegate() const;
   // This is called only when the node is focused.
   virtual bool ShouldHaveFocusAppearance() const;
 
@@ -660,7 +663,9 @@ class CORE_EXPORT Node : public EventTarget {
   bool IsChildOfV0ShadowHost() const;
   ShadowRoot* V1ShadowRootOfParent() const;
   Element* FlatTreeParentForChildDirty() const;
-  ContainerNode* GetStyleRecalcParent() const;
+  Element* GetStyleRecalcParent() const {
+    return FlatTreeParentForChildDirty();
+  }
   Element* GetReattachParent() const { return FlatTreeParentForChildDirty(); }
 
   bool IsDocumentTypeNode() const { return getNodeType() == kDocumentTypeNode; }
@@ -679,6 +684,8 @@ class CORE_EXPORT Node : public EventTarget {
 
   // Whether or not a selection can be started in this object
   virtual bool CanStartSelection() const;
+
+  void NotifyPriorityScrollAnchorStatusChanged();
 
   // ---------------------------------------------------------------------------
   // Integration with layout tree
@@ -842,7 +849,7 @@ class CORE_EXPORT Node : public EventTarget {
       ShadowTreesTreatment = kTreatShadowTreesAsDisconnected) const;
 
   const AtomicString& InterfaceName() const override;
-  ExecutionContext* GetExecutionContext() const final;
+  ExecutionContext* GetExecutionContext() const override;
 
   void RemoveAllEventListeners() override;
   void RemoveAllEventListenersRecursively();
@@ -926,7 +933,10 @@ class CORE_EXPORT Node : public EventTarget {
   // If the node is a plugin, then this returns its WebPluginContainer.
   WebPluginContainerImpl* GetWebPluginContainer() const;
 
-  void Trace(Visitor*) override;
+  void RegisterScrollTimeline(ScrollTimeline*);
+  void UnregisterScrollTimeline(ScrollTimeline*);
+
+  void Trace(Visitor*) const override;
 
  private:
   enum NodeFlags : uint32_t {
@@ -961,24 +971,24 @@ class CORE_EXPORT Node : public EventTarget {
     kChildNeedsStyleRecalcFlag = 1 << 16,
     kStyleChangeMask = 0x3 << kNodeStyleChangeShift,
 
-    kCustomElementStateMask = 0x3 << kNodeCustomElementShift,
+    kCustomElementStateMask = 0x7 << kNodeCustomElementShift,
 
-    kHasNameOrIsEditingTextFlag = 1 << 21,
-    kHasEventTargetDataFlag = 1 << 22,
+    kHasNameOrIsEditingTextFlag = 1 << 22,
+    kHasEventTargetDataFlag = 1 << 23,
 
-    kV0CustomElementFlag = 1 << 23,
-    kV0CustomElementUpgradedFlag = 1 << 24,
+    kV0CustomElementFlag = 1 << 24,
+    kV0CustomElementUpgradedFlag = 1 << 25,
 
-    kNeedsReattachLayoutTree = 1 << 25,
-    kChildNeedsReattachLayoutTree = 1 << 26,
+    kNeedsReattachLayoutTree = 1 << 26,
+    kChildNeedsReattachLayoutTree = 1 << 27,
 
-    kHasDuplicateAttributes = 1 << 27,
+    kHasDuplicateAttributes = 1 << 28,
 
-    kForceReattachLayoutTree = 1 << 28,
+    kForceReattachLayoutTree = 1 << 29,
 
     kDefaultNodeFlags = kIsFinishedParsingChildrenFlag,
 
-    // 4 bits remaining.
+    // 3 bits remaining.
   };
 
   ALWAYS_INLINE bool GetFlag(NodeFlags mask) const {
@@ -1077,6 +1087,8 @@ class CORE_EXPORT Node : public EventTarget {
   void SetIsFinishedParsingChildren(bool value) {
     SetFlag(value, kIsFinishedParsingChildrenFlag);
   }
+
+  void InvalidateIfHasEffectiveAppearance() const;
 
  private:
   // Gets nodeName without caching AtomicStrings. Used by

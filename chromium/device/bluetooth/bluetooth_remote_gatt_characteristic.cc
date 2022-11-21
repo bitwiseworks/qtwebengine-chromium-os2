@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -105,12 +106,6 @@ void BluetoothRemoteGattCharacteristic::StartNotifySession(
                              std::move(error_callback));
 }
 #endif
-
-bool BluetoothRemoteGattCharacteristic::WriteWithoutResponse(
-    base::span<const uint8_t> value) {
-  NOTIMPLEMENTED();
-  return false;
-}
 
 bool BluetoothRemoteGattCharacteristic::AddDescriptor(
     std::unique_ptr<BluetoothRemoteGattDescriptor> descriptor) {
@@ -287,10 +282,12 @@ void BluetoothRemoteGattCharacteristic::StopNotifySession(
   auto repeating_callback =
       base::AdaptCallbackForRepeating(std::move(callback));
   NotifySessionCommand* command = new NotifySessionCommand(
-      base::Bind(&BluetoothRemoteGattCharacteristic::ExecuteStopNotifySession,
-                 GetWeakPtr(), session, repeating_callback),
-      base::Bind(&BluetoothRemoteGattCharacteristic::CancelStopNotifySession,
-                 GetWeakPtr(), repeating_callback));
+      base::BindOnce(
+          &BluetoothRemoteGattCharacteristic::ExecuteStopNotifySession,
+          GetWeakPtr(), session, repeating_callback),
+      base::BindOnce(
+          &BluetoothRemoteGattCharacteristic::CancelStopNotifySession,
+          GetWeakPtr(), repeating_callback));
 
   pending_notify_commands_.push(std::unique_ptr<NotifySessionCommand>(command));
   if (pending_notify_commands_.size() == 1) {

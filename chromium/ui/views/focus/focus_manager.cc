@@ -9,14 +9,15 @@
 #include <vector>
 
 #include "base/auto_reset.h"
+#include "base/check_op.h"
 #include "base/i18n/rtl.h"
-#include "base/logging.h"
 #include "build/build_config.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/focus/focus_manager_delegate.h"
 #include "ui/views/focus/focus_search.h"
 #include "ui/views/focus/widget_focus_manager.h"
@@ -205,7 +206,9 @@ bool FocusManager::RotatePaneFocus(Direction direction,
       continue;
 
     pane->RequestFocus();
-    focused_view = GetFocusedView();
+    // |pane| may be in a different widget, so don't assume its focus manager
+    // is |this|.
+    focused_view = pane->GetWidget()->GetFocusManager()->GetFocusedView();
     if (pane == focused_view || pane->Contains(focused_view))
       return true;
   }
@@ -312,7 +315,7 @@ View* FocusManager::GetNextFocusableView(View* original_starting_view,
   // the starting views widget or |widget_|.
   Widget* widget = starting_view ? starting_view->GetWidget()
                                  : original_starting_view->GetWidget();
-  if (widget->widget_delegate()->ShouldAdvanceFocusToTopLevelWidget())
+  if (widget->widget_delegate()->focus_traverses_out())
     widget = widget_;
   return GetNextFocusableView(nullptr, widget, reverse, true);
 }
@@ -336,9 +339,9 @@ void FocusManager::SetFocusedViewWithReason(View* view,
   // Change this to DCHECK once it's resolved.
   CHECK(!view || ContainsView(view));
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_APPLE)
   // TODO(warx): There are some AccessiblePaneViewTest failed on macosx.
-  // crbug.com/650859. Remove !defined(OS_MACOSX) once that is fixed.
+  // crbug.com/650859. Remove !defined(OS_APPLE) once that is fixed.
   //
   // If the widget isn't active store the focused view and then attempt to
   // activate the widget. If activation succeeds |view| will be focused.
@@ -522,7 +525,22 @@ void FocusManager::UnregisterAccelerators(ui::AcceleratorTarget* target) {
 bool FocusManager::ProcessAccelerator(const ui::Accelerator& accelerator) {
   if (accelerator_manager_.Process(accelerator))
     return true;
-  return delegate_ && delegate_->ProcessAccelerator(accelerator);
+  if (delegate_ && delegate_->ProcessAccelerator(accelerator))
+    return true;
+
+#if defined(OS_APPLE)
+  // On MacOS accelerators are processed when a bubble is opened without
+  // manual redirection to bubble anchor widget. Including redirect on MacOS
+  // breaks processing accelerators by the bubble itself.
+  return false;
+#else
+  return RedirectAcceleratorToBubbleAnchorWidget(accelerator);
+#endif
+}
+
+bool FocusManager::IsAcceleratorRegistered(
+    const ui::Accelerator& accelerator) const {
+  return accelerator_manager_.IsRegistered(accelerator);
 }
 
 bool FocusManager::HasPriorityHandler(
@@ -575,7 +593,7 @@ bool FocusManager::IsFocusable(View* view) const {
   DCHECK(view);
 
 // |keyboard_accessible_| is only used on Mac.
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   return keyboard_accessible_ ? view->IsAccessibilityFocusable()
                               : view->IsFocusable();
 #else
@@ -589,6 +607,47 @@ void FocusManager::OnViewIsDeleting(View* view) {
   // such that ViewRemoved() is never called.
   CHECK_EQ(view, focused_view_);
   SetFocusedView(nullptr);
+}
+
+bool FocusManager::RedirectAcceleratorToBubbleAnchorWidget(
+    const ui::Accelerator& accelerator) {
+  views::BubbleDialogDelegate* widget_delegate =
+      widget_->widget_delegate()->AsBubbleDialogDelegate();
+  Widget* anchor_widget =
+      widget_delegate ? widget_delegate->anchor_widget() : nullptr;
+  if (!anchor_widget)
+    return false;
+
+  FocusManager* focus_manager = anchor_widget->GetFocusManager();
+  if (!focus_manager->IsAcceleratorRegistered(accelerator))
+    return false;
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  // Processing an accelerator can delete things. Because we
+  // need these objects afterwards on Linux, save widget_ as weak pointer and
+  // save the close_on_deactivate property value of widget_delegate in a
+  // variable.
+  base::WeakPtr<Widget> widget_weak_ptr = widget_->GetWeakPtr();
+  const bool close_widget_on_deactivate =
+      widget_delegate->close_on_deactivate();
+#endif
+
+  // The parent view must be focused for it to process events.
+  focus_manager->SetFocusedView(anchor_widget->GetRootView());
+  const bool accelerator_processed =
+      focus_manager->ProcessAccelerator(accelerator);
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  // Need to manually close the bubble widget on Linux. On Linux when the
+  // bubble is shown, the main widget remains active. Because of that when
+  // focus is set to the main widget to process accelerator, the main widget
+  // isn't activated and the bubble widget isn't deactivated and closed.
+  if (accelerator_processed && close_widget_on_deactivate) {
+    widget_weak_ptr->CloseWithReason(views::Widget::ClosedReason::kLostFocus);
+  }
+#endif
+
+  return accelerator_processed;
 }
 
 }  // namespace views

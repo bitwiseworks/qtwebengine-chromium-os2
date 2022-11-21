@@ -5,7 +5,12 @@
 #ifndef UI_OZONE_PUBLIC_PLATFORM_SCREEN_H_
 #define UI_OZONE_PUBLIC_PLATFORM_SCREEN_H_
 
+#include <set>
+#include <string>
+#include <vector>
+
 #include "base/component_export.h"
+#include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace display {
@@ -57,6 +62,11 @@ class COMPONENT_EXPORT(OZONE_BASE) PlatformScreen {
   virtual gfx::AcceleratedWidget GetAcceleratedWidgetAtScreenPoint(
       const gfx::Point& point) const = 0;
 
+  // Returns top level accelerated widget at |point| ignoring |ignore|.
+  virtual gfx::AcceleratedWidget GetLocalProcessWidgetAtPoint(
+      const gfx::Point& point,
+      const std::set<gfx::AcceleratedWidget>& ignore) const;
+
   // Returns the |Display| nearest the specified point. |point| must be in DIPs.
   virtual display::Display GetDisplayNearestPoint(
       const gfx::Point& point) const = 0;
@@ -66,6 +76,9 @@ class COMPONENT_EXPORT(OZONE_BASE) PlatformScreen {
   // TODO(rjk): Update the code to track this.
   virtual display::Display GetDisplayMatching(
       const gfx::Rect& match_rect) const = 0;
+
+  // Suspends the platform-specific screensaver, if applicable.
+  virtual void SetScreenSaverSuspended(bool suspend);
 
   // Adds/Removes display observers.
   virtual void AddObserver(display::DisplayObserver* observer) = 0;

@@ -31,6 +31,7 @@
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/linux_util.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
@@ -44,7 +45,7 @@
 #include "components/crash/core/app/breakpad_linux_impl.h"
 #include "components/crash/core/app/crash_reporter_client.h"
 #include "components/crash/core/common/crash_keys.h"
-#include "services/service_manager/embedder/descriptors.h"
+#include "content/public/common/content_descriptors.h"
 #include "third_party/breakpad/breakpad/src/client/linux/crash_generation/crash_generation_client.h"
 #include "third_party/breakpad/breakpad/src/client/linux/handler/exception_handler.h"
 #include "third_party/breakpad/breakpad/src/client/linux/minidump_writer/directory_reader.h"
@@ -64,7 +65,6 @@
 
 #if defined(OS_CHROMEOS)
 #include "components/crash/core/app/crash_switches.h"
-#include "services/service_manager/embedder/switches.h"  // nogncheck
 #endif
 
 #if defined(ADDRESS_SANITIZER)
@@ -103,7 +103,11 @@ namespace {
 // while we do have functions to deal with uint64_t's.
 uint64_t g_crash_loop_before_time = 0;
 #else
-const char kUploadURL[] = "https://clients2.google.com/cr/report";
+char* g_upload_url = nullptr;
+void SetUploadURL(const std::string& url) {
+  DCHECK(!g_upload_url);
+  g_upload_url = strdup(url.c_str());
+}
 #endif
 
 bool g_is_crash_reporter_enabled = false;
@@ -115,9 +119,6 @@ ExceptionHandler* g_breakpad = nullptr;
 #if defined(ADDRESS_SANITIZER)
 const char* g_asan_report_str = nullptr;
 #endif
-
-bool g_use_crash_key_white_list = false;
-const char* const* g_crash_key_white_list = nullptr;
 
 #if defined(OS_ANDROID)
 #define G_DUMPS_SUPPRESSED_MAGIC 0x5AFECEDE
@@ -1022,8 +1023,8 @@ void MicrodumpInfo::Initialize(const std::string& process_type,
 class NonBrowserCrashHandler : public google_breakpad::CrashGenerationClient {
  public:
   NonBrowserCrashHandler()
-      : server_fd_(base::GlobalDescriptors::GetInstance()->Get(
-            service_manager::kCrashDumpSignal)) {}
+      : server_fd_(
+            base::GlobalDescriptors::GetInstance()->Get(kCrashDumpSignal)) {}
 
   ~NonBrowserCrashHandler() override {}
 
@@ -1132,23 +1133,10 @@ void EnableNonBrowserCrashDumping() {
 }
 #endif  // defined(OS_ANDROID)
 
-bool IsInWhiteList(const base::StringPiece& key) {
-  DCHECK(g_crash_key_white_list);
-  for (size_t i = 0; g_crash_key_white_list[i]; ++i) {
-    if (0 == my_strcmp(g_crash_key_white_list[i], key.data())) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // GetCrashReporterClient() cannot call any Set methods until after
 // InitCrashKeys().
 void InitCrashKeys() {
   crash_reporter::InitializeCrashKeys();
-  g_use_crash_key_white_list =
-      GetCrashReporterClient()->UseCrashKeysWhiteList();
-  g_crash_key_white_list = GetCrashReporterClient()->GetCrashKeyWhiteList();
 }
 
 void SetCrashLoopBeforeTime(const std::string& process_type,
@@ -1400,16 +1388,16 @@ void ExecUploadProcessOrTerminate(const BreakpadInfo& info,
 
   static const char kWgetBinary[] = "/usr/bin/wget";
   const char* args[] = {
-    kWgetBinary,
-    header_content_encoding,
-    header_content_type,
-    post_file,
-    kUploadURL,
-    "--timeout=10",  // Set a timeout so we don't hang forever.
-    "--tries=1",     // Don't retry if the upload fails.
-    "-O",  // Output reply to the file descriptor path.
-    status_fd_path,
-    nullptr,
+      kWgetBinary,
+      header_content_encoding,
+      header_content_type,
+      post_file,
+      g_upload_url,
+      "--timeout=10",  // Set a timeout so we don't hang forever.
+      "--tries=1",     // Don't retry if the upload fails.
+      "-O",            // Output reply to the file descriptor path.
+      status_fd_path,
+      nullptr,
   };
   static const char msg[] = "Cannot upload crash dump: cannot exec "
                             "/usr/bin/wget\n";
@@ -1865,8 +1853,6 @@ void HandleCrashDump(const BreakpadInfo& info) {
     CrashKeyStorage::Iterator crash_key_iterator(*info.crash_keys);
     const CrashKeyStorage::Entry* entry;
     while ((entry = crash_key_iterator.Next())) {
-      if (g_use_crash_key_white_list && !IsInWhiteList(entry->key))
-        continue;
       size_t key_size, value_size;
       // Check for malformed messages.
       key_size = entry->key[CrashKeyStorage::key_size - 1] != '\0'
@@ -2036,6 +2022,10 @@ void InitCrashReporter(const std::string& process_type) {
       process_type == kBrowserProcessType ||
 #endif
       process_type.empty();
+
+#if !defined(OS_CHROMEOS)
+  SetUploadURL(GetCrashReporterClient()->GetUploadUrl());
+#endif
 
   if (is_browser_process) {
     bool enable_breakpad = GetCrashReporterClient()->GetCollectStatsConsent() ||

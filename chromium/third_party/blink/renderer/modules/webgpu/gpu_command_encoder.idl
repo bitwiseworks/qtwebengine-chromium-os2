@@ -12,10 +12,10 @@
 
     void copyBufferToBuffer(
         GPUBuffer src,
-        GPUBufferSize srcOffset,
+        GPUSize64 srcOffset,
         GPUBuffer dst,
-        GPUBufferSize dstOffset,
-        GPUBufferSize size);
+        GPUSize64 dstOffset,
+        GPUSize64 size);
 
     [RaisesException] void copyBufferToTexture(
         GPUBufferCopyView source,
@@ -32,9 +32,18 @@
         GPUTextureCopyView destination,
         GPUExtent3D copySize);
 
-    void pushDebugGroup(DOMString groupLabel);
+    void pushDebugGroup(USVString groupLabel);
     void popDebugGroup();
-    void insertDebugMarker(DOMString markerLabel);
+    void insertDebugMarker(USVString markerLabel);
+
+    void resolveQuerySet(
+        GPUQuerySet querySet,
+        GPUSize32 firstQuery,
+        GPUSize32 queryCount,
+        GPUBuffer destination,
+        GPUSize64 destinationOffset);
+
+    void writeTimestamp(GPUQuerySet querySet, GPUSize32 queryIndex);
 
     GPUCommandBuffer finish(optional GPUCommandBufferDescriptor descriptor = {});
 };

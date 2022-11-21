@@ -20,8 +20,6 @@ jumbo_component("x11") {
 
   defines = [ "EVENTS_IMPLEMENTATION" ]
 
-  configs += [ "//build/config/linux:x11" ]
-
   public_deps = [
     "//ui/events",
     "//ui/events:events_base",
@@ -36,6 +34,7 @@ jumbo_component("x11") {
 
   deps = [
     "//base",
+    "//ui/base:features",
     "//ui/events/keycodes:x11",
   ]
 
@@ -55,5 +54,9 @@ jumbo_component("x11") {
       "x11_event_watcher_fdwatch.cc",
       "x11_event_watcher_fdwatch.h",
     ]
+  }
+
+  if (use_ozone) {
+    deps += [ "//ui/base:features" ]
   }
 }

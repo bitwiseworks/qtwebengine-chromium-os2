@@ -25,6 +25,7 @@ android_library("module_installer_java") {
     "java/src/org/chromium/components/module_installer/observer/ActivityObserver.java",
     "java/src/org/chromium/components/module_installer/observer/ActivityObserverFacade.java",
     "java/src/org/chromium/components/module_installer/observer/InstallerObserver.java",
+    "java/src/org/chromium/components/module_installer/util/ActivityObserverUtil.java",
     "java/src/org/chromium/components/module_installer/util/CrashKeyRecorder.java",
     "java/src/org/chromium/components/module_installer/util/ModuleUtil.java",
     "java/src/org/chromium/components/module_installer/util/SplitCompatInitializer.java",
@@ -35,6 +36,7 @@ android_library("module_installer_java") {
     "//base:base_java",
     "//base:jni_java",
     "//components/crash/android:java",
+    "//third_party/android_deps:androidx_annotation_annotation_java",
     "//third_party/google_android_play_core:com_google_android_play_core_java",
   ]
 
@@ -58,6 +60,8 @@ junit_binary("module_installer_junit_tests") {
     "//base:base_java",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
+    "//third_party/google_android_play_core:com_google_android_play_core_java",
+    "//third_party/hamcrest:hamcrest_java",
   ]
 }
 

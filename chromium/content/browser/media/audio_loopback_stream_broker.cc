@@ -7,8 +7,8 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/task/post_task.h"
 #include "base/unguessable_token.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -25,7 +25,7 @@ AudioLoopbackStreamBroker::AudioLoopbackStreamBroker(
     uint32_t shared_memory_count,
     bool mute_source,
     AudioStreamBroker::DeleterCallback deleter,
-    mojo::PendingRemote<mojom::RendererAudioInputStreamFactoryClient>
+    mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
         renderer_factory_client)
     : AudioStreamBroker(render_process_id, render_frame_id),
       source_(source),

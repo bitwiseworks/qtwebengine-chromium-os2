@@ -23,6 +23,11 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_inline.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_inline_text.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_text.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_length_list.h"
+#include "third_party/blink/renderer/core/svg/svg_animated_number_list.h"
+#include "third_party/blink/renderer/core/svg/svg_length_context.h"
+#include "third_party/blink/renderer/core/svg/svg_length_list.h"
+#include "third_party/blink/renderer/core/svg/svg_number_list.h"
 #include "third_party/blink/renderer/core/svg/svg_text_positioning_element.h"
 
 namespace blink {
@@ -241,7 +246,7 @@ void SVGTextLayoutAttributesBuilder::FillCharacterDataMap(
 }
 
 void SVGTextLayoutAttributesBuilder::TextPosition::Trace(
-    blink::Visitor* visitor) {
+    blink::Visitor* visitor) const {
   visitor->Trace(element);
 }
 

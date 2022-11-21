@@ -8,6 +8,7 @@
 
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/web_test_support.h"
 
 namespace blink {
 
@@ -21,11 +22,7 @@ LayoutTheme& LayoutTheme::NativeTheme() {
 }
 
 Color LayoutThemeWin::SystemColor(CSSValueID css_value_id,
-                                  WebColorScheme color_scheme) const {
-  if (!RuntimeEnabledFeatures::UseWindowsSystemColorsEnabled()) {
-    return LayoutThemeDefault::SystemColor(css_value_id, color_scheme);
-  }
-
+                                  ColorScheme color_scheme) const {
   blink::WebThemeEngine::SystemThemeColor theme_color;
   switch (css_value_id) {
     case CSSValueID::kActivetext:
@@ -62,7 +59,8 @@ Color LayoutThemeWin::SystemColor(CSSValueID css_value_id,
       return LayoutThemeDefault::SystemColor(css_value_id, color_scheme);
   }
 
-  if (Platform::Current() && Platform::Current()->ThemeEngine()) {
+  if (!WebTestSupport::IsRunningWebTest() && Platform::Current() &&
+      Platform::Current()->ThemeEngine()) {
     const base::Optional<SkColor> system_color =
         Platform::Current()->ThemeEngine()->GetSystemColor(theme_color);
     if (system_color)

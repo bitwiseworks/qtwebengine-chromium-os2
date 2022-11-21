@@ -29,17 +29,19 @@ ReportingCacheImpl::~ReportingCacheImpl() {
   }
 }
 
-void ReportingCacheImpl::AddReport(const GURL& url,
-                                   const std::string& user_agent,
-                                   const std::string& group_name,
-                                   const std::string& type,
-                                   std::unique_ptr<const base::Value> body,
-                                   int depth,
-                                   base::TimeTicks queued,
-                                   int attempts) {
-  auto report = std::make_unique<ReportingReport>(url, user_agent, group_name,
-                                                  type, std::move(body), depth,
-                                                  queued, attempts);
+void ReportingCacheImpl::AddReport(
+    const NetworkIsolationKey& network_isolation_key,
+    const GURL& url,
+    const std::string& user_agent,
+    const std::string& group_name,
+    const std::string& type,
+    std::unique_ptr<const base::Value> body,
+    int depth,
+    base::TimeTicks queued,
+    int attempts) {
+  auto report = std::make_unique<ReportingReport>(
+      network_isolation_key, url, user_agent, group_name, type, std::move(body),
+      depth, queued, attempts);
 
   auto inserted = reports_.insert(std::move(report));
   DCHECK(inserted.second);
@@ -84,6 +86,9 @@ base::Value ReportingCacheImpl::GetReportsAsValue() const {
   std::vector<base::Value> report_list;
   for (const ReportingReport* report : sorted_reports) {
     base::Value report_dict(base::Value::Type::DICTIONARY);
+    report_dict.SetKey(
+        "network_isolation_key",
+        base::Value(report->network_isolation_key.ToDebugString()));
     report_dict.SetKey("url", base::Value(report->url.spec()));
     report_dict.SetKey("group", base::Value(report->group));
     report_dict.SetKey("type", base::Value(report->type));
@@ -171,15 +176,11 @@ void ReportingCacheImpl::IncrementEndpointDeliveries(
 void ReportingCacheImpl::RemoveReports(
     const std::vector<const ReportingReport*>& reports,
     ReportingReport::Outcome outcome) {
-  base::Optional<base::TimeTicks> delivered = base::nullopt;
-  if (outcome == ReportingReport::Outcome::DELIVERED)
-    delivered = tick_clock().NowTicks();
   for (const ReportingReport* report : reports) {
     auto it = reports_.find(report);
     DCHECK(it != reports_.end());
 
     it->get()->outcome = outcome;
-    it->get()->delivered = delivered;
 
     if (it->get()->IsUploadPending()) {
       it->get()->status = ReportingReport::Status::DOOMED;
@@ -215,12 +216,11 @@ bool ReportingCacheImpl::IsReportDoomedForTesting(
 }
 
 void ReportingCacheImpl::OnParsedHeader(
+    const NetworkIsolationKey& network_isolation_key,
     const url::Origin& origin,
     std::vector<ReportingEndpointGroup> parsed_header) {
   SanityCheckClients();
 
-  // TODO(chlily): Respect NetworkIsolationKey.
-  NetworkIsolationKey network_isolation_key = NetworkIsolationKey::Todo();
   Client new_client(network_isolation_key, origin);
   base::Time now = clock().Now();
   new_client.last_used = now;
@@ -234,11 +234,8 @@ void ReportingCacheImpl::OnParsedHeader(
     // Creates an endpoint group and sets its |last_used| to |now|.
     CachedReportingEndpointGroup new_group(parsed_endpoint_group, now);
 
-    // TODO(chlily): This DCHECK passes right now because the groups have their
-    // NIK set to an empty NIK by the header parser, and we also set the
-    // client's NIK to an empty NIK above. Eventually it should pass because the
-    // header parser should provide the NIK it used for the groups so that the
-    // client can be created using the same NIK.
+    // Consistency check: the new client should have the same NIK and origin as
+    // all groups parsed from this header.
     DCHECK_EQ(new_group.group_key.network_isolation_key,
               new_client.network_isolation_key);
     DCHECK_EQ(new_group.group_key.origin, new_client.origin);
@@ -252,10 +249,6 @@ void ReportingCacheImpl::OnParsedHeader(
       AddOrUpdateEndpoint(std::move(new_endpoint));
     }
 
-    // Remove endpoints that may have been previously configured for this group,
-    // but which were not specified in the current header.
-    RemoveEndpointsInGroupOtherThan(new_group.group_key, new_endpoints);
-
     AddOrUpdateEndpointGroup(std::move(new_group));
   }
 
@@ -265,6 +258,15 @@ void ReportingCacheImpl::OnParsedHeader(
   // TODO(crbug.com/983000): Allow duplicate endpoint URLs.
   for (const auto& group_key_and_endpoint_set : endpoints_per_group) {
     new_client.endpoint_count += group_key_and_endpoint_set.second.size();
+
+    // Remove endpoints that may have been previously configured for this group,
+    // but which were not specified in the current header.
+    // This must be done all at once after all the groups in the header have
+    // been processed, rather than after each individual group, otherwise
+    // headers with multiple groups of the same name will clobber previous parts
+    // of themselves. See crbug.com/1116529.
+    RemoveEndpointsInGroupOtherThan(group_key_and_endpoint_set.first,
+                                    group_key_and_endpoint_set.second);
   }
 
   // Remove endpoint groups that may have been configured for an existing client

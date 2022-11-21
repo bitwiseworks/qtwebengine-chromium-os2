@@ -16,8 +16,6 @@ class Navigator;
 
 class NavigatorBluetooth final : public GarbageCollected<NavigatorBluetooth>,
                                  public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorBluetooth);
-
  public:
   static const char kSupplementName[];
 
@@ -32,7 +30,7 @@ class NavigatorBluetooth final : public GarbageCollected<NavigatorBluetooth>,
 
   explicit NavigatorBluetooth(Navigator&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   Member<Bluetooth> bluetooth_;

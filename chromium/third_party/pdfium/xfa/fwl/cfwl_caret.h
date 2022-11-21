@@ -13,14 +13,9 @@
 #include "xfa/fwl/cfwl_widget.h"
 #include "xfa/fxgraphics/cxfa_gecolor.h"
 
-class CFWL_WidgetProperties;
-class CFWL_Widget;
-
 class CFWL_Caret final : public CFWL_Widget, public CFX_Timer::CallbackIface {
  public:
-  CFWL_Caret(const CFWL_App* app,
-             std::unique_ptr<CFWL_WidgetProperties> properties,
-             CFWL_Widget* pOuter);
+  CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CFWL_Caret() override;
 
   // CFWL_Widget:
@@ -38,9 +33,9 @@ class CFWL_Caret final : public CFWL_Widget, public CFX_Timer::CallbackIface {
   void HideCaret();
 
  private:
-  void DrawCaretBK(CXFA_Graphics* pGraphics,
-                   IFWL_ThemeProvider* pTheme,
-                   const CFX_Matrix* pMatrix);
+  CFWL_Caret(CFWL_App* app, const Properties& properties, CFWL_Widget* pOuter);
+
+  void DrawCaretBK(CXFA_Graphics* pGraphics, const CFX_Matrix* pMatrix);
 
   std::unique_ptr<CFX_Timer> m_pTimer;
 };

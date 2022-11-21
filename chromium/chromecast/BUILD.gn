@@ -10,8 +10,11 @@ import("//chromecast/build/tests/cast_test.gni")
 import("//chromecast/chromecast.gni")
 import("//media/media_options.gni")
 import("//tools/grit/repack.gni")
-import("//ui/ozone/ozone.gni")
 import("//v8/gni/v8.gni")
+
+if (chromecast_branding != "public") {
+  import("//chromecast/internal/chromecast_internal.gni")
+}
 
 if (is_android) {
   import("//build/config/android/rules.gni")
@@ -33,7 +36,7 @@ group("all") {
   if (!is_android) {
     data_deps += [ ":cast_shell" ]
   }
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     deps += [
       "//chromecast/browser/webview/client:wayland_webview_client",
       "//chromecast/tracing",
@@ -77,6 +80,7 @@ cast_test_group("cast_tests") {
     "//chromecast/crypto:cast_crypto_unittests",
     "//chromecast/device/bluetooth:cast_bluetooth_unittests",
     "//chromecast/media:cast_media_unittests",
+    "//chromecast/metrics:cast_metrics_unittest",
     "//chromecast/net:cast_net_unittests",
     "//chromecast/system/reboot:cast_reboot_unittests",
     "//content/test:content_unittests",
@@ -86,9 +90,14 @@ cast_test_group("cast_tests") {
     "//net:net_unittests",
     "//sql:sql_unittests",
     "//storage:storage_unittests",
-    "//third_party/cacheinvalidation:cacheinvalidation_unittests",
     "//ui/base:ui_base_unittests",
   ]
+
+  if (enable_chromecast_extensions) {
+    tests += [
+      "//chromecast/browser/accessibility/flutter:cast_accessibility_unittests",
+    ]
+  }
 
   if (!is_cast_audio_only) {
     tests += [ "//gpu:gpu_unittests" ]
@@ -106,7 +115,7 @@ cast_test_group("cast_tests") {
     tests += [ "//media/gpu:video_decode_accelerator_tests" ]
   }
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     tests += [
       "//chromecast/crash:cast_crash_unittests",
       "//components/exo:exo_unittests",
@@ -122,13 +131,17 @@ cast_test_group("cast_tests") {
     filters += [ sandbox_linux_unittests_filter ]
   }
 
-  if (is_linux || is_fuchsia) {
+  if (is_linux || is_chromeos || is_fuchsia) {
     tests += [ "//chromecast/media/cma/backend:cast_audio_backend_unittests" ]
     cast_audio_backend_unittests_filter = {
       test_name = "cast_audio_backend_unittests"
 
       # --test-launcher-jobs=1 => so mixer service receiver can bind.
-      args = [ "--test-launcher-jobs=1" ]
+      args = [
+        "--test-launcher-jobs=1",
+        "--mixer-service-endpoint=/tmp/cast_audio_backend_unittest-mixer",
+        "--mixer-service-port=12855",
+      ]
     }
     filters += [ cast_audio_backend_unittests_filter ]
   }
@@ -165,7 +178,7 @@ cast_test_group("cast_tests") {
         "--no-sandbox",
         "--enable-local-file-accesses",
         "--test-launcher-jobs=1",
-        "--enable-hardware-overlays=\"\"",
+        "--enable-hardware-overlays=",
       ]
 
       gtest_excludes = []
@@ -407,7 +420,7 @@ cast_test_group_list("cast_test_lists") {
   test_groups = [ ":cast_tests" ]
 
   if (chromecast_branding != "public") {
-    test_groups += [ "//chromecast/internal:internal_cast_tests" ]
+    test_groups += internal_cast_test_groups
   }
 }
 
@@ -481,14 +494,14 @@ cast_executable("cast_shell") {
     ":cast_shell_lib",
     ":chromecast_locales_pak",
     "//chromecast/app",
-    "//content/public/app:both",
+    "//content/public/app",
   ]
 }
 
 repack("cast_shell_pak") {
   sources = [
     "$root_gen_dir/chromecast/app/shell_resources.pak",
-    "$root_gen_dir/chromecast/bindings/bindings_resources.pak",
+    "$root_gen_dir/components/cast/named_message_port_connector/named_message_port_connector_resources.pak",
     "$root_gen_dir/content/app/resources/content_resources_100_percent.pak",
     "$root_gen_dir/content/content_resources.pak",
     "$root_gen_dir/content/dev_ui_content_resources.pak",
@@ -507,7 +520,7 @@ repack("cast_shell_pak") {
 
   deps = [
     "//chromecast/app:resources",
-    "//chromecast/bindings:bindings_resources_grit",
+    "//components/cast/named_message_port_connector:resources",
     "//content:content_resources",
     "//content:dev_ui_content_resources",
     "//content/app/resources",
@@ -590,6 +603,7 @@ buildflag_header("chromecast_buildflags") {
     "ENABLE_PLAYREADY=$enable_playready",
     "ENABLE_VIDEO_CAPTURE_SERVICE=$enable_video_capture_service",
     "ENABLE_VOLUME_TABLES_ACCESS=$enable_volume_tables_access",
+    "IS_ANDROID_APPLIANCE=$is_android_appliance",
     "IS_ANDROID_THINGS=$is_android_things",
     "IS_ANDROID_THINGS_NON_PUBLIC=$is_android_things_non_public",
     "IS_CAST_AUDIO_ONLY=$is_cast_audio_only",
@@ -598,6 +612,7 @@ buildflag_header("chromecast_buildflags") {
     "SUPPORTS_MULTIZONE=$supports_multizone",
     "USE_ANDROID_USER_AGENT=$use_android_user_agent",
     "USE_CHROMECAST_CDMS=$use_chromecast_cdms",
+    "ENABLE_CHROMIUM_RUNTIME_CAST_RENDERER=$enable_chromium_runtime_cast_renderer",
   ]
 }
 
@@ -637,12 +652,16 @@ if (is_android) {
   }
 
   android_apk("cast_shell_apk") {
+    enable_lint = true
+    lint_baseline_file = "android/lint-baseline.xml"
+    lint_suppressions_file = "android/lint-suppressions.xml"
+
     apk_name = "CastShell"
     android_manifest = "$root_gen_dir/cast_shell_manifest/AndroidManifest.xml"
     android_manifest_dep = "//chromecast/browser/android:cast_shell_manifest"
 
     min_sdk_version = 21
-    target_sdk_version = 29
+    target_sdk_version = 30
 
     shared_libraries = [ "//chromecast/android:libcast_shell_android" ]
 

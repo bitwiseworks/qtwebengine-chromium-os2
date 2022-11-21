@@ -19,6 +19,7 @@ export class ListDelegate {
    * @return {!Element}
    */
   createElementForItem(item) {
+    throw new Error('not implemented yet');
   }
 
   /**
@@ -28,6 +29,7 @@ export class ListDelegate {
    * @return {number}
    */
   heightForItem(item) {
+    throw new Error('not implemented yet');
   }
 
   /**
@@ -35,6 +37,7 @@ export class ListDelegate {
    * @return {boolean}
    */
   isItemSelectable(item) {
+    throw new Error('not implemented yet');
   }
 
   /**
@@ -52,6 +55,7 @@ export class ListDelegate {
    * @return {boolean}
    */
   updateSelectedItemARIA(fromElement, toElement) {
+    throw new Error('not implemented yet');
   }
 }
 
@@ -72,14 +76,16 @@ export class ListControl {
    * @param {!ListMode=} mode
    */
   constructor(model, delegate, mode) {
-    this.element = createElement('div');
+    this.element = document.createElement('div');
     this.element.style.overflowY = 'auto';
     this._topElement = this.element.createChild('div');
     this._bottomElement = this.element.createChild('div');
     this._firstIndex = 0;
     this._lastIndex = 0;
     this._renderedHeight = 0;
+    /** @type {number} */
     this._topHeight = 0;
+    /** @type {number} */
     this._bottomHeight = 0;
 
     this._model = model;
@@ -98,6 +104,7 @@ export class ListControl {
     this._delegate = delegate;
     this._mode = mode || ListMode.EqualHeightItems;
     this._fixedHeight = 0;
+    /** @type {!Int32Array} */
     this._variableOffsets = new Int32Array(0);
     this._clearContents();
 
@@ -166,6 +173,14 @@ export class ListControl {
     const item = this._model.at(index);
     this._itemToElement.delete(item);
     this.invalidateRange(index, index + 1);
+    if (this._selectedIndex !== -1) {
+      this._select(this._selectedIndex, null, null);
+    }
+  }
+
+  refreshAllItems() {
+    this._itemToElement.clear();
+    this.invalidateRange(0, this._model.length);
     if (this._selectedIndex !== -1) {
       this._select(this._selectedIndex, null, null);
     }
@@ -386,9 +401,10 @@ export class ListControl {
   }
 
   /**
-   * @param {!Event} event
+   * @param {!Event} ev
    */
-  _onKeyDown(event) {
+  _onKeyDown(ev) {
+    const event = /** @type {!KeyboardEvent} */ (ev);
     let selected = false;
     switch (event.key) {
       case 'ArrowUp':
@@ -446,12 +462,32 @@ export class ListControl {
     let element = this._itemToElement.get(item);
     if (!element) {
       element = this._delegate.createElementForItem(item);
-      if (!ARIAUtils.hasRole(element)) {
-        ARIAUtils.markAsOption(element);
-      }
       this._itemToElement.set(item, element);
+      this._updateElementARIA(element, index);
     }
     return element;
+  }
+
+  _refreshARIA() {
+    for (let index = this._firstIndex; index <= this._lastIndex; index++) {
+      const item = this._model.at(index);
+      const element = this._itemToElement.get(item);
+      if (element) {
+        this._updateElementARIA(element, index);
+      }
+    }
+  }
+
+  /**
+   * @param {!Element} element
+   * @param {number} index
+   */
+  _updateElementARIA(element, index) {
+    if (!ARIAUtils.hasRole(element)) {
+      ARIAUtils.markAsOption(element);
+    }
+    ARIAUtils.setSetSize(element, this._model.length);
+    ARIAUtils.setPositionInSet(element, index + 1);
   }
 
   /**
@@ -491,7 +527,7 @@ export class ListControl {
       oldItem = this._selectedItem;
     }
     if (oldElement === undefined) {
-      oldElement = this._itemToElement.get(oldItem) || null;
+      oldElement = this._itemToElement.get(/** @type {!T} */ (oldItem)) || null;
     }
     this._selectedIndex = index;
     this._selectedItem = index === -1 ? null : this._model.at(index);
@@ -627,6 +663,7 @@ export class ListControl {
     // when invalidating after firstIndex but before first visible element.
     this._clearViewport();
     this._updateViewport(Platform.NumberUtilities.clamp(scrollTop, 0, totalHeight - viewportHeight), viewportHeight);
+    this._refreshARIA();
   }
 
   /**
@@ -637,10 +674,10 @@ export class ListControl {
   _invalidateNonViewportMode(start, remove, add) {
     let startElement = this._topElement;
     for (let index = 0; index < start; index++) {
-      startElement = startElement.nextElementSibling;
+      startElement = /** @type {!HTMLElement} */ (startElement.nextElementSibling);
     }
     while (remove--) {
-      startElement.nextElementSibling.remove();
+      /** @type {!HTMLElement} */ (startElement.nextElementSibling).remove();
     }
     while (add--) {
       this.element.insertBefore(this._elementAtIndex(start + add), startElement.nextElementSibling);

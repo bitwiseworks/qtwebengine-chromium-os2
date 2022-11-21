@@ -1,6 +1,8 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import {ColumnDescriptor, Events, Parameters} from './DataGrid.js';  // eslint-disable-line no-unused-vars
 import {ViewportDataGrid, ViewportDataGridNode} from './ViewportDataGrid.js';
@@ -84,7 +86,7 @@ export class SortableDataGrid extends ViewportDataGrid {
 
     const columns = /** @type {!Array<!ColumnDescriptor>} */ ([]);
     for (let i = 0; i < columnNames.length; ++i) {
-      columns.push({id: String(i), title: columnNames[i], width: columnNames[i].length, sortable: true});
+      columns.push({id: String(i), title: columnNames[i], sortable: true});
     }
 
     const nodes = [];

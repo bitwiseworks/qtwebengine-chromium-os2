@@ -41,6 +41,8 @@ class CustomLayoutFragment : public ScriptWrappable {
                        const LogicalSize& size,
                        const base::Optional<LayoutUnit> baseline,
                        v8::Isolate*);
+  CustomLayoutFragment(const CustomLayoutFragment&) = delete;
+  CustomLayoutFragment& operator=(const CustomLayoutFragment&) = delete;
   ~CustomLayoutFragment() override = default;
 
   double inlineSize() const { return inline_size_; }
@@ -53,8 +55,6 @@ class CustomLayoutFragment : public ScriptWrappable {
   void setBlockOffset(double block_offset) { block_offset_ = block_offset; }
 
   base::Optional<double> baseline() const { return baseline_; }
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  double baseline(bool& is_null) const;  // DEPRECATED
 
   ScriptValue data(ScriptState*) const;
 
@@ -63,7 +63,7 @@ class CustomLayoutFragment : public ScriptWrappable {
 
   bool IsValid() const { return token_->IsValid(); }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   Member<CustomLayoutChild> child_;
@@ -97,8 +97,6 @@ class CustomLayoutFragment : public ScriptWrappable {
   const base::Optional<double> baseline_;
 
   TraceWrapperV8Reference<v8::Value> layout_worklet_world_v8_data_;
-
-  DISALLOW_COPY_AND_ASSIGN(CustomLayoutFragment);
 };
 
 }  // namespace blink

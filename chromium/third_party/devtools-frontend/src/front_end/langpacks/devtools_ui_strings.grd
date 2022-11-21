@@ -13,6 +13,7 @@
     <messages fallback_to_english="true">
       <part file="../accessibility/accessibility_strings.grdp" />
       <part file="../animation/animation_strings.grdp" />
+      <part file="../developer_resources/developer_resources_strings.grdp" />
       <part file="../lighthouse/lighthouse_strings.grdp" />
       <part file="../bindings/bindings_strings.grdp" />
       <part file="../browser_debugger/browser_debugger_strings.grdp" />
@@ -51,6 +52,7 @@
       <part file="../perf_ui/perf_ui_strings.grdp" />
       <part file="../performance_monitor/performance_monitor_strings.grdp" />
       <part file="../persistence/persistence_strings.grdp" />
+      <part file="../platform/platform_strings.grdp" />
       <part file="../profiler/profiler_strings.grdp" />
       <part file="../issues/issues_strings.grdp" />
       <part file="../protocol_monitor/protocol_monitor_strings.grdp" />
@@ -69,6 +71,7 @@
       <part file="../timeline_model/timeline_model_strings.grdp" />
       <part file="../ui/ui_strings.grdp" />
       <part file="../web_audio/web_audio_strings.grdp" />
+      <part file="../webauthn/webauthn_strings.grdp" />
       <part file="../workspace/workspace_strings.grdp" />
       <part file="shared_strings.grdp" />
     </messages>

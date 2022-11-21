@@ -11,11 +11,9 @@
 #include <vector>
 
 #include "components/autofill/core/common/autofill_features.h"
-#include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/origin_credential_store.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "url/origin.h"
-
-using autofill::PasswordForm;
 
 namespace password_manager {
 
@@ -43,14 +41,7 @@ void CredentialCache::SaveCredentialsAndBlacklistedForOrigin(
                           return credential.origin() == origin;
                         });
   GetOrCreateCredentialStore(origin).SaveCredentials(std::move(credentials));
-  GetOrCreateCredentialStore(origin).InitializeBlacklistedStatus(
-      is_blacklisted.value());
-}
-
-void CredentialCache::UpdateBlacklistedForOrigin(
-    const url::Origin& origin,
-    IsOriginBlacklisted is_blacklisted) {
-  GetOrCreateCredentialStore(origin).UpdateBlacklistedStatus(
+  GetOrCreateCredentialStore(origin).SetBlacklistedStatus(
       is_blacklisted.value());
 }
 

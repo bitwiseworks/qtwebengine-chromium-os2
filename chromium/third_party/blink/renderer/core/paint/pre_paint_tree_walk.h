@@ -44,13 +44,18 @@ class CORE_EXPORT PrePaintTreeWalk {
             parent_context_accessor,
         bool needs_tree_builder_context)
         : paint_invalidator_context(parent_context_accessor),
-          ancestor_overflow_paint_layer(
-              parent_context.ancestor_overflow_paint_layer),
+          ancestor_scroll_container_paint_layer(
+              parent_context.ancestor_scroll_container_paint_layer),
           inside_blocking_touch_event_handler(
               parent_context.inside_blocking_touch_event_handler),
           effective_allowed_touch_action_changed(
               parent_context.effective_allowed_touch_action_changed),
-          clip_changed(parent_context.clip_changed) {
+          clip_changed(parent_context.clip_changed),
+          paint_invalidation_container(
+              parent_context.paint_invalidation_container),
+          paint_invalidation_container_for_stacked_contents(
+              parent_context
+                  .paint_invalidation_container_for_stacked_contents) {
       if (needs_tree_builder_context || DCHECK_IS_ON()) {
         DCHECK(parent_context.tree_builder_context);
         tree_builder_context.emplace(*parent_context.tree_builder_context);
@@ -65,10 +70,9 @@ class CORE_EXPORT PrePaintTreeWalk {
     base::Optional<PaintPropertyTreeBuilderContext> tree_builder_context;
     PaintInvalidatorContext paint_invalidator_context;
 
-    // The ancestor in the PaintLayer tree which has overflow clip, or
-    // is the root layer. Note that it is tree ancestor, not containing
-    // block or stacking ancestor.
-    PaintLayer* ancestor_overflow_paint_layer = nullptr;
+    // The ancestor in the PaintLayer tree which is a scroll container. Note
+    // that it is tree ancestor, not containing block or stacking ancestor.
+    PaintLayer* ancestor_scroll_container_paint_layer = nullptr;
 
     // Whether there is a blocking touch event handler on any ancestor.
     bool inside_blocking_touch_event_handler = false;
@@ -81,14 +85,19 @@ class CORE_EXPORT PrePaintTreeWalk {
     // true. It will be propagated to descendant contexts even if we don't
     // create tree_builder_context.
     bool clip_changed = false;
+
+    const LayoutBoxModelObject* paint_invalidation_container = nullptr;
+    const LayoutBoxModelObject*
+        paint_invalidation_container_for_stacked_contents = nullptr;
   };
 
   static bool ContextRequiresPrePaint(const PrePaintTreeWalkContext&);
-  static bool ContextRequiresTreeBuilderContext(const PrePaintTreeWalkContext&,
-                                                const LayoutObject&);
+  static bool ContextRequiresTreeBuilderContext(const PrePaintTreeWalkContext&);
 
+#if DCHECK_IS_ON()
   void CheckTreeBuilderContextState(const LayoutObject&,
                                     const PrePaintTreeWalkContext&);
+#endif
 
   const PrePaintTreeWalkContext& ContextAt(wtf_size_t index) {
     DCHECK_LT(index, context_storage_.size());
@@ -126,6 +135,11 @@ class CORE_EXPORT PrePaintTreeWalk {
                                     PrePaintTreeWalkContext&);
 
   void ResizeContextStorageIfNeeded();
+
+  void UpdatePaintInvalidationContainer(const LayoutObject& object,
+                                        const PaintLayer* painting_layer,
+                                        PrePaintTreeWalkContext& context,
+                                        bool is_ng_painting);
 
   PaintInvalidator paint_invalidator_;
   Vector<PrePaintTreeWalkContext> context_storage_;

@@ -52,7 +52,6 @@
 #include "libavcodec/h264_ps.h"
 #include "libavcodec/golomb.h"
 #include "libavcodec/internal.h"
-#include "audiointerleave.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "internal.h"
@@ -72,14 +71,14 @@ typedef struct MXFLocalTagPair {
 } MXFLocalTagPair;
 
 typedef struct MXFIndexEntry {
-    uint8_t flags;
     uint64_t offset;
     unsigned slice_offset; ///< offset of audio slice
     uint16_t temporal_ref;
+    uint8_t flags;
 } MXFIndexEntry;
 
 typedef struct MXFStreamContext {
-    AudioInterleaveContext aic;
+    int64_t pkt_cnt;         ///< pkt counter for muxed packets
     UID track_essence_element_key;
     int index;               ///< index in mxf_essence_container_uls table
     const UID *codec_ul;
@@ -554,11 +553,10 @@ static void mxf_write_metadata_key(AVIOContext *pb, unsigned int value)
     avio_wb24(pb, value);
 }
 
-static const MXFCodecUL *mxf_get_data_definition_ul(int type)
+static const MXFCodecUL *mxf_get_codec_ul_by_id(const MXFCodecUL *uls, int id)
 {
-    const MXFCodecUL *uls = ff_mxf_data_definition_uls;
     while (uls->uid[0]) {
-        if (type == uls->id)
+        if (id == uls->id)
             break;
         uls++;
     }
@@ -848,7 +846,7 @@ static void mxf_write_common_fields(AVFormatContext *s, AVStream *st)
     if (st == mxf->timecode_track)
         avio_write(pb, smpte_12m_timecode_track_data_ul, 16);
     else {
-        const MXFCodecUL *data_def_ul = mxf_get_data_definition_ul(st->codecpar->codec_type);
+        const MXFCodecUL *data_def_ul = mxf_get_codec_ul_by_id(ff_mxf_data_definition_uls, st->codecpar->codec_type);
         avio_write(pb, data_def_ul->uid, 16);
     }
 
@@ -1050,34 +1048,6 @@ static const UID mxf_generic_sound_descriptor_key = { 0x06,0x0E,0x2B,0x34,0x02,0
 
 static const UID mxf_avc_subdescriptor_key = { 0x06,0x0E,0x2B,0x34,0x02,0x53,0x01,0x01,0x0d,0x01,0x01,0x01,0x01,0x01,0x6E,0x00 };
 
-static int get_trc(UID ul, enum AVColorTransferCharacteristic trc)
-{
-    switch (trc){
-    case AVCOL_TRC_GAMMA28   :
-    case AVCOL_TRC_GAMMA22   :
-        memcpy(ul, ((UID){0x06,0x0E,0x2B,0x34,0x04,0x01,0x01,0x01,0x04,0x01,0x01,0x01,0x01,0x01,0x00,0x00}), 16);
-        return 0;
-    case AVCOL_TRC_BT709     :
-    case AVCOL_TRC_SMPTE170M :
-        memcpy(ul, ((UID){0x06,0x0E,0x2B,0x34,0x04,0x01,0x01,0x01,0x04,0x01,0x01,0x01,0x01,0x02,0x00,0x00}), 16);
-        return 0;
-    case AVCOL_TRC_SMPTE240M :
-        memcpy(ul, ((UID){0x06,0x0E,0x2B,0x34,0x04,0x01,0x01,0x01,0x04,0x01,0x01,0x01,0x01,0x03,0x00,0x00}), 16);
-        return 0;
-    case AVCOL_TRC_BT1361_ECG:
-        memcpy(ul, ((UID){0x06,0x0E,0x2B,0x34,0x04,0x01,0x01,0x06,0x04,0x01,0x01,0x01,0x01,0x05,0x00,0x00}), 16);
-        return 0;
-    case AVCOL_TRC_LINEAR    :
-        memcpy(ul, ((UID){0x06,0x0E,0x2B,0x34,0x04,0x01,0x01,0x06,0x04,0x01,0x01,0x01,0x01,0x06,0x00,0x00}), 16);
-        return 0;
-    case AVCOL_TRC_SMPTE428  :
-        memcpy(ul, ((UID){0x06,0x0E,0x2B,0x34,0x04,0x01,0x01,0x08,0x04,0x01,0x01,0x01,0x01,0x07,0x00,0x00}), 16);
-        return 0;
-    default:
-        return -1;
-    }
-}
-
 static int64_t mxf_write_cdci_common(AVFormatContext *s, AVStream *st, const UID key)
 {
     MXFStreamContext *sc = st->priv_data;
@@ -1086,10 +1056,14 @@ static int64_t mxf_write_cdci_common(AVFormatContext *s, AVStream *st, const UID
     int stored_height = (st->codecpar->height+15)/16*16;
     int display_height;
     int f1, f2;
-    UID transfer_ul = {0};
+    const MXFCodecUL *color_primaries_ul;
+    const MXFCodecUL *color_trc_ul;
+    const MXFCodecUL *color_space_ul;
     int64_t pos = mxf_write_generic_desc(s, st, key);
 
-    get_trc(transfer_ul, st->codecpar->color_trc);
+    color_primaries_ul = mxf_get_codec_ul_by_id(ff_mxf_color_primaries_uls, st->codecpar->color_primaries);
+    color_trc_ul       = mxf_get_codec_ul_by_id(ff_mxf_color_trc_uls, st->codecpar->color_trc);
+    color_space_ul     = mxf_get_codec_ul_by_id(ff_mxf_color_space_uls, st->codecpar->color_space);
 
     if (st->codecpar->codec_id == AV_CODEC_ID_DVVIDEO) {
         if (st->codecpar->height == 1080)
@@ -1236,10 +1210,19 @@ static int64_t mxf_write_cdci_common(AVFormatContext *s, AVStream *st, const UID
     avio_wb32(pb, sc->aspect_ratio.num);
     avio_wb32(pb, sc->aspect_ratio.den);
 
-    //Transfer characteristic
-    if (transfer_ul[0]) {
+    if (color_primaries_ul->uid[0]) {
+        mxf_write_local_tag(pb, 16, 0x3219);
+        avio_write(pb, color_primaries_ul->uid, 16);
+    };
+
+    if (color_trc_ul->uid[0]) {
         mxf_write_local_tag(pb, 16, 0x3210);
-        avio_write(pb, transfer_ul, 16);
+        avio_write(pb, color_trc_ul->uid, 16);
+    };
+
+    if (color_space_ul->uid[0]) {
+        mxf_write_local_tag(pb, 16, 0x321A);
+        avio_write(pb, color_space_ul->uid, 16);
     };
 
     mxf_write_local_tag(pb, 16, 0x3201);
@@ -1747,7 +1730,7 @@ static void mxf_write_index_table_segment(AVFormatContext *s)
             avio_wb32(pb, KAG_SIZE); // system item size including klv fill
         } else { // audio or data track
             if (!audio_frame_size) {
-                audio_frame_size = sc->aic.samples[0]*sc->aic.sample_size;
+                audio_frame_size = sc->frame_size;
                 audio_frame_size += klv_fill_size(audio_frame_size);
             }
             avio_w8(pb, 1);
@@ -2172,14 +2155,14 @@ static int mxf_parse_h264_frame(AVFormatContext *s, AVStream *st,
 {
     MXFContext *mxf = s->priv_data;
     MXFStreamContext *sc = st->priv_data;
-    H264SequenceParameterSet *sps = NULL;
+    H264SPS seq, *const sps = &seq;
     GetBitContext gb;
     const uint8_t *buf = pkt->data;
     const uint8_t *buf_end = pkt->data + pkt->size;
     const uint8_t *nal_end;
     uint32_t state = -1;
     int extra_size = 512; // support AVC Intra files without SPS/PPS header
-    int i, frame_size, slice_type, intra_only = 0;
+    int i, frame_size, slice_type, has_sps = 0, intra_only = 0, ret;
 
     for (;;) {
         buf = avpriv_find_start_code(buf, buf_end, &state);
@@ -2194,11 +2177,12 @@ static int mxf_parse_h264_frame(AVFormatContext *s, AVStream *st,
                 break;
 
             nal_end = ff_avc_find_startcode(buf, buf_end);
-            sps = ff_avc_decode_sps(buf, nal_end - buf);
-            if (!sps) {
+            ret = ff_avc_decode_sps(sps, buf, nal_end - buf);
+            if (ret < 0) {
                 av_log(s, AV_LOG_ERROR, "error parsing sps\n");
                 return 0;
             }
+            has_sps = 1;
 
             sc->aspect_ratio.num = st->codecpar->width * sps->sar.num;
             sc->aspect_ratio.den = st->codecpar->height * sps->sar.den;
@@ -2244,7 +2228,7 @@ static int mxf_parse_h264_frame(AVFormatContext *s, AVStream *st,
     if (mxf->header_written)
         return 1;
 
-    if (!sps)
+    if (!has_sps)
         sc->interlaced = st->codecpar->field_order != AV_FIELD_PROGRESSIVE ? 1 : 0;
     sc->codec_ul = NULL;
     frame_size = pkt->size + extra_size;
@@ -2261,7 +2245,7 @@ static int mxf_parse_h264_frame(AVFormatContext *s, AVStream *st,
             if (sc->interlaced)
                 sc->field_dominance = 1; // top field first is mandatory for AVC Intra
             break;
-        } else if (sps && mxf_h264_codec_uls[i].frame_size == 0 &&
+        } else if (has_sps && mxf_h264_codec_uls[i].frame_size == 0 &&
                    mxf_h264_codec_uls[i].profile == sps->profile_idc &&
                    (mxf_h264_codec_uls[i].intra_only < 0 ||
                     mxf_h264_codec_uls[i].intra_only == intra_only)) {
@@ -2271,8 +2255,6 @@ static int mxf_parse_h264_frame(AVFormatContext *s, AVStream *st,
             // continue to check for avc intra
         }
     }
-
-    av_free(sps);
 
     if (!sc->codec_ul) {
         av_log(s, AV_LOG_ERROR, "h264 profile not supported\n");
@@ -2407,17 +2389,28 @@ static void mxf_gen_umid(AVFormatContext *s)
     mxf->instance_number = seed & 0xFFFFFF;
 }
 
-static int mxf_init_timecode(AVFormatContext *s, AVStream *st, AVRational rate)
+static int mxf_init_timecode(AVFormatContext *s, AVStream *st, AVRational tbc)
 {
     MXFContext *mxf = s->priv_data;
     AVDictionaryEntry *tcr = av_dict_get(s->metadata, "timecode", NULL, 0);
+
+    if (!ff_mxf_get_content_package_rate(tbc)) {
+        if (s->strict_std_compliance > FF_COMPLIANCE_UNOFFICIAL) {
+            av_log(s, AV_LOG_ERROR, "Unsupported frame rate %d/%d. Set -strict option to 'unofficial' or lower in order to allow it!\n", tbc.den, tbc.num);
+            return AVERROR(EINVAL);
+        } else {
+            av_log(s, AV_LOG_WARNING, "Unofficial frame rate %d/%d.\n", tbc.den, tbc.num);
+        }
+    }
+
+    mxf->timecode_base = (tbc.den + tbc.num/2) / tbc.num;
     if (!tcr)
         tcr = av_dict_get(st->metadata, "timecode", NULL, 0);
 
     if (tcr)
-        return av_timecode_init_from_string(&mxf->tc, rate, tcr->value, s);
+        return av_timecode_init_from_string(&mxf->tc, av_inv_q(tbc), tcr->value, s);
     else
-        return av_timecode_init(&mxf->tc, rate, 0, 0, s);
+        return av_timecode_init(&mxf->tc, av_inv_q(tbc), 0, 0, s);
 }
 
 static int mxf_write_header(AVFormatContext *s)
@@ -2425,7 +2418,6 @@ static int mxf_write_header(AVFormatContext *s)
     MXFContext *mxf = s->priv_data;
     int i, ret;
     uint8_t present[FF_ARRAY_ELEMS(mxf_essence_container_uls)] = {0};
-    const MXFSamplesPerFrame *spf = NULL;
     int64_t timestamp = 0;
 
     if (!s->nb_streams)
@@ -2455,7 +2447,7 @@ static int mxf_write_header(AVFormatContext *s)
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             const AVPixFmtDescriptor *pix_desc = av_pix_fmt_desc_get(st->codecpar->format);
             // TODO: should be avg_frame_rate
-            AVRational rate, tbc = st->time_base;
+            AVRational tbc = st->time_base;
             // Default component depth to 8
             sc->component_depth = 8;
             sc->h_chroma_sub_sample = 2;
@@ -2479,18 +2471,10 @@ static int mxf_write_header(AVFormatContext *s)
             case AVCHROMA_LOC_CENTER:  sc->color_siting = 3; break;
             }
 
-            mxf->timecode_base = (tbc.den + tbc.num/2) / tbc.num;
-            spf = ff_mxf_get_samples_per_frame(s, tbc);
-            if (!spf) {
-                av_log(s, AV_LOG_ERROR, "Unsupported video frame rate %d/%d\n",
-                       tbc.den, tbc.num);
-                return AVERROR(EINVAL);
-            }
             mxf->content_package_rate = ff_mxf_get_content_package_rate(tbc);
-            mxf->time_base = spf->time_base;
-            rate = av_inv_q(mxf->time_base);
+            mxf->time_base = tbc;
             avpriv_set_pts_info(st, 64, mxf->time_base.num, mxf->time_base.den);
-            if((ret = mxf_init_timecode(s, st, rate)) < 0)
+            if((ret = mxf_init_timecode(s, st, tbc)) < 0)
                 return ret;
 
             if (st->codecpar->codec_id == AV_CODEC_ID_MPEG2VIDEO) {
@@ -2536,6 +2520,7 @@ static int mxf_write_header(AVFormatContext *s)
             if (mxf->signal_standard >= 0)
                 sc->signal_standard = mxf->signal_standard;
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            char bsf_arg[32];
             if (st->codecpar->sample_rate != 48000) {
                 av_log(s, AV_LOG_ERROR, "only 48khz is implemented\n");
                 return -1;
@@ -2552,7 +2537,7 @@ static int mxf_write_header(AVFormatContext *s)
                 }
                 sc->index = INDEX_D10_AUDIO;
                 sc->container_ul = ((MXFStreamContext*)s->streams[0]->priv_data)->container_ul;
-                sc->frame_size = 4 + 8 * spf[0].samples_per_frame[0] * 4;
+                sc->frame_size = 4 + 8 * av_rescale_rnd(st->codecpar->sample_rate, mxf->time_base.num, mxf->time_base.den, AV_ROUND_UP) * 4;
             } else if (s->oformat == &ff_mxf_opatom_muxer) {
                 AVRational tbc = av_inv_q(mxf->audio_edit_rate);
 
@@ -2566,24 +2551,22 @@ static int mxf_write_header(AVFormatContext *s)
                     return AVERROR(EINVAL);
                 }
 
-                spf = ff_mxf_get_samples_per_frame(s, tbc);
-                if (!spf) {
-                    av_log(s, AV_LOG_ERROR, "Unsupported timecode frame rate %d/%d\n", tbc.den, tbc.num);
-                    return AVERROR(EINVAL);
-                }
-
                 mxf->time_base = st->time_base;
-                if((ret = mxf_init_timecode(s, st, av_inv_q(spf->time_base))) < 0)
+                if((ret = mxf_init_timecode(s, st, tbc)) < 0)
                     return ret;
 
-                mxf->timecode_base = (tbc.den + tbc.num/2) / tbc.num;
                 mxf->edit_unit_byte_count = (av_get_bits_per_sample(st->codecpar->codec_id) * st->codecpar->channels) >> 3;
                 sc->index = INDEX_WAV;
             } else {
                 mxf->slice_count = 1;
-                sc->frame_size = (st->codecpar->channels * spf[0].samples_per_frame[0] *
-                                  av_get_bits_per_sample(st->codecpar->codec_id)) / 8;
+                sc->frame_size = st->codecpar->channels *
+                                 av_rescale_rnd(st->codecpar->sample_rate, mxf->time_base.num, mxf->time_base.den, AV_ROUND_UP) *
+                                 av_get_bits_per_sample(st->codecpar->codec_id) / 8;
             }
+            snprintf(bsf_arg, sizeof(bsf_arg), "r=%d/%d", mxf->tc.rate.num, mxf->tc.rate.den);
+            ret = ff_stream_add_bitstream_filter(st, "pcm_rechunk", bsf_arg);
+            if (ret < 0)
+                return ret;
         } else if (st->codecpar->codec_type == AVMEDIA_TYPE_DATA) {
             AVDictionaryEntry *e = av_dict_get(st->metadata, "data_type", NULL, 0);
             if (e && !strcmp(e->value, "vbi_vanc_smpte_436M")) {
@@ -2650,12 +2633,6 @@ static int mxf_write_header(AVFormatContext *s)
         return AVERROR(ENOMEM);
     mxf->timecode_track->index = -1;
 
-    if (!spf)
-        spf = ff_mxf_get_samples_per_frame(s, (AVRational){ 1, 25 });
-
-    if (ff_audio_interleave_init(s, spf->samples_per_frame, mxf->time_base) < 0)
-        return -1;
-
     return 0;
 }
 
@@ -2686,7 +2663,7 @@ static void mxf_write_system_item(AVFormatContext *s)
     avio_w8(pb, mxf->content_package_rate); // content package rate
     avio_w8(pb, 0x00); // content package type
     avio_wb16(pb, 0x00); // channel handle
-    avio_wb16(pb, (mxf->tc.start + frame) & 0xFFFF); // continuity count, supposed to overflow
+    avio_wb16(pb, frame & 0xFFFF); // continuity count, supposed to overflow
     if (mxf->essence_container_count > 1)
         avio_write(pb, multiple_desc_ul, 16);
     else {
@@ -3017,8 +2994,6 @@ static void mxf_deinit(AVFormatContext *s)
 {
     MXFContext *mxf = s->priv_data;
 
-    ff_audio_interleave_close(s);
-
     av_freep(&mxf->index_entries);
     av_freep(&mxf->body_partition_offset);
     if (mxf->timecode_track) {
@@ -3077,7 +3052,6 @@ static int mxf_interleave_get_packet(AVFormatContext *s, AVPacket *out, AVPacket
         return 1;
     } else {
     out:
-        av_init_packet(out);
         return 0;
     }
 }
@@ -3094,8 +3068,14 @@ static int mxf_compare_timestamps(AVFormatContext *s, const AVPacket *next,
 
 static int mxf_interleave(AVFormatContext *s, AVPacket *out, AVPacket *pkt, int flush)
 {
-    return ff_audio_rechunk_interleave(s, out, pkt, flush,
-                               mxf_interleave_get_packet, mxf_compare_timestamps);
+    int ret;
+    if (pkt) {
+        MXFStreamContext *sc = s->streams[pkt->stream_index]->priv_data;
+        pkt->pts = pkt->dts = sc->pkt_cnt++;
+        if ((ret = ff_interleave_add_packet(s, pkt, mxf_compare_timestamps)) < 0)
+            return ret;
+    }
+    return mxf_interleave_get_packet(s, out, NULL, flush);
 }
 
 #define MXF_COMMON_OPTIONS \

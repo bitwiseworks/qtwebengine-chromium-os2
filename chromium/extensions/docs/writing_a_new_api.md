@@ -3,10 +3,16 @@
 [TOC]
 
 ## Overview
-This document describes the procedure and general advice for writing the implementation of a new Extension API.
+This document describes the procedure and general advice for writing the
+implementation of a new Extension API.
 
 ## Before Writing (Much) Code
-Before you invest significant time and energy into writing a new Extension API, be sure to go through the API proposal process.  This is important, as we may not accept each proposal for a new Extension API, and many require tweaks or changes.  The proposal process is designed to reach consensus on both the general usefulness and appropriateness of an API, as well as the high-level shape it will take.
+Before you invest significant time and energy into writing a new Extension API,
+be sure to go through the API proposal process.  This is important, as we may
+not accept each proposal for a new Extension API, and many require tweaks or
+changes.  The proposal process is designed to reach consensus on both the
+general usefulness and appropriateness of an API, as well as the high-level
+shape it will take.
 
 The proposal process is documented [here](/extensions/docs/new_api_proposal.md).
 
@@ -30,7 +36,7 @@ channels, or even to specific extension IDs, as well as specify required
 permissions.
 
 Read more about the features files
-[here](chrome/common/extensions/api/_features.md).
+[here](/chrome/common/extensions/api/_features.md).
 
 ### API Functions
 Extension functions are called by the extension in order to perform some action
@@ -39,14 +45,14 @@ is called by an extension to create a tab, and is implemented in C++ by the
 `TabsCreateFunction`, and instance of the `ExtensionFunction` class.  Generally,
 each API function will map to an instance of the `ExtensionFunction` class.
 
-Read more about extension functions [here](extensions/docs/api_functions.md).
+Read more about extension functions [here](/extensions/docs/api_functions.md).
 
 ### API Events
 Events are dispatched by Chrome to inform the extension of an occurrence.  For
 instance, the `chrome.tabs.onCreated()` event is dispatched when a new tab is
 created.
 
-Read more about extension events [here](extensions/docs/events.md).
+Read more about extension events [here](/extensions/docs/events.md).
 
 ### API Properties
 Properties on the API are exposed as JavaScript properties on the API object
@@ -64,7 +70,7 @@ in extension API bindings, and custom bindings are generally discouraged.**
 Custom bindings are only required if an API has behavior that is unique enough
 to not be built into the general extension API system.
 
-Read more about extension bindings [here](extensions/renderer/bindings.md).
+Read more about extension bindings [here](/extensions/renderer/bindings.md).
 
 ## Implementation Process
 What is the best way to approach writing a new API implementation?
@@ -142,7 +148,11 @@ method, intentionally, requires special review from API reviewers (who are
 familiar with the best practices and any common pitfalls).  If a stub is used,
 this review is no longer useful.
 
-Additionally, APIs may need to be slightly tweaked as a result of different implementation details.  While most of these should be ironed out in the proposal process, some may still come up during the implementation review.  Bundling the declaration with the implementation allows us to catch any changes that need to happen in the API surface during the primary review.
+Additionally, APIs may need to be slightly tweaked as a result of different
+implementation details.  While most of these should be ironed out in the
+proposal process, some may still come up during the implementation review.
+Bundling the declaration with the implementation allows us to catch any changes
+that need to happen in the API surface during the primary review.
 
 #### Code Concepts
 TODO(devlin): Incorporate the below into this article.

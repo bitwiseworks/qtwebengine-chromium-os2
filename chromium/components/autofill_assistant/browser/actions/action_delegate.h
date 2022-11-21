@@ -10,14 +10,15 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "components/autofill_assistant/browser/actions/click_action.h"
 #include "components/autofill_assistant/browser/batch_element_checker.h"
 #include "components/autofill_assistant/browser/details.h"
 #include "components/autofill_assistant/browser/info_box.h"
 #include "components/autofill_assistant/browser/selector.h"
+#include "components/autofill_assistant/browser/state.h"
 #include "components/autofill_assistant/browser/top_padding.h"
 #include "components/autofill_assistant/browser/user_data.h"
 #include "components/autofill_assistant/browser/viewport_mode.h"
+#include "components/autofill_assistant/browser/web/element_finder.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 #include "third_party/icu/source/common/unicode/umachine.h"
 
@@ -40,7 +41,7 @@ class ClientStatus;
 struct ClientSettings;
 struct CollectUserDataOptions;
 class UserAction;
-class WebsiteLoginFetcher;
+class WebsiteLoginManager;
 
 // Action delegate called when processing actions.
 class ActionDelegate {
@@ -95,10 +96,24 @@ class ActionDelegate {
                base::OnceCallback<void(const ClientStatus&)>)> check_elements,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
-  // Click or tap the element given by |selector| on the web page.
+  // Find an element specified by |selector| on the web page.
+  virtual void FindElement(const Selector&,
+                           ElementFinder::Callback callback) = 0;
+
+  // Click or tap the |element|.
   virtual void ClickOrTapElement(
-      const Selector& selector,
-      ClickAction::ClickType click_type,
+      ClickType click_type,
+      const ElementFinder::Result& element,
+      base::OnceCallback<void(const ClientStatus&)> callback) = 0;
+
+  // Wait for the |element|'s document to become interactive.
+  virtual void WaitForDocumentToBecomeInteractive(
+      const ElementFinder::Result& element,
+      base::OnceCallback<void(const ClientStatus&)> callback) = 0;
+
+  // Scroll the |element| into view.
+  virtual void ScrollIntoView(
+      const ElementFinder::Result& element,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
   // Have the UI enter the prompt mode and make the given actions available.
@@ -111,9 +126,12 @@ class ActionDelegate {
   // When |browse_mode| is true, navigation and user gestures like go_back no
   // longer shut down the autofill assistant client, except for navigating to
   // a different domain.
-  virtual void Prompt(std::unique_ptr<std::vector<UserAction>> user_actions,
-                      bool disable_force_expand_sheet,
-                      bool browse_mode = false) = 0;
+  virtual void Prompt(
+      std::unique_ptr<std::vector<UserAction>> user_actions,
+      bool disable_force_expand_sheet,
+      base::OnceCallback<void()> end_on_navigation_callback = base::DoNothing(),
+      bool browse_mode = false,
+      bool browse_mode_invisible = false) = 0;
 
   // Have the UI leave the prompt state and go back to its previous state.
   virtual void CleanUpAfterPrompt() = 0;
@@ -127,6 +145,15 @@ class ActionDelegate {
   virtual void CollectUserData(
       CollectUserDataOptions* collect_user_data_options) = 0;
 
+  // Updates the most recent successful user data options.
+  virtual void SetLastSuccessfulUserDataOptions(
+      std::unique_ptr<CollectUserDataOptions> collect_user_data_options) = 0;
+
+  // Provides read access to the most recent successful user data options.
+  // Returns nullptr if there is no such object.
+  virtual const CollectUserDataOptions* GetLastSuccessfulUserDataOptions()
+      const = 0;
+
   // Executes |write_callback| on the currently stored user_data and
   // user_data_options.
   virtual void WriteUserData(
@@ -137,9 +164,10 @@ class ActionDelegate {
       base::OnceCallback<void(std::unique_ptr<autofill::CreditCard> card,
                               const base::string16& cvc)>;
 
-  // Asks for the full card information for the selected card. Might require the
+  // Asks for the full card information for |credit_card|. Might require the
   // user entering CVC.
-  virtual void GetFullCard(GetFullCardCallback callback) = 0;
+  virtual void GetFullCard(const autofill::CreditCard* credit_card,
+                           GetFullCardCallback callback) = 0;
 
   // Fill the address form given by |selector| with the given address
   // |profile|. |profile| cannot be nullptr.
@@ -164,12 +192,11 @@ class ActionDelegate {
                               const autofill::FormData&,
                               const autofill::FormFieldData&)> callback) = 0;
 
-  // Select the option given by |selector| and the value of the option to be
-  // picked.
+  // Select the option to be picked given by the |value| in the |element|.
   virtual void SelectOption(
-      const Selector& selector,
       const std::string& value,
       DropdownSelectStrategy select_strategy,
+      const ElementFinder::Result& element,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
   // Focus on element given by |selector|. |top_padding| specifies the padding
@@ -199,30 +226,30 @@ class ActionDelegate {
       base::OnceCallback<void(const ClientStatus&, const std::string&)>
           callback) = 0;
 
-  // Set the |value| of field |selector| and return the result through
+  // Set the |value| of field |element| and return the result through
   // |callback|. If |simulate_key_presses| is true, the value will be set by
   // clicking the field and then simulating key presses, otherwise the `value`
   // attribute will be set directly.
   virtual void SetFieldValue(
-      const Selector& selector,
       const std::string& value,
       KeyboardValueFillStrategy fill_strategy,
       int key_press_delay_in_millisecond,
+      const ElementFinder::Result& element,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
-  // Set the |value| of the |attribute| of the element given by |selector|.
+  // Set the |value| of all the |attributes| of the |element|.
   virtual void SetAttribute(
-      const Selector& selector,
-      const std::vector<std::string>& attribute,
+      const std::vector<std::string>& attributes,
       const std::string& value,
+      const ElementFinder::Result& element,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
-  // Sets the keyboard focus to |selector| and inputs the specified codepoints.
+  // Sets the keyboard focus to |element| and inputs the specified codepoints.
   // Returns the result through |callback|.
   virtual void SendKeyboardInput(
-      const Selector& selector,
       const std::vector<UChar32>& codepoints,
       int key_press_delay_in_millisecond,
+      const ElementFinder::Result& element,
       base::OnceCallback<void(const ClientStatus&)> callback) = 0;
 
   // Return the outerHTML of an element given by |selector|.
@@ -231,9 +258,10 @@ class ActionDelegate {
       base::OnceCallback<void(const ClientStatus&, const std::string&)>
           callback) = 0;
 
-  // Return the tag of the element given by |selector|.
+  // Return the tag of the |element|. In case of an error, returns an empty
+  // string.
   virtual void GetElementTag(
-      const Selector& selector,
+      const ElementFinder::Result& element,
       base::OnceCallback<void(const ClientStatus&, const std::string&)>
           callback) = 0;
 
@@ -286,14 +314,14 @@ class ActionDelegate {
   virtual autofill::PersonalDataManager* GetPersonalDataManager() = 0;
 
   // Get current login fetcher.
-  virtual WebsiteLoginFetcher* GetWebsiteLoginFetcher() = 0;
+  virtual WebsiteLoginManager* GetWebsiteLoginManager() = 0;
 
   // Get associated web contents.
   virtual content::WebContents* GetWebContents() = 0;
 
   // Returns the e-mail address that corresponds to the access token or an empty
   // string.
-  virtual std::string GetAccountEmailAddress() = 0;
+  virtual std::string GetEmailAddressForAccessTokenAccount() = 0;
 
   // Returns the locale for the current device or platform.
   virtual std::string GetLocale() = 0;
@@ -308,11 +336,27 @@ class ActionDelegate {
   // Sets or updates info box.
   virtual void SetInfoBox(const InfoBox& infoBox) = 0;
 
-  // Show the progress bar and set it at |progress|%.
+  // Set the progress bar at |progress|%.
   virtual void SetProgress(int progress) = 0;
+
+  // Set the progress bar at the |active_step| linked to the given
+  // |active_step_identifier|.
+  virtual bool SetProgressActiveStepIdentifier(
+      const std::string& active_step_identifier) = 0;
+
+  // Set the progress bar at the |active_step|.
+  virtual void SetProgressActiveStep(int active_step) = 0;
 
   // Shows the progress bar when |visible| is true. Hides it when false.
   virtual void SetProgressVisible(bool visible) = 0;
+
+  // Sets the error state of the progress bar to |error|.
+  virtual void SetProgressBarErrorState(bool error) = 0;
+
+  // Sets a new step progress bar configuration.
+  virtual void SetStepProgressBarConfiguration(
+      const ShowProgressBarProto::StepProgressBarConfiguration&
+          configuration) = 0;
 
   // Set the viewport mode.
   virtual void SetViewportMode(ViewportMode mode) = 0;
@@ -358,19 +402,30 @@ class ActionDelegate {
   // Gets the user data.
   virtual const UserData* GetUserData() const = 0;
 
+  // Access to the user model.
+  virtual UserModel* GetUserModel() = 0;
+
   // Show |generic_ui| to the user and call |end_action_callback| when done.
   // Note that this callback needs to be tied to one or multiple interactions
   // specified in |generic_ui|, as otherwise it will never be called.
+  // |view_inflation_finished_callback| should be called immediately after
+  // view inflation, with a status indicating whether view inflation succeeded.
   virtual void SetGenericUi(
       std::unique_ptr<GenericUserInterfaceProto> generic_ui,
-      base::OnceCallback<void(bool,
-                              ProcessedActionStatusProto,
-                              const UserModel*)> end_action_callback) = 0;
+      base::OnceCallback<void(const ClientStatus&)> end_action_callback,
+      base::OnceCallback<void(const ClientStatus&)>
+          view_inflation_finished_callback) = 0;
 
   // Clears the generic UI. This will remove all corresponding views from the
   // view hierarchy and remove all corresponding interactions. Note that
   // |user_model| will persist and will not be affected by this call.
   virtual void ClearGenericUi() = 0;
+
+  // Sets the OverlayBehavior.
+  virtual void SetOverlayBehavior(
+      ConfigureUiStateProto::OverlayBehavior overlay_behavior) = 0;
+
+  virtual base::WeakPtr<ActionDelegate> GetWeakPtr() = 0;
 
  protected:
   ActionDelegate() = default;

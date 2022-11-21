@@ -8,7 +8,7 @@ import("//build/config/linux/pkg_config.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/shim_headers.gni")
 import("//third_party/libvpx/libvpx_srcs.gni")
-import("//third_party/yasm/yasm_assemble.gni")
+import("//third_party/nasm/nasm_assemble.gni")
 
 declare_args() {
   use_system_libvpx = false
@@ -34,12 +34,14 @@ if (current_cpu == "x86") {
   } else {
     cpu_arch_full = "arm"
   }
-} else {
-  if (is_chromeos) {
+} else if (current_cpu == "arm64") {
+  if (is_chromeos || is_mac) {
     cpu_arch_full = "arm64-highbd"
   } else {
     cpu_arch_full = current_cpu
   }
+} else {
+  cpu_arch_full = current_cpu
 }
 
 if (is_nacl) {
@@ -107,7 +109,7 @@ config("libvpx_external_config") {
 }
 
 if (current_cpu == "x86" || (current_cpu == "x64" && !is_msan)) {
-  yasm_assemble("libvpx_yasm") {
+  nasm_assemble("libvpx_asm") {
     if (current_cpu == "x86") {
       sources = libvpx_srcs_x86_assembly
     } else if (current_cpu == "x64") {
@@ -337,7 +339,7 @@ static_library("bundled_libvpx") {
       sources = libvpx_srcs_arm
     }
   } else if (current_cpu == "arm64") {
-    if (is_chromeos || is_win) {
+    if (is_chromeos || is_win || is_mac) {
       sources = libvpx_srcs_arm64_highbd
     } else {
       sources = libvpx_srcs_arm64
@@ -350,6 +352,7 @@ static_library("bundled_libvpx") {
   deps = []
   if (current_cpu == "x86" || (current_cpu == "x64" && !is_msan)) {
     deps += [
+      ":libvpx_asm",
       ":libvpx_intrinsics_avx",
       ":libvpx_intrinsics_avx2",
       ":libvpx_intrinsics_avx512",
@@ -357,7 +360,6 @@ static_library("bundled_libvpx") {
       ":libvpx_intrinsics_sse2",
       ":libvpx_intrinsics_sse4_1",
       ":libvpx_intrinsics_ssse3",
-      ":libvpx_yasm",
     ]
   }
   if (cpu_arch_full == "arm-neon-cpu-detect") {
@@ -369,6 +371,23 @@ static_library("bundled_libvpx") {
   if (current_cpu == "arm" && arm_assembly_sources != []) {
     deps += [ ":libvpx_assembly_arm" ]
   }
+
+  public_configs = [ ":libvpx_external_config" ]
+}
+
+static_library("bundled_libvp9rc") {
+  if (!is_debug && is_win) {
+    configs -= [ "//build/config/compiler:default_optimization" ]
+    configs += [ "//build/config/compiler:optimize_max" ]
+  }
+
+  sources = [ "//third_party/libvpx/source/libvpx/vp9/ratectrl_rtc.cc",
+              "//third_party/libvpx/source/libvpx/vp9/ratectrl_rtc.h" ]
+
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
+  configs += [ ":libvpx_config" ]
+  public_deps = [ ":libvpx" ]
 
   public_configs = [ ":libvpx_external_config" ]
 }
@@ -401,5 +420,13 @@ group("libvpx") {
     public_configs = [ ":system_libvpx" ]
   } else {
     public_deps = [ ":bundled_libvpx" ]
+  }
+}
+
+group("libvp9rc") {
+  if (use_system_libvpx) {
+    public_deps = [ ":libvpx" ]
+  } else {
+    public_deps = [ ":bundled_libvp9rc" ]
   }
 }

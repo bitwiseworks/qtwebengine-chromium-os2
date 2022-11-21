@@ -53,14 +53,20 @@ bool TruncateAndroidPropertyForTesting(const std::string& line,
 // Expands properties (i.e. {property-name}) in |input| with the dictionary
 // |config| provides, and writes the results to |output|. Returns true if the
 // output file is successfully written.
-bool ExpandPropertyFile(const base::FilePath& input,
-                        const base::FilePath& output,
-                        CrosConfig* config);
+bool ExpandPropertyFileForTesting(const base::FilePath& input,
+                                  const base::FilePath& output,
+                                  CrosConfig* config);
 
-// Calls ExpandPropertyFile for {build,default}.prop files in |source_path|.
-// Expanded files are written in |dest_path|. Returns true on success.
+// Calls ExpandPropertyFile for {build,default,vendor_build}.prop files in
+// |source_path|. Expanded files are written in |dest_path|. Returns true on
+// success. When |single_file| is true, only one file (|dest_path| itself) is
+// written. All expanded properties are included in the single file.
+// When |add_native_bridge_64_bit_support| is true, add / modify some properties
+// related to supported CPU ABIs.
 bool ExpandPropertyFiles(const base::FilePath& source_path,
-                         const base::FilePath& dest_path);
+                         const base::FilePath& dest_path,
+                         bool single_file,
+                         bool add_native_bridge_64bit_support);
 
 }  // namespace arc
 

@@ -75,6 +75,13 @@ const char kAuditRecordingOAuth2Scope[] =
 // OAuth scope for access to clear cut logs.
 const char kClearCutOAuth2Scope[] = "https://www.googleapis.com/auth/cclog";
 
+// OAuth scope for FCM, the Firebase Cloud Messaging service.
+const char kFCMOAuthScope[] =
+    "https://www.googleapis.com/auth/firebase.messaging";
+
+// OAuth scope for access to Tachyon api.
+const char kTachyonOAuthScope[] = "https://www.googleapis.com/auth/tachyon";
+
 // Used to mint uber auth tokens when needed.
 const char kGaiaSid[] = "sid";
 const char kGaiaLsid[] = "lsid";

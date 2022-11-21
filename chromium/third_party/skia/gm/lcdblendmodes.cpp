@@ -146,10 +146,10 @@ protected:
 private:
     SkScalar fTextHeight;
     sk_sp<SkShader> fCheckerboard;
-    typedef skiagm::GM INHERITED;
+    using INHERITED = skiagm::GM;
 };
 
 //////////////////////////////////////////////////////////////////////////////
 
 DEF_GM( return new LcdBlendGM; )
-}
+}  // namespace skiagm

@@ -7,9 +7,10 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/memory/aligned_memory.h"
 
 namespace {

@@ -102,9 +102,15 @@ def _LoadToolchainEnv(cpu, sdk_dir, target_store):
     # Load environment from json file.
     env = os.path.normpath(os.path.join(sdk_dir, 'bin/SetEnv.%s.json' % cpu))
     env = json.load(open(env))['env']
+    if env['VSINSTALLDIR'] == [["..", "..\\"]]:
+      # Old-style paths were relative to the win_sdk\bin directory.
+      json_relative_dir = os.path.join(sdk_dir, 'bin')
+    else:
+      # New-style paths are relative to the toolchain directory, which is the
+      # parent of the SDK directory.
+      json_relative_dir = os.path.split(sdk_dir)[0]
     for k in env:
-      entries = [os.path.join(*([os.path.join(sdk_dir, 'bin')] + e))
-                 for e in env[k]]
+      entries = [os.path.join(*([json_relative_dir] + e)) for e in env[k]]
       # clang-cl wants INCLUDE to be ;-separated even on non-Windows,
       # lld-link wants LIB to be ;-separated even on non-Windows.  Path gets :.
       # The separator for INCLUDE here must match the one used in main() below.
@@ -139,9 +145,16 @@ def _LoadToolchainEnv(cpu, sdk_dir, target_store):
     if not os.path.exists(script_path):
       # vcvarsall.bat for VS 2017 fails if run after running vcvarsall.bat from
       # VS 2013 or VS 2015. Fix this by clearing the vsinstalldir environment
-      # variable.
+      # variable. Since vcvarsall.bat appends to the INCLUDE, LIB, and LIBPATH
+      # environment variables we need to clear those to avoid getting double
+      # entries when vcvarsall.bat has been run before gn gen. vcvarsall.bat
+      # also adds to PATH, but there is no clean way of clearing that and it
+      # doesn't seem to cause problems.
       if 'VSINSTALLDIR' in os.environ:
         del os.environ['VSINSTALLDIR']
+        del os.environ['INCLUDE']
+        del os.environ['LIB']
+        del os.environ['LIBPATH']
       other_path = os.path.normpath(os.path.join(
                                         os.environ['GYP_MSVS_OVERRIDE_PATH'],
                                         'VC/Auxiliary/Build/vcvarsall.bat'))
@@ -153,10 +166,14 @@ def _LoadToolchainEnv(cpu, sdk_dir, target_store):
     if (cpu != 'x64'):
       # x64 is default target CPU thus any other CPU requires a target set
       cpu_arg += '_' + cpu
-    args = [script_path, cpu_arg]
+    args = [script_path, cpu_arg, ]
     # Store target must come before any SDK version declaration
     if (target_store):
-      args.append(['store'])
+      args.append('store')
+    # Explicitly specifying the SDK version to build with to avoid accidentally
+    # building with a new and untested SDK. This should stay in sync with the
+    # packaged toolchain in build/vs_toolchain.py.
+    args.append('10.0.19041.0')
     variables = _LoadEnvFromBat(args)
   return _ExtractImportantEnvironment(variables)
 
@@ -183,6 +200,16 @@ def _LowercaseDict(d):
     A dict with both keys and values lowercased (e.g.: {'a': 'bcd'}).
   """
   return {k.lower(): d[k].lower() for k in d}
+
+
+def FindFileInEnvList(env, env_name, separator, file_name, optional=False):
+  parts = env[env_name].split(separator)
+  for path in parts:
+    if os.path.exists(os.path.join(path, file_name)):
+      return os.path.realpath(path)
+  assert optional, "%s is not found in %s:\n%s\nCheck if it is installed." % (
+      file_name, env_name, '\n'.join(parts))
+  return ''
 
 
 def main():
@@ -225,71 +252,47 @@ def main():
   ninja_use_custom_environment_files = (len(sys.argv) == 7)
 
   for cpu in cpus:
-    if cpu != target_cpu:
-	continue
-    if not ninja_use_custom_environment_files:
-      env = os.environ
-    else:
-      # Extract environment variables for subprocesses.
-      env = _LoadToolchainEnv(cpu, win_sdk_path, target_store)
-      env['PATH'] = runtime_dirs + os.pathsep + env['PATH']
+    if cpu == target_cpu:
+      if not ninja_use_custom_environment_files:
+        env = os.environ
+      else:
+        # Extract environment variables for subprocesses.
+        env = _LoadToolchainEnv(cpu, win_sdk_path, target_store)
+        env['PATH'] = runtime_dirs + os.pathsep + env['PATH']
 
-    for path in env['PATH'].split(os.pathsep):
-      if os.path.exists(os.path.join(path, 'cl.exe')):
-        vc_bin_dir = os.path.realpath(path)
-        break
-    assert vc_bin_dir, "cl.exe is not found, check if it is installed."
+      vc_bin_dir = FindFileInEnvList(env, 'PATH', os.pathsep, 'cl.exe')
+      vc_lib_path = FindFileInEnvList(env, 'LIB', ';', 'msvcrt.lib')
+      vc_lib_atlmfc_path = FindFileInEnvList(
+          env, 'LIB', ';', 'atls.lib', optional=True)
+      vc_lib_um_path = FindFileInEnvList(env, 'LIB', ';', 'user32.lib')
 
-    for path in env['LIB'].split(';'):
-      if os.path.exists(os.path.join(path, 'msvcrt.lib')):
-        vc_lib_path = os.path.realpath(path)
-        break
-    assert vc_lib_path, "msvcrt.lib is not found, check if it is installed."
+      # The separator for INCLUDE here must match the one used in
+      # _LoadToolchainEnv() above.
+      include = [p.replace('"', r'\"') for p in env['INCLUDE'].split(';') if p]
 
-    for path in env['LIB'].split(';'):
-      if os.path.exists(os.path.join(path, 'atls.lib')):
-        vc_lib_atlmfc_path = os.path.realpath(path)
-        break
-    if (target_store != True):
-      # Path is assumed to exist for desktop applications.
-      assert vc_lib_atlmfc_path, (
-          "Microsoft.VisualStudio.Component.VC.ATLMFC " +
-          "is not found, check if it is installed.")
-
-    for path in env['LIB'].split(';'):
-      if os.path.exists(os.path.join(path, 'User32.Lib')):
-        vc_lib_um_path = os.path.realpath(path)
-        break
-    assert vc_lib_um_path, (
-        "User32.lib is not found, check if it is installed.")
-
-    # The separator for INCLUDE here must match the one used in
-    # _LoadToolchainEnv() above.
-    include = [p.replace('"', r'\"') for p in env['INCLUDE'].split(';') if p]
-
-    # Make include path relative to builddir when cwd and sdk in same drive.
-    try:
-      include = list(map(os.path.relpath, include))
-    except ValueError:
+      # Make include path relative to builddir when cwd and sdk in same drive.
+      try:
+        include = list(map(os.path.relpath, include))
+      except ValueError:
         pass
 
-    lib = [p.replace('"', r'\"') for p in env['LIB'].split(';') if p]
-    # Make lib path relative to builddir when cwd and sdk in same drive.
-    try:
-      lib = map(os.path.relpath, lib)
-    except ValueError:
-      pass
+      lib = [p.replace('"', r'\"') for p in env['LIB'].split(';') if p]
+      # Make lib path relative to builddir when cwd and sdk in same drive.
+      try:
+        lib = map(os.path.relpath, lib)
+      except ValueError:
+        pass
 
-    def q(s):  # Quote s if it contains spaces or other weird characters.
-      return s if re.match(r'^[a-zA-Z0-9._/\\:-]*$', s) else '"' + s + '"'
-    include_I = ' '.join([q('/I' + i) for i in include])
-    include_imsvc = ' '.join([q('-imsvc' + i) for i in include])
-    libpath_flags = ' '.join([q('-libpath:' + i) for i in lib])
+      def q(s):  # Quote s if it contains spaces or other weird characters.
+        return s if re.match(r'^[a-zA-Z0-9._/\\:-]*$', s) else '"' + s + '"'
+      include_I = ' '.join([q('/I' + i) for i in include])
+      include_imsvc = ' '.join([q('-imsvc' + i) for i in include])
+      libpath_flags = ' '.join([q('-libpath:' + i) for i in lib])
 
-    if (environment_block_name != ''):
-      env_block = _FormatAsEnvironmentBlock(env)
-      with open(environment_block_name, 'w') as f:
-        f.write(env_block)
+      if (environment_block_name != ''):
+        env_block = _FormatAsEnvironmentBlock(env)
+        with open(environment_block_name, 'w') as f:
+          f.write(env_block)
 
   print('vc_bin_dir = ' + gn_helpers.ToGNString(vc_bin_dir))
   assert include_I

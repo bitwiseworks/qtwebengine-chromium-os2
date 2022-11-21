@@ -12,52 +12,72 @@
 
 #include <utility>
 
+#include "rtc_base/checks.h"
+#include "rtc_base/experiments/balanced_degradation_settings.h"
+#include "rtc_base/ref_counted_object.h"
+#include "rtc_base/task_utils/to_queued_task.h"
+#include "rtc_base/time_utils.h"
+
 namespace webrtc {
 
-QualityScalerResource::QualityScalerResource() : quality_scaler_(nullptr) {}
+// static
+rtc::scoped_refptr<QualityScalerResource> QualityScalerResource::Create() {
+  return new rtc::RefCountedObject<QualityScalerResource>();
+}
+
+QualityScalerResource::QualityScalerResource()
+    : VideoStreamEncoderResource("QualityScalerResource"),
+      quality_scaler_(nullptr) {}
+
+QualityScalerResource::~QualityScalerResource() {
+  RTC_DCHECK(!quality_scaler_);
+}
 
 bool QualityScalerResource::is_started() const {
+  RTC_DCHECK_RUN_ON(encoder_queue());
   return quality_scaler_.get();
 }
 
 void QualityScalerResource::StartCheckForOveruse(
     VideoEncoder::QpThresholds qp_thresholds) {
+  RTC_DCHECK_RUN_ON(encoder_queue());
   RTC_DCHECK(!is_started());
   quality_scaler_ =
       std::make_unique<QualityScaler>(this, std::move(qp_thresholds));
 }
 
 void QualityScalerResource::StopCheckForOveruse() {
+  RTC_DCHECK_RUN_ON(encoder_queue());
+  RTC_DCHECK(is_started());
+  // Ensure we have no pending callbacks. This makes it safe to destroy the
+  // QualityScaler and even task queues with tasks in-flight.
   quality_scaler_.reset();
 }
 
 void QualityScalerResource::SetQpThresholds(
     VideoEncoder::QpThresholds qp_thresholds) {
+  RTC_DCHECK_RUN_ON(encoder_queue());
   RTC_DCHECK(is_started());
   quality_scaler_->SetQpThresholds(std::move(qp_thresholds));
 }
 
 bool QualityScalerResource::QpFastFilterLow() {
+  RTC_DCHECK_RUN_ON(encoder_queue());
   RTC_DCHECK(is_started());
   return quality_scaler_->QpFastFilterLow();
 }
 
 void QualityScalerResource::OnEncodeCompleted(const EncodedImage& encoded_image,
                                               int64_t time_sent_in_us) {
+  RTC_DCHECK_RUN_ON(encoder_queue());
   if (quality_scaler_ && encoded_image.qp_ >= 0) {
     quality_scaler_->ReportQp(encoded_image.qp_, time_sent_in_us);
-  } else if (!quality_scaler_) {
-    // TODO(webrtc:11553): this is a workaround to ensure that all quality
-    // scaler imposed limitations are removed once qualty scaler is disabled
-    // mid call.
-    // Instead it should be done at a higher layer in the same way for all
-    // resources.
-    OnResourceUsageStateMeasured(ResourceUsageState::kUnderuse);
   }
 }
 
 void QualityScalerResource::OnFrameDropped(
     EncodedImageCallback::DropReason reason) {
+  RTC_DCHECK_RUN_ON(encoder_queue());
   if (!quality_scaler_)
     return;
   switch (reason) {
@@ -70,15 +90,12 @@ void QualityScalerResource::OnFrameDropped(
   }
 }
 
-void QualityScalerResource::AdaptUp(AdaptReason reason) {
-  RTC_DCHECK_EQ(reason, AdaptReason::kQuality);
-  OnResourceUsageStateMeasured(ResourceUsageState::kUnderuse);
+void QualityScalerResource::OnReportQpUsageHigh() {
+  OnResourceUsageStateMeasured(ResourceUsageState::kOveruse);
 }
 
-bool QualityScalerResource::AdaptDown(AdaptReason reason) {
-  RTC_DCHECK_EQ(reason, AdaptReason::kQuality);
-  return OnResourceUsageStateMeasured(ResourceUsageState::kOveruse) !=
-         ResourceListenerResponse::kQualityScalerShouldIncreaseFrequency;
+void QualityScalerResource::OnReportQpUsageLow() {
+  OnResourceUsageStateMeasured(ResourceUsageState::kUnderuse);
 }
 
 }  // namespace webrtc

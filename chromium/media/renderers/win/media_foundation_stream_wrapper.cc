@@ -43,18 +43,16 @@ bool AreLowIVBytesZero(const std::string& iv) {
 }
 
 // Add encryption related attributes to |mf_sample| and update |last_key_id|.
-HRESULT AddEncryptAttributes(const DecoderBuffer& buffer,
+HRESULT AddEncryptAttributes(const DecryptConfig& decrypt_config,
                              IMFSample* mf_sample,
                              GUID* last_key_id) {
-  const DecryptConfig* decrypt_config = buffer.decrypt_config();
-  if (!decrypt_config)
-    return S_OK;
+  DVLOG(3) << __func__;
 
   MFSampleEncryptionProtectionScheme mf_protection_scheme;
-  if (decrypt_config->encryption_scheme() == EncryptionScheme::kCenc) {
+  if (decrypt_config.encryption_scheme() == EncryptionScheme::kCenc) {
     mf_protection_scheme = MFSampleEncryptionProtectionScheme::
         MF_SAMPLE_ENCRYPTION_PROTECTION_SCHEME_AES_CTR;
-  } else if (decrypt_config->encryption_scheme() == EncryptionScheme::kCbcs) {
+  } else if (decrypt_config.encryption_scheme() == EncryptionScheme::kCbcs) {
     mf_protection_scheme = MFSampleEncryptionProtectionScheme::
         MF_SAMPLE_ENCRYPTION_PROTECTION_SCHEME_AES_CBC;
   } else {
@@ -67,29 +65,29 @@ HRESULT AddEncryptAttributes(const DecoderBuffer& buffer,
   // KID
   // https://matroska.org/technical/specs/index.html#ContentEncKeyID
   // For WebM case, key ID size is not specified.
-  if (decrypt_config->key_id().length() != sizeof(GUID)) {
+  if (decrypt_config.key_id().length() != sizeof(GUID)) {
     DLOG(ERROR) << __func__ << ": Unsupported key ID size";
     return MF_E_UNEXPECTED;
   }
-  GUID key_id = GetGUIDFromString(decrypt_config->key_id());
+  GUID key_id = GetGUIDFromString(decrypt_config.key_id());
   RETURN_IF_FAILED(mf_sample->SetGUID(MFSampleExtension_Content_KeyID, key_id));
   *last_key_id = key_id;
 
   // IV
-  size_t iv_length = decrypt_config->iv().length();
+  size_t iv_length = decrypt_config.iv().length();
   DCHECK(iv_length == 16);
   // For cases where a 16-byte IV is specified, but the low 8-bytes are all
   // 0, ensure that a 8-byte IV is set (this allows HWDRM to work on
   // hardware / drivers which don't support CTR decryption with 16-byte IVs)
-  if (AreLowIVBytesZero(decrypt_config->iv()))
+  if (AreLowIVBytesZero(decrypt_config.iv()))
     iv_length = 8;
   RETURN_IF_FAILED(mf_sample->SetBlob(
       MFSampleExtension_Encryption_SampleID,
-      reinterpret_cast<const uint8_t*>(decrypt_config->iv().c_str()),
+      reinterpret_cast<const uint8_t*>(decrypt_config.iv().c_str()),
       iv_length));
 
   // Handle subsample entries.
-  const auto& subsample_entries = decrypt_config->subsamples();
+  const auto& subsample_entries = decrypt_config.subsamples();
   if (subsample_entries.empty())
     return S_OK;
 
@@ -152,7 +150,7 @@ HRESULT MediaFoundationStreamWrapper::RuntimeClassInitialize(
     int stream_id,
     IMFMediaSource* parent_source,
     DemuxerStream* demuxer_stream) {
-  DVLOG(1) << __func__ << ": this=" << this;
+  DVLOG_FUNC(1);
 
   {
     base::AutoLock auto_lock(lock_);
@@ -168,27 +166,27 @@ HRESULT MediaFoundationStreamWrapper::RuntimeClassInitialize(
 
 void MediaFoundationStreamWrapper::SetTaskRunner(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  DVLOG(1) << __func__ << ": this=" << this;
+  DVLOG_FUNC(1);
 
   task_runner_ = std::move(task_runner);
 }
 
 void MediaFoundationStreamWrapper::DetachParent() {
-  DVLOG(1) << __func__ << ": this=" << this;
+  DVLOG_FUNC(1);
 
   base::AutoLock auto_lock(lock_);
   parent_source_ = nullptr;
 }
 
 void MediaFoundationStreamWrapper::DetachDemuxerStream() {
-  DVLOG(1) << __func__ << ": this=" << this;
+  DVLOG_FUNC(1);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   demuxer_stream_ = nullptr;
 }
 
 void MediaFoundationStreamWrapper::SetSelected(bool selected) {
-  DVLOG(2) << __func__ << ": this=" << this << ",selected=" << selected;
+  DVLOG_FUNC(2) << "selected=" << selected;
 
   base::AutoLock auto_lock(lock_);
   selected_ = selected;
@@ -196,20 +194,20 @@ void MediaFoundationStreamWrapper::SetSelected(bool selected) {
 
 bool MediaFoundationStreamWrapper::IsSelected() {
   base::AutoLock auto_lock(lock_);
-  DVLOG(2) << __func__ << ": this=" << this << ",selected_=" << selected_;
+  DVLOG_FUNC(2) << "selected_=" << selected_;
 
   return selected_;
 }
 
 bool MediaFoundationStreamWrapper::IsEnabled() {
   base::AutoLock auto_lock(lock_);
-  DVLOG(2) << __func__ << ": this=" << this << ",enabled_=" << enabled_;
+  DVLOG_FUNC(2) << "enabled_=" << enabled_;
 
   return enabled_;
 }
 
 void MediaFoundationStreamWrapper::SetEnabled(bool enabled) {
-  DVLOG(2) << __func__ << ": this=" << this << ",enabled=" << enabled;
+  DVLOG_FUNC(2) << "enabled=" << enabled;
 
   {
     base::AutoLock auto_lock(lock_);
@@ -222,7 +220,7 @@ void MediaFoundationStreamWrapper::SetEnabled(bool enabled) {
 }
 
 void MediaFoundationStreamWrapper::SetFlushed(bool flushed) {
-  DVLOG(2) << __func__ << ": this=" << this << ",flushed=" << flushed;
+  DVLOG_FUNC(2) << "flushed=" << flushed;
 
   base::AutoLock auto_lock(lock_);
   flushed_ = flushed;
@@ -234,14 +232,14 @@ void MediaFoundationStreamWrapper::SetFlushed(bool flushed) {
 }
 
 bool MediaFoundationStreamWrapper::HasEnded() const {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   return stream_ended_;
 }
 
 HRESULT MediaFoundationStreamWrapper::QueueStartedEvent(
     const PROPVARIANT* start_position) {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   state_ = State::kStarted;
   RETURN_IF_FAILED(mf_media_event_queue_->QueueEventParamVar(
@@ -251,7 +249,7 @@ HRESULT MediaFoundationStreamWrapper::QueueStartedEvent(
 
 HRESULT MediaFoundationStreamWrapper::QueueSeekedEvent(
     const PROPVARIANT* start_position) {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   state_ = State::kStarted;
   RETURN_IF_FAILED(mf_media_event_queue_->QueueEventParamVar(
@@ -260,7 +258,7 @@ HRESULT MediaFoundationStreamWrapper::QueueSeekedEvent(
 }
 
 HRESULT MediaFoundationStreamWrapper::QueueStoppedEvent() {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   state_ = State::kStopped;
   RETURN_IF_FAILED(mf_media_event_queue_->QueueEventParamVar(
@@ -269,7 +267,7 @@ HRESULT MediaFoundationStreamWrapper::QueueStoppedEvent() {
 }
 
 HRESULT MediaFoundationStreamWrapper::QueuePausedEvent() {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   state_ = State::kPaused;
   RETURN_IF_FAILED(mf_media_event_queue_->QueueEventParamVar(
@@ -282,7 +280,7 @@ DemuxerStream::Type MediaFoundationStreamWrapper::StreamType() const {
 }
 
 void MediaFoundationStreamWrapper::ProcessRequestsIfPossible() {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   {
@@ -313,16 +311,16 @@ void MediaFoundationStreamWrapper::ProcessRequestsIfPossible() {
 HRESULT MediaFoundationStreamWrapper::ServiceSampleRequest(
     IUnknown* token,
     DecoderBuffer* buffer) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   lock_.AssertAcquired();
 
   if (buffer->end_of_stream()) {
     if (!enabled_) {
-      DVLOG(2) << "Ignoring EOS for disabled stream: this=" << this;
+      DVLOG_FUNC(2) << "Ignoring EOS for disabled stream";
       return S_OK;
     }
-    DVLOG(2) << "End of stream: this=" << this;
+    DVLOG_FUNC(2) << "End of stream";
     RETURN_IF_FAILED(mf_media_event_queue_->QueueEventParamUnk(
         MEEndOfStream, GUID_NULL, S_OK, nullptr));
     stream_ended_ = true;
@@ -331,9 +329,8 @@ HRESULT MediaFoundationStreamWrapper::ServiceSampleRequest(
           ->CheckForEndOfPresentation();
     }
   } else {
-    DVLOG(3) << __func__ << ". this=" << this
-             << ",buffer ts(ms)=" << buffer->timestamp().InMilliseconds()
-             << ",is_key_frame=" << buffer->is_key_frame();
+    DVLOG_FUNC(3) << "buffer ts=" << buffer->timestamp()
+                  << ", is_key_frame=" << buffer->is_key_frame();
     ComPtr<IMFSample> mf_sample;
     RETURN_IF_FAILED(GenerateSampleFromDecoderBuffer(buffer, &mf_sample));
     if (token) {
@@ -347,7 +344,7 @@ HRESULT MediaFoundationStreamWrapper::ServiceSampleRequest(
 }
 
 bool MediaFoundationStreamWrapper::ServicePostFlushSampleRequest() {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   base::AutoLock auto_lock(lock_);
@@ -360,7 +357,7 @@ bool MediaFoundationStreamWrapper::ServicePostFlushSampleRequest() {
   HRESULT hr = ServiceSampleRequest(request_token.Get(),
                                     post_flush_buffers_.front().get());
   if (FAILED(hr)) {
-    DLOG(WARNING) << "Failed to service post flush sample. hr=" << hr;
+    DLOG(WARNING) << "Failed to service post flush sample: " << PrintHr(hr);
     return false;
   }
 
@@ -370,7 +367,7 @@ bool MediaFoundationStreamWrapper::ServicePostFlushSampleRequest() {
 }
 
 HRESULT MediaFoundationStreamWrapper::QueueFormatChangedEvent() {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   ComPtr<IMFMediaType> media_type;
   RETURN_IF_FAILED(GetMediaType(&media_type));
@@ -382,7 +379,10 @@ HRESULT MediaFoundationStreamWrapper::QueueFormatChangedEvent() {
 void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
     DemuxerStream::Status status,
     scoped_refptr<DecoderBuffer> buffer) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3) << "status=" << status
+                << (buffer ? " buffer=" + buffer->AsHumanReadableString(true)
+                           : "");
+
   {
     base::AutoLock auto_lock(lock_);
     DCHECK(pending_stream_read_);
@@ -395,39 +395,40 @@ void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
       // Push |buffer| to process later if needed. Otherwise, process it
       // immediately.
       if (flushed_ || !post_flush_buffers_.empty()) {
-        DVLOG(3) << __func__ << ". this=" << this << ", push buffer.";
+        DVLOG_FUNC(3) << "push buffer.";
         post_flush_buffers_.push(buffer);
       } else {
         hr = ServiceSampleRequest(token.Get(), buffer.get());
         if (FAILED(hr)) {
-          DLOG(ERROR) << __func__ << ": ServiceSampleRequest failed. hr=" << hr;
+          DLOG(ERROR) << __func__
+                      << ": ServiceSampleRequest failed: " << PrintHr(hr);
           return;
         }
         pending_sample_request_tokens_.pop();
       }
     } else if (status == DemuxerStream::Status::kConfigChanged) {
-      DVLOG(2) << "Stream config changed. this=" << this
-               << ",AreFormatChangesEnabled=" << AreFormatChangesEnabled();
+      DVLOG_FUNC(2) << "Stream config changed, AreFormatChangesEnabled="
+                    << AreFormatChangesEnabled();
       if (AreFormatChangesEnabled()) {
         hr = QueueFormatChangedEvent();
         if (FAILED(hr)) {
           DLOG(ERROR) << __func__
-                      << ": QueueFormatChangedEvent failed. hr=" << hr;
+                      << ": QueueFormatChangedEvent failed: " << PrintHr(hr);
           return;
         }
       }
     } else if (status == DemuxerStream::Status::kError) {
-      DVLOG(2) << "Stream read error: this=" << this;
+      DVLOG_FUNC(2) << "Stream read error";
       mf_media_event_queue_->QueueEventParamVar(
           MEError, GUID_NULL, MF_E_INVALID_STREAM_DATA, nullptr);
       return;
     } else if (status == DemuxerStream::Status::kAborted) {
-      DVLOG(2) << "Stream read aborted: this=" << this;
+      DVLOG_FUNC(2) << "Stream read aborted";
       // Continue to ProcessRequestsIfPossible() to satisfy pending sample
       // request by issuing DemuxerStream::Read() if necessary.
     } else {
       NOTREACHED() << "Unexpected demuxer stream status. status=" << status
-                   << ",this=" << this;
+                   << ", this=" << this;
     }
   }
 
@@ -437,7 +438,7 @@ void MediaFoundationStreamWrapper::OnDemuxerStreamRead(
 HRESULT MediaFoundationStreamWrapper::GenerateSampleFromDecoderBuffer(
     DecoderBuffer* buffer,
     IMFSample** sample_out) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
 
   ComPtr<IMFSample> mf_sample;
   RETURN_IF_FAILED(MFCreateSample(&mf_sample));
@@ -465,9 +466,9 @@ HRESULT MediaFoundationStreamWrapper::GenerateSampleFromDecoderBuffer(
 
   RETURN_IF_FAILED(mf_sample->AddBuffer(mf_buffer.Get()));
 
-  if (IsEncrypted()) {
-    RETURN_IF_FAILED(
-        AddEncryptAttributes(*buffer, mf_sample.Get(), &last_key_id_));
+  if (buffer->decrypt_config()) {
+    RETURN_IF_FAILED(AddEncryptAttributes(*(buffer->decrypt_config()),
+                                          mf_sample.Get(), &last_key_id_));
   }
 
   RETURN_IF_FAILED(TransformSample(mf_sample));
@@ -478,14 +479,14 @@ HRESULT MediaFoundationStreamWrapper::GenerateSampleFromDecoderBuffer(
 
 HRESULT MediaFoundationStreamWrapper::TransformSample(
     Microsoft::WRL::ComPtr<IMFSample>& sample) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
 
   return S_OK;
 }
 
 HRESULT MediaFoundationStreamWrapper::GetMediaSource(
     IMFMediaSource** media_source_out) {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
   DCHECK(!task_runner_->RunsTasksInCurrentSequence());
 
   base::AutoLock auto_lock(lock_);
@@ -499,7 +500,7 @@ HRESULT MediaFoundationStreamWrapper::GetMediaSource(
 
 HRESULT MediaFoundationStreamWrapper::GetStreamDescriptor(
     IMFStreamDescriptor** stream_descriptor_out) {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   if (!mf_stream_descriptor_) {
     DLOG(ERROR) << __func__ << ": MF_E_NOT_INITIALIZED";
@@ -510,7 +511,7 @@ HRESULT MediaFoundationStreamWrapper::GetStreamDescriptor(
 }
 
 HRESULT MediaFoundationStreamWrapper::RequestSample(IUnknown* token) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(!task_runner_->RunsTasksInCurrentSequence());
 
   base::AutoLock auto_lock(lock_);
@@ -527,7 +528,7 @@ HRESULT MediaFoundationStreamWrapper::RequestSample(IUnknown* token) {
 
 HRESULT MediaFoundationStreamWrapper::GetEvent(DWORD flags,
                                                IMFMediaEvent** event_out) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(mf_media_event_queue_);
 
   // Not tracing hr to avoid the noise from MF_E_NO_EVENTS_AVAILABLE.
@@ -536,7 +537,7 @@ HRESULT MediaFoundationStreamWrapper::GetEvent(DWORD flags,
 
 HRESULT MediaFoundationStreamWrapper::BeginGetEvent(IMFAsyncCallback* callback,
                                                     IUnknown* state) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(mf_media_event_queue_);
 
   RETURN_IF_FAILED(mf_media_event_queue_->BeginGetEvent(callback, state));
@@ -545,7 +546,7 @@ HRESULT MediaFoundationStreamWrapper::BeginGetEvent(IMFAsyncCallback* callback,
 
 HRESULT MediaFoundationStreamWrapper::EndGetEvent(IMFAsyncResult* result,
                                                   IMFMediaEvent** event_out) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(mf_media_event_queue_);
 
   RETURN_IF_FAILED(mf_media_event_queue_->EndGetEvent(result, event_out));
@@ -556,7 +557,7 @@ HRESULT MediaFoundationStreamWrapper::QueueEvent(MediaEventType type,
                                                  REFGUID extended_type,
                                                  HRESULT status,
                                                  const PROPVARIANT* value) {
-  DVLOG(3) << __func__ << ". this=" << this;
+  DVLOG_FUNC(3);
   DCHECK(mf_media_event_queue_);
 
   RETURN_IF_FAILED(mf_media_event_queue_->QueueEventParamVar(
@@ -565,7 +566,7 @@ HRESULT MediaFoundationStreamWrapper::QueueEvent(MediaEventType type,
 }
 
 HRESULT MediaFoundationStreamWrapper::GenerateStreamDescriptor() {
-  DVLOG(2) << __func__ << ": this=" << this;
+  DVLOG_FUNC(2);
 
   ComPtr<IMFMediaType> media_type;
   IMFMediaType** mediaTypes = &media_type;

@@ -22,6 +22,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/test/browser_test.h"
 #include "ui/gfx/geometry/rect.h"
 
 typedef InProcessBrowserTest PreservedWindowPlacement;
@@ -77,7 +78,7 @@ class PreferenceServiceTest : public InProcessBrowserTest {
   base::FilePath tmp_pref_file_;
 };
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_WIN) || defined(OS_MAC)
 // This test verifies that the window position from the prefs file is restored
 // when the app restores.  This doesn't really make sense on Linux, where
 // the window manager might fight with you over positioning.  However, we

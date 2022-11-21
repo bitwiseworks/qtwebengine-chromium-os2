@@ -19,7 +19,7 @@ namespace {
 // by this method.
 void CreateFactoryForToken(
     mojo::Remote<blink::mojom::BlobURLToken>,
-    const base::WeakPtr<BlobUrlRegistry>& url_registry,
+    base::WeakPtr<BlobUrlRegistry> url_registry,
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
     const base::UnguessableToken& token) {
   mojo::PendingRemote<blink::mojom::Blob> blob;

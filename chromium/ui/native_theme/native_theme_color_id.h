@@ -7,7 +7,7 @@
 
 // Clang format mangles sectioned lists like the below badly.
 // clang-format off
-#define NATIVE_THEME_COLOR_IDS                                                 \
+#define NATIVE_THEME_CROSS_PLATFORM_COLOR_IDS                                  \
   /* Windows */                                                                \
   OP(kColorId_WindowBackground),                                               \
   /* Dialogs */                                                                \
@@ -20,14 +20,16 @@
   OP(kColorId_FocusedBorderColor),                                             \
   OP(kColorId_UnfocusedBorderColor),                                           \
   /* Button */                                                                 \
+  OP(kColorId_ButtonColor),                                                    \
   OP(kColorId_ButtonBorderColor),                                              \
+  OP(kColorId_DisabledButtonBorderColor),                                      \
+  OP(kColorId_ButtonCheckedColor),                                             \
+  OP(kColorId_ButtonUncheckedColor),                                           \
   OP(kColorId_ButtonEnabledColor),                                             \
   OP(kColorId_ButtonDisabledColor),                                            \
   OP(kColorId_ButtonHoverColor),                                               \
   OP(kColorId_ButtonInkDropFillColor),                                         \
   OP(kColorId_ButtonInkDropShadowColor),                                       \
-  OP(kColorId_ButtonPressedShade),                                             \
-  OP(kColorId_ButtonUncheckedColor),                                           \
   OP(kColorId_ProminentButtonColor),                                           \
   OP(kColorId_ProminentButtonDisabledColor),                                   \
   OP(kColorId_ProminentButtonFocusedColor),                                    \
@@ -50,6 +52,8 @@
   OP(kColorId_MenuSeparatorColor),                                             \
   OP(kColorId_MenuBackgroundColor),                                            \
   OP(kColorId_MenuBorderColor),                                                \
+  /* Colors for icons displayed in a menu context. */                          \
+  OP(kColorId_MenuIconColor),                                                  \
   OP(kColorId_HighlightedMenuItemBackgroundColor),                             \
   OP(kColorId_HighlightedMenuItemForegroundColor),                             \
   OP(kColorId_MenuItemInitialAlertBackgroundColor),                            \
@@ -57,6 +61,13 @@
   /* Custom frame view */                                                      \
   OP(kColorId_CustomFrameActiveColor),                                         \
   OP(kColorId_CustomFrameInactiveColor),                                       \
+  /* Custom tab bar */                                                         \
+  OP(kColorId_CustomTabBarBackgroundColor),                                    \
+  OP(kColorId_CustomTabBarForegroundColor),                                    \
+  OP(kColorId_CustomTabBarSecurityChipDangerousColor),                         \
+  OP(kColorId_CustomTabBarSecurityChipDefaultColor),                           \
+  OP(kColorId_CustomTabBarSecurityChipSecureColor),                            \
+  OP(kColorId_CustomTabBarSecurityChipWithCertColor),                          \
   /* Dropdown */                                                               \
   OP(kColorId_DropdownBackgroundColor),                                        \
   OP(kColorId_DropdownForegroundColor),                                        \
@@ -74,6 +85,16 @@
   OP(kColorId_LinkPressed),                                                    \
   OP(kColorId_OverlayScrollbarThumbBackground),                                \
   OP(kColorId_OverlayScrollbarThumbForeground),                                \
+  /* Notification view */                                                      \
+  OP(kColorId_NotificationDefaultBackground),                                  \
+  OP(kColorId_NotificationActionsRowBackground),                               \
+  OP(kColorId_NotificationInlineSettingsBackground),                           \
+  OP(kColorId_NotificationLargeImageBackground),                               \
+  OP(kColorId_NotificationPlaceholderIconColor),                               \
+  OP(kColorId_NotificationEmptyPlaceholderIconColor),                          \
+  OP(kColorId_NotificationEmptyPlaceholderTextColor),                          \
+  OP(kColorId_NotificationDefaultAccentColor),                                 \
+  OP(kColorId_NotificationInkDropBase),                                        \
   /* Slider */                                                                 \
   OP(kColorId_SliderThumbDefault),                                             \
   OP(kColorId_SliderTroughDefault),                                            \
@@ -91,6 +112,7 @@
   OP(kColorId_TabBottomBorder),                                                \
   OP(kColorId_TabHighlightBackground),                                         \
   OP(kColorId_TabHighlightFocusedBackground),                                  \
+  OP(kColorId_TabSelectedBorderColor),                                         \
   /* Textfield */                                                              \
   OP(kColorId_TextfieldDefaultColor),                                          \
   OP(kColorId_TextfieldDefaultBackground),                                     \
@@ -130,12 +152,29 @@
   OP(kColorId_ThrobberLightColor),                                             \
   /* Colors for Bubble Border */                                               \
   OP(kColorId_BubbleBorder),                                                   \
+  /* Colors for Footnote Container. */                                         \
+  OP(kColorId_FootnoteContainerBorder),                                        \
   /* Colors for icons that alert, e.g. upgrade reminders. */                   \
   OP(kColorId_AlertSeverityLow),                                               \
   OP(kColorId_AlertSeverityMedium),                                            \
   OP(kColorId_AlertSeverityHigh),                                              \
-  /* Colors for icons in secondary UI (content settings, help button, etc). */ \
-  OP(kColorId_DefaultIconColor)
+  /* Colors for icons in non-menu contexts. */                                 \
+  OP(kColorId_DefaultIconColor),                                               \
+  OP(kColorId_DisabledIconColor)
+
+#if defined(OS_CHROMEOS)
+#define NATIVE_THEME_CHROMEOS_COLOR_IDS                                        \
+  /* Notification view */                                                      \
+  OP(kColorId_NotificationButtonBackground)
+#endif
+
+#if defined(OS_CHROMEOS)
+#define NATIVE_THEME_COLOR_IDS                                                 \
+  NATIVE_THEME_CROSS_PLATFORM_COLOR_IDS,                                       \
+  NATIVE_THEME_CHROMEOS_COLOR_IDS
+#else
+#define NATIVE_THEME_COLOR_IDS NATIVE_THEME_CROSS_PLATFORM_COLOR_IDS
+#endif
 
 // clang-format on
 

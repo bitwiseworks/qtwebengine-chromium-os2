@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/numerics/ranges.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/optional.h"
@@ -113,10 +113,13 @@ void TCPConnectedSocket::Connect(
   DCHECK(!socket_);
   DCHECK(callback);
 
+  // TODO(https://crbug.com/1123197): Pass a non-null NetworkQualityEstimator.
+  net::NetworkQualityEstimator* network_quality_estimator = nullptr;
+
   std::unique_ptr<net::TransportClientSocket> socket =
       client_socket_factory_->CreateTransportClientSocket(
-          remote_addr_list, nullptr /*socket_performance_watcher*/, net_log_,
-          net::NetLogSource());
+          remote_addr_list, nullptr /*socket_performance_watcher*/,
+          network_quality_estimator, net_log_, net::NetLogSource());
 
   if (local_addr) {
     int result = socket->Bind(local_addr.value());
@@ -142,7 +145,7 @@ void TCPConnectedSocket::ConnectWithSocket(
     socket_->SetBeforeConnectCallback(base::BindRepeating(
         &ConfigureSocket, socket_.get(), *tcp_connected_socket_options));
   }
-  int result = socket_->Connect(base::BindRepeating(
+  int result = socket_->Connect(base::BindOnce(
       &TCPConnectedSocket::OnConnectCompleted, base::Unretained(this)));
 
   if (result == net::ERR_IO_PENDING)

@@ -28,9 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/**
- * @unrestricted
- */
+import * as Root from '../root/root.js';  // eslint-disable-line no-unused-vars
+import * as TextUtils from '../text_utils/text_utils.js';
+
 export class SyntaxHighlighter {
   /**
    * @param {string} mimeType
@@ -47,7 +47,7 @@ export class SyntaxHighlighter {
    * @return {!Element}
    */
   createSpan(content, className) {
-    const span = createElement('span');
+    const span = document.createElement('span');
     span.className = className.replace(/\S+/g, 'cm-$&');
     if (this._stripExtraWhitespace && className !== 'whitespace') {
       content = content.replace(/^[\n\r]*/, '').replace(/\s*$/, '');
@@ -58,17 +58,24 @@ export class SyntaxHighlighter {
 
   /**
    * @param {!Element} node
-   * @return {!Promise.<undefined>}
+   * @return {!Promise.<void>}
    */
   syntaxHighlightNode(node) {
-    const lines = node.textContent.split('\n');
+    const lines = node.textContent ? node.textContent.split('\n') : [];
+    /** @type {number} */
     let plainTextStart;
+    /** @type {string} */
     let line;
 
-    return self.runtime.extension(TextUtils.TokenizerFactory).instance().then(processTokens.bind(this));
+    const extension = Root.Runtime.Runtime.instance().extension(TextUtils.TextUtils.TokenizerFactory);
+    if (extension) {
+      return extension.instance().then(
+          factory => processTokens.call(this, /** @type {!TextUtils.TextUtils.TokenizerFactory} */ (factory)));
+    }
+    return Promise.resolve();
 
     /**
-     * @param {!TextUtils.TokenizerFactory} tokenizerFactory
+     * @param {!TextUtils.TextUtils.TokenizerFactory} tokenizerFactory
      * @this {SyntaxHighlighter}
      */
     function processTokens(tokenizerFactory) {

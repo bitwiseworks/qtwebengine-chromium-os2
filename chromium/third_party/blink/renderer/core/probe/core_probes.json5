@@ -24,6 +24,11 @@
         "ExecuteScript",
       ]
     },
+    InspectorIssueReporter: {
+      probes: [
+        "DidFailLoading",
+      ]
+    },
     InspectorAnimationAgent: {
       probes: [
         "AnimationPlayStateChanged",
@@ -45,11 +50,15 @@
     InspectorCSSAgent: {
       probes: [
         "ActiveStyleSheetsUpdated",
+        "DidMutateStyleSheet",
         "DocumentDetached",
         "FontsUpdated",
         "ForcePseudoState",
         "MediaQueryResultChanged",
         "WillChangeStyleElement",
+        "LocalFontsEnabled",
+        "DidUpdateComputedStyle",
+        "RecalculateStyle",
       ]
     },
     InspectorDOMAgent: {
@@ -107,8 +116,10 @@
       probes: [
         "ApplyAcceptLanguageOverride",
         "ApplyUserAgentOverride",
+        "ApplyUserAgentMetadataOverride",
         "FrameStartedLoading",
         "PrepareRequest",
+        "WillCommitLoad",
       ]
     },
     InspectorLayerTreeAgent: {
@@ -124,7 +135,9 @@
     },
     InspectorMediaAgent: {
       probes: [
+        "PlayerErrorsRaised",
         "PlayerEventsAdded",
+        "PlayerMessagesLogged",
         "PlayerPropertiesChanged",
         "PlayersCreated"
       ]
@@ -163,6 +176,7 @@
         "WillSendRequest",
         "WillSendNavigationRequest",
         "WillSendWebSocketHandshakeRequest",
+        "SetDevToolsIds",
       ]
     },
     InspectorPageAgent: {

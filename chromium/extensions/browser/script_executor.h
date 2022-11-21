@@ -46,12 +46,6 @@ class ScriptExecutor {
   explicit ScriptExecutor(content::WebContents* web_contents);
   ~ScriptExecutor();
 
-  // The type of script being injected.
-  enum ScriptType {
-    JAVASCRIPT,
-    CSS,
-  };
-
   // The scope of the script injection across the frames.
   enum FrameScope {
     SINGLE_FRAME,
@@ -79,9 +73,8 @@ class ScriptExecutor {
 
   // Callback from ExecuteScript. The arguments are (error, on_url, result).
   // Success is implied by an empty error.
-  typedef base::Callback<
-      void(const std::string&, const GURL&, const base::ListValue&)>
-      ScriptFinishedCallback;
+  using ScriptFinishedCallback = base::OnceCallback<
+      void(const std::string&, const GURL&, const base::ListValue&)>;
 
   // Executes a script. The arguments match ExtensionMsg_ExecuteCode_Params in
   // extension_messages.h (request_id is populated automatically).
@@ -94,7 +87,7 @@ class ScriptExecutor {
   // before a response is received (in this case the callback will be with a
   // failure and appropriate error message).
   void ExecuteScript(const HostID& host_id,
-                     ScriptType script_type,
+                     UserScript::ActionType action_type,
                      const std::string& code,
                      FrameScope frame_scope,
                      int frame_id,
@@ -106,7 +99,7 @@ class ScriptExecutor {
                      bool user_gesture,
                      base::Optional<CSSOrigin> css_origin,
                      ResultType result_type,
-                     const ScriptFinishedCallback& callback);
+                     ScriptFinishedCallback callback);
 
   // Set the observer for ScriptsExecutedNotification callbacks.
   void set_observer(ScriptsExecutedNotification observer) {

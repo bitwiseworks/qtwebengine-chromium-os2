@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <set>
+#include <utility>
 
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
@@ -18,7 +19,6 @@
 #include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_role_properties.h"
-#include "ui/accessibility/ax_text_utils.h"
 #include "ui/gfx/transform.h"
 
 namespace ui {
@@ -153,6 +153,7 @@ bool IsNodeIdIntAttribute(ax::mojom::IntAttribute attr) {
     case ax::mojom::IntAttribute::kCheckedState:
     case ax::mojom::IntAttribute::kRestriction:
     case ax::mojom::IntAttribute::kListStyle:
+    case ax::mojom::IntAttribute::kTextAlign:
     case ax::mojom::IntAttribute::kTextDirection:
     case ax::mojom::IntAttribute::kTextPosition:
     case ax::mojom::IntAttribute::kTextStyle:
@@ -570,16 +571,41 @@ AXNodeTextStyles AXNodeData::GetTextStyles() const {
 }
 
 void AXNodeData::SetName(const std::string& name) {
+  DCHECK_NE(role, ax::mojom::Role::kNone)
+      << "A valid role is required before setting the name attribute, because "
+         "the role is used for setting the required NameFrom attribute.";
+
   auto iter = std::find_if(string_attributes.begin(), string_attributes.end(),
                            [](const auto& string_attribute) {
                              return string_attribute.first ==
                                     ax::mojom::StringAttribute::kName;
                            });
+
   if (iter == string_attributes.end()) {
     string_attributes.push_back(
         std::make_pair(ax::mojom::StringAttribute::kName, name));
   } else {
     iter->second = name;
+  }
+
+  if (HasIntAttribute(ax::mojom::IntAttribute::kNameFrom))
+    return;
+  // Since this method is mostly used by tests which don't always set the
+  // "NameFrom" attribute, we need to set it here to the most likely value if
+  // not set, otherwise code that tries to calculate the node's inner text, its
+  // hypertext, or even its value, might not know whether to include the name in
+  // the result or not.
+  //
+  // For example, if there is a text field, but it is empty, i.e. it has no
+  // value, its value could be its name if "NameFrom" is set to "kPlaceholder"
+  // or to "kContents" but not if it's set to "kAttribute". Similarly, if there
+  // is a button without any unignored children, it's name can only be
+  // equivalent to its inner text if "NameFrom" is set to "kContents" or to
+  // "kValue", but not if it is set to "kAttribute".
+  if (IsText(role)) {
+    SetNameFrom(ax::mojom::NameFrom::kContents);
+  } else {
+    SetNameFrom(ax::mojom::NameFrom::kAttribute);
   }
 }
 
@@ -729,12 +755,16 @@ ax::mojom::CheckedState AXNodeData::GetCheckedState() const {
 }
 
 void AXNodeData::SetCheckedState(ax::mojom::CheckedState checked_state) {
-  if (HasIntAttribute(ax::mojom::IntAttribute::kCheckedState))
+  if (HasCheckedState())
     RemoveIntAttribute(ax::mojom::IntAttribute::kCheckedState);
   if (checked_state != ax::mojom::CheckedState::kNone) {
     AddIntAttribute(ax::mojom::IntAttribute::kCheckedState,
                     static_cast<int32_t>(checked_state));
   }
+}
+
+bool AXNodeData::HasCheckedState() const {
+  return HasIntAttribute(ax::mojom::IntAttribute::kCheckedState);
 }
 
 ax::mojom::DefaultActionVerb AXNodeData::GetDefaultActionVerb() const {
@@ -866,18 +896,44 @@ void AXNodeData::SetListStyle(ax::mojom::ListStyle list_style) {
   }
 }
 
-ax::mojom::TextDirection AXNodeData::GetTextDirection() const {
-  return static_cast<ax::mojom::TextDirection>(
+ax::mojom::TextAlign AXNodeData::GetTextAlign() const {
+  return static_cast<ax::mojom::TextAlign>(
+      GetIntAttribute(ax::mojom::IntAttribute::kTextAlign));
+}
+
+void AXNodeData::SetTextAlign(ax::mojom::TextAlign text_align) {
+  if (HasIntAttribute(ax::mojom::IntAttribute::kTextAlign))
+    RemoveIntAttribute(ax::mojom::IntAttribute::kTextAlign);
+  AddIntAttribute(ax::mojom::IntAttribute::kTextAlign,
+                  static_cast<int32_t>(text_align));
+}
+
+ax::mojom::WritingDirection AXNodeData::GetTextDirection() const {
+  return static_cast<ax::mojom::WritingDirection>(
       GetIntAttribute(ax::mojom::IntAttribute::kTextDirection));
 }
 
-void AXNodeData::SetTextDirection(ax::mojom::TextDirection text_direction) {
+void AXNodeData::SetTextDirection(ax::mojom::WritingDirection text_direction) {
   if (HasIntAttribute(ax::mojom::IntAttribute::kTextDirection))
     RemoveIntAttribute(ax::mojom::IntAttribute::kTextDirection);
-  if (text_direction != ax::mojom::TextDirection::kNone) {
+  if (text_direction != ax::mojom::WritingDirection::kNone) {
     AddIntAttribute(ax::mojom::IntAttribute::kTextDirection,
                     static_cast<int32_t>(text_direction));
   }
+}
+
+bool AXNodeData::IsActivatable() const {
+  return IsTextField() || role == ax::mojom::Role::kListBox;
+}
+
+bool AXNodeData::IsButtonPressed() const {
+  // Currently there is no internal representation for |aria-pressed|, and
+  // we map |aria-pressed="true"| to ax::mojom::CheckedState::kTrue for a native
+  // button or role="button".
+  // https://www.w3.org/TR/wai-aria-1.1/#aria-pressed
+  if (IsButton(role) && GetCheckedState() == ax::mojom::CheckedState::kTrue)
+    return true;
+  return false;
 }
 
 bool AXNodeData::IsClickable() const {
@@ -892,19 +948,52 @@ bool AXNodeData::IsClickable() const {
   return ui::IsClickable(role);
 }
 
+bool AXNodeData::IsSelectable() const {
+  // It's selectable if it has the attribute, whether it's true or false.
+  return HasBoolAttribute(ax::mojom::BoolAttribute::kSelected) &&
+         GetRestriction() != ax::mojom::Restriction::kDisabled;
+}
+
 bool AXNodeData::IsIgnored() const {
-  if (HasState(ax::mojom::State::kIgnored) || role == ax::mojom::Role::kIgnored)
-    return true;
-  return false;
+  return HasState(ax::mojom::State::kIgnored) ||
+         role == ax::mojom::Role::kIgnored;
+}
+
+bool AXNodeData::IsInvisibleOrIgnored() const {
+  return IsIgnored() || HasState(ax::mojom::State::kInvisible);
 }
 
 bool AXNodeData::IsInvocable() const {
   // A control is "invocable" if it initiates an action when activated but
   // does not maintain any state. A control that maintains state when activated
   // would be considered a toggle or expand-collapse element - these elements
-  // are "clickable" but not "invocable".
-  return IsClickable() && !SupportsExpandCollapse() &&
-         !ui::SupportsToggle(role);
+  // are "clickable" but not "invocable". Similarly, if the action only involves
+  // activating the control, such as when clicking a text field, the control is
+  // not considered "invocable".
+  return IsClickable() && !IsActivatable() && !SupportsExpandCollapse() &&
+         !SupportsToggle(role);
+}
+
+bool AXNodeData::IsMenuButton() const {
+  // According to the WAI-ARIA spec, a menu button is a native button or an ARIA
+  // role="button" that opens a menu. Although ARIA does not include a role
+  // specifically for menu buttons, screen readers identify buttons that have
+  // aria-haspopup="true" or aria-haspopup="menu" as menu buttons, and Blink
+  // maps both to HasPopup::kMenu.
+  // https://www.w3.org/TR/wai-aria-practices/#menubutton
+  // https://www.w3.org/TR/wai-aria-1.1/#aria-haspopup
+  if (IsButton(role) && GetHasPopup() == ax::mojom::HasPopup::kMenu)
+    return true;
+
+  return false;
+}
+
+bool AXNodeData::IsTextField() const {
+  return IsPlainTextField() || IsRichTextField();
+}
+
+bool AXNodeData::IsPasswordField() const {
+  return IsTextField() && HasState(ax::mojom::State::kProtected);
 }
 
 bool AXNodeData::IsPlainTextField() const {
@@ -916,6 +1005,11 @@ bool AXNodeData::IsPlainTextField() const {
           role == ax::mojom::Role::kTextFieldWithComboBox ||
           role == ax::mojom::Role::kSearchBox ||
           GetBoolAttribute(ax::mojom::BoolAttribute::kEditableRoot));
+}
+
+bool AXNodeData::IsRichTextField() const {
+  return GetBoolAttribute(ax::mojom::BoolAttribute::kEditableRoot) &&
+         HasState(ax::mojom::State::kRichlyEditable);
 }
 
 bool AXNodeData::IsReadOnlyOrDisabled() const {
@@ -938,23 +1032,12 @@ bool AXNodeData::IsReadOnlyOrDisabled() const {
 }
 
 bool AXNodeData::IsRangeValueSupported() const {
-  // https://www.w3.org/TR/wai-aria-1.1/#aria-valuenow
-  // https://www.w3.org/TR/wai-aria-1.1/#aria-valuetext
-  // Roles that support aria-valuetext / aria-valuenow
-  switch (role) {
-    case ax::mojom::Role::kMeter:
-    case ax::mojom::Role::kProgressIndicator:
-    case ax::mojom::Role::kScrollBar:
-    case ax::mojom::Role::kSlider:
-    case ax::mojom::Role::kSpinButton:
-      return true;
-    case ax::mojom::Role::kSplitter:
-      // According to the ARIA spec, role="separator" acts as a splitter only
-      // when focusable, and supports a range only in that case.
-      return HasState(ax::mojom::State::kFocusable);
-    default:
-      return false;
+  if (role == ax::mojom::Role::kSplitter) {
+    // According to the ARIA spec, role="separator" acts as a splitter only
+    // when focusable, and supports a range only in that case.
+    return HasState(ax::mojom::State::kFocusable);
   }
+  return ui::IsRangeValueSupported(role);
 }
 
 bool AXNodeData::SupportsExpandCollapse() const {
@@ -964,21 +1047,6 @@ bool AXNodeData::SupportsExpandCollapse() const {
     return true;
 
   return ui::SupportsExpandCollapse(role);
-}
-
-bool AXNodeData::IsContainedInActiveLiveRegion() const {
-  if (!HasStringAttribute(ax::mojom::StringAttribute::kContainerLiveStatus))
-    return false;
-
-  if (base::CompareCaseInsensitiveASCII(
-          GetStringAttribute(ax::mojom::StringAttribute::kContainerLiveStatus),
-          "off") == 0)
-    return false;
-
-  if (GetBoolAttribute(ax::mojom::BoolAttribute::kContainerLiveBusy))
-    return false;
-
-  return true;
 }
 
 std::string AXNodeData::ToString() const {
@@ -997,9 +1065,9 @@ std::string AXNodeData::ToString() const {
     std::string value = base::NumberToString(int_attribute.second);
     switch (int_attribute.first) {
       case ax::mojom::IntAttribute::kDefaultActionVerb:
-        result += " action=" + base::UTF16ToUTF8(ActionVerbToUnlocalizedString(
-                                   static_cast<ax::mojom::DefaultActionVerb>(
-                                       int_attribute.second)));
+        result += std::string(" action=") +
+                  ui::ToString(static_cast<ax::mojom::DefaultActionVerb>(
+                      int_attribute.second));
         break;
       case ax::mojom::IntAttribute::kScrollX:
         result += " scroll_x=" + value;
@@ -1190,18 +1258,24 @@ std::string AXNodeData::ToString() const {
             break;
         }
         break;
+      case ax::mojom::IntAttribute::kTextAlign:
+        result += " text_align=";
+        result += ui::ToString(
+            static_cast<ax::mojom::TextAlign>(int_attribute.second));
+        break;
       case ax::mojom::IntAttribute::kTextDirection:
-        switch (static_cast<ax::mojom::TextDirection>(int_attribute.second)) {
-          case ax::mojom::TextDirection::kLtr:
+        switch (
+            static_cast<ax::mojom::WritingDirection>(int_attribute.second)) {
+          case ax::mojom::WritingDirection::kLtr:
             result += " text_direction=ltr";
             break;
-          case ax::mojom::TextDirection::kRtl:
+          case ax::mojom::WritingDirection::kRtl:
             result += " text_direction=rtl";
             break;
-          case ax::mojom::TextDirection::kTtb:
+          case ax::mojom::WritingDirection::kTtb:
             result += " text_direction=ttb";
             break;
-          case ax::mojom::TextDirection::kBtt:
+          case ax::mojom::WritingDirection::kBtt:
             result += " text_direction=btt";
             break;
           default:
@@ -1459,6 +1533,9 @@ std::string AXNodeData::ToString() const {
       case ax::mojom::FloatAttribute::kFontWeight:
         result += " font_weight=" + value;
         break;
+      case ax::mojom::FloatAttribute::kTextIndent:
+        result += " text_indent=" + value;
+        break;
       case ax::mojom::FloatAttribute::kNone:
         break;
     }
@@ -1501,8 +1578,14 @@ std::string AXNodeData::ToString() const {
       case ax::mojom::BoolAttribute::kClipsChildren:
         result += " clips_children=" + value;
         break;
+      case ax::mojom::BoolAttribute::kNotUserSelectableStyle:
+        result += " not_user_selectable=" + value;
+        break;
       case ax::mojom::BoolAttribute::kSelected:
         result += " selected=" + value;
+        break;
+      case ax::mojom::BoolAttribute::kSelectedFromFocus:
+        result += " selected_from_focus=" + value;
         break;
       case ax::mojom::BoolAttribute::kSupportsTextLocation:
         result += " supports_text_location=" + value;

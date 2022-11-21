@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/hit_test.h"
@@ -28,8 +28,8 @@ int ClientView::NonClientHitTest(const gfx::Point& point) {
   return bounds().Contains(point) ? HTCLIENT : HTNOWHERE;
 }
 
-bool ClientView::CanClose() {
-  return true;
+CloseRequestResult ClientView::OnWindowCloseRequested() {
+  return CloseRequestResult::kCanClose;
 }
 
 void ClientView::WidgetClosing() {}
@@ -80,8 +80,7 @@ void ClientView::ViewHierarchyChanged(
   }
 }
 
-BEGIN_METADATA(ClientView)
-METADATA_PARENT_CLASS(View)
-END_METADATA()
+BEGIN_METADATA(ClientView, View)
+END_METADATA
 
 }  // namespace views

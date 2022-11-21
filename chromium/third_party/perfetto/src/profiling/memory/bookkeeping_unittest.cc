@@ -31,10 +31,12 @@ std::vector<FrameData> stack() {
   unwindstack::FrameData data{};
   data.function_name = "fun1";
   data.map_name = "map1";
+  data.pc = 1;
   res.emplace_back(std::move(data), "dummy_buildid");
   data = {};
   data.function_name = "fun2";
   data.map_name = "map2";
+  data.pc = 2;
   res.emplace_back(std::move(data), "dummy_buildid");
   return res;
 }
@@ -44,10 +46,12 @@ std::vector<FrameData> stack2() {
   unwindstack::FrameData data{};
   data.function_name = "fun1";
   data.map_name = "map1";
+  data.pc = 1;
   res.emplace_back(std::move(data), "dummy_buildid");
   data = {};
   data.function_name = "fun3";
   data.map_name = "map3";
+  data.pc = 3;
   res.emplace_back(std::move(data), "dummy_buildid");
   return res;
 }
@@ -114,9 +118,12 @@ TEST(BookkeepingTest, Max) {
   sequence_number++;
   hd.RecordFree(0x1, sequence_number, 100 * sequence_number);
   sequence_number++;
+  hd.RecordMalloc(stack2(), 0x2, 1, 2, sequence_number, 100 * sequence_number);
   ASSERT_EQ(hd.max_timestamp(), 200u);
   ASSERT_EQ(hd.GetMaxForTesting(stack()), 5u);
   ASSERT_EQ(hd.GetMaxForTesting(stack2()), 2u);
+  ASSERT_EQ(hd.GetMaxCountForTesting(stack()), 1u);
+  ASSERT_EQ(hd.GetMaxCountForTesting(stack2()), 1u);
 }
 
 TEST(BookkeepingTest, TwoHeapTrackers) {

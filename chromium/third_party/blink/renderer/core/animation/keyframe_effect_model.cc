@@ -180,36 +180,23 @@ bool KeyframeEffectModelBase::SnapshotCompositableProperties(
   // ensure that it can be animated.
   const PropertyRegistry* property_registry =
       element.GetDocument().GetPropertyRegistry();
-  if (!property_registry) {
-    // TODO(kevers): Change to DCHECK once CSSVariables2Enabled flag is removed.
+  if (!property_registry)
     return updated;
-  }
 
-  if (auto* inherited_variables = computed_style.InheritedVariables()) {
-    for (const auto& name : inherited_variables->GetCustomPropertyNames()) {
-      if (property_registry->WasReferenced(name)) {
-        // This variable has been referenced as a property value at least once
-        // during style resolution in the document. Animating this property on
-        // the compositor could introduce misalignment in frame synchronization.
-        continue;
-      }
-      updated |= SnapshotCompositorKeyFrames(
-          PropertyHandle(name), element, computed_style, parent_style,
-          should_snapshot_property_callback, should_snapshot_keyframe_callback);
+  for (const AtomicString& name : computed_style.GetVariableNames()) {
+    if (property_registry->WasReferenced(name)) {
+      // This variable has been referenced as a property value at least once
+      // during style resolution in the document. Animating this property on
+      // the compositor could introduce misalignment in frame synchronization.
+      //
+      // TODO(kevers): For non-inherited properites, check if referenced in
+      // computed style. References elsewhere in the document should not prevent
+      // compositing.
+      continue;
     }
-  }
-  if (auto* non_inherited_variables = computed_style.NonInheritedVariables()) {
-    for (const auto& name : non_inherited_variables->GetCustomPropertyNames()) {
-      // TODO(kevers): Check if referenced in computed style. References
-      // elsewhere in the document should not prevent compositing.
-      if (property_registry->WasReferenced(name)) {
-        // Avoid potential side-effect of animating on compositor.
-        continue;
-      }
-      updated |= SnapshotCompositorKeyFrames(
-          PropertyHandle(name), element, computed_style, parent_style,
-          should_snapshot_property_callback, should_snapshot_keyframe_callback);
-    }
+    updated |= SnapshotCompositorKeyFrames(
+        PropertyHandle(name), element, computed_style, parent_style,
+        should_snapshot_property_callback, should_snapshot_keyframe_callback);
   }
   return updated;
 }
@@ -300,7 +287,25 @@ bool KeyframeEffectModelBase::IsTransformRelatedEffect() const {
          Affects(PropertyHandle(GetCSSPropertyTranslate()));
 }
 
-void KeyframeEffectModelBase::Trace(Visitor* visitor) {
+bool KeyframeEffectModelBase::SetLogicalPropertyResolutionContext(
+    TextDirection text_direction,
+    WritingMode writing_mode) {
+  bool changed = false;
+  for (wtf_size_t i = 0; i < keyframes_.size(); i++) {
+    if (auto* string_keyframe = DynamicTo<StringKeyframe>(*keyframes_[i])) {
+      if (string_keyframe->HasLogicalProperty()) {
+        string_keyframe->SetLogicalPropertyResolutionContext(text_direction,
+                                                             writing_mode);
+        changed = true;
+      }
+    }
+  }
+  if (changed)
+    ClearCachedData();
+  return changed;
+}
+
+void KeyframeEffectModelBase::Trace(Visitor* visitor) const {
   visitor->Trace(keyframes_);
   visitor->Trace(keyframe_groups_);
   visitor->Trace(interpolation_effect_);
@@ -323,20 +328,16 @@ void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
       zero_offset_easing = &keyframe->Easing();
 
     for (const PropertyHandle& property : keyframe->Properties()) {
-      KeyframeGroupMap::iterator group_iter = keyframe_groups_->find(property);
-      PropertySpecificKeyframeGroup* group;
-      if (group_iter == keyframe_groups_->end()) {
-        group =
-            keyframe_groups_
-                ->insert(property,
-                         MakeGarbageCollected<PropertySpecificKeyframeGroup>())
-                .stored_value->value.Get();
-      } else {
-        group = group_iter->value.Get();
-      }
+      Member<PropertySpecificKeyframeGroup>& group =
+          keyframe_groups_->insert(property, nullptr).stored_value->value;
+      if (!group)
+        group = MakeGarbageCollected<PropertySpecificKeyframeGroup>();
 
-      group->AppendKeyframe(keyframe->CreatePropertySpecificKeyframe(
-          property, composite_, computed_offset));
+      Keyframe::PropertySpecificKeyframe* property_specific_keyframe =
+          keyframe->CreatePropertySpecificKeyframe(property, composite_,
+                                                   computed_offset);
+      has_revert_ |= property_specific_keyframe->IsRevert();
+      group->AppendKeyframe(property_specific_keyframe);
     }
   }
 
@@ -348,6 +349,17 @@ void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
 
     entry.value->RemoveRedundantKeyframes();
   }
+}
+
+bool KeyframeEffectModelBase::HasNonVariableProperty() const {
+  for (const auto& keyframe : keyframes_) {
+    for (const auto& property : keyframe->Properties()) {
+      if (!property.IsCSSProperty() ||
+          property.GetCSSProperty().PropertyID() != CSSPropertyID::kVariable)
+        return true;
+    }
+  }
+  return false;
 }
 
 void KeyframeEffectModelBase::EnsureInterpolationEffectPopulated() const {

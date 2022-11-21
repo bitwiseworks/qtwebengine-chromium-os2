@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,6 +15,7 @@
 #include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/dragdrop/file_info/file_info.h"
 #include "ui/base/x/selection_utils.h"
+#include "ui/base/x/x11_util.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 
 // Note: the GetBlah() methods are used immediately by the
@@ -35,38 +35,25 @@ const char kNetscapeURL[] = "_NETSCAPE_URL";
 }  // namespace
 
 XOSExchangeDataProvider::XOSExchangeDataProvider(
-    XID x_window,
+    x11::Window x_window,
     const SelectionFormatMap& selection)
-    : x_display_(gfx::GetXDisplay()),
-      x_root_window_(DefaultRootWindow(x_display_)),
+    : connection_(x11::Connection::Get()),
+      x_root_window_(ui::GetX11RootWindow()),
       own_window_(false),
       x_window_(x_window),
       format_map_(selection),
-      selection_owner_(x_display_, x_window_, gfx::GetAtom(kDndSelection)) {}
+      selection_owner_(connection_, x_window_, gfx::GetAtom(kDndSelection)) {}
 
 XOSExchangeDataProvider::XOSExchangeDataProvider()
-    : x_display_(gfx::GetXDisplay()),
-      x_root_window_(DefaultRootWindow(x_display_)),
+    : connection_(x11::Connection::Get()),
+      x_root_window_(ui::GetX11RootWindow()),
       own_window_(true),
-      x_window_(XCreateWindow(x_display_,
-                              x_root_window_,
-                              -100,            // x
-                              -100,            // y
-                              10,              // width
-                              10,              // height
-                              0,               // border width
-                              CopyFromParent,  // depth
-                              InputOnly,
-                              CopyFromParent,  // visual
-                              0,
-                              nullptr)),
-      selection_owner_(x_display_, x_window_, gfx::GetAtom(kDndSelection)) {
-  XStoreName(x_display_, x_window_, "Chromium Drag & Drop Window");
-}
+      x_window_(CreateDummyWindow("Chromium Drag & Drop Window")),
+      selection_owner_(connection_, x_window_, gfx::GetAtom(kDndSelection)) {}
 
 XOSExchangeDataProvider::~XOSExchangeDataProvider() {
   if (own_window_)
-    XDestroyWindow(x_display_, x_window_);
+    connection_->DestroyWindow({x_window_});
 }
 
 void XOSExchangeDataProvider::TakeOwnershipOfSelection() const {
@@ -74,7 +61,7 @@ void XOSExchangeDataProvider::TakeOwnershipOfSelection() const {
 }
 
 void XOSExchangeDataProvider::RetrieveTargets(
-    std::vector<Atom>* targets) const {
+    std::vector<x11::Atom>* targets) const {
   selection_owner_.RetrieveTargets(targets);
 }
 
@@ -82,6 +69,12 @@ SelectionFormatMap XOSExchangeDataProvider::GetFormatMap() const {
   // We return the |selection_owner_|'s format map instead of our own in case
   // ours has been modified since TakeOwnershipOfSelection() was called.
   return selection_owner_.selection_format_map();
+}
+
+std::unique_ptr<OSExchangeDataProvider> XOSExchangeDataProvider::Clone() const {
+  std::unique_ptr<XOSExchangeDataProvider> ret(new XOSExchangeDataProvider());
+  ret->set_format_map(format_map());
+  return std::move(ret);
 }
 
 void XOSExchangeDataProvider::MarkOriginatedFromRenderer() {
@@ -104,9 +97,9 @@ void XOSExchangeDataProvider::SetString(const base::string16& text_data) {
       base::RefCountedString::TakeString(&utf8));
 
   format_map_.Insert(gfx::GetAtom(kMimeTypeText), mem);
-  format_map_.Insert(gfx::GetAtom(kText), mem);
-  format_map_.Insert(gfx::GetAtom(kString), mem);
-  format_map_.Insert(gfx::GetAtom(kUtf8String), mem);
+  format_map_.Insert(gfx::GetAtom(kMimeTypeLinuxText), mem);
+  format_map_.Insert(gfx::GetAtom(kMimeTypeLinuxString), mem);
+  format_map_.Insert(gfx::GetAtom(kMimeTypeLinuxUtf8String), mem);
 }
 
 void XOSExchangeDataProvider::SetURL(const GURL& url,
@@ -152,7 +145,7 @@ void XOSExchangeDataProvider::SetURL(const GURL& url,
 
 void XOSExchangeDataProvider::SetFilename(const base::FilePath& path) {
   std::vector<FileInfo> data;
-  data.push_back(FileInfo(path, base::FilePath()));
+  data.emplace_back(path, base::FilePath());
   SetFilenames(data);
 }
 
@@ -192,8 +185,8 @@ bool XOSExchangeDataProvider::GetString(base::string16* result) const {
     return false;
   }
 
-  std::vector<Atom> text_atoms = ui::GetTextAtomsFrom();
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> text_atoms = ui::GetTextAtomsFrom();
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(text_atoms, GetTargets(), &requested_types);
 
   ui::SelectionData data(format_map_.GetFirstOf(requested_types));
@@ -206,12 +199,11 @@ bool XOSExchangeDataProvider::GetString(base::string16* result) const {
   return false;
 }
 
-bool XOSExchangeDataProvider::GetURLAndTitle(
-    OSExchangeData::FilenameToURLPolicy policy,
-    GURL* url,
-    base::string16* title) const {
-  std::vector<Atom> url_atoms = ui::GetURLAtomsFrom();
-  std::vector<Atom> requested_types;
+bool XOSExchangeDataProvider::GetURLAndTitle(FilenameToURLPolicy policy,
+                                             GURL* url,
+                                             base::string16* title) const {
+  std::vector<x11::Atom> url_atoms = ui::GetURLAtomsFrom();
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   ui::SelectionData data(format_map_.GetFirstOf(requested_types));
@@ -242,7 +234,7 @@ bool XOSExchangeDataProvider::GetURLAndTitle(
       for (const std::string& token : tokens) {
         GURL test_url(token);
         if (!test_url.SchemeIsFile() ||
-            policy == OSExchangeData::CONVERT_FILENAMES) {
+            policy == FilenameToURLPolicy::CONVERT_FILENAMES) {
           *url = test_url;
           *title = base::string16();
           return true;
@@ -266,8 +258,8 @@ bool XOSExchangeDataProvider::GetFilename(base::FilePath* path) const {
 
 bool XOSExchangeDataProvider::GetFilenames(
     std::vector<FileInfo>* filenames) const {
-  std::vector<Atom> url_atoms = ui::GetURIListAtomsFrom();
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> url_atoms = ui::GetURIListAtomsFrom();
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   filenames->clear();
@@ -288,7 +280,7 @@ bool XOSExchangeDataProvider::GetFilenames(
 
 bool XOSExchangeDataProvider::GetPickledData(const ClipboardFormatType& format,
                                              base::Pickle* pickle) const {
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> requested_types;
   requested_types.push_back(gfx::GetAtom(format.GetName().c_str()));
 
   ui::SelectionData data(format_map_.GetFirstOf(requested_types));
@@ -304,16 +296,15 @@ bool XOSExchangeDataProvider::GetPickledData(const ClipboardFormatType& format,
 }
 
 bool XOSExchangeDataProvider::HasString() const {
-  std::vector<Atom> text_atoms = ui::GetTextAtomsFrom();
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> text_atoms = ui::GetTextAtomsFrom();
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(text_atoms, GetTargets(), &requested_types);
   return !requested_types.empty() && !HasFile();
 }
 
-bool XOSExchangeDataProvider::HasURL(
-    OSExchangeData::FilenameToURLPolicy policy) const {
-  std::vector<Atom> url_atoms = ui::GetURLAtomsFrom();
-  std::vector<Atom> requested_types;
+bool XOSExchangeDataProvider::HasURL(FilenameToURLPolicy policy) const {
+  std::vector<x11::Atom> url_atoms = ui::GetURLAtomsFrom();
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   if (requested_types.empty())
@@ -330,7 +321,7 @@ bool XOSExchangeDataProvider::HasURL(
       std::vector<std::string> tokens = ui::ParseURIList(data);
       for (const std::string& token : tokens) {
         if (!GURL(token).SchemeIsFile() ||
-            policy == OSExchangeData::CONVERT_FILENAMES)
+            policy == FilenameToURLPolicy::CONVERT_FILENAMES)
           return true;
       }
 
@@ -342,8 +333,8 @@ bool XOSExchangeDataProvider::HasURL(
 }
 
 bool XOSExchangeDataProvider::HasFile() const {
-  std::vector<Atom> url_atoms = ui::GetURIListAtomsFrom();
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> url_atoms = ui::GetURIListAtomsFrom();
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   if (requested_types.empty())
@@ -368,13 +359,46 @@ bool XOSExchangeDataProvider::HasFile() const {
 
 bool XOSExchangeDataProvider::HasCustomFormat(
     const ClipboardFormatType& format) const {
-  std::vector<Atom> url_atoms;
+  std::vector<x11::Atom> url_atoms;
   url_atoms.push_back(gfx::GetAtom(format.GetName().c_str()));
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   return !requested_types.empty();
 }
+
+#if defined(USE_X11)
+void XOSExchangeDataProvider::SetFileContents(
+    const base::FilePath& filename,
+    const std::string& file_contents) {
+  DCHECK(!filename.empty());
+  DCHECK(!base::Contains(format_map(), gfx::GetAtom(kMimeTypeMozillaURL)));
+  set_file_contents_name(filename);
+  // Direct save handling is a complicated juggling affair between this class,
+  // SelectionFormat, and XDragDropClient. The general idea behind
+  // the protocol is this:
+  // - The source window sets its XdndDirectSave0 window property to the
+  //   proposed filename.
+  // - When a target window receives the drop, it updates the XdndDirectSave0
+  //   property on the source window to the filename it would like the contents
+  //   to be saved to and then requests the XdndDirectSave0 type from the
+  //   source.
+  // - The source is supposed to copy the file here and return success (S),
+  //   failure (F), or error (E).
+  // - In this case, failure means the destination should try to populate the
+  //   file itself by copying the data from application/octet-stream. To make
+  //   things simpler for Chrome, we always 'fail' and let the destination do
+  //   the work.
+  std::string failure("F");
+  InsertData(gfx::GetAtom("XdndDirectSave0"),
+             scoped_refptr<base::RefCountedMemory>(
+                 base::RefCountedString::TakeString(&failure)));
+  std::string file_contents_copy = file_contents;
+  InsertData(gfx::GetAtom("application/octet-stream"),
+             scoped_refptr<base::RefCountedMemory>(
+                 base::RefCountedString::TakeString(&file_contents_copy)));
+}
+#endif
 
 void XOSExchangeDataProvider::SetHtml(const base::string16& html,
                                       const GURL& base_url) {
@@ -392,9 +416,9 @@ void XOSExchangeDataProvider::SetHtml(const base::string16& html,
 
 bool XOSExchangeDataProvider::GetHtml(base::string16* html,
                                       GURL* base_url) const {
-  std::vector<Atom> url_atoms;
+  std::vector<x11::Atom> url_atoms;
   url_atoms.push_back(gfx::GetAtom(kMimeTypeHTML));
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   ui::SelectionData data(format_map_.GetFirstOf(requested_types));
@@ -408,9 +432,9 @@ bool XOSExchangeDataProvider::GetHtml(base::string16* html,
 }
 
 bool XOSExchangeDataProvider::HasHtml() const {
-  std::vector<Atom> url_atoms;
+  std::vector<x11::Atom> url_atoms;
   url_atoms.push_back(gfx::GetAtom(kMimeTypeHTML));
-  std::vector<Atom> requested_types;
+  std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
 
   return !requested_types.empty();
@@ -443,12 +467,12 @@ bool XOSExchangeDataProvider::GetPlainTextURL(GURL* url) const {
   return false;
 }
 
-std::vector<Atom> XOSExchangeDataProvider::GetTargets() const {
+std::vector<x11::Atom> XOSExchangeDataProvider::GetTargets() const {
   return format_map_.GetTypes();
 }
 
 void XOSExchangeDataProvider::InsertData(
-    Atom format,
+    x11::Atom format,
     const scoped_refptr<base::RefCountedMemory>& data) {
   format_map_.Insert(format, data);
 }

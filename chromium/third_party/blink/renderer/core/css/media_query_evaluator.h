@@ -28,7 +28,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_MEDIA_QUERY_EVALUATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_MEDIA_QUERY_EVALUATOR_H_
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -60,13 +59,12 @@ class CORE_EXPORT MediaQueryEvaluator final
  public:
   static void Init();
 
-  // Creates evaluator which evaluates to true for all media queries.
-  MediaQueryEvaluator() = default;
+  MediaQueryEvaluator() = delete;
 
-  // Creates evaluator which evaluates only simple media queries
-  // Evaluator returns true for acceptedMediaType and returns true for any media
-  // features.
-  MediaQueryEvaluator(const char* accepted_media_type);
+  // Creates evaluator to evaluate media types only. Evaluator returns true for
+  // accepted_media_type and triggers a NOTREACHED returning false for any media
+  // features. Should only be used for UA stylesheets.
+  explicit MediaQueryEvaluator(const char* accepted_media_type);
 
   // Creates evaluator which evaluates full media queries.
   explicit MediaQueryEvaluator(LocalFrame*);
@@ -76,6 +74,8 @@ class CORE_EXPORT MediaQueryEvaluator final
   explicit MediaQueryEvaluator(const MediaValues&);
 
   explicit MediaQueryEvaluator(MediaValuesInitialViewport*);
+  MediaQueryEvaluator(const MediaQueryEvaluator&) = delete;
+  MediaQueryEvaluator& operator=(const MediaQueryEvaluator&) = delete;
 
   ~MediaQueryEvaluator();
 
@@ -98,14 +98,13 @@ class CORE_EXPORT MediaQueryEvaluator final
   // evaluation.
   bool DidResultsChange(const MediaQueryResultList& results) const;
 
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
  private:
   const String MediaType() const;
 
   String media_type_;
   Member<MediaValues> media_values_;
-  DISALLOW_COPY_AND_ASSIGN(MediaQueryEvaluator);
 };
 
 }  // namespace blink

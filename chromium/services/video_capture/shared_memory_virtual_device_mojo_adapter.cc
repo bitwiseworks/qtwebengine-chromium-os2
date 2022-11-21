@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/capture/video/scoped_buffer_pool_reservation.h"
 #include "media/capture/video/video_capture_buffer_pool_impl.h"
@@ -38,7 +38,6 @@ SharedMemoryVirtualDeviceMojoAdapter::SharedMemoryVirtualDeviceMojoAdapter(
       send_buffer_handles_to_producer_as_raw_file_descriptors_(
           send_buffer_handles_to_producer_as_raw_file_descriptors),
       buffer_pool_(new media::VideoCaptureBufferPoolImpl(
-          std::make_unique<media::VideoCaptureBufferTrackerFactoryImpl>(),
           media::VideoCaptureBufferType::kSharedMemory,
           max_buffer_pool_buffer_count())) {}
 

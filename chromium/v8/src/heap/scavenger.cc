@@ -4,7 +4,6 @@
 
 #include "src/heap/scavenger.h"
 
-#include "src/heap/array-buffer-collector.h"
 #include "src/heap/array-buffer-sweeper.h"
 #include "src/heap/barrier.h"
 #include "src/heap/gc-tracer.h"
@@ -12,7 +11,9 @@
 #include "src/heap/invalidated-slots-inl.h"
 #include "src/heap/item-parallel-job.h"
 #include "src/heap/mark-compact-inl.h"
+#include "src/heap/memory-chunk-inl.h"
 #include "src/heap/objects-visiting-inl.h"
+#include "src/heap/remembered-set-inl.h"
 #include "src/heap/scavenger-inl.h"
 #include "src/heap/sweeper.h"
 #include "src/objects/data-handler-inl.h"
@@ -265,6 +266,17 @@ void ScavengerCollector::CollectGarbage() {
 
   {
     Sweeper* sweeper = heap_->mark_compact_collector()->sweeper();
+
+    // Try to finish sweeping here, such that the following code doesn't need to
+    // pause & resume sweeping.
+    if (sweeper->sweeping_in_progress() && FLAG_concurrent_sweeping &&
+        !sweeper->AreSweeperTasksRunning()) {
+      // At this point we know that all concurrent sweeping tasks have run
+      // out-of-work and quit: all pages are swept. The main thread still needs
+      // to complete sweeping though.
+      heap_->mark_compact_collector()->EnsureSweepingCompleted();
+    }
+
     // Pause the concurrent sweeper.
     Sweeper::PauseOrCompleteScope pause_scope(sweeper);
     // Filter out pages from the sweeper that need to be processed for old to
@@ -295,7 +307,18 @@ void ScavengerCollector::CollectGarbage() {
     {
       // Copy roots.
       TRACE_GC(heap_->tracer(), GCTracer::Scope::SCAVENGER_SCAVENGE_ROOTS);
-      heap_->IterateRoots(&root_scavenge_visitor, VISIT_ALL_IN_SCAVENGE);
+      // Scavenger treats all weak roots except for global handles as strong.
+      // That is why we don't set skip_weak = true here and instead visit
+      // global handles separately.
+      base::EnumSet<SkipRoot> options({SkipRoot::kExternalStringTable,
+                                       SkipRoot::kGlobalHandles,
+                                       SkipRoot::kOldGeneration});
+      if (V8_UNLIKELY(FLAG_scavenge_separate_stack_scanning)) {
+        options.Add(SkipRoot::kStack);
+      }
+      heap_->IterateRoots(&root_scavenge_visitor, options);
+      isolate_->global_handles()->IterateYoungStrongAndDependentRoots(
+          &root_scavenge_visitor);
     }
     {
       // Parallel phase scavenging all copied and promoted objects.
@@ -304,21 +327,28 @@ void ScavengerCollector::CollectGarbage() {
       DCHECK(copied_list.IsEmpty());
       DCHECK(promotion_list.IsEmpty());
     }
+
+    if (V8_UNLIKELY(FLAG_scavenge_separate_stack_scanning)) {
+      IterateStackAndScavenge(&root_scavenge_visitor, scavengers,
+                              num_scavenge_tasks, kMainThreadId);
+      DCHECK(copied_list.IsEmpty());
+      DCHECK(promotion_list.IsEmpty());
+    }
+
     {
       // Scavenge weak global handles.
       TRACE_GC(heap_->tracer(),
                GCTracer::Scope::SCAVENGER_SCAVENGE_WEAK_GLOBAL_HANDLES_PROCESS);
-      isolate_->global_handles()->MarkYoungWeakUnmodifiedObjectsPending(
+      isolate_->global_handles()->MarkYoungWeakDeadObjectsPending(
           &IsUnscavengedHeapObjectSlot);
-      isolate_->global_handles()->IterateYoungWeakUnmodifiedRootsForFinalizers(
+      isolate_->global_handles()->IterateYoungWeakDeadObjectsForFinalizers(
           &root_scavenge_visitor);
       scavengers[kMainThreadId]->Process();
 
       DCHECK(copied_list.IsEmpty());
       DCHECK(promotion_list.IsEmpty());
-      isolate_->global_handles()
-          ->IterateYoungWeakUnmodifiedRootsForPhantomHandles(
-              &root_scavenge_visitor, &IsUnscavengedHeapObjectSlot);
+      isolate_->global_handles()->IterateYoungWeakObjectsForPhantomHandles(
+          &root_scavenge_visitor, &IsUnscavengedHeapObjectSlot);
     }
 
     {
@@ -359,12 +389,6 @@ void ScavengerCollector::CollectGarbage() {
   // Set age mark.
   heap_->new_space_->set_age_mark(heap_->new_space()->top());
 
-  {
-    TRACE_GC(heap_->tracer(), GCTracer::Scope::SCAVENGER_PROCESS_ARRAY_BUFFERS);
-    ArrayBufferTracker::PrepareToFreeDeadInNewSpace(heap_);
-  }
-  heap_->array_buffer_collector()->FreeAllocations();
-
   // Since we promote all surviving large objects immediatelly, all remaining
   // large objects must be dead.
   // TODO(hpayer): Don't free all as soon as we have an intermediate generation.
@@ -393,6 +417,39 @@ void ScavengerCollector::CollectGarbage() {
 
   // Update how much has survived scavenge.
   heap_->IncrementYoungSurvivorsCounter(heap_->SurvivedYoungObjectSize());
+}
+
+void ScavengerCollector::IterateStackAndScavenge(
+    RootScavengeVisitor* root_scavenge_visitor, Scavenger** scavengers,
+    int num_scavenge_tasks, int main_thread_id) {
+  // Scan the stack, scavenge the newly discovered objects, and report
+  // the survival statistics before and afer the stack scanning.
+  // This code is not intended for production.
+  TRACE_GC(heap_->tracer(), GCTracer::Scope::SCAVENGER_SCAVENGE_STACK_ROOTS);
+  size_t survived_bytes_before = 0;
+  for (int i = 0; i < num_scavenge_tasks; i++) {
+    survived_bytes_before +=
+        scavengers[i]->bytes_copied() + scavengers[i]->bytes_promoted();
+  }
+  heap_->IterateStackRoots(root_scavenge_visitor);
+  scavengers[main_thread_id]->Process();
+  size_t survived_bytes_after = 0;
+  for (int i = 0; i < num_scavenge_tasks; i++) {
+    survived_bytes_after +=
+        scavengers[i]->bytes_copied() + scavengers[i]->bytes_promoted();
+  }
+  TRACE_EVENT2(TRACE_DISABLED_BY_DEFAULT("v8.gc"),
+               "V8.GCScavengerStackScanning", "survived_bytes_before",
+               survived_bytes_before, "survived_bytes_after",
+               survived_bytes_after);
+  if (FLAG_trace_gc_verbose && !FLAG_trace_gc_ignore_scavenger) {
+    isolate_->PrintWithTimestamp(
+        "Scavenge stack scanning: survived_before=%4zuKB, "
+        "survived_after=%4zuKB delta=%.1f%%\n",
+        survived_bytes_before / KB, survived_bytes_after / KB,
+        (survived_bytes_after - survived_bytes_before) * 100.0 /
+            survived_bytes_after);
+  }
 }
 
 void ScavengerCollector::SweepArrayBufferExtensions() {
@@ -429,7 +486,7 @@ int ScavengerCollector::NumberOfScavengeTasks() {
   static int num_cores = V8::GetCurrentPlatform()->NumberOfWorkerThreads() + 1;
   int tasks =
       Max(1, Min(Min(num_scavenge_tasks, kMaxScavengerTasks), num_cores));
-  if (!heap_->CanExpandOldGeneration(
+  if (!heap_->CanPromoteYoungAndExpandOldGeneration(
           static_cast<size_t>(tasks * Page::kPageSize))) {
     // Optimize for memory usage near the heap limit.
     tasks = 1;
@@ -471,7 +528,7 @@ void Scavenger::IterateAndScavengePromotedObject(HeapObject target, Map map,
   target.IterateBodyFast(map, size, &visitor);
 
   if (map.IsJSArrayBufferMap()) {
-    DCHECK(!MemoryChunk::FromHeapObject(target)->IsLargePage());
+    DCHECK(!BasicMemoryChunk::FromHeapObject(target)->IsLargePage());
     JSArrayBuffer::cast(target).YoungMarkExtensionPromoted();
   }
 }

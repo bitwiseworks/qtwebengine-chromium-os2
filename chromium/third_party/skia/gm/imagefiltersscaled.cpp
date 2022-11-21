@@ -156,10 +156,10 @@ protected:
 private:
     sk_sp<SkImage> fCheckerboard, fGradientCircle;
 
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 
 //////////////////////////////////////////////////////////////////////////////
 
 DEF_GM(return new ImageFiltersScaledGM;)
-}
+}  // namespace skiagm

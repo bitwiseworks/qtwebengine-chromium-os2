@@ -9,7 +9,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "content/browser/android/render_widget_host_connector.h"
-#include "content/public/common/input_event_ack_state.h"
+#include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
 
 namespace blink {
 class WebGestureEvent;
@@ -43,8 +43,10 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jboolean enabled);
+  bool has_listeners_attached() const { return has_listeners_attached_; }
+  void SetHasListenersAttached(JNIEnv* env, jboolean enabled);
   void GestureEventAck(const blink::WebGestureEvent& event,
-                       InputEventAckState ack_result);
+                       blink::mojom::InputEventResultState ack_result);
   void DidStopFlinging();
   bool FilterInputEvent(const blink::WebInputEvent& event);
 
@@ -60,6 +62,7 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
                         const float top_shown_pix,
                         bool top_changed);
   void UpdateOnTouchDown();
+  void OnRootScrollOffsetChanged(const gfx::Vector2dF& root_scroll_offset);
 
   // RendetWidgetHostConnector implementation.
   void UpdateRenderProcessConnection(
@@ -82,6 +85,9 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
 
   // A weak reference to the Java GestureListenerManager object.
   JavaObjectWeakGlobalRef java_ref_;
+
+  // True if there is at least one listener attached.
+  bool has_listeners_attached_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(GestureListenerManager);
 };

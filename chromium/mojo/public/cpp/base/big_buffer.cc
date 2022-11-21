@@ -4,7 +4,8 @@
 
 #include "mojo/public/cpp/base/big_buffer.h"
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 
 namespace mojo_base {
 
@@ -66,6 +67,10 @@ void TryCreateSharedMemory(
       // instead produce an invalid buffer. This will always fail validation on
       // the receiving end.
       *storage_type = BigBuffer::StorageType::kInvalidBuffer;
+
+      // TODO(crbug.com/1076341): Remove this temporary CHECK to investigate
+      // some bad IPC reports likely caused by this path.
+      CHECK(false);
       return;
     }
   }

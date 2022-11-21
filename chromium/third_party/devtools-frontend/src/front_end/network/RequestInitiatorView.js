@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as SDK from '../sdk/sdk.js';
@@ -48,7 +51,8 @@ export class RequestInitiatorView extends UI.Widget.VBox {
    * @param {boolean} expanded
    */
   _appendExpandableSection(sectionContent, title, expanded) {
-    const section = createElementWithClass('div', 'request-initiator-view-section');
+    const section = document.createElement('div');
+    section.classList.add('request-initiator-view-section');
     const icon = UI.Icon.Icon.create('smallicon-triangle-right');
     const clickableElement = section.createChild('div', 'request-initiator-view-section-title');
     clickableElement.appendChild(icon);
@@ -133,7 +137,7 @@ export class RequestInitiatorView extends UI.Widget.VBox {
       this._appendExpandableSection(stackTracePreview.element, ls`Request call stack`, true);
     }
 
-    const initiatorGraph = self.SDK.networkLog.initiatorGraphForRequest(this._request);
+    const initiatorGraph = SDK.NetworkLog.NetworkLog.instance().initiatorGraphForRequest(this._request);
     if (initiatorGraph.initiators.size > 1 || initiatorGraph.initiated.size > 1) {
       initiatorDataPresent = true;
       this._appendExpandableSection(

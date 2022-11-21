@@ -11,6 +11,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
 #include "src/core/SkArenaAlloc.h"
+#include "src/core/SkMatrixProvider.h"
 #include "src/core/SkMatrixUtils.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkReadBuffer.h"
@@ -21,7 +22,8 @@
 #include <atomic>
 
 #if SK_SUPPORT_GPU
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrFragmentProcessor.h"
@@ -260,7 +262,8 @@ bool SkPictureShader::onAppendStages(const SkStageRec& rec) const {
 
     // Keep bitmapShader alive by using alloc instead of stack memory
     auto& bitmapShader = *rec.fAlloc->make<sk_sp<SkShader>>();
-    bitmapShader = this->refBitmapShader(rec.fCTM, &lm, rec.fDstColorType, rec.fDstCS);
+    bitmapShader = this->refBitmapShader(rec.fMatrixProvider.localToDevice(), &lm,
+                                         rec.fDstColorType, rec.fDstCS);
 
     if (!bitmapShader) {
         return false;
@@ -273,20 +276,24 @@ bool SkPictureShader::onAppendStages(const SkStageRec& rec) const {
 }
 
 skvm::Color SkPictureShader::onProgram(skvm::Builder* p,
-                                       skvm::F32 x, skvm::F32 y, skvm::Color paint,
-                                       const SkMatrix& ctm, const SkMatrix* localM,
+                                       skvm::Coord device, skvm::Coord local, skvm::Color paint,
+                                       const SkMatrixProvider& matrices, const SkMatrix* localM,
                                        SkFilterQuality quality, const SkColorInfo& dst,
                                        skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const {
     auto lm = this->totalLocalMatrix(localM);
 
     // Keep bitmapShader alive by using alloc instead of stack memory
     auto& bitmapShader = *alloc->make<sk_sp<SkShader>>();
-    bitmapShader = this->refBitmapShader(ctm, &lm, dst.colorType(), dst.colorSpace());
+    bitmapShader = this->refBitmapShader(matrices.localToDevice(), &lm,
+                                         dst.colorType(), dst.colorSpace());
     if (!bitmapShader) {
         return {};
     }
 
-    return as_SB(bitmapShader)->program(p, x,y, paint, ctm, lm, quality, dst, uniforms, alloc);
+    return as_SB(bitmapShader)->program(p, device,local, paint,
+                                        matrices,lm,
+                                        quality,dst,
+                                        uniforms,alloc);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -336,8 +343,6 @@ void SkPictureShader::PictureShaderContext::shadeSpan(int x, int y, SkPMColor ds
 }
 
 #if SK_SUPPORT_GPU
-#include "include/gpu/GrContext.h"
-#include "src/gpu/GrContextPriv.h"
 
 std::unique_ptr<GrFragmentProcessor> SkPictureShader::asFragmentProcessor(
         const GrFPArgs& args) const {
@@ -351,15 +356,15 @@ std::unique_ptr<GrFragmentProcessor> SkPictureShader::asFragmentProcessor(
     if (dstColorType == kUnknown_SkColorType) {
         dstColorType = kRGBA_8888_SkColorType;
     }
-    sk_sp<SkShader> bitmapShader(this->refBitmapShader(*args.fViewMatrix, &lm, dstColorType,
-                                                       args.fDstColorInfo->colorSpace(),
-                                                       maxTextureSize));
+    sk_sp<SkShader> bitmapShader(
+            this->refBitmapShader(args.fMatrixProvider.localToDevice(), &lm, dstColorType,
+                                  args.fDstColorInfo->colorSpace(), maxTextureSize));
     if (!bitmapShader) {
         return nullptr;
     }
 
     // We want to *reset* args.fPreLocalMatrix, not compose it.
-    GrFPArgs newArgs(args.fContext, args.fViewMatrix, args.fFilterQuality, args.fDstColorInfo);
+    GrFPArgs newArgs(args.fContext, args.fMatrixProvider, args.fFilterQuality, args.fDstColorInfo);
     newArgs.fPreLocalMatrix = lm.get();
 
     return as_SB(bitmapShader)->asFragmentProcessor(newArgs);

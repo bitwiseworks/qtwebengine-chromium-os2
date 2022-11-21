@@ -8,6 +8,7 @@
 #include <linux/input.h>
 #include <stddef.h>
 
+#include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/devices/stylus_state.h"
 #include "ui/events/event.h"
@@ -122,8 +123,13 @@ void EventConverterEvdevImpl::ProcessEvents(const input_event* inputs,
   for (int i = 0; i < count; ++i) {
     const input_event& input = inputs[i];
     switch (input.type) {
+      case EV_MSC:
+        if (input.code == MSC_SCAN)
+          last_scan_code_ = input.value;
+        break;
       case EV_KEY:
         ConvertKeyEvent(input);
+        last_scan_code_ = 0;
         break;
       case EV_REL:
         ConvertMouseMoveEvent(input);
@@ -133,6 +139,7 @@ void EventConverterEvdevImpl::ProcessEvents(const input_event* inputs,
           OnLostSync();
         else if (input.code == SYN_REPORT)
           FlushEvents(input);
+        last_scan_code_ = 0;
         break;
       case EV_SW:
         if (input.code == kSwitchStylusInserted) {
@@ -191,7 +198,7 @@ void EventConverterEvdevImpl::OnKeyChange(unsigned int key,
   key_state_.set(key, down);
 
   dispatcher_->DispatchKeyEvent(
-      KeyEventParams(input_device_.id, ui::EF_NONE, key, down,
+      KeyEventParams(input_device_.id, ui::EF_NONE, key, last_scan_code_, down,
                      false /* suppress_auto_repeat */, timestamp));
 }
 
@@ -239,8 +246,8 @@ void EventConverterEvdevImpl::OnButtonChange(int code,
 
   dispatcher_->DispatchMouseButtonEvent(MouseButtonEventParams(
       input_device_.id, EF_NONE, cursor_->GetLocation(), code, down,
-      /* allow_remap */ true,
-      PointerDetails(EventPointerType::POINTER_TYPE_MOUSE), timestamp));
+      /* allow_remap */ true, PointerDetails(EventPointerType::kMouse),
+      timestamp));
 }
 
 void EventConverterEvdevImpl::FlushEvents(const input_event& input) {
@@ -249,10 +256,10 @@ void EventConverterEvdevImpl::FlushEvents(const input_event& input) {
 
   cursor_->MoveCursor(gfx::Vector2dF(x_offset_, y_offset_));
 
-  dispatcher_->DispatchMouseMoveEvent(
-      MouseMoveEventParams(input_device_.id, EF_NONE, cursor_->GetLocation(),
-                           PointerDetails(EventPointerType::POINTER_TYPE_MOUSE),
-                           TimeTicksFromInputEvent(input)));
+  dispatcher_->DispatchMouseMoveEvent(MouseMoveEventParams(
+      input_device_.id, EF_NONE, cursor_->GetLocation(),
+      nullptr /* ordinal_delta*/, PointerDetails(EventPointerType::kMouse),
+      TimeTicksFromInputEvent(input)));
 
   x_offset_ = 0;
   y_offset_ = 0;

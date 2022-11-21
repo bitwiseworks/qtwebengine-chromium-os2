@@ -11,7 +11,7 @@
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/webauth/authenticator_environment_impl.h"
 #include "content/browser/webauth/virtual_authenticator.h"
 #include "content/browser/webauth/virtual_fido_discovery_factory.h"
@@ -66,13 +66,11 @@ std::unique_ptr<WebAuthn::Credential> BuildCredentialFromRegistration(
     const std::pair<const std::vector<uint8_t>,
                     device::VirtualFidoDevice::RegistrationData>&
         registration) {
-  std::vector<uint8_t> private_key;
-  registration.second.private_key->ExportPrivateKey(&private_key);
-
   auto credential =
       WebAuthn::Credential::Create()
           .SetCredentialId(Binary::fromVector(registration.first))
-          .SetPrivateKey(Binary::fromVector(std::move(private_key)))
+          .SetPrivateKey(Binary::fromVector(
+              registration.second.private_key->GetPKCS8PrivateKey()))
           .SetSignCount(registration.second.counter)
           .SetIsResidentCredential(registration.second.is_resident)
           .Build();
@@ -111,9 +109,6 @@ Response WebAuthnHandler::Enable() {
 
   AuthenticatorEnvironmentImpl::GetInstance()->EnableVirtualAuthenticatorFor(
       frame_host_->frame_tree_node());
-  virtual_discovery_factory_ =
-      AuthenticatorEnvironmentImpl::GetInstance()->GetVirtualFactoryFor(
-          frame_host_->frame_tree_node());
   return Response::Success();
 }
 
@@ -122,14 +117,16 @@ Response WebAuthnHandler::Disable() {
     AuthenticatorEnvironmentImpl::GetInstance()->DisableVirtualAuthenticatorFor(
         frame_host_->frame_tree_node());
   }
-  virtual_discovery_factory_ = nullptr;
   return Response::Success();
 }
 
 Response WebAuthnHandler::AddVirtualAuthenticator(
     std::unique_ptr<WebAuthn::VirtualAuthenticatorOptions> options,
     String* out_authenticator_id) {
-  if (!virtual_discovery_factory_)
+  VirtualAuthenticatorManagerImpl* authenticator_manager =
+      AuthenticatorEnvironmentImpl::GetInstance()
+          ->MaybeGetVirtualAuthenticatorManager(frame_host_->frame_tree_node());
+  if (!authenticator_manager)
     return Response::ServerError(kVirtualEnvironmentNotEnabled);
 
   auto transport =
@@ -146,20 +143,31 @@ Response WebAuthnHandler::AddVirtualAuthenticator(
     return Response::InvalidParams(kCableNotSupportedOnU2f);
   }
 
-  auto* authenticator = virtual_discovery_factory_->CreateAuthenticator(
-      protocol, *transport,
-      transport == device::FidoTransportProtocol::kInternal
-          ? device::AuthenticatorAttachment::kPlatform
-          : device::AuthenticatorAttachment::kCrossPlatform,
-      options->GetHasResidentKey(false /* default */),
-      options->GetHasUserVerification(false /* default */));
+  VirtualAuthenticator* authenticator = nullptr;
+  switch (protocol) {
+    case device::ProtocolVersion::kU2f:
+      authenticator = authenticator_manager->CreateU2FAuthenticator(*transport);
+      break;
+    case device::ProtocolVersion::kCtap2:
+      authenticator = authenticator_manager->CreateCTAP2Authenticator(
+          device::Ctap2Version::kCtap2_0, *transport,
+          transport == device::FidoTransportProtocol::kInternal
+              ? device::AuthenticatorAttachment::kPlatform
+              : device::AuthenticatorAttachment::kCrossPlatform,
+          options->GetHasResidentKey(/*default=*/false),
+          options->GetHasUserVerification(/*default=*/false));
+      break;
+    case device::ProtocolVersion::kUnknown:
+      NOTREACHED();
+      break;
+  }
   if (!authenticator)
     return Response::ServerError(kErrorCreatingAuthenticator);
 
   authenticator->SetUserPresence(
       options->GetAutomaticPresenceSimulation(true /* default */));
   authenticator->set_user_verified(
-      options->GetIsUserVerified(false /* default */));
+      options->GetIsUserVerified(/*default=*/false));
 
   *out_authenticator_id = authenticator->unique_id();
   return Response::Success();
@@ -167,10 +175,13 @@ Response WebAuthnHandler::AddVirtualAuthenticator(
 
 Response WebAuthnHandler::RemoveVirtualAuthenticator(
     const String& authenticator_id) {
-  if (!virtual_discovery_factory_)
+  VirtualAuthenticatorManagerImpl* authenticator_manager =
+      AuthenticatorEnvironmentImpl::GetInstance()
+          ->MaybeGetVirtualAuthenticatorManager(frame_host_->frame_tree_node());
+  if (!authenticator_manager)
     return Response::ServerError(kVirtualEnvironmentNotEnabled);
 
-  if (!virtual_discovery_factory_->RemoveAuthenticator(authenticator_id))
+  if (!authenticator_manager->RemoveAuthenticator(authenticator_id))
     return Response::InvalidParams(kAuthenticatorNotFound);
 
   return Response::Success();
@@ -290,14 +301,29 @@ Response WebAuthnHandler::SetUserVerified(const String& authenticator_id,
   return Response::Success();
 }
 
+Response WebAuthnHandler::SetAutomaticPresenceSimulation(
+    const String& authenticator_id,
+    bool enabled) {
+  VirtualAuthenticator* authenticator;
+  Response response = FindAuthenticator(authenticator_id, &authenticator);
+  if (!response.IsSuccess())
+    return response;
+
+  authenticator->SetUserPresence(enabled);
+  return Response::Success();
+}
+
 Response WebAuthnHandler::FindAuthenticator(
     const String& id,
     VirtualAuthenticator** out_authenticator) {
   *out_authenticator = nullptr;
-  if (!virtual_discovery_factory_)
+  VirtualAuthenticatorManagerImpl* authenticator_manager =
+      AuthenticatorEnvironmentImpl::GetInstance()
+          ->MaybeGetVirtualAuthenticatorManager(frame_host_->frame_tree_node());
+  if (!authenticator_manager)
     return Response::ServerError(kVirtualEnvironmentNotEnabled);
 
-  *out_authenticator = virtual_discovery_factory_->GetAuthenticator(id);
+  *out_authenticator = authenticator_manager->GetAuthenticator(id);
   if (!*out_authenticator)
     return Response::InvalidParams(kAuthenticatorNotFound);
 

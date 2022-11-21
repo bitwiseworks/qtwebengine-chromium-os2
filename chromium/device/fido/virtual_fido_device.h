@@ -18,7 +18,6 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
-#include "crypto/ec_private_key.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_device.h"
 #include "device/fido/fido_parsing_utils.h"
@@ -29,9 +28,11 @@
 
 namespace crypto {
 class ECPrivateKey;
-}  // namespace crypto
+}
 
 namespace device {
+
+struct PublicKey;
 
 constexpr size_t kMaxPinRetries = 8;
 
@@ -39,12 +40,53 @@ constexpr size_t kMaxUvRetries = 5;
 
 class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
  public:
+  // PrivateKey abstracts over the private key types supported by the virtual
+  // authenticator.
+  class COMPONENT_EXPORT(DEVICE_FIDO) PrivateKey {
+   public:
+    // FromPKCS8 attempts to parse |pkcs8_private_key| as an ASN.1, DER, PKCS#8
+    // private key of a supported type and returns a |PrivateKey| instance
+    // representing that key.
+    static base::Optional<std::unique_ptr<PrivateKey>> FromPKCS8(
+        base::span<const uint8_t> pkcs8_private_key);
+
+    // FreshP256Key returns a randomly generated P-256 PrivateKey.
+    static std::unique_ptr<PrivateKey> FreshP256Key();
+
+    // FreshRSAKey returns a randomly generated RSA PrivateKey.
+    static std::unique_ptr<PrivateKey> FreshRSAKey();
+
+    // FreshEd25519Key returns a randomly generated Ed25519 PrivateKey.
+    static std::unique_ptr<PrivateKey> FreshEd25519Key();
+
+    // FreshInvalidForTestingKey returns a dummy |PrivateKey| with a special
+    // algorithm number that is used to test that unknown public keys are
+    // handled correctly.
+    static std::unique_ptr<PrivateKey> FreshInvalidForTestingKey();
+
+    virtual ~PrivateKey();
+
+    // Sign returns a signature over |message|.
+    virtual std::vector<uint8_t> Sign(base::span<const uint8_t> message) = 0;
+
+    // GetX962PublicKey returns the elliptic-curve public key encoded in X9.62
+    // format. Only elliptic-curve based private keys can be represented in this
+    // format and calling this function on other types of keys will crash.
+    virtual std::vector<uint8_t> GetX962PublicKey() const;
+
+    // GetPKCS8PrivateKey returns the private key encoded in ASN.1, DER, PKCS#8
+    // format.
+    virtual std::vector<uint8_t> GetPKCS8PrivateKey() const = 0;
+
+    virtual std::unique_ptr<PublicKey> GetPublicKey() const = 0;
+  };
+
   // Encapsulates information corresponding to one registered key on the virtual
   // authenticator device.
   struct COMPONENT_EXPORT(DEVICE_FIDO) RegistrationData {
     RegistrationData();
     RegistrationData(
-        std::unique_ptr<crypto::ECPrivateKey> private_key,
+        std::unique_ptr<PrivateKey> private_key,
         base::span<const uint8_t, kRpIdHashLength> application_parameter,
         uint32_t counter);
 
@@ -53,18 +95,26 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
 
     ~RegistrationData();
 
-    std::unique_ptr<crypto::ECPrivateKey> private_key;
+    std::unique_ptr<PrivateKey> private_key;
     std::array<uint8_t, kRpIdHashLength> application_parameter;
     uint32_t counter = 0;
     bool is_resident = false;
     // is_u2f is true if the credential was created via a U2F interface.
     bool is_u2f = false;
-    base::Optional<device::CredProtect> protection;
+    device::CredProtect protection = device::CredProtect::kUVOptional;
 
     // user is only valid if |is_resident| is true.
     base::Optional<device::PublicKeyCredentialUserEntity> user;
     // rp is only valid if |is_resident| is true.
     base::Optional<device::PublicKeyCredentialRpEntity> rp;
+
+    // hmac_key is present iff the credential has the hmac_secret extension
+    // enabled. The first element of the pair is the HMAC key for non-UV, and
+    // the second for when UV is used.
+    base::Optional<std::pair<std::array<uint8_t, 32>, std::array<uint8_t, 32>>>
+        hmac_key;
+
+    base::Optional<std::array<uint8_t, 32>> large_blob_key;
 
     DISALLOW_COPY_AND_ASSIGN(RegistrationData);
   };
@@ -123,6 +173,10 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
     // The random PIN token that is returned as a placeholder for the PIN
     // itself.
     uint8_t pin_token[32];
+    // The permissions parameter for |pin_token|.
+    uint8_t pin_uv_token_permissions = 0;
+    // The permissions RPID for |pin_token|.
+    base::Optional<std::string> pin_uv_token_rpid;
 
     // Number of internal UV retries remaining.
     int uv_retries = kMaxUvRetries;
@@ -167,6 +221,22 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
     // to return from a previous authenticatorCredentialManagement command.
     std::list<cbor::Value::MapValue> pending_registrations;
 
+    // allow_list_sizes contains the lengths of the allow_lists that have been
+    // seen in assertion requests. This is for tests to confirm that the
+    // expected sequence of requests was sent.
+    std::vector<size_t> allow_list_sizes;
+
+    // The large-blob array. This is initialized to an empty CBOR array (0x80)
+    // followed by LEFT(SHA-256(h'80'), 16).
+    std::vector<uint8_t> large_blob = {0x80, 0x76, 0xbe, 0x8b, 0x52, 0x8d,
+                                       0x00, 0x75, 0xf7, 0xaa, 0xe9, 0x8d,
+                                       0x6f, 0xa5, 0x7a, 0x6d, 0x3c};
+    // Buffer that gets progressively filled with large blob fragments until
+    // committed.
+    std::vector<uint8_t> large_blob_buffer;
+    uint64_t large_blob_expected_next_offset = 0;
+    uint64_t large_blob_expected_length = 0;
+
     FidoTransportProtocol transport =
         FidoTransportProtocol::kUsbHumanInterfaceDevice;
 
@@ -187,7 +257,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
                            device::PublicKeyCredentialRpEntity rp,
                            device::PublicKeyCredentialUserEntity user,
                            int32_t signature_counter,
-                           std::unique_ptr<crypto::ECPrivateKey> private_key);
+                           std::unique_ptr<PrivateKey> private_key);
 
     // Adds a resident credential with the specified values, creating a new
     // private key.

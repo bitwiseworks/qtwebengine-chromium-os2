@@ -28,17 +28,24 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
+import * as Emulation from '../emulation/emulation.js';
 import * as Host from '../host/host.js';
 import * as Platform from '../platform/platform.js';
 import * as ProtocolClient from '../protocol_client/protocol_client.js';  // eslint-disable-line no-unused-vars
+import * as Root from '../root/root.js';
 import * as SDK from '../sdk/sdk.js';
 import * as TextUtils from '../text_utils/text_utils.js';
 import * as UI from '../ui/ui.js';
 
+import {Adorner, AdornerCategories} from './Adorner.js';
 import {canGetJSPath, cssPath, jsPath, xPath} from './DOMPath.js';
 import {MappedCharToEntity, UpdateRecord} from './ElementsTreeOutline.js';  // eslint-disable-line no-unused-vars
+import {ImagePreviewPopover} from './ImagePreviewPopover.js';
 import {MarkerDecorator} from './MarkerDecorator.js';
 
 /**
@@ -47,9 +54,9 @@ import {MarkerDecorator} from './MarkerDecorator.js';
 export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
   /**
    * @param {!SDK.DOMModel.DOMNode} node
-   * @param {boolean=} elementCloseTag
+   * @param {boolean=} isClosingTag
    */
-  constructor(node, elementCloseTag) {
+  constructor(node, isClosingTag) {
     // The title will be updated in onattach.
     super();
     this._node = node;
@@ -60,14 +67,34 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
     this._gutterContainer.appendChild(gutterMenuIcon);
     this._decorationsElement = this._gutterContainer.createChild('div', 'hidden');
 
-    this._elementCloseTag = elementCloseTag;
+    this._isClosingTag = isClosingTag;
 
-    if (this._node.nodeType() === Node.ELEMENT_NODE && !elementCloseTag) {
+    if (this._node.nodeType() === Node.ELEMENT_NODE && !isClosingTag) {
       this._canAddAttributes = true;
     }
+    /** @type {?string} */
     this._searchQuery = null;
     this._expandedChildrenLimit = InitialChildrenLimit;
     this._decorationsThrottler = new Common.Throttler.Throttler(100);
+
+    if (!isClosingTag) {
+      this._adornerContainer = this.listItemElement.createChild('div', 'adorner-container hidden');
+      /** @type {!Array<!Adorner>} */
+      this._adorners = [];
+      /** @type {!Array<!Adorner>} */
+      this._styleAdorners = [];
+      this._adornersThrottler = new Common.Throttler.Throttler(100);
+
+      if (Root.Runtime.experiments.isEnabled('cssGridFeatures')) {
+        // This flag check is put here because currently the only style adorner is Grid;
+        // we will refactor this logic when we have more style-related adorners
+        this.updateStyleAdorners();
+      }
+      if (node.isAdFrameNode()) {
+        const adorner = this.adornText('Ad', AdornerCategories.Security);
+        adorner.title = ls`This frame was identified as an ad frame`;
+      }
+    }
 
     /**
      * @type {!Element|undefined}
@@ -128,15 +155,9 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
   /**
    * @param {!UI.ContextMenu.ContextMenu} contextMenu
    * @param {!SDK.DOMModel.DOMNode} node
-   * @suppressGlobalPropertiesCheck
    */
   static populateForcedPseudoStateItems(contextMenu, node) {
-    const pseudoClasses = ['active', 'hover', 'focus', 'visited', 'focus-within'];
-    try {
-      document.querySelector(':focus-visible');  // Will throw if not supported
-      pseudoClasses.push('focus-visible');
-    } catch (e) {
-    }
+    const pseudoClasses = ['active', 'hover', 'focus', 'visited', 'focus-within', 'focus-visible'];
     const forcedPseudoState = node.domModel().cssModel().pseudoState(node);
     const stateMenu = contextMenu.debugSection().appendSubMenuItem(Common.UIString.UIString('Force state'));
     for (let i = 0; i < pseudoClasses.length; ++i) {
@@ -159,7 +180,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    * @return {boolean}
    */
   isClosingTag() {
-    return !!this._elementCloseTag;
+    return !!this._isClosingTag;
   }
 
   /**
@@ -290,8 +311,8 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    * @override
    */
   onbind() {
-    if (!this._elementCloseTag) {
-      this._node[this.treeOutline.treeElementSymbol()] = this;
+    if (!this._isClosingTag) {
+      this.treeOutline.treeElementByNode.set(this._node, this);
     }
   }
 
@@ -299,8 +320,11 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    * @override
    */
   onunbind() {
-    if (this._node[this.treeOutline.treeElementSymbol()] === this) {
-      this._node[this.treeOutline.treeElementSymbol()] = null;
+    if (this._editing) {
+      this._editing.cancel();
+    }
+    if (this.treeOutline.treeElementByNode.get(this._node) === this) {
+      this.treeOutline.treeElementByNode.delete(this._node);
     }
   }
 
@@ -337,7 +361,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    * @override
    */
   onexpand() {
-    if (this._elementCloseTag) {
+    if (this._isClosingTag) {
       return;
     }
 
@@ -348,7 +372,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    * @override
    */
   oncollapse() {
-    if (this._elementCloseTag) {
+    if (this._isClosingTag) {
       return;
     }
 
@@ -434,7 +458,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    * @return {boolean}
    */
   ondblclick(event) {
-    if (this._editing || this._elementCloseTag) {
+    if (this._editing || this._isClosingTag) {
       return false;
     }
 
@@ -516,7 +540,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
    */
   populateTagContextMenu(contextMenu, event) {
     // Add attribute-related actions.
-    const treeElement = this._elementCloseTag ? this.treeOutline.findTreeElement(this._node) : this;
+    const treeElement = this._isClosingTag ? this.treeOutline.findTreeElement(this._node) : this;
     contextMenu.editSection().appendItem(
         Common.UIString.UIString('Add attribute'), treeElement._addNewAttribute.bind(treeElement));
 
@@ -600,7 +624,8 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
     menuItem = contextMenu.debugSection().appendCheckboxItem(
         Common.UIString.UIString('Hide element'), treeOutline.toggleHideElement.bind(treeOutline, this._node),
         treeOutline.isToggledToHidden(this._node));
-    menuItem.setShortcut(self.UI.shortcutRegistry.shortcutTitleForAction('elements.hide-element'));
+    menuItem.setShortcut(
+        UI.ShortcutRegistry.ShortcutRegistry.instance().shortcutTitleForAction('elements.hide-element'));
 
     if (isEditable) {
       contextMenu.editSection().appendItem(Common.UIString.UIString('Delete element'), this.remove.bind(this));
@@ -608,6 +633,11 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
 
     contextMenu.viewSection().appendItem(ls`Expand recursively`, this.expandRecursively.bind(this));
     contextMenu.viewSection().appendItem(ls`Collapse children`, this.collapseChildren.bind(this));
+    const deviceModeWrapperAction = new Emulation.DeviceModeWrapper.ActionDelegate();
+    contextMenu.viewSection().appendItem(
+        ls`Capture node screenshot`,
+        deviceModeWrapperAction.handleAction.bind(
+            null, UI.Context.Context.instance(), 'emulation.capture-node-screenshot'));
   }
 
   _startEditing() {
@@ -773,7 +803,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
     }
 
     const tagName = tagNameElement.textContent;
-    if (EditTagBlacklist.has(tagName.toLowerCase())) {
+    if (EditTagBlocklist.has(tagName.toLowerCase())) {
       return false;
     }
 
@@ -864,7 +894,9 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
     // Append editor.
     this.listItemElement.appendChild(this._htmlEditElement);
 
-    self.runtime.extension(UI.TextEditor.TextEditorFactory).instance().then(gotFactory.bind(this));
+    Root.Runtime.Runtime.instance().extension(UI.TextEditor.TextEditorFactory).instance().then(factory => {
+      gotFactory.call(this, /** @type {!UI.TextEditor.TextEditorFactory} */ (factory));
+    });
 
     /**
      * @param {!UI.TextEditor.TextEditorFactory} factory
@@ -1172,9 +1204,13 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
       const highlightElement = createElement('span');
       highlightElement.className = 'highlight';
       highlightElement.appendChild(nodeInfo);
+      // fixme: make it clear that `this.title = x` is a setter with significant side effects
       this.title = highlightElement;
       this.updateDecorations();
       this.listItemElement.insertBefore(this._gutterContainer, this.listItemElement.firstChild);
+      if (!this._isClosingTag) {
+        this.listItemElement.appendChild(this._adornerContainer);
+      }
       delete this._highlightResult;
       delete this.selectionElement;
       delete this._hintElement;
@@ -1227,7 +1263,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
     const node = this._node;
 
     if (!this.treeOutline._decoratorExtensions) {
-      this.treeOutline._decoratorExtensions = self.runtime.extensions(MarkerDecorator);
+      this.treeOutline._decoratorExtensions = Root.Runtime.Runtime.instance().extensions(MarkerDecorator);
     }
 
     const markerToExtension = new Map();
@@ -1274,6 +1310,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
       this._decorationsElement.removeChildren();
       this._decorationsElement.classList.add('hidden');
       this._gutterContainer.classList.toggle('has-decorations', decorations.length || descendantDecorations.length);
+      UI.ARIAUtils.setAccessibleName(this._decorationsElement, '');
 
       if (!decorations.length && !descendantDecorations.length) {
         return;
@@ -1309,6 +1346,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
         processColors.call(this, descendantColors, 'elements-gutter-decoration elements-has-decorated-children');
       }
       UI.Tooltip.Tooltip.install(this._decorationsElement, titles);
+      UI.ARIAUtils.setAccessibleName(this._decorationsElement, titles.textContent);
 
       /**
        * @param {!Set<string>} colors
@@ -1410,8 +1448,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
       const link = node.nodeName().toLowerCase() === 'a' ?
           UI.XLink.XLink.create(rewrittenHref, value, '', true /* preventClick */) :
           Components.Linkifier.Linkifier.linkifyURL(rewrittenHref, {text: value, preventClick: true});
-      link[HrefSymbol] = rewrittenHref;
-      return link;
+      return ImagePreviewPopover.setImageUrl(link, rewrittenHref);
     }
 
     const nodeName = node ? node.nodeName().toLowerCase() : '';
@@ -1513,6 +1550,8 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
     const tagNameElement =
         tagElement.createChild('span', isClosingTag ? 'webkit-html-close-tag-name' : 'webkit-html-tag-name');
     tagNameElement.textContent = (isClosingTag ? '/' : '') + tagName;
+    // Force screen readers to consider the tagname as one label, this avoids announcing <div id> as one word "divid".
+    UI.ARIAUtils.setAccessibleName(tagNameElement, tagName);
     if (!isClosingTag) {
       if (node.hasAttributes()) {
         const attributes = node.attributes();
@@ -1582,7 +1621,7 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
         }
 
         const tagName = node.nodeNameInCorrectCase();
-        if (this._elementCloseTag) {
+        if (this._isClosingTag) {
           this._buildTagDOM(titleDOM, tagName, true, true, updateRecord);
           break;
         }
@@ -1834,11 +1873,135 @@ export class ElementsTreeElement extends UI.TreeOutline.TreeElement {
 
   _editAsHTML() {
     const promise = Common.Revealer.reveal(this.node());
-    promise.then(() => self.UI.actionRegistry.action('elements.edit-as-html').execute());
+    promise.then(() => UI.ActionRegistry.ActionRegistry.instance().action('elements.edit-as-html').execute());
+  }
+
+  // TODO: add unit tests for adorner-related methods after component and TypeScript works are done
+  /**
+   *
+   * @param {string} text
+   * @param {!AdornerCategories} category
+   * @return {!Adorner}
+   */
+  adornText(text, category) {
+    const adornerContent = /** @type {!HTMLElement} */ (document.createElement('span'));
+    adornerContent.textContent = text;
+    const options = {
+      category,
+    };
+    const adorner = Adorner.create(adornerContent, text, options);
+    this._adorners.push(adorner);
+    this._updateAdorners();
+    return adorner;
+  }
+
+  /**
+   *
+   * @param {!Adorner} adornerToRemove
+   */
+  removeAdorner(adornerToRemove) {
+    const adorners = this._adorners;
+    adornerToRemove.remove();
+    for (let i = 0; i < adorners.length; ++i) {
+      if (adorners[i] === adornerToRemove) {
+        adorners.splice(i, 1);
+        this._updateAdorners();
+        return;
+      }
+    }
+  }
+
+  removeAllAdorners() {
+    for (const adorner of this._adorners) {
+      adorner.remove();
+    }
+
+    this._adorners = [];
+    this._updateAdorners();
+  }
+
+  _updateAdorners() {
+    this._adornersThrottler.schedule(this._updateAdornersInternal.bind(this));
+  }
+
+  /**
+   * @return {!Promise<void>}
+   */
+  _updateAdornersInternal() {
+    const adorners = this._adorners;
+    const adornerContainer = this._adornerContainer;
+    if (adorners.length === 0) {
+      adornerContainer.classList.add('hidden');
+      return Promise.resolve();
+    }
+
+    adorners.sort(adornerComparator);
+
+    adornerContainer.removeChildren();
+    for (const adorner of adorners) {
+      adornerContainer.appendChild(adorner);
+    }
+    adornerContainer.classList.remove('hidden');
+    return Promise.resolve();
+  }
+
+  async updateStyleAdorners() {
+    if (this._isClosingTag) {
+      return;
+    }
+
+    const node = this.node();
+    const nodeId = node.id;
+    if (node.nodeType() === Node.COMMENT_NODE || node.nodeType() === Node.DOCUMENT_FRAGMENT_NODE ||
+        nodeId === undefined) {
+      return;
+    }
+
+    const styles = await node.domModel().cssModel().computedStylePromise(nodeId);
+    for (const styleAdorner of this._styleAdorners) {
+      this.removeAdorner(styleAdorner);
+    }
+    this._styleAdorners = [];
+    if (!styles) {
+      return;
+    }
+
+    const display = styles.get('display');
+    if (display === 'grid' || display === 'inline-grid') {
+      const gridAdorner = this.adornText('grid', AdornerCategories.Layout);
+      gridAdorner.classList.add('grid');
+      const onClick = /** @type {!EventListener} */ (() => {
+        if (gridAdorner.isActive()) {
+          node.domModel().overlayModel().highlightGridInPersistentOverlay(
+              nodeId, Host.UserMetrics.GridOverlayOpener.Adorner);
+        } else {
+          node.domModel().overlayModel().hideGridInPersistentOverlay(nodeId);
+        }
+      });
+      gridAdorner.addInteraction(onClick, {
+        isToggle: true,
+        shouldPropagateOnKeydown: false,
+        ariaLabelDefault: ls`Enable grid mode`,
+        ariaLabelActive: ls`Disable grid mode`,
+      });
+
+      this._styleAdorners.push(gridAdorner);
+
+      node.domModel().overlayModel().addEventListener(SDK.OverlayModel.Events.PersistentGridOverlayCleared, () => {
+        gridAdorner.toggle(false /* force inactive state */);
+      });
+      node.domModel().overlayModel().addEventListener(
+          SDK.OverlayModel.Events.PersistentGridOverlayStateChanged, event => {
+            const {nodeId: eventNodeId, enabled} = event.data;
+            if (eventNodeId !== nodeId) {
+              return;
+            }
+            gridAdorner.toggle(enabled);
+          });
+    }
   }
 }
 
-export const HrefSymbol = Symbol('ElementsTreeElement.Href');
 export const InitialChildrenLimit = 500;
 
 // A union of HTML4 and HTML5-Draft elements that explicitly
@@ -1849,4 +2012,27 @@ export const ForbiddenClosingTagElements = new Set([
 ]);
 
 // These tags we do not allow editing their tag name.
-export const EditTagBlacklist = new Set(['html', 'head', 'body']);
+export const EditTagBlocklist = new Set(['html', 'head', 'body']);
+
+const OrderedAdornerCategories = [
+  AdornerCategories.Security,
+  AdornerCategories.Layout,
+  AdornerCategories.Default,
+];
+// Use idx + 1 for the order to avoid JavaScript's 0 == false issue
+const AdornerCategoryOrder = new Map(OrderedAdornerCategories.map((category, idx) => [category, idx + 1]));
+
+/**
+ *
+ * @param {!Adorner} adornerA
+ * @param {!Adorner} adornerB
+ * @return {number}
+ */
+function adornerComparator(adornerA, adornerB) {
+  const orderA = AdornerCategoryOrder.get(adornerA.category) || Number.POSITIVE_INFINITY;
+  const orderB = AdornerCategoryOrder.get(adornerB.category) || Number.POSITIVE_INFINITY;
+  if (orderA === orderB) {
+    return adornerA.name.localeCompare(adornerB.name);
+  }
+  return orderA - orderB;
+}

@@ -10,8 +10,7 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_SURFACEVK_H_
 #define LIBANGLE_RENDERER_VULKAN_SURFACEVK_H_
 
-#include "volk.h"
-
+#include "common/vulkan/vk_headers.h"
 #include "libANGLE/renderer/SurfaceImpl.h"
 #include "libANGLE/renderer/vulkan/RenderTargetVk.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
@@ -20,7 +19,7 @@ namespace rx
 {
 class RendererVk;
 
-class SurfaceVk : public SurfaceImpl
+class SurfaceVk : public SurfaceImpl, public angle::ObserverInterface
 {
   public:
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
@@ -33,6 +32,9 @@ class SurfaceVk : public SurfaceImpl
     SurfaceVk(const egl::SurfaceState &surfaceState);
     ~SurfaceVk() override;
 
+    // We monitor the staging buffer for changes. This handles staged data from outside this class.
+    void onSubjectStateChange(angle::SubjectIndex index, angle::SubjectMessage message) override;
+
     RenderTargetVk mColorRenderTarget;
     RenderTargetVk mDepthStencilRenderTarget;
 };
@@ -40,7 +42,7 @@ class SurfaceVk : public SurfaceImpl
 class OffscreenSurfaceVk : public SurfaceVk
 {
   public:
-    OffscreenSurfaceVk(const egl::SurfaceState &surfaceState);
+    OffscreenSurfaceVk(const egl::SurfaceState &surfaceState, RendererVk *renderer);
     ~OffscreenSurfaceVk() override;
 
     egl::Error initialize(const egl::Display *display) override;
@@ -78,7 +80,7 @@ class OffscreenSurfaceVk : public SurfaceVk
   protected:
     struct AttachmentImage final : angle::NonCopyable
     {
-        AttachmentImage();
+        AttachmentImage(SurfaceVk *surfaceVk);
         ~AttachmentImage();
 
         angle::Result initialize(DisplayVk *displayVk,
@@ -98,6 +100,7 @@ class OffscreenSurfaceVk : public SurfaceVk
 
         vk::ImageHelper image;
         vk::ImageViewHelper imageViews;
+        angle::ObserverBinding imageObserverBinding;
     };
 
     virtual angle::Result initializeImpl(DisplayVk *displayVk);
@@ -190,6 +193,11 @@ class WindowSurfaceVk : public SurfaceVk
     void destroy(const egl::Display *display) override;
 
     egl::Error initialize(const egl::Display *display) override;
+    angle::Result getAttachmentRenderTarget(const gl::Context *context,
+                                            GLenum binding,
+                                            const gl::ImageIndex &imageIndex,
+                                            GLsizei samples,
+                                            FramebufferAttachmentRenderTarget **rtOut) override;
     FramebufferImpl *createDefaultFramebuffer(const gl::Context *context,
                                               const gl::FramebufferState &state) override;
     egl::Error swap(const gl::Context *context) override;
@@ -211,6 +219,17 @@ class WindowSurfaceVk : public SurfaceVk
     // width and height can change with client window resizing
     EGLint getWidth() const override;
     EGLint getHeight() const override;
+    // Note: windows cannot be resized on Android.  The approach requires
+    // calling vkGetPhysicalDeviceSurfaceCapabilitiesKHR.  However, that is
+    // expensive; and there are troublesome timing issues for other parts of
+    // ANGLE (which cause test failures and crashes).  Therefore, a
+    // special-Android-only path is created just for the querying of EGL_WIDTH
+    // and EGL_HEIGHT.
+    // https://issuetracker.google.com/issues/153329980
+    egl::Error getUserWidth(const egl::Display *display, EGLint *value) const override;
+    egl::Error getUserHeight(const egl::Display *display, EGLint *value) const override;
+    angle::Result getUserExtentsImpl(DisplayVk *displayVk,
+                                     VkSurfaceCapabilitiesKHR *surfaceCaps) const;
 
     EGLint isPostSubBufferSupported() const override;
     EGLint getSwapBehavior() const override;
@@ -241,26 +260,33 @@ class WindowSurfaceVk : public SurfaceVk
     virtual angle::Result getCurrentWindowSize(vk::Context *context, gl::Extents *extentsOut) = 0;
 
     angle::Result initializeImpl(DisplayVk *displayVk);
-    angle::Result recreateSwapchain(ContextVk *contextVk,
-                                    const gl::Extents &extents,
-                                    uint32_t swapHistoryIndex);
+    angle::Result recreateSwapchain(ContextVk *contextVk, const gl::Extents &extents);
     angle::Result createSwapChain(vk::Context *context,
                                   const gl::Extents &extents,
                                   VkSwapchainKHR oldSwapchain);
-    angle::Result checkForOutOfDateSwapchain(ContextVk *contextVk,
-                                             uint32_t swapHistoryIndex,
-                                             bool presentOutOfDate);
+    angle::Result checkForOutOfDateSwapchain(ContextVk *contextVk, bool presentOutOfDate);
     angle::Result resizeSwapchainImages(vk::Context *context, uint32_t imageCount);
     void releaseSwapchainImages(ContextVk *contextVk);
     void destroySwapChainImages(DisplayVk *displayVk);
-    VkResult nextSwapchainImage(vk::Context *context);
+    // This method calls vkAcquireNextImageKHR() to acquire the next swapchain image.  It is called
+    // when the swapchain is initially created and when present() finds the swapchain out of date.
+    // Otherwise, it is scheduled to be called later by deferAcquireNextImage().
+    VkResult acquireNextSwapchainImage(vk::Context *context);
+    // This method is called when a swapchain image is presented.  It schedules
+    // acquireNextSwapchainImage() to be called later.
+    void deferAcquireNextImage(const gl::Context *context);
+    // Called when a swapchain image whose acquisition was deferred must be acquired.  This method
+    // will recreate the swapchain (if needed) and call the acquireNextSwapchainImage() method.
+    angle::Result doDeferredAcquireNextImage(const gl::Context *context, bool presentOutOfDate);
     angle::Result present(ContextVk *contextVk,
                           EGLint *rects,
                           EGLint n_rects,
                           const void *pNextChain,
                           bool *presentOutOfDate);
 
-    angle::Result updateAndDrawOverlay(ContextVk *contextVk, impl::SwapchainImage *image) const;
+    void updateOverlay(ContextVk *contextVk) const;
+    bool overlayHasEnabledWidget(ContextVk *contextVk) const;
+    angle::Result drawOverlay(ContextVk *contextVk, impl::SwapchainImage *image) const;
 
     angle::Result newPresentSemaphore(vk::Context *context, vk::Semaphore *semaphoreOut);
 
@@ -291,6 +317,7 @@ class WindowSurfaceVk : public SurfaceVk
     std::vector<impl::SwapchainCleanupData> mOldSwapchains;
 
     std::vector<impl::SwapchainImage> mSwapchainImages;
+    std::vector<angle::ObserverBinding> mSwapchainImageBindings;
     vk::Semaphore mAcquireImageSemaphore;
     uint32_t mCurrentSwapchainImageIndex;
 
@@ -299,11 +326,16 @@ class WindowSurfaceVk : public SurfaceVk
     // Depth/stencil image.  Possibly multisampled.
     vk::ImageHelper mDepthStencilImage;
     vk::ImageViewHelper mDepthStencilImageViews;
+    angle::ObserverBinding mDepthStencilImageBinding;
 
     // Multisample color image, view and framebuffer, if multisampling enabled.
     vk::ImageHelper mColorImageMS;
     vk::ImageViewHelper mColorImageMSViews;
+    angle::ObserverBinding mColorImageMSBinding;
     vk::Framebuffer mFramebufferMS;
+
+    // True when acquiring the next image is deferred.
+    bool mNeedToAcquireNextSwapchainImage;
 };
 
 }  // namespace rx

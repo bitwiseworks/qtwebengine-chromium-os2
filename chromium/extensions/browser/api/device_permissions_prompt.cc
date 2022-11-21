@@ -11,6 +11,7 @@
 #include "base/bind_helpers.h"
 #include "base/i18n/message_formatter.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/no_destructor.h"
 #include "base/scoped_observer.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -86,8 +87,8 @@ class UsbDevicePermissionsPrompt : public DevicePermissionsPrompt::Prompt,
     if (observer) {
       auto* device_manager = UsbDeviceManager::Get(browser_context());
       if (device_manager && !manager_observer_.IsObserving(device_manager)) {
-        device_manager->GetDevices(
-            base::Bind(&UsbDevicePermissionsPrompt::OnDevicesEnumerated, this));
+        device_manager->GetDevices(base::BindOnce(
+            &UsbDevicePermissionsPrompt::OnDevicesEnumerated, this));
         manager_observer_.Add(device_manager);
       }
     }

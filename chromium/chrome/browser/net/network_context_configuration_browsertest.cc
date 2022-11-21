@@ -53,10 +53,11 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/content_features.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/network_service_util.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -84,7 +85,7 @@
 #include "net/test/gtest_util.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#include "net/url_request/url_request.h"
+#include "net/url_request/referrer_policy.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -96,9 +97,10 @@
 #include "services/network/test/test_dns_util.h"
 #include "services/network/test/test_url_loader_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "url/gurl.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -165,11 +167,13 @@ class ConnectionTypeWaiter
 
   void Wait(network::mojom::ConnectionType expected_type) {
     auto current_type = network::mojom::ConnectionType::CONNECTION_UNKNOWN;
-    network::NetworkConnectionTracker::ConnectionTypeCallback callback =
-        base::BindOnce(&ConnectionTypeWaiter::OnConnectionChanged,
-                       base::Unretained(this));
-    while (!tracker_->GetConnectionType(&current_type, std::move(callback)) ||
-           current_type != expected_type) {
+    for (;;) {
+      network::NetworkConnectionTracker::ConnectionTypeCallback callback =
+          base::BindOnce(&ConnectionTypeWaiter::OnConnectionChanged,
+                         base::Unretained(this));
+      if (tracker_->GetConnectionType(&current_type, std::move(callback)) &&
+          current_type == expected_type)
+        break;
       run_loop_ = std::make_unique<base::RunLoop>(
           base::RunLoop::Type::kNestableTasksAllowed);
       run_loop_->Run();
@@ -305,8 +309,11 @@ class NetworkContextConfigurationBrowserTest
 
   content::StoragePartition* GetStoragePartitionForContextType(
       NetworkContextType network_context_type) {
-    const GURL kOnDiskUrl("chrome-guest://foo/persist");
-    const GURL kInMemoryUrl("chrome-guest://foo/");
+    const auto kOnDiskConfig = content::StoragePartitionConfig::Create(
+        "foo", /*partition_name=*/"", /*in_memory=*/false);
+    const auto kInMemoryConfig = content::StoragePartitionConfig::Create(
+        "foo", /*partition_name=*/"", /*in_memory=*/true);
+
     switch (network_context_type) {
       case NetworkContextType::kSystem:
       case NetworkContextType::kSafeBrowsing:
@@ -320,15 +327,15 @@ class NetworkContextConfigurationBrowserTest
         return content::BrowserContext::GetDefaultStoragePartition(
             incognito_->profile());
       case NetworkContextType::kOnDiskApp:
-        return content::BrowserContext::GetStoragePartitionForSite(
-            browser()->profile(), kOnDiskUrl);
+        return content::BrowserContext::GetStoragePartition(
+            browser()->profile(), kOnDiskConfig);
       case NetworkContextType::kInMemoryApp:
-        return content::BrowserContext::GetStoragePartitionForSite(
-            browser()->profile(), kInMemoryUrl);
+        return content::BrowserContext::GetStoragePartition(
+            browser()->profile(), kInMemoryConfig);
       case NetworkContextType::kOnDiskAppWithIncognitoProfile:
         DCHECK(incognito_);
-        return content::BrowserContext::GetStoragePartitionForSite(
-            incognito_->profile(), kOnDiskUrl);
+        return content::BrowserContext::GetStoragePartition(
+            incognito_->profile(), kOnDiskConfig);
     }
     NOTREACHED();
     return nullptr;
@@ -433,7 +440,7 @@ class NetworkContextConfigurationBrowserTest
       case NetworkContextType::kOnDiskAppWithIncognitoProfile:
         // Incognito actually uses the non-incognito prefs, so this should end
         // up being the same pref store as in the KProfile case.
-        return browser()->profile()->GetOffTheRecordProfile()->GetPrefs();
+        return browser()->profile()->GetPrimaryOTRProfile()->GetPrefs();
     }
   }
 
@@ -462,7 +469,7 @@ class NetworkContextConfigurationBrowserTest
       case NetworkContextType::kIncognitoProfile:
       case NetworkContextType::kOnDiskAppWithIncognitoProfile:
         ProfileNetworkContextServiceFactory::GetForContext(
-            browser()->profile()->GetOffTheRecordProfile())
+            browser()->profile()->GetPrimaryOTRProfile())
             ->FlushProxyConfigMonitorForTesting();
         break;
     }
@@ -567,8 +574,8 @@ class NetworkContextConfigurationBrowserTest
     request->site_for_cookies = net::SiteForCookies::FromOrigin(origin);
 
     request->trusted_params = network::ResourceRequest::TrustedParams();
-    request->trusted_params->network_isolation_key =
-        net::NetworkIsolationKey(origin, origin);
+    request->trusted_params->isolation_info =
+        net::IsolationInfo::CreateForInternalRequest(origin);
 
     content::SimpleURLLoaderTestHelper simple_loader_helper;
     std::unique_ptr<network::SimpleURLLoader> simple_loader =
@@ -632,8 +639,8 @@ class NetworkContextConfigurationBrowserTest
         url, net::CookieOptions::MakeAllInclusive(),
         base::BindOnce(
             [](std::string* cookies_out, base::RunLoop* run_loop,
-               const net::CookieStatusList& cookies,
-               const net::CookieStatusList& excluded_cookies) {
+               const net::CookieAccessResultList& cookies,
+               const net::CookieAccessResultList& excluded_cookies) {
               *cookies_out = net::CanonicalCookie::BuildCookieLine(cookies);
               run_loop->Quit();
             },
@@ -712,8 +719,7 @@ class NetworkContextConfigurationBrowserTest
       policy::PolicyMap values;
       values.Set(policy::key::kSSLVersionMin, policy::POLICY_LEVEL_MANDATORY,
                  policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
-                 std::make_unique<base::Value>(switches::kSSLVersionTLSv11),
-                 nullptr);
+                 base::Value(switches::kSSLVersionTLSv11), nullptr);
       base::RunLoop run_loop;
       PrefChangeRegistrar pref_change_registrar;
       pref_change_registrar.Init(g_browser_process->local_state());
@@ -750,7 +756,7 @@ class NetworkContextConfigurationBrowserTest
     // instead of '/echo' to avoid a disk_cache bug.
     // See https://crbug.com/792255.
     int net_error = content::LoadBasicRequest(
-        network_context(), embedded_test_server()->GetURL("/echoheader"), 0, 0,
+        network_context(), embedded_test_server()->GetURL("/echoheader"),
         net::LOAD_BYPASS_PROXY);
     EXPECT_THAT(net_error, net::test::IsOk());
 
@@ -791,8 +797,12 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   net::test_server::RegisterDefaultHandlers(&https_server);
   ASSERT_TRUE(https_server.Start());
-  if (GetPrefService()->FindPreference(prefs::kBlockThirdPartyCookies))
-    GetPrefService()->SetBoolean(prefs::kBlockThirdPartyCookies, true);
+  if (GetPrefService()->FindPreference(prefs::kCookieControlsMode)) {
+    GetPrefService()->SetInteger(
+        prefs::kCookieControlsMode,
+        static_cast<int>(
+            content_settings::CookieControlsMode::kBlockThirdParty));
+  }
   SetCookie(CookieType::kFirstParty, CookiePersistenceType::kPersistent,
             embedded_test_server());
 
@@ -802,8 +812,8 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
   url::Origin origin = url::Origin::Create(GURL(chrome::kChromeUIPrintURL));
   request->site_for_cookies = net::SiteForCookies::FromOrigin(origin);
   request->trusted_params = network::ResourceRequest::TrustedParams();
-  request->trusted_params->network_isolation_key =
-      net::NetworkIsolationKey(origin, origin);
+  request->trusted_params->isolation_info =
+      net::IsolationInfo::CreateForInternalRequest(origin);
   content::SimpleURLLoaderTestHelper simple_loader_helper;
   std::unique_ptr<network::SimpleURLLoader> simple_loader =
       network::SimpleURLLoader::Create(std::move(request),
@@ -845,7 +855,9 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
   test_server.RegisterRequestHandler(base::BindRepeating(&EchoCookieHeader));
   ASSERT_TRUE(test_server.Start());
 
-  GetPrefService()->SetBoolean(prefs::kBlockThirdPartyCookies, true);
+  GetPrefService()->SetInteger(
+      prefs::kCookieControlsMode,
+      static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty));
   SetCookie(CookieType::kFirstParty, CookiePersistenceType::kPersistent,
             embedded_test_server());
 
@@ -869,8 +881,8 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
 
   // This request will show up as cross-site because the chrome-extension URL
   // won't match the test_server domain (127.0.0.1), but because we set
-  // |attach_same_site_cookies| to true for extension-initiated requests, this
-  // will actually be able to get the cookie.
+  // |force_ignore_site_for_cookies| to true for extension-initiated requests,
+  // this will actually be able to get the cookie.
   GURL url = test_server.GetURL("/echocookieheader");
   std::string script = R"((url => {
     var xhr = new XMLHttpRequest();
@@ -926,8 +938,10 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, Cache) {
       std::make_unique<network::ResourceRequest>();
   request->url = request_url;
   request->trusted_params = network::ResourceRequest::TrustedParams();
-  request->trusted_params->network_isolation_key =
-      net::NetworkIsolationKey(request_origin, request_origin);
+  request->trusted_params->isolation_info =
+      net::IsolationInfo::CreateForInternalRequest(request_origin);
+  request->site_for_cookies =
+      request->trusted_params->isolation_info.site_for_cookies();
 
   content::SimpleURLLoaderTestHelper simple_loader_helper;
   std::unique_ptr<network::SimpleURLLoader> simple_loader =
@@ -950,8 +964,10 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, Cache) {
       std::make_unique<network::ResourceRequest>();
   request2->url = request_url;
   request2->trusted_params = network::ResourceRequest::TrustedParams();
-  request2->trusted_params->network_isolation_key =
-      net::NetworkIsolationKey(request_origin, request_origin);
+  request2->trusted_params->isolation_info =
+      net::IsolationInfo::CreateForInternalRequest(request_origin);
+  request2->site_for_cookies =
+      request2->trusted_params->isolation_info.site_for_cookies();
 
   content::SimpleURLLoaderTestHelper simple_loader_helper2;
   std::unique_ptr<network::SimpleURLLoader> simple_loader2 =
@@ -1039,8 +1055,10 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, PRE_DiskCache) {
       std::make_unique<network::ResourceRequest>();
   request->url = test_url;
   request->trusted_params = network::ResourceRequest::TrustedParams();
-  request->trusted_params->network_isolation_key =
-      net::NetworkIsolationKey(test_origin, test_origin);
+  request->trusted_params->isolation_info =
+      net::IsolationInfo::CreateForInternalRequest(test_origin);
+  request->site_for_cookies =
+      request->trusted_params->isolation_info.site_for_cookies();
 
   content::SimpleURLLoaderTestHelper simple_loader_helper;
   std::unique_ptr<network::SimpleURLLoader> simple_loader =
@@ -1057,9 +1075,7 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, PRE_DiskCache) {
   // Write the URL and expected response to a file.
   std::string file_data =
       test_url.spec() + "\n" + *simple_loader_helper.response_body();
-  ASSERT_EQ(
-      static_cast<int>(file_data.length()),
-      base::WriteFile(save_url_file_path, file_data.data(), file_data.size()));
+  ASSERT_TRUE(base::WriteFile(save_url_file_path, file_data));
 
   EXPECT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
 }
@@ -1097,8 +1113,10 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, DiskCache) {
       std::make_unique<network::ResourceRequest>();
   request->url = test_url;
   request->trusted_params = network::ResourceRequest::TrustedParams();
-  request->trusted_params->network_isolation_key =
-      net::NetworkIsolationKey(test_origin, test_origin);
+  request->trusted_params->isolation_info =
+      net::IsolationInfo::CreateForInternalRequest(test_origin);
+  request->site_for_cookies =
+      request->trusted_params->isolation_info.site_for_cookies();
 
   content::SimpleURLLoaderTestHelper simple_loader_helper;
   request->load_flags = net::LOAD_ONLY_FROM_CACHE;
@@ -1232,9 +1250,7 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, PRE_Hsts) {
   base::FilePath save_url_file_path = browser()->profile()->GetPath().Append(
       FILE_PATH_LITERAL("url_for_test.txt"));
   std::string file_data = start_url.spec();
-  ASSERT_EQ(
-      static_cast<int>(file_data.length()),
-      base::WriteFile(save_url_file_path, file_data.data(), file_data.size()));
+  ASSERT_TRUE(base::WriteFile(save_url_file_path, file_data));
 }
 
 // Checks if the HSTS information from the last test is still available after a
@@ -1374,26 +1390,44 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
   ASSERT_TRUE(FetchHeaderEcho("user-agent", &user_agent));
   EXPECT_EQ(::GetUserAgent(), user_agent);
 
-  // Now change the profile a different language, and see if the headers
-  // get updated.
+  // Change AcceptLanguages preferences, and check that headers are updated.
+  // First, A single language.
   browser()->profile()->GetPrefs()->SetString(language::prefs::kAcceptLanguages,
-                                              "uk");
+                                              "zu");
   FlushNetworkInterface();
   std::string accept_language2, user_agent2;
   ASSERT_TRUE(FetchHeaderEcho("accept-language", &accept_language2));
-  EXPECT_EQ(system ? kNoAcceptLanguage : "uk", accept_language2);
+  EXPECT_EQ(system ? kNoAcceptLanguage : "zu", accept_language2);
   ASSERT_TRUE(FetchHeaderEcho("user-agent", &user_agent2));
   EXPECT_EQ(::GetUserAgent(), user_agent2);
 
-  // Try a more complicated one, with multiple languages.
+  // Second, a single language with locale.
   browser()->profile()->GetPrefs()->SetString(language::prefs::kAcceptLanguages,
-                                              "uk, en_US");
+                                              "zu-ZA");
   FlushNetworkInterface();
   std::string accept_language3, user_agent3;
   ASSERT_TRUE(FetchHeaderEcho("accept-language", &accept_language3));
-  EXPECT_EQ(system ? kNoAcceptLanguage : "uk,en_US;q=0.9", accept_language3);
+  EXPECT_EQ(system ? kNoAcceptLanguage : "zu-ZA,zu;q=0.9", accept_language3);
   ASSERT_TRUE(FetchHeaderEcho("user-agent", &user_agent3));
   EXPECT_EQ(::GetUserAgent(), user_agent3);
+
+  // Third, a list with multiple languages. Incognito mode should return only
+  // the first.
+  browser()->profile()->GetPrefs()->SetString(language::prefs::kAcceptLanguages,
+                                              "ar,am,en-GB,ru,zu");
+  FlushNetworkInterface();
+  std::string accept_language4;
+  std::string user_agent4;
+  ASSERT_TRUE(FetchHeaderEcho("accept-language", &accept_language4));
+  if (GetProfile()->IsOffTheRecord()) {
+    EXPECT_EQ(system ? kNoAcceptLanguage : "ar", accept_language4);
+  } else {
+    EXPECT_EQ(system ? kNoAcceptLanguage
+                     : "ar,am;q=0.9,en-GB;q=0.8,en;q=0.7,ru;q=0.6,zu;q=0.5",
+              accept_language4);
+  }
+  ASSERT_TRUE(FetchHeaderEcho("user-agent", &user_agent4));
+  EXPECT_EQ(::GetUserAgent(), user_agent4);
 }
 
 // First part of testing enable referrers. Check that referrers are enabled by
@@ -1473,7 +1507,7 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
       std::make_unique<network::ResourceRequest>();
   request->url = embedded_test_server()->GetURL("/echoheader?Referer");
   request->referrer = GURL("http://referrer/");
-  request->referrer_policy = net::URLRequest::NO_REFERRER;
+  request->referrer_policy = net::ReferrerPolicy::NO_REFERRER;
   content::SimpleURLLoaderTestHelper simple_loader_helper;
   std::unique_ptr<network::SimpleURLLoader> simple_loader =
       network::SimpleURLLoader::Create(std::move(request),
@@ -1509,7 +1543,7 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
 IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest, CookiesEnabled) {
   if (IsRestartStateWithInProcessNetworkService())
     return;
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   // TODO(https://crbug.com/880496): Fix and reenable test.
   if (base::mac::IsOS10_11())
     return;
@@ -1548,7 +1582,9 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
   if (system)
     return;
 
-  GetPrefService()->SetBoolean(prefs::kBlockThirdPartyCookies, true);
+  GetPrefService()->SetInteger(
+      prefs::kCookieControlsMode,
+      static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty));
   SetCookie(CookieType::kThirdParty, CookiePersistenceType::kSession,
             https_server());
 
@@ -1567,21 +1603,19 @@ IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,
   if (system)
     return;
 
-  // The preference is expected to be reset in incognito mode.
-  if (is_incognito()) {
-    EXPECT_FALSE(GetPrefService()->GetBoolean(prefs::kBlockThirdPartyCookies));
-    return;
-  }
-
-  // The kBlockThirdPartyCookies pref should carry over to the next session.
-  EXPECT_TRUE(GetPrefService()->GetBoolean(prefs::kBlockThirdPartyCookies));
+  // The third-party cookies pref should carry over to the next session.
+  EXPECT_EQ(
+      static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty),
+      GetPrefService()->GetInteger(prefs::kCookieControlsMode));
   SetCookie(CookieType::kThirdParty, CookiePersistenceType::kSession,
             https_server());
 
   EXPECT_TRUE(GetCookies(https_server()->base_url()).empty());
 
   // Set pref to false, third party cookies should be allowed now.
-  GetPrefService()->SetBoolean(prefs::kBlockThirdPartyCookies, false);
+  GetPrefService()->SetInteger(
+      prefs::kCookieControlsMode,
+      static_cast<int>(content_settings::CookieControlsMode::kOff));
   // Set a third-party cookie. It should actually get set this time.
   SetCookie(CookieType::kThirdParty, CookiePersistenceType::kSession,
             https_server());
@@ -1745,7 +1779,7 @@ class NetworkContextConfigurationHttpPacBrowserTest
   ~NetworkContextConfigurationHttpPacBrowserTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    pac_test_server_.RegisterRequestHandler(base::Bind(
+    pac_test_server_.RegisterRequestHandler(base::BindRepeating(
         &NetworkContextConfigurationHttpPacBrowserTest::HandlePacRequest,
         GetPacScript()));
     EXPECT_TRUE(pac_test_server_.Start());
@@ -1792,9 +1826,7 @@ class NetworkContextConfigurationFilePacBrowserTest
         temp_dir_.GetPath().AppendASCII(kPacFileName);
 
     std::string pac_script = GetPacScript();
-    ASSERT_EQ(
-        static_cast<int>(pac_script.size()),
-        base::WriteFile(pac_file_path, pac_script.c_str(), pac_script.size()));
+    ASSERT_TRUE(base::WriteFile(pac_file_path, pac_script));
 
     command_line->AppendSwitchASCII(
         switches::kProxyPacUrl, net::FilePathToFileURL(pac_file_path).spec());
@@ -1850,7 +1882,7 @@ class NetworkContextConfigurationFtpPacBrowserTest
  public:
   NetworkContextConfigurationFtpPacBrowserTest()
       : ftp_server_(net::SpawnedTestServer::TYPE_FTP, GetChromeTestDataDir()) {
-    scoped_feature_list_.InitAndEnableFeature(features::kFtpProtocol);
+    scoped_feature_list_.InitAndEnableFeature(blink::features::kFtpProtocol);
     EXPECT_TRUE(ftp_server_.Start());
   }
   ~NetworkContextConfigurationFtpPacBrowserTest() override {}
@@ -2013,8 +2045,7 @@ class NetworkContextConfigurationManagedProxySettingsBrowserTest
     policies.Set(policy::key::kMaxConnectionsPerProxy,
                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
                  policy::POLICY_SOURCE_CLOUD,
-                 std::make_unique<base::Value>(
-                     static_cast<int>(kTestMaxConnectionsPerProxy)),
+                 base::Value(static_cast<int>(kTestMaxConnectionsPerProxy)),
                  /*external_data_fetcher=*/nullptr);
     UpdateChromePolicy(policies);
   }

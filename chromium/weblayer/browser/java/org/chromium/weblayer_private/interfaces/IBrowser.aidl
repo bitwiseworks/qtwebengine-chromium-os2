@@ -32,4 +32,15 @@ interface IBrowser {
   void addTab(in ITab tab) = 7;
   void destroyTab(in ITab tab) = 8;
   IUrlBarController getUrlBarController() = 9;
+
+  void setBottomView(in IObjectWrapper view) = 10;
+
+  ITab createTab() = 11;
+
+  void setTopViewAndScrollingBehavior(in IObjectWrapper view, in int minHeight,
+                                      in boolean onlyExpandControlsAtPageTop,
+                                      in boolean animate) = 12;
+
+  // Added in 87.
+  boolean isRestoringPreviousState() = 14;
 }

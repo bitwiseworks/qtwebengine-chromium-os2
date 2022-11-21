@@ -156,6 +156,10 @@ blink_modules_sources("peerconnection") {
     "rtc_void_request_promise_impl.h",
     "rtc_void_request_script_promise_resolver_impl.cc",
     "rtc_void_request_script_promise_resolver_impl.h",
+    "thermal_resource.cc",
+    "thermal_resource.h",
+    "thermal_uma_listener.cc",
+    "thermal_uma_listener.h",
     "transceiver_state_surfacer.cc",
     "transceiver_state_surfacer.h",
     "web_rtc_stats_report_callback_resolver.cc",
@@ -173,7 +177,7 @@ blink_modules_sources("peerconnection") {
   ]
 
   public_deps = [ "//third_party/webrtc_overrides:webrtc_component" ]
-  deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
+  deps = [ "//third_party/abseil-cpp:absl" ]
 
   if (!enable_webrtc) {
     sources -= [
@@ -211,4 +215,6 @@ jumbo_source_set("test_support") {
     "//third_party/blink/renderer/platform",
     "//third_party/webrtc_overrides:webrtc_component",
   ]
+
+  configs += [ "//third_party/blink/renderer:inside_blink" ]
 }

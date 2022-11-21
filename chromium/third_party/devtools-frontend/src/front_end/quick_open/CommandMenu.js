@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Diff from '../diff/diff.js';
 import * as Host from '../host/host.js';
+import * as Root from '../root/root.js';
 import * as UI from '../ui/ui.js';
 
 import {FilteredListWidget, Provider} from './FilteredListWidget.js';
@@ -55,13 +59,20 @@ export class CommandMenu {
   static createSettingCommand(extension, title, value) {
     const category = extension.descriptor()['category'] || '';
     const tags = extension.descriptor()['tags'] || '';
+    const reloadRequired = !!extension.descriptor()['reloadRequired'];
     const setting = Common.Settings.Settings.instance().moduleSetting(extension.descriptor()['settingName']);
     return CommandMenu.createCommand({
       category: ls(category),
       keys: tags,
       title,
       shortcut: '',
-      executeHandler: setting.set.bind(setting, value),
+      executeHandler: () => {
+        setting.set(value);
+        if (reloadRequired) {
+          UI.InspectorView.InspectorView.instance().displayReloadRequiredWarning(
+              ls`One or more settings have changed which requires a reload to take effect.`);
+        }
+      },
       availableHandler,
     });
 
@@ -79,7 +90,7 @@ export class CommandMenu {
    */
   static createActionCommand(options) {
     const {action, userActionCode} = options;
-    const shortcut = self.UI.shortcutRegistry.shortcutTitleForAction(action.id()) || '';
+    const shortcut = UI.ShortcutRegistry.ShortcutRegistry.instance().shortcutTitleForAction(action.id()) || '';
 
     return CommandMenu.createCommand({
       category: action.category(),
@@ -112,14 +123,14 @@ export class CommandMenu {
 
   _loadCommands() {
     const locations = new Map();
-    self.runtime.extensions(UI.View.ViewLocationResolver).forEach(extension => {
+    Root.Runtime.Runtime.instance().extensions(UI.View.ViewLocationResolver).forEach(extension => {
       const category = extension.descriptor()['category'];
       const name = extension.descriptor()['name'];
       if (category && name) {
         locations.set(name, category);
       }
     });
-    const viewExtensions = self.runtime.extensions('view');
+    const viewExtensions = Root.Runtime.Runtime.instance().extensions('view');
     for (const extension of viewExtensions) {
       const category = locations.get(extension.descriptor()['location']);
       if (!category) {
@@ -128,16 +139,11 @@ export class CommandMenu {
 
       /** @type {!RevealViewCommandOptions} */
       const options = {extension, category: ls(category), userActionCode: undefined};
-
-      if (category === 'Settings') {
-        options.userActionCode = Host.UserMetrics.Action.SettingsOpenedFromCommandMenu;
-      }
-
       this._commands.push(CommandMenu.createRevealViewCommand(options));
     }
 
-    // Populate whitelisted settings.
-    const settingExtensions = self.runtime.extensions('setting');
+    // Populate allowlisted settings.
+    const settingExtensions = Root.Runtime.Runtime.instance().extensions('setting');
     for (const extension of settingExtensions) {
       const options = extension.descriptor()['options'];
       if (!options || !extension.descriptor()['category']) {
@@ -199,8 +205,8 @@ export class CommandMenuProvider extends Provider {
   attach() {
     const allCommands = commandMenu.commands();
 
-    // Populate whitelisted actions.
-    const actions = self.UI.actionRegistry.availableActions();
+    // Populate allowlisted actions.
+    const actions = UI.ActionRegistry.ActionRegistry.instance().availableActions();
     for (const action of actions) {
       const category = action.category();
       if (!category) {
@@ -209,10 +215,6 @@ export class CommandMenuProvider extends Provider {
 
       /** @type {!ActionCommandOptions} */
       const options = {action};
-      if (category === 'Settings') {
-        options.userActionCode = Host.UserMetrics.Action.SettingsOpenedFromCommandMenu;
-      }
-
       this._commands.push(CommandMenu.createActionCommand(options));
     }
 
@@ -267,14 +269,7 @@ export class CommandMenuProvider extends Provider {
    */
   itemScoreAt(itemIndex, query) {
     const command = this._commands[itemIndex];
-    const opcodes = Diff.Diff.DiffWrapper.charDiff(query.toLowerCase(), command.title().toLowerCase());
-    let score = 0;
-    // Score longer sequences higher.
-    for (let i = 0; i < opcodes.length; ++i) {
-      if (opcodes[i][0] === Diff.Diff.Operation.Equal) {
-        score += opcodes[i][1].length * opcodes[i][1].length;
-      }
-    }
+    let score = Diff.Diff.DiffWrapper.characterScore(query.toLowerCase(), command.title().toLowerCase());
 
     // Score panel/drawer reveals above regular actions.
     if (command.category().startsWith('Panel')) {

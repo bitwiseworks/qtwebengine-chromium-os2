@@ -19,10 +19,10 @@
 #include "skia/ext/platform_canvas.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
-#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/modules/mediarecorder/buildflags.h"
 #include "third_party/blink/renderer/modules/mediarecorder/vea_encoder.h"
 #include "third_party/blink/renderer/modules/mediarecorder/vpx_encoder.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
@@ -320,11 +320,10 @@ void VideoTrackRecorderImpl::Encoder::RetrieveFrameOnMainThread(
     const gfx::Size& old_visible_size = video_frame->visible_rect().size();
     gfx::Size new_visible_size = old_visible_size;
 
-    media::VideoRotation video_rotation = media::VIDEO_ROTATION_0;
-    if (video_frame->metadata()->GetRotation(
-            media::VideoFrameMetadata::ROTATION, &video_rotation) &&
-        (video_rotation == media::VIDEO_ROTATION_90 ||
-         video_rotation == media::VIDEO_ROTATION_270)) {
+    media::VideoRotation video_rotation =
+        video_frame->metadata()->rotation.value_or(media::VIDEO_ROTATION_0);
+    if (video_rotation == media::VIDEO_ROTATION_90 ||
+        video_rotation == media::VIDEO_ROTATION_270) {
       new_visible_size.SetSize(old_visible_size.height(),
                                old_visible_size.width());
     }

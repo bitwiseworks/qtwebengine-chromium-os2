@@ -8,12 +8,10 @@
 #include <string>
 #include <vector>
 
+#include "base/optional.h"
 #include "media/base/video_facing.h"
+#include "media/capture/video/video_capture_device_descriptor.h"
 #include "third_party/blink/public/common/common_export.h"
-
-namespace media {
-struct VideoCaptureDeviceDescriptor;
-}  // namespace media
 
 namespace blink {
 
@@ -32,6 +30,8 @@ struct BLINK_COMMON_EXPORT WebMediaDeviceInfo {
       const std::string& device_id,
       const std::string& label,
       const std::string& group_id,
+      const media::VideoCaptureControlSupport& video_control_support =
+          media::VideoCaptureControlSupport(),
       media::VideoFacingMode video_facing = media::MEDIA_VIDEO_FACING_NONE);
   explicit WebMediaDeviceInfo(
       const media::VideoCaptureDeviceDescriptor& descriptor);
@@ -42,7 +42,9 @@ struct BLINK_COMMON_EXPORT WebMediaDeviceInfo {
   std::string device_id;
   std::string label;
   std::string group_id;
-  media::VideoFacingMode video_facing;
+  media::VideoCaptureControlSupport video_control_support;
+  media::VideoFacingMode video_facing =
+      media::VideoFacingMode::MEDIA_VIDEO_FACING_NONE;
 };
 
 using WebMediaDeviceInfoArray = std::vector<WebMediaDeviceInfo>;

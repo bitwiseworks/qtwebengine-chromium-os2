@@ -9,7 +9,6 @@
 
 namespace blink {
 class WebWidget;
-struct WebDeviceEmulationParams;
 }  // namespace blink
 
 namespace content {
@@ -34,29 +33,8 @@ class CONTENT_EXPORT RenderWidgetDelegate {
   // VR. https://crbug.com/940063
   virtual bool ShouldAckSyntheticInputImmediately() = 0;
 
-  // ==================================
-  // These methods called during handling of a SynchronizeVisualProperties
-  // message to handle updating state on the delegate.
-  //
-  // Called during handling a SynchronizeVisualProperties message, with the new
-  // display mode that will be applied to the RenderWidget. The display mode in
-  // the RenderWidget is already changed when this method is called.
-  virtual void ApplyNewDisplayModeForWidget(
-      blink::mojom::DisplayMode new_display_mode) = 0;
-  // Called during handling a SynchronizeVisualProperties message, if auto
-  // resize is enabled, with the new auto size limits.
-  virtual void ApplyAutoResizeLimitsForWidget(const gfx::Size& min_size,
-                                              const gfx::Size& max_size) = 0;
-  // Called during handling a SynchronizeVisualProperties message, if auto
-  // resize was enabled but is being disabled.
-  virtual void DisableAutoResizeForWidget() = 0;
-  // Called during handling a SynchronizeVisualProperties message, if the
-  // message informed that the focused node should be scrolled into view.
-  virtual void ScrollFocusedNodeIntoViewForWidget() = 0;
-  // ==================================
-
-  // Called when RenderWidget receives a SetFocus event.
-  virtual void DidReceiveSetFocusEventForWidget() = 0;
+  // Returns the current state of auto resize.
+  virtual bool AutoResizeMode() = 0;
 
   // Called when the RenderWidget handles
   // LayerTreeViewDelegate::DidCommitCompositorFrame().
@@ -72,12 +50,6 @@ class CONTENT_EXPORT RenderWidgetDelegate {
       const gfx::Size& size,
       const gfx::Size& visible_viewport_size,
       cc::BrowserControlsParams browser_controls_params) = 0;
-
-  // Called when RenderWidget services RenderWidgetScreenMetricsEmulatorDelegate
-  // SetScreenMetricsEmulationParameters().
-  virtual void SetScreenMetricsEmulationParametersForWidget(
-      bool enabled,
-      const blink::WebDeviceEmulationParams& params) = 0;
 };
 
 }  // namespace content

@@ -10,10 +10,11 @@
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "media/base/media_switches.h"
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -44,7 +45,7 @@ class WebRtcGetDisplayMediaBrowserTest : public WebRtcTestBase {
         tab->GetMainFrame(),
         base::StringPrintf("runGetDisplayMedia(%s);", constraints.c_str()),
         &result));
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
     // Starting from macOS 10.15, screen capture requires system permissions
     // that are disabled by default. The permission is reported as granted
     // if the fake UI is used.

@@ -10,6 +10,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/form_data.h"
+#include "components/autofill/core/common/renderer_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,8 +32,8 @@ using autofill::USERNAME;
 using autofill::USERNAME_AND_EMAIL_ADDRESS;
 using base::ASCIIToUTF16;
 
-using FieldPrediction =
-    autofill::AutofillQueryResponseContents::Field::FieldPrediction;
+using FieldPrediction = autofill::AutofillQueryResponse::FormSuggestion::
+    FieldSuggestion::FieldPrediction;
 
 namespace password_manager {
 
@@ -70,7 +71,7 @@ TEST(FormPredictionsTest, ConvertToFormPredictions) {
   FormData form_data;
   for (size_t i = 0; i < base::size(test_fields); ++i) {
     FormFieldData field;
-    field.unique_renderer_id = i + 1000;
+    field.unique_renderer_id = autofill::FieldRendererId(i + 1000);
     field.name = ASCIIToUTF16(test_fields[i].name);
     field.form_control_type = test_fields[i].form_control_type;
     form_data.fields.push_back(field);
@@ -83,8 +84,6 @@ TEST(FormPredictionsTest, ConvertToFormPredictions) {
     field->set_server_type(test_fields[i].input_type);
 
     std::vector<FieldPrediction> predictions(1);
-    predictions[0].set_may_use_prefilled_placeholder(
-        test_fields[i].may_use_prefilled_placeholder);
 
     for (ServerFieldType type : test_fields[i].additional_types) {
       FieldPrediction additional_prediction;
@@ -92,6 +91,8 @@ TEST(FormPredictionsTest, ConvertToFormPredictions) {
       predictions.push_back(additional_prediction);
     }
     field->set_server_predictions(predictions);
+    field->set_may_use_prefilled_placeholder(
+        test_fields[i].may_use_prefilled_placeholder);
   }
 
   constexpr int driver_id = 1000;
@@ -149,7 +150,7 @@ TEST(FormPredictionsTest, ConvertToFormPredictions_SynthesiseConfirmation) {
     FormData form_data;
     for (size_t i = 0; i < test_form.size(); ++i) {
       FormFieldData field;
-      field.unique_renderer_id = i + 1000;
+      field.unique_renderer_id = autofill::FieldRendererId(i + 1000);
       field.name = ASCIIToUTF16(test_form[i].name);
       field.form_control_type = test_form[i].form_control_type;
       form_data.fields.push_back(field);

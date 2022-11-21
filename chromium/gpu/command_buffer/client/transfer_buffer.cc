@@ -11,7 +11,7 @@
 #include <climits>
 
 #include "base/bits.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 
@@ -61,6 +61,11 @@ void TransferBuffer::Free() {
     TRACE_EVENT0("gpu", "TransferBuffer::Free");
     helper_->OrderingBarrier();
     helper_->command_buffer()->DestroyTransferBuffer(buffer_id_);
+    if (!HaveBuffer()) {
+      // The above may call this function reentrantly. If the buffer was
+      // already freed, then our work is done.
+      return;
+    }
     buffer_id_ = -1;
     buffer_ = nullptr;
     result_buffer_ = nullptr;

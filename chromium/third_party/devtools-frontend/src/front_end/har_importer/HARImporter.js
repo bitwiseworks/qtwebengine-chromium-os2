@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
 
@@ -85,7 +88,7 @@ export class Importer {
 
     // Response data.
     if (entry.response.content.mimeType && entry.response.content.mimeType !== 'x-unknown') {
-      request.mimeType = entry.response.content.mimeType;
+      request.mimeType = /** @type {!SDK.NetworkRequest.MIME_TYPE} */ (entry.response.content.mimeType);
     }
     request.responseHeaders = entry.response.headers;
     request.statusCode = entry.response.status;
@@ -238,6 +241,8 @@ export class Importer {
 
       workerStart: -1,
       workerReady: -1,
+      workerFetchStart: -1,
+      workerRespondWithSettled: -1,
       sendStart: timings.send >= 0 ? lastEntry : -1,
       sendEnd: accumulateTime(timings.send),
       pushStart: 0,

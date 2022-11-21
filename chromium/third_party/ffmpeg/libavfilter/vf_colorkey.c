@@ -45,7 +45,7 @@ static uint8_t do_colorkey_pixel(ColorkeyContext *ctx, uint8_t r, uint8_t g, uin
     int dg = (int)g - ctx->colorkey_rgba[1];
     int db = (int)b - ctx->colorkey_rgba[2];
 
-    double diff = sqrt((dr * dr + dg * dg + db * db) / (255.0 * 255.0));
+    double diff = sqrt((dr * dr + dg * dg + db * db) / (255.0 * 255.0 * 3.0));
 
     if (ctx->blend > 0.0001) {
         return av_clipd((diff - ctx->similarity) / ctx->blend, 0.0, 1.0) * 255.0;
@@ -204,7 +204,7 @@ static const AVFilterPad colorkey_outputs[] = {
 #if CONFIG_COLORKEY_FILTER
 
 static const AVOption colorkey_options[] = {
-    { "color", "set the colorkey key color", OFFSET(colorkey_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color", "set the colorkey key color", OFFSET(colorkey_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, 0, 0, FLAGS },
     { "similarity", "set the colorkey similarity value", OFFSET(similarity), AV_OPT_TYPE_FLOAT, { .dbl = 0.01 }, 0.01, 1.0, FLAGS },
     { "blend", "set the colorkey key blend value", OFFSET(blend), AV_OPT_TYPE_FLOAT, { .dbl = 0.0 }, 0.0, 1.0, FLAGS },
     { NULL }
@@ -229,7 +229,7 @@ AVFilter ff_vf_colorkey = {
 #if CONFIG_COLORHOLD_FILTER
 
 static const AVOption colorhold_options[] = {
-    { "color", "set the colorhold key color", OFFSET(colorkey_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, CHAR_MIN, CHAR_MAX, FLAGS },
+    { "color", "set the colorhold key color", OFFSET(colorkey_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, 0, 0, FLAGS },
     { "similarity", "set the colorhold similarity value", OFFSET(similarity), AV_OPT_TYPE_FLOAT, { .dbl = 0.01 }, 0.01, 1.0, FLAGS },
     { "blend", "set the colorhold blend value", OFFSET(blend), AV_OPT_TYPE_FLOAT, { .dbl = 0.0 }, 0.0, 1.0, FLAGS },
     { NULL }

@@ -59,6 +59,8 @@ from v8_utilities import binding_header_filename, extended_attribute_value_conta
 NON_WRAPPER_TYPES = frozenset([
     'EventHandler',
     'NodeFilter',
+    'OnBeforeUnloadEventHandler',
+    'OnErrorEventHandler',
 ])
 TYPED_ARRAY_TYPES = frozenset([
     'Float32Array',
@@ -83,8 +85,8 @@ ARRAY_BUFFER_AND_VIEW_TYPES = TYPED_ARRAY_TYPES.union(
         'SharedArrayBuffer',
     ]))
 # We have an unfortunate hack that treats types whose name ends with
-# 'Constructor' as aliases to IDL interface object. This white list is used to
-# disable the hack.
+# 'Constructor' as aliases to IDL interface object. This list is used to disable
+# the hack.
 _CALLBACK_CONSTRUCTORS = frozenset((
     'AnimatorConstructor',
     'BlinkAudioWorkletProcessorConstructor',
@@ -125,6 +127,8 @@ CPP_INTEGER_CONVERSION_RULES = {
 }
 CPP_SPECIAL_CONVERSION_RULES = {
     'EventHandler': 'EventListener*',
+    'OnBeforeUnloadEventHandler': 'EventListener*',
+    'OnErrorEventHandler': 'EventListener*',
     'Promise': 'ScriptPromise',
     'ScriptValue': 'ScriptValue',
     # FIXME: Eliminate custom bindings for XPathNSResolver  http://crbug.com/345529
@@ -548,6 +552,11 @@ def impl_includes_for_type(idl_type, interfaces_info):
     base_idl_type = idl_type.base_type
     if idl_type.is_string_type:
         includes_for_type.add('platform/wtf/text/wtf_string.h')
+    if idl_type.is_record_type:
+        includes_for_type.update(impl_includes_for_type(idl_type.key_type,
+                                                        interfaces_info))
+        includes_for_type.update(impl_includes_for_type(idl_type.value_type,
+                                                        interfaces_info))
     if idl_type.is_callback_function:
         component = IdlType.callback_functions[base_idl_type]['component_dir']
         return set([
@@ -1028,6 +1037,10 @@ V8_SET_RETURN_VALUE = {
     'V8SetReturnValue(info, {cpp_value})',
     'NodeFilter':
     'V8SetReturnValue(info, {cpp_value})',
+    'OnBeforeUnloadEventHandler':
+    'V8SetReturnValue(info, {cpp_value})',
+    'OnErrorEventHandler':
+    'V8SetReturnValue(info, {cpp_value})',
     'ScriptValue':
     'V8SetReturnValue(info, {cpp_value})',
     # Records.
@@ -1101,7 +1114,9 @@ def v8_set_return_value(idl_type,
         idl_type, cpp_value, extended_attributes)
     this_v8_conversion_type = idl_type.v8_conversion_type(extended_attributes)
     # SetReturn-specific overrides
-    if this_v8_conversion_type in ('EventHandler', 'NodeFilter', 'ScriptValue',
+    if this_v8_conversion_type in ('EventHandler', 'NodeFilter',
+                                   'OnBeforeUnloadEventHandler',
+                                   'OnErrorEventHandler', 'ScriptValue',
                                    'sequence', 'FrozenArray'):
         # Convert value to V8 and then use general V8SetReturnValue
         cpp_value = idl_type.cpp_value_to_v8_value(
@@ -1161,6 +1176,10 @@ CPP_VALUE_TO_V8_VALUE = {
     'JSEventHandler::AsV8Value({isolate}, impl, {cpp_value})',
     'NodeFilter':
     'ToV8({cpp_value}, {creation_context}, {isolate})',
+    'OnBeforeUnloadEventHandler':
+    'JSEventHandler::AsV8Value({isolate}, impl, {cpp_value})',
+    'OnErrorEventHandler':
+    'JSEventHandler::AsV8Value({isolate}, impl, {cpp_value})',
     'Record':
     'ToV8({cpp_value}, {creation_context}, {isolate})',
     'ScriptValue':

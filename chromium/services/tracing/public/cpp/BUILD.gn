@@ -2,11 +2,22 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/buildflag_header.gni")
 import("//build/config/chromecast_build.gni")
 import("//build/config/compiler/compiler.gni")
+import("//build_overrides/build.gni")
+import("//services/tracing/public/cpp/stack_sampling/loader_lock_sampling.gni")
 
-config("wrap_find_exidx") {
-  ldflags = [ "-Wl,-wrap,dl_unwind_find_exidx" ]
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
+buildflag_header("buildflags") {
+  header = "buildflags.h"
+  flags = [ "ENABLE_LOADER_LOCK_SAMPLING=$enable_loader_lock_sampling" ]
 }
 
 source_set("traced_process") {
@@ -32,8 +43,9 @@ if (!is_nacl && !is_ios) {
 
 target(tracing_lib_type, "cpp") {
   sources = [
+    "perfetto/flow_event_utils.cc",
+    "perfetto/flow_event_utils.h",
     "perfetto/macros.h",
-    "perfetto/macros_internal.h",
   ]
 
   defines = [ "IS_TRACING_CPP_IMPL" ]
@@ -41,14 +53,11 @@ target(tracing_lib_type, "cpp") {
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
-  public_deps = [
-    "//base",
-    "//third_party/perfetto:libperfetto",
-  ]
+  public_deps = [ "//base" ]
 
   deps = [ "//third_party/perfetto/include/perfetto/protozero" ]
 
-  all_dependent_configs = [ "//third_party/perfetto/gn:public_config" ]
+  all_dependent_configs = []
 
   if (!is_nacl && !is_ios) {
     sources += [
@@ -56,8 +65,6 @@ target(tracing_lib_type, "cpp") {
       "base_agent.h",
       "perfetto/dummy_producer.cc",
       "perfetto/dummy_producer.h",
-      "perfetto/flow_event_utils.cc",
-      "perfetto/flow_event_utils.h",
       "perfetto/interning_index.h",
       "perfetto/java_heap_profiler/hprof_buffer_android.cc",
       "perfetto/java_heap_profiler/hprof_buffer_android.h",
@@ -68,13 +75,18 @@ target(tracing_lib_type, "cpp") {
       "perfetto/java_heap_profiler/hprof_parser_android.h",
       "perfetto/java_heap_profiler/java_heap_profiler_android.cc",
       "perfetto/java_heap_profiler/java_heap_profiler_android.h",
-      "perfetto/macros_internal.cc",
       "perfetto/perfetto_config.cc",
       "perfetto/perfetto_config.h",
+      "perfetto/perfetto_platform.cc",
+      "perfetto/perfetto_platform.h",
       "perfetto/perfetto_producer.cc",
       "perfetto/perfetto_producer.h",
+      "perfetto/perfetto_session.cc",
+      "perfetto/perfetto_session.h",
       "perfetto/perfetto_traced_process.cc",
       "perfetto/perfetto_traced_process.h",
+      "perfetto/perfetto_tracing_backend.cc",
+      "perfetto/perfetto_tracing_backend.h",
       "perfetto/producer_client.cc",
       "perfetto/producer_client.h",
       "perfetto/shared_memory.cc",
@@ -86,18 +98,22 @@ target(tracing_lib_type, "cpp") {
       "perfetto/task_runner.h",
       "perfetto/trace_event_data_source.cc",
       "perfetto/trace_event_data_source.h",
+      "perfetto/trace_packet_tokenizer.cc",
+      "perfetto/trace_packet_tokenizer.h",
       "perfetto/trace_time.cc",
       "perfetto/trace_time.h",
       "perfetto/traced_value_proto_writer.cc",
       "perfetto/traced_value_proto_writer.h",
       "perfetto/track_event_thread_local_event_sink.cc",
       "perfetto/track_event_thread_local_event_sink.h",
+      "stack_sampling/reached_code_data_source_android.cc",
+      "stack_sampling/reached_code_data_source_android.h",
       "stack_sampling/tracing_sampler_profiler.cc",
       "stack_sampling/tracing_sampler_profiler.h",
       "trace_event_agent.cc",
       "trace_event_agent.h",
-      "trace_event_args_whitelist.cc",
-      "trace_event_args_whitelist.h",
+      "trace_event_args_allowlist.cc",
+      "trace_event_args_allowlist.h",
       "trace_startup.cc",
       "trace_startup.h",
       "traced_process_impl.cc",
@@ -106,6 +122,20 @@ target(tracing_lib_type, "cpp") {
       "tracing_features.h",
     ]
 
+    if (is_android && current_cpu == "arm64") {
+      sources += [
+        "stack_sampling/stack_unwinder_arm64_android.cc",
+        "stack_sampling/stack_unwinder_arm64_android.h",
+      ]
+    }
+
+    if (enable_loader_lock_sampling) {
+      sources += [
+        "stack_sampling/loader_lock_sampler_win.cc",
+        "stack_sampling/loader_lock_sampler_win.h",
+      ]
+    }
+
     public_deps += [
       "//components/tracing:startup_tracing",
       "//mojo/public/cpp/bindings",
@@ -113,6 +143,7 @@ target(tracing_lib_type, "cpp") {
     ]
 
     deps += [
+      ":buildflags",
       "//build:chromecast_buildflags",
       "//third_party/perfetto/protos/perfetto/trace/chrome:minimal_complete_lite",
     ]
@@ -134,9 +165,6 @@ target(tracing_lib_type, "cpp") {
       ]
       deps += [ "//buildtools/third_party/libunwind" ]
       include_dirs = [ "//buildtools/third_party/libunwind/trunk/include" ]
-
-      # stack_unwinder_android.cc overrides the dl_unwind_find_exidx function.
-      all_dependent_configs += [ ":wrap_find_exidx" ]
     }
   }  # !is_ios && !is_nacl
 }

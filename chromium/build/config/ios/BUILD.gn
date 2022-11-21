@@ -37,15 +37,27 @@ config("compiler") {
       "-arch",
       "x86_64",
     ]
+    swiftflags = [
+      "-target",
+      "x86_64-apple-ios$ios_deployment_target-simulator",
+    ]
   } else if (current_cpu == "x86") {
     common_ios_flags += [
       "-arch",
       "i386",
     ]
+    swiftflags = [
+      "-target",
+      "i386-apple-ios$ios_deployment_target-simulator",
+    ]
   } else if (current_cpu == "armv7" || current_cpu == "arm") {
     common_ios_flags += [
       "-arch",
       "armv7",
+    ]
+    swiftflags = [
+      "-target",
+      "armv7-apple-ios$ios_deployment_target",
     ]
     if (use_qt_fat_lib) {
       common_ios_flags += [
@@ -58,6 +70,10 @@ config("compiler") {
       "-arch",
       "arm64",
     ]
+    swiftflags = [
+      "-target",
+      "arm64-apple-ios$ios_deployment_target",
+    ]
     if (use_qt_fat_lib) {
       common_ios_flags += [
         "-arch",
@@ -65,6 +81,11 @@ config("compiler") {
       ]
     }
   }
+
+  swiftflags += [
+    "-swift-version",
+    "5",
+  ]
 
   # This is here so that all files get recompiled after an Xcode update.
   # (defines are passed via the command line, and build system rebuild things
@@ -86,7 +107,6 @@ config("compiler") {
 # that is iOS-only. Please see that target for advice on what should go in
 # :runtime_library vs. :compiler.
 config("runtime_library") {
-
   if (use_qt_fat_lib) {
     common_flags = [
       "-Xarch_arm64",
@@ -102,9 +122,17 @@ config("runtime_library") {
         "-isysroot",
         rebase_path(sysroot, root_build_dir),
       ]
+      swiftflags = [
+        "-sdk",
+        rebase_path(sysroot, root_build_dir),
+      ]
     } else {
       sysroot_flags = [
         "-isysroot",
+        sysroot,
+      ]
+      swiftflags = [
+        "-sdk",
         sysroot,
       ]
     }
@@ -140,6 +168,7 @@ config("ios_executable_flags") {
 
 config("ios_dynamic_flags") {
   ldflags = [ "-Wl,-ObjC" ]  # Always load Objective-C categories and class.
+  lib_dirs = [ "$sysroot/usr/lib/swift" ]
 }
 
 config("xctest_config") {
@@ -196,6 +225,8 @@ action("xctest_runner_without_arm64e") {
     rebase_path(outputs[0], root_build_dir),
     "--input",
     rebase_path(sources[0], root_build_dir),
+    "--xcode-version",
+    xcode_version,
   ]
 
   if (ios_use_goma_rbe) {

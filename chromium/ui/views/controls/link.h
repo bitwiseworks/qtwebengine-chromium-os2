@@ -32,35 +32,22 @@ class VIEWS_EXPORT Link : public Label {
 
   // A callback to be called when the link is clicked.  Closures are also
   // accepted; see below.
-  using ClickedCallback =
-      base::RepeatingCallback<void(Link* source, int event_flags)>;
+  using ClickedCallback = base::RepeatingCallback<void(const ui::Event& event)>;
 
-  // The padding for the focus ring border when rendering a focused Link with
-  // FocusStyle::kRing.
-  static constexpr gfx::Insets kFocusBorderPadding = gfx::Insets(1);
-
-  // How the Link is styled when focused.
-  enum class FocusStyle {
-    kUnderline,  // An underline style is added to the text only when focused.
-    kRing,       // A focus ring is drawn around the View.
-  };
-
-  explicit Link(const base::string16& title,
+  explicit Link(const base::string16& title = base::string16(),
                 int text_context = style::CONTEXT_LABEL,
                 int text_style = style::STYLE_LINK);
   ~Link() override;
 
-  // Returns the current FocusStyle of this Link.
-  FocusStyle GetFocusStyle() const;
-
-  // Allow providing callbacks that expect either zero or two args, since many
-  // callers don't care about the arguments and can avoid adapter functions this
+  // Allow providing callbacks that expect either zero or one args, since many
+  // callers don't care about the argument and can avoid adapter functions this
   // way.
   void set_callback(base::RepeatingClosure callback) {
-    // Adapt this closure to a ClickedCallback by discarding the extra args.
-    callback_ = base::BindRepeating(
-        [](base::RepeatingClosure closure, Link*, int) { closure.Run(); },
-        std::move(callback));
+    // Adapt this closure to a ClickedCallback by discarding the extra arg.
+    callback_ =
+        base::BindRepeating([](base::RepeatingClosure closure,
+                               const ui::Event& event) { closure.Run(); },
+                            std::move(callback));
   }
   void set_callback(ClickedCallback callback) {
     callback_ = std::move(callback);
@@ -68,11 +55,11 @@ class VIEWS_EXPORT Link : public Label {
 
   SkColor GetColor() const;
 
+  void SetForceUnderline(bool force_underline);
+
   // Label:
-  void PaintFocusRing(gfx::Canvas* canvas) const override;
-  gfx::Insets GetInsets() const override;
   gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
-  bool CanProcessEventsWithinSubtree() const override;
+  bool GetCanProcessEventsWithinSubtree() const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
@@ -89,24 +76,16 @@ class VIEWS_EXPORT Link : public Label {
   void SetEnabledColor(SkColor color) override;
   bool IsSelectionSupported() const override;
 
-  bool GetUnderline() const;
-  // TODO(estade): almost all the places that call this pass false. With
-  // Harmony, false is already the default so those callsites can be removed.
-  // TODO(tapted): Then remove all callsites when client code sets a correct
-  // typography style and derives this from style::GetFont(STYLE_LINK).
-  void SetUnderline(bool underline);
-
  private:
   void SetPressed(bool pressed);
+
+  void OnClick(const ui::Event& event);
 
   void RecalculateFont();
 
   void ConfigureFocus();
 
   ClickedCallback callback_;
-
-  // Whether the link should be underlined when enabled.
-  bool underline_ = false;
 
   // Whether the link is currently pressed.
   bool pressed_ = false;
@@ -115,6 +94,10 @@ class VIEWS_EXPORT Link : public Label {
   base::Optional<SkColor> requested_enabled_color_;
 
   PropertyChangedSubscription enabled_changed_subscription_;
+
+  // Whether the link text should use underline style regardless of enabled or
+  // focused state.
+  bool force_underline_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(Link);
 };

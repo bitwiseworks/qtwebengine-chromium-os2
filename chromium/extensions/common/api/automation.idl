@@ -13,40 +13,66 @@
 
   // Possible events fired on an $(ref:automation.AutomationNode).
   enum EventType {
-    activedescendantchanged,
+    accessKeyChanged,
+    activeDescendantChanged,
     alert,
     ariaAttributeChanged,
+    atomicChanged,
+    autoCompleteChanged,
     autocorrectionOccured,
     blur,
+    busyChanged,
     checkedStateChanged,
     childrenChanged,
+    classNameChanged,
     clicked,
+    collapsed,
     controlsChanged,
+    describedByChanged,
+    descriptionChanged,
     documentSelectionChanged,
     documentTitleChanged,
+    dropeffectChanged,
+    enabledChanged,
     endOfTest,
+    expanded,
     expandedChanged,
+    flowFromChanged,
+    flowToChanged,
     focus,
     focusAfterMenuClose,
+    focusChanged,
     focusContext,
+    grabbedChanged,
+    haspopupChanged,
     hide,
+    hierarchicalLevelChanged,
     hitTestResult,
     hover,
+    ignoredChanged,
+    imageAnnotationChanged,
     imageFrameUpdated,
     invalidStatusChanged,
+    keyShortcutsChanged,
+    labeledByChanged,
+    languageChanged,
     layoutComplete,
+    layoutInvalidated,   // fired when aria-busy goes false
     liveRegionChanged,
     liveRegionCreated,
+    liveRegionNodeChanged,  // fired on a node within a live region.
+    liveRelevantChanged,
+    liveStatusChanged,
     loadComplete,
     loadStart,
     locationChanged,
     mediaStartedPlaying,
     mediaStoppedPlaying,
     menuEnd,
+    menuItemSelected,
     menuListItemSelected,
     menuListValueChanged,
     menuPopupEnd,
-    menuPopupHide,
     menuPopupStart,
     menuStart,
     mouseCanceled,
@@ -54,26 +80,48 @@
     mouseMoved,
     mousePressed,
     mouseReleased,
+    multilineStateChanged,
+    multiselectableStateChanged,
+    nameChanged,
+    objectAttributeChanged,
+    otherAttributeChanged,
+    placeholderChanged,
+    portalActivated,
+    positionInSetChanged,
+    readonlyChanged,
+    relatedNodeChanged,
+    requiredStateChanged,
+    roleChanged,
     rowCollapsed,
     rowCountChanged,
     rowExpanded,
+    scrollHorizontalPositionChanged,
     scrollPositionChanged,
+    scrollVerticalPositionChanged,
     scrolledToAnchor,
+    selectedChanged,
     selectedChildrenChanged,
     selection,
     selectionAdd,
     selectionRemove,
+    setSizeChanged,
     show,
+    sortChanged,
     stateChanged,
+    subtreeCreated,
+    textAttributeChanged,
     textChanged,
     textSelectionChanged,
     tooltipClosed,
     tooltipOpened,
+    treeChanged,
+    valueChanged,
+    valueMaxChanged,
+    valueMinChanged,
+    valueStepChanged,
     windowActivated,
     windowDeactivated,
-    windowVisibilityChanged,
-    treeChanged,
-    valueChanged
+    windowVisibilityChanged
   };
 
   // Describes the purpose of an $(ref:automation.AutomationNode).
@@ -188,6 +236,7 @@
     ignored,
     image,
     imageMap,
+    imeCandidate,
     inlineTextBox,
     inputTime,
     keyboard,
@@ -211,7 +260,6 @@
     math,
     menu,
     menuBar,
-    menuButton,
     menuItem,
     menuItemCheckBox,
     menuItemRadio,
@@ -342,7 +390,6 @@
   // to the tree, each node that's added, removed, or changed, will appear
   // in exactly one TreeChange, with one of these types.
   //
-  //
   // nodeCreated means that this node was added to the tree and its parent is
   // new as well, so it's just one node in a new subtree that was added.
   enum TreeChangeType {
@@ -438,6 +485,106 @@ enum MarkerType {
   suggestion
 };
 
+// The following three enums are associated with an $(ref:automation.AutomationIntent).
+
+// A command associated with an $(ref:automation.AutomationIntent).
+enum IntentCommandType {
+  clearSelection,
+  delete,
+  dictate,
+  extendSelection,
+  format,
+  history,
+  insert,
+  marker,
+  moveSelection,
+  setSelection
+};
+
+// The type of an input event associated with an $(ref:automation.AutomationIntent). It describes an edit
+// command, e.g. IntentCommandType.insert, in more detail.
+enum IntentInputEventType {
+  // Insertion.
+  insertText,
+  insertLineBreak,
+  insertParagraph,
+  insertOrderedList,
+  insertUnorderedList,
+  insertHorizontalRule,
+  insertFromPaste,
+  insertFromDrop,
+  insertFromYank,
+  insertTranspose,
+  insertReplacementText,
+  insertCompositionText,
+  // Deletion.
+  deleteWordBackward,
+  deleteWordForward,
+  deleteSoftLineBackward,
+  deleteSoftLineForward,
+  deleteHardLineBackward,
+  deleteHardLineForward,
+  deleteContentBackward,
+  deleteContentForward,
+  deleteByCut,
+  deleteByDrag,
+  // History.
+  historyUndo,
+  historyRedo,
+  // Formatting.
+  formatBold,
+  formatItalic,
+  formatUnderline,
+  formatStrikeThrough,
+  formatSuperscript,
+  formatSubscript,
+  formatJustifyCenter,
+  formatJustifyFull,
+  formatJustifyRight,
+  formatJustifyLeft,
+  formatIndent,
+  formatOutdent,
+  formatRemove,
+  formatSetBlockTextDirection
+};
+
+// A text boundary associated with an $(ref:automation.AutomationIntent).
+enum IntentTextBoundaryType {
+  character,
+  format,
+  lineEnd,
+  lineStart,
+  lineStartOrEnd,
+  object,
+  pageEnd,
+  pageStart,
+  pageStartOrEnd,
+  paragraphEnd,
+  paragraphStart,
+  paragraphStartOrEnd,
+  sentenceEnd,
+  sentenceStart,
+  sentenceStartOrEnd,
+  webPage,
+  wordEnd,
+  wordStart,
+  wordStartOrEnd
+};
+
+// A move direction associated with an $(ref:automation.AutomationIntent).
+enum IntentMoveDirectionType {
+  backward,
+  forward
+};
+
+// A sort applied to a table row or column header.
+enum SortDirectionType {
+  unsorted,
+  ascending,
+  descending,
+  other
+};
+
   dictionary Rect {
     long left;
     long top;
@@ -476,16 +623,30 @@ enum MarkerType {
   [nocompile, noinline_doc] dictionary SetDocumentSelectionParams {
     // The node where the selection begins.
     [instanceOf=AutomationNode] object anchorObject;
+
     // The offset in the anchor node where the selection begins.
     long anchorOffset;
+
     // The node where the selection ends.
     [instanceOf=AutomationNode] object focusObject;
+
     // The offset within the focus node where the selection ends.
     long focusOffset;
   };
 
   // Called when the result for a <code>query</code> is available.
   callback QueryCallback = void(AutomationNode node);
+
+  [nocompile, noinline_doc] dictionary AutomationIntent {
+    // A command associated with this AutomationIntent.
+    IntentCommandType command;
+
+    // A text boundary associated with this AutomationIntent.
+    IntentTextBoundaryType textBoundary;
+
+    // A move direction associated with this AutomationIntent.
+    IntentMoveDirectionType moveDirection;
+  };
 
   // An event in the Automation tree.
   [nocompile, noinline_doc] dictionary AutomationEvent {
@@ -498,11 +659,15 @@ enum MarkerType {
     // The source of this event.
     DOMString eventFrom;
 
+    // Any mouse coordinates associated with this event.
     long mouseX;
     long mouseY;
 
+    // A list of $(ref:automation.AutomationIntent)s associated with this event.
+    AutomationIntent[] intents;
+
     // Stops this event from further processing except for any remaining
-    // listeners on $(ref:AutomationEvent.target).
+    // listeners on $(ref:automation.AutomationEvent.target).
     static void stopPropagation();
   };
 
@@ -569,6 +734,78 @@ enum MarkerType {
     object flags;
   };
 
+  // A position in the automation tree.
+  // See ui/accessibility/ax_position.h for documentation. All members need to
+  // be kept in sync with
+  // extensions/renderer/api/automation/automation_position.h.
+  // Some members there are kept private and not represented here.
+  [nocompile, noinline_doc] dictionary AutomationPosition {
+
+    AutomationNode? node;
+    long childIndex;
+    long textOffset;
+    DOMString affinity;
+
+    static boolean isNullPosition();
+    static boolean isTreePosition();
+    static boolean isTextPosition();
+    static boolean isLeafTextPosition();
+    static boolean atStartOfAnchor();
+    static boolean atEndOfAnchor();
+    static boolean atStartOfWord();
+    static boolean atEndOfWord();
+    static boolean atStartOfLine();
+    static boolean atEndOfLine();
+    static boolean atStartOfParagraph();
+    static boolean atEndOfParagraph();
+    static boolean atStartOfPage();
+    static boolean atEndOfPage();
+    static boolean atStartOfFormat();
+    static boolean atEndOfFormat();
+    static boolean atStartOfDocument();
+    static boolean atEndOfDocument();
+    static void asTreePosition();
+    static void asTextPosition();
+    static void asLeafTextPosition();
+    static void moveToPositionAtStartOfAnchor();
+    static void moveToPositionAtEndOfAnchor();
+    static void moveToPositionAtStartOfDocument();
+    static void moveToPositionAtEndOfDocument();
+    static void moveToParentPosition();
+    static void moveToNextLeafTreePosition();
+    static void moveToPreviousLeafTreePosition();
+    static void moveToNextLeafTextPosition();
+    static void moveToPreviousLeafTextPosition();
+    static void moveToNextCharacterPosition();
+    static void moveToPreviousCharacterPosition();
+    static void moveToNextWordStartPosition();
+    static void moveToPreviousWordStartPosition();
+    static void moveToNextWordEndPosition();
+    static void moveToPreviousWordEndPosition();
+    static void moveToNextLineStartPosition();
+    static void moveToPreviousLineStartPosition();
+    static void moveToNextLineEndPosition();
+    static void moveToPreviousLineEndPosition();
+    static void moveToPreviousFormatStartPosition();
+    static void moveToNextFormatEndPosition();
+    static void moveToNextParagraphStartPosition();
+    static void moveToPreviousParagraphStartPosition();
+    static void moveToNextParagraphEndPosition();
+    static void moveToPreviousParagraphEndPosition();
+    static void moveToNextPageStartPosition();
+    static void moveToPreviousPageStartPosition();
+    static void moveToNextPageEndPosition();
+    static void moveToPreviousPageEndPosition();
+    static void moveToNextAnchorPosition();
+    static void moveToPreviousAnchorPosition();
+    static long maxTextOffset();
+    static boolean isInLineBreak();
+    static boolean isInTextObject();
+    static boolean isInWhiteSpace();
+    static boolean isValid();
+    static DOMString getText();
+  };
+
   // A single node in an Automation tree.
   [nocompile, noinline_doc] dictionary AutomationNode {
     // The root node of the tree containing this AutomationNode.
@@ -592,8 +829,17 @@ enum MarkerType {
     // Determines the location of the text within the node specified by
     // |startIndex| and |endIndex|, inclusively. Invokes |callback| with the
     // bounding rectangle, in screen coordinates. |callback| can be invoked
-    // either synchronously or asynchronously.
+    // either synchronously or asynchronously. The bounds are clipped to
+    // ancestors.
     static void boundsForRange(long startIndex, long endIndex,
+        BoundsForRangeCallback callback);
+
+    // Determines the location of the text within the node specified by
+    // |startIndex| and |endIndex|, inclusively. Invokes |callback| with the
+    // bounding rectangle, in screen coordinates. |callback| can be invoked
+    // either synchronously or asynchronously. The bounds are not clipped to
+    // ancestors.
+    static void unclippedBoundsForRange(long startIndex, long endIndex,
         BoundsForRangeCallback callback);
 
     // The location (as a bounding box) of this node in global screen
@@ -805,6 +1051,9 @@ enum MarkerType {
     // The affinity of the tree selection end, if any.
     DOMString? selectionEndAffinity;
 
+    // Indicates that the node is marked user-select:none
+    boolean? notUserSelectableStyle;
+
     //
     // Range attributes.
     //
@@ -1005,6 +1254,9 @@ enum MarkerType {
     // Indicates the font family.
     DOMString fontFamily;
 
+    // Indicates whether this is a root of an editable subtree.
+    boolean editableRoot;
+
     //
     // Walking the tree.
     //
@@ -1023,6 +1275,9 @@ enum MarkerType {
     // The index of this node in its parent node's list of children. If this is
     // the root node, this will be undefined.
     long? indexInParent;
+
+    // The sort direction of this node.
+    SortDirectionType sortDirection;
 
     //
     // Actions.
@@ -1070,6 +1325,12 @@ enum MarkerType {
     // Replaces the selected text within a text field.
     static void replaceSelectedText(DOMString value);
 
+    // Sets accessibility focus. Accessibility focus is the node on which an
+    // extension tracks a user's focus. This may be conveyed through a focus
+    // ring or or speech output by the extension. Automation will dispatch more
+    // events to the accessibility focus such as location changes.
+    static void setAccessibilityFocus();
+
     // Sets selection within a text field.
     static void setSelection(long startIndex, long endIndex);
 
@@ -1096,22 +1357,28 @@ enum MarkerType {
     static void suspendMedia();
 
     // Scrolls this scrollable container backward.
-    static void scrollBackward(PerformActionCallback callback);
+    static void scrollBackward(optional PerformActionCallback callback);
 
     // Scrolls this scrollable container forward.
-    static void scrollForward(PerformActionCallback callback);
+    static void scrollForward(optional PerformActionCallback callback);
 
     // Scrolls this scrollable container up.
-    static void scrollUp(PerformActionCallback callback);
+    static void scrollUp(optional PerformActionCallback callback);
 
     // Scrolls this scrollable container down.
-    static void scrollDown(PerformActionCallback callback);
+    static void scrollDown(optional PerformActionCallback callback);
 
     // Scrolls this scrollable container left.
-    static void scrollLeft(PerformActionCallback callback);
+    static void scrollLeft(optional PerformActionCallback callback);
 
     // Scrolls this scrollable container right.
-    static void scrollRight(PerformActionCallback callback);
+    static void scrollRight(optional PerformActionCallback callback);
+
+    // Scrolls this scrollable container to the given point.
+    static void scrollToPoint(long x, long y);
+
+    // Sets this scrollable container's scroll offset.
+    static void setScrollOffset(long x, long y);
 
     // Adds a listener for the given event type and event phase.
     static void addEventListener(
@@ -1161,6 +1428,9 @@ enum MarkerType {
     // 3. LanguageSpans are non-overlapping and contain exactly one language.
     static LanguageSpan[] languageAnnotationForStringAttribute(
         DOMString attribute);
+
+    // Creates a position object backed by Chrome's accessibility position support.
+    static AutomationPosition createPosition(long offset, optional boolean isUpstream);
   };
 
   // Called when the <code>AutomationNode</code> for the page is available.
@@ -1168,6 +1438,10 @@ enum MarkerType {
 
   // Called with the <code>AutomationNode</code> that currently has focus.
   callback FocusCallback = void(AutomationNode focusedNode);
+
+  // Called with the <code>AutomationNode</code> that currently has
+  // accessibility focus.
+  callback AccessibilityFocusCallback = void(AutomationNode focusedNode);
 
   interface Functions {
     // Get the automation tree for the tab with the given tabId, or the current
@@ -1185,6 +1459,12 @@ enum MarkerType {
     // Get the automation node that currently has focus, globally. Will return
     // null if none of the nodes in any loaded trees have focus.
     [nocompile] static void getFocus(FocusCallback callback);
+
+    // Get the automation node that currently has accessibility focus, globally.
+    // Will return null if none of the nodes in any loaded trees have
+    // accessibility focus.
+    [nocompile] static void getAccessibilityFocus(
+        AccessibilityFocusCallback callback);
 
     // Add a tree change observer. Tree change observers are static/global, they
     // listen to changes across all trees. Pass a filter to determine what

@@ -17,8 +17,6 @@ class Navigator;
 
 class NavigatorPlugins final : public GarbageCollected<NavigatorPlugins>,
                                public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorPlugins);
-
  public:
   static const char kSupplementName[];
 
@@ -31,11 +29,13 @@ class NavigatorPlugins final : public GarbageCollected<NavigatorPlugins>,
 
   explicit NavigatorPlugins(Navigator&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   DOMPluginArray* plugins(LocalFrame*) const;
   DOMMimeTypeArray* mimeTypes(LocalFrame*) const;
+
+  void RecordMimeTypes(LocalFrame*) const;
 
   mutable Member<DOMPluginArray> plugins_;
   mutable Member<DOMMimeTypeArray> mime_types_;

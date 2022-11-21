@@ -14,9 +14,11 @@
 #include "components/optimization_guide/hints_processing_util.h"
 #include "components/optimization_guide/optimization_guide_features.h"
 #include "components/optimization_guide/optimization_guide_prefs.h"
+#include "components/optimization_guide/optimization_guide_util.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "content/public/browser/network_service_instance.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
@@ -125,6 +127,11 @@ bool HintsFetcher::WasHostCoveredByFetch(PrefService* pref_service,
 bool HintsFetcher::WasHostCoveredByFetch(PrefService* pref_service,
                                          const std::string& host,
                                          const base::Clock* time_clock) {
+  if (!optimization_guide::features::ShouldPersistHintsToDisk()) {
+    // Don't consult the pref if we aren't even persisting hints to disk.
+    return false;
+  }
+
   DictionaryPrefUpdate hosts_fetched(
       pref_service, prefs::kHintsFetcherHostsSuccessfullyFetched);
   base::Optional<double> value =
@@ -188,11 +195,16 @@ bool HintsFetcher::FetchOptimizationGuideServiceHints(
   request_context_ = request_context;
 
   proto::GetHintsRequest get_hints_request;
+  get_hints_request.add_supported_key_representations(proto::HOST);
+  get_hints_request.add_supported_key_representations(proto::FULL_URL);
 
   for (const auto& optimization_type : optimization_types)
     get_hints_request.add_supported_optimizations(optimization_type);
 
   get_hints_request.set_context(request_context_);
+
+  *get_hints_request.mutable_active_field_trials() =
+      GetActiveFieldTrialsAllowedForFetch();
 
   for (const auto& url : valid_urls)
     get_hints_request.add_urls()->set_url(url.spec());
@@ -234,8 +246,12 @@ bool HintsFetcher::FetchOptimizationGuideServiceHints(
   resource_request->method = "POST";
   resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
-  active_url_loader_ = network::SimpleURLLoader::Create(
-      std::move(resource_request), traffic_annotation);
+  active_url_loader_ = variations::CreateSimpleURLLoaderWithVariationsHeader(
+      std::move(resource_request),
+      // This is always InIncognito::kNo as the OptimizationGuideKeyedService is
+      // not enabled on incognito sessions and is rechecked before each fetch.
+      variations::InIncognito::kNo, variations::SignedIn::kNo,
+      traffic_annotation);
 
   active_url_loader_->AttachStringForUpload(serialized_request,
                                             "application/x-protobuf");
@@ -318,6 +334,11 @@ void HintsFetcher::HandleResponse(const std::string& get_hints_response_data,
 
 void HintsFetcher::UpdateHostsSuccessfullyFetched(
     base::TimeDelta valid_duration) {
+  if (!optimization_guide::features::ShouldPersistHintsToDisk()) {
+    // Do not persist any state if we aren't persisting hints to disk.
+    return;
+  }
+
   DictionaryPrefUpdate hosts_fetched_list(
       pref_service_, prefs::kHintsFetcherHostsSuccessfullyFetched);
 
@@ -410,7 +431,7 @@ std::vector<std::string> HintsFetcher::GetSizeLimitedHostsDueForHintsRefresh(
 
     base::Optional<double> value =
         hosts_fetched->FindDoubleKey(HashHostForDictionary(host));
-    if (value) {
+    if (value && optimization_guide::features::ShouldPersistHintsToDisk()) {
       base::Time host_valid_time = base::Time::FromDeltaSinceWindowsEpoch(
           base::TimeDelta::FromSecondsD(*value));
       host_hints_due_for_refresh =

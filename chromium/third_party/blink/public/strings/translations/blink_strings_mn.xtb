@@ -13,9 +13,12 @@
 <translation id="1211441953136645838">нэмэлт тэмдэглэл</translation>
 <translation id="1281252709823657822">харилцан яриа</translation>
 <translation id="1306460908038601864">Унтраалттай</translation>
+<translation id="1311894908970423688">Утга нь <ph name="VALUE_DATE_OR_TIME" /> байх ёстой.</translation>
 <translation id="1335095011850992622">оролцогчид</translation>
 <translation id="1342835525016946179">Гарчиг</translation>
 <translation id="1359897965706325498">баннер</translation>
+<translation id="145015347812617860"><ph name="COUNT" /> зүйлс</translation>
+<translation id="1480676835519562650">олныг сонгох боломжтой, <ph name="COUNT" />-c <ph name="SELECTED" />-г сонгосон</translation>
 <translation id="1589122976691792535">хамрах бүс</translation>
 <translation id="1591562245178063882">Энэ сар</translation>
 <translation id="1637811476055996098">Файлуудыг сонгох</translation>
@@ -35,6 +38,7 @@
 <translation id="1938124657309484470">Оруулсан утга <ph name="MAXIMUM_DATE_OR_TIME" /> эсвэл түүнээс өмнөх хувилбар байх ёстой.</translation>
 <translation id="1946271899482435442">Огноо сонгогчийг харуулах</translation>
 <translation id="1993104285338243655">Тусгал үүсгэх рүү сэлгэсэн</translation>
+<translation id="2031987842108996681">Улаан суваг</translation>
 <translation id="2060505056492490888">" <ph name="DOT" /> '' нь <ph name="INVALIDDOMAIN" />-ны хувьд буруу байрлалд ашиглагдаж байна.</translation>
 <translation id="2148716181193084225">Өнөөдөр</translation>
 <translation id="2158401438286456825">хуудасны жагсаалт</translation>
@@ -43,15 +47,19 @@
 <translation id="2247351761944213033">Долоо хоног <ph name="WEEKNUMBER" /> , <ph name="YEAR" /></translation>
 <translation id="2277199496770840904"><ph name="NUMBER" />-р бичлэг</translation>
 <translation id="2291999235780842123">чагтлах</translation>
+<translation id="2307576640803031502">жагсаалтын <ph name="COUNT" />-с <ph name="INDEX" /></translation>
 <translation id="2311842470354187719">хуудас тусгаарлагч</translation>
 <translation id="2335594187091864976">огноо болон хугацаа сонгогч</translation>
+<translation id="2393030564806080191">Арван зургаатын өнгөний утга</translation>
 <translation id="245932805758469625">видео үргэлжлэх үлдсэн секундийн тоо</translation>
 <translation id="248395913932153421">Өдөр</translation>
 <translation id="2507943997699731163">Энэ талбарыг бөглөнө үү.</translation>
 <translation id="2508569020611168319">чихтэй хуудасны жагсаалт</translation>
+<translation id="2530182415807757784">олныг сонгох боломжтой, алийг нь ч сонгоогүй.</translation>
 <translation id="2561842179657104141">бусад медиа хяналтыг харуулах</translation>
 <translation id="2572483411312390101">Тоглуулах</translation>
 <translation id="2613802280814924224">Хүчинтэй утга оруулна уу. Хамгийн ойролцоо хүчинтэй утга нь <ph name="VALID_VALUE" /> юм.</translation>
+<translation id="2634240155926812724">Ногоон суваг</translation>
 <translation id="2653659639078652383">Илгээх</translation>
 <translation id="2657045182931379222">график объект</translation>
 <translation id="2674318244760992338">Доод хэсэг</translation>
@@ -72,6 +80,7 @@
 <translation id="310520048233152454">URL-аа оруулна уу.</translation>
 <translation id="3175736971608411871">хугацаа хэмжигч</translation>
 <translation id="3199563858620722075">багцийн хайрцаг</translation>
+<translation id="3329013043687509092">Өнгөний нэвчилт</translation>
 <translation id="3450233048674729344">Оруулсан утга нь <ph name="MAXIMUM" />-тай тэнцүү эсвэл бага байх ёстой.</translation>
 <translation id="3486220673238053218">тодорхойлолт</translation>
 <translation id="3557673793733683882">гарчиг <ph name="HEADING_LEVEL" /></translation>
@@ -98,7 +107,6 @@
 <translation id="4248100235867064564">цэсний мөр</translation>
 <translation id="4360991593054037559">Хүчинтэй утгыг оруулна уу. Хамгийн ойрын хүчинтэй дараах хоёр <ph name="VALID_VALUE_LOW" /> болон <ph name="VALID_VALUE_HIGHER" />  утгууд байна.</translation>
 <translation id="4384583879834880242">Асуулт, хариулт</translation>
-<translation id="4413860115965805769">цэсний товчлуур</translation>
 <translation id="4444765639179266822"><ph name="OCR_TEXT" /> гэж хэлж байгаа бололтой</translation>
 <translation id="4446524499724042288">тайлбар толины лавлагаа</translation>
 <translation id="4522570452068850558">дэлгэрэнгүй мэдээлэл</translation>
@@ -126,6 +134,7 @@
 <translation id="5034860022980953847">явцын үзүүлэлт</translation>
 <translation id="5090250355906949916">видеоны цаг устгагч</translation>
 <translation id="5093189678851173835">эпиграф</translation>
+<translation id="509897012892853729">Цэнхэр суваг</translation>
 <translation id="5117590920725113268">Дараагийн сарыг харуулах</translation>
 <translation id="512758898067543763">мөрний толгой</translation>
 <translation id="5143125788380636750">төгсгөлийн үг</translation>
@@ -149,9 +158,11 @@
 <translation id="5677946354068040947">бусад сонголт</translation>
 <translation id="576709008726043716">оршил</translation>
 <translation id="57838592816432529">Дууг хаах</translation>
+<translation id="5860033963881614850">Идэвхгүй байна</translation>
 <translation id="588258955323874662">Дэлгэц дүүрэн</translation>
 <translation id="5888666972993069672">Одоо <ph name="DEVICE_FRIENDLY_NAME" />-д дамжуулж байна</translation>
 <translation id="591047860372322273">хайх хэсэг</translation>
+<translation id="5916664084637901428">Асаах</translation>
 <translation id="5939518447894949180">Дахин сэргээх</translation>
 <translation id="5966707198760109579">Долоо хоног</translation>
 <translation id="5987525920412732405">эргүүлэх товчлуур</translation>
@@ -163,6 +174,7 @@
 <translation id="6166809985690652833">төгсгөлийн үг</translation>
 <translation id="6209276755895393898">Дараах шиг харагдаж байна: <ph name="DESCRIPTION" /></translation>
 <translation id="6213469881011901533">тайлбар толь</translation>
+<translation id="6281588256137006900">Цайвар байдал</translation>
 <translation id="6281763101136022427">url</translation>
 <translation id="6310801910862476708">Дэлгэцэн доторх дэлгэцийг хаах</translation>
 <translation id="6398862346408813489">Сар сонгох самбар харуулах</translation>
@@ -178,11 +190,13 @@
 <translation id="6643016212128521049">Цэвэрлэх</translation>
 <translation id="668171684555832681">Бусад...</translation>
 <translation id="6692633176391053278">stepper</translation>
+<translation id="6709093583001123835">Утга нь <ph name="VALUE" /> байх ёстой.</translation>
 <translation id="6709570249143506788">Тоглуулагчийн чанар муу байна</translation>
 <translation id="6755330956360078551">хэрэгслийн зөвлөмж</translation>
 <translation id="6790428901817661496">Тоглуулах</translation>
 <translation id="6820355525329141109">Нэмэлт өгөгдлийг ачаалж чадсангүй.</translation>
 <translation id="6820615603175220800">ном зүйн лавлагаа</translation>
+<translation id="6831465880655513317">Өнгө ялгалт болон цайвар байдлыг сонгоход зориулсан 2 хэмжээст тохируулагчтай өнгөний хүрд</translation>
 <translation id="6843725295806269523">дууг хаах</translation>
 <translation id="6885760532393684712">лавлагаа</translation>
 <translation id="689129560213475294">колофон</translation>
@@ -200,6 +214,7 @@
 <translation id="7263440858009898357">Жагсаалтаас нэг зүйлийг сонгоно уу.</translation>
 <translation id="727747134524199931">баганын толгой</translation>
 <translation id="7320576522385648310">буферлэж байна</translation>
+<translation id="7341556277900466204">Өнгөний хүрд</translation>
 <translation id="7353453495576941748">оролцогч</translation>
 <translation id="7364796246159120393">Файлаа сонгоно уу</translation>
 <translation id="739024184232394898">Бусад...</translation>
@@ -220,6 +235,7 @@
 <translation id="775297008183122718">Буруу утга</translation>
 <translation id="7789962463072032349">Түр зогсох</translation>
 <translation id="7802800022689234070">тодруулгын гурвалжин</translation>
+<translation id="7852167693871241274">Өнгө тохируулагч</translation>
 <translation id="7888071071722539607">Имэйл хаягт "<ph name="ATSIGN" />"-ыг оруулж өгнө үү. '<ph name="INVALIDADDRESS" />'-д <ph name="ATSIGN" /> дутуу байна.</translation>
 <translation id="7891486169920085145">задлагч</translation>
 <translation id="795667975304826397">Ямар ч файл сонгогдоогүй байна</translation>
@@ -260,7 +276,9 @@
 <translation id="8845239796550121995">Одоо таны ТВ-д дамжуулж байна</translation>
 <translation id="8851136666856101339">Гол</translation>
 <translation id="8875657656876809964">Видеог дахин тоглуулахaд алдаа гарлаа</translation>
+<translation id="8889402386540077796">Hue</translation>
 <translation id="8901569739625249689"><ph name="QUANTITY" /> килобайт</translation>
+<translation id="894736920926684893">Формат сэлгэгч</translation>
 <translation id="8987927404178983737">Сар</translation>
 <translation id="901493112792887934">Секунтаар илэрхийлэгдсэн цаг</translation>
 <translation id="901834265349196618">и-мэйл</translation>
@@ -273,6 +291,7 @@
 <translation id="9155987714137265666"><ph name="WEEK_START_DATE" />-ээс эхэлж буй <ph name="WEEK" /></translation>
 <translation id="916607977885256133">Дэлгэцэн доторх дэлгэц</translation>
 <translation id="9168329111483466115">зүүлт тайлбар</translation>
+<translation id="945780513535800434">Хэсэгчлэн тэмдэглэсэн</translation>
 <translation id="954003015749068518">дэлгэцэн доторх дэлгэцийг оруулах</translation>
 <translation id="966787709310836684">цэс</translation>
 </translationbundle>

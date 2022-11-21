@@ -12,6 +12,8 @@ declare_args() {
   build_angle_deqp_tests = false
   build_angle_gles1_conform_tests = false
   build_angle_trace_perf_tests = false
+  build_angle_perftests =
+      is_win || is_linux || is_chromeos || is_android || is_mac || is_fuchsia
 }
 
 angle_test("test_utils_unittest_helper") {
@@ -53,7 +55,7 @@ angle_static_library("angle_test_expectations") {
   sources = test_expectations_sources
   if (is_mac) {
     sources += test_expectations_sources_mac
-    libs = [ "Cocoa.framework" ]
+    frameworks = [ "Cocoa.framework" ]
   }
 }
 
@@ -93,6 +95,10 @@ template("angle_common_test_utils") {
         "test_utils/angle_test_instantiate_apple.mm",
       ]
     }
+    data_deps = []
+    if (angle_enable_vulkan_validation_layers) {
+      data_deps += [ "$angle_root/src/common/vulkan:vulkan_validation_layers" ]
+    }
   }
 }
 
@@ -102,6 +108,16 @@ angle_common_test_utils("angle_common_test_utils_shared") {
 
 angle_common_test_utils("angle_common_test_utils_static") {
   angle_util = "angle_util_static"
+}
+
+# We use this in the restricted trace tests to load driver info.
+angle_test("angle_system_info_test") {
+  standalone_harness = true
+  sources = [ "angle_system_info_tests_main.cpp" ]
+  deps = [
+    "$angle_root:angle_gpu_info_util",
+    "$angle_root/util:angle_util",
+  ]
 }
 
 angle_test("angle_unittests") {
@@ -130,7 +146,7 @@ angle_test("angle_unittests") {
   }
 }
 
-if (is_win || is_linux || is_mac || is_android || is_fuchsia) {
+if (is_win || is_linux || is_chromeos || is_mac || is_android || is_fuchsia) {
   import("angle_end2end_tests.gni")
 
   angle_test("angle_end2end_tests") {
@@ -142,7 +158,7 @@ if (is_win || is_linux || is_mac || is_android || is_fuchsia) {
 
     if (is_mac) {
       sources += angle_end2end_tests_mac_sources
-      libs += [
+      frameworks = [
         "CoreFoundation.framework",
         "IOSurface.framework",
       ]
@@ -162,6 +178,10 @@ if (is_win || is_linux || is_mac || is_android || is_fuchsia) {
       "$angle_root:angle_image_util",
     ]
 
+    if (is_android) {
+      include_dirs += [ "${android_ndk_root}/sysroot/usr/includes" ]
+    }
+
     data_deps = [
       "$angle_root:libEGL",
       "$angle_root:libGLESv1_CM",
@@ -174,9 +194,7 @@ if (is_win || is_linux || is_mac || is_android || is_fuchsia) {
         "test_utils/VulkanExternalHelper.cpp",
         "test_utils/VulkanExternalHelper.h",
       ]
-      deps += [
-        "$angle_root/src/libANGLE/renderer/vulkan:angle_vulkan_entry_points",
-      ]
+      deps += [ "$angle_root/src/common/vulkan" ]
     }
 
     if (is_fuchsia) {
@@ -185,7 +203,7 @@ if (is_win || is_linux || is_mac || is_android || is_fuchsia) {
   }
 }
 
-if (is_win || is_linux || is_mac || is_android) {
+if (is_win || is_linux || is_chromeos || is_mac || is_android) {
   import("angle_white_box_tests.gni")
 
   angle_test("angle_white_box_tests") {
@@ -193,7 +211,7 @@ if (is_win || is_linux || is_mac || is_android) {
     sources = angle_white_box_tests_sources
     main = "angle_end2end_tests_main"
 
-    if (is_win) {
+    if (is_win && angle_enable_d3d11) {
       sources += angle_white_box_tests_win_sources
     }
 
@@ -212,9 +230,7 @@ if (is_win || is_linux || is_mac || is_android) {
 
     if (angle_enable_vulkan) {
       sources += angle_white_box_tests_vulkan_sources
-      deps += [
-        "$angle_root/src/libANGLE/renderer/vulkan:angle_vulkan_entry_points",
-      ]
+      deps += [ "$angle_root/src/common/vulkan:angle_vulkan_entry_points" ]
     }
   }
 }
@@ -251,7 +267,7 @@ angle_perftests_common("angle_perftests_static") {
   test_utils = ":angle_common_test_utils_static"
 }
 
-if (is_win || is_linux || is_android || is_mac) {
+if (is_win || is_linux || is_chromeos || is_android || is_mac) {
   import("angle_perftests.gni")
 
   # This test suite is for perf tests that use ANGLE's internals in some direct way.
@@ -272,44 +288,36 @@ if (is_win || is_linux || is_android || is_mac) {
     if (angle_enable_vulkan && !is_mac) {
       sources += angle_white_box_perf_tests_vulkan_sources
       deps += [
-        "$angle_glslang_dir:glslang_sources",
-        "$angle_root/src/libANGLE/renderer/vulkan:angle_vulkan_entry_points",
+        "$angle_glslang_dir:glslang_lib_sources",
+        "$angle_root/src/common/vulkan:angle_vulkan_entry_points",
       ]
     }
   }
 }
 
-if (is_win || is_linux || is_android || is_mac || is_fuchsia) {
+if (build_angle_perftests) {
   import("angle_perftests.gni")
 
   angle_source_set("angle_trace_perftests") {
     testonly = true
     if (build_angle_trace_perf_tests) {
-      import("perf_tests/restricted_traces/angle_trace_perf_tests.gni")
-      sources = angle_trace_perf_sources
-      defines = angle_trace_perf_defines
-      data = angle_trace_perf_data
+      sources = [ "perf_tests/TracePerfTest.cpp" ]
+
+      if (is_android) {
+        _trace_data_path = "/sdcard/chromium_tests_root/third_party/angle/src/tests/restricted_traces"
+      } else {
+        _trace_data_path = rebase_path("restricted_traces", root_out_dir)
+      }
+
+      defines = [ "ANGLE_TRACE_DATA_DIR=\"${_trace_data_path}\"" ]
       deps = [
         ":angle_perftests_shared",
         "$angle_root:angle_compression",
+        "$angle_root/util:angle_png_utils",
+        "restricted_traces:angle_restricted_traces",
       ]
       suppressed_configs +=
           [ "$angle_root:constructor_and_destructor_warnings" ]
-
-      # Disable optimization in the trace perf tests to avoid optimizing huge files.
-      if (!is_debug) {
-        suppressed_configs += [ "//build/config/compiler:default_optimization" ]
-        configs += [ "//build/config/compiler:no_optimize" ]
-      }
-
-      # TODO(jmadill/cnorthrop): Lift after traces updated. http://anglebug.com/3630
-      if (is_win && current_cpu == "x86") {
-        if (is_clang) {
-          cflags_cc = [ "-Wno-shorten-64-to-32" ]
-        } else {
-          cflags_cc = [ "/wd4244" ]
-        }
-      }
     }
   }
 
@@ -330,13 +338,17 @@ if (is_win || is_linux || is_android || is_mac || is_fuchsia) {
       "${angle_root}:libGLESv2",
     ]
 
-    if (is_win || is_linux) {
+    if (build_with_chromium) {
+      data_deps += [ "//testing:run_perf_test" ]
+    }
+
+    if (is_win || is_linux || is_chromeos) {
       data_deps += [ "${angle_root}/third_party/glmark2:glmark2_angle" ]
     }
     if (is_win && target_cpu != "arm64") {
       data_deps += [ "${angle_root}/third_party/glmark2:glmark2_wgl" ]
     }
-    if (is_linux) {
+    if (is_linux || is_chromeos) {
       data_deps += [ "${angle_root}/third_party/glmark2:glmark2_glx" ]
     }
 
@@ -361,14 +373,16 @@ if (build_angle_gles1_conform_tests) {
       "$gles1_conform_root/conform/conformshell",
       "$gles1_conform_root/ctk",
       "$gles1_conform_root/fixed",
-      "$gles1_conform_root/include",
       "$gles1_conform_root/platform",
     ]
 
     defines = [
       "COMMON",
       "CONFORM_ALTERNATE_MAIN",
-      "NULLWS",
+
+      # NULLWS defines is only used in covegl/native.h, remove here.
+      # if needed please add it in angle_test("angle_gles1_covegl_no_gtest") defines.
+      #"NULLWS",
     ]
 
     # This is used by the tests to typedef uint32_t. For some reason only needed on mac.
@@ -397,6 +411,29 @@ if (build_angle_gles1_conform_tests) {
   }
 
   # This source set is a bit special so we don't use angle_source_set.
+  angle_gles1_conform_common_source = [
+    "$gles1_conform_root/ctk/ctk.h",
+    "$gles1_conform_root/ctk/ctkn.c",
+    "$gles1_conform_root/ctk/glext.c",
+    "$gles1_conform_root/fixed/fixed.c",
+    "$gles1_conform_root/fixed/float64.c",
+    "$gles1_conform_root/fixed/int32.c",
+    "$gles1_conform_root/fixed/int64.c",
+    "$gles1_conform_root/platform/gl_fixed_point.h",
+    "$gles1_conform_root/platform/gl_single_precision.h",
+    "$gles1_conform_root/platform/math_fixed.h",
+    "$gles1_conform_root/platform/math_float.h",
+    "$gles1_conform_root/platform/platform.h",
+    "$gles1_conform_root/platform/platform_gl.h",
+    "$gles1_conform_root/platform/platform_random.h",
+    "$gles1_conform_root/platform/platform_stdlib.h",
+    "$gles1_conform_root/platform/platform_types.h",
+    "$gles1_conform_root/platform/printf_fixed.h",
+    "$gles1_conform_root/platform/printf_float.h",
+    "$gles1_conform_root/platform/random.c",
+    "$gles1_conform_root/platform/stdlib_ansi.h",
+  ]
+
   source_set("angle_gles1_conformance_no_gtest") {
     configs += [
       ":angle_gles1_conform_support",
@@ -524,27 +561,9 @@ if (build_angle_gles1_conform_tests) {
       "$gles1_conform_root/conform/conformshell/utils.h",
       "$gles1_conform_root/conform/conformshell/utilt.c",
       "$gles1_conform_root/conform/conformshell/utilt.h",
-      "$gles1_conform_root/ctk/ctk.h",
-      "$gles1_conform_root/ctk/ctkn.c",
-      "$gles1_conform_root/ctk/glext.c",
-      "$gles1_conform_root/fixed/fixed.c",
-      "$gles1_conform_root/fixed/float64.c",
-      "$gles1_conform_root/fixed/int32.c",
-      "$gles1_conform_root/fixed/int64.c",
-      "$gles1_conform_root/platform/gl_fixed_point.h",
-      "$gles1_conform_root/platform/gl_single_precision.h",
-      "$gles1_conform_root/platform/math_fixed.h",
-      "$gles1_conform_root/platform/math_float.h",
-      "$gles1_conform_root/platform/platform.h",
-      "$gles1_conform_root/platform/platform_gl.h",
-      "$gles1_conform_root/platform/platform_random.h",
-      "$gles1_conform_root/platform/platform_stdlib.h",
-      "$gles1_conform_root/platform/platform_types.h",
-      "$gles1_conform_root/platform/printf_fixed.h",
-      "$gles1_conform_root/platform/printf_float.h",
-      "$gles1_conform_root/platform/random.c",
-      "$gles1_conform_root/platform/stdlib_ansi.h",
     ]
+
+    sources += angle_gles1_conform_common_source
   }
 
   angle_test("angle_gles1_conformance_tests") {
@@ -617,27 +636,9 @@ if (build_angle_gles1_conform_tests) {
         "$gles1_conform_root/conform/covgl/t.c",
         "$gles1_conform_root/conform/covgl/v.c",
         "$gles1_conform_root/conform/covgl/w.c",
-        "$gles1_conform_root/ctk/ctk.h",
-        "$gles1_conform_root/ctk/ctkn.c",
-        "$gles1_conform_root/ctk/glext.c",
-        "$gles1_conform_root/fixed/fixed.c",
-        "$gles1_conform_root/fixed/float64.c",
-        "$gles1_conform_root/fixed/int32.c",
-        "$gles1_conform_root/fixed/int64.c",
-        "$gles1_conform_root/platform/gl_fixed_point.h",
-        "$gles1_conform_root/platform/gl_single_precision.h",
-        "$gles1_conform_root/platform/math_fixed.h",
-        "$gles1_conform_root/platform/math_float.h",
-        "$gles1_conform_root/platform/platform.h",
-        "$gles1_conform_root/platform/platform_gl.h",
-        "$gles1_conform_root/platform/platform_random.h",
-        "$gles1_conform_root/platform/platform_stdlib.h",
-        "$gles1_conform_root/platform/platform_types.h",
-        "$gles1_conform_root/platform/printf_fixed.h",
-        "$gles1_conform_root/platform/printf_float.h",
-        "$gles1_conform_root/platform/random.c",
-        "$gles1_conform_root/platform/stdlib_ansi.h",
       ]
+
+      sources += angle_gles1_conform_common_source
 
       defines = [ "ProbeEnum=ProbeEnumANGLE" ]
     }
@@ -662,6 +663,150 @@ if (build_angle_gles1_conform_tests) {
         ":angle_gles1_conform_support",
         "${angle_root}:libANGLE_config",
         "${angle_root}:angle_backend_config",
+      ]
+    }
+  }
+  source_set("angle_gles1_primtest_no_gtest") {
+    configs += [
+      ":angle_gles1_conform_support",
+      "$angle_root:internal_config",
+    ]
+
+    public_configs = [
+      "$angle_root/util:angle_util_config",
+      "$angle_root:angle_static",
+      "$angle_root:gl_prototypes",
+    ]
+
+    testonly = true
+
+    public_deps = [
+      "$angle_root:angle_common",
+      "$angle_root:libEGL_static",
+      "$angle_root:libGLESv1_CM_static",
+      "$angle_root:libGLESv2_static",
+      "$angle_root:preprocessor",
+      "$angle_root:translator",
+      "$angle_root/util:angle_util_static",
+    ]
+
+    sources = [
+      "$gles1_conform_root/conform/primtest/alias.c",
+      "$gles1_conform_root/conform/primtest/alpha.c",
+      "$gles1_conform_root/conform/primtest/blend.c",
+      "$gles1_conform_root/conform/primtest/depth.c",
+      "$gles1_conform_root/conform/primtest/dither.c",
+      "$gles1_conform_root/conform/primtest/driver.c",
+      "$gles1_conform_root/conform/primtest/driver.h",
+      "$gles1_conform_root/conform/primtest/fog.c",
+      "$gles1_conform_root/conform/primtest/hint.c",
+      "$gles1_conform_root/conform/primtest/light.c",
+      "$gles1_conform_root/conform/primtest/logic.c",
+      "$gles1_conform_root/conform/primtest/prim.c",
+      "$gles1_conform_root/conform/primtest/scissor.c",
+      "$gles1_conform_root/conform/primtest/shade.c",
+      "$gles1_conform_root/conform/primtest/shell.c",
+      "$gles1_conform_root/conform/primtest/shell.h",
+      "$gles1_conform_root/conform/primtest/stencil.c",
+      "$gles1_conform_root/conform/primtest/texture.c",
+      "$gles1_conform_root/conform/primtest/tproto.h",
+    ]
+
+    sources += angle_gles1_conform_common_source
+  }
+
+  angle_test("angle_gles1_primtest_tests") {
+    deps = [
+      ":angle_common_test_utils_static",
+      ":angle_gles1_primtest_no_gtest",
+    ]
+
+    include_dirs = [ "$gles1_conform_root/conform" ]
+
+    sources = [
+      "gles1_conformance_tests/PrimtestTests.cpp",
+      "test_utils/ANGLETest.cpp",
+      "test_utils/ANGLETest.h",
+    ]
+    main = "angle_end2end_tests_main"
+
+    configs += [
+      ":angle_gles1_conform_support",
+      "${angle_root}:libANGLE_config",
+      "${angle_root}:angle_backend_config",
+    ]
+  }
+  source_set("angle_gles1_covegl_no_gtest_source") {
+    configs += [
+      ":angle_gles1_conform_support",
+      "$angle_root:internal_config",
+    ]
+
+    public_configs = [
+      "$angle_root/util:angle_util_config",
+      "$angle_root:angle_static",
+      "$angle_root:gl_prototypes",
+    ]
+
+    testonly = true
+
+    public_deps = [
+      "$angle_root:angle_common",
+      "$angle_root:libEGL_static",
+      "$angle_root:libGLESv1_CM_static",
+      "$angle_root:libGLESv2_static",
+      "$angle_root:preprocessor",
+      "$angle_root:translator",
+      "$angle_root/util:angle_util_static",
+    ]
+
+    sources = [
+      "$gles1_conform_root/conform/covegl/enum.c",
+      "$gles1_conform_root/conform/covegl/native.h",
+      "$gles1_conform_root/conform/covegl/test.c",
+    ]
+
+    sources += angle_gles1_conform_common_source
+
+    if (!is_win && !is_linux && !is_chromeos) {
+      defines = [ "NULLWS" ]
+    }
+  }
+
+  angle_test("angle_gles1_covegl_no_gtest") {
+    deps = [ ":angle_gles1_covegl_no_gtest_source" ]
+
+    include_dirs = [ "$gles1_conform_root" ]
+
+    sources = [ "$gles1_conform_root/conform/covegl/shell.c" ]
+
+    if (is_win) {
+      sources += [ "$gles1_conform_root/conform/covegl/native_w32.c" ]
+    } else if (is_linux || is_chromeos) {
+      sources += [ "$gles1_conform_root/conform/covegl/native.c" ]
+    } else {
+      sources += [ "$gles1_conform_root/conform/covegl/native_nws.c" ]
+      defines += [ "NULLWS" ]
+    }
+
+    configs += [
+      "${angle_root}:libANGLE_config",
+      "${angle_root}:angle_backend_config",
+    ]
+
+    defines += [ "COMMON" ]
+
+    if (is_win) {
+      if (is_clang) {
+        cflags = [ "-Wno-incompatible-pointer-types" ]
+      } else {
+        cflags = [ "/wd4133" ]  # 'function': incompatible types
+      }
+
+      suppressed_configs += [
+        "//build/config/win:lean_and_mean",
+        "//build/config/win:nominmax",
+        "//build/config/win:unicode",
       ]
     }
   }
@@ -740,7 +885,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     # Ask the system headers to expose all the regular function otherwise
     # dEQP doesn't compile and produces warnings about implicitly defined
     # functions.
-    if (is_linux) {
+    if (is_linux || is_chromeos) {
       # This has to be GNU_SOURCE as on Linux dEQP uses syscall()
       defines += [ "_GNU_SOURCE" ]
     }
@@ -822,6 +967,27 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     sources = deqp_framework_decpp_sources
   }
 
+  config("angle_deqp_framework_xexml_config") {
+    include_dirs = [ "$deqp_path/framework/xexml" ]
+  }
+
+  angle_deqp_source_set("angle_deqp_framework_xexml") {
+    public_configs += [
+      ":angle_deqp_support",
+      ":angle_deqp_framework_decpp_config",
+      ":angle_deqp_framework_delibs_config",
+      "//build/config/compiler:exceptions",
+      "//build/config/compiler:no_chromium_code",
+    ]
+
+    public_deps = [
+      ":angle_deqp_framework_debase",
+      ":angle_deqp_framework_decpp",
+      ":angle_deqp_framework_delibs",
+    ]
+    sources = deqp_framework_xexml_sources
+  }
+
   config("angle_deqp_libtester_config") {
     defines = [ "ANGLE_DEQP_LIBTESTER_IMPLEMENTATION" ]
 
@@ -854,7 +1020,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     if (is_win) {
       sources += deqp_framework_delibs_sources_win
     }
-    if (is_linux || is_android || is_mac) {
+    if (is_linux || is_chromeos || is_android || is_mac) {
       sources += deqp_framework_delibs_sources_unix
     }
 
@@ -880,6 +1046,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     public_deps = [
       ":angle_deqp_framework_decpp",
       ":angle_deqp_framework_qphelper",
+      ":angle_deqp_framework_xexml",
     ]
   }
 
@@ -1110,7 +1277,7 @@ if (build_angle_deqp_tests && !is_fuchsia) {
     public_deps = [
       ":angle_deqp_framework_egl",
       ":angle_deqp_glshared",
-      "${angle_glslang_dir}:glslang_sources",
+      "${angle_glslang_dir}:glslang_lib_sources",
       "${angle_spirv_tools_dir}:spvtools_val",
     ]
     public_configs = [ ":angle_deqp_khr_common_config" ]
@@ -1150,7 +1317,9 @@ group("angle_tests") {
   deps = [
     ":angle_end2end_tests",
     ":angle_perftests",
+    ":angle_system_info_test",
     ":angle_unittests",
+    "capture_replay_tests",
   ]
   if (!is_fuchsia) {
     deps += [
@@ -1175,7 +1344,11 @@ group("angle_tests") {
     }
   }
   if (build_angle_gles1_conform_tests) {
-    deps += [ ":angle_gles1_conformance_tests" ]
+    deps += [
+      ":angle_gles1_conformance_tests",
+      ":angle_gles1_covegl_no_gtest",
+      ":angle_gles1_primtest_tests",
+    ]
     if (!is_win && !is_mac) {
       deps += [ ":angle_gles1_covgl_tests" ]
     }

@@ -27,10 +27,10 @@ class FrameRateDeciderTest : public testing::Test,
 
   void SetUp() override {
     surface_manager_ = std::make_unique<SurfaceManager>(this, base::nullopt);
-    frame_rate_decider_ =
-        std::make_unique<FrameRateDecider>(surface_manager_.get(), this, false);
-    frame_rate_decider_->set_min_num_of_frames_to_toggle_interval_for_testing(
-        0u);
+    bool hw_support_for_multiple_refresh_rates = true;
+    frame_rate_decider_ = std::make_unique<FrameRateDecider>(
+        surface_manager_.get(), this, hw_support_for_multiple_refresh_rates,
+        false, 0);
   }
 
   void TearDown() override {
@@ -43,7 +43,14 @@ class FrameRateDeciderTest : public testing::Test,
     display_interval_ = interval;
   }
   base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
-      const FrameSinkId& id) override {
+      const FrameSinkId& id,
+      mojom::CompositorFrameSinkType* type) override {
+    if (type) {
+      auto it = frame_sink_types_.find(id);
+      *type = it == frame_sink_types_.end()
+                  ? mojom::CompositorFrameSinkType::kMediaStream
+                  : it->second;
+    }
     return preferred_intervals_[id];
   }
 
@@ -87,6 +94,7 @@ class FrameRateDeciderTest : public testing::Test,
 
   base::TimeDelta display_interval_;
   base::flat_map<FrameSinkId, base::TimeDelta> preferred_intervals_;
+  base::flat_map<FrameSinkId, mojom::CompositorFrameSinkType> frame_sink_types_;
 
   std::unique_ptr<SurfaceManager> surface_manager_;
   std::unique_ptr<FrameRateDecider> frame_rate_decider_;
@@ -109,12 +117,12 @@ TEST_F(FrameRateDeciderTest, ActiveSurfaceTrackingFrameIndexChange) {
   EXPECT_EQ(display_interval_, preferred_interval);
 
   // Do a draw with the same surface and same CompositorFrame. Its assumed that
-  // the surface is not being updated and we toggle back to the min interval.
+  // the surface is not being updated and we retain the current state.
   {
     FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
     frame_rate_decider_->OnSurfaceWillBeDrawn(surface);
   }
-  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+  EXPECT_EQ(display_interval_, preferred_interval);
 
   // Submit a new frame to this surface and draw again. The interval should be
   // set to the surface's preferred rate.
@@ -140,12 +148,12 @@ TEST_F(FrameRateDeciderTest, ActiveSurfaceTrackingSurfaceIdChange) {
   EXPECT_EQ(display_interval_, preferred_interval);
 
   // Do a draw with the same surface and same CompositorFrame. Its assumed that
-  // the surface is not being updated and we toggle back to the min interval.
+  // no content changed onscreen and we retain the current state.
   {
     FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
     frame_rate_decider_->OnSurfaceWillBeDrawn(surface);
   }
-  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+  EXPECT_EQ(display_interval_, preferred_interval);
 
   // Create a new surface with the same frame sink id. The interval should be
   // set to the surface's preferred rate.
@@ -316,9 +324,10 @@ TEST_F(FrameRateDeciderTest, TogglesAfterMinNumOfFrames) {
 }
 
 TEST_F(FrameRateDeciderTest, TogglesWithSyntheticBFS) {
-  frame_rate_decider_ =
-      std::make_unique<FrameRateDecider>(surface_manager_.get(), this, true);
-  frame_rate_decider_->set_min_num_of_frames_to_toggle_interval_for_testing(0u);
+  bool hw_support_for_multiple_refresh_rate = false;
+  frame_rate_decider_ = std::make_unique<FrameRateDecider>(
+      surface_manager_.get(), this, hw_support_for_multiple_refresh_rate, false,
+      0);
   base::TimeDelta min_supported_interval = base::TimeDelta::FromSeconds(1);
   const std::vector<base::TimeDelta> supported_intervals = {
       min_supported_interval * 2, min_supported_interval};
@@ -361,6 +370,142 @@ TEST_F(FrameRateDeciderTest, TogglesWithSyntheticBFS) {
     frame_rate_decider_->OnSurfaceWillBeDrawn(surface1);
   }
   EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+}
+
+TEST_F(FrameRateDeciderTest, ManySinksWithMinInterval) {
+  base::TimeDelta min_supported_interval = base::TimeDelta::FromSeconds(1);
+  const std::vector<base::TimeDelta> supported_intervals = {
+      min_supported_interval * 3, min_supported_interval * 2,
+      min_supported_interval};
+  frame_rate_decider_->SetSupportedFrameIntervals(supported_intervals);
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+
+  Surface* surfaces[3];
+  for (int i = 0; i < 3; ++i) {
+    FrameSinkId frame_sink_id(1u, i);
+    if (i == 0)
+      preferred_intervals_[frame_sink_id] = min_supported_interval;
+    else
+      preferred_intervals_[frame_sink_id] = BeginFrameArgs::MinInterval();
+    surfaces[i] = CreateAndDrawSurface(frame_sink_id);
+  }
+
+  for (int i = 0; i < 3; ++i)
+    UpdateFrame(surfaces[i]);
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    for (int i = 0; i < 3; ++i)
+      frame_rate_decider_->OnSurfaceWillBeDrawn(surfaces[i]);
+  }
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+}
+
+// If there are no fixed frame sources, we should not lower the frame interval.
+TEST_F(FrameRateDeciderTest, NoFixedIntervalSurfaces) {
+  base::TimeDelta min_supported_interval = base::TimeDelta::FromSeconds(1);
+  const std::vector<base::TimeDelta> supported_intervals = {
+      min_supported_interval * 3, min_supported_interval * 2,
+      min_supported_interval};
+  frame_rate_decider_->SetSupportedFrameIntervals(supported_intervals);
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+
+  Surface* surfaces[3];
+  for (int i = 0; i < 3; ++i) {
+    FrameSinkId frame_sink_id(1u, i);
+    preferred_intervals_[frame_sink_id] = BeginFrameArgs::MaxInterval();
+    frame_sink_types_[frame_sink_id] =
+        mojom::CompositorFrameSinkType::kLayerTree;
+    surfaces[i] = CreateAndDrawSurface(frame_sink_id);
+  }
+
+  for (int i = 0; i < 3; ++i)
+    UpdateFrame(surfaces[i]);
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    for (int i = 0; i < 3; ++i)
+      frame_rate_decider_->OnSurfaceWillBeDrawn(surfaces[i]);
+  }
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+}
+
+TEST_F(FrameRateDeciderTest, NoHwSupportForMultiRefreshRates) {
+  bool hw_support_for_multiple_refresh_rate = false;
+  frame_rate_decider_ = std::make_unique<FrameRateDecider>(
+      surface_manager_.get(), this, hw_support_for_multiple_refresh_rate, false,
+      0);
+  base::TimeDelta min_supported_interval = base::TimeDelta::FromSeconds(1);
+  const std::vector<base::TimeDelta> supported_intervals = {
+      min_supported_interval * 3, min_supported_interval * 2,
+      min_supported_interval};
+  frame_rate_decider_
+      ->set_frame_interval_for_sinks_with_no_preference_for_testing(
+          min_supported_interval);
+  frame_rate_decider_->SetSupportedFrameIntervals(supported_intervals);
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+
+  FrameSinkId video_frame_sink_id(1u, 1u);
+  Surface* video_surface = CreateAndDrawSurface(video_frame_sink_id);
+  preferred_intervals_[video_frame_sink_id] = min_supported_interval;
+  frame_sink_types_[video_frame_sink_id] =
+      mojom::CompositorFrameSinkType::kVideo;
+
+  FrameSinkId stream_frame_sink_id(1u, 2u);
+  Surface* stream_surface = CreateAndDrawSurface(stream_frame_sink_id);
+  preferred_intervals_[stream_frame_sink_id] = min_supported_interval;
+  frame_sink_types_[stream_frame_sink_id] =
+      mojom::CompositorFrameSinkType::kMediaStream;
+
+  FrameSinkId content_frame_sink_id(1u, 3u);
+  Surface* content_surface = CreateAndDrawSurface(content_frame_sink_id);
+  preferred_intervals_[content_frame_sink_id] = BeginFrameArgs::MaxInterval();
+  frame_sink_types_[content_frame_sink_id] =
+      mojom::CompositorFrameSinkType::kLayerTree;
+
+  // Only 1 fixed rate source, frame interval is unchanged.
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    UpdateFrame(video_surface);
+    frame_rate_decider_->OnSurfaceWillBeDrawn(video_surface);
+  }
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+
+  // Multiple fixed rate sources, frame interval is lowered.
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    frame_rate_decider_->OnSurfaceWillBeDrawn(video_surface);
+    frame_rate_decider_->OnSurfaceWillBeDrawn(stream_surface);
+  }
+  EXPECT_EQ(display_interval_, min_supported_interval);
+
+  // One fixed rate source + content source with no preference, frame interval
+  // is lowered.
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    frame_rate_decider_->OnSurfaceWillBeDrawn(video_surface);
+    frame_rate_decider_->OnSurfaceWillBeDrawn(content_surface);
+  }
+  EXPECT_EQ(display_interval_, min_supported_interval);
+
+  // The content source opts out of no preference, frame interval is not
+  // lowered.
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    preferred_intervals_[content_frame_sink_id] = BeginFrameArgs::MinInterval();
+    frame_rate_decider_->OnSurfaceWillBeDrawn(video_surface);
+    frame_rate_decider_->OnSurfaceWillBeDrawn(content_surface);
+  }
+  EXPECT_EQ(display_interval_, FrameRateDecider::UnspecifiedFrameInterval());
+
+  // Multiple fixed rate sources + content source with estimated interval.
+  // Frame rate is lowered.
+  {
+    FrameRateDecider::ScopedAggregate scope(frame_rate_decider_.get());
+    preferred_intervals_[content_frame_sink_id] = min_supported_interval;
+    frame_rate_decider_->OnSurfaceWillBeDrawn(video_surface);
+    frame_rate_decider_->OnSurfaceWillBeDrawn(stream_surface);
+    frame_rate_decider_->OnSurfaceWillBeDrawn(content_surface);
+  }
+  EXPECT_EQ(display_interval_, min_supported_interval);
 }
 
 }  // namespace

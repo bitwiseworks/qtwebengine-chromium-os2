@@ -31,7 +31,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_FLEXIBLE_BOX_ALGORITHM_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_FLEXIBLE_BOX_ALGORITHM_H_
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/min_max_sizes.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_block_node.h"
@@ -66,6 +65,8 @@ enum class TransformedWritingMode {
 typedef Vector<FlexItem, 8> FlexItemVector;
 
 class AutoClearOverrideLogicalHeight {
+  STACK_ALLOCATED();
+
  public:
   explicit AutoClearOverrideLogicalHeight(LayoutBox* box)
       : box_(box), old_override_height_(-1) {
@@ -116,6 +117,7 @@ class FlexItem {
   // - |min_max_main_sizes| is the resolved min and max size properties in the
   //   main axis direction (not intrinsic widths). It does not include
   //   border/padding.
+  //   |min_max_cross_sizes| does include cross_axis_border_padding.
   FlexItem(const FlexLayoutAlgorithm*,
            LayoutBox*,
            const ComputedStyle& style,
@@ -125,7 +127,9 @@ class FlexItem {
            base::Optional<MinMaxSizes> min_max_cross_sizes,
            LayoutUnit main_axis_border_padding,
            LayoutUnit cross_axis_border_padding,
-           NGPhysicalBoxStrut physical_margins);
+           NGPhysicalBoxStrut physical_margins,
+           NGBoxStrut scrollbars,
+           bool depends_on_min_max_sizes = false);
 
   LayoutUnit HypotheticalMainAxisMarginBoxSize() const {
     return hypothetical_main_content_size + main_axis_border_padding +
@@ -196,6 +200,7 @@ class FlexItem {
   const LayoutUnit main_axis_border_padding;
   const LayoutUnit cross_axis_border_padding;
   NGPhysicalBoxStrut physical_margins;
+  const NGBoxStrut scrollbars;
 
   LayoutUnit flexed_content_size;
 
@@ -204,6 +209,7 @@ class FlexItem {
   // The algorithm stores the main axis offset in X and cross axis offset in Y.
   LayoutPoint desired_location;
 
+  const bool depends_on_min_max_sizes;
   bool frozen;
 
   // Legacy partially relies on FlexLayoutAlgorithm::AlignChildren to determine
@@ -359,7 +365,12 @@ class FlexLayoutAlgorithm {
   DISALLOW_NEW();
 
  public:
-  FlexLayoutAlgorithm(const ComputedStyle*, LayoutUnit line_break_length);
+  FlexLayoutAlgorithm(const ComputedStyle*,
+                      LayoutUnit line_break_length,
+                      LogicalSize percent_resolution_sizes,
+                      Document*);
+  FlexLayoutAlgorithm(const FlexLayoutAlgorithm&) = delete;
+  FlexLayoutAlgorithm& operator=(const FlexLayoutAlgorithm&) = delete;
 
   template <typename... Args>
   FlexItem& emplace_back(Args&&... args) {
@@ -381,6 +392,7 @@ class FlexLayoutAlgorithm {
   bool IsColumnFlow() const;
   bool IsMultiline() const { return style_->FlexWrap() != EFlexWrap::kNowrap; }
   static bool IsHorizontalFlow(const ComputedStyle&);
+  static bool IsColumnFlow(const ComputedStyle&);
   bool IsLeftToRightFlow() const;
   TransformedWritingMode GetTransformedWritingMode() const;
 
@@ -429,6 +441,13 @@ class FlexLayoutAlgorithm {
                            LayoutUnit border_scrollbar_padding_before);
   bool IsNGFlexBox() const;
 
+  static LayoutUnit GapBetweenItems(const ComputedStyle& style,
+                                    LogicalSize percent_resolution_sizes);
+  static LayoutUnit GapBetweenLines(const ComputedStyle& style,
+                                    LogicalSize percent_resolution_sizes);
+  const LayoutUnit gap_between_items_;
+  const LayoutUnit gap_between_lines_;
+
  private:
   EOverflow MainAxisOverflowForChild(const LayoutBox& child) const;
 
@@ -437,7 +456,6 @@ class FlexLayoutAlgorithm {
   FlexItemVector all_items_;
   Vector<FlexLine> flex_lines_;
   size_t next_item_index_;
-  DISALLOW_COPY_AND_ASSIGN(FlexLayoutAlgorithm);
 };
 
 inline const FlexLine* FlexItem::Line() const {

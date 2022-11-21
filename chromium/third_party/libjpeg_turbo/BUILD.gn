@@ -7,11 +7,9 @@
 
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/features.gni")
-
 if (current_cpu == "arm" || current_cpu == "arm64") {
   import("//build/config/arm.gni")
 }
-
 if (!use_qt) {
 assert(!is_ios, "This is not used on iOS, don't drag it in unintentionally")
 }
@@ -25,6 +23,7 @@ source_set("libjpeg_headers") {
     "jpeglib.h",
     "jpeglibmangler.h",
   ]
+  defines = [ "MANGLE_JPEG_NAMES" ]
 }
 
 if (current_cpu == "x86" || current_cpu == "x64") {
@@ -132,7 +131,7 @@ if (current_cpu == "x86" || current_cpu == "x64") {
       }
     } else if (is_mac || is_ios) {
       defines += [ "MACHO" ]
-    } else if (is_linux || is_android || is_fuchsia) {
+    } else if (is_linux || is_android || is_fuchsia || is_chromeos) {
       defines += [ "ELF" ]
     }
   }
@@ -140,51 +139,50 @@ if (current_cpu == "x86" || current_cpu == "x64") {
 
 static_library("simd") {
   include_dirs = [ "." ]
-  deps = [
-    ":libjpeg_headers",
-  ]
+  deps = [ ":libjpeg_headers" ]
 
   if (current_cpu == "x86") {
     deps += [ ":simd_asm" ]
-    sources = [
-      "simd/i386/jsimd.c",
-    ]
+    sources = [ "simd/i386/jsimd.c" ]
   } else if (current_cpu == "x64") {
     deps += [ ":simd_asm" ]
+    sources = [ "simd/x86_64/jsimd.c" ]
+  } else if ((current_cpu == "arm" || current_cpu == "arm64") && arm_use_neon) {
+    include_dirs += [ "simd/arm/" ]
+
     sources = [
-      "simd/x86_64/jsimd.c",
+      "simd/arm/jccolor-neon.c",
+      "simd/arm/jcgray-neon.c",
+      "simd/arm/jcphuff-neon.c",
+      "simd/arm/jcsample-neon.c",
+      "simd/arm/jdcolor-neon.c",
+      "simd/arm/jdmerge-neon.c",
+      "simd/arm/jdsample-neon.c",
+      "simd/arm/jfdctfst-neon.c",
+      "simd/arm/jfdctint-neon.c",
+      "simd/arm/jidctfst-neon.c",
+      "simd/arm/jidctint-neon.c",
+      "simd/arm/jidctred-neon.c",
+      "simd/arm/jquanti-neon.c",
     ]
-  } else if (current_cpu == "arm" && arm_version >= 7 &&
-             (arm_use_neon || arm_optionally_use_neon)) {
-    sources = [
-      "simd/arm/arm/jsimd.c",
-      "simd/arm/arm/jsimd_neon.S",
-      "simd/arm/common/jdcolor-neon.c",
-      "simd/arm/common/jdmerge-neon.c",
-      "simd/arm/common/jdsample-neon.c",
-      "simd/arm/common/jidctfst-neon.c",
-      "simd/arm/common/jidctint-neon.c",
-      "simd/arm/common/jidctred-neon.c",
-    ]
-    configs -= [ "//build/config/compiler:default_optimization" ]
-    configs += [ "//build/config/compiler:optimize_speed" ]
-  } else if (current_cpu == "arm64" && arm_use_neon) {
-    sources = [
-      "simd/arm/arm64/jsimd.c",
-      "simd/arm/arm64/jsimd_neon.S",
-      "simd/arm/common/jdcolor-neon.c",
-      "simd/arm/common/jdmerge-neon.c",
-      "simd/arm/common/jdsample-neon.c",
-      "simd/arm/common/jidctfst-neon.c",
-      "simd/arm/common/jidctint-neon.c",
-      "simd/arm/common/jidctred-neon.c",
-    ]
+    if (current_cpu == "arm") {
+      sources += [
+        "simd/arm/aarch32/jchuff-neon.c",
+        "simd/arm/aarch32/jsimd.c",
+      ]
+    } else if (current_cpu == "arm64") {
+      sources += [
+        "simd/arm/aarch64/jchuff-neon.c",
+        "simd/arm/aarch64/jsimd.c",
+      ]
+    }
+
+    defines = [ "NEON_INTRINSICS" ]
+
     configs -= [ "//build/config/compiler:default_optimization" ]
     configs += [ "//build/config/compiler:optimize_speed" ]
   } else {
-    sources = [
-      "jsimd_none.c",
-    ]
+    sources = [ "jsimd_none.c" ]
   }
 
   if (is_win) {
@@ -204,7 +202,6 @@ static_library("libjpeg") {
     "jccolor.c",
     "jcdctmgr.c",
     "jchuff.c",
-    "jchuff.h",
     "jcicc.c",
     "jcinit.c",
     "jcmainct.c",
@@ -224,7 +221,6 @@ static_library("libjpeg") {
     "jdcolor.c",
     "jddctmgr.c",
     "jdhuff.c",
-    "jdhuff.h",
     "jdicc.c",
     "jdinput.c",
     "jdmainct.c",
@@ -236,7 +232,6 @@ static_library("libjpeg") {
     "jdsample.c",
     "jdtrans.c",
     "jerror.c",
-    "jerror.h",
     "jfdctflt.c",
     "jfdctfst.c",
     "jfdctint.c",
@@ -246,13 +241,10 @@ static_library("libjpeg") {
     "jidctred.c",
     "jmemmgr.c",
     "jmemnobs.c",
-    "jmemsys.h",
     "jpeg_nbits_table.c",
-    "jpegint.h",
     "jquant1.c",
     "jquant2.c",
     "jutils.c",
-    "jversion.h",
   ]
 
   defines = [
@@ -263,15 +255,94 @@ static_library("libjpeg") {
   configs += [ ":libjpeg_config" ]
 
   public_configs = [ ":libjpeg_config" ]
-  public_deps = [
-    ":libjpeg_headers",
-  ]
+  public_deps = [ ":libjpeg_headers" ]
 
-  # MemorySanitizer doesn't support assembly code, so keep it disabled in
-  # MSan builds for now.
-  if (is_msan) {
+  # MemorySanitizer doesn't support assembly code, so keep it disabled in x86
+  # and x64 MSan builds for now.
+  if (is_msan && (current_cpu == "x86" || current_cpu == "x64")) {
     sources += [ "jsimd_none.c" ]
   } else {
     public_deps += [ ":simd" ]
+
+    if ((current_cpu == "arm" || current_cpu == "arm64") && arm_use_neon) {
+      defines += [ "NEON_INTRINSICS" ]
+    }
+  }
+}
+
+static_library("turbojpeg") {
+  sources = [
+    "jdatadst-tj.c",
+    "jdatasrc-tj.c",
+    "rdbmp.c",
+    "rdppm.c",
+    "transupp.c",
+    "turbojpeg.c",
+    "wrbmp.c",
+    "wrppm.c",
+  ]
+
+  defines = [
+    "WITH_SIMD",
+    "BMP_SUPPORTED",
+    "PPM_SUPPORTED",
+  ]
+
+  configs += [ ":libjpeg_config" ]
+
+  public_configs = [ ":libjpeg_config" ]
+  public_deps = [ ":libjpeg" ]
+}
+
+if (build_with_chromium) {
+  import("//testing/test.gni")
+
+  test("libjpeg_turbo_unittests") {
+    testonly = true
+
+    sources = [
+      "cdjpeg.c",
+      "cjpeg.c",
+      "djpeg.c",
+      "gtest/cjpeg-gtest-wrapper.cpp",
+      "gtest/djpeg-gtest-wrapper.cpp",
+      "gtest/gtest-utils.cpp",
+      "gtest/jpegtran-gtest-wrapper.cpp",
+      "gtest/tjbench-gtest-wrapper.cpp",
+      "gtest/tjunittest-gtest-wrapper.cpp",
+      "jpegtran.c",
+      "md5/md5.c",
+      "md5/md5hl.c",
+      "rdcolmap.c",
+      "rdgif.c",
+      "rdswitch.c",
+      "tjbench.c",
+      "tjunittest.c",
+      "tjutil.c",
+    ]
+
+    deps = [
+      ":turbojpeg",
+      "//base",
+      "//testing/gtest",
+      "//testing/gtest:gtest_main",
+    ]
+
+    data = [ "testimages/" ]
+
+    defines = [
+      "GTEST",
+      "WITH_SIMD",
+      "BMP_SUPPORTED",
+      "PPM_SUPPORTED",
+    ]
+
+    include_dirs = [
+      "//third_party/googletest/src/googletest/include/gtest",
+      ".",
+    ]
+
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [ "//build/config/compiler:no_chromium_code" ]
   }
 }

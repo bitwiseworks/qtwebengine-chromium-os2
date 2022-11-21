@@ -9,7 +9,6 @@
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
-#include "mojo/public/cpp/bindings/associated_interface_ptr.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom.h"
@@ -36,6 +35,10 @@ void FakeServiceWorker::RunUntilInitializeGlobalScope() {
   loop.Run();
 }
 
+void FakeServiceWorker::FlushForTesting() {
+  receiver_.FlushForTesting();
+}
+
 void FakeServiceWorker::InitializeGlobalScope(
     mojo::PendingAssociatedRemote<blink::mojom::ServiceWorkerHost>
         service_worker_host,
@@ -43,7 +46,9 @@ void FakeServiceWorker::InitializeGlobalScope(
     blink::mojom::ServiceWorkerObjectInfoPtr service_worker_info,
     blink::mojom::FetchHandlerExistence fetch_handler_existence,
     std::unique_ptr<blink::PendingURLLoaderFactoryBundle>
-        subresource_loader_factories) {
+        subresource_loader_factories,
+    mojo::PendingReceiver<blink::mojom::ReportingObserver>
+        reporting_observer_receiver) {
   host_.Bind(std::move(service_worker_host));
 
   // Enable callers to use these endpoints without us actually binding them
@@ -77,7 +82,8 @@ void FakeServiceWorker::InitializeGlobalScope(
 
 void FakeServiceWorker::DispatchInstallEvent(
     DispatchInstallEventCallback callback) {
-  std::move(callback).Run(blink::mojom::ServiceWorkerEventStatus::COMPLETED);
+  std::move(callback).Run(blink::mojom::ServiceWorkerEventStatus::COMPLETED,
+                          /*fetch_count=*/0);
 }
 
 void FakeServiceWorker::DispatchActivateEvent(
@@ -126,8 +132,11 @@ void FakeServiceWorker::DispatchFetchEventForMainResource(
   response->response_type = network::mojom::FetchResponseType::kDefault;
   mojo::Remote<blink::mojom::ServiceWorkerFetchResponseCallback>
       response_callback(std::move(pending_response_callback));
-  response_callback->OnResponse(
-      std::move(response), blink::mojom::ServiceWorkerFetchEventTiming::New());
+  auto timing = blink::mojom::ServiceWorkerFetchEventTiming::New();
+  auto now = base::TimeTicks::Now();
+  timing->respond_with_settled_time = now;
+  timing->dispatch_event_time = now;
+  response_callback->OnResponse(std::move(response), std::move(timing));
   std::move(callback).Run(blink::mojom::ServiceWorkerEventStatus::COMPLETED);
 }
 
@@ -164,14 +173,14 @@ void FakeServiceWorker::DispatchSyncEvent(const std::string& tag,
                                           bool last_chance,
                                           base::TimeDelta timeout,
                                           DispatchSyncEventCallback callback) {
-  NOTIMPLEMENTED();
+  std::move(callback).Run(blink::mojom::ServiceWorkerEventStatus::COMPLETED);
 }
 
 void FakeServiceWorker::DispatchPeriodicSyncEvent(
     const std::string& tag,
     base::TimeDelta timeout,
     DispatchPeriodicSyncEventCallback callback) {
-  NOTIMPLEMENTED();
+  std::move(callback).Run(blink::mojom::ServiceWorkerEventStatus::COMPLETED);
 }
 
 void FakeServiceWorker::DispatchAbortPaymentEvent(

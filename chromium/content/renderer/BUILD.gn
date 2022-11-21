@@ -9,9 +9,15 @@ import("//build/config/ui.gni")
 import("//content/common/features.gni")
 import("//media/media_options.gni")
 import("//ppapi/buildflags/buildflags.gni")
-import("//printing/buildflags/buildflags.gni")
 import("//third_party/webrtc/webrtc.gni")
 import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
+
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
 
 if (is_component_build) {
   link_target_type = "jumbo_source_set"
@@ -24,10 +30,10 @@ target(link_target_type, "renderer") {
   # internal content ones) should depend on the public one.
   visibility = [
     ":for_content_tests",
+    "//chromecast/media/audio:*",
     "//content/app:*",
     "//content/public/renderer:renderer_sources",
     "//content/renderer:audio_decoder_fuzzer",
-    "//chromecast/media/audio:*",
   ]
 
   sources = [
@@ -37,18 +43,20 @@ target(link_target_type, "renderer") {
     "accessibility/ax_action_target_factory.h",
     "accessibility/ax_image_annotator.cc",
     "accessibility/ax_image_annotator.h",
+    "accessibility/ax_image_stopwords.cc",
+    "accessibility/ax_image_stopwords.h",
     "accessibility/blink_ax_action_target.cc",
     "accessibility/blink_ax_action_target.h",
-    "accessibility/blink_ax_enum_conversion.cc",
-    "accessibility/blink_ax_enum_conversion.h",
     "accessibility/blink_ax_tree_source.cc",
     "accessibility/blink_ax_tree_source.h",
     "accessibility/render_accessibility_impl.cc",
     "accessibility/render_accessibility_impl.h",
     "accessibility/render_accessibility_manager.cc",
     "accessibility/render_accessibility_manager.h",
-    "android/synchronous_layer_tree_frame_sink.cc",
-    "android/synchronous_layer_tree_frame_sink.h",
+    "agent_scheduling_group.cc",
+    "agent_scheduling_group.h",
+    "android/synchronous_layer_tree_frame_sink_impl.cc",
+    "android/synchronous_layer_tree_frame_sink_impl.h",
     "browser_exposed_renderer_interfaces.cc",
     "browser_exposed_renderer_interfaces.h",
     "categorized_worker_pool.cc",
@@ -57,9 +65,6 @@ target(link_target_type, "renderer") {
     "child_frame_compositing_helper.h",
     "child_frame_compositor.h",
     "compositor/compositor_dependencies.h",
-    "compositor/layer_tree_view.cc",
-    "compositor/layer_tree_view.h",
-    "compositor/layer_tree_view_delegate.h",
     "content_security_policy_util.cc",
     "content_security_policy_util.h",
     "context_menu_params_builder.cc",
@@ -70,46 +75,22 @@ target(link_target_type, "renderer") {
     "discardable_memory_utils.h",
     "dom_automation_controller.cc",
     "dom_automation_controller.h",
-    "drop_data_builder.cc",
-    "drop_data_builder.h",
     "effective_connection_type_helper.cc",
     "effective_connection_type_helper.h",
     "frame_blame_context.cc",
     "frame_blame_context.h",
     "frame_owner_properties_converter.cc",
     "frame_owner_properties_converter.h",
-    "frame_swap_message_queue.cc",
-    "frame_swap_message_queue.h",
     "gpu_benchmarking_extension.cc",
     "gpu_benchmarking_extension.h",
     "history_entry.cc",
     "history_entry.h",
     "history_serialization.cc",
     "history_serialization.h",
-    "ime_event_guard.cc",
-    "ime_event_guard.h",
+    "impression_conversions.cc",
+    "impression_conversions.h",
     "in_process_renderer_thread.cc",
     "in_process_renderer_thread.h",
-    "input/frame_input_handler_impl.cc",
-    "input/frame_input_handler_impl.h",
-    "input/input_event_prediction.cc",
-    "input/input_event_prediction.h",
-    "input/input_target_client_impl.cc",
-    "input/input_target_client_impl.h",
-    "input/main_thread_event_queue.cc",
-    "input/main_thread_event_queue.h",
-    "input/main_thread_event_queue_task.h",
-    "input/main_thread_event_queue_task_list.cc",
-    "input/main_thread_event_queue_task_list.h",
-    "input/render_widget_input_handler.cc",
-    "input/render_widget_input_handler.h",
-    "input/render_widget_input_handler_delegate.h",
-    "input/scoped_web_input_event_with_latency_info.cc",
-    "input/scoped_web_input_event_with_latency_info.h",
-    "input/widget_input_handler_impl.cc",
-    "input/widget_input_handler_impl.h",
-    "input/widget_input_handler_manager.cc",
-    "input/widget_input_handler_manager.h",
     "internal_document_state_data.cc",
     "internal_document_state_data.h",
     "java/gin_java_bridge_dispatcher.cc",
@@ -122,16 +103,8 @@ target(link_target_type, "renderer") {
     "java/gin_java_function_invocation_helper.h",
     "loader/child_url_loader_factory_bundle.cc",
     "loader/child_url_loader_factory_bundle.h",
-    "loader/code_cache_loader_impl.cc",
-    "loader/code_cache_loader_impl.h",
-    "loader/frame_request_blocker.cc",
-    "loader/frame_request_blocker.h",
-    "loader/internet_disconnected_web_url_loader.cc",
-    "loader/internet_disconnected_web_url_loader.h",
     "loader/navigation_body_loader.cc",
     "loader/navigation_body_loader.h",
-    "loader/navigation_response_override_parameters.cc",
-    "loader/navigation_response_override_parameters.h",
     "loader/request_extra_data.cc",
     "loader/request_extra_data.h",
     "loader/resource_dispatcher.cc",
@@ -152,8 +125,6 @@ target(link_target_type, "renderer") {
     "loader/web_url_request_util.h",
     "loader/web_worker_fetch_context_impl.cc",
     "loader/web_worker_fetch_context_impl.h",
-    "low_memory_mode_controller.cc",
-    "low_memory_mode_controller.h",
     "media/android/flinging_renderer_client.cc",
     "media/android/flinging_renderer_client.h",
     "media/android/flinging_renderer_client_factory.cc",
@@ -166,21 +137,6 @@ target(link_target_type, "renderer") {
     "media/android/stream_texture_factory.h",
     "media/android/stream_texture_wrapper_impl.cc",
     "media/android/stream_texture_wrapper_impl.h",
-    "media/audio/audio_device_factory.cc",
-    "media/audio/audio_device_factory.h",
-    "media/audio/audio_input_ipc_factory.cc",
-    "media/audio/audio_input_ipc_factory.h",
-    "media/audio/audio_output_ipc_factory.cc",
-    "media/audio/audio_output_ipc_factory.h",
-    "media/audio/audio_renderer_mixer_manager.cc",
-    "media/audio/audio_renderer_mixer_manager.h",
-    "media/audio/audio_renderer_sink_cache.h",
-    "media/audio/audio_renderer_sink_cache_impl.cc",
-    "media/audio/audio_renderer_sink_cache_impl.h",
-    "media/audio/mojo_audio_input_ipc.cc",
-    "media/audio/mojo_audio_input_ipc.h",
-    "media/audio/mojo_audio_output_ipc.cc",
-    "media/audio/mojo_audio_output_ipc.h",
     "media/audio_decoder.cc",
     "media/audio_decoder.h",
     "media/batching_media_log.cc",
@@ -191,6 +147,8 @@ target(link_target_type, "renderer") {
     "media/inspector_media_event_handler.h",
     "media/media_factory.cc",
     "media/media_factory.h",
+    "media/media_interface_factory.cc",
+    "media/media_interface_factory.h",
     "media/media_permission_dispatcher.cc",
     "media/media_permission_dispatcher.h",
     "media/power_status_helper_impl.cc",
@@ -219,8 +177,6 @@ target(link_target_type, "renderer") {
     "net_info_helper.h",
     "peripheral_content_heuristic.cc",
     "peripheral_content_heuristic.h",
-    "queue_message_swap_promise.cc",
-    "queue_message_swap_promise.h",
     "render_frame_impl.cc",
     "render_frame_impl.h",
     "render_frame_metadata_observer_impl.cc",
@@ -242,9 +198,6 @@ target(link_target_type, "renderer") {
     "render_widget_delegate.h",
     "render_widget_mouse_lock_dispatcher.cc",
     "render_widget_mouse_lock_dispatcher.h",
-    "render_widget_screen_metrics_emulator.cc",
-    "render_widget_screen_metrics_emulator.h",
-    "render_widget_screen_metrics_emulator_delegate.h",
     "renderer_blink_platform_impl.cc",
     "renderer_blink_platform_impl.h",
     "renderer_main.cc",
@@ -255,8 +208,6 @@ target(link_target_type, "renderer") {
     "renderer_main_platform_delegate_win.cc",
     "sad_plugin.cc",
     "sad_plugin.h",
-    "savable_resources.cc",
-    "savable_resources.h",
     "seccomp_sandbox_status_android.cc",
     "seccomp_sandbox_status_android.h",
     "service_worker/controller_service_worker_connector.cc",
@@ -335,14 +286,17 @@ target(link_target_type, "renderer") {
   deps = [
     "//base",
     "//base:i18n",
+    "//build:chromecast_buildflags",
     "//cc",
     "//cc/animation",
     "//cc/mojo_embedder",
+    "//cc/mojom",
     "//cc/paint",
     "//components/discardable_memory/client",
     "//components/metrics",
     "//components/metrics:single_sample_metrics",
     "//components/url_formatter",
+    "//components/variations:variations_mojom",
     "//components/variations/net",
     "//components/viz/client",
     "//components/viz/common",
@@ -375,7 +329,6 @@ target(link_target_type, "renderer") {
     "//media/mojo:buildflags",
     "//media/mojo/clients",
     "//media/mojo/mojom",
-    "//media/mojo/mojom:remoting",
     "//media/webrtc",
     "//mojo/public/cpp/bindings",
     "//net",
@@ -389,6 +342,7 @@ target(link_target_type, "renderer") {
     "//services/image_annotation/public/cpp:cpp",
     "//services/image_annotation/public/mojom:mojom",
     "//services/metrics/public/cpp:metrics_cpp",
+    "//services/metrics/public/cpp:ukm_builders",
     "//services/network:network_service",
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/mojom",
@@ -408,6 +362,8 @@ target(link_target_type, "renderer") {
     "//ui/accessibility",
     "//ui/base",
     "//ui/base/clipboard",
+    "//ui/base/cursor:cursor_base",
+    "//ui/base/dragdrop/mojom:mojom_shared",
     "//ui/base/ime",
     "//ui/display",
     "//ui/events:dom_keycode_converter",
@@ -418,28 +374,18 @@ target(link_target_type, "renderer") {
     "//ui/latency",
     "//ui/native_theme",
     "//ui/surface",
+    "//url",
     "//v8",
   ]
   allow_circular_includes_from = []
 
-  if (use_external_popup_menu) {
-    sources += [
-      "external_popup_menu.cc",
-      "external_popup_menu.h",
-    ]
-  }
-
   if (is_android) {
     set_sources_assignment_filter([])
     sources += [
-      "input/synchronous_compositor_proxy.cc",
-      "input/synchronous_compositor_proxy.h",
-      "input/synchronous_compositor_registry.h",
-
       # Add back the Linux file which Android shares.
       "render_view_linux.cc",
     ]
-    set_sources_assignment_filter(sources_assignment_filter)
+    set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
 
     deps += [
       # Used by Android WebView only.
@@ -461,24 +407,12 @@ target(link_target_type, "renderer") {
     ]
   }
 
-  if (is_linux) {
-    deps += [
-      "//components/services/font/public/cpp",
-      "//services/service_manager/zygote",
-    ]
-  }
-
-  if (is_mac) {
-    sources += [
-      "text_input_client_observer.cc",
-      "text_input_client_observer.h",
-    ]
+  if (is_linux || is_chromeos) {
+    deps += [ "//components/services/font/public/cpp" ]
   }
 
   if (is_fuchsia) {
     sources += [
-      "media/audio/fuchsia_audio_device_factory.cc",
-      "media/audio/fuchsia_audio_device_factory.h",
       "media/fuchsia_renderer_factory.cc",
       "media/fuchsia_renderer_factory.h",
       "render_view_fuchsia.cc",
@@ -489,11 +423,23 @@ target(link_target_type, "renderer") {
       "//media/fuchsia/audio",
       "//media/fuchsia/cdm/client",
       "//media/fuchsia/mojom",
+      "//third_party/fuchsia-sdk/sdk/pkg/sys_cpp",
     ]
   }
 
-  if (enable_media_remoting) {
-    deps += [ "//media/remoting" ]
+  if (enable_media_remoting || is_chromecast) {
+    deps += [ "//media/mojo/mojom:remoting" ]
+
+    if (enable_media_remoting) {
+      deps += [ "//media/remoting:remoting_sender" ]
+    }
+
+    if (is_chromecast) {
+      deps += [
+        "//media/remoting:remoting_constants",
+        "//media/remoting:remoting_renderer",
+      ]
+    }
   }
 
   if (enable_plugins && enable_webrtc) {
@@ -647,26 +593,29 @@ target(link_target_type, "renderer") {
       "//ppapi/host",
       "//ppapi/proxy",
       "//ppapi/shared_impl",
+      "//printing/mojom",
       "//third_party/libvpx",
       "//third_party/opus",
-      "//ui/base/cursor",
-      "//ui/base/mojom:cursor_type",
+      "//ui/base/cursor:cursor_base",
+      "//ui/base/cursor/mojom:cursor_type",
     ]
   }
 
-  if (enable_basic_printing) {
-    deps += [ "//printing" ]
-  }
-
-  if (enable_mojo_media) {
-    sources += [
-      "media/media_interface_factory.cc",
-      "media/media_interface_factory.h",
-    ]
-  }
-
-  if (is_linux || is_android) {
+  if (is_linux || is_chromeos || is_android) {
     deps += [ "//sandbox:sandbox_buildflags" ]
+  }
+
+  if (is_chromeos) {
+    sources += [
+      "performance_manager/mechanisms/userspace_swap_renderer_initialization_impl.cc",
+      "performance_manager/mechanisms/userspace_swap_renderer_initialization_impl.h",
+    ]
+    deps += [
+      "//chromeos:chromeos_export",
+      "//chromeos/memory/userspace_swap",
+      "//chromeos/memory/userspace_swap:mojom",
+      "//chromeos/system:system",
+    ]
   }
 
   if (use_ozone) {
@@ -681,8 +630,8 @@ target(link_target_type, "renderer") {
 # See comment at the top of //content/BUILD.gn for how this works.
 group("for_content_tests") {
   visibility = [
-    "//content/shell/test_runner",
     "//content/test/*",
+    "//content/web_test:web_test_renderer",
   ]
 
   if (!is_component_build) {

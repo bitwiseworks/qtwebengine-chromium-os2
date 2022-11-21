@@ -46,11 +46,8 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
-#include "third_party/blink/renderer/core/paint/compositing/composited_layer_mapping.h"
-#include "third_party/blink/renderer/core/paint/compositing/compositing_reason_finder.h"
 #include "third_party/blink/renderer/core/paint/filter_effect_builder.h"
 #include "third_party/blink/renderer/core/paint/object_paint_properties.h"
-#include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/platform/animation/animation_translation_util.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation.h"
 #include "third_party/blink/renderer/platform/animation/compositor_color_animation_curve.h"
@@ -61,7 +58,6 @@
 #include "third_party/blink/renderer/platform/animation/compositor_keyframe_model.h"
 #include "third_party/blink/renderer/platform/animation/compositor_transform_animation_curve.h"
 #include "third_party/blink/renderer/platform/animation/compositor_transform_keyframe.h"
-#include "third_party/blink/renderer/platform/geometry/float_box.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 
 namespace blink {
@@ -188,7 +184,8 @@ CompositorAnimations::CheckCanStartEffectOnCompositor(
     const Animation* animation_to_add,
     const EffectModel& effect,
     const PaintArtifactCompositor* paint_artifact_compositor,
-    double animation_playback_rate) {
+    double animation_playback_rate,
+    PropertyHandleSet* unsupported_properties) {
   FailureReasons reasons = kNoFailure;
   const auto& keyframe_effect = To<KeyframeEffectModelBase>(effect);
 
@@ -273,8 +270,12 @@ CompositorAnimations::CheckCanStartEffectOnCompositor(
             if (layout_object && layout_object->Style() &&
                 !layout_object->Style()->HasCSSPaintImagesUsingCustomProperty(
                     property.CustomPropertyName(),
-                    layout_object->GetDocument()))
+                    layout_object->GetDocument())) {
+              if (unsupported_properties) {
+                unsupported_properties->insert(property);
+              }
               reasons |= kUnsupportedCSSProperty;
+            }
             // TODO: Add support for keyframes containing different types
             if (!keyframes.front() ||
                 !keyframes.front()->GetCompositorKeyframeValue() ||
@@ -285,6 +286,9 @@ CompositorAnimations::CheckCanStartEffectOnCompositor(
           } else {
             // We skip the rest of the loop in this case for the same reason as
             // unsupported CSS properties - see below.
+            if (unsupported_properties) {
+              unsupported_properties->insert(property);
+            }
             reasons |= kUnsupportedCSSProperty;
             continue;
           }
@@ -296,6 +300,9 @@ CompositorAnimations::CheckCanStartEffectOnCompositor(
           //       an unsupported property.
           //   ii. GetCompositorKeyframeValue() will be false so we will
           //       accidentally count this as kInvalidAnimationOrEffect as well.
+          if (unsupported_properties) {
+            unsupported_properties->insert(property);
+          }
           reasons |= kUnsupportedCSSProperty;
           continue;
       }
@@ -348,7 +355,8 @@ CompositorAnimations::CheckCanStartEffectOnCompositor(
 
 CompositorAnimations::FailureReasons
 CompositorAnimations::CheckCanStartElementOnCompositor(
-    const Element& target_element) {
+    const Element& target_element,
+    const EffectModel& model) {
   FailureReasons reasons = kNoFailure;
 
   // Both of these checks are required. It is legal to enable the compositor
@@ -378,8 +386,10 @@ CompositorAnimations::CheckCanStartElementOnCompositor(
           (transform && transform->HasDirectCompositingReasons()) ||
           (effect && effect->HasDirectCompositingReasons());
     }
-    if (!has_direct_compositing_reasons)
+    if (!has_direct_compositing_reasons &&
+        To<KeyframeEffectModelBase>(model).HasNonVariableProperty()) {
       reasons |= kTargetHasInvalidCompositingState;
+    }
   } else {
     reasons |= kTargetHasInvalidCompositingState;
   }
@@ -395,11 +405,13 @@ CompositorAnimations::CheckCanStartAnimationOnCompositor(
     const Animation* animation_to_add,
     const EffectModel& effect,
     const PaintArtifactCompositor* paint_artifact_compositor,
-    double animation_playback_rate) {
+    double animation_playback_rate,
+    PropertyHandleSet* unsupported_properties) {
   FailureReasons reasons = CheckCanStartEffectOnCompositor(
       timing, target_element, animation_to_add, effect,
-      paint_artifact_compositor, animation_playback_rate);
-  return reasons | CheckCanStartElementOnCompositor(target_element);
+      paint_artifact_compositor, animation_playback_rate,
+      unsupported_properties);
+  return reasons | CheckCanStartElementOnCompositor(target_element, effect);
 }
 
 void CompositorAnimations::CancelIncompatibleAnimationsOnCompositor(
@@ -478,8 +490,9 @@ void CompositorAnimations::StartAnimationOnCompositor(
 void CompositorAnimations::CancelAnimationOnCompositor(
     const Element& element,
     CompositorAnimation* compositor_animation,
-    int id) {
-  if (CheckCanStartElementOnCompositor(element) != kNoFailure) {
+    int id,
+    const EffectModel& model) {
+  if (CheckCanStartElementOnCompositor(element, model) != kNoFailure) {
     // When an element is being detached, we cancel any associated
     // Animations for CSS animations. But by the time we get
     // here the mapping will have been removed.
@@ -495,8 +508,9 @@ void CompositorAnimations::PauseAnimationForTestingOnCompositor(
     const Element& element,
     const Animation& animation,
     int id,
-    base::TimeDelta pause_time) {
-  DCHECK_EQ(CheckCanStartElementOnCompositor(element), kNoFailure);
+    base::TimeDelta pause_time,
+    const EffectModel& model) {
+  DCHECK_EQ(CheckCanStartElementOnCompositor(element, model), kNoFailure);
   CompositorAnimation* compositor_animation =
       animation.GetCompositorAnimation();
   DCHECK(compositor_animation);
@@ -508,25 +522,6 @@ void CompositorAnimations::AttachCompositedLayers(
     CompositorAnimation* compositor_animation) {
   if (!compositor_animation)
     return;
-
-  if (!element.GetLayoutObject() ||
-      !element.GetLayoutObject()->IsBoxModelObject() ||
-      !element.GetLayoutObject()->HasLayer())
-    return;
-
-  PaintLayer* layer =
-      ToLayoutBoxModelObject(element.GetLayoutObject())->Layer();
-
-  // Composited animations do not depend on a composited layer mapping for CAP.
-  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
-    if (!layer->IsAllowedToQueryCompositingState() ||
-        !layer->GetCompositedLayerMapping() ||
-        !layer->GetCompositedLayerMapping()->MainGraphicsLayer())
-      return;
-
-    if (!layer->GetCompositedLayerMapping()->MainGraphicsLayer()->CcLayer())
-      return;
-  }
 
   CompositorElementIdNamespace element_id_namespace =
       CompositorElementIdNamespace::kPrimary;
@@ -561,10 +556,11 @@ bool CompositorAnimations::ConvertTimingForCompositor(
 
   // Compositor's time offset is positive for seeking into the animation.
   DCHECK(animation_playback_rate);
-  out.scaled_time_offset = -base::TimeDelta::FromSecondsD(
-                               timing.start_delay / animation_playback_rate) +
-                           time_offset;
-  // Start delay is effectively +/- infinity.
+  double delay = animation_playback_rate > 0 ? timing.start_delay : 0;
+  out.scaled_time_offset =
+      -base::TimeDelta::FromSecondsD(delay / animation_playback_rate) +
+      time_offset;
+  // Delay is effectively +/- infinity.
   if (out.scaled_time_offset.is_max() || out.scaled_time_offset.is_min())
     return false;
 
@@ -773,6 +769,17 @@ void CompositorAnimations::GetAnimationOnCompositor(
     keyframe_models.push_back(std::move(keyframe_model));
   }
   DCHECK(!keyframe_models.IsEmpty());
+}
+
+bool CompositorAnimations::CheckUsesCompositedScrolling(Node* target) {
+  if (!target)
+    return false;
+  DCHECK(target->GetDocument().Lifecycle().GetState() >=
+         DocumentLifecycle::kCompositingAssignmentsClean);
+  auto* layout_box_model_object = target->GetLayoutBoxModelObject();
+  if (!layout_box_model_object)
+    return false;
+  return layout_box_model_object->UsesCompositedScrolling();
 }
 
 }  // namespace blink

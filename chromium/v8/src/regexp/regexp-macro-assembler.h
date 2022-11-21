@@ -28,13 +28,14 @@ struct DisjunctDecisionRow {
 class RegExpMacroAssembler {
  public:
   // The implementation must be able to handle at least:
-  static const int kMaxRegister = (1 << 16) - 1;
-  static const int kMaxCPOffset = (1 << 15) - 1;
-  static const int kMinCPOffset = -(1 << 15);
+  static constexpr int kMaxRegisterCount = (1 << 16);
+  static constexpr int kMaxRegister = kMaxRegisterCount - 1;
+  static constexpr int kMaxCPOffset = (1 << 15) - 1;
+  static constexpr int kMinCPOffset = -(1 << 15);
 
-  static const int kTableSizeBits = 7;
-  static const int kTableSize = 1 << kTableSizeBits;
-  static const int kTableMask = kTableSize - 1;
+  static constexpr int kTableSizeBits = 7;
+  static constexpr int kTableSize = 1 << kTableSizeBits;
+  static constexpr int kTableMask = kTableSize - 1;
 
   static constexpr int kUseCharactersValue = -1;
 
@@ -87,7 +88,7 @@ class RegExpMacroAssembler {
   virtual void CheckNotBackReference(int start_reg, bool read_backward,
                                      Label* on_no_match) = 0;
   virtual void CheckNotBackReferenceIgnoreCase(int start_reg,
-                                               bool read_backward,
+                                               bool read_backward, bool unicode,
                                                Label* on_no_match) = 0;
   // Check the current character for a match with a literal character.  If we
   // fail to match then goto the on_failure label.  End of input always
@@ -164,11 +165,16 @@ class RegExpMacroAssembler {
   virtual void ClearRegisters(int reg_from, int reg_to) = 0;
   virtual void WriteStackPointerToRegister(int reg) = 0;
 
-  // Compares two-byte strings case insensitively.
+  // Compare two-byte strings case insensitively.
   // Called from generated RegExp code.
-  static int CaseInsensitiveCompareUC16(Address byte_offset1,
-                                        Address byte_offset2,
-                                        size_t byte_length, Isolate* isolate);
+  static int CaseInsensitiveCompareNonUnicode(Address byte_offset1,
+                                              Address byte_offset2,
+                                              size_t byte_length,
+                                              Isolate* isolate);
+  static int CaseInsensitiveCompareUnicode(Address byte_offset1,
+                                           Address byte_offset2,
+                                           size_t byte_length,
+                                           Isolate* isolate);
 
   // Check that we are not in the middle of a surrogate pair.
   void CheckNotInSurrogatePair(int cp_offset, Label* on_failure);
@@ -272,6 +278,13 @@ class NativeRegExpMacroAssembler: public RegExpMacroAssembler {
                                        const byte* input_end, int* output,
                                        int output_size, Isolate* isolate,
                                        JSRegExp regexp);
+  void LoadCurrentCharacterImpl(int cp_offset, Label* on_end_of_input,
+                                bool check_bounds, int characters,
+                                int eats_at_least) override;
+  // Load a number of characters at the given offset from the
+  // current position, into the current-character register.
+  virtual void LoadCurrentCharacterUnchecked(int cp_offset,
+                                             int character_count) = 0;
 };
 
 }  // namespace internal

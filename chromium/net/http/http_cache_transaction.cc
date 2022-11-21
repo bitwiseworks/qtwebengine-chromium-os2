@@ -188,7 +188,6 @@ HttpCache::Transaction::Transaction(RequestPriority priority, HttpCache* cache)
       shared_writing_error_(OK),
       cache_entry_status_(CacheEntryStatus::ENTRY_UNDEFINED),
       validation_cause_(VALIDATION_CAUSE_UNDEFINED),
-      cant_conditionalize_zero_freshness_from_memhint_(false),
       recorded_histograms_(false),
       parallel_writing_pattern_(PARALLEL_WRITING_NONE),
       moved_network_transaction_to_writers_(false),
@@ -569,9 +568,15 @@ void HttpCache::Transaction::SetWebSocketHandshakeStreamCreateHelper(
 }
 
 void HttpCache::Transaction::SetBeforeNetworkStartCallback(
-    const BeforeNetworkStartCallback& callback) {
+    BeforeNetworkStartCallback callback) {
   DCHECK(!network_trans_);
-  before_network_start_callback_ = callback;
+  before_network_start_callback_ = std::move(callback);
+}
+
+void HttpCache::Transaction::SetConnectedCallback(
+    const ConnectedCallback& callback) {
+  DCHECK(!network_trans_);
+  connected_callback_ = callback;
 }
 
 void HttpCache::Transaction::SetRequestHeadersCallback(
@@ -603,6 +608,14 @@ void HttpCache::Transaction::GetConnectionAttempts(
   out->insert(out->begin(),
               network_transaction_info_.old_connection_attempts.begin(),
               network_transaction_info_.old_connection_attempts.end());
+}
+
+void HttpCache::Transaction::CloseConnectionOnDestruction() {
+  if (network_trans_) {
+    network_trans_->CloseConnectionOnDestruction();
+  } else if (InWriters()) {
+    entry_->writers->CloseConnectionOnDestruction();
+  }
 }
 
 void HttpCache::Transaction::SetValidatingCannotProceed() {
@@ -1124,7 +1137,6 @@ int HttpCache::Transaction::DoOpenOrCreateEntry() {
     // below --- as we've already dropped the old entry.
     couldnt_conditionalize_request_ = true;
     validation_cause_ = VALIDATION_CAUSE_ZERO_FRESHNESS;
-    cant_conditionalize_zero_freshness_from_memhint_ = true;
     UpdateCacheEntryStatus(CacheEntryStatus::ENTRY_CANT_CONDITIONALIZE);
   }
 
@@ -1684,7 +1696,9 @@ int HttpCache::Transaction::DoSendRequest() {
     return rv;
   }
 
-  network_trans_->SetBeforeNetworkStartCallback(before_network_start_callback_);
+  network_trans_->SetBeforeNetworkStartCallback(
+      std::move(before_network_start_callback_));
+  network_trans_->SetConnectedCallback(connected_callback_);
   network_trans_->SetRequestHeadersCallback(request_headers_callback_);
   network_trans_->SetResponseHeadersCallback(response_headers_callback_);
 
@@ -2094,6 +2108,8 @@ int HttpCache::Transaction::DoHeadersPhaseCannotProceed(int result) {
 
   entry_ = nullptr;
   new_entry_ = nullptr;
+
+  SetResponse(HttpResponseInfo());
 
   // Bypass the cache for timeout scenario.
   if (result == ERR_CACHE_LOCK_TIMEOUT)
@@ -2626,26 +2642,37 @@ int HttpCache::Transaction::ValidateEntryHeadersAndContinue() {
   return OK;
 }
 
-int HttpCache::Transaction::BeginExternallyConditionalizedRequest() {
-  DCHECK_EQ(UPDATE, mode_);
+bool HttpCache::Transaction::
+    ExternallyConditionalizedValidationHeadersMatchEntry() const {
   DCHECK(external_validation_.initialized);
 
   for (size_t i = 0; i < base::size(kValidationHeaders); i++) {
     if (external_validation_.values[i].empty())
       continue;
+
     // Retrieve either the cached response's "etag" or "last-modified" header.
     std::string validator;
     response_.headers->EnumerateHeader(
         nullptr, kValidationHeaders[i].related_response_header_name,
         &validator);
 
-    if (response_.headers->response_code() != 200 || truncated_ ||
-        validator.empty() || validator != external_validation_.values[i]) {
-      // The externally conditionalized request is not a validation request
-      // for our existing cache entry. Proceed with caching disabled.
-      UpdateCacheEntryStatus(CacheEntryStatus::ENTRY_OTHER);
-      DoneWithEntry(true);
+    if (validator != external_validation_.values[i]) {
+      return false;
     }
+  }
+
+  return true;
+}
+
+int HttpCache::Transaction::BeginExternallyConditionalizedRequest() {
+  DCHECK_EQ(UPDATE, mode_);
+
+  if (response_.headers->response_code() != 200 || truncated_ ||
+      !ExternallyConditionalizedValidationHeadersMatchEntry()) {
+    // The externally conditionalized request is not a validation request
+    // for our existing cache entry. Proceed with caching disabled.
+    UpdateCacheEntryStatus(CacheEntryStatus::ENTRY_OTHER);
+    DoneWithEntry(true);
   }
 
   TransitionToState(STATE_SEND_REQUEST);
@@ -2709,11 +2736,12 @@ ValidationType HttpCache::Transaction::RequiresValidation() {
   if (effective_load_flags_ & LOAD_SKIP_CACHE_VALIDATION)
     return VALIDATION_NONE;
 
+  TimeDelta response_time_in_cache =
+      cache_->clock_->Now() - response_.response_time;
   if (response_.unused_since_prefetch &&
       !(effective_load_flags_ & LOAD_PREFETCH) &&
-      response_.headers->GetCurrentAge(
-          response_.request_time, response_.response_time,
-          cache_->clock_->Now()) < TimeDelta::FromMinutes(kPrefetchReuseMins)) {
+      (response_time_in_cache < TimeDelta::FromMinutes(kPrefetchReuseMins)) &&
+      (response_time_in_cache >= TimeDelta())) {
     // The first use of a resource after prefetch within a short window skips
     // validation.
     return VALIDATION_NONE;
@@ -3485,11 +3513,6 @@ void HttpCache::Transaction::RecordHistograms() {
   if (cache_entry_status_ == CacheEntryStatus::ENTRY_CANT_CONDITIONALIZE) {
     UMA_HISTOGRAM_ENUMERATION("HttpCache.CantConditionalizeCause",
                               validation_cause_, VALIDATION_CAUSE_MAX);
-    if (validation_cause_ == VALIDATION_CAUSE_ZERO_FRESHNESS) {
-      UMA_HISTOGRAM_BOOLEAN(
-          "HttpCache.CantConditionalizeZeroFreshnessFromMemHint",
-          cant_conditionalize_zero_freshness_from_memhint_);
-    }
   }
 
   if (cache_entry_status_ == CacheEntryStatus::ENTRY_OTHER)
@@ -3599,13 +3622,17 @@ void HttpCache::Transaction::TransitionToState(State state) {
 bool HttpCache::Transaction::ShouldDisableCaching(
     const HttpResponseHeaders* headers) const {
   bool disable_caching = false;
-  if (base::FeatureList::IsEnabled(features::kTurnOffStreamingMediaCaching) &&
-      IsOnBatteryPower()) {
-    // If we're running on battery, and the acquired content is 'large' and
-    // not already cached, and we have a MIME type of audio or video, then
-    // disable the cache for this response. We based our initial definition of
-    // 'large' on the disk cache maximum block size of 16K, which we observed
-    // captures the majority of responses from various MSE implementations.
+  if (base::FeatureList::IsEnabled(
+          features::kTurnOffStreamingMediaCachingAlways) ||
+      (base::FeatureList::IsEnabled(
+           features::kTurnOffStreamingMediaCachingOnBattery) &&
+       IsOnBatteryPower())) {
+    // If the feature is always enabled or enabled while we're running on
+    // battery, and the acquired content is 'large' and not already cached, and
+    // we have a MIME type of audio or video, then disable the cache for this
+    // response. We based our initial definition of 'large' on the disk cache
+    // maximum block size of 16K, which we observed captures the majority of
+    // responses from various MSE implementations.
     static constexpr int kMaxContentSize = 4096 * 4;
     std::string mime_type;
     base::CompareCase insensitive_ascii = base::CompareCase::INSENSITIVE_ASCII;

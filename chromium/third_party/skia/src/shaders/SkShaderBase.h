@@ -45,7 +45,7 @@ class SkStageUpdater {
 public:
     virtual ~SkStageUpdater() {}
 
-    virtual bool update(const SkMatrix& ctm, const SkMatrix* localM) = 0;
+    virtual bool SK_WARN_UNUSED_RESULT update(const SkMatrix& ctm, const SkMatrix* localM) = 0;
 };
 
 class SkShaderBase : public SkShader {
@@ -135,7 +135,7 @@ public:
         SkMatrix    fTotalInverse;
         uint8_t     fPaintAlpha;
 
-        typedef SkNoncopyable INHERITED;
+        using INHERITED = SkNoncopyable;
     };
 
     /**
@@ -173,6 +173,7 @@ public:
     bool asLuminanceColor(SkColor*) const;
 
     // If this returns false, then we draw nothing (do not fall back to shader context)
+    SK_WARN_UNUSED_RESULT
     bool appendStages(const SkStageRec&) const;
 
     bool SK_WARN_UNUSED_RESULT computeTotalInverse(const SkMatrix& ctm,
@@ -211,8 +212,9 @@ public:
         return this->onAppendUpdatableStages(rec);
     }
 
-    skvm::Color program(skvm::Builder*, skvm::F32 x, skvm::F32 y, skvm::Color paint,
-                        const SkMatrix& ctm, const SkMatrix* localM,
+    SK_WARN_UNUSED_RESULT
+    skvm::Color program(skvm::Builder*, skvm::Coord device, skvm::Coord local, skvm::Color paint,
+                        const SkMatrixProvider&, const SkMatrix* localM,
                         SkFilterQuality quality, const SkColorInfo& dst,
                         skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const;
 
@@ -241,18 +243,19 @@ protected:
     virtual SkStageUpdater* onAppendUpdatableStages(const SkStageRec&) const { return nullptr; }
 
 protected:
-    static void ApplyMatrix(skvm::Builder*, const SkMatrix&, skvm::F32* x, skvm::F32* y, skvm::Uniforms*);
+    static skvm::Coord ApplyMatrix(skvm::Builder*, const SkMatrix&, skvm::Coord, skvm::Uniforms*);
 
 private:
     // This is essentially const, but not officially so it can be modified in constructors.
     SkMatrix fLocalMatrix;
 
-    virtual skvm::Color onProgram(skvm::Builder*, skvm::F32 x, skvm::F32 y, skvm::Color paint,
-                                  const SkMatrix& ctm, const SkMatrix* localM,
+    virtual skvm::Color onProgram(skvm::Builder*,
+                                  skvm::Coord device, skvm::Coord local, skvm::Color paint,
+                                  const SkMatrixProvider&, const SkMatrix* localM,
                                   SkFilterQuality quality, const SkColorInfo& dst,
                                   skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const;
 
-    typedef SkShader INHERITED;
+    using INHERITED = SkShader;
 };
 
 inline SkShaderBase* as_SB(SkShader* shader) {

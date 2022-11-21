@@ -4,10 +4,12 @@
 
 #include "base/profiler/stack_sampler_impl.h"
 
+#include <iterator>
 #include <utility>
 
+#include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
+#include "base/profiler/metadata_recorder.h"
 #include "base/profiler/profile_builder.h"
 #include "base/profiler/sample_metadata.h"
 #include "base/profiler/stack_buffer.h"
@@ -31,16 +33,13 @@ namespace {
 // the thread is suspended.
 class StackCopierDelegate : public StackCopier::Delegate {
  public:
-  StackCopierDelegate(ModuleCache* module_cache,
-                      Unwinder* native_unwinder,
-                      Unwinder* aux_unwinder,
-                      ProfileBuilder* profile_builder)
-      : module_cache_(module_cache),
-        native_unwinder_(native_unwinder),
-        aux_unwinder_(aux_unwinder),
+  StackCopierDelegate(
+      const base::circular_deque<std::unique_ptr<Unwinder>>* unwinders,
+      ProfileBuilder* profile_builder,
+      MetadataRecorder::MetadataProvider* metadata_provider)
+      : unwinders_(unwinders),
         profile_builder_(profile_builder),
-        metadata_provider_(
-            GetSampleMetadataRecorder()->CreateMetadataProvider()) {}
+        metadata_provider_(metadata_provider) {}
 
   StackCopierDelegate(const StackCopierDelegate&) = delete;
   StackCopierDelegate& operator=(const StackCopierDelegate&) = delete;
@@ -51,75 +50,91 @@ class StackCopierDelegate : public StackCopier::Delegate {
   // particular, it may not perform any heap allocation or deallocation,
   // including indirectly via use of DCHECK/CHECK or other logging statements.
   void OnStackCopy() override {
-    native_unwinder_->OnStackCapture();
-    if (aux_unwinder_)
-      aux_unwinder_->OnStackCapture();
+    for (const auto& unwinder : *unwinders_)
+      unwinder->OnStackCapture();
 
-#if !defined(OS_POSIX) || defined(OS_MACOSX)
-    profile_builder_->RecordMetadata(metadata_provider_.get());
-#else
-    // TODO(https://crbug.com/1056283): Support metadata recording on POSIX
-    // platforms.
-    ALLOW_UNUSED_LOCAL(profile_builder_);
-#endif
-  }
-
-  void OnThreadResume() override {
-    // Reset this as soon as possible because it may hold a lock on the
-    // metadata.
-    metadata_provider_.reset();
-
-    native_unwinder_->UpdateModules(module_cache_);
-    if (aux_unwinder_)
-      aux_unwinder_->UpdateModules(module_cache_);
+    profile_builder_->RecordMetadata(*metadata_provider_);
   }
 
  private:
-  ModuleCache* const module_cache_;
-  Unwinder* const native_unwinder_;
-  Unwinder* const aux_unwinder_;
+  const base::circular_deque<std::unique_ptr<Unwinder>>* unwinders_;
   ProfileBuilder* const profile_builder_;
-  std::unique_ptr<ProfileBuilder::MetadataProvider> metadata_provider_;
+  const MetadataRecorder::MetadataProvider* const metadata_provider_;
 };
 
 }  // namespace
 
 StackSamplerImpl::StackSamplerImpl(std::unique_ptr<StackCopier> stack_copier,
-                                   std::unique_ptr<Unwinder> native_unwinder,
+                                   UnwindersFactory core_unwinders_factory,
                                    ModuleCache* module_cache,
+                                   RepeatingClosure record_sample_callback,
                                    StackSamplerTestDelegate* test_delegate)
     : stack_copier_(std::move(stack_copier)),
-      native_unwinder_(std::move(native_unwinder)),
+      unwinders_factory_(std::move(core_unwinders_factory)),
       module_cache_(module_cache),
-      test_delegate_(test_delegate) {}
+      record_sample_callback_(std::move(record_sample_callback)),
+      test_delegate_(test_delegate) {
+  DCHECK(unwinders_factory_);
+}
 
 StackSamplerImpl::~StackSamplerImpl() = default;
 
+void StackSamplerImpl::Initialize() {
+  std::vector<std::unique_ptr<Unwinder>> unwinders =
+      std::move(unwinders_factory_).Run();
+
+  // |unwinders| is iterated backward since |unwinders_factory_| generates
+  // unwinders in increasing priority order. |unwinders_| is stored in
+  // decreasing priority order for ease of use within the class.
+  unwinders_.insert(unwinders_.end(),
+                    std::make_move_iterator(unwinders.rbegin()),
+                    std::make_move_iterator(unwinders.rend()));
+
+  for (const auto& unwinder : unwinders_)
+    unwinder->AddInitialModules(module_cache_);
+}
+
 void StackSamplerImpl::AddAuxUnwinder(std::unique_ptr<Unwinder> unwinder) {
-  aux_unwinder_ = std::move(unwinder);
-  aux_unwinder_->AddInitialModules(module_cache_);
+  unwinder->AddInitialModules(module_cache_);
+  unwinders_.push_front(std::move(unwinder));
 }
 
 void StackSamplerImpl::RecordStackFrames(StackBuffer* stack_buffer,
                                          ProfileBuilder* profile_builder) {
   DCHECK(stack_buffer);
 
+  if (record_sample_callback_)
+    record_sample_callback_.Run();
+
   RegisterContext thread_context;
   uintptr_t stack_top;
   TimeTicks timestamp;
-  StackCopierDelegate delegate(module_cache_, native_unwinder_.get(),
-                               aux_unwinder_.get(), profile_builder);
-  bool success = stack_copier_->CopyStack(stack_buffer, &stack_top, &timestamp,
-                                          &thread_context, &delegate);
-  if (!success)
+
+  bool copy_stack_succeeded;
+  {
+    // Make this scope as small as possible because |metadata_provider| is
+    // holding a lock.
+    MetadataRecorder::MetadataProvider metadata_provider(
+        GetSampleMetadataRecorder());
+    StackCopierDelegate delegate(&unwinders_, profile_builder,
+                                 &metadata_provider);
+    copy_stack_succeeded = stack_copier_->CopyStack(
+        stack_buffer, &stack_top, &timestamp, &thread_context, &delegate);
+  }
+  if (!copy_stack_succeeded) {
+    profile_builder->OnSampleCompleted(
+        {}, timestamp.is_null() ? TimeTicks::Now() : timestamp);
     return;
+  }
+
+  for (const auto& unwinder : unwinders_)
+    unwinder->UpdateModules(module_cache_);
 
   if (test_delegate_)
     test_delegate_->OnPreStackWalk();
 
   profile_builder->OnSampleCompleted(
-      WalkStack(module_cache_, &thread_context, stack_top,
-                native_unwinder_.get(), aux_unwinder_.get()),
+      WalkStack(module_cache_, &thread_context, stack_top, unwinders_),
       timestamp);
 }
 
@@ -128,18 +143,16 @@ std::vector<Frame> StackSamplerImpl::WalkStackForTesting(
     ModuleCache* module_cache,
     RegisterContext* thread_context,
     uintptr_t stack_top,
-    Unwinder* native_unwinder,
-    Unwinder* aux_unwinder) {
-  return WalkStack(module_cache, thread_context, stack_top, native_unwinder,
-                   aux_unwinder);
+    const base::circular_deque<std::unique_ptr<Unwinder>>& unwinders) {
+  return WalkStack(module_cache, thread_context, stack_top, unwinders);
 }
 
 // static
-std::vector<Frame> StackSamplerImpl::WalkStack(ModuleCache* module_cache,
-                                               RegisterContext* thread_context,
-                                               uintptr_t stack_top,
-                                               Unwinder* native_unwinder,
-                                               Unwinder* aux_unwinder) {
+std::vector<Frame> StackSamplerImpl::WalkStack(
+    ModuleCache* module_cache,
+    RegisterContext* thread_context,
+    uintptr_t stack_top,
+    const base::circular_deque<std::unique_ptr<Unwinder>>& unwinders) {
   std::vector<Frame> stack;
   // Reserve enough memory for most stacks, to avoid repeated
   // allocations. Approximately 99.9% of recorded stacks are 128 frames or
@@ -154,21 +167,24 @@ std::vector<Frame> StackSamplerImpl::WalkStack(ModuleCache* module_cache,
   size_t prior_stack_size;
   UnwindResult result;
   do {
-    // Choose an authoritative unwinder for the current module. Use the aux
-    // unwinder if it thinks it can unwind from the current frame, otherwise use
-    // the native unwinder.
-    Unwinder* unwinder =
-        aux_unwinder && aux_unwinder->CanUnwindFrom(stack.back())
-            ? aux_unwinder
-            : native_unwinder;
+    // Choose an authoritative unwinder for the current module. Use the first
+    // unwinder that thinks it can unwind from the current frame.
+    auto unwinder =
+        std::find_if(unwinders.begin(), unwinders.end(),
+                     [&stack](const std::unique_ptr<Unwinder>& unwinder) {
+                       return unwinder->CanUnwindFrom(stack.back());
+                     });
+    if (unwinder == unwinders.end())
+      return stack;
 
     prior_stack_size = stack.size();
-    result =
-        unwinder->TryUnwind(thread_context, stack_top, module_cache, &stack);
+    result = unwinder->get()->TryUnwind(thread_context, stack_top, module_cache,
+                                        &stack);
 
-    // The native unwinder should be the only one that returns COMPLETED
-    // since the stack starts in native code.
-    DCHECK(result != UnwindResult::COMPLETED || unwinder == native_unwinder);
+    // The unwinder with the lowest priority should be the only one that returns
+    // COMPLETED since the stack starts in native code.
+    DCHECK(result != UnwindResult::COMPLETED ||
+           unwinder->get() == unwinders.back().get());
   } while (result != UnwindResult::ABORTED &&
            result != UnwindResult::COMPLETED &&
            // Give up if the authoritative unwinder for the module was unable to

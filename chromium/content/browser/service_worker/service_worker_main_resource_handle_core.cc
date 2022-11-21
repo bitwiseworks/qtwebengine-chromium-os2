@@ -12,8 +12,12 @@ namespace content {
 
 ServiceWorkerMainResourceHandleCore::ServiceWorkerMainResourceHandleCore(
     base::WeakPtr<ServiceWorkerMainResourceHandle> ui_handle,
-    ServiceWorkerContextWrapper* context_wrapper)
-    : context_wrapper_(context_wrapper), ui_handle_(ui_handle) {
+    ServiceWorkerContextWrapper* context_wrapper,
+    ServiceWorkerAccessedCallback service_worker_accessed_callback)
+    : context_wrapper_(context_wrapper),
+      ui_handle_(ui_handle),
+      service_worker_accessed_callback_(
+          std::move(service_worker_accessed_callback)) {
   // The ServiceWorkerMainResourceHandleCore is created on the UI thread but
   // should only be accessed from the core thread afterwards.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -35,6 +39,11 @@ void ServiceWorkerMainResourceHandleCore::OnBeginNavigationCommit(
                                              cross_origin_embedder_policy,
                                              std::move(coep_reporter));
   }
+}
+void ServiceWorkerMainResourceHandleCore::OnEndNavigationCommit() {
+  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+  if (container_host_)
+    container_host_->OnEndNavigationCommit();
 }
 
 void ServiceWorkerMainResourceHandleCore::OnBeginWorkerCommit(

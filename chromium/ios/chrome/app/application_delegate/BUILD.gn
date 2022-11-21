@@ -2,6 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/buildflag_header.gni")
+import("//ios/chrome/features.gni")
+
 source_set("application_delegate") {
   sources = [
     "memory_warning_helper.h",
@@ -10,9 +13,9 @@ source_set("application_delegate") {
   deps = [
     "//base",
     "//ios/chrome/browser/crash_report",
-    "//ios/chrome/browser/metrics",
+    "//ios/chrome/browser/metrics:previous_session_info",
   ]
-  libs = [ "Foundation.framework" ]
+  frameworks = [ "Foundation.framework" ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
 }
@@ -23,15 +26,19 @@ source_set("unit_tests") {
   sources = [
     "app_state_unittest.mm",
     "memory_warning_helper_unittest.mm",
+    "metric_kit_subscriber_unittest.mm",
     "metrics_mediator_unittest.mm",
+    "url_opener_params_unittest.mm",
     "url_opener_unittest.mm",
     "user_activity_handler_unittest.mm",
   ]
   deps = [
     ":application_delegate",
     ":application_delegate_internal",
+    ":metric_kit_subscriber",
     ":tab_opening",
     ":test_support",
+    ":url_opener_params",
     "//base",
     "//base/test:test_support",
     "//components/handoff",
@@ -50,6 +57,7 @@ source_set("unit_tests") {
     "//ios/chrome/browser/main:public",
     "//ios/chrome/browser/main:test_support",
     "//ios/chrome/browser/metrics",
+    "//ios/chrome/browser/metrics:previous_session_info",
     "//ios/chrome/browser/ntp_snippets",
     "//ios/chrome/browser/signin",
     "//ios/chrome/browser/signin:test_support",
@@ -62,6 +70,7 @@ source_set("unit_tests") {
     "//ios/chrome/browser/ui/safe_mode",
     "//ios/chrome/browser/ui/settings",
     "//ios/chrome/browser/ui/settings:settings_root",
+    "//ios/chrome/browser/ui/util:multiwindow_util",
     "//ios/chrome/browser/url_loading",
     "//ios/chrome/browser/web:tab_id_tab_helper",
     "//ios/chrome/browser/web_state_list",
@@ -83,7 +92,7 @@ source_set("unit_tests") {
     "//ui/base",
     "//url",
   ]
-  libs = [ "CoreSpotlight.framework" ]
+  frameworks = [ "CoreSpotlight.framework" ]
 }
 
 source_set("tab_opening") {
@@ -96,18 +105,53 @@ source_set("tab_opening") {
     "//base",
     "//ios/chrome/app",
     "//ios/chrome/app:mode",
+    "//ios/chrome/browser/main:public",
     "//ui/base",
   ]
-  libs = [
+  frameworks = [
     "CoreSpotlight.framework",
     "UIKit.framework",
   ]
 }
 
-source_set("application_delegate_internal") {
+source_set("url_opener_params") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  sources = [
+    "url_opener_params.h",
+    "url_opener_params.mm",
+  ]
+  deps = [ "//base" ]
+}
+
+source_set("metric_kit_subscriber") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  sources = [
+    "metric_kit_subscriber.h",
+    "metric_kit_subscriber.mm",
+  ]
+  frameworks = [ "MetricKit.framework" ]
+  deps = [
+    "//base",
+    "//components/version_info",
+  ]
+}
+
+source_set("app_state_header") {
   configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
     "app_state.h",
+    "app_state_agent.h",
+  ]
+  public_deps = [
+    "//ios/chrome/browser/ui/main:scene_state_observer",
+    "//ios/chrome/browser/ui/scoped_ui_blocker",
+  ]
+}
+
+source_set("application_delegate_internal") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  public_deps = [ ":app_state_header" ]
+  sources = [
     "app_state.mm",
     "browser_launcher.h",
     "metrics_mediator.h",
@@ -121,7 +165,9 @@ source_set("application_delegate_internal") {
   ]
   deps = [
     ":application_delegate",
+    ":metric_kit_subscriber",
     ":tab_opening",
+    ":url_opener_params",
     "//base",
     "//build:branding_buildflags",
     "//components/crash/core/common",
@@ -138,6 +184,7 @@ source_set("application_delegate_internal") {
     "//ios/chrome/app/startup",
     "//ios/chrome/browser",
     "//ios/chrome/browser/browser_state",
+    "//ios/chrome/browser/browsing_data",
     "//ios/chrome/browser/crash_report",
     "//ios/chrome/browser/device_sharing",
     "//ios/chrome/browser/feature_engagement",
@@ -145,7 +192,9 @@ source_set("application_delegate_internal") {
     "//ios/chrome/browser/main:public",
     "//ios/chrome/browser/metrics",
     "//ios/chrome/browser/metrics:metrics_internal",
+    "//ios/chrome/browser/metrics:previous_session_info",
     "//ios/chrome/browser/net",
+    "//ios/chrome/browser/ntp_snippets:ntp_snippets",
     "//ios/chrome/browser/search_engines",
     "//ios/chrome/browser/signin",
     "//ios/chrome/browser/tabs",
@@ -154,12 +203,15 @@ source_set("application_delegate_internal") {
     "//ios/chrome/browser/ui/commands",
     "//ios/chrome/browser/ui/main",
     "//ios/chrome/browser/ui/main:scene",
+    "//ios/chrome/browser/ui/ntp:util",
     "//ios/chrome/browser/ui/safe_mode",
     "//ios/chrome/browser/ui/util",
     "//ios/chrome/browser/ui/util:multiwindow_util",
     "//ios/chrome/browser/url_loading",
     "//ios/chrome/browser/web:tab_id_tab_helper",
     "//ios/chrome/browser/web_state_list",
+    "//ios/chrome/browser/web_state_list:agents",
+    "//ios/chrome/browser/web_state_list:session_metrics",
     "//ios/chrome/common/app_group:main_app",
     "//ios/net",
     "//ios/public/provider/chrome/browser",
@@ -170,7 +222,8 @@ source_set("application_delegate_internal") {
     "//ui/base",
     "//url",
   ]
-  libs = [
+
+  frameworks = [
     "CoreSpotlight.framework",
     "UIKit.framework",
   ]
@@ -188,6 +241,8 @@ source_set("test_support") {
     "fake_startup_information.h",
     "fake_startup_information.mm",
     "metrics_mediator_testing.h",
+    "mock_metrickit_metric_payload.h",
+    "mock_metrickit_metric_payload.mm",
     "mock_tab_opener.h",
     "mock_tab_opener.mm",
   ]
@@ -196,14 +251,19 @@ source_set("test_support") {
     ":tab_opening",
     "//base",
     "//base/test:test_support",
+    "//components/version_info",
     "//ios/chrome/app",
     "//ios/chrome/app:app_internal",
     "//ios/chrome/app:mode",
     "//ios/chrome/browser",
     "//ios/chrome/browser/url_loading",
     "//net",
+    "//third_party/ocmock",
     "//ui/base",
     "//url",
   ]
-  libs = [ "UIKit.framework" ]
+  frameworks = [
+    "MetricKit.framework",
+    "UIKit.framework",
+  ]
 }

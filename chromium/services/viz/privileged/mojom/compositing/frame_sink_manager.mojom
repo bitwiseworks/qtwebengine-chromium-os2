@@ -30,9 +30,13 @@ struct RootCompositorFrameSinkParams {
   // Disables begin frame rate limiting for the display compositor.
   bool disable_frame_rate_limit = false;
   bool use_preferred_interval_for_video = false;
+  uint32 num_of_frames_to_toggle_interval = 60;
 
   [EnableIf=is_android]
   float refresh_rate;
+
+  [EnableIf=is_win]
+  bool set_present_duration_allowed = false;
 
   pending_associated_receiver<CompositorFrameSink> compositor_frame_sink;
   pending_remote<CompositorFrameSinkClient> compositor_frame_sink_client;
@@ -40,7 +44,8 @@ struct RootCompositorFrameSinkParams {
   pending_associated_receiver<DisplayPrivate> display_private;
   pending_remote<DisplayClient> display_client;
 
-  associated ExternalBeginFrameController&? external_begin_frame_controller;
+  pending_associated_receiver<ExternalBeginFrameController>?
+      external_begin_frame_controller;
 };
 
 // The FrameSinkManager interface is a privileged interface that allows the
@@ -120,6 +125,18 @@ interface FrameSinkManager {
   // Marks the given SurfaceIds for destruction.
   EvictSurfaces(array<SurfaceId> surface_ids);
 
+  // Starts throttling the frame sinks specified by |frame_sink_ids| and all
+  // their descendant sinks to send BeginFrames at an interval of |interval|.
+  // |interval| should be greater than zero. Previous throttling operation on
+  // any frame sinks must be first ended by calling EndThrottling() before
+  // applying the current throttling operation.
+  StartThrottling(
+      array<FrameSinkId> frame_sink_ids,
+      mojo_base.mojom.TimeDelta interval);
+
+  // Ends all previously throttled frame sinks.
+  EndThrottling();
+
   // Takes a snapshot of |surface_id| or a newer surface with the same
   // FrameSinkId. The request will be queued up until such surface exists and is
   // reachable from the root surface.
@@ -139,6 +156,10 @@ interface FrameSinkManager {
 
   [Sync]
   EvictBackBuffer(uint32 cache_id) => ();
+
+  // This allows dynamic manipulation of the viz debug options stored in
+  // |debug_settings| (show_overdraw_feedback, etc.).
+  UpdateDebugRendererSettings(DebugRendererSettings debug_settings);
 };
 
 // The FrameSinkManagerClient interface is implemented by the Display

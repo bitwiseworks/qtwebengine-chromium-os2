@@ -9,6 +9,13 @@ import("//build/config/jumbo.gni")
 import("//testing/test.gni")
 import("//third_party/blink/renderer/config.gni")
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 visibility = [
   ":*",
   "//mojo/public/cpp/bindings/*",
@@ -109,9 +116,12 @@ jumbo_component("wtf") {
     "text/case_map.cc",
     "text/case_map.h",
     "text/character_names.h",
+    "text/character_visitor.h",
     "text/integer_to_string_conversion.h",
     "text/line_ending.cc",
     "text/line_ending.h",
+    "text/math_transform.cc",
+    "text/math_transform.h",
     "text/number_parsing_options.h",
     "text/parsing_utilities.h",
     "text/string_buffer.h",
@@ -201,9 +211,13 @@ jumbo_component("wtf") {
     "//third_party/blink/renderer:features",
   ]
 
+  # TODO(tkent): WTF should not depend on it.
+  deps = [ "//third_party/blink/public/common:headers" ]
+
   public_deps = [
     "//base",
     "//base/third_party/double_conversion",
+    "//components/crash/core/common:crash_key",
     "//third_party/icu",
   ]
 
@@ -217,12 +231,12 @@ jumbo_component("wtf") {
 
     # Inject Visual Studio debug visualizers for our types into all targets
     # that reference this.
-    all_dependent_configs = [ "//tools/win/DebugVisualizers:webkit" ]
+    all_dependent_configs = [ "//tools/win/DebugVisualizers:blink" ]
     inputs = [
-      # webkit.natvis listed as an input here instead of in
-      # //tools/win/DebugVisualizers:webkit to prevent unnecessary size increase
+      # blink.natvis listed as an input here instead of in
+      # //tools/win/DebugVisualizers:blink to prevent unnecessary size increase
       # in generated build files.
-      "//tools/win/DebugVisualizers/webkit.natvis",
+      "//tools/win/DebugVisualizers/blink.natvis",
     ]
   }
 
@@ -231,7 +245,7 @@ jumbo_component("wtf") {
   }
 
   if (is_mac) {
-    libs = [
+    frameworks = [
       "CoreFoundation.framework",
       "Foundation.framework",
     ]
@@ -288,10 +302,12 @@ jumbo_source_set("wtf_unittests_sources") {
     "scoped_logger_test.cc",
     "shared_buffer_test.cc",
     "testing/run_all_tests.cc",
+    "text/atomic_string_table_test.cc",
     "text/atomic_string_test.cc",
     "text/case_map_test.cc",
     "text/integer_to_string_conversion_test.cc",
     "text/line_ending_test.cc",
+    "text/math_transform_test.cc",
     "text/string_buffer_test.cc",
     "text/string_builder_test.cc",
     "text/string_hasher_test.cc",

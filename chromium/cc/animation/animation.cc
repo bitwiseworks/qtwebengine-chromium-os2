@@ -75,6 +75,15 @@ scoped_refptr<ElementAnimations> Animation::element_animations() const {
 }
 
 void Animation::AttachElement(ElementId element_id) {
+  DCHECK_NE(element_id.GetStableId(), ElementId::kReservedElementId);
+  AttachElementInternal(element_id);
+}
+
+void Animation::AttachNoElement() {
+  AttachElementInternal(ElementId(ElementId::kReservedElementId));
+}
+
+void Animation::AttachElementInternal(ElementId element_id) {
   keyframe_effect_->AttachElement(element_id);
   // Register animation only if layer AND host attached.
   if (animation_host_)
@@ -114,9 +123,30 @@ void Animation::PushPropertiesTo(Animation* animation_impl) {
   keyframe_effect_->PushPropertiesTo(animation_impl->keyframe_effect_.get());
 }
 
-void Animation::Tick(base::TimeTicks monotonic_time) {
-  DCHECK(!monotonic_time.is_null());
-  keyframe_effect_->Tick(monotonic_time);
+void Animation::Tick(base::TimeTicks tick_time) {
+  DCHECK(!IsWorkletAnimation());
+  if (IsScrollLinkedAnimation()) {
+    // blink::Animation uses its start time to calculate local time for each of
+    // its keyframes. However, in cc the start time is stored at the Keyframe
+    // level so we have to delegate the tick time to a lower level to calculate
+    // the local time.
+    // With ScrollTimeline, the start time of the animation is calculated
+    // differently i.e. it is not the current time at the moment of start.
+    // To deal with this the scroll timeline pauses the animation at its desired
+    // time and then ticks it which side-steps the start time altogether. See
+    // crbug.com/1076012 for alternative design choices considered for future
+    // improvement.
+    keyframe_effect_->Pause(tick_time - base::TimeTicks(),
+                            PauseCondition::kAfterStart);
+    keyframe_effect_->Tick(base::TimeTicks());
+  } else {
+    DCHECK(!tick_time.is_null());
+    keyframe_effect_->Tick(tick_time);
+  }
+}
+
+bool Animation::IsScrollLinkedAnimation() const {
+  return animation_timeline_ && animation_timeline_->IsScrollTimeline();
 }
 
 void Animation::UpdateState(bool start_ready_animations,
@@ -183,10 +213,6 @@ void Animation::DelegateAnimationEvent(const AnimationEvent& event) {
         break;
     }
   }
-}
-
-size_t Animation::TickingKeyframeModelsCount() const {
-  return keyframe_effect_->TickingKeyframeModelsCount();
 }
 
 bool Animation::AffectsCustomProperty() const {
@@ -259,14 +285,6 @@ void Animation::NotifyKeyframeModelFinishedForTesting(
                        {timeline_id, id(), keyframe_model_id}, group_id,
                        target_property, base::TimeTicks());
   DispatchAndDelegateAnimationEvent(event);
-}
-
-void Animation::UpdateScrollTimeline(base::Optional<ElementId> scroller_id,
-                                     base::Optional<double> start_scroll_offset,
-                                     base::Optional<double> end_scroll_offset) {
-  ToScrollTimeline(animation_timeline_)
-      ->UpdateScrollerIdAndScrollOffsets(scroller_id, start_scroll_offset,
-                                         end_scroll_offset);
 }
 
 }  // namespace cc

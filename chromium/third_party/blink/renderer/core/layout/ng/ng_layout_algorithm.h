@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/layout/min_max_sizes.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_block_node.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_constraint_space.h"
+#include "third_party/blink/renderer/core/layout/ng/ng_fragmentation_utils.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -30,13 +31,9 @@ class NGLayoutAlgorithmOperations {
 
   // Computes the min-content and max-content intrinsic sizes for the given box.
   // The result will not take any min-width, max-width or width properties into
-  // account. If the return value is empty, the caller is expected to synthesize
-  // this value from the overflow rect returned from Layout called with an
-  // available width of 0 and LayoutUnit::max(), respectively.
-  virtual base::Optional<MinMaxSizes> ComputeMinMaxSizes(
-      const MinMaxSizesInput&) const {
-    return base::nullopt;
-  }
+  // account.
+  virtual MinMaxSizesResult ComputeMinMaxSizes(
+      const MinMaxSizesInput&) const = 0;
 };
 
 // Parameters to pass when creating a layout algorithm for a block node.
@@ -60,6 +57,7 @@ struct NGLayoutAlgorithmParams {
   const NGConstraintSpace& space;
   const NGBlockBreakToken* break_token;
   const NGEarlyBreak* early_break;
+  const NGLayoutResult* previous_result = nullptr;
 };
 
 // Base class for all LayoutNG algorithms.
@@ -79,15 +77,25 @@ class CORE_EXPORT NGLayoutAlgorithm : public NGLayoutAlgorithmOperations {
         container_builder_(node,
                            style,
                            &space,
-                           space.GetWritingMode(),
-                           direction) {}
+                           {space.GetWritingMode(), direction}) {}
 
-  NGLayoutAlgorithm(const NGLayoutAlgorithmParams& params)
-      : NGLayoutAlgorithm(params.node,
-                          &params.node.Style(),
-                          params.space,
-                          params.space.Direction(),
-                          params.break_token) {}
+  // Constructor for algorithms that use NGBoxFragmentBuilder and
+  // NGBlockBreakToken.
+  explicit NGLayoutAlgorithm(const NGLayoutAlgorithmParams& params)
+      : node_(params.node),
+        break_token_(params.break_token),
+        container_builder_(
+            params.node,
+            &params.node.Style(),
+            &params.space,
+            {params.space.GetWritingMode(), params.space.Direction()}) {
+    container_builder_.SetInitialFragmentGeometry(params.fragment_geometry);
+    if (UNLIKELY(params.space.HasBlockFragmentation())) {
+      DCHECK(params.space.IsAnonymous() || !params.node.IsMonolithic());
+      SetupFragmentBuilderForFragmentation(params.space, params.break_token,
+                                           &container_builder_);
+    }
+  }
 
   virtual ~NGLayoutAlgorithm() = default;
 
@@ -108,6 +116,16 @@ class CORE_EXPORT NGLayoutAlgorithm : public NGLayoutAlgorithmOperations {
   NGInputNodeType Node() const { return node_; }
 
   const NGBreakTokenType* BreakToken() const { return break_token_.get(); }
+
+  const NGBoxStrut& BorderPadding() const {
+    return container_builder_.BorderPadding();
+  }
+  const NGBoxStrut& BorderScrollbarPadding() const {
+    return container_builder_.BorderScrollbarPadding();
+  }
+  const LogicalSize& ChildAvailableSize() const {
+    return container_builder_.ChildAvailableSize();
+  }
 
   NGInputNodeType node_;
 

@@ -10,9 +10,11 @@
 #include "components/dbus/properties/types.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/base/models/menu_separator_types.h"
 #include "ui/base/models/simple_menu_model.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep_default.h"
@@ -66,12 +68,10 @@ class TestMenuModel : public ui::SimpleMenuModel,
     EXPECT_LE(command_id, 0);
     return label_;
   }
-  bool GetIconForCommandId(int command_id, gfx::Image* icon) const override {
+  ui::ImageModel GetIconForCommandId(int command_id) const override {
     EXPECT_LE(command_id, 0);
-    if (icon_.IsEmpty())
-      return false;
-    *icon = icon_;
-    return true;
+    return icon_.IsEmpty() ? ui::ImageModel()
+                           : ui::ImageModel::FromImage(icon_);
   }
   void ExecuteCommand(int command_id, int event_flags) override {
     EXPECT_LE(command_id, 0);
@@ -171,7 +171,8 @@ class TestMenuModelBuilder {
         menu->AddActionableSubMenu(0, label_, nullptr);
         break;
       case ui::MenuModel::TYPE_HIGHLIGHTED:
-        menu->AddHighlightedItemWithIcon(0, label_, icon_.AsImageSkia());
+        menu->AddHighlightedItemWithIcon(0, label_,
+                                         ui::ImageModel::FromImage(icon_));
         break;
     }
     return menu;
@@ -319,6 +320,8 @@ TEST(MenuPropertyListTest, ComputePropertiesIcon) {
 
 #if defined(USE_X11)
 TEST(MenuPropertyListTest, ComputePropertiesAccelerator) {
+  if (features::IsUsingOzonePlatform())
+    return;
   auto builder = TestMenuModelBuilder();
 
   // No accelerator.

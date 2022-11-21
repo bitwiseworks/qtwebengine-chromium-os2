@@ -16,20 +16,29 @@
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/client/transient_window_client.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/platform_window/extensions/workspace_extension.h"
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/platform_window_init_properties.h"
+#include "ui/platform_window/wm/wm_move_loop_handler.h"
 #include "ui/views/corewm/tooltip_aura.h"
 #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_ozone.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/widget_aura_utils.h"
 #include "ui/views/window/native_frame_view.h"
 #include "ui/wm/core/window_util.h"
+#include "ui/wm/public/window_move_client.h"
+
+DEFINE_UI_CLASS_PROPERTY_TYPE(views::DesktopWindowTreeHostPlatform*)
 
 namespace views {
+
+DEFINE_UI_CLASS_PROPERTY_KEY(DesktopWindowTreeHostPlatform*,
+                             kHostForRootWindow,
+                             nullptr)
 
 namespace {
 
@@ -108,12 +117,29 @@ DesktopWindowTreeHostPlatform::DesktopWindowTreeHostPlatform(
     internal::NativeWidgetDelegate* native_widget_delegate,
     DesktopNativeWidgetAura* desktop_native_widget_aura)
     : native_widget_delegate_(native_widget_delegate),
-      desktop_native_widget_aura_(desktop_native_widget_aura) {}
+      desktop_native_widget_aura_(desktop_native_widget_aura),
+      window_move_client_(this) {}
 
 DesktopWindowTreeHostPlatform::~DesktopWindowTreeHostPlatform() {
+  window()->ClearProperty(kHostForRootWindow);
   DCHECK(!platform_window()) << "The host must be closed before destroying it.";
   desktop_native_widget_aura_->OnDesktopWindowTreeHostDestroyed(this);
   DestroyDispatcher();
+}
+
+// static
+aura::Window* DesktopWindowTreeHostPlatform::GetContentWindowForWidget(
+    gfx::AcceleratedWidget widget) {
+  auto* host = DesktopWindowTreeHostPlatform::GetHostForWidget(widget);
+  return host ? host->GetContentWindow() : nullptr;
+}
+
+// static
+DesktopWindowTreeHostPlatform* DesktopWindowTreeHostPlatform::GetHostForWidget(
+    gfx::AcceleratedWidget widget) {
+  aura::WindowTreeHost* host =
+      aura::WindowTreeHost::GetForAcceleratedWidget(widget);
+  return host ? host->window()->GetProperty(kHostForRootWindow) : nullptr;
 }
 
 aura::Window* DesktopWindowTreeHostPlatform::GetContentWindow() {
@@ -160,6 +186,11 @@ void DesktopWindowTreeHostPlatform::Init(const Widget::InitParams& params) {
 
 void DesktopWindowTreeHostPlatform::OnNativeWidgetCreated(
     const Widget::InitParams& params) {
+  window()->SetProperty(kHostForRootWindow, this);
+  // This reroutes RunMoveLoop requests to the DesktopWindowTreeHostPlatform.
+  // The availability of this feature depends on a platform (PlatformWindow)
+  // that implements RunMoveLoop.
+  wm::SetWindowMoveClient(window(), &window_move_client_);
   platform_window()->SetUseNativeFrame(params.type ==
                                            Widget::InitParams::TYPE_WINDOW &&
                                        !params.remove_standard_frame);
@@ -179,7 +210,6 @@ DesktopWindowTreeHostPlatform::CreateTooltip() {
 std::unique_ptr<aura::client::DragDropClient>
 DesktopWindowTreeHostPlatform::CreateDragDropClient(
     DesktopNativeCursorManager* cursor_manager) {
-#if !defined(USE_X11)
   ui::WmDragHandler* drag_handler = ui::GetWmDragHandler(*(platform_window()));
   std::unique_ptr<DesktopDragDropClientOzone> drag_drop_client =
       std::make_unique<DesktopDragDropClientOzone>(window(), cursor_manager,
@@ -188,11 +218,6 @@ DesktopWindowTreeHostPlatform::CreateDragDropClient(
   // drop action.
   SetWmDropHandler(platform_window(), drag_drop_client.get());
   return std::move(drag_drop_client);
-#else
-  // TODO(https://crbug.com/990756): Move the X11 initialization of dnd here.
-  NOTIMPLEMENTED_LOG_ONCE();
-  return nullptr;
-#endif
 }
 
 void DesktopWindowTreeHostPlatform::Close() {
@@ -222,7 +247,8 @@ void DesktopWindowTreeHostPlatform::CloseNow() {
     return;
 
 #if defined(USE_OZONE)
-  SetWmDropHandler(platform_window(), nullptr);
+  if (features::IsUsingOzonePlatform())
+    SetWmDropHandler(platform_window(), nullptr);
 #endif
 
   platform_window()->PrepareForShutdown();
@@ -504,14 +530,16 @@ Widget::MoveLoopResult DesktopWindowTreeHostPlatform::RunMoveLoop(
     const gfx::Vector2d& drag_offset,
     Widget::MoveLoopSource source,
     Widget::MoveLoopEscapeBehavior escape_behavior) {
-  // TODO(crbug.com/896640): needs PlatformWindow support.
-  NOTIMPLEMENTED_LOG_ONCE();
+  auto* move_loop_handler = ui::GetWmMoveLoopHandler(*platform_window());
+  if (move_loop_handler && move_loop_handler->RunMoveLoop(drag_offset))
+    return Widget::MOVE_LOOP_SUCCESSFUL;
   return Widget::MOVE_LOOP_CANCELED;
 }
 
 void DesktopWindowTreeHostPlatform::EndMoveLoop() {
-  // TODO(crbug.com/896640): needs PlatformWindow support.
-  NOTIMPLEMENTED_LOG_ONCE();
+  auto* move_loop_handler = ui::GetWmMoveLoopHandler(*platform_window());
+  if (move_loop_handler)
+    move_loop_handler->EndMoveLoop();
 }
 
 void DesktopWindowTreeHostPlatform::SetVisibilityChangedAnimationsEnabled(
@@ -519,8 +547,10 @@ void DesktopWindowTreeHostPlatform::SetVisibilityChangedAnimationsEnabled(
   platform_window()->SetVisibilityChangedAnimationsEnabled(value);
 }
 
-NonClientFrameView* DesktopWindowTreeHostPlatform::CreateNonClientFrameView() {
-  return ShouldUseNativeFrame() ? new NativeFrameView(GetWidget()) : nullptr;
+std::unique_ptr<NonClientFrameView>
+DesktopWindowTreeHostPlatform::CreateNonClientFrameView() {
+  return ShouldUseNativeFrame() ? std::make_unique<NativeFrameView>(GetWidget())
+                                : nullptr;
 }
 
 bool DesktopWindowTreeHostPlatform::ShouldUseNativeFrame() const {
@@ -553,7 +583,10 @@ void DesktopWindowTreeHostPlatform::SetFullscreen(bool fullscreen) {
   if (IsFullscreen() == fullscreen)
     return;
 
+  auto weak_ptr = GetWeakPtr();
   platform_window()->ToggleFullscreen();
+  if (!weak_ptr)
+    return;
 
   // The state must change synchronously to let media react on fullscreen
   // changes.
@@ -646,6 +679,9 @@ void DesktopWindowTreeHostPlatform::HideImpl() {
 }
 
 void DesktopWindowTreeHostPlatform::OnClosed() {
+  wm::SetWindowMoveClient(window(), nullptr);
+  SetWmDropHandler(platform_window(), nullptr);
+  desktop_native_widget_aura_->OnHostWillClose();
   SetPlatformWindow(nullptr);
   desktop_native_widget_aura_->OnHostClosed();
 }
@@ -678,6 +714,10 @@ void DesktopWindowTreeHostPlatform::OnWindowStateChanged(
 
 void DesktopWindowTreeHostPlatform::OnCloseRequest() {
   GetWidget()->Close();
+}
+
+void DesktopWindowTreeHostPlatform::OnWillDestroyAcceleratedWidget() {
+  desktop_native_widget_aura_->OnHostWillClose();
 }
 
 void DesktopWindowTreeHostPlatform::OnActivationChanged(bool active) {
@@ -754,7 +794,7 @@ void DesktopWindowTreeHostPlatform::AddAdditionalInitProperties(
 // DesktopWindowTreeHost:
 
 // Linux subclasses this host and adds some Linux specific bits.
-#if !defined(OS_LINUX)
+#if !defined(OS_LINUX) && !defined(OS_CHROMEOS)
 // static
 DesktopWindowTreeHost* DesktopWindowTreeHost::Create(
     internal::NativeWidgetDelegate* native_widget_delegate,

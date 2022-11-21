@@ -2,8 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//chrome/browser/resources/optimize_webui.gni")
+import("//chrome/common/features.gni")
 import("//third_party/closure_compiler/compile_js.gni")
-import("//tools/polymer/polymer.gni")
+import("//tools/grit/grit_rule.gni")
+import("//tools/polymer/html_to_js.gni")
+import("//ui/webui/webui_features.gni")
 
 js_type_check("closure_compile") {
   is_polymer3 = true
@@ -11,31 +15,79 @@ js_type_check("closure_compile") {
     ":app",
     ":browser_proxy",
     ":customize_dialog",
+    ":doodle_share_dialog",
     ":fakebox",
-    ":grid",
+    ":iframe",
     ":logo",
-    ":theme_icon",
-    ":untrusted_iframe",
+    ":new_tab_page",
+    ":one_google_bar_api",
+    ":promo_browser_command_proxy",
+    ":realbox",
+    ":realbox_button",
+    ":realbox_dropdown",
+    ":realbox_icon",
+    ":realbox_match",
     ":utils",
     ":voice_search_overlay",
+    "modules:module_descriptor",
+    "modules:module_registry",
+    "modules:modules",
+  ]
+}
+
+js_library("new_tab_page") {
+  deps = [
+    ":app",
+    ":background_manager",
+    ":browser_proxy",
+    ":customize_dialog",
+    ":promo_browser_command_proxy",
+    ":utils",
+    "modules:module_descriptor",
+    "modules:module_registry",
+    "modules/dummy:module",
+    "modules/kaleidoscope:module",
   ]
 }
 
 js_library("browser_proxy") {
   deps = [
+    ":background_manager",
+    ":utils",
     "//chrome/browser/ui/webui/new_tab_page:mojo_bindings_js_library_for_compile",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
     "//ui/webui/resources/js:cr.m",
   ]
-  externs_list = [ "externs.js" ]
 }
 
 js_library("app") {
   deps = [
+    ":background_manager",
     ":browser_proxy",
+    ":middle_slot_promo",
     ":most_visited",
+    ":one_google_bar_api",
+    ":promo_browser_command_proxy",
+    "modules:module_wrapper",
+    "modules:modules",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/cr_elements/cr_toast:cr_toast.m",
     "//ui/webui/resources/js:event_tracker.m",
+    "//ui/webui/resources/js:load_time_data.m",
+  ]
+}
+
+js_library("promo_browser_command_proxy") {
+  deps = [
+    "//chrome/browser/promo_browser_command:mojo_bindings_js_library_for_compile",
+    "//ui/webui/resources/js:cr.m",
+  ]
+}
+
+js_library("middle_slot_promo") {
+  deps = [
+    ":browser_proxy",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
 }
 
@@ -57,9 +109,9 @@ js_library("customize_dialog") {
   deps = [
     ":customize_backgrounds",
     ":customize_shortcuts",
-    ":customize_themes",
     ":utils",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/cr_components/customize_themes",
     "//ui/webui/resources/cr_elements/cr_button:cr_button.m",
     "//ui/webui/resources/cr_elements/cr_dialog:cr_dialog.m",
   ]
@@ -67,13 +119,6 @@ js_library("customize_dialog") {
 
 js_library("customize_backgrounds") {
   deps = [
-    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
-  ]
-}
-
-js_library("customize_themes") {
-  deps = [
-    ":grid",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
 }
@@ -93,28 +138,18 @@ js_library("customize_shortcuts") {
   ]
 }
 
-js_library("theme_icon") {
-  deps = [
-    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
-  ]
-}
-
-js_library("grid") {
-  deps = [
-    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
-  ]
-}
-
 js_library("voice_search_overlay") {
   deps = [
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/cr_elements/cr_button:cr_button.m",
+    "//ui/webui/resources/cr_elements/cr_icon_button:cr_icon_button.m",
   ]
 }
 
 js_library("utils") {
 }
 
-js_library("untrusted_iframe") {
+js_library("iframe") {
   deps = [
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
@@ -126,104 +161,174 @@ js_library("fakebox") {
   ]
 }
 
-js_library("logo") {
+js_library("realbox") {
+  deps = [
+    ":browser_proxy",
+    ":realbox_icon",
+    ":utils",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/js:assert.m",
+    "//ui/webui/resources/js:load_time_data.m",
+  ]
+}
+
+js_library("realbox_dropdown") {
+  deps = [
+    ":browser_proxy",
+    ":realbox_button",
+    ":realbox_match",
+    ":utils",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/js:assert.m",
+    "//ui/webui/resources/js:load_time_data.m",
+  ]
+}
+
+js_library("realbox_button") {
   deps = [
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
 }
 
-polymer_modulizer("app") {
-  js_file = "app.js"
-  html_file = "app.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("customize_dialog") {
-  js_file = "customize_dialog.js"
-  html_file = "customize_dialog.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("mini_page") {
-  js_file = "mini_page.js"
-  html_file = "mini_page.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("most_visited") {
-  js_file = "most_visited.js"
-  html_file = "most_visited.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("customize_shortcuts") {
-  js_file = "customize_shortcuts.js"
-  html_file = "customize_shortcuts.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("customize_backgrounds") {
-  js_file = "customize_backgrounds.js"
-  html_file = "customize_backgrounds.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("customize_themes") {
-  js_file = "customize_themes.js"
-  html_file = "customize_themes.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("theme_icon") {
-  js_file = "theme_icon.js"
-  html_file = "theme_icon.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("grid") {
-  js_file = "grid.js"
-  html_file = "grid.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("voice_search_overlay") {
-  js_file = "voice_search_overlay.js"
-  html_file = "voice_search_overlay.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("untrusted_iframe") {
-  js_file = "untrusted_iframe.js"
-  html_file = "untrusted_iframe.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("fakebox") {
-  js_file = "fakebox.js"
-  html_file = "fakebox.html"
-  html_type = "v3-ready"
-}
-
-polymer_modulizer("logo") {
-  js_file = "logo.js"
-  html_file = "logo.html"
-  html_type = "v3-ready"
-}
-
-group("polymer3_elements") {
-  public_deps = [
-    ":app_module",
-    ":customize_backgrounds_module",
-    ":customize_dialog_module",
-    ":customize_shortcuts_module",
-    ":customize_themes_module",
-    ":fakebox_module",
-    ":grid_module",
-    ":logo_module",
-    ":mini_page_module",
-    ":most_visited_module",
-    ":theme_icon_module",
-    ":untrusted_iframe_module",
-    ":voice_search_overlay_module",
+js_library("realbox_icon") {
+  deps = [
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
+}
+
+js_library("realbox_match") {
+  deps = [
+    ":realbox_button",
+    ":realbox_icon",
+    ":utils",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/js:load_time_data.m",
+  ]
+}
+
+js_library("logo") {
+  deps = [
+    ":doodle_share_dialog",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/cr_elements/cr_button:cr_button.m",
+  ]
+}
+
+js_library("doodle_share_dialog") {
+  deps = [
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+    "//ui/webui/resources/cr_elements/cr_button:cr_button.m",
+    "//ui/webui/resources/cr_elements/cr_dialog:cr_dialog.m",
+    "//ui/webui/resources/cr_elements/cr_icon_button:cr_icon_button.m",
+    "//ui/webui/resources/cr_elements/cr_input:cr_input.m",
+  ]
+}
+
+js_library("background_manager") {
+  deps = [ ":utils" ]
+}
+
+js_library("one_google_bar_api") {
+}
+
+js_library("img") {
+}
+
+html_to_js("web_components_local") {
+  js_files = [
+    "app.js",
+    "customize_backgrounds.js",
+    "customize_dialog.js",
+    "customize_shortcuts.js",
+    "doodle_share_dialog.js",
+    "fakebox.js",
+    "logo.js",
+    "middle_slot_promo.js",
+    "mini_page.js",
+    "most_visited.js",
+    "realbox_button.js",
+    "realbox_dropdown.js",
+    "realbox_icon.js",
+    "realbox_match.js",
+    "realbox.js",
+    "iframe.js",
+    "voice_search_overlay.js",
+    "customize_modules.js",
+  ]
+}
+
+group("web_components") {
+  public_deps = [
+    ":web_components_local",
+    "modules:web_components",
+  ]
+}
+
+if (optimize_webui) {
+  grit("unoptimized_resources") {
+    source = "new_tab_page_resources.grd"
+
+    deps = [
+      "//chrome/browser/promo_browser_command:mojo_bindings_js",
+      "//chrome/browser/resources/new_tab_page:web_components",
+      "//chrome/browser/search/shopping_tasks:mojo_bindings_js",
+      "//chrome/browser/ui/webui/new_tab_page:mojo_bindings_js",
+      "//skia/public/mojom:mojom_js",
+    ]
+
+    grit_flags = [
+      "-E",
+      "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+    ]
+
+    defines = chrome_grit_defines + [ "is_official_build=$is_official_build" ]
+    outputs = [
+      "grit/new_tab_page_resources.h",
+      "grit/new_tab_page_resources_map.cc",
+      "grit/new_tab_page_resources_map.h",
+      "new_tab_page_resources.pak",
+    ]
+    output_dir = "$root_gen_dir/chrome/browser/resources/new_tab_page"
+  }
+
+  unpak("unpak") {
+    pak_file = "new_tab_page_resources.pak"
+    out_folder = "unpak"
+    deps = [ ":unoptimized_resources" ]
+
+    excludes = [
+      "../../promo_browser_command/promo_browser_command.mojom-lite.js",
+      "../../search/shopping_tasks/shopping_tasks.mojom-lite.js",
+      "../../ui/webui/new_tab_page/new_tab_page.mojom-lite.js",
+      "../../../common/search/omnibox.mojom-lite.js",
+      "../../../../skia/public/mojom/skcolor.mojom-lite.js",
+    ]
+  }
+
+  optimize_webui("optimized_js") {
+    host = "new-tab-page"
+    input = rebase_path("$target_gen_dir/unpak", root_build_dir)
+    deps = [
+      ":unpak",
+      "../../../../ui/webui/resources:preprocess",
+    ]
+    js_module_in_files = [ "new_tab_page.js" ]
+    js_out_files = [ "new_tab_page.rollup.js" ]
+    excludes = [
+      "chrome://resources/js/cr.m.js",
+      "chrome://resources/mojo/mojo/public/js/mojo_bindings_lite.js",
+      "chrome://resources/mojo/mojo/public/mojom/base/big_buffer.mojom-lite.js",
+      "chrome://resources/mojo/mojo/public/mojom/base/string16.mojom-lite.js",
+      "chrome://resources/mojo/mojo/public/mojom/base/text_direction.mojom-lite.js",
+      "chrome://resources/mojo/mojo/public/mojom/base/time.mojom-lite.js",
+      "chrome://resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-lite.js",
+      "chrome://resources/mojo/skia/public/mojom/skcolor.mojom-lite.js",
+      "chrome://resources/mojo/url/mojom/origin.mojom-lite.js",
+      "chrome://resources/mojo/url/mojom/url.mojom-lite.js",
+      "new_tab_page.mojom-lite.js",
+      "omnibox.mojom-lite.js",
+      "promo_browser_command.mojom-lite.js",
+      "modules/shopping_tasks/shopping_tasks.mojom-lite.js",
+    ]
+  }
 }

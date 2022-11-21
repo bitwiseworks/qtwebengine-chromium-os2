@@ -12,12 +12,15 @@
 #include "src/codegen/label.h"
 #include "src/codegen/register-arch.h"
 #include "src/codegen/source-position.h"
+#include "src/common/assert-scope.h"
 #include "src/common/globals.h"
 #include "src/deoptimizer/deoptimize-reason.h"
 #include "src/diagnostics/code-tracer.h"
 #include "src/execution/frame-constants.h"
 #include "src/execution/isolate.h"
+#include "src/heap/heap.h"
 #include "src/objects/feedback-vector.h"
+#include "src/objects/js-function.h"
 #include "src/objects/shared-function-info.h"
 #include "src/utils/allocation.h"
 #include "src/utils/boxed-float.h"
@@ -34,6 +37,7 @@ class TranslatedFrame;
 class TranslatedState;
 class RegisterValues;
 class MacroAssembler;
+class StrongRootsEntry;
 
 enum class BuiltinContinuationMode;
 
@@ -116,6 +120,8 @@ class TranslatedValue {
     DCHECK_NE(materialization_state(), kUninitialized);
     return storage_;
   }
+
+  void ReplaceElementsArrayWithCopy();
 
   Kind kind_;
   MaterializationState materialization_state_ = kUninitialized;
@@ -313,7 +319,15 @@ class TranslatedFrame {
 
 class TranslatedState {
  public:
-  TranslatedState() = default;
+  // There are two constructors, each for a different purpose:
+
+  // The default constructor is for the purpose of deoptimizing an optimized
+  // frame (replacing it with one or several unoptimized frames). It is used by
+  // the Deoptimizer.
+  TranslatedState() : purpose_(kDeoptimization) {}
+
+  // This constructor is for the purpose of merely inspecting an optimized
+  // frame. It is used by stack trace generation and various debugging features.
   explicit TranslatedState(const JavaScriptFrame* frame);
 
   void Prepare(Address stack_frame_pointer);
@@ -338,14 +352,21 @@ class TranslatedState {
   Isolate* isolate() { return isolate_; }
 
   void Init(Isolate* isolate, Address input_frame_pointer,
-            TranslationIterator* iterator, FixedArray literal_array,
-            RegisterValues* registers, FILE* trace_file, int parameter_count);
+            Address stack_frame_pointer, TranslationIterator* iterator,
+            FixedArray literal_array, RegisterValues* registers,
+            FILE* trace_file, int parameter_count, int actual_argument_count);
 
   void VerifyMaterializedObjects();
   bool DoUpdateFeedback();
 
  private:
   friend TranslatedValue;
+
+  // See the description of the constructors for an explanation of the two
+  // purposes. The only actual difference is that in the kFrameInspection case
+  // extra work is needed to not violate assumptions made by left-trimming.  For
+  // details, see the code around ReplaceElementsArrayWithCopy.
+  enum Purpose { kDeoptimization, kFrameInspection };
 
   TranslatedFrame CreateNextTranslatedFrame(TranslationIterator* iterator,
                                             FixedArray literal_array,
@@ -354,8 +375,7 @@ class TranslatedState {
                                 FixedArray literal_array, Address fp,
                                 RegisterValues* registers, FILE* trace_file);
   Address DecompressIfNeeded(intptr_t value);
-  Address ComputeArgumentsPosition(Address input_frame_pointer,
-                                   CreateArgumentsType type, int* length);
+  Address ComputeArgumentsPosition(Address input_frame_pointer, int* length);
   void CreateArgumentsElementsTranslatedValues(int frame_index,
                                                Address input_frame_pointer,
                                                CreateArgumentsType type,
@@ -404,10 +424,12 @@ class TranslatedState {
   static Float32 GetFloatSlot(Address fp, int slot_index);
   static Float64 GetDoubleSlot(Address fp, int slot_index);
 
+  Purpose const purpose_;
   std::vector<TranslatedFrame> frames_;
   Isolate* isolate_ = nullptr;
   Address stack_frame_pointer_ = kNullAddress;
   int formal_parameter_count_;
+  int actual_argument_count_;
 
   struct ObjectPosition {
     int frame_index_;
@@ -444,7 +466,7 @@ class Deoptimizer : public Malloced {
   static int ComputeSourcePositionFromBytecodeArray(SharedFunctionInfo shared,
                                                     BailoutId node_id);
 
-  static const char* MessageFor(DeoptimizeKind kind);
+  static const char* MessageFor(DeoptimizeKind kind, bool reuse_code);
 
   int output_count() const { return output_count_; }
 
@@ -454,6 +476,8 @@ class Deoptimizer : public Malloced {
 
   // Number of created JS frames. Not all created frames are necessarily JS.
   int jsframe_count() const { return jsframe_count_; }
+
+  bool should_reuse_code() const;
 
   static Deoptimizer* New(Address raw_function, DeoptimizeKind kind,
                           unsigned bailout_id, Address from, int fp_to_sp_delta,
@@ -479,6 +503,13 @@ class Deoptimizer : public Malloced {
   // (via code->set_marked_for_deoptimization) and unlinks all functions that
   // refer to that code.
   static void DeoptimizeMarkedCode(Isolate* isolate);
+
+  // Check the given address against a list of allowed addresses, to prevent a
+  // potential attacker from using the frame creation process in the
+  // deoptimizer, in particular the signing process, to gain control over the
+  // program.
+  // When building mksnapshot, always return false.
+  static bool IsValidReturnAddress(Address address);
 
   ~Deoptimizer();
 
@@ -526,6 +557,11 @@ class Deoptimizer : public Malloced {
   static const int kNonLazyDeoptExitSize;
   static const int kLazyDeoptExitSize;
 
+  // Tracing.
+  static void TraceMarkForDeoptimization(Code code, const char* reason);
+  static void TraceEvictFromOptimizedCodeCache(SharedFunctionInfo sfi,
+                                               const char* reason);
+
  private:
   friend class FrameWriter;
   void QueueValueForMaterialization(Address output_address, Object obj,
@@ -534,7 +570,6 @@ class Deoptimizer : public Malloced {
   Deoptimizer(Isolate* isolate, JSFunction function, DeoptimizeKind kind,
               unsigned bailout_id, Address from, int fp_to_sp_delta);
   Code FindOptimizedCode();
-  void PrintFunctionName();
   void DeleteFrameDescriptions();
 
   static bool IsDeoptimizationEntry(Isolate* isolate, Address addr,
@@ -572,6 +607,23 @@ class Deoptimizer : public Malloced {
   // searching all code objects).
   Code FindDeoptimizingCode(Address addr);
 
+  // Tracing.
+  bool tracing_enabled() const { return static_cast<bool>(trace_scope_); }
+  bool verbose_tracing_enabled() const {
+    return FLAG_trace_deopt_verbose && trace_scope_;
+  }
+  CodeTracer::Scope* trace_scope() const { return trace_scope_.get(); }
+  CodeTracer::Scope* verbose_trace_scope() const {
+    return FLAG_trace_deopt_verbose ? trace_scope() : nullptr;
+  }
+  void TraceDeoptBegin(int optimization_id, int node_id);
+  void TraceDeoptEnd(double deopt_duration);
+#ifdef DEBUG
+  static void TraceFoundActivation(Isolate* isolate, JSFunction function);
+#endif
+  static void TraceDeoptAll(Isolate* isolate);
+  static void TraceDeoptMarked(Isolate* isolate);
+
   Isolate* isolate_;
   JSFunction function_;
   Code compiled_code_;
@@ -599,6 +651,9 @@ class Deoptimizer : public Malloced {
   intptr_t caller_constant_pool_;
   intptr_t input_frame_context_;
 
+  // The argument count of the bottom most frame.
+  int actual_argument_count_;
+
   // Key for lookup of previously materialized objects
   intptr_t stack_fp_;
 
@@ -610,10 +665,10 @@ class Deoptimizer : public Malloced {
   std::vector<ValueToMaterialize> values_to_materialize_;
 
 #ifdef DEBUG
-  DisallowHeapAllocation* disallow_heap_allocation_;
+  DisallowGarbageCollection* disallow_garbage_collection_;
 #endif  // DEBUG
 
-  CodeTracer::Scope* trace_scope_;
+  std::unique_ptr<CodeTracer::Scope> trace_scope_;
 
   static const int table_entry_size_;
 
@@ -779,7 +834,7 @@ class FrameDescription {
   intptr_t continuation_;
 
   // This must be at the end of the object as the object is allocated larger
-  // than its definition indicate to extend this array.
+  // than its definition indicates to extend this array.
   intptr_t frame_content_[1];
 
   intptr_t* GetFrameSlotPointer(unsigned offset) {
@@ -812,6 +867,7 @@ class DeoptimizerData {
   void set_deopt_entry_code(DeoptimizeKind kind, Code code);
 
   Deoptimizer* current_;
+  StrongRootsEntry* strong_roots_entry_;
 
   friend class Deoptimizer;
 
@@ -911,7 +967,7 @@ class Translation {
                                                         int literal_id,
                                                         unsigned height);
   void ArgumentsElements(CreateArgumentsType type);
-  void ArgumentsLength(CreateArgumentsType type);
+  void ArgumentsLength();
   void BeginCapturedObject(int length);
   void AddUpdateFeedback(int vector_literal, int slot);
   void DuplicateObject(int object_index);

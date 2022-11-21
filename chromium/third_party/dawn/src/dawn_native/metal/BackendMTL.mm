@@ -183,7 +183,7 @@ namespace dawn_native { namespace metal {
             if (!instance->ConsumedError(GetDevicePCIInfo(device, &ids))) {
                 mPCIInfo.vendorId = ids.vendorId;
                 mPCIInfo.deviceId = ids.deviceId;
-            };
+            }
 
 #if defined(DAWN_PLATFORM_IOS)
             mAdapterType = wgpu::AdapterType::IntegratedGPU;
@@ -206,14 +206,25 @@ namespace dawn_native { namespace metal {
 
       private:
         ResultOrError<DeviceBase*> CreateDeviceImpl(const DeviceDescriptor* descriptor) override {
-            return {new Device(this, mDevice, descriptor)};
+            return Device::Create(this, mDevice, descriptor);
         }
+
         void InitializeSupportedExtensions() {
 #if defined(DAWN_PLATFORM_MACOS)
             if ([mDevice supportsFeatureSet:MTLFeatureSet_macOS_GPUFamily1_v1]) {
                 mSupportedExtensions.EnableExtension(Extension::TextureCompressionBC);
             }
 #endif
+
+            if (@available(macOS 10.15, iOS 14.0, *)) {
+                if ([mDevice supportsFamily:MTLGPUFamilyMac2] ||
+                    [mDevice supportsFamily:MTLGPUFamilyApple5]) {
+                    mSupportedExtensions.EnableExtension(Extension::PipelineStatisticsQuery);
+                    mSupportedExtensions.EnableExtension(Extension::TimestampQuery);
+                }
+            }
+
+            mSupportedExtensions.EnableExtension(Extension::ShaderFloat16);
         }
 
         id<MTLDevice> mDevice = nil;

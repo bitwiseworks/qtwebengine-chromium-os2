@@ -78,17 +78,21 @@ INSTANTIATE_TEST_SUITE_P(Tests,
                          ::testing::PrintToStringParamName());
 
 TEST_P(LegacyQuicStreamIdManagerTest, CanOpenNextOutgoingStream) {
-  EXPECT_TRUE(manager_.CanOpenNextOutgoingStream(
-      manager_.max_open_outgoing_streams() - 1));
-  EXPECT_FALSE(
-      manager_.CanOpenNextOutgoingStream(manager_.max_open_outgoing_streams()));
+  for (size_t i = 0; i < manager_.max_open_outgoing_streams() - 1; ++i) {
+    manager_.ActivateStream(/*is_incoming=*/false);
+  }
+  EXPECT_TRUE(manager_.CanOpenNextOutgoingStream());
+  manager_.ActivateStream(/*is_incoming=*/false);
+  EXPECT_FALSE(manager_.CanOpenNextOutgoingStream());
 }
 
 TEST_P(LegacyQuicStreamIdManagerTest, CanOpenIncomingStream) {
-  EXPECT_TRUE(
-      manager_.CanOpenIncomingStream(manager_.max_open_incoming_streams() - 1));
-  EXPECT_FALSE(
-      manager_.CanOpenIncomingStream(manager_.max_open_incoming_streams()));
+  for (size_t i = 0; i < manager_.max_open_incoming_streams() - 1; ++i) {
+    manager_.ActivateStream(/*is_incoming=*/true);
+  }
+  EXPECT_TRUE(manager_.CanOpenIncomingStream());
+  manager_.ActivateStream(/*is_incoming=*/true);
+  EXPECT_FALSE(manager_.CanOpenIncomingStream());
 }
 
 TEST_P(LegacyQuicStreamIdManagerTest, AvailableStreams) {

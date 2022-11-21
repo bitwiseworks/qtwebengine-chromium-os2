@@ -8,10 +8,21 @@
 #include <cstdint>
 #include <memory>
 
+#include "base/base64.h"
 #include "base/no_destructor.h"
+#include "components/metrics/content/content_stability_metrics_provider.h"
+#include "components/metrics/content/extensions_helper.h"
+#include "components/metrics/metrics_provider.h"
 #include "components/metrics/metrics_service.h"
+#include "components/page_load_metrics/browser/metrics_web_contents_observer.h"
+#include "components/variations/variations_ids_provider.h"
 #include "components/version_info/android/channel_getter.h"
+#include "content/public/browser/browser_context.h"
+#include "google_apis/google_api_keys.h"
+#include "weblayer/browser/browser_context_impl.h"
 #include "weblayer/browser/java/jni/MetricsServiceClient_jni.h"
+#include "weblayer/browser/system_network_context_manager.h"
+#include "weblayer/browser/tab_impl.h"
 
 namespace weblayer {
 
@@ -36,6 +47,28 @@ const int kBetaDevCanarySampledInRatePerMille = 990;
 // consulting with the privacy team.
 const int kPackageNameLimitRatePerMille = 100;
 
+// MetricsProvider that interfaces with page_load_metrics.
+class PageLoadMetricsProvider : public metrics::MetricsProvider {
+ public:
+  PageLoadMetricsProvider() = default;
+  ~PageLoadMetricsProvider() override = default;
+
+  // metrics:MetricsProvider implementation:
+  void OnAppEnterBackground() override {
+    auto tabs = TabImpl::GetAllTabImpl();
+    for (auto* tab : tabs) {
+      page_load_metrics::MetricsWebContentsObserver* observer =
+          page_load_metrics::MetricsWebContentsObserver::FromWebContents(
+              tab->web_contents());
+      if (observer)
+        observer->FlushMetricsOnAppEnterBackground();
+    }
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(PageLoadMetricsProvider);
+};
+
 }  // namespace
 
 // static
@@ -45,11 +78,53 @@ WebLayerMetricsServiceClient* WebLayerMetricsServiceClient::GetInstance() {
   return client.get();
 }
 
-WebLayerMetricsServiceClient::WebLayerMetricsServiceClient() = default;
-WebLayerMetricsServiceClient::~WebLayerMetricsServiceClient() = default;
+WebLayerMetricsServiceClient::WebLayerMetricsServiceClient() {
+  ProfileImpl::AddProfileObserver(this);
+}
+
+WebLayerMetricsServiceClient::~WebLayerMetricsServiceClient() {
+  ProfileImpl::RemoveProfileObserver(this);
+}
+
+void WebLayerMetricsServiceClient::RegisterExternalExperiments(
+    const std::vector<int>& experiment_ids) {
+  if (!GetMetricsService()) {
+    if (!IsConsentDetermined()) {
+      post_start_tasks_.push_back(base::BindOnce(
+          &WebLayerMetricsServiceClient::RegisterExternalExperiments,
+          base::Unretained(this), experiment_ids));
+    }
+    return;
+  }
+
+  GetMetricsService()->synthetic_trial_registry()->RegisterExternalExperiments(
+      "WebLayerExperiments", experiment_ids,
+      variations::SyntheticTrialRegistry::kOverrideExistingIds);
+}
 
 int32_t WebLayerMetricsServiceClient::GetProduct() {
   return metrics::ChromeUserMetricsExtension::ANDROID_WEBLAYER;
+}
+
+bool WebLayerMetricsServiceClient::IsExternalExperimentAllowlistEnabled() {
+  // RegisterExternalExperiments() is actually used to register experiment ids
+  // coming from the app embedding WebLayer itself, rather than externally. So
+  // the allowlist shouldn't be applied.
+  return false;
+}
+
+bool WebLayerMetricsServiceClient::IsUkmAllowedForAllProfiles() {
+  for (auto* profile : ProfileImpl::GetAllProfiles()) {
+    if (!profile->GetBooleanSetting(SettingType::UKM_ENABLED))
+      return false;
+  }
+  return true;
+}
+
+std::string WebLayerMetricsServiceClient::GetUploadSigningKey() {
+  std::string decoded_key;
+  base::Base64Decode(google_apis::GetMetricsKey(), &decoded_key);
+  return decoded_key;
 }
 
 int WebLayerMetricsServiceClient::GetSampleRatePerMille() {
@@ -61,16 +136,56 @@ int WebLayerMetricsServiceClient::GetSampleRatePerMille() {
   return kBetaDevCanarySampledInRatePerMille;
 }
 
-void WebLayerMetricsServiceClient::InitInternal() {}
+void WebLayerMetricsServiceClient::OnMetricsStart() {
+  for (auto& task : post_start_tasks_) {
+    std::move(task).Run();
+  }
+  post_start_tasks_.clear();
+  GetMetricsService()->synthetic_trial_registry()->AddSyntheticTrialObserver(
+      variations::VariationsIdsProvider::GetInstance());
+}
 
-void WebLayerMetricsServiceClient::OnMetricsStart() {}
+void WebLayerMetricsServiceClient::OnMetricsNotStarted() {
+  post_start_tasks_.clear();
+}
 
 int WebLayerMetricsServiceClient::GetPackageNameLimitRatePerMille() {
   return kPackageNameLimitRatePerMille;
 }
 
-bool WebLayerMetricsServiceClient::ShouldWakeMetricsService() {
+void WebLayerMetricsServiceClient::RegisterAdditionalMetricsProviders(
+    metrics::MetricsService* service) {
+  service->RegisterMetricsProvider(
+      std::make_unique<metrics::ContentStabilityMetricsProvider>(pref_service(),
+                                                                 nullptr));
+  service->RegisterMetricsProvider(std::make_unique<PageLoadMetricsProvider>());
+}
+
+bool WebLayerMetricsServiceClient::IsPersistentHistogramsEnabled() {
   return true;
+}
+
+bool WebLayerMetricsServiceClient::IsOffTheRecordSessionActive() {
+  for (auto* profile : ProfileImpl::GetAllProfiles()) {
+    if (profile->GetBrowserContext()->IsOffTheRecord())
+      return true;
+  }
+
+  return false;
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+WebLayerMetricsServiceClient::GetURLLoaderFactory() {
+  return SystemNetworkContextManager::GetInstance()
+      ->GetSharedURLLoaderFactory();
+}
+
+void WebLayerMetricsServiceClient::ProfileCreated(ProfileImpl* profile) {
+  UpdateUkmService();
+}
+
+void WebLayerMetricsServiceClient::ProfileDestroyed(ProfileImpl* profile) {
+  UpdateUkmService();
 }
 
 // static

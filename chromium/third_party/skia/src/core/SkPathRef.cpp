@@ -13,6 +13,7 @@
 #include "include/private/SkTo.h"
 #include "src/core/SkBuffer.h"
 #include "src/core/SkPathPriv.h"
+#include "src/core/SkPathView.h"
 #include "src/core/SkSafeMath.h"
 
 //////////////////////////////////////////////////////////////////////////////
@@ -135,7 +136,14 @@ void SkPathRef::CreateTransformedCopy(sk_sp<SkPathRef>* dst,
         return;
     }
 
+    sk_sp<const SkPathRef> srcKeepAlive;
     if (!(*dst)->unique()) {
+        // If dst and src are the same then we are about to drop our only ref on the common path
+        // ref. Some other thread may have owned src when we checked unique() above but it may not
+        // continue to do so. Add another ref so we continue to be an owner until we're done.
+        if (dst->get() == &src) {
+            srcKeepAlive.reset(SkRef(&src));
+        }
         dst->reset(new SkPathRef);
     }
 
@@ -387,10 +395,12 @@ SkPoint* SkPathRef::growForRepeatedVerb(int /*SkPath::Verb*/ verb,
             break;
         case SkPath::kDone_Verb:
             SkDEBUGFAIL("growForRepeatedVerb called for kDone");
-            // fall through
+            pCnt = 0;
+            break;
         default:
             SkDEBUGFAIL("default should not be reached");
             pCnt = 0;
+            break;
     }
 
     fBoundsIsDirty = true;  // this also invalidates fIsFinite
@@ -437,10 +447,12 @@ SkPoint* SkPathRef::growForVerb(int /* SkPath::Verb*/ verb, SkScalar weight) {
             break;
         case SkPath::kDone_Verb:
             SkDEBUGFAIL("growForVerb called for kDone");
-            // fall through
+            pCnt = 0;
+            break;
         default:
             SkDEBUGFAIL("default is not reached");
             pCnt = 0;
+            break;
     }
 
     fSegmentMask |= mask;
@@ -589,7 +601,7 @@ uint8_t SkPathRef::Iter::next(SkPoint pts[4]) {
             break;
         case SkPath::kConic_Verb:
             fConicWeights += 1;
-            // fall-through
+            [[fallthrough]];
         case SkPath::kQuad_Verb:
             pts[0] = srcPts[-1];
             pts[1] = srcPts[0];
@@ -672,6 +684,21 @@ bool SkPathRef::isValid() const {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
+#include "src/core/SkPathView.h"
+
+SkPathView SkPathRef::view(SkPathFillType ft, SkPathConvexity ct) const {
+    return {
+        { fPoints.begin(),       fPoints.size()       },
+        { fVerbs.begin(),        fVerbs.size()        },
+        { fConicWeights.begin(), fConicWeights.size() },
+        ft,
+        ct,
+        this->getBounds(),  // don't use fBounds, in case our bounds are dirty
+        fSegmentMask,
+        this->isFinite(),
+    };
+}
+
 SkPathEdgeIter::SkPathEdgeIter(const SkPath& path) {
     fMoveToPtr = fPts = path.fPathRef->points();
     fVerbs = path.fPathRef->verbsBegin();
@@ -685,3 +712,55 @@ SkPathEdgeIter::SkPathEdgeIter(const SkPath& path) {
     fNextIsNewContour = false;
     SkDEBUGCODE(fIsConic = false;)
 }
+
+SkPathEdgeIter::SkPathEdgeIter(const SkPathView& path) {
+    fMoveToPtr = fPts = path.fPoints.cbegin();
+    fVerbs = path.fVerbs.cbegin();
+    fVerbsStop = path.fVerbs.cend();
+    fConicWeights = path.fWeights.cbegin();
+    if (fConicWeights) {
+        fConicWeights -= 1;  // begin one behind
+    }
+
+    fNeedsCloseLine = false;
+    fNextIsNewContour = false;
+    SkDEBUGCODE(fIsConic = false;)
+}
+
+bool SkPathView::isRect(SkRect* rect) const {
+    SkPathDirection direction;
+    bool isClosed;
+
+    int currVerb = 0;
+    const SkPoint* pts = fPoints.begin();
+    return SkPathPriv::IsRectContour(*this, false, &currVerb, &pts, &isClosed, &direction, rect);
+}
+
+#ifdef SK_DEBUG
+void SkPathView::validate() const {
+    bool finite = SkScalarsAreFinite((const SkScalar*)fPoints.begin(),  fPoints.count() * 2)
+               && SkScalarsAreFinite(                 fWeights.begin(), fWeights.count());
+
+    SkASSERT(fIsFinite == finite);
+
+    if (fIsFinite) {
+        SkRect bounds;
+        bounds.setBounds(fPoints.begin(), fPoints.count());
+        SkASSERT(bounds == fBounds);
+    } else {
+        SkASSERT(fBounds.isEmpty());
+    }
+
+    unsigned mask = 0;
+    for (auto v : fVerbs) {
+        switch (static_cast<SkPathVerb>(v)) {
+            default: break;
+            case SkPathVerb::kLine:  mask |= kLine_SkPathSegmentMask; break;
+            case SkPathVerb::kQuad:  mask |= kQuad_SkPathSegmentMask; break;
+            case SkPathVerb::kConic: mask |= kConic_SkPathSegmentMask; break;
+            case SkPathVerb::kCubic: mask |= kCubic_SkPathSegmentMask; break;
+        }
+    }
+    SkASSERT(mask == fSegmentMask);
+}
+#endif

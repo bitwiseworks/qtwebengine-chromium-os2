@@ -30,8 +30,8 @@ class StubPasswordManagerClient : public PasswordManagerClient {
   bool PromptUserToSaveOrUpdatePassword(
       std::unique_ptr<PasswordFormManagerForUI> form_to_save,
       bool update_password) override;
-  bool ShowOnboarding(
-      std::unique_ptr<PasswordFormManagerForUI> form_to_save) override;
+  void PromptUserToMovePasswordToAccount(
+      std::unique_ptr<PasswordFormManagerForUI> form_to_move) override;
   void ShowManualFallbackForSaving(
       std::unique_ptr<PasswordFormManagerForUI> form_to_save,
       bool has_generated_password,
@@ -41,30 +41,29 @@ class StubPasswordManagerClient : public PasswordManagerClient {
       password_manager::PasswordManagerDriver* driver,
       autofill::mojom::FocusedFieldType focused_field_type) override;
   bool PromptUserToChooseCredentials(
-      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
-      const GURL& origin,
-      const CredentialsCallback& callback) override;
+      std::vector<std::unique_ptr<PasswordForm>> local_forms,
+      const url::Origin& origin,
+      CredentialsCallback callback) override;
   void NotifyUserAutoSignin(
-      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
-      const GURL& origin) override;
-  void NotifyUserCouldBeAutoSignedIn(
-      std::unique_ptr<autofill::PasswordForm>) override;
+      std::vector<std::unique_ptr<PasswordForm>> local_forms,
+      const url::Origin& origin) override;
+  void NotifyUserCouldBeAutoSignedIn(std::unique_ptr<PasswordForm>) override;
   void NotifySuccessfulLoginWithExistingPassword(
-      const autofill::PasswordForm& form) override;
+      std::unique_ptr<PasswordFormManagerForUI> submitted_manager) override;
   void NotifyStorePasswordCalled() override;
   void AutomaticPasswordSave(
       std::unique_ptr<PasswordFormManagerForUI> saved_manager) override;
   PrefService* GetPrefs() const override;
   PasswordStore* GetProfilePasswordStore() const override;
   PasswordStore* GetAccountPasswordStore() const override;
-  const GURL& GetLastCommittedEntryURL() const override;
+  const GURL& GetLastCommittedURL() const override;
+  url::Origin GetLastCommittedOrigin() const override;
   const CredentialsFilter* GetStoreResultFilter() const override;
   const autofill::LogManager* GetLogManager() const override;
   const MockPasswordFeatureManager* GetPasswordFeatureManager() const override;
   MockPasswordFeatureManager* GetPasswordFeatureManager();
 
-#if defined(ON_FOCUS_PING_ENABLED) || \
-    defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
+#if defined(ON_FOCUS_PING_ENABLED) || defined(PASSWORD_REUSE_DETECTION_ENABLED)
   safe_browsing::PasswordProtectionService* GetPasswordProtectionService()
       const override;
 #endif
@@ -74,7 +73,7 @@ class StubPasswordManagerClient : public PasswordManagerClient {
                                    const GURL& frame_url) override;
 #endif
 
-#if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
+#if defined(PASSWORD_REUSE_DETECTION_ENABLED)
   void CheckProtectedPasswordEntry(
       metrics_util::PasswordType reused_password_type,
       const std::string& username,
@@ -82,7 +81,7 @@ class StubPasswordManagerClient : public PasswordManagerClient {
       bool password_field_exists) override;
 #endif
 
-#if defined(SYNC_PASSWORD_REUSE_WARNING_ENABLED)
+#if defined(PASSWORD_REUSE_WARNING_ENABLED)
   void LogPasswordReuseDetectedEvent() override;
 #endif
 
@@ -90,6 +89,7 @@ class StubPasswordManagerClient : public PasswordManagerClient {
   PasswordManagerMetricsRecorder* GetMetricsRecorder() override;
   signin::IdentityManager* GetIdentityManager() override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
+  network::mojom::NetworkContext* GetNetworkContext() const override;
   bool IsIsolationForPasswordSitesEnabled() const override;
   bool IsNewTabPage() const override;
   FieldInfoManager* GetFieldInfoManager() const override;

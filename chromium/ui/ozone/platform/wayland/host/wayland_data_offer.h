@@ -5,15 +5,12 @@
 #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_DATA_OFFER_H_
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_DATA_OFFER_H_
 
-#include <wayland-client.h>
-
 #include <string>
-#include <vector>
 
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
-#include "ui/ozone/platform/wayland/host/internal/wayland_data_offer_base.h"
+#include "ui/ozone/platform/wayland/host/wayland_data_offer_base.h"
 
 namespace ui {
 
@@ -24,7 +21,7 @@ namespace ui {
 // The offer describes the different mime types that the data can be
 // converted to and provides the mechanism for transferring the data
 // directly from the source client.
-class WaylandDataOffer : public internal::WaylandDataOfferBase {
+class WaylandDataOffer : public WaylandDataOfferBase {
  public:
   // Takes ownership of data_offer.
   explicit WaylandDataOffer(wl_data_offer* data_offer);
@@ -34,7 +31,7 @@ class WaylandDataOffer : public internal::WaylandDataOfferBase {
   void Accept(uint32_t serial, const std::string& mime_type);
   void Reject(uint32_t serial);
 
-  // internal::WaylandDataOfferBase overrides:
+  // WaylandDataOfferBase overrides:
   base::ScopedFD Receive(const std::string& mime_type) override;
 
   void FinishOffer();

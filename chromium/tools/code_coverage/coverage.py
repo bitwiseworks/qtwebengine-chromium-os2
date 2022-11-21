@@ -82,12 +82,6 @@ import urllib2
 
 sys.path.append(
     os.path.join(
-        os.path.dirname(__file__), os.path.pardir, os.path.pardir, 'tools',
-        'clang', 'scripts'))
-import update
-
-sys.path.append(
-    os.path.join(
         os.path.dirname(__file__), os.path.pardir, os.path.pardir,
         'third_party'))
 from collections import defaultdict
@@ -96,12 +90,15 @@ import coverage_utils
 
 # Absolute path to the code coverage tools binary. These paths can be
 # overwritten by user specified coverage tool paths.
-LLVM_BIN_DIR = os.path.join(update.LLVM_BUILD_DIR, 'bin')
+# Absolute path to the root of the checkout.
+SRC_ROOT_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                             os.path.pardir, os.path.pardir)
+LLVM_BIN_DIR = os.path.join(
+    os.path.join(SRC_ROOT_PATH, 'third_party', 'llvm-build', 'Release+Asserts'),
+    'bin')
 LLVM_COV_PATH = os.path.join(LLVM_BIN_DIR, 'llvm-cov')
 LLVM_PROFDATA_PATH = os.path.join(LLVM_BIN_DIR, 'llvm-profdata')
 
-# Absolute path to the root of the checkout.
-SRC_ROOT_PATH = None
 
 # Build directory, the value is parsed from command line arguments.
 BUILD_DIR = None
@@ -157,7 +154,12 @@ def _ConfigureLLVMCoverageTools(args):
     LLVM_COV_PATH = os.path.join(llvm_bin_dir, 'llvm-cov')
     LLVM_PROFDATA_PATH = os.path.join(llvm_bin_dir, 'llvm-profdata')
   else:
-    update.UpdatePackage('coverage_tools')
+    subprocess.check_call(
+        ['tools/clang/scripts/update.py', '--package', 'coverage_tools'])
+
+  if coverage_utils.GetHostPlatform() == 'win':
+    LLVM_COV_PATH += '.exe'
+    LLVM_PROFDATA_PATH += '.exe'
 
   coverage_tools_exist = (
       os.path.exists(LLVM_COV_PATH) and os.path.exists(LLVM_PROFDATA_PATH))
@@ -290,8 +292,11 @@ def _BuildTargets(targets, jobs_count):
                 default value is derived based on CPUs availability.
   """
   logging.info('Building %s.', str(targets))
+  autoninja = 'autoninja'
+  if coverage_utils.GetHostPlatform() == 'win':
+    autoninja += '.bat'
 
-  subprocess_cmd = ['autoninja', '-C', BUILD_DIR]
+  subprocess_cmd = [autoninja, '-C', BUILD_DIR]
   if jobs_count is not None:
     subprocess_cmd.append('-j' + str(jobs_count))
 
@@ -690,8 +695,8 @@ def _ValidateCurrentPlatformIsSupported():
     current_platform = coverage_utils.GetHostPlatform()
 
   assert current_platform in [
-      'linux', 'mac', 'chromeos', 'ios'
-  ], ('Coverage is only supported on linux, mac, chromeos and ios.')
+      'linux', 'mac', 'chromeos', 'ios', 'win'
+  ], ('Coverage is only supported on linux, mac, chromeos, ios and win.')
 
 
 def _GetBuildArgs():
@@ -941,18 +946,17 @@ def _ParseCommandArguments():
 
 def Main():
   """Execute tool commands."""
+
+  # Change directory to source root to aid in relative paths calculations.
+  os.chdir(SRC_ROOT_PATH)
+
   # Setup coverage binaries even when script is called with empty params. This
   # is used by coverage bot for initial setup.
   if len(sys.argv) == 1:
-    update.UpdatePackage('coverage_tools')
+    subprocess.check_call(
+        ['tools/clang/scripts/update.py', '--package', 'coverage_tools'])
     print(__doc__)
     return
-
-  # Change directory to source root to aid in relative paths calculations.
-  global SRC_ROOT_PATH
-  SRC_ROOT_PATH = coverage_utils.GetFullPath(
-      os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir))
-  os.chdir(SRC_ROOT_PATH)
 
   args = _ParseCommandArguments()
   coverage_utils.ConfigureLogging(verbose=args.verbose, log_file=args.log_file)
@@ -1019,8 +1023,9 @@ def Main():
         'otool')
     if os.path.exists(hermetic_otool_path):
       otool_path = hermetic_otool_path
-  binary_paths.extend(
-      coverage_utils.GetSharedLibraries(binary_paths, BUILD_DIR, otool_path))
+  if sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
+    binary_paths.extend(
+        coverage_utils.GetSharedLibraries(binary_paths, BUILD_DIR, otool_path))
 
   assert args.format == 'html' or args.format == 'text', (
       '%s is not a valid output format for "llvm-cov show". Only "text" and '

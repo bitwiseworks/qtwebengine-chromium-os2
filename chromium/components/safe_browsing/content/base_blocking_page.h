@@ -15,8 +15,11 @@
 #include "components/security_interstitials/content/security_interstitial_page.h"
 #include "components/security_interstitials/core/base_safe_browsing_error_ui.h"
 #include "components/security_interstitials/core/metrics_helper.h"
-#include "content/public/browser/interstitial_page_delegate.h"
 #include "url/gurl.h"
+
+namespace security_interstitials {
+class SettingsPageHelper;
+}
 
 namespace safe_browsing {
 
@@ -36,21 +39,11 @@ class BaseBlockingPage
   static const BaseSafeBrowsingErrorUI::SBErrorDisplayOptions
   CreateDefaultDisplayOptions(const UnsafeResourceList& unsafe_resources);
 
-  // Shows a blocking page warning the user about phishing/malware for a
-  // specific resource.
-  // This can be called several times. If an interstitial is already showing
-  // and the user decides to proceed, it will be discarded and a new one will be
-  // displayed.
-  static void ShowBlockingPage(BaseUIManager* ui_manager,
-                               const UnsafeResource& resource);
-
   // Returns true if the passed |unsafe_resources| is blocking the load of
   // the main page.
   static bool IsMainPageLoadBlocked(const UnsafeResourceList& unsafe_resources);
 
-  // InterstitialPageDelegate methods:
-  void OnProceed() override;
-  void OnDontProceed() override;
+  // SecurityInterstitialPage method:
   void CommandReceived(const std::string& command) override;
 
   // Checks the threat type to decide if we should report ThreatDetails.
@@ -69,10 +62,9 @@ class BaseBlockingPage
       const BaseSafeBrowsingErrorUI::SBErrorDisplayOptions& display_options);
 
   // SecurityInterstitialPage methods:
-  bool ShouldCreateNewNavigation() const override;
   void PopulateInterstitialStrings(
       base::DictionaryValue* load_time_data) override;
-  void OnInterstitialClosing() override;
+  void OnInterstitialClosing() override {}
 
   // Called when the interstitial is going away. Intentionally do nothing in
   // this base class.
@@ -122,10 +114,13 @@ class BaseBlockingPage
 
   static std::unique_ptr<
       security_interstitials::SecurityInterstitialControllerClient>
-  CreateControllerClient(content::WebContents* web_contents,
-                         const UnsafeResourceList& unsafe_resources,
-                         BaseUIManager* ui_manager,
-                         PrefService* pref_service);
+  CreateControllerClient(
+      content::WebContents* web_contents,
+      const UnsafeResourceList& unsafe_resources,
+      BaseUIManager* ui_manager,
+      PrefService* pref_service,
+      std::unique_ptr<security_interstitials::SettingsPageHelper>
+          settings_page_helper);
 
   int GetHTMLTemplateId() override;
 

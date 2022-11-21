@@ -5,9 +5,9 @@
 #include "net/http/http_server_properties.h"
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/feature_list.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -18,6 +18,7 @@
 #include "base/time/default_tick_clock.h"
 #include "base/values.h"
 #include "net/base/features.h"
+#include "net/base/url_util.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties_manager.h"
 #include "net/socket/ssl_client_socket.h"
@@ -156,7 +157,7 @@ HttpServerProperties::HttpServerProperties(
                                    this,
                                    tick_clock_),
       canonical_suffixes_({".ggpht.com", ".c.youtube.com", ".googlevideo.com",
-                           ".googleusercontent.com"}),
+                           ".googleusercontent.com", ".gvt1.com"}),
       quic_server_info_map_(kDefaultMaxQuicServerEntries),
       max_server_configs_stored_in_properties_(kDefaultMaxQuicServerEntries) {}
 
@@ -871,7 +872,7 @@ void HttpServerProperties::SetAlternativeServicesInternal(
     // before the first completes. In this case, only one of the jobs
     // would reach this code, whereas all of them should should have.
     HistogramAlternateProtocolUsage(ALTERNATE_PROTOCOL_USAGE_MAPPING_MISSING,
-                                    false);
+                                    IsGoogleHost(origin.host()));
   }
 
   // If this host ends with a canonical suffix, then set it as the

@@ -24,6 +24,7 @@ class Layer;
 }
 
 namespace content {
+class AgentSchedulingGroup;
 class CompositorDependencies;
 class PepperPluginInstanceImpl;
 class PepperExternalWidgetClient;
@@ -37,13 +38,13 @@ class RenderWidgetFullscreenPepper : public RenderWidget,
   // The created object is owned by the browser process. The browser process
   // is responsible for destroying it with an IPC message.
   static RenderWidgetFullscreenPepper* Create(
+      AgentSchedulingGroup& agent_scheduling_group,
       int32_t routing_id,
       RenderWidget::ShowCallback show_callback,
       CompositorDependencies* compositor_deps,
-      const ScreenInfo& screen_info,
+      const blink::ScreenInfo& screen_info,
       PepperPluginInstanceImpl* plugin,
       const blink::WebURL& local_main_frame_url,
-      mojo::PendingReceiver<mojom::Widget> widget_receiver,
       mojo::PendingAssociatedRemote<blink::mojom::WidgetHost> blink_widget_host,
       mojo::PendingAssociatedReceiver<blink::mojom::Widget> blink_widget);
 
@@ -61,23 +62,22 @@ class RenderWidgetFullscreenPepper : public RenderWidget,
 
  protected:
   RenderWidgetFullscreenPepper(
+      AgentSchedulingGroup& agent_scheduling_group,
       int32_t routing_id,
       CompositorDependencies* compositor_deps,
       PepperPluginInstanceImpl* plugin,
-      mojo::PendingReceiver<mojom::Widget> widget_receiver,
       mojo::PendingAssociatedRemote<blink::mojom::WidgetHost> blink_widget_host,
       mojo::PendingAssociatedReceiver<blink::mojom::Widget> blink_widget,
       blink::WebURL main_frame_url);
   ~RenderWidgetFullscreenPepper() override;
 
   // RenderWidget API.
-  void DidInitiatePaint() override;
   void Close(std::unique_ptr<RenderWidget> widget) override;
-  void AfterUpdateVisualProperties() override;
 
  private:
   friend class PepperExternalWidgetClient;
 
+  void DidInitiatePaint();
   void UpdateLayerBounds();
   void DidResize(const gfx::Size& size);
   blink::WebInputEventResult ProcessInputEvent(

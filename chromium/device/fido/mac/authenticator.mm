@@ -95,6 +95,7 @@ void TouchIdAuthenticator::MakeCredential(CtapMakeCredentialRequest request,
 }
 
 void TouchIdAuthenticator::GetAssertion(CtapGetAssertionRequest request,
+                                        CtapGetAssertionOptions options,
                                         GetAssertionCallback callback) {
   if (base::mac::IsAtLeastOS10_13()) {
     DCHECK(!operation_);

@@ -13,11 +13,9 @@
 #include "base/strings/stringprintf.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
-#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/public/web/modules/mediastream/web_media_stream_device_observer.h"
-#include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
-#include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/modules/mediastream/apply_constraints_processor.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_tracker.h"
@@ -51,20 +49,19 @@ UserMediaClient::Request::Request(UserMediaRequest* user_media_request)
     : user_media_request_(user_media_request) {
   DCHECK(user_media_request_);
   DCHECK(!apply_constraints_request_);
-  DCHECK(web_track_to_stop_.IsNull());
+  DCHECK(!track_to_stop_);
 }
 
 UserMediaClient::Request::Request(blink::ApplyConstraintsRequest* request)
     : apply_constraints_request_(request) {
   DCHECK(apply_constraints_request_);
   DCHECK(!user_media_request_);
-  DCHECK(web_track_to_stop_.IsNull());
+  DCHECK(!track_to_stop_);
 }
 
-UserMediaClient::Request::Request(
-    const blink::WebMediaStreamTrack& web_track_to_stop)
-    : web_track_to_stop_(web_track_to_stop) {
-  DCHECK(!web_track_to_stop_.IsNull());
+UserMediaClient::Request::Request(MediaStreamComponent* track_to_stop)
+    : track_to_stop_(track_to_stop) {
+  DCHECK(track_to_stop_);
   DCHECK(!user_media_request_);
   DCHECK(!apply_constraints_request_);
 }
@@ -94,7 +91,8 @@ UserMediaClient::UserMediaClient(
                     return client->GetMediaDevicesDispatcher();
                   },
                   WrapWeakPersistent(this)),
-              std::move(task_runner))) {
+              std::move(task_runner))),
+      media_devices_dispatcher_(frame->DomWindow()) {
   if (frame_) {
     // WrapWeakPersistent is safe because the |frame_| owns UserMediaClient.
     frame_->SetIsCapturingMediaCallback(WTF::BindRepeating(
@@ -133,11 +131,11 @@ void UserMediaClient::RequestUserMedia(UserMediaRequest* user_media_request) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(user_media_request);
   DCHECK(user_media_request->Audio() || user_media_request->Video());
-  // ownerDocument may be null if we are in a test.
+  // GetWindow() may be null if we are in a test.
   // In that case, it's OK to not check frame().
 
-  DCHECK(!user_media_request->OwnerDocument() ||
-         frame_ == user_media_request->OwnerDocument()->GetFrame());
+  DCHECK(!user_media_request->GetWindow() ||
+         frame_ == user_media_request->GetWindow()->GetFrame());
 
   // Save histogram data so we can see how much GetUserMedia is used.
   UpdateAPICount(user_media_request->MediaRequestType());
@@ -161,11 +159,9 @@ void UserMediaClient::RequestUserMedia(UserMediaRequest* user_media_request) {
   // TODO(mustaq): The description above seems specific to pre-UAv2 stack-based
   // tokens.  Perhaps we don't need to preserve this bit?
   bool has_transient_user_activation = false;
-  if (user_media_request->OwnerDocument() &&
-      user_media_request->OwnerDocument()->GetFrame()) {
-    has_transient_user_activation = user_media_request->OwnerDocument()
-                                        ->GetFrame()
-                                        ->Frame::HasTransientUserActivation();
+  if (LocalDOMWindow* window = user_media_request->GetWindow()) {
+    has_transient_user_activation =
+        LocalFrame::HasTransientUserActivation(window->GetFrame());
   }
   user_media_request->set_request_id(request_id);
   user_media_request->set_has_transient_user_activation(
@@ -186,8 +182,8 @@ void UserMediaClient::ApplyConstraints(
     MaybeProcessNextRequestInfo();
 }
 
-void UserMediaClient::StopTrack(const blink::WebMediaStreamTrack& web_track) {
-  pending_request_infos_.push_back(MakeGarbageCollected<Request>(web_track));
+void UserMediaClient::StopTrack(MediaStreamComponent* track) {
+  pending_request_infos_.push_back(MakeGarbageCollected<Request>(track));
   if (!is_processing_request_)
     MaybeProcessNextRequestInfo();
 }
@@ -217,9 +213,8 @@ void UserMediaClient::MaybeProcessNextRequestInfo() {
                   WrapWeakPersistent(this)));
   } else {
     DCHECK(current_request->IsStopTrack());
-    blink::WebPlatformMediaStreamTrack* track =
-        blink::WebPlatformMediaStreamTrack::GetTrack(
-            current_request->web_track_to_stop());
+    MediaStreamTrackPlatform* track = MediaStreamTrackPlatform::GetTrack(
+        WebMediaStreamTrack(current_request->track_to_stop()));
     if (track) {
       track->StopAndNotify(WTF::Bind(&UserMediaClient::CurrentRequestCompleted,
                                      WrapWeakPersistent(this)));
@@ -292,24 +287,28 @@ void UserMediaClient::ContextDestroyed() {
   DeleteAllUserMediaRequests();
 }
 
-void UserMediaClient::Trace(Visitor* visitor) {
+void UserMediaClient::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(user_media_processor_);
   visitor->Trace(apply_constraints_processor_);
+  visitor->Trace(media_devices_dispatcher_);
   visitor->Trace(pending_request_infos_);
 }
 
 void UserMediaClient::SetMediaDevicesDispatcherForTesting(
     mojo::PendingRemote<blink::mojom::blink::MediaDevicesDispatcherHost>
         media_devices_dispatcher) {
-  media_devices_dispatcher_.Bind(std::move(media_devices_dispatcher));
+  media_devices_dispatcher_.Bind(
+      std::move(media_devices_dispatcher),
+      frame_->GetTaskRunner(blink::TaskType::kInternalMedia));
 }
 
 blink::mojom::blink::MediaDevicesDispatcherHost*
 UserMediaClient::GetMediaDevicesDispatcher() {
-  if (!media_devices_dispatcher_) {
+  if (!media_devices_dispatcher_.is_bound()) {
     frame_->GetBrowserInterfaceBroker().GetInterface(
-        media_devices_dispatcher_.BindNewPipeAndPassReceiver());
+        media_devices_dispatcher_.BindNewPipeAndPassReceiver(
+            frame_->GetTaskRunner(blink::TaskType::kInternalMedia)));
   }
 
   return media_devices_dispatcher_.get();

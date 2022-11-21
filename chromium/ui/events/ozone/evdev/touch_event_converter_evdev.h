@@ -50,6 +50,14 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
                            DeviceEventDispatcherEvdev* dispatcher);
   ~TouchEventConverterEvdev() override;
 
+  static std::unique_ptr<TouchEventConverterEvdev> Create(
+      base::ScopedFD fd,
+      base::FilePath path,
+      int id,
+      const EventDeviceInfo& devinfo,
+      SharedPalmDetectionFilterState* shared_palm_state,
+      DeviceEventDispatcherEvdev* dispatcher);
+
   // EventConverterEvdev:
   bool HasTouchscreen() const override;
   bool HasPen() const override;
@@ -190,10 +198,10 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
   base::RepeatingCallback<void(bool)> enable_palm_suppression_callback_;
 
   // Do we mark a touch as palm when touch_major is the max?
-  const bool palm_on_touch_major_max_;
+  bool palm_on_touch_major_max_;
 
   // Do we mark a touch as palm when the tool type is marked as TOOL_TYPE_PALM ?
-  const bool palm_on_tool_type_palm_;
+  bool palm_on_tool_type_palm_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchEventConverterEvdev);
 };

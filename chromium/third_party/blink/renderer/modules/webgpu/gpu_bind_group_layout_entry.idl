@@ -5,13 +5,20 @@
 // https://gpuweb.github.io/gpuweb/
 
 dictionary GPUBindGroupLayoutEntry {
-    required unsigned long binding;
+    required GPUIndex32 binding;
     required GPUShaderStageFlags visibility;
     required GPUBindingType type;
-    GPUTextureViewDimension textureDimension = "2d";
+
+    boolean hasDynamicOffset = false;
+
+    GPUSize64 minBufferBindingSize;
+
+    GPUTextureViewDimension viewDimension = "2d";
+
     GPUTextureComponentType textureComponentType = "float";
     boolean multisampled = false;
-    boolean hasDynamicOffset = false;
+
+    GPUTextureFormat storageTextureFormat;
 };
 
 enum GPUBindingType {
@@ -19,8 +26,11 @@ enum GPUBindingType {
     "storage-buffer",
     "readonly-storage-buffer",
     "sampler",
+    "comparison-sampler",
     "sampled-texture",
-    "storage-texture",
+    "multisampled-texture",
+    "readonly-storage-texture",
+    "writeonly-storage-texture",
 };
 
 enum GPUTextureComponentType {

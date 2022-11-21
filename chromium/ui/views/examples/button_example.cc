@@ -50,26 +50,26 @@ void ButtonExample::CreateExampleView(View* container) {
   auto label_button =
       std::make_unique<LabelButton>(this, ASCIIToUTF16(kLabelButton));
   label_button->SetFocusForPlatform();
-  label_button->set_request_focus_on_press(true);
+  label_button->SetRequestFocusOnPress(true);
   label_button_ = container->AddChildView(std::move(label_button));
 
-  md_button_ = container->AddChildView(
-      MdTextButton::Create(this, base::ASCIIToUTF16("Material Design")));
+  md_button_ = container->AddChildView(std::make_unique<views::MdTextButton>(
+      this, base::ASCIIToUTF16("Material Design")));
 
-  auto md_disabled_button = MdTextButton::Create(
+  auto md_disabled_button = std::make_unique<views::MdTextButton>(
       this, ASCIIToUTF16("Material Design Disabled Button"));
   md_disabled_button->SetState(Button::STATE_DISABLED);
   md_disabled_button_ = container->AddChildView(std::move(md_disabled_button));
 
-  auto md_default_button =
-      MdTextButton::Create(this, base::ASCIIToUTF16("Default"));
+  auto md_default_button = std::make_unique<views::MdTextButton>(
+      this, base::ASCIIToUTF16("Default"));
   md_default_button->SetIsDefault(true);
   md_default_button_ = container->AddChildView(std::move(md_default_button));
 
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   auto image_button = std::make_unique<ImageButton>(this);
   image_button->SetFocusForPlatform();
-  image_button->set_request_focus_on_press(true);
+  image_button->SetRequestFocusOnPress(true);
   image_button->SetImage(ImageButton::STATE_NORMAL,
                          rb.GetImageNamed(IDR_CLOSE).ToImageSkia());
   image_button->SetImage(ImageButton::STATE_HOVERED,
@@ -89,11 +89,11 @@ void ButtonExample::LabelButtonPressed(LabelButton* label_button,
               ? kLongText
               : label_button->GetText().length() > 50 ? kLabelButton : ""));
     } else if (event.IsAltDown()) {
-      label_button->SetImage(
+      label_button->SetImageModel(
           Button::STATE_NORMAL,
           label_button->GetImage(Button::STATE_NORMAL).isNull()
-              ? *icon_
-              : gfx::ImageSkia());
+              ? ui::ImageModel::FromImageSkia(*icon_)
+              : ui::ImageModel());
     } else {
       static int alignment = 0;
       label_button->SetHorizontalAlignment(

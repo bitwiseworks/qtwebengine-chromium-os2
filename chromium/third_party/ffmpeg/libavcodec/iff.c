@@ -440,6 +440,8 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
     if (avctx->codec_tag == MKTAG('A', 'N', 'I', 'M')) {
         s->video_size = FFALIGN(avctx->width, 2) * avctx->height * s->bpp;
+        if (!s->video_size)
+            return AVERROR_INVALIDDATA;
         s->video[0] = av_calloc(FFALIGN(avctx->width, 2) * avctx->height, s->bpp);
         s->video[1] = av_calloc(FFALIGN(avctx->width, 2) * avctx->height, s->bpp);
         s->pal = av_calloc(256, sizeof(*s->pal));
@@ -715,13 +717,15 @@ static void decode_deep_rle32(uint8_t *dst, const uint8_t *src, int src_size, in
 {
     const uint8_t *src_end = src + src_size;
     int x = 0, y = 0, i;
-    while (src + 5 <= src_end) {
+    while (src_end - src >= 5) {
         int opcode;
         opcode = *(int8_t *)src++;
         if (opcode >= 0) {
             int size = opcode + 1;
             for (i = 0; i < size; i++) {
-                int length = FFMIN(size - i, width);
+                int length = FFMIN(size - i, width - x);
+                if (src_end - src < length * 4)
+                    return;
                 memcpy(dst + y*linesize + x * 4, src, length * 4);
                 src += length * 4;
                 x += length;
@@ -1376,11 +1380,10 @@ static void decode_delta_d(uint8_t *dst,
                     opcode--;
                 }
             } else {
-                opcode = -opcode;
                 while (opcode && bytestream2_get_bytes_left(&gb) > 0) {
                     bytestream2_put_be32(&pb, bytestream2_get_be32(&gb));
                     bytestream2_skip_p(&pb, pitch - 4);
-                    opcode--;
+                    opcode++;
                 }
             }
             entries--;

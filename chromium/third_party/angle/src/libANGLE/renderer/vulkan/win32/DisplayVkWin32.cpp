@@ -12,8 +12,8 @@
 #include "libANGLE/renderer/vulkan/RendererVk.h"
 
 #include <windows.h>
-#include "volk.h"
 
+#include "common/vulkan/vk_headers.h"
 #include "libANGLE/renderer/vulkan/vk_caps_utils.h"
 #include "libANGLE/renderer/vulkan/win32/WindowSurfaceVkWin32.h"
 
@@ -139,7 +139,7 @@ egl::ConfigSet DisplayVkWin32::generateConfigs()
     return egl_vk::GenerateConfigs(kColorFormats, egl_vk::kConfigDepthStencilFormats, this);
 }
 
-bool DisplayVkWin32::checkConfigSupport(egl::Config *config)
+void DisplayVkWin32::checkConfigSupport(egl::Config *config)
 {
     const vk::Format &formatVk = this->getRenderer()->getFormat(config->renderTargetFormat);
     VkFormat nativeFormat      = formatVk.vkImageFormat;
@@ -149,18 +149,19 @@ bool DisplayVkWin32::checkConfigSupport(egl::Config *config)
     // supported format will be returned.
     if (mSurfaceFormats.size() == 1u && mSurfaceFormats[0].format == VK_FORMAT_UNDEFINED)
     {
-        return true;
+        return;
     }
 
     for (const VkSurfaceFormatKHR &surfaceFormat : mSurfaceFormats)
     {
         if (surfaceFormat.format == nativeFormat)
         {
-            return true;
+            return;
         }
     }
 
-    return false;
+    // No window support for this config.
+    config->surfaceType &= ~EGL_WINDOW_BIT;
 }
 
 const char *DisplayVkWin32::getWSIExtension() const

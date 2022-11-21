@@ -5,17 +5,22 @@
 #ifndef DISCOVERY_MDNS_MDNS_READER_H_
 #define DISCOVERY_MDNS_MDNS_READER_H_
 
+#include <utility>
 #include <vector>
 
 #include "discovery/mdns/mdns_records.h"
+#include "platform/base/error.h"
 #include "util/big_endian.h"
 
 namespace openscreen {
 namespace discovery {
 
+struct Config;
+
 class MdnsReader : public BigEndianReader {
  public:
-  using BigEndianReader::BigEndianReader;
+  MdnsReader(const Config& config, const uint8_t* buffer, size_t length);
+
   using BigEndianReader::Read;
 
   // The following methods return true if the method was able to successfully
@@ -31,14 +36,16 @@ class MdnsReader : public BigEndianReader {
   bool Read(PtrRecordRdata* out);
   bool Read(TxtRecordRdata* out);
   bool Read(NsecRecordRdata* out);
+
   // Reads a DNS resource record with its RDATA.
   // The correct type of RDATA to be read is determined by the type
   // specified in the record.
   bool Read(MdnsRecord* out);
   bool Read(MdnsQuestion* out);
+
   // Reads multiple mDNS questions and records that are a part of
   // a mDNS message being read.
-  bool Read(MdnsMessage* out);
+  ErrorOr<MdnsMessage> Read();
 
  private:
   struct NsecBitMapField {
@@ -77,6 +84,9 @@ class MdnsReader : public BigEndianReader {
     }
     return false;
   }
+
+  // Maximum allowed size for the rdata in any received record.
+  const size_t kMaximumAllowedRdataSize;
 };
 
 }  // namespace discovery

@@ -10,6 +10,13 @@ if (is_android) {
   import("//build/config/android/config.gni")
 }
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 if (is_component_build) {
   link_target_type = "source_set"
 } else {
@@ -69,8 +76,6 @@ target(link_target_type, "child") {
     "runtime_features.h",
     "scoped_child_process_reference.cc",
     "scoped_child_process_reference.h",
-    "thread_safe_sender.cc",
-    "thread_safe_sender.h",
     "webthemeengine_impl_android.cc",
     "webthemeengine_impl_android.h",
     "webthemeengine_impl_conversions.cc",
@@ -101,6 +106,7 @@ target(link_target_type, "child") {
     "//content/common",
     "//content/public/common:common_sources",
     "//crypto:platform",
+    "//device/gamepad/public/cpp:switches",
     "//gpu/command_buffer/client",
     "//media",
     "//media/blink",
@@ -108,6 +114,7 @@ target(link_target_type, "child") {
     "//net",
     "//services/device/public/cpp:device_features",
     "//services/device/public/cpp/power_monitor",
+    "//services/network/public/cpp",
     "//services/resource_coordinator/public/cpp/memory_instrumentation",
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/mojom",
@@ -143,11 +150,10 @@ target(link_target_type, "child") {
     ]
   }
 
-  if (is_linux) {
+  if (is_linux || is_chromeos) {
     deps += [
       "//components/services/font/public/cpp",
       "//components/services/font/public/mojom",
-      "//services/service_manager/zygote",
     ]
   }
 

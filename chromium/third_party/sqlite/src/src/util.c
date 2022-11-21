@@ -115,6 +115,16 @@ void sqlite3Error(sqlite3 *db, int err_code){
 }
 
 /*
+** The equivalent of sqlite3Error(db, SQLITE_OK).  Clear the error state
+** and error message.
+*/
+void sqlite3ErrorClear(sqlite3 *db){
+  assert( db!=0 );
+  db->errCode = SQLITE_OK;
+  if( db->pErr ) sqlite3ValueSetNull(db->pErr);
+}
+
+/*
 ** Load the sqlite3.iSysErrno field if that is an appropriate thing
 ** to do based on the SQLite error code in rc.
 */
@@ -315,6 +325,19 @@ int sqlite3_strnicmp(const char *zLeft, const char *zRight, int N){
   b = (unsigned char *)zRight;
   while( N-- > 0 && *a!=0 && UpperToLower[*a]==UpperToLower[*b]){ a++; b++; }
   return N<0 ? 0 : UpperToLower[*a] - UpperToLower[*b];
+}
+
+/*
+** Compute an 8-bit hash on a string that is insensitive to case differences
+*/
+u8 sqlite3StrIHash(const char *z){
+  u8 h = 0;
+  if( z==0 ) return 0;
+  while( z[0] ){
+    h += UpperToLower[(unsigned char)z[0]];
+    z++;
+  }
+  return h;
 }
 
 /*
@@ -583,6 +606,30 @@ do_atof_calc:
 #endif
 
 /*
+** Render an signed 64-bit integer as text.  Store the result in zOut[].
+**
+** The caller must ensure that zOut[] is at least 21 bytes in size.
+*/
+void sqlite3Int64ToText(i64 v, char *zOut){
+  int i;
+  u64 x;
+  char zTemp[22];
+  if( v<0 ){
+    x = (v==SMALLEST_INT64) ? ((u64)1)<<63 : (u64)-v;
+  }else{
+    x = v;
+  }
+  i = sizeof(zTemp)-2;
+  zTemp[sizeof(zTemp)-1] = 0;
+  do{
+    zTemp[i--] = (x%10) + '0';
+    x = x/10;
+  }while( x );
+  if( v<0 ) zTemp[i--] = '-';
+  memcpy(zOut, &zTemp[i+1], sizeof(zTemp)-1-i);
+}
+
+/*
 ** Compare the 19-character string zNum against the text representation
 ** value 2^63:  9223372036854775808.  Return negative, zero, or positive
 ** if zNum is less than, equal to, or greater than the string.
@@ -644,6 +691,7 @@ int sqlite3Atoi64(const char *zNum, i64 *pNum, int length, u8 enc){
     incr = 1;
   }else{
     incr = 2;
+    length &= ~1;
     assert( SQLITE_UTF16LE==2 && SQLITE_UTF16BE==3 );
     for(i=3-enc; i<length && zNum[i]==0; i+=2){}
     nonNum = i<length;
@@ -822,8 +870,26 @@ int sqlite3GetInt32(const char *zNum, int *pValue){
 */
 int sqlite3Atoi(const char *z){
   int x = 0;
-  if( z ) sqlite3GetInt32(z, &x);
+  sqlite3GetInt32(z, &x);
   return x;
+}
+
+/*
+** Try to convert z into an unsigned 32-bit integer.  Return true on
+** success and false if there is an error.
+**
+** Only decimal notation is accepted.
+*/
+int sqlite3GetUInt32(const char *z, u32 *pI){
+  u64 v = 0;
+  int i;
+  for(i=0; sqlite3Isdigit(z[i]); i++){
+    v = v*10 + z[i] - '0';
+    if( v>4294967296LL ){ *pI = 0; return 0; }
+  }
+  if( i==0 || z[i]!=0 ){ *pI = 0; return 0; }
+  *pI = (u32)v;
+  return 1;
 }
 
 /*
@@ -1128,8 +1194,7 @@ u8 sqlite3GetVarint32(const unsigned char *p, u32 *v){
     u64 v64;
     u8 n;
 
-    p -= 2;
-    n = sqlite3GetVarint(p, &v64);
+    n = sqlite3GetVarint(p-2, &v64);
     assert( n>3 && n<=9 );
     if( (v64 & SQLITE_MAX_U32)!=v64 ){
       *v = 0xffffffff;
@@ -1256,7 +1321,7 @@ u8 sqlite3HexToInt(int h){
   return (u8)(h & 0xf);
 }
 
-#if !defined(SQLITE_OMIT_BLOB_LITERAL) || defined(SQLITE_HAS_CODEC)
+#if !defined(SQLITE_OMIT_BLOB_LITERAL)
 /*
 ** Convert a BLOB literal of the form "x'hhhhhh'" into its binary
 ** value.  Return a pointer to its binary value.  Space to hold the
@@ -1277,7 +1342,7 @@ void *sqlite3HexToBlob(sqlite3 *db, const char *z, int n){
   }
   return zBlob;
 }
-#endif /* !SQLITE_OMIT_BLOB_LITERAL || SQLITE_HAS_CODEC */
+#endif /* !SQLITE_OMIT_BLOB_LITERAL */
 
 /*
 ** Log an error that is an API call on a connection pointer that should

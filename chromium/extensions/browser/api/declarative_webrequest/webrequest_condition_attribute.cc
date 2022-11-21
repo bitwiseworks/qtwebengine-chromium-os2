@@ -9,10 +9,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/lazy_instance.h"
-#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -28,7 +29,6 @@
 #include "extensions/common/error_utils.h"
 #include "net/base/net_errors.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "net/cookies/static_cookie_policy.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_util.h"
 
@@ -81,11 +81,6 @@ struct WebRequestConditionAttributeFactory {
         keys::kExcludeResponseHeadersKey,
         DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
         &WebRequestConditionAttributeResponseHeaders::Create);
-
-    factory.RegisterFactoryMethod(
-        keys::kThirdPartyKey,
-        DedupingFactory<WebRequestConditionAttribute>::IS_PARAMETERIZED,
-        &WebRequestConditionAttributeThirdParty::Create);
 
     factory.RegisterFactoryMethod(
         keys::kStagesKey,
@@ -710,76 +705,6 @@ std::string WebRequestConditionAttributeResponseHeaders::GetName() const {
 bool WebRequestConditionAttributeResponseHeaders::Equals(
     const WebRequestConditionAttribute* other) const {
   return false;
-}
-
-//
-// WebRequestConditionAttributeThirdParty
-//
-
-WebRequestConditionAttributeThirdParty::
-WebRequestConditionAttributeThirdParty(bool match_third_party)
-    : match_third_party_(match_third_party) {}
-
-WebRequestConditionAttributeThirdParty::
-~WebRequestConditionAttributeThirdParty() {}
-
-// static
-scoped_refptr<const WebRequestConditionAttribute>
-WebRequestConditionAttributeThirdParty::Create(
-    const std::string& name,
-    const base::Value* value,
-    std::string* error,
-    bool* bad_message) {
-  DCHECK(name == keys::kThirdPartyKey);
-
-  bool third_party = false;  // Dummy value, gets overwritten.
-  if (!value->GetAsBoolean(&third_party)) {
-    *error = ErrorUtils::FormatErrorMessage(kInvalidValue,
-                                                     keys::kThirdPartyKey);
-    return nullptr;
-  }
-
-  return scoped_refptr<const WebRequestConditionAttribute>(
-      new WebRequestConditionAttributeThirdParty(third_party));
-}
-
-int WebRequestConditionAttributeThirdParty::GetStages() const {
-  return ON_BEFORE_REQUEST | ON_BEFORE_SEND_HEADERS | ON_SEND_HEADERS |
-      ON_HEADERS_RECEIVED | ON_AUTH_REQUIRED | ON_BEFORE_REDIRECT |
-      ON_RESPONSE_STARTED | ON_COMPLETED | ON_ERROR;
-}
-
-bool WebRequestConditionAttributeThirdParty::IsFulfilled(
-    const WebRequestData& request_data) const {
-  if (!(request_data.stage & GetStages()))
-    return false;
-
-  // Request is "1st party" if it gets cookies under 3rd party-blocking policy.
-  const net::StaticCookiePolicy block_third_party_policy(
-      net::StaticCookiePolicy::BLOCK_ALL_THIRD_PARTY_COOKIES);
-  const int can_get_cookies = block_third_party_policy.CanAccessCookies(
-      request_data.request->url, request_data.request->site_for_cookies);
-  const bool is_first_party = (can_get_cookies == net::OK);
-
-  return match_third_party_ ? !is_first_party : is_first_party;
-}
-
-WebRequestConditionAttribute::Type
-WebRequestConditionAttributeThirdParty::GetType() const {
-  return CONDITION_THIRD_PARTY;
-}
-
-std::string WebRequestConditionAttributeThirdParty::GetName() const {
-  return keys::kThirdPartyKey;
-}
-
-bool WebRequestConditionAttributeThirdParty::Equals(
-    const WebRequestConditionAttribute* other) const {
-  if (!WebRequestConditionAttribute::Equals(other))
-    return false;
-  const WebRequestConditionAttributeThirdParty* casted_other =
-      static_cast<const WebRequestConditionAttributeThirdParty*>(other);
-  return match_third_party_ == casted_other->match_third_party_;
 }
 
 //

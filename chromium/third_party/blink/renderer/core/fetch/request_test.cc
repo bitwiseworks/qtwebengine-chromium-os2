@@ -82,9 +82,10 @@ TEST(ServiceWorkerRequestTest, FromAndToFetchAPIRequest) {
   }
   fetch_api_request->referrer =
       mojom::blink::Referrer::New(KURL(NullURL(), referrer), kReferrerPolicy);
+  const auto fetch_api_request_headers = fetch_api_request->headers;
 
   Request* request =
-      Request::Create(scope.GetScriptState(), *fetch_api_request,
+      Request::Create(scope.GetScriptState(), std::move(fetch_api_request),
                       Request::ForServiceWorkerFetchEvent::kFalse);
   DCHECK(request);
   EXPECT_EQ(url, request->url());
@@ -114,10 +115,11 @@ TEST(ServiceWorkerRequestTest, FromAndToFetchAPIRequest) {
   EXPECT_EQ(kCredentialsMode, second_fetch_api_request->credentials_mode);
   EXPECT_EQ(kCacheMode, second_fetch_api_request->cache_mode);
   EXPECT_EQ(kRedirectMode, second_fetch_api_request->redirect_mode);
+  EXPECT_EQ(kDestination, second_fetch_api_request->destination);
   EXPECT_EQ(referrer, second_fetch_api_request->referrer->url);
   EXPECT_EQ(network::mojom::ReferrerPolicy::kAlways,
             second_fetch_api_request->referrer->policy);
-  EXPECT_EQ(fetch_api_request->headers, second_fetch_api_request->headers);
+  EXPECT_EQ(fetch_api_request_headers, second_fetch_api_request->headers);
 }
 
 TEST(ServiceWorkerRequestTest, ToFetchAPIRequestStripsURLFragment) {

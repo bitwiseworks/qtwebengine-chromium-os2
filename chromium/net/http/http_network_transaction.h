@@ -84,11 +84,12 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   void SetWebSocketHandshakeStreamCreateHelper(
       WebSocketHandshakeStreamBase::CreateHelper* create_helper) override;
   void SetBeforeNetworkStartCallback(
-      const BeforeNetworkStartCallback& callback) override;
+      BeforeNetworkStartCallback callback) override;
+  void SetConnectedCallback(const ConnectedCallback& callback) override;
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override;
   void SetResponseHeadersCallback(ResponseHeadersCallback callback) override;
-
   int ResumeNetworkStart() override;
+  void CloseConnectionOnDestruction() override;
 
   // HttpStreamRequest::Delegate methods:
   void OnStreamReady(const SSLConfig& used_ssl_config,
@@ -413,6 +414,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       websocket_handshake_stream_base_create_helper_;
 
   BeforeNetworkStartCallback before_network_start_callback_;
+  ConnectedCallback connected_callback_;
   RequestHeadersCallback request_headers_callback_;
   ResponseHeadersCallback response_headers_callback_;
 
@@ -432,6 +434,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   // Number of times the transaction was restarted via a RestartWith* call.
   size_t num_restarts_;
+
+  bool close_connection_on_destruction_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(HttpNetworkTransaction);
 };

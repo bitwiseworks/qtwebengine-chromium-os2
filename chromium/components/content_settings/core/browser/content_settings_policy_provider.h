@@ -36,11 +36,18 @@ class PolicyProvider : public ObservableProvider {
       const ResourceIdentifier& resource_identifier,
       bool incognito) const override;
 
-  bool SetWebsiteSetting(const ContentSettingsPattern& primary_pattern,
-                         const ContentSettingsPattern& secondary_pattern,
-                         ContentSettingsType content_type,
-                         const ResourceIdentifier& resource_identifier,
-                         std::unique_ptr<base::Value>&& value) override;
+  std::unique_ptr<RuleIterator> GetDiscardedRuleIterator(
+      ContentSettingsType content_type,
+      const ResourceIdentifier& resource_identifier,
+      bool incognito) const override;
+
+  bool SetWebsiteSetting(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsType content_type,
+      const ResourceIdentifier& resource_identifier,
+      std::unique_ptr<base::Value>&& value,
+      const ContentSettingConstraints& constraint = {}) override;
 
   void ClearAllContentSettingsRules(ContentSettingsType content_type) override;
 
@@ -70,6 +77,8 @@ class PolicyProvider : public ObservableProvider {
   void ReadManagedContentSettingsTypes(ContentSettingsType content_type);
 
   OriginIdentifierValueMap value_map_;
+
+  std::map<ContentSettingsType, std::vector<Rule>> discarded_rules_value_map_;
 
   PrefService* prefs_;
 

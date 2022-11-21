@@ -1,7 +1,75 @@
 Revision history for Shaderc
 
-v2020.0-dev 2020-01-22
- - Start v2020.0-dev
+v2020.4-dev 2020-09-02
+ - Start v2020.4-dev
+
+v2020.3 2020-09-02
+ - General:
+   - Last release with spvc
+   - Cleaned up issues discovered by Infer
+ - spvc:
+   - Added support for Dawn using deprecated Options constructor
+   - Adding support for the additional fixed sample mask in MSL
+
+v2020.2 2020-07-23
+ - General:
+   - Remove VS2013 support
+   - Support both posix and non-posix MinGW toolchains
+   - Support optionally building Tint tooling for WGSL
+   - Add -h option to glslc, spvc; same as --help
+   - Add source file license checker
+   - BUILD.gn improvements
+
+ - glslc, libshaderc:
+   - Update to Glslang generator 9
+   - Add interface to support 16bit types in HLSL
+   - Add glslc hidden experimental option -mfmt=wgsl; requires Tint
+
+ - spvc:
+   - Add minimum buffer size for Dawn reflection
+
+v2020.1 2020-06-09
+ This is the last version that officially supports VS2013.
+
+ - General:
+   - Added warning signs about unsupported downloads (#1041)
+   - Added .NET bindings to README.md (#1060)
+   - Only add -fPIC if supported by the compiler. (#1061)
+
+ - glslc, libshaderc:
+   - Removed Singleton pattern around access to glslang (#1059)
+
+ - spvc:
+   - Added concept of comparison sampler to API (#1036)
+   - Added support for options.hlsl.nonwritable_uav_texture_as_srv (#1048)
+   - Support forcing storage buffers to be always declared as UAV. (#1076)
+
+v2020.0 2020-03-06
+ - General:
+   - Getting spirv.hpp from SPIRV-Headers instead of not glslang (#992)
+   - Added clarification about status of artifacts in downloads.md (#1012)
+
+ - glslc, libshaderc:
+   - Added support for new Glslang profile enum, EProfileCount (#973)
+   - Updated user documentation for -S in glslc (#978)
+   - Add documentation for Vulkan 1.2 and SPIR-V 1.5 (#980)
+   - Removed NV_EXTENSIONS conditionals (#1003)
+   - Added support for generating WebGPU SPIR-V to libshaderc (#1021)
+   - Rolled in all DEPS for provisional SPIR-V extensions for raytracing
+
+ - spvc:
+   - Normalized API behaviour (#967)
+   - Added source_set target for libshaderc_spvc (#976)
+   - Added in support for spvc logging to the terminal (#981)
+   - Internal refactoring to reduce boiler plate in API implementations (#984)
+   - Added newline to logging messages to make them readable (#985)
+   - Added reflection support for Dawn:
+     - storage textures (#1001)
+     - storage texture format (#1005)
+     - texture dimension for storage textures (#1008)
+     - is storage texture declared as multisampled texture (#1011)
+   - Converted compile options to require explicit environments (#1019)
+   - Added knob to control force_zero_initialized_variables in SPIRV-Cross (#1028)
 
 v2019.1 2020-01-22
  - glslc, libshaderc:

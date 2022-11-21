@@ -75,6 +75,7 @@
 #include "third_party/blink/renderer/core/html/imports/html_imports_controller.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/page_popup_controller.h"
@@ -108,38 +109,44 @@ CSSFontSelector* CreateCSSFontSelectorFor(Document& document) {
 
 StyleEngine::StyleEngine(Document& document)
     : document_(&document),
-      is_master_(!document.IsHTMLImport()),
+      is_html_import_(document.IsHTMLImport()),
       document_style_sheet_collection_(
           MakeGarbageCollected<DocumentStyleSheetCollection>(document)) {
   if (document.GetFrame()) {
     // We don't need to create CSSFontSelector for imported document or
     // HTMLTemplateElement's document, because those documents have no frame.
+    // Likewise for the StyleResolver.
     font_selector_ = CreateCSSFontSelectorFor(document);
     font_selector_->RegisterForInvalidationCallbacks(this);
+    resolver_ = MakeGarbageCollected<StyleResolver>(document);
+    if (const auto* owner = document.GetFrame()->Owner())
+      owner_color_scheme_ = owner->GetColorScheme();
   }
   if (document.IsInMainFrame())
     viewport_resolver_ = MakeGarbageCollected<ViewportStyleResolver>(document);
-  if (IsMaster())
+  if (!IsHTMLImport())
     global_rule_set_ = MakeGarbageCollected<CSSGlobalRuleSet>();
   if (auto* settings = GetDocument().GetSettings()) {
     if (!settings->GetForceDarkModeEnabled())
       preferred_color_scheme_ = settings->GetPreferredColorScheme();
+    UpdateColorSchemeMetrics();
   }
   if (Platform::Current() && Platform::Current()->ThemeEngine())
     forced_colors_ = Platform::Current()->ThemeEngine()->GetForcedColors();
+  UpdateForcedBackgroundColor();
 }
 
 StyleEngine::~StyleEngine() = default;
 
-inline Document* StyleEngine::Master() {
-  if (IsMaster())
+inline Document* StyleEngine::HTMLImportRootDocument() {
+  if (!IsHTMLImport())
     return document_;
   HTMLImportsController* import = GetDocument().ImportsController();
   // Document::ImportsController() can return null while executing its
   // destructor.
   if (!import)
     return nullptr;
-  return import->Master();
+  return import->TreeRoot();
 }
 
 TreeScopeStyleSheetCollection& StyleEngine::EnsureStyleSheetCollectionFor(
@@ -171,21 +178,11 @@ TreeScopeStyleSheetCollection* StyleEngine::StyleSheetCollectionFor(
 
 const HeapVector<Member<StyleSheet>>& StyleEngine::StyleSheetsForStyleSheetList(
     TreeScope& tree_scope) {
-  DCHECK(Master());
+  DCHECK(HTMLImportRootDocument());
   TreeScopeStyleSheetCollection& collection =
       EnsureStyleSheetCollectionFor(tree_scope);
-  if (Master()->IsActive()) {
-    if (all_tree_scopes_dirty_) {
-      // If all tree scopes are dirty, update all of active style. Otherwise, we
-      // would have to mark all tree scopes explicitly dirty for stylesheet list
-      // or repeatedly update the stylesheet list on styleSheets access. Note
-      // that this can only happen once if we kDidLayoutWithPendingSheets in
-      // Document::UpdateStyleAndLayoutTreeIgnoringPendingStyleSheets.
-      UpdateActiveStyle();
-    } else {
-      collection.UpdateStyleSheetList();
-    }
-  }
+  if (HTMLImportRootDocument()->IsActive())
+    collection.UpdateStyleSheetList();
   return collection.StyleSheetsForStyleSheetList();
 }
 
@@ -285,7 +282,7 @@ void StyleEngine::RemovePendingSheet(Node& style_sheet_candidate_node,
 
 void StyleEngine::SetNeedsActiveStyleUpdate(TreeScope& tree_scope) {
   DCHECK(tree_scope.RootNode().isConnected());
-  if (GetDocument().IsActive() || !IsMaster())
+  if (GetDocument().IsActive() || IsHTMLImport())
     MarkTreeScopeDirty(tree_scope);
 }
 
@@ -440,7 +437,7 @@ void StyleEngine::MediaQueriesChangedInScope(TreeScope& tree_scope) {
 }
 
 void StyleEngine::WatchedSelectorsChanged() {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   global_rule_set_->InitWatchedSelectorsRuleSet(GetDocument());
   // TODO(futhark@chromium.org): Should be able to use RuleSetInvalidation here.
@@ -449,11 +446,11 @@ void StyleEngine::WatchedSelectorsChanged() {
 }
 
 bool StyleEngine::ShouldUpdateDocumentStyleSheetCollection() const {
-  return all_tree_scopes_dirty_ || document_scope_dirty_;
+  return document_scope_dirty_;
 }
 
 bool StyleEngine::ShouldUpdateShadowTreeStyleSheetCollection() const {
-  return all_tree_scopes_dirty_ || !dirty_tree_scopes_.IsEmpty();
+  return !dirty_tree_scopes_.IsEmpty();
 }
 
 void StyleEngine::MediaQueryAffectingValueChanged(
@@ -512,20 +509,18 @@ void StyleEngine::MediaQueryAffectingValueChanged(MediaValueChange change) {
 }
 
 void StyleEngine::UpdateActiveStyleSheetsInImport(
-    StyleEngine& master_engine,
+    StyleEngine& root_engine,
     DocumentStyleSheetCollector& parent_collector) {
-  DCHECK(RuntimeEnabledFeatures::HTMLImportsEnabled(&GetDocument()));
-  DCHECK(!IsMaster());
+  DCHECK(RuntimeEnabledFeatures::HTMLImportsEnabled(
+      GetDocument().GetExecutionContext()));
+  DCHECK(IsHTMLImport());
   HeapVector<Member<StyleSheet>> sheets_for_list;
   ImportedDocumentStyleSheetCollector subcollector(parent_collector,
                                                    sheets_for_list);
-  GetDocumentStyleSheetCollection().CollectStyleSheets(master_engine,
+  GetDocumentStyleSheetCollection().CollectStyleSheets(root_engine,
                                                        subcollector);
   GetDocumentStyleSheetCollection().SwapSheetsForSheetList(sheets_for_list);
 
-  // all_tree_scopes_dirty_ should only be set on main documents, never html
-  // imports.
-  DCHECK(!all_tree_scopes_dirty_);
   // Mark false for consistency. It is never checked for import documents.
   document_scope_dirty_ = false;
 }
@@ -564,7 +559,7 @@ void StyleEngine::UpdateActiveStyleSheets() {
   if (!NeedsActiveStyleSheetUpdate())
     return;
 
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(!GetDocument().InStyleRecalc());
   DCHECK(GetDocument().IsActive());
 
@@ -578,14 +573,8 @@ void StyleEngine::UpdateActiveStyleSheets() {
 
   if (ShouldUpdateShadowTreeStyleSheetCollection()) {
     UnorderedTreeScopeSet tree_scopes_removed;
-
-    if (all_tree_scopes_dirty_) {
-      for (TreeScope* tree_scope : active_tree_scopes_)
-        UpdateActiveStyleSheetsInShadow(tree_scope, tree_scopes_removed);
-    } else {
-      for (TreeScope* tree_scope : dirty_tree_scopes_)
-        UpdateActiveStyleSheetsInShadow(tree_scope, tree_scopes_removed);
-    }
+    for (TreeScope* tree_scope : dirty_tree_scopes_)
+      UpdateActiveStyleSheetsInShadow(tree_scope, tree_scopes_removed);
     for (TreeScope* tree_scope : tree_scopes_removed)
       active_tree_scopes_.erase(tree_scope);
   }
@@ -594,7 +583,6 @@ void StyleEngine::UpdateActiveStyleSheets() {
 
   dirty_tree_scopes_.clear();
   document_scope_dirty_ = false;
-  all_tree_scopes_dirty_ = false;
   tree_scopes_removed_ = false;
   user_style_dirty_ = false;
 }
@@ -612,6 +600,8 @@ bool StyleEngine::NeedsActiveStyleUpdate() const {
 
 void StyleEngine::UpdateActiveStyle() {
   DCHECK(GetDocument().IsActive());
+  DCHECK(IsMainThread());
+  TRACE_EVENT0("blink", "Document::updateActiveStyle");
   UpdateViewport();
   UpdateActiveStyleSheets();
   UpdateGlobalRuleSet();
@@ -690,20 +680,17 @@ RuleSet* StyleEngine::RuleSetForSheet(CSSStyleSheet& sheet) {
     return nullptr;
 
   AddRuleFlags add_rule_flags = kRuleHasNoSpecialState;
-  if (document_->GetSecurityOrigin()->CanRequest(sheet.BaseURL()))
+  if (document_->GetExecutionContext()->GetSecurityOrigin()->CanRequest(
+          sheet.BaseURL())) {
     add_rule_flags = kRuleHasDocumentSecurityOrigin;
+  }
   return &sheet.Contents()->EnsureRuleSet(*media_query_evaluator_,
                                           add_rule_flags);
 }
 
-void StyleEngine::CreateResolver() {
-  resolver_ = MakeGarbageCollected<StyleResolver>(*document_);
-  resolver_->SetRuleUsageTracker(tracker_);
-}
-
 void StyleEngine::ClearResolvers() {
   DCHECK(!GetDocument().InStyleRecalc());
-  DCHECK(IsMaster() || !resolver_);
+  DCHECK(!IsHTMLImport() || !resolver_);
 
   GetDocument().ClearScopedStyleResolver();
   for (TreeScope* tree_scope : active_tree_scopes_)
@@ -738,7 +725,7 @@ void StyleEngine::DidDetach() {
   environment_variables_ = nullptr;
 }
 
-bool StyleEngine::ClearFontCacheAndAddUserFonts() {
+bool StyleEngine::ClearFontFaceCacheAndAddUserFonts() {
   bool fonts_changed = false;
 
   if (font_selector_ &&
@@ -800,10 +787,8 @@ void StyleEngine::MarkTreeScopeDirty(TreeScope& scope) {
 void StyleEngine::MarkDocumentDirty() {
   document_scope_dirty_ = true;
   document_style_sheet_collection_->MarkSheetListDirty();
-  if (RuntimeEnabledFeatures::CSSViewportEnabled())
-    ViewportRulesChanged();
   if (GetDocument().ImportLoader())
-    GetDocument().MasterDocument().GetStyleEngine().MarkDocumentDirty();
+    GetDocument().TreeRootDocument().GetStyleEngine().MarkDocumentDirty();
   else
     GetDocument().ScheduleLayoutTreeUpdateIfNeeded();
 }
@@ -900,22 +885,18 @@ void StyleEngine::InvalidateStyleAndLayoutForFontUpdates() {
   if (!fonts_need_update_)
     return;
 
-  DCHECK(RuntimeEnabledFeatures::CSSReducedFontLoadingInvalidationsEnabled());
   TRACE_EVENT0("blink", "StyleEngine::InvalidateStyleAndLayoutForFontUpdates");
 
   fonts_need_update_ = false;
-  Element* root = GetDocument().documentElement();
-  if (!root)
-    return;
 
-  {
+  if (Element* root = GetDocument().documentElement()) {
     TRACE_EVENT0("blink", "Node::MarkSubtreeNeedsStyleRecalcForFontUpdates");
     root->MarkSubtreeNeedsStyleRecalcForFontUpdates();
   }
 
-  if (LayoutObject* root_object = root->GetLayoutObject()) {
+  if (LayoutView* layout_view = GetDocument().GetLayoutView()) {
     TRACE_EVENT0("blink", "LayoutObject::InvalidateSubtreeForFontUpdates");
-    root_object->InvalidateSubtreeLayoutForFontUpdates();
+    layout_view->InvalidateSubtreeLayoutForFontUpdates();
   }
 }
 
@@ -924,26 +905,21 @@ void StyleEngine::MarkFontsNeedUpdate() {
   GetDocument().ScheduleLayoutTreeUpdateIfNeeded();
 }
 
-void StyleEngine::FontsNeedUpdate(FontSelector*) {
+void StyleEngine::FontsNeedUpdate(FontSelector*, FontInvalidationReason) {
   if (!GetDocument().IsActive())
     return;
 
   if (resolver_)
     resolver_->InvalidateMatchedPropertiesCache();
   MarkViewportStyleDirty();
-
-  if (RuntimeEnabledFeatures::CSSReducedFontLoadingInvalidationsEnabled()) {
-    MarkFontsNeedUpdate();
-  } else {
-    MarkAllElementsForStyleRecalc(
-        StyleChangeReasonForTracing::Create(style_change_reason::kFonts));
-  }
+  MarkFontsNeedUpdate();
 
   probe::FontsUpdated(document_->GetExecutionContext(), nullptr, String(),
                       nullptr);
 }
 
 void StyleEngine::PlatformColorsChanged() {
+  UpdateForcedBackgroundColor();
   if (resolver_)
     resolver_->InvalidateMatchedPropertiesCache();
   MarkAllElementsForStyleRecalc(StyleChangeReasonForTracing::Create(
@@ -1328,7 +1304,7 @@ void StyleEngine::ScheduleInvalidationsForRuleSets(
     const HeapHashSet<Member<RuleSet>>& rule_sets,
     InvalidationScope invalidation_scope) {
 #if DCHECK_IS_ON()
-  // Full scope recalcs should be handled while collecting the ruleSets before
+  // Full scope recalcs should be handled while collecting the rule sets before
   // calling this method.
   for (auto rule_set : rule_sets)
     DCHECK(!rule_set->Features().NeedsFullRecalcForRuleSetInvalidation());
@@ -1368,10 +1344,12 @@ void StyleEngine::ScheduleInvalidationsForRuleSets(
       }
     }
 
-    if (element->GetStyleChangeType() < kSubtreeStyleChange)
+    if (element->GetStyleChangeType() < kSubtreeStyleChange &&
+        element->GetComputedStyle()) {
       element = ElementTraversal::Next(*element, stay_within);
-    else
+    } else {
       element = ElementTraversal::NextSkippingChildren(*element, stay_within);
+    }
   }
 }
 
@@ -1400,7 +1378,7 @@ void StyleEngine::SetHttpDefaultStyle(const String& content) {
 }
 
 void StyleEngine::EnsureUAStyleForXrOverlay() {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   if (CSSDefaultStyleSheets::Instance().EnsureDefaultStyleSheetForXrOverlay()) {
     global_rule_set_->MarkDirty();
@@ -1409,7 +1387,7 @@ void StyleEngine::EnsureUAStyleForXrOverlay() {
 }
 
 void StyleEngine::EnsureUAStyleForFullscreen() {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   if (global_rule_set_->HasFullscreenUAStyle())
     return;
@@ -1419,7 +1397,7 @@ void StyleEngine::EnsureUAStyleForFullscreen() {
 }
 
 void StyleEngine::EnsureUAStyleForElement(const Element& element) {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   if (CSSDefaultStyleSheets::Instance().EnsureDefaultStyleSheetsForElement(
           element)) {
@@ -1428,8 +1406,18 @@ void StyleEngine::EnsureUAStyleForElement(const Element& element) {
   }
 }
 
+void StyleEngine::EnsureUAStyleForPseudoElement(PseudoId pseudo_id) {
+  DCHECK(!IsHTMLImport());
+  DCHECK(global_rule_set_);
+  if (CSSDefaultStyleSheets::Instance()
+          .EnsureDefaultStyleSheetsForPseudoElement(pseudo_id)) {
+    global_rule_set_->MarkDirty();
+    UpdateActiveStyle();
+  }
+}
+
 bool StyleEngine::HasRulesForId(const AtomicString& id) const {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   return global_rule_set_->GetRuleFeatureSet().HasSelectorForId(id);
 }
@@ -1458,7 +1446,10 @@ void StyleEngine::ViewportRulesChanged() {
 
 void StyleEngine::HtmlImportAddedOrRemoved() {
   if (GetDocument().ImportLoader()) {
-    GetDocument().MasterDocument().GetStyleEngine().HtmlImportAddedOrRemoved();
+    GetDocument()
+        .TreeRootDocument()
+        .GetStyleEngine()
+        .HtmlImportAddedOrRemoved();
     return;
   }
 
@@ -1497,6 +1488,7 @@ enum RuleSetFlags {
   kKeyframesRules = 1 << 1,
   kFullRecalcRules = 1 << 2,
   kPropertyRules = 1 << 3,
+  kScrollTimelineRules = 1 << 4,
 };
 
 unsigned GetRuleSetFlags(const HeapHashSet<Member<RuleSet>> rule_sets) {
@@ -1511,18 +1503,10 @@ unsigned GetRuleSetFlags(const HeapHashSet<Member<RuleSet>> rule_sets) {
       flags |= kFullRecalcRules;
     if (!rule_set->PropertyRules().IsEmpty())
       flags |= kPropertyRules;
+    if (!rule_set->ScrollTimelineRules().IsEmpty())
+      flags |= kScrollTimelineRules;
   }
   return flags;
-}
-
-bool NeedsFullRecalcForRuleSetChanges(TreeScope& tree_scope,
-                                      unsigned changed_rule_flags,
-                                      bool has_rebuilt_font_cache) {
-  if (changed_rule_flags & kFullRecalcRules)
-    return true;
-  if (!tree_scope.RootNode().IsDocumentNode())
-    return false;
-  return (changed_rule_flags & kFontFaceRules) || has_rebuilt_font_cache;
 }
 
 }  // namespace
@@ -1531,13 +1515,12 @@ void StyleEngine::InvalidateForRuleSetChanges(
     TreeScope& tree_scope,
     const HeapHashSet<Member<RuleSet>>& changed_rule_sets,
     unsigned changed_rule_flags,
-    InvalidationScope invalidation_scope,
-    bool has_rebuilt_font_cache) {
+    InvalidationScope invalidation_scope) {
   if (tree_scope.GetDocument().HasPendingForcedStyleRecalc())
     return;
   if (!tree_scope.GetDocument().documentElement())
     return;
-  if (changed_rule_sets.IsEmpty() && !has_rebuilt_font_cache)
+  if (changed_rule_sets.IsEmpty())
     return;
 
   Element& invalidation_root =
@@ -1545,8 +1528,7 @@ void StyleEngine::InvalidateForRuleSetChanges(
   if (invalidation_root.GetStyleChangeType() == kSubtreeStyleChange)
     return;
 
-  if (NeedsFullRecalcForRuleSetChanges(tree_scope, changed_rule_flags,
-                                       has_rebuilt_font_cache)) {
+  if (changed_rule_flags & kFullRecalcRules) {
     invalidation_root.SetNeedsStyleRecalc(
         kSubtreeStyleChange,
         StyleChangeReasonForTracing::Create(
@@ -1567,7 +1549,7 @@ void StyleEngine::InvalidateInitialData() {
 void StyleEngine::ApplyUserRuleSetChanges(
     const ActiveStyleSheetVector& old_style_sheets,
     const ActiveStyleSheetVector& new_style_sheets) {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   HeapHashSet<Member<RuleSet>> changed_rule_sets;
 
@@ -1581,7 +1563,7 @@ void StyleEngine::ApplyUserRuleSetChanges(
   global_rule_set_->MarkDirty();
 
   unsigned changed_rule_flags = GetRuleSetFlags(changed_rule_sets);
-  bool has_rebuilt_font_cache = false;
+  bool has_rebuilt_font_face_cache = false;
   if (changed_rule_flags & kFontFaceRules) {
     if (ScopedStyleResolver* scoped_resolver =
             GetDocument().GetScopedStyleResolver()) {
@@ -1592,7 +1574,7 @@ void StyleEngine::ApplyUserRuleSetChanges(
       scoped_resolver->SetNeedsAppendAllSheets();
       MarkDocumentDirty();
     } else {
-      has_rebuilt_font_cache = ClearFontCacheAndAddUserFonts();
+      has_rebuilt_font_face_cache = ClearFontFaceCacheAndAddUserFonts();
     }
   }
 
@@ -1608,16 +1590,33 @@ void StyleEngine::ApplyUserRuleSetChanges(
     ScopedStyleResolver::KeyframesRulesAdded(GetDocument());
   }
 
+  if (changed_rule_flags & kPropertyRules) {
+    ClearPropertyRules();
+    AddPropertyRulesFromSheets(new_style_sheets);
+
+    // We just cleared all the rules, which includes any author rules. They
+    // must be forcibly re-added.
+    if (ScopedStyleResolver* scoped_resolver =
+            GetDocument().GetScopedStyleResolver()) {
+      scoped_resolver->SetNeedsAppendAllSheets();
+      MarkDocumentDirty();
+    }
+  }
+
+  if ((changed_rule_flags & kFontFaceRules) || has_rebuilt_font_face_cache) {
+    GetFontSelector()->FontFaceInvalidated(
+        FontInvalidationReason::kGeneralInvalidation);
+  }
+
   InvalidateForRuleSetChanges(GetDocument(), changed_rule_sets,
-                              changed_rule_flags, kInvalidateAllScopes,
-                              has_rebuilt_font_cache);
+                              changed_rule_flags, kInvalidateAllScopes);
 }
 
 void StyleEngine::ApplyRuleSetChanges(
     TreeScope& tree_scope,
     const ActiveStyleSheetVector& old_style_sheets,
     const ActiveStyleSheetVector& new_style_sheets) {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   HeapHashSet<Member<RuleSet>> changed_rule_sets;
 
@@ -1626,12 +1625,14 @@ void StyleEngine::ApplyRuleSetChanges(
 
   unsigned changed_rule_flags = GetRuleSetFlags(changed_rule_sets);
 
-  bool rebuild_font_cache = change == kActiveSheetsChanged &&
-                            (changed_rule_flags & kFontFaceRules) &&
-                            tree_scope.RootNode().IsDocumentNode();
+  bool rebuild_font_face_cache = change == kActiveSheetsChanged &&
+                                 (changed_rule_flags & kFontFaceRules) &&
+                                 tree_scope.RootNode().IsDocumentNode();
+  bool rebuild_at_property_registry = false;
   ScopedStyleResolver* scoped_resolver = tree_scope.GetScopedStyleResolver();
   if (scoped_resolver && scoped_resolver->NeedsAppendAllSheets()) {
-    rebuild_font_cache = true;
+    rebuild_font_face_cache = true;
+    rebuild_at_property_registry = true;
     change = kActiveSheetsChanged;
   }
 
@@ -1644,23 +1645,33 @@ void StyleEngine::ApplyRuleSetChanges(
   if (changed_rule_flags & kKeyframesRules)
     ScopedStyleResolver::KeyframesRulesAdded(tree_scope);
 
-  if (changed_rule_flags & kPropertyRules) {
-    // TODO(https://crbug.com/978786): Don't ignore TreeScope.
-
-    // TODO(https://crbug.com/978781): Support unregistration.
-    // At this point we could have unregistered properties for
-    // change==kActiveSheetsChanged, but we don't yet support that.
-
-    for (auto* it = new_style_sheets.begin(); it != new_style_sheets.end();
-         it++) {
-      DCHECK(it->second);
-      AddPropertyRules(*it->second);
+  if ((changed_rule_flags & kPropertyRules) || rebuild_at_property_registry) {
+    // @property rules are (for now) ignored in shadow trees, per spec.
+    // https://drafts.css-houdini.org/css-properties-values-api-1/#at-property-rule
+    if (tree_scope.RootNode().IsDocumentNode()) {
+      ClearPropertyRules();
+      AddPropertyRulesFromSheets(active_user_style_sheets_);
+      AddPropertyRulesFromSheets(new_style_sheets);
     }
   }
 
-  bool has_rebuilt_font_cache = false;
-  if (rebuild_font_cache)
-    has_rebuilt_font_cache = ClearFontCacheAndAddUserFonts();
+  // TODO(crbug.com/1097055): Support user origin rules.
+  if (changed_rule_flags & kScrollTimelineRules) {
+    // @scroll-timeline rules are currently not allowed in shadow trees.
+    // https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-at-rule
+    if (tree_scope.RootNode().IsDocumentNode()) {
+      scroll_timeline_map_.clear();
+
+      for (const ActiveStyleSheet& active_sheet : new_style_sheets) {
+        if (RuleSet* rule_set = active_sheet.second)
+          AddScrollTimelineRules(*rule_set);
+      }
+    }
+  }
+
+  bool has_rebuilt_font_face_cache = false;
+  if (rebuild_font_face_cache)
+    has_rebuilt_font_face_cache = ClearFontFaceCacheAndAddUserFonts();
 
   unsigned append_start_index = 0;
   if (scoped_resolver) {
@@ -1682,8 +1693,15 @@ void StyleEngine::ApplyRuleSetChanges(
         append_start_index, new_style_sheets);
   }
 
+  if (tree_scope.RootNode().IsDocumentNode()) {
+    if ((changed_rule_flags & kFontFaceRules) || has_rebuilt_font_face_cache) {
+      GetFontSelector()->FontFaceInvalidated(
+          FontInvalidationReason::kGeneralInvalidation);
+    }
+  }
+
   InvalidateForRuleSetChanges(tree_scope, changed_rule_sets, changed_rule_flags,
-                              kInvalidateCurrentScope, has_rebuilt_font_cache);
+                              kInvalidateCurrentScope);
 }
 
 void StyleEngine::LoadVisionDeficiencyFilter() {
@@ -1735,7 +1753,7 @@ const MediaQueryEvaluator& StyleEngine::EnsureMediaQueryEvaluator() {
 }
 
 bool StyleEngine::MediaQueryAffectedByViewportChange() {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   return EnsureMediaQueryEvaluator().DidResultsChange(
       global_rule_set_->GetRuleFeatureSet()
@@ -1743,7 +1761,7 @@ bool StyleEngine::MediaQueryAffectedByViewportChange() {
 }
 
 bool StyleEngine::MediaQueryAffectedByDeviceChange() {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   DCHECK(global_rule_set_);
   return EnsureMediaQueryEvaluator().DidResultsChange(
       global_rule_set_->GetRuleFeatureSet().DeviceDependentMediaQueryResults());
@@ -1755,17 +1773,16 @@ bool StyleEngine::UpdateRemUnits(const ComputedStyle* old_root_style,
     return false;
   if (!old_root_style || old_root_style->SpecifiedFontSize() !=
                              new_root_style->SpecifiedFontSize()) {
-    DCHECK(Resolver());
     // Resolved rem units are stored in the matched properties cache so we need
     // to make sure to invalidate the cache if the documentElement font size
     // changes.
-    Resolver()->InvalidateMatchedPropertiesCache();
+    GetStyleResolver().InvalidateMatchedPropertiesCache();
     return true;
   }
   return false;
 }
 
-void StyleEngine::CustomPropertyRegistered() {
+void StyleEngine::PropertyRegistryChanged() {
   // TODO(timloh): Invalidate only elements with this custom property set
   MarkAllElementsForStyleRecalc(StyleChangeReasonForTracing::Create(
       style_change_reason::kPropertyRegistration));
@@ -1858,6 +1875,18 @@ void StyleEngine::CollectMatchingUserRules(
   }
 }
 
+void StyleEngine::ClearPropertyRules() {
+  PropertyRegistration::RemoveDeclaredProperties(GetDocument());
+}
+
+void StyleEngine::AddPropertyRulesFromSheets(
+    const ActiveStyleSheetVector& sheets) {
+  for (const ActiveStyleSheet& active_sheet : sheets) {
+    if (RuleSet* rule_set = active_sheet.second)
+      AddPropertyRules(*rule_set);
+  }
+}
+
 bool StyleEngine::AddUserFontFaceRules(const RuleSet& rule_set) {
   if (!font_selector_)
     return false;
@@ -1895,30 +1924,20 @@ void StyleEngine::AddUserKeyframeStyle(StyleRuleKeyframes* rule) {
 }
 
 void StyleEngine::AddPropertyRules(const RuleSet& rule_set) {
-  PropertyRegistry* registry = GetDocument().GetPropertyRegistry();
-  if (!registry)
-    return;
   const HeapVector<Member<StyleRuleProperty>> property_rules =
       rule_set.PropertyRules();
   for (unsigned i = 0; i < property_rules.size(); ++i) {
     StyleRuleProperty* rule = property_rules[i];
-
     AtomicString name(rule->GetName());
-
-    // For now, ignore silently if registration already exists.
-    // TODO(https://crbug.com/978781): Support unregistration.
-    if (registry->Registration(name))
-      continue;
-
-    PropertyRegistration* registration =
-        PropertyRegistration::MaybeCreate(GetDocument(), name, *rule);
-
-    if (!registration)
-      continue;
-
-    registry->RegisterProperty(name, *registration);
-    CustomPropertyRegistered();
+    PropertyRegistration::DeclareProperty(GetDocument(), name, *rule);
   }
+}
+
+void StyleEngine::AddScrollTimelineRules(const RuleSet& rule_set) {
+  const HeapVector<Member<StyleRuleScrollTimeline>> scroll_timeline_rules =
+      rule_set.ScrollTimelineRules();
+  for (const auto& rule : scroll_timeline_rules)
+    scroll_timeline_map_.Set(AtomicString(rule->GetName()), rule);
 }
 
 StyleRuleKeyframes* StyleEngine::KeyframeStylesForAnimation(
@@ -1933,6 +1952,11 @@ StyleRuleKeyframes* StyleEngine::KeyframeStylesForAnimation(
   return it->value.Get();
 }
 
+StyleRuleScrollTimeline* StyleEngine::FindScrollTimelineRule(
+    const AtomicString& name) {
+  return scroll_timeline_map_.at(name);
+}
+
 DocumentStyleEnvironmentVariables& StyleEngine::EnsureEnvironmentVariables() {
   if (!environment_variables_) {
     environment_variables_ = DocumentStyleEnvironmentVariables::Create(
@@ -1944,8 +1968,8 @@ DocumentStyleEnvironmentVariables& StyleEngine::EnsureEnvironmentVariables() {
 scoped_refptr<StyleInitialData> StyleEngine::MaybeCreateAndGetInitialData() {
   if (initial_data_)
     return initial_data_;
-  if (PropertyRegistry* registry = document_->GetPropertyRegistry()) {
-    if (registry->RegistrationCount())
+  if (const PropertyRegistry* registry = document_->GetPropertyRegistry()) {
+    if (!registry->IsEmpty())
       initial_data_ = StyleInitialData::Create(*registry);
   }
   return initial_data_;
@@ -1969,13 +1993,21 @@ void StyleEngine::RecalcStyle() {
   PropagateWritingModeAndDirectionToHTMLRoot();
 }
 
-void StyleEngine::ClearEnsuredDescendantStyles(Element& element) {
-  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
-  SelectorFilterRootScope filter_scope(&element);
-  element.ClearNeedsStyleRecalc();
-  element.RecalcDescendantStyles(StyleRecalcChange::kClearEnsured);
-  element.ClearChildNeedsStyleRecalc();
-  GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kStyleClean);
+void StyleEngine::ClearEnsuredDescendantStyles(Element& root) {
+  Node* current = &root;
+  while (current) {
+    if (auto* element = DynamicTo<Element>(current)) {
+      if (const auto* style = element->GetComputedStyle()) {
+        DCHECK(style->IsEnsuredOutsideFlatTree());
+        element->SetComputedStyle(nullptr);
+        element->ClearNeedsStyleRecalc();
+        element->ClearChildNeedsStyleRecalc();
+        current = FlatTreeTraversal::Next(*current, &root);
+        continue;
+      }
+    }
+    current = FlatTreeTraversal::NextSkippingChildren(*current, &root);
+  }
 }
 
 void StyleEngine::RebuildLayoutTree() {
@@ -2051,23 +2083,14 @@ void StyleEngine::ViewportDefiningElementDidChange() {
     // need a recalc, this will not be updated as its done as part of setting
     // ComputedStyle on the LayoutObject. Force a SetStyle for body when the
     // ViewportDefiningElement changes in order to trigger an update of
-    // HasOverflowClip() and the PaintLayer in StyleDidChange().
+    // IsScrollContainer() and the PaintLayer in StyleDidChange().
     layout_object->SetStyle(ComputedStyle::Clone(*layout_object->Style()));
-    // CompositingReason::kClipsCompositingDescendants depends on the root
-    // element having a clip-related style. Since style update due to changes of
-    // viewport-defining element don't end up as a StyleDifference, we need a
-    // special dirty bit for this situation.
-    if (layout_object->HasLayer()) {
-      ToLayoutBoxModelObject(layout_object)
-          ->Layer()
-          ->SetNeedsCompositingReasonsUpdate();
-    }
   }
 }
 
 void StyleEngine::UpdateStyleInvalidationRoot(ContainerNode* ancestor,
                                               Node* dirty_node) {
-  DCHECK(IsMaster());
+  DCHECK(!IsHTMLImport());
   if (GetDocument().IsActive()) {
     if (in_dom_removal_) {
       ancestor = nullptr;
@@ -2079,14 +2102,24 @@ void StyleEngine::UpdateStyleInvalidationRoot(ContainerNode* ancestor,
 
 void StyleEngine::UpdateStyleRecalcRoot(ContainerNode* ancestor,
                                         Node* dirty_node) {
-  if (GetDocument().IsActive()) {
-    DCHECK(!in_layout_tree_rebuild_);
-    if (in_dom_removal_) {
-      ancestor = nullptr;
-      dirty_node = document_;
-    }
-    style_recalc_root_.Update(ancestor, dirty_node);
+  if (!GetDocument().IsActive())
+    return;
+  // We have at least one instance where we mark style dirty from style recalc
+  // (from LayoutTextControl::StyleDidChange()). That means we are in the
+  // process of traversing down the tree from the recalc root. Any updates to
+  // the style recalc root will be cleared after the style recalc traversal
+  // finishes and updating it may just trigger sanity DCHECKs in
+  // StyleTraversalRoot. Just return here instead.
+  if (GetDocument().InStyleRecalc()) {
+    DCHECK(allow_mark_style_dirty_from_recalc_);
+    return;
   }
+  DCHECK(!in_layout_tree_rebuild_);
+  if (in_dom_removal_) {
+    ancestor = nullptr;
+    dirty_node = document_;
+  }
+  style_recalc_root_.Update(ancestor, dirty_node);
 }
 
 void StyleEngine::UpdateLayoutTreeRebuildRoot(ContainerNode* ancestor,
@@ -2099,15 +2132,20 @@ void StyleEngine::UpdateLayoutTreeRebuildRoot(ContainerNode* ancestor,
 bool StyleEngine::SupportsDarkColorScheme() {
   if (!meta_color_scheme_)
     return false;
+  bool has_light = false;
+  bool has_dark = false;
   if (const auto* scheme_list = DynamicTo<CSSValueList>(*meta_color_scheme_)) {
     for (auto& item : *scheme_list) {
       if (const auto* ident = DynamicTo<CSSIdentifierValue>(*item)) {
         if (ident->GetValueID() == CSSValueID::kDark)
-          return true;
+          has_dark = true;
+        else if (ident->GetValueID() == CSSValueID::kLight)
+          has_light = true;
       }
     }
   }
-  return false;
+  return has_dark &&
+         (!has_light || preferred_color_scheme_ == PreferredColorScheme::kDark);
 }
 
 void StyleEngine::UpdateColorScheme() {
@@ -2128,19 +2166,41 @@ void StyleEngine::UpdateColorScheme() {
     if (value.IsValid())
       preferred_color_scheme_ = CSSValueIDToPreferredColorScheme(value.id);
   }
-  bool use_dark_scheme =
-      preferred_color_scheme_ == PreferredColorScheme::kDark &&
-      SupportsDarkColorScheme();
-  if (!use_dark_scheme && settings->GetForceDarkModeEnabled()) {
+  if (!SupportsDarkColorScheme() && settings->GetForceDarkModeEnabled()) {
     // Make sure we don't match (prefers-color-scheme: dark) when forced
     // darkening is enabled.
-    preferred_color_scheme_ = PreferredColorScheme::kNoPreference;
+    preferred_color_scheme_ = PreferredColorScheme::kLight;
   }
+  if (GetDocument().Printing())
+    preferred_color_scheme_ = PreferredColorScheme::kLight;
 
+  bool color_scheme_changed = false;
   if (forced_colors_ != old_forced_colors ||
-      preferred_color_scheme_ != old_preferred_color_scheme)
+      preferred_color_scheme_ != old_preferred_color_scheme) {
     PlatformColorsChanged();
-  UpdateColorSchemeBackground();
+    color_scheme_changed = true;
+  }
+  UpdateColorSchemeBackground(color_scheme_changed);
+
+  UpdateColorSchemeMetrics();
+}
+
+void StyleEngine::UpdateColorSchemeMetrics() {
+  auto* settings = GetDocument().GetSettings();
+  if (settings->GetForceDarkModeEnabled())
+    UseCounter::Count(GetDocument(), WebFeature::kForcedDarkMode);
+
+  // True if the preferred color scheme will match dark.
+  if (preferred_color_scheme_ == PreferredColorScheme::kDark)
+    UseCounter::Count(GetDocument(), WebFeature::kPreferredColorSchemeDark);
+
+  // This is equal to kPreferredColorSchemeDark in most cases, but can differ
+  // with forced dark mode. With the system in dark mode and forced dark mode
+  // enabled, the preferred color scheme can be light while the setting is dark.
+  if (settings->GetPreferredColorScheme() == PreferredColorScheme::kDark) {
+    UseCounter::Count(GetDocument(),
+                      WebFeature::kPreferredColorSchemeDarkSetting);
+  }
 }
 
 void StyleEngine::ColorSchemeChanged() {
@@ -2156,27 +2216,69 @@ void StyleEngine::SetColorSchemeFromMeta(const CSSValue* color_scheme) {
   UpdateColorScheme();
 }
 
-void StyleEngine::UpdateColorSchemeBackground() {
+void StyleEngine::UpdateColorSchemeBackground(bool color_scheme_changed) {
   LocalFrameView* view = GetDocument().View();
   if (!view)
     return;
 
-  bool use_dark_background = false;
+  LocalFrameView::UseColorAdjustBackground use_color_adjust_background =
+      LocalFrameView::UseColorAdjustBackground::kNo;
 
-  if (preferred_color_scheme_ == PreferredColorScheme::kDark &&
-      forced_colors_ != ForcedColors::kActive) {
-    const ComputedStyle* style = nullptr;
-    if (auto* root_element = GetDocument().documentElement())
-      style = root_element->GetComputedStyle();
-    if (style) {
-      if (style->UsedColorSchemeForInitialColors() == WebColorScheme::kDark)
-        use_dark_background = true;
-    } else if (SupportsDarkColorScheme()) {
-      use_dark_background = true;
+  if (forced_colors_ != ForcedColors::kNone) {
+    if (GetDocument().IsInMainFrame()) {
+      use_color_adjust_background =
+          LocalFrameView::UseColorAdjustBackground::kIfBaseNotTransparent;
+    }
+  } else {
+    // Find out if we should use a canvas color that is different from the
+    // view's base background color in order to match the root element color-
+    // scheme. See spec:
+    // https://drafts.csswg.org/css-color-adjust/#color-scheme-effect
+    ColorScheme root_color_scheme = ColorScheme::kLight;
+    if (auto* root_element = GetDocument().documentElement()) {
+      if (const ComputedStyle* style = root_element->GetComputedStyle())
+        root_color_scheme = style->UsedColorSchemeForInitialColors();
+      else if (SupportsDarkColorScheme())
+        root_color_scheme = ColorScheme::kDark;
+    }
+    color_scheme_background_ = root_color_scheme == ColorScheme::kLight
+                                   ? Color::kWhite
+                                   : Color(0x12, 0x12, 0x12);
+    if (GetDocument().IsInMainFrame()) {
+      if (root_color_scheme == ColorScheme::kDark) {
+        use_color_adjust_background =
+            LocalFrameView::UseColorAdjustBackground::kIfBaseNotTransparent;
+      }
+    } else if (root_color_scheme != owner_color_scheme_) {
+      // Iframes should paint a solid background if the embedding iframe has a
+      // used color-scheme different from the used color-scheme of the embedded
+      // root element. Normally, iframes as transparent by default.
+      use_color_adjust_background =
+          LocalFrameView::UseColorAdjustBackground::kYes;
     }
   }
 
-  view->SetUseDarkSchemeBackground(use_dark_background);
+  view->SetUseColorAdjustBackground(use_color_adjust_background,
+                                    color_scheme_changed);
+}
+
+void StyleEngine::SetOwnerColorScheme(ColorScheme color_scheme) {
+  DCHECK(!GetDocument().IsInMainFrame());
+  if (owner_color_scheme_ == color_scheme)
+    return;
+  owner_color_scheme_ = color_scheme;
+  UpdateColorSchemeBackground(true);
+}
+
+void StyleEngine::UpdateForcedBackgroundColor() {
+  forced_background_color_ = LayoutTheme::GetTheme().SystemColor(
+      CSSValueID::kCanvas, ColorScheme::kLight);
+}
+
+Color StyleEngine::ColorAdjustBackgroundColor() const {
+  if (forced_colors_ != ForcedColors::kNone)
+    return ForcedBackgroundColor();
+  return color_scheme_background_;
 }
 
 void StyleEngine::MarkAllElementsForStyleRecalc(
@@ -2191,14 +2293,7 @@ void StyleEngine::UpdateViewportStyle() {
 
   viewport_style_dirty_ = false;
 
-  // TODO(futhark@chromium.org): Cannot access the EnsureStyleResolver()
-  // before calling StyleForViewport() below because apparently the
-  // StyleResolver's constructor has side effects. We should fix it. See
-  // printing/setPrinting.html, printing/width-overflow.html though they only
-  // fail on mac when accessing the resolver by what appears to be a viewport
-  // size difference.
-  scoped_refptr<ComputedStyle> viewport_style =
-      StyleResolver::StyleForViewport(GetDocument());
+  scoped_refptr<ComputedStyle> viewport_style = resolver_->StyleForViewport();
   if (ComputedStyle::ComputeDifference(
           viewport_style.get(), GetDocument().GetLayoutView()->Style()) !=
       ComputedStyle::Difference::kEqual) {
@@ -2217,13 +2312,14 @@ void StyleEngine::PropagateWritingModeAndDirectionToHTMLRoot() {
     root_element->PropagateWritingModeAndDirectionFromBody();
 }
 
-void StyleEngine::Trace(Visitor* visitor) {
+void StyleEngine::Trace(Visitor* visitor) const {
   visitor->Trace(document_);
   visitor->Trace(injected_user_style_sheets_);
   visitor->Trace(injected_author_style_sheets_);
   visitor->Trace(active_user_style_sheets_);
   visitor->Trace(custom_element_default_style_sheets_);
   visitor->Trace(keyframes_rule_map_);
+  visitor->Trace(scroll_timeline_map_);
   visitor->Trace(inspector_style_sheet_);
   visitor->Trace(document_style_sheet_collection_);
   visitor->Trace(style_sheet_collection_map_);

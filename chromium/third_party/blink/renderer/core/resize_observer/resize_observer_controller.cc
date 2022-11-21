@@ -4,9 +4,28 @@
 
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_controller.h"
 
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer.h"
 
 namespace blink {
+
+const char ResizeObserverController::kSupplementName[] =
+    "ResizeObserverController";
+
+ResizeObserverController* ResizeObserverController::From(
+    LocalDOMWindow& window) {
+  auto* controller = FromIfExists(window);
+  if (!controller) {
+    controller = MakeGarbageCollected<ResizeObserverController>();
+    Supplement<LocalDOMWindow>::ProvideTo(window, controller);
+  }
+  return controller;
+}
+
+ResizeObserverController* ResizeObserverController::FromIfExists(
+    LocalDOMWindow& window) {
+  return Supplement<LocalDOMWindow>::From<ResizeObserverController>(window);
+}
 
 ResizeObserverController::ResizeObserverController() = default;
 
@@ -52,7 +71,8 @@ void ResizeObserverController::ClearObservations() {
     observer->ClearObservations();
 }
 
-void ResizeObserverController::Trace(Visitor* visitor) {
+void ResizeObserverController::Trace(Visitor* visitor) const {
+  Supplement<LocalDOMWindow>::Trace(visitor);
   visitor->Trace(observers_);
 }
 

@@ -25,25 +25,7 @@ void SkDrawableGlyphBuffer::ensureSize(size_t size) {
     fDrawableSize = 0;
 }
 
-void SkDrawableGlyphBuffer::startSource(
-        const SkZip<const SkGlyphID, const SkPoint>& source, SkPoint origin) {
-    fInputSize = source.size();
-    fDrawableSize = 0;
-
-    // Map all the positions.
-    auto positions = source.get<1>();
-    SkMatrix::MakeTrans(origin.x(), origin.y()).mapPoints(
-            fPositions, positions.data(), positions.size());
-
-    // Convert from SkGlyphIDs to SkPackedGlyphIDs.
-    SkGlyphVariant* packedIDCursor = fMultiBuffer;
-    for (auto t : source) {
-        *packedIDCursor++ = SkPackedGlyphID{std::get<0>(t)};
-    }
-    SkDEBUGCODE(fPhase = kInput);
-}
-
-void SkDrawableGlyphBuffer::startPaths(const SkZip<const SkGlyphID, const SkPoint> &source) {
+void SkDrawableGlyphBuffer::startSource(const SkZip<const SkGlyphID, const SkPoint>& source) {
     fInputSize = source.size();
     fDrawableSize = 0;
 
@@ -58,7 +40,7 @@ void SkDrawableGlyphBuffer::startPaths(const SkZip<const SkGlyphID, const SkPoin
     SkDEBUGCODE(fPhase = kInput);
 }
 
-void SkDrawableGlyphBuffer::startDevice(
+void SkDrawableGlyphBuffer::startBitmapDevice(
         const SkZip<const SkGlyphID, const SkPoint>& source,
         SkPoint origin, const SkMatrix& viewMatrix,
         const SkGlyphPositionRoundingSpec& roundingSpec) {
@@ -87,6 +69,44 @@ void SkDrawableGlyphBuffer::startDevice(
     }
     SkDEBUGCODE(fPhase = kInput);
 }
+
+SkPoint SkDrawableGlyphBuffer::startGPUDevice(
+        const SkZip<const SkGlyphID, const SkPoint>& source,
+        SkPoint origin, const SkMatrix& viewMatrix,
+        const SkGlyphPositionRoundingSpec& roundingSpec) {
+    fInputSize = source.size();
+    fDrawableSize = 0;
+
+    SkMatrix device = viewMatrix;
+    SkPoint halfSampleFreq = roundingSpec.halfAxisSampleFreq;
+    device.postTranslate(halfSampleFreq.x(), halfSampleFreq.y());
+    device.preTranslate(origin.x(), origin.y());
+
+    auto positions = source.get<1>();
+    device.mapPoints(fPositions, positions.data(), positions.size());
+
+    auto floor = [](SkPoint pt) -> SkPoint {
+        return {SkScalarFloorToScalar(pt.x()), SkScalarFloorToScalar(pt.y())};
+    };
+
+    // q = [Q](0,0,1) = [R][V][O](0,0,1).
+    SkPoint q = device.mapXY(0, 0);
+    SkPoint qFloor = floor(q);
+
+    for (auto t
+            : SkMakeZip(fMultiBuffer.get(), source.get<0>(), fPositions.get())) {
+        SkGlyphVariant& packedGlyphID = std::get<0>(t);
+        const SkGlyphID glyphID = std::get<1>(t);
+        SkPoint& pos = std::get<2>(t);
+        packedGlyphID = SkPackedGlyphID{glyphID, pos, roundingSpec.ignorePositionFieldMask};
+        pos = floor(pos - qFloor);
+    }
+
+    SkDEBUGCODE(fPhase = kInput);
+    // Return the residual = Floor(q) - q + (rx,ry,0).
+    return qFloor - q + roundingSpec.halfAxisSampleFreq;
+}
+
 
 void SkDrawableGlyphBuffer::reset() {
     SkDEBUGCODE(fPhase = kReset);

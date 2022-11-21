@@ -6,8 +6,6 @@
 
 #include "xfa/fxfa/cxfa_ffwidgethandler.h"
 
-#include <vector>
-
 #include "fxjs/xfa/cjx_object.h"
 #include "xfa/fxfa/cxfa_ffdoc.h"
 #include "xfa/fxfa/cxfa_ffdocview.h"
@@ -25,7 +23,11 @@
 CXFA_FFWidgetHandler::CXFA_FFWidgetHandler(CXFA_FFDocView* pDocView)
     : m_pDocView(pDocView) {}
 
-CXFA_FFWidgetHandler::~CXFA_FFWidgetHandler() {}
+CXFA_FFWidgetHandler::~CXFA_FFWidgetHandler() = default;
+
+void CXFA_FFWidgetHandler::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(m_pDocView);
+}
 
 bool CXFA_FFWidgetHandler::OnMouseEnter(CXFA_FFWidget* hWidget) {
   m_pDocView->LockUpdate();
@@ -50,10 +52,10 @@ bool CXFA_FFWidgetHandler::OnLButtonDown(CXFA_FFWidget* hWidget,
   bool bRet = hWidget->AcceptsFocusOnButtonDown(
       dwFlags, hWidget->Rotate2Normal(point), FWL_MouseCommand::LeftButtonDown);
   if (bRet) {
-    if (m_pDocView->SetFocus(hWidget)) {
-      m_pDocView->GetDoc()->GetDocEnvironment()->SetFocusWidget(
-          m_pDocView->GetDoc(), hWidget);
-    }
+    // May re-enter JS.
+    if (m_pDocView->SetFocus(hWidget))
+      m_pDocView->GetDoc()->SetFocusWidget(hWidget);
+
     bRet = hWidget->OnLButtonDown(dwFlags, hWidget->Rotate2Normal(point));
   }
   m_pDocView->UnlockUpdate();
@@ -75,54 +77,46 @@ bool CXFA_FFWidgetHandler::OnLButtonUp(CXFA_FFWidget* hWidget,
 bool CXFA_FFWidgetHandler::OnLButtonDblClk(CXFA_FFWidget* hWidget,
                                            uint32_t dwFlags,
                                            const CFX_PointF& point) {
-  bool bRet = hWidget->OnLButtonDblClk(dwFlags, hWidget->Rotate2Normal(point));
-  return bRet;
+  return hWidget->OnLButtonDblClk(dwFlags, hWidget->Rotate2Normal(point));
 }
 
 bool CXFA_FFWidgetHandler::OnMouseMove(CXFA_FFWidget* hWidget,
                                        uint32_t dwFlags,
                                        const CFX_PointF& point) {
-  bool bRet = hWidget->OnMouseMove(dwFlags, hWidget->Rotate2Normal(point));
-  return bRet;
+  return hWidget->OnMouseMove(dwFlags, hWidget->Rotate2Normal(point));
 }
 
 bool CXFA_FFWidgetHandler::OnMouseWheel(CXFA_FFWidget* hWidget,
                                         uint32_t dwFlags,
-                                        int16_t zDelta,
-                                        const CFX_PointF& point) {
-  bool bRet =
-      hWidget->OnMouseWheel(dwFlags, zDelta, hWidget->Rotate2Normal(point));
-  return bRet;
+                                        const CFX_PointF& point,
+                                        const CFX_Vector& delta) {
+  return hWidget->OnMouseWheel(dwFlags, hWidget->Rotate2Normal(point), delta);
 }
 
 bool CXFA_FFWidgetHandler::OnRButtonDown(CXFA_FFWidget* hWidget,
                                          uint32_t dwFlags,
                                          const CFX_PointF& point) {
-  bool bRet =
-      hWidget->AcceptsFocusOnButtonDown(dwFlags, hWidget->Rotate2Normal(point),
-                                        FWL_MouseCommand::RightButtonDown);
-  if (bRet) {
-    if (m_pDocView->SetFocus(hWidget)) {
-      m_pDocView->GetDoc()->GetDocEnvironment()->SetFocusWidget(
-          m_pDocView->GetDoc(), hWidget);
-    }
-    bRet = hWidget->OnRButtonDown(dwFlags, hWidget->Rotate2Normal(point));
+  if (!hWidget->AcceptsFocusOnButtonDown(dwFlags, hWidget->Rotate2Normal(point),
+                                         FWL_MouseCommand::RightButtonDown)) {
+    return false;
   }
-  return bRet;
+  // May re-enter JS.
+  if (m_pDocView->SetFocus(hWidget)) {
+    m_pDocView->GetDoc()->SetFocusWidget(hWidget);
+  }
+  return hWidget->OnRButtonDown(dwFlags, hWidget->Rotate2Normal(point));
 }
 
 bool CXFA_FFWidgetHandler::OnRButtonUp(CXFA_FFWidget* hWidget,
                                        uint32_t dwFlags,
                                        const CFX_PointF& point) {
-  bool bRet = hWidget->OnRButtonUp(dwFlags, hWidget->Rotate2Normal(point));
-  return bRet;
+  return hWidget->OnRButtonUp(dwFlags, hWidget->Rotate2Normal(point));
 }
 
 bool CXFA_FFWidgetHandler::OnRButtonDblClk(CXFA_FFWidget* hWidget,
                                            uint32_t dwFlags,
                                            const CFX_PointF& point) {
-  bool bRet = hWidget->OnRButtonDblClk(dwFlags, hWidget->Rotate2Normal(point));
-  return bRet;
+  return hWidget->OnRButtonDblClk(dwFlags, hWidget->Rotate2Normal(point));
 }
 
 bool CXFA_FFWidgetHandler::OnKeyDown(CXFA_FFWidget* hWidget,
@@ -136,15 +130,13 @@ bool CXFA_FFWidgetHandler::OnKeyDown(CXFA_FFWidget* hWidget,
 bool CXFA_FFWidgetHandler::OnKeyUp(CXFA_FFWidget* hWidget,
                                    uint32_t dwKeyCode,
                                    uint32_t dwFlags) {
-  bool bRet = hWidget->OnKeyUp(dwKeyCode, dwFlags);
-  return bRet;
+  return hWidget->OnKeyUp(dwKeyCode, dwFlags);
 }
 
 bool CXFA_FFWidgetHandler::OnChar(CXFA_FFWidget* hWidget,
                                   uint32_t dwChar,
                                   uint32_t dwFlags) {
-  bool bRet = hWidget->OnChar(dwChar, dwFlags);
-  return bRet;
+  return hWidget->OnChar(dwChar, dwFlags);
 }
 
 WideString CXFA_FFWidgetHandler::GetText(CXFA_FFWidget* widget) {
@@ -164,6 +156,14 @@ void CXFA_FFWidgetHandler::PasteText(CXFA_FFWidget* widget,
     return;
 
   widget->Paste(text);
+}
+
+bool CXFA_FFWidgetHandler::SelectAllText(CXFA_FFWidget* widget) {
+  if (!widget->CanSelectAll())
+    return false;
+
+  widget->SelectAll();
+  return true;
 }
 
 bool CXFA_FFWidgetHandler::CanUndo(CXFA_FFWidget* widget) {
@@ -232,10 +232,8 @@ XFA_EventError CXFA_FFWidgetHandler::ProcessEvent(CXFA_Node* pNode,
     case XFA_EVENT_Calculate:
       return pNode->ProcessCalculate(m_pDocView.Get());
     case XFA_EVENT_Validate:
-      if (m_pDocView->GetDoc()->GetDocEnvironment()->IsValidationsEnabled(
-              m_pDocView->GetDoc())) {
+      if (m_pDocView->GetDoc()->IsValidationsEnabled())
         return pNode->ProcessValidate(m_pDocView.Get(), 0);
-      }
       return XFA_EventError::kDisabled;
     case XFA_EVENT_InitCalculate: {
       CXFA_Calculate* calc = pNode->GetCalculateIfExists();

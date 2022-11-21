@@ -8,6 +8,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/optional.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -20,6 +21,7 @@
 #include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_profile_handler.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/vpn_provider/vpn_provider_api.h"
 #include "extensions/browser/api/vpn_provider/vpn_service.h"
@@ -184,8 +186,8 @@ class VpnProviderApiTest : public extensions::ExtensionApiTest {
 
   void TriggerInternalRemove() {
     NetworkHandler::Get()->network_configuration_handler()->RemoveConfiguration(
-        GetSingleServicePath(), base::DoNothing(),
-        base::Bind(DoNothingFailureCallback));
+        GetSingleServicePath(), /*remove_confirmer=*/base::nullopt,
+        base::DoNothing(), base::Bind(DoNothingFailureCallback));
   }
 
  protected:
@@ -256,12 +258,13 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, DestroyConnectedConfig) {
 
   EXPECT_TRUE(RunExtensionTest("destroyConnectedConfigSetup"));
 
+  extensions::ResultCatcher catcher;
+
   EXPECT_TRUE(DestroyConfigForTest(kTestConfig));
   EXPECT_FALSE(DoesConfigExist(kTestConfig));
   EXPECT_FALSE(ShillProfileClient::Get()->GetTestInterface()->GetService(
       service_path, &profile_path, &properties));
 
-  extensions::ResultCatcher catcher;
   ASSERT_TRUE(catcher.GetNextResult());
 }
 
@@ -402,7 +405,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateDisable) {
       service_path, &profile_path, &properties));
 }
 
-IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateBlacklist) {
+IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateBlocklist) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
   EXPECT_TRUE(RunExtensionTest("createConfigSuccess"));
@@ -416,7 +419,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateBlacklist) {
 
   extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile())->extension_service();
-  extension_service->BlacklistExtensionForTest(extension_id_);
+  extension_service->BlocklistExtensionForTest(extension_id_);
   content::RunAllPendingInMessageLoop();
   EXPECT_FALSE(DoesConfigExist(kTestConfig));
   EXPECT_FALSE(ShillProfileClient::Get()->GetTestInterface()->GetService(

@@ -32,7 +32,7 @@ executable("top_domain_generator") {
     "//url:url",
   ]
   if (is_ios) {
-    libs = [ "UIKit.framework" ]
+    frameworks = [ "UIKit.framework" ]
   }
 }
 
@@ -61,9 +61,8 @@ compiled_action("generate_top_domains_test_trie") {
   ]
   outputs = [ "$target_gen_dir/test_domains-trie-inc.cc" ]
 
-  # Passing --for_testing flag marks only the first site with is_top_500.
-  args = rebase_path(inputs, root_build_dir) +
-         rebase_path(outputs, root_build_dir) + [ "--for_testing" ]
+  args =
+      rebase_path(inputs, root_build_dir) + rebase_path(outputs, root_build_dir)
 }
 
 executable("make_top_domain_list_variables") {
@@ -72,10 +71,11 @@ executable("make_top_domain_list_variables") {
     ":common",
     "//base",
     "//base:i18n",
+    "//components/url_formatter/spoof_checks/common_words:common",
     "//third_party/icu",
   ]
   if (is_ios) {
-    libs = [ "UIKit.framework" ]
+    frameworks = [ "UIKit.framework" ]
   }
 }
 

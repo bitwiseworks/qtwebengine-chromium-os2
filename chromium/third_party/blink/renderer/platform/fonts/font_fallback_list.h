@@ -39,6 +39,9 @@ class FontDescription;
 
 const int kCAllFamiliesScanned = -1;
 
+// FontFallbackList caches FontData from FontSelector and FontCache. If font
+// updates occur (e.g., @font-face rule changes, web font is loaded, etc.),
+// the cached data becomes stale and hence, invalid.
 class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
   USING_FAST_MALLOC(FontFallbackList);
 
@@ -48,10 +51,26 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
   }
 
   ~FontFallbackList() { ReleaseFontData(); }
-  bool IsValid() const;
-  void Invalidate();
 
-  bool LoadingCustomFonts() const;
+  // Returns whether the cached data is valid. We can use a FontFallbackList
+  // only when it's valid.
+  bool IsValid() const;
+
+  // Called when font updates (see class comment) have made the cached data
+  // invalid. Once marked, a Font object cannot reuse |this|, but have to work
+  // on a new instance obtained from FontFallbackMap.
+  void MarkInvalid() {
+    DCHECK(RuntimeEnabledFeatures::
+               CSSReducedFontLoadingLayoutInvalidationsEnabled());
+    is_invalid_ = true;
+  }
+
+  // Clears all the stale data, and reset the state for replenishment. Note that
+  // this is a deprecated function, and will be removed after we launch feature
+  // CSSReducedFontLoadingLayoutInvalidations. With the feature, we'll never
+  // revalidate a FontFallbackList, but create a new FontFallbackList instead.
+  void RevalidateDeprecated();
+
   bool ShouldSkipDrawing() const;
 
   FontSelector* GetFontSelector() const { return font_selector_.Get(); }
@@ -60,11 +79,6 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
   uint16_t Generation() const { return generation_; }
 
   ShapeCache* GetShapeCache(const FontDescription& font_description) {
-    if (RuntimeEnabledFeatures::CSSReducedFontLoadingInvalidationsEnabled()) {
-      if (!IsValid())
-        Invalidate();
-    }
-
     if (!shape_cache_) {
       FallbackListCompositeKey key = CompositeKey(font_description);
       shape_cache_ =
@@ -78,11 +92,6 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
 
   const SimpleFontData* PrimarySimpleFontData(
       const FontDescription& font_description) {
-    if (RuntimeEnabledFeatures::CSSReducedFontLoadingInvalidationsEnabled()) {
-      if (!IsValid())
-        Invalidate();
-    }
-
     if (!cached_primary_simple_font_data_) {
       cached_primary_simple_font_data_ =
           DeterminePrimarySimpleFontData(font_description);
@@ -99,10 +108,14 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
     can_shape_word_by_word_computed_ = true;
   }
 
+  bool HasLoadingFallback() const { return has_loading_fallback_; }
+  bool HasCustomFont() const { return has_custom_font_; }
+  bool HasAdvanceOverride() const { return has_advance_override_; }
+
  private:
   explicit FontFallbackList(FontSelector* font_selector);
 
-  scoped_refptr<FontData> GetFontData(const FontDescription&, int& family_index) const;
+  scoped_refptr<FontData> GetFontData(const FontDescription&);
 
   const SimpleFontData* DeterminePrimarySimpleFontData(const FontDescription&);
 
@@ -118,8 +131,12 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
   int family_index_;
   uint16_t generation_;
   bool has_loading_fallback_ : 1;
+  bool has_custom_font_ : 1;
+  bool has_advance_override_ : 1;
   bool can_shape_word_by_word_ : 1;
   bool can_shape_word_by_word_computed_ : 1;
+  bool is_invalid_ : 1;
+
   base::WeakPtr<ShapeCache> shape_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(FontFallbackList);

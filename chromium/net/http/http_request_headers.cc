@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -105,6 +106,8 @@ void HttpRequestHeaders::Clear() {
 
 void HttpRequestHeaders::SetHeader(const base::StringPiece& key,
                                    const base::StringPiece& value) {
+  // Invalid header names or values could mean clients can attach
+  // browser-internal headers.
   DCHECK(HttpUtil::IsValidHeaderName(key)) << key;
   DCHECK(HttpUtil::IsValidHeaderValue(value)) << key << ":" << value;
   SetHeaderInternal(key, value);
@@ -112,6 +115,8 @@ void HttpRequestHeaders::SetHeader(const base::StringPiece& key,
 
 void HttpRequestHeaders::SetHeaderIfMissing(const base::StringPiece& key,
                                             const base::StringPiece& value) {
+  // Invalid header names or values could mean clients can attach
+  // browser-internal headers.
   DCHECK(HttpUtil::IsValidHeaderName(key));
   DCHECK(HttpUtil::IsValidHeaderValue(value));
   auto it = FindHeader(key);

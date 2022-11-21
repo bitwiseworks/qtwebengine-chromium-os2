@@ -46,7 +46,6 @@
 #include "third_party/blink/renderer/core/css/properties/css_property_ref.h"
 #include "third_party/blink/renderer/core/css/properties/longhand.h"
 #include "third_party/blink/renderer/core/css/properties/longhands/variable.h"
-#include "third_party/blink/renderer/core/css/resolver/css_variable_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -70,20 +69,10 @@ void StyleBuilder::ApplyProperty(const CSSProperty& property,
 
   CSSPropertyID id = property.PropertyID();
   bool is_inherited = property.IsInherited();
-  if (id != CSSPropertyID::kVariable && (value.IsVariableReferenceValue() ||
-                                         value.IsPendingSubstitutionValue())) {
-    bool omit_animation_tainted =
-        CSSAnimations::IsAnimationAffectingProperty(property);
-    const CSSValue* resolved_value =
-        CSSVariableResolver(state).ResolveVariableReferences(
-            id, value, omit_animation_tainted);
-    ApplyProperty(property, state, *resolved_value);
 
-    if (!state.Style()->HasVariableReferenceFromNonInheritedProperty() &&
-        !is_inherited)
-      state.Style()->SetHasVariableReferenceFromNonInheritedProperty();
-    return;
-  }
+  // These values must be resolved by StyleCascade before application:
+  DCHECK(!value.IsVariableReferenceValue());
+  DCHECK(!value.IsPendingSubstitutionValue());
 
   DCHECK(!property.IsShorthand())
       << "Shorthand property id = " << static_cast<int>(id)
@@ -98,9 +87,10 @@ void StyleBuilder::ApplyProperty(const CSSProperty& property,
   // isInherit => (state.parentNode() && state.parentStyle())
   DCHECK(!is_inherit || (state.ParentNode() && state.ParentStyle()));
 
-  if (is_inherit && !state.ParentStyle()->HasExplicitlyInheritedProperties() &&
-      !is_inherited) {
-    state.ParentStyle()->SetHasExplicitlyInheritedProperties();
+  if (is_inherit && !is_inherited) {
+    state.MarkDependency(property);
+    state.Style()->SetHasExplicitInheritance();
+    state.ParentStyle()->SetChildHasExplicitInheritance();
   } else if (value.IsUnsetValue()) {
     DCHECK(!is_inherit && !is_initial);
     if (is_inherited)

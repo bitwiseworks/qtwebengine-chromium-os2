@@ -248,7 +248,8 @@ table {
     border-collapse: separate;
     border-spacing: 2px;
     border-color: gray;
-    box-sizing: border-box
+    box-sizing: border-box;
+    text-indent: initial
 }
 
 thead {
@@ -407,7 +408,7 @@ input, textarea, select, button {
     margin: 0__qem;
     font: -webkit-small-control;
     text-rendering: auto; /* FIXME: Remove when tabs work with optimizeLegibility. */
-    color: -internal-light-dark-color(black, white);
+    color: -internal-light-dark(black, white);
     letter-spacing: normal;
     word-spacing: normal;
     line-height: normal;
@@ -425,7 +426,7 @@ input[type="hidden" i] {
 input {
     -webkit-appearance: textfield; /* AutoAppearanceFor() should match to this. */
     padding: 1px;
-    background-color: -internal-light-dark-color(white, black);
+    background-color: -internal-light-dark(white, black);
     border: 2px inset;
     -webkit-rtl-ordering: logical;
     cursor: text;
@@ -444,7 +445,7 @@ input::-webkit-textfield-decoration-container {
 }
 
 input::-webkit-clear-button {
-    -webkit-appearance: searchfield-cancel-button; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     display: inline-block;
     cursor: default;
     flex: none;
@@ -460,7 +461,7 @@ input:enabled:read-write:-webkit-any(:focus,:hover)::-webkit-clear-button {
 }
 
 input[type="search" i]::-webkit-search-cancel-button {
-    -webkit-appearance: searchfield-cancel-button; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     display: block;
     cursor: default;
     flex: none;
@@ -477,7 +478,7 @@ input[type="search" i]:enabled:read-write:-webkit-any(:focus,:hover)::-webkit-se
 }
 
 input::-webkit-inner-spin-button {
-    -webkit-appearance: inner-spin-button; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     display: inline-block;
     cursor: default;
     flex: none;
@@ -498,7 +499,7 @@ select {
 
 textarea {
     -webkit-appearance: textarea; /* AutoAppearanceFor() should match to this. */
-    background-color: -internal-light-dark-color(white, black);
+    background-color: -internal-light-dark(white, black);
     border: 1px solid;
     -webkit-rtl-ordering: logical;
     flex-direction: column;
@@ -560,7 +561,10 @@ input[type="hidden" i], input[type="image" i], input[type="file" i] {
 input[type="file" i] {
     align-items: baseline;
     color: inherit;
+    overflow: hidden;
     text-align: start !important;
+    text-overflow: ellipsis;
+    white-space: pre;
 }
 
 input[type="image" i] {
@@ -575,7 +579,7 @@ select:-internal-autofill-previewed {
   -webkit-appearance:menulist-button;
   background-color: #E8F0FE !important;
   background-image:none !important;
-  color: -internal-light-dark-color(black, white) !important;
+  color: -internal-light-dark(black, white) !important;
 }
 
 input:-internal-autofill-selected,
@@ -584,7 +588,7 @@ select:-internal-autofill-selected {
   -webkit-appearance:menulist-button;
   background-color: #E8F0FE !important;
   background-image:none !important;
-  color: -internal-light-dark-color(black, white) !important;
+  color: -internal-light-dark(black, white) !important;
 }
 
 input[type="radio" i], input[type="checkbox" i] {
@@ -603,10 +607,11 @@ input[type="button" i], input[type="submit" i], input[type="reset" i] {
 }
 
 input[type="file" i]::-webkit-file-upload-button {
-    -webkit-appearance: push-button; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     -webkit-user-modify: read-only !important;
     white-space: nowrap;
     margin: 0;
+    margin-inline-end: 4px;
     font-size: inherit;
 }
 
@@ -614,7 +619,7 @@ input[type="button" i], input[type="submit" i], input[type="reset" i], input[typ
     align-items: flex-start;
     text-align: center;
     cursor: default;
-    color: -internal-light-dark-color(ButtonText, #AAAAAA);
+    color: -internal-light-dark(ButtonText, #AAAAAA);
     padding: 2px 6px 3px 6px;
     border: 2px outset ButtonFace;
     background-color: ButtonFace;
@@ -631,12 +636,20 @@ input[type="range" i] {
 }
 
 input[type="range" i]::-webkit-slider-container, input[type="range" i]::-webkit-media-slider-container {
-    -webkit-appearance: inherit; /* AutoAppearanceFor() should match to this. */
+    appearance: inherit;
     flex: 1;
     min-inline-size: 0;
     box-sizing: border-box;
     -webkit-user-modify: read-only !important;
     display: flex;
+}
+
+input[type="range" i]:-internal-has-datalist::-webkit-slider-container {
+    /*
+     * See LayoutThemeDefault. "22px" is
+     * 2 * (SliderTickOffsetFromTrackCenter() + SliderTickSize().Height()).
+     */
+    min-block-size: 22px;
 }
 
 input[type="range" i]::-webkit-slider-runnable-track {
@@ -650,7 +663,7 @@ input[type="range" i]::-webkit-slider-runnable-track {
 }
 
 input[type="range" i]::-webkit-slider-thumb, input[type="range" i]::-webkit-media-slider-thumb {
-    -webkit-appearance: sliderthumb-horizontal; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     box-sizing: border-box;
     -webkit-user-modify: read-only !important;
     display: block;
@@ -660,7 +673,7 @@ input[type="button" i]:disabled, input[type="submit" i]:disabled, input[type="re
 input[type="file" i]:disabled::-webkit-file-upload-button, button:disabled,
 select:disabled, optgroup:disabled, option:disabled,
 select[disabled]>option {
-    color: -internal-light-dark-color(GrayText, #aaa);
+    color: -internal-light-dark(GrayText, #aaa);
 }
 
 input[type="button" i]:active, input[type="submit" i]:active, input[type="reset" i]:active, input[type="file" i]:active::-webkit-file-upload-button, button:active {
@@ -672,12 +685,12 @@ input[type="button" i]:active:disabled, input[type="submit" i]:active:disabled, 
 }
 
 input:disabled, textarea:disabled {
-    color: -internal-light-dark-color(#545454, #aaa);
+    color: -internal-light-dark(#545454, #aaa);
     cursor: default;
 }
 
 option:-internal-spatial-navigation-focus {
-    outline: -internal-light-dark-color(black, white) dashed 1px;
+    outline: -internal-light-dark(black, white) dashed 1px;
     outline-offset: -1px;
 }
 
@@ -799,8 +812,8 @@ select {
     border: 1px solid;
     white-space: pre;
     -webkit-rtl-ordering: logical;
-    color: -internal-light-dark-color(black, white);
-    background-color: -internal-light-dark-color(white, black);
+    color: -internal-light-dark(black, white);
+    background-color: -internal-light-dark(white, black);
     cursor: default;
 }
 
@@ -878,7 +891,7 @@ output {
 /* meter */
 
 meter {
-    -webkit-appearance: meter; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     box-sizing: border-box;
     display: inline-block;
     height: 1em;
@@ -888,7 +901,7 @@ meter {
 }
 
 meter::-webkit-meter-inner-element {
-    -webkit-appearance: inherit; /* AutoAppearanceFor() should match to this. */
+    appearance: inherit;
     box-sizing: inherit;
     display: none;
     -webkit-user-modify: read-only !important;
@@ -936,7 +949,7 @@ meter::-webkit-meter-even-less-good-value {
 /* progress */
 
 progress {
-    -webkit-appearance: progress-bar; /* AutoAppearanceFor() should match to this. */
+    appearance: auto;
     box-sizing: border-box;
     display: inline-block;
     height: 1em;
@@ -1160,8 +1173,8 @@ dialog {
     margin: auto;
     border: solid;
     padding: 1em;
-    background: -internal-light-dark-color(white, black);
-    color: -internal-light-dark-color(black, white);
+    background: -internal-light-dark(white, black);
+    color: -internal-light-dark(black, white);
 }
 
 /* TODO(foolip): In the Fullscreen spec, there's a ::backdrop block with the

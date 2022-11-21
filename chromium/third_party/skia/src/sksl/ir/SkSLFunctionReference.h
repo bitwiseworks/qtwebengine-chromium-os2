@@ -19,9 +19,11 @@ namespace SkSL {
  * always eventually replaced by FunctionCalls in valid programs.
  */
 struct FunctionReference : public Expression {
+    static constexpr Kind kExpressionKind = Kind::kFunctionReference;
+
     FunctionReference(const Context& context, int offset,
                       std::vector<const FunctionDeclaration*> function)
-    : INHERITED(offset, kFunctionReference_Kind, *context.fInvalid_Type)
+    : INHERITED(offset, kExpressionKind, context.fInvalid_Type.get())
     , fFunctions(function) {}
 
     bool hasProperty(Property property) const override {
@@ -29,25 +31,24 @@ struct FunctionReference : public Expression {
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new FunctionReference(fOffset, fFunctions, &fType));
+        return std::unique_ptr<Expression>(new FunctionReference(fOffset, fFunctions,
+                                                                 &this->type()));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         return String("<function>");
     }
-#endif
 
     const std::vector<const FunctionDeclaration*> fFunctions;
 
-    typedef Expression INHERITED;
+    using INHERITED = Expression;
 
 private:
     FunctionReference(int offset, std::vector<const FunctionDeclaration*> function,
                       const Type* type)
-    : INHERITED(offset, kFunctionReference_Kind, *type)
+    : INHERITED(offset, kExpressionKind, type)
     , fFunctions(function) {}};
 
-} // namespace
+}  // namespace SkSL
 
 #endif

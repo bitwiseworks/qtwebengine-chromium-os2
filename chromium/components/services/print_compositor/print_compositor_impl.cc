@@ -5,13 +5,16 @@
 #include "components/services/print_compositor/print_compositor_impl.h"
 
 #include <algorithm>
+#include <cstring>
 #include <tuple>
 #include <utility>
 
+#include "base/debug/alias.h"
 #include "base/logging.h"
 #include "base/memory/discardable_memory.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/discardable_memory/client/client_discardable_shared_memory_manager.h"
@@ -30,7 +33,7 @@
 
 #if defined(OS_WIN)
 #include "content/public/child/dwrite_font_proxy_init_win.h"
-#elif defined(OS_MACOSX)
+#elif defined(OS_APPLE)
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/skia/include/core/SkFontMgr.h"
 #elif defined(OS_POSIX) && !defined(OS_ANDROID)
@@ -39,16 +42,34 @@
 
 namespace printing {
 
+namespace {
+
+// TODO(https://crbug.com/1078170): Remove this. It's a sentinel value to
+// check for stack corruption before the stack unwinds at the end of the
+// constructor below.
+const char kStackPadding[] =
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!";
+
+}  // namespace
+
 PrintCompositorImpl::PrintCompositorImpl(
     mojo::PendingReceiver<mojom::PrintCompositor> receiver,
     bool initialize_environment,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner)
     : io_task_runner_(std::move(io_task_runner)) {
+  // TODO(https://crbug.com/1078170): Remove this.
+  char stack_padding[64];
+  strcpy(stack_padding, kStackPadding);
+  base::debug::Alias(stack_padding);
+
   if (receiver)
     receiver_.Bind(std::move(receiver));
 
-  if (!initialize_environment)
+  if (!initialize_environment) {
+    // TODO(https://crbug.com/1078170): Remove this.
+    CHECK_EQ(stack_padding, std::string(kStackPadding));
     return;
+  }
 
 #if defined(OS_WIN)
   // Initialize direct write font proxy so skia can use it.
@@ -67,13 +88,16 @@ PrintCompositorImpl::PrintCompositorImpl(
   content::UtilityThread::Get()->EnsureBlinkInitialized();
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   // Check that font access is granted.
   // This doesn't do comprehensive tests to make sure fonts can work properly.
   // It is just a quick and simple check to catch things like improper sandbox
   // policy setup.
   DCHECK(SkFontMgr::RefDefault()->countFamilies());
 #endif
+
+  // TODO(https://crbug.com/1078170): Remove this.
+  CHECK_EQ(stack_padding, std::string(kStackPadding));
 }
 
 PrintCompositorImpl::~PrintCompositorImpl() {
@@ -122,13 +146,9 @@ void PrintCompositorImpl::AddSubframeContent(
 
   // Add this frame and its serialized content.
   DCHECK(!base::Contains(frame_info_map_, frame_guid));
-  auto& frame_info =
-      frame_info_map_.emplace(frame_guid, std::make_unique<FrameInfo>())
-          .first->second;
-  frame_info->serialized_content = std::move(mapping);
-
-  // Copy the subframe content information.
-  frame_info->subframe_content_map = subframe_content_map;
+  frame_info_map_.emplace(frame_guid, std::make_unique<FrameInfo>(
+                                          mapping.GetMemoryAsSpan<uint8_t>(),
+                                          subframe_content_map));
 
   // If there is no request, we do nothing more.
   // Otherwise, we need to check whether any request actually waits on this
@@ -161,6 +181,7 @@ void PrintCompositorImpl::CompositePageToPdf(
     base::ReadOnlySharedMemoryRegion serialized_content,
     const ContentToFrameMap& subframe_content_map,
     mojom::PrintCompositor::CompositePageToPdfCallback callback) {
+  TRACE_EVENT0("print", "PrintCompositorImpl::CompositePageToPdf");
   if (docinfo_)
     docinfo_->pages_provided++;
   HandleCompositionRequest(frame_guid, std::move(serialized_content),
@@ -172,6 +193,7 @@ void PrintCompositorImpl::CompositeDocumentToPdf(
     base::ReadOnlySharedMemoryRegion serialized_content,
     const ContentToFrameMap& subframe_content_map,
     mojom::PrintCompositor::CompositeDocumentToPdfCallback callback) {
+  TRACE_EVENT0("print", "PrintCompositorImpl::CompositeDocumentToPdf");
   DCHECK(!docinfo_);
   HandleCompositionRequest(frame_guid, std::move(serialized_content),
                            subframe_content_map, std::move(callback));
@@ -224,27 +246,31 @@ void PrintCompositorImpl::UpdateRequestsWithSubframeInfo(
     if (pending_list.erase(frame_guid)) {
       std::copy(pending_subframes.begin(), pending_subframes.end(),
                 std::inserter(pending_list, pending_list.end()));
-      if (pending_list.empty()) {
-        // If the request isn't waiting on any subframes then it is ready.
-        // Fulfill the request now.
-        FulfillRequest(std::move(request->serialized_content),
-                       request->subframe_content_map,
-                       std::move(request->callback));
+    }
 
-        // Check for a collected print preview document that was waiting on
-        // this page to finish.
-        if (docinfo_) {
-          if (docinfo_->page_count &&
-              (docinfo_->pages_written == docinfo_->page_count)) {
-            CompleteDocumentRequest(std::move(docinfo_->callback));
-          }
-        }
-        it = requests_.erase(it);
-        continue;
+    // If the request still has pending frames, or isn't at the front of the
+    // request queue (and thus could be dependent upon content from their
+    // data stream), then keep waiting.
+    const bool fulfill_request =
+        it == requests_.begin() && pending_list.empty();
+    if (!fulfill_request) {
+      ++it;
+      continue;
+    }
+
+    // Fulfill the request now.
+    FulfillRequest(request->serialized_content, request->subframe_content_map,
+                   std::move(request->callback));
+
+    // Check for a collected print preview document that was waiting on
+    // this page to finish.
+    if (docinfo_) {
+      if (docinfo_->page_count &&
+          (docinfo_->pages_written == docinfo_->page_count)) {
+        CompleteDocumentRequest(std::move(docinfo_->callback));
       }
     }
-    // If the request still has pending frames, keep waiting.
-    ++it;
+    it = requests_.erase(it);
   }
 }
 
@@ -295,9 +321,15 @@ void PrintCompositorImpl::HandleCompositionRequest(
   base::flat_set<uint64_t> pending_subframes;
   if (IsReadyToComposite(frame_guid, subframe_content_map,
                          &pending_subframes)) {
-    FulfillRequest(std::move(mapping), subframe_content_map,
-                   std::move(callback));
-    return;
+    // This request has all the necessary subframes.
+    // Due to typeface serialization caching, need to ensure that previous
+    // requests have already been processed, otherwise this request could
+    // fail by trying to use a typeface which hasn't been deserialized yet.
+    if (requests_.empty()) {
+      FulfillRequest(mapping.GetMemoryAsSpan<uint8_t>(), subframe_content_map,
+                     std::move(callback));
+      return;
+    }
   }
 
   // When it is not ready yet, keep its information and
@@ -307,8 +339,8 @@ void PrintCompositorImpl::HandleCompositionRequest(
     frame_info_map_[frame_guid] = std::make_unique<FrameInfo>();
 
   requests_.push_back(std::make_unique<RequestInfo>(
-      std::move(mapping), subframe_content_map, std::move(pending_subframes),
-      std::move(callback)));
+      mapping.GetMemoryAsSpan<uint8_t>(), subframe_content_map,
+      std::move(pending_subframes), std::move(callback)));
 }
 
 void PrintCompositorImpl::HandleDocumentCompletionRequest() {
@@ -322,19 +354,16 @@ void PrintCompositorImpl::HandleDocumentCompletionRequest() {
 }
 
 mojom::PrintCompositor::Status PrintCompositorImpl::CompositeToPdf(
-    base::ReadOnlySharedMemoryMapping shared_mem,
+    base::span<const uint8_t> serialized_content,
     const ContentToFrameMap& subframe_content_map,
     base::ReadOnlySharedMemoryRegion* region) {
-  if (!shared_mem.IsValid()) {
-    DLOG(ERROR) << "CompositeToPdf: Invalid input.";
-    return mojom::PrintCompositor::Status::kHandleMapError;
-  }
+  TRACE_EVENT0("print", "PrintCompositorImpl::CompositeToPdf");
 
-  DeserializationContext subframes =
-      GetDeserializationContext(subframe_content_map);
+  PictureDeserializationContext subframes =
+      GetPictureDeserializationContext(subframe_content_map);
 
   // Read in content and convert it into pdf.
-  SkMemoryStream stream(shared_mem.memory(), shared_mem.size());
+  SkMemoryStream stream(serialized_content.data(), serialized_content.size());
   int page_count = SkMultiPictureDocumentReadPageCount(&stream);
   if (!page_count) {
     DLOG(ERROR) << "CompositeToPdf: No page is read.";
@@ -342,7 +371,7 @@ mojom::PrintCompositor::Status PrintCompositorImpl::CompositeToPdf(
   }
 
   std::vector<SkDocumentPage> pages(page_count);
-  SkDeserialProcs procs = DeserializationProcs(&subframes);
+  SkDeserialProcs procs = DeserializationProcs(&subframes, &typefaces_);
   if (!SkMultiPictureDocumentRead(&stream, pages.data(), page_count, &procs)) {
     DLOG(ERROR) << "CompositeToPdf: Page reading failed.";
     return mojom::PrintCompositor::Status::kContentFormatError;
@@ -353,6 +382,7 @@ mojom::PrintCompositor::Status PrintCompositorImpl::CompositeToPdf(
       MakePdfDocument(creator_, ui::AXTreeUpdate(), &wstream);
 
   for (const auto& page : pages) {
+    TRACE_EVENT0("print", "PrintCompositorImpl::CompositeToPdf draw page");
     SkCanvas* canvas = doc->beginPage(page.fSize.width(), page.fSize.height());
     canvas->drawPicture(page.fPicture);
     doc->endPage();
@@ -385,42 +415,25 @@ mojom::PrintCompositor::Status PrintCompositorImpl::CompositeToPdf(
   return mojom::PrintCompositor::Status::kSuccess;
 }
 
-mojom::PrintCompositor::Status PrintCompositorImpl::CompleteDocumentToPdf(
-    base::ReadOnlySharedMemoryRegion* region) {
-  docinfo_->doc->close();
-
-  base::MappedReadOnlyRegion region_mapping =
-      base::ReadOnlySharedMemoryRegion::Create(
-          docinfo_->compositor_stream.bytesWritten());
-  if (!region_mapping.IsValid()) {
-    DLOG(ERROR)
-        << "CompleteDocumentToPdf: Cannot create new shared memory region.";
-    return mojom::PrintCompositor::Status::kHandleMapError;
-  }
-
-  docinfo_->compositor_stream.copyToAndReset(region_mapping.mapping.memory());
-  *region = std::move(region_mapping.region);
-  return mojom::PrintCompositor::Status::kSuccess;
-}
-
 void PrintCompositorImpl::CompositeSubframe(FrameInfo* frame_info) {
   frame_info->composited = true;
 
   // Composite subframes first.
-  DeserializationContext subframes =
-      GetDeserializationContext(frame_info->subframe_content_map);
+  PictureDeserializationContext subframes =
+      GetPictureDeserializationContext(frame_info->subframe_content_map);
 
   // Composite the entire frame.
-  SkMemoryStream stream(frame_info->serialized_content.memory(),
+  SkMemoryStream stream(frame_info->serialized_content.data(),
                         frame_info->serialized_content.size());
-  SkDeserialProcs procs = DeserializationProcs(&subframes);
+  SkDeserialProcs procs =
+      DeserializationProcs(&subframes, &frame_info->typefaces);
   frame_info->content = SkPicture::MakeFromStream(&stream, &procs);
 }
 
-PrintCompositorImpl::DeserializationContext
-PrintCompositorImpl::GetDeserializationContext(
+PrintCompositorImpl::PictureDeserializationContext
+PrintCompositorImpl::GetPictureDeserializationContext(
     const ContentToFrameMap& subframe_content_map) {
-  DeserializationContext subframes;
+  PictureDeserializationContext subframes;
   for (auto& content_info : subframe_content_map) {
     uint32_t content_id = content_info.first;
     uint64_t frame_guid = content_info.second;
@@ -437,45 +450,58 @@ PrintCompositorImpl::GetDeserializationContext(
 }
 
 void PrintCompositorImpl::FulfillRequest(
-    base::ReadOnlySharedMemoryMapping serialized_content,
+    base::span<const uint8_t> serialized_content,
     const ContentToFrameMap& subframe_content_map,
     CompositeToPdfCallback callback) {
   base::ReadOnlySharedMemoryRegion region;
-  auto status = CompositeToPdf(std::move(serialized_content),
-                               subframe_content_map, &region);
+  auto status =
+      CompositeToPdf(serialized_content, subframe_content_map, &region);
   std::move(callback).Run(status, std::move(region));
 }
 
 void PrintCompositorImpl::CompleteDocumentRequest(
     CompleteDocumentToPdfCallback callback) {
+  mojom::PrintCompositor::Status status;
   base::ReadOnlySharedMemoryRegion region;
-  auto status = CompleteDocumentToPdf(&region);
+
+  docinfo_->doc->close();
+
+  base::MappedReadOnlyRegion region_mapping =
+      base::ReadOnlySharedMemoryRegion::Create(
+          docinfo_->compositor_stream.bytesWritten());
+  if (region_mapping.IsValid()) {
+    docinfo_->compositor_stream.copyToAndReset(region_mapping.mapping.memory());
+    region = std::move(region_mapping.region);
+    status = mojom::PrintCompositor::Status::kSuccess;
+  } else {
+    DLOG(ERROR) << "CompleteDocumentRequest: "
+                << "Cannot create new shared memory region.";
+    status = mojom::PrintCompositor::Status::kHandleMapError;
+  }
+
   std::move(callback).Run(status, std::move(region));
 }
 
 PrintCompositorImpl::FrameContentInfo::FrameContentInfo(
-    base::ReadOnlySharedMemoryMapping content,
+    base::span<const uint8_t> content,
     const ContentToFrameMap& map)
-    : serialized_content(std::move(content)), subframe_content_map(map) {}
+    : serialized_content(content.begin(), content.end()),
+      subframe_content_map(map) {}
 
 PrintCompositorImpl::FrameContentInfo::FrameContentInfo() = default;
 
 PrintCompositorImpl::FrameContentInfo::~FrameContentInfo() = default;
-
-PrintCompositorImpl::FrameInfo::FrameInfo() = default;
-
-PrintCompositorImpl::FrameInfo::~FrameInfo() = default;
 
 PrintCompositorImpl::DocumentInfo::DocumentInfo() = default;
 
 PrintCompositorImpl::DocumentInfo::~DocumentInfo() = default;
 
 PrintCompositorImpl::RequestInfo::RequestInfo(
-    base::ReadOnlySharedMemoryMapping content,
+    base::span<const uint8_t> content,
     const ContentToFrameMap& content_info,
     const base::flat_set<uint64_t>& pending_subframes,
     mojom::PrintCompositor::CompositePageToPdfCallback callback)
-    : FrameContentInfo(std::move(content), content_info),
+    : FrameContentInfo(content, content_info),
       pending_subframes(pending_subframes),
       callback(std::move(callback)) {}
 

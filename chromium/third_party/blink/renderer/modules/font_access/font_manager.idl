@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 // TODO(https://crbug.com/1062766): Update spec documents with objects as implemented.
-// https://inexorabletash.github.io/font-enumeration/
+// https://wicg.github.io/local-font-access/
 [
     Exposed=(Window,Worker),
     SecureContext,
     RuntimeEnabled=FontAccess
 ] interface FontManager {
-    [CallWith=ScriptState] object query();
+    [CallWith=ScriptState, RaisesException, Measure] object query();
 };

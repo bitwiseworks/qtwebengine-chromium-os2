@@ -37,6 +37,12 @@ AdvancedCapability::~AdvancedCapability() = default;
 
 #endif  // defined(OS_CHROMEOS)
 
+bool PrinterSemanticCapsAndDefaults::Paper::operator==(
+    const PrinterSemanticCapsAndDefaults::Paper& other) const {
+  return display_name == other.display_name && vendor_id == other.vendor_id &&
+         size_um == other.size_um;
+}
+
 PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults() = default;
 
 PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults(
@@ -57,12 +63,12 @@ PrintBackend::~PrintBackend() = default;
 
 // static
 scoped_refptr<PrintBackend> PrintBackend::CreateInstance(
-    const base::DictionaryValue* print_backend_settings,
     const std::string& locale) {
   return g_print_backend_for_test
              ? g_print_backend_for_test
-             : PrintBackend::CreateInstanceImpl(print_backend_settings, locale,
-                                                /*for_cloud_print=*/false);
+             : PrintBackend::CreateInstanceImpl(
+                   /*print_backend_settings=*/nullptr, locale,
+                   /*for_cloud_print=*/false);
 }
 
 #if defined(USE_CUPS)

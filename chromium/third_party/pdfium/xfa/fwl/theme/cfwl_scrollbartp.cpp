@@ -6,7 +6,6 @@
 
 #include "xfa/fwl/theme/cfwl_scrollbartp.h"
 
-#include "core/fxge/render_defines.h"
 #include "xfa/fwl/cfwl_scrollbar.h"
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_widget.h"
@@ -24,7 +23,7 @@ CFWL_ScrollBarTP::CFWL_ScrollBarTP() : m_pThemeData(new SBThemeData) {
   SetThemeData();
 }
 
-CFWL_ScrollBarTP::~CFWL_ScrollBarTP() {}
+CFWL_ScrollBarTP::~CFWL_ScrollBarTP() = default;
 
 void CFWL_ScrollBarTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
   CFWL_Widget* pWidget = pParams.m_pWidget;
@@ -40,29 +39,29 @@ void CFWL_ScrollBarTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
   bool bVert = !!pWidget->GetStylesEx();
   switch (pParams.m_iPart) {
     case CFWL_Part::ForeArrow: {
-      DrawMaxMinBtn(pGraphics, pParams.m_rtPart,
+      DrawMaxMinBtn(pGraphics, pParams.m_PartRect,
                     bVert ? FWLTHEME_DIRECTION_Up : FWLTHEME_DIRECTION_Left,
                     eState, pParams.m_matrix);
       break;
     }
     case CFWL_Part::BackArrow: {
-      DrawMaxMinBtn(pGraphics, pParams.m_rtPart,
+      DrawMaxMinBtn(pGraphics, pParams.m_PartRect,
                     bVert ? FWLTHEME_DIRECTION_Down : FWLTHEME_DIRECTION_Right,
                     eState, pParams.m_matrix);
       break;
     }
     case CFWL_Part::Thumb: {
-      DrawThumbBtn(pGraphics, pParams.m_rtPart, bVert, eState, true,
+      DrawThumbBtn(pGraphics, pParams.m_PartRect, bVert, eState, true,
                    pParams.m_matrix);
       break;
     }
     case CFWL_Part::LowerTrack: {
-      DrawTrack(pGraphics, pParams.m_rtPart, bVert, eState, true,
+      DrawTrack(pGraphics, pParams.m_PartRect, bVert, eState, true,
                 pParams.m_matrix);
       break;
     }
     case CFWL_Part::UpperTrack: {
-      DrawTrack(pGraphics, pParams.m_rtPart, bVert, eState, false,
+      DrawTrack(pGraphics, pParams.m_PartRect, bVert, eState, false,
                 pParams.m_matrix);
       break;
     }
@@ -205,7 +204,8 @@ void CFWL_ScrollBarTP::DrawTrack(CXFA_Graphics* pGraphics,
     path.AddRectangle(rect.left, fBottom - 1, rect.width, 1);
   }
   pGraphics->SetFillColor(CXFA_GEColor(ArgbEncode(255, 238, 237, 229)));
-  pGraphics->FillPath(&path, FXFILL_WINDING, &matrix);
+  pGraphics->FillPath(&path, CFX_FillRenderOptions::FillType::kWinding,
+                      &matrix);
   path.Clear();
   path.AddRectangle(rect.left + 1, rect.top, rect.width - 2, rect.height);
   pGraphics->RestoreGraphState();

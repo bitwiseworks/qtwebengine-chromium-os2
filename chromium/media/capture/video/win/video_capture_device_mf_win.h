@@ -13,6 +13,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <stdint.h>
+#include <strmif.h>
 #include <wrl/client.h>
 
 #include <vector>
@@ -24,6 +25,7 @@
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/win/capability_list_win.h"
 #include "media/capture/video/win/metrics.h"
+#include "media/capture/video/win/video_capture_dxgi_device_manager.h"
 
 interface IMFSourceReader;
 
@@ -39,13 +41,17 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
  public:
   static bool GetPixelFormatFromMFSourceMediaSubtype(const GUID& guid,
                                                      VideoPixelFormat* format);
+  static VideoCaptureControlSupport GetControlSupport(
+      Microsoft::WRL::ComPtr<IMFMediaSource> source);
 
   explicit VideoCaptureDeviceMFWin(
       const VideoCaptureDeviceDescriptor& device_descriptor,
-      Microsoft::WRL::ComPtr<IMFMediaSource> source);
+      Microsoft::WRL::ComPtr<IMFMediaSource> source,
+      scoped_refptr<VideoCaptureDXGIDeviceManager> dxgi_device_manager);
   explicit VideoCaptureDeviceMFWin(
       const VideoCaptureDeviceDescriptor& device_descriptor,
       Microsoft::WRL::ComPtr<IMFMediaSource> source,
+      scoped_refptr<VideoCaptureDXGIDeviceManager> dxgi_device_manager,
       Microsoft::WRL::ComPtr<IMFCaptureEngine> engine);
 
   ~VideoCaptureDeviceMFWin() override;
@@ -92,6 +98,11 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
     retry_delay_in_ms_ = retry_delay_in_ms;
   }
 
+  void set_dxgi_device_manager_for_testing(
+      scoped_refptr<VideoCaptureDXGIDeviceManager> dxgi_device_manager) {
+    dxgi_device_manager_ = std::move(dxgi_device_manager);
+  }
+
  private:
   HRESULT ExecuteHresultCallbackWithRetries(
       base::RepeatingCallback<HRESULT()> callback,
@@ -116,6 +127,7 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
                const base::Location& from_here,
                const char* message);
   void SendOnStartedIfNotYetSent();
+  HRESULT WaitOnCaptureEvent(GUID capture_event_guid);
 
   VideoFacingMode facing_mode_;
   CreateMFPhotoCallbackCB create_mf_photo_callback_;
@@ -131,13 +143,22 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
 
   std::unique_ptr<VideoCaptureDevice::Client> client_;
   const Microsoft::WRL::ComPtr<IMFMediaSource> source_;
+  Microsoft::WRL::ComPtr<IAMCameraControl> camera_control_;
+  Microsoft::WRL::ComPtr<IAMVideoProcAmp> video_control_;
   Microsoft::WRL::ComPtr<IMFCaptureEngine> engine_;
   std::unique_ptr<CapabilityWin> selected_video_capability_;
   CapabilityList photo_capabilities_;
   std::unique_ptr<CapabilityWin> selected_photo_capability_;
   bool is_started_;
   bool has_sent_on_started_to_client_;
+  // These flags keep the manual/auto mode between cycles of SetPhotoOptions().
+  bool exposure_mode_manual_;
+  bool focus_mode_manual_;
+  bool white_balance_mode_manual_;
   base::queue<TakePhotoCallback> video_stream_take_photo_callbacks_;
+  base::WaitableEvent capture_initialize_;
+  base::WaitableEvent capture_error_;
+  scoped_refptr<VideoCaptureDXGIDeviceManager> dxgi_device_manager_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

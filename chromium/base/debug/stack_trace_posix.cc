@@ -31,11 +31,11 @@
 #include <execinfo.h>
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #include <AvailabilityMacros.h>
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include "base/debug/proc_maps_linux.h"
 #endif
 
@@ -258,7 +258,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
 // or DCHECK() failure. While it may not be fully safe to run the stack symbol
 // printing code, in practice it's better to provide meaningful stack traces -
 // and the risk is low given we're likely crashing already.
-#if !defined(OS_MACOSX) || !DCHECK_IS_ON()
+#if !defined(OS_APPLE) || !DCHECK_IS_ON()
   // Record the fact that we are in the signal handler now, so that the rest
   // of StackTrace can behave in an async-signal-safe manner.
   in_signal_handler = 1;
@@ -344,7 +344,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
 
   debug::StackTrace().Print();
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #if ARCH_CPU_X86_FAMILY
   ucontext_t* context = reinterpret_cast<ucontext_t*>(void_context);
   const struct {
@@ -415,11 +415,11 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   }
   PrintToStderr("\n");
 #endif  // ARCH_CPU_X86_FAMILY
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
 
   PrintToStderr("[end of stack trace]\n");
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   if (::signal(signal, SIG_DFL) == SIG_ERR)
     _exit(1);
 #else
@@ -428,7 +428,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   // https://code.google.com/p/chromium/issues/detail?id=551681
   PrintToStderr("Calling _exit(1). Core file will not be generated.\n");
   _exit(1);
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+#endif  // defined(OS_MAC)
 }
 
 class PrintBacktraceOutputHandler : public BacktraceOutputHandler {
@@ -800,9 +800,9 @@ bool EnableInProcessStackDumping() {
   success &= (sigaction(SIGBUS, &action, nullptr) == 0);
   success &= (sigaction(SIGSEGV, &action, nullptr) == 0);
 // On Linux, SIGSYS is reserved by the kernel for seccomp-bpf sandboxing.
-#if !defined(OS_LINUX)
+#if !defined(OS_LINUX) && !defined(OS_CHROMEOS)
   success &= (sigaction(SIGSYS, &action, nullptr) == 0);
-#endif  // !defined(OS_LINUX)
+#endif  // !defined(OS_LINUX) && !defined(OS_CHROMEOS)
 
   return success;
 }

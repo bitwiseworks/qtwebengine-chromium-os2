@@ -531,9 +531,7 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
                                         "because it was not transferred.");
       return false;
     }
-    if (stream->IsLocked(script_state_, exception_state).value_or(true)) {
-      if (exception_state.HadException())
-        return false;
+    if (stream->IsLocked()) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kDataCloneError,
           "A ReadableStream could not be cloned because it was locked");
@@ -555,9 +553,7 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
                                         "because it was not transferred.");
       return false;
     }
-    if (stream->IsLocked(script_state_, exception_state).value_or(true)) {
-      if (exception_state.HadException())
-        return false;
+    if (stream->locked()) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kDataCloneError,
           "A WritableStream could not be cloned because it was locked");
@@ -584,14 +580,12 @@ bool V8ScriptValueSerializer::WriteDOMObject(ScriptWrappable* wrappable,
                                         "because it was not transferred.");
       return false;
     }
-    if (stream->Readable()
-            ->IsLocked(script_state_, exception_state)
-            .value_or(true) ||
-        stream->Writable()
-            ->IsLocked(script_state_, exception_state)
-            .value_or(true)) {
-      if (exception_state.HadException())
-        return false;
+    // https://streams.spec.whatwg.org/#ts-transfer
+    // 3. If ! IsReadableStreamLocked(readable) is true, throw a
+    //    "DataCloneError" DOMException.
+    // 4. If ! IsWritableStreamLocked(writable) is true, throw a
+    //    "DataCloneError" DOMException.
+    if (stream->Readable()->locked() || stream->Writable()->locked()) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kDataCloneError,
           "A TransformStream could not be cloned because it was locked");

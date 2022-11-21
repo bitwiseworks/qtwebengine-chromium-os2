@@ -31,6 +31,8 @@
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as TextUtils from '../text_utils/text_utils.js';
 
+import {PageResourceLoader, PageResourceLoadInitiator} from './PageResourceLoader.js';  // eslint-disable-line no-unused-vars
+
 /**
  * @implements {TextUtils.ContentProvider.ContentProvider}
  * @unrestricted
@@ -39,10 +41,12 @@ export class CompilerSourceMappingContentProvider {
   /**
    * @param {string} sourceURL
    * @param {!Common.ResourceType.ResourceType} contentType
+   * @param {!PageResourceLoadInitiator} initiator
    */
-  constructor(sourceURL, contentType) {
+  constructor(sourceURL, contentType, initiator) {
     this._sourceURL = sourceURL;
     this._contentType = contentType;
+    this._initiator = initiator;
   }
 
   /**
@@ -73,19 +77,15 @@ export class CompilerSourceMappingContentProvider {
    * @override
    * @return {!Promise<!TextUtils.ContentProvider.DeferredContent>}
    */
-  requestContent() {
-    return new Promise(resolve => {
-      self.SDK.multitargetNetworkManager.loadResource(
-          this._sourceURL, (success, _headers, content, errorDescription) => {
-            if (!success) {
-              const error = ls`Could not load content for ${this._sourceURL} (${errorDescription.message})`;
-              console.error(error);
-              resolve({error, isEncoded: false});
-            } else {
-              resolve({content, isEncoded: false});
-            }
-          });
-    });
+  async requestContent() {
+    try {
+      const {content} = await PageResourceLoader.instance().loadResource(this._sourceURL, this._initiator);
+      return {content, isEncoded: false};
+    } catch (e) {
+      const error = ls`Could not load content for ${this._sourceURL} (${e.message})`;
+      console.error(error);
+      return {content: null, error, isEncoded: false};
+    }
   }
 
   /**

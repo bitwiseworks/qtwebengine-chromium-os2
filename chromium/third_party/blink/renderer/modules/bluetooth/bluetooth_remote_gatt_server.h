@@ -5,13 +5,14 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_BLUETOOTH_BLUETOOTH_REMOTE_GATT_SERVER_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BLUETOOTH_BLUETOOTH_REMOTE_GATT_SERVER_H_
 
-#include "mojo/public/cpp/bindings/associated_receiver_set.h"
 #include "third_party/blink/public/mojom/bluetooth/web_bluetooth.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/modules/v8/string_or_unsigned_long.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_device.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_receiver_set.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -26,22 +27,14 @@ class ScriptState;
 // bluetooth peripheral.
 class BluetoothRemoteGATTServer
     : public ScriptWrappable,
-      public ExecutionContextLifecycleObserver,
       public mojom::blink::WebBluetoothServerClient {
-  USING_PRE_FINALIZER(BluetoothRemoteGATTServer, Dispose);
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(BluetoothRemoteGATTServer);
 
  public:
   BluetoothRemoteGATTServer(ExecutionContext*, BluetoothDevice*);
 
-  // ExecutionContextLifecycleObserver:
-  void ContextDestroyed() override;
-
   // mojom::blink::WebBluetoothServerClient:
   void GATTServerDisconnected() override;
-
-  void SetConnected(bool connected) { connected_ = connected; }
 
   // The Active Algorithms set is maintained so that disconnection, i.e.
   // disconnect() method or the device disconnecting by itself, can be detected
@@ -54,8 +47,6 @@ class BluetoothRemoteGATTServer
   // Removes |resolver| from the set of Active Algorithms if it was in the set
   // and returns true, false otherwise.
   bool RemoveFromActiveAlgorithms(ScriptPromiseResolver*);
-  // Removes all ScriptPromiseResolvers from the set of Active Algorithms.
-  void ClearActiveAlgorithms() { active_algorithms_.clear(); }
 
   // If gatt is connected then sets gatt.connected to false and disconnects.
   // This function only performs the necessary steps to ensure a device
@@ -69,12 +60,8 @@ class BluetoothRemoteGATTServer
 
   void DispatchDisconnected();
 
-  // USING_PRE_FINALIZER interface.
-  // Called before the object gets garbage collected.
-  void Dispose();
-
   // Interface required by Garbage Collectoin:
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   // IDL exposed interface:
   BluetoothDevice* device() { return device_; }
@@ -110,7 +97,9 @@ class BluetoothRemoteGATTServer
   // using this server’s connection.
   HeapHashSet<Member<ScriptPromiseResolver>> active_algorithms_;
 
-  mojo::AssociatedReceiverSet<mojom::blink::WebBluetoothServerClient>
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+  HeapMojoAssociatedReceiverSet<mojom::blink::WebBluetoothServerClient,
+                                BluetoothRemoteGATTServer>
       client_receivers_;
 
   Member<BluetoothDevice> device_;

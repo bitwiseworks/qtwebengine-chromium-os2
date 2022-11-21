@@ -446,10 +446,7 @@ static int getNextNode(
       if( pKey->eType==FTSQUERY_NEAR ){
         assert( nKey==4 );
         if( zInput[4]=='/' && zInput[5]>='0' && zInput[5]<='9' ){
-          nNear = 0;
-          for(nKey=5; zInput[nKey]>='0' && zInput[nKey]<='9'; nKey++){
-            nNear = nNear * 10 + (zInput[nKey] - '0');
-          }
+          nKey += 1+sqlite3Fts3ReadInt(&zInput[nKey+1], &nNear);
         }
       }
 
@@ -496,6 +493,11 @@ static int getNextNode(
     if( *zInput=='(' ){
       int nConsumed = 0;
       pParse->nNest++;
+#if !defined(SQLITE_MAX_EXPR_DEPTH)
+      if( pParse->nNest>1000 ) return SQLITE_ERROR;
+#elif SQLITE_MAX_EXPR_DEPTH>0
+      if( pParse->nNest>SQLITE_MAX_EXPR_DEPTH ) return SQLITE_ERROR;
+#endif
       rc = fts3ExprParse(pParse, zInput+1, nInput-1, ppExpr, &nConsumed);
       *pnConsumed = (int)(zInput - z) + 1 + nConsumed;
       return rc;

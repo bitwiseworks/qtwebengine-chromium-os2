@@ -6,10 +6,10 @@
 
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/shell/browser/shell.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -63,8 +63,7 @@ class MouseCursorOverlayControllerBrowserTest : public ContentBrowserTest {
     auto overlay_ptr = std::make_unique<FakeOverlay>();
     FakeOverlay* const overlay = overlay_ptr.get();
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    controller_.Start(std::move(overlay_ptr),
-                      base::CreateSingleThreadTaskRunner({BrowserThread::UI}));
+    controller_.Start(std::move(overlay_ptr), GetUIThreadTaskRunner({}));
     return overlay;
   }
 

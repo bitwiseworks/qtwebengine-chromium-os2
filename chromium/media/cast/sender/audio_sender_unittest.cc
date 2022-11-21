@@ -11,6 +11,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -58,7 +59,7 @@ class TestPacketSender : public PacketTransport {
  public:
   TestPacketSender() : number_of_rtp_packets_(0), number_of_rtcp_packets_(0) {}
 
-  bool SendPacket(PacketRef packet, const base::Closure& cb) final {
+  bool SendPacket(PacketRef packet, base::OnceClosure cb) final {
     if (IsRtcpPacket(&packet->data[0], packet->data.size())) {
       ++number_of_rtcp_packets_;
     } else {
@@ -111,9 +112,8 @@ class AudioSenderTest : public ::testing::Test {
         base::WrapUnique(transport_), task_runner_));
     OperationalStatus operational_status = STATUS_UNINITIALIZED;
     audio_sender_.reset(new AudioSender(
-        cast_environment_,
-        audio_config_,
-        base::Bind(&SaveOperationalStatus, &operational_status),
+        cast_environment_, audio_config_,
+        base::BindOnce(&SaveOperationalStatus, &operational_status),
         transport_sender_.get()));
     task_runner_->RunTasks();
     CHECK_EQ(STATUS_INITIALIZED, operational_status);
@@ -122,7 +122,7 @@ class AudioSenderTest : public ::testing::Test {
   ~AudioSenderTest() override = default;
 
   base::SimpleTestTickClock testing_clock_;
-  TestPacketSender* transport_;               // Owned by CastTransport.
+  TestPacketSender* transport_;  // Owned by CastTransport.
   std::unique_ptr<CastTransportImpl> transport_sender_;
   scoped_refptr<FakeSingleThreadTaskRunner> task_runner_;
   std::unique_ptr<AudioSender> audio_sender_;

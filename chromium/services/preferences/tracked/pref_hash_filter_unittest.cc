@@ -16,7 +16,6 @@
 #include "base/bind.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
@@ -543,7 +542,7 @@ class PrefHashFilterTest : public testing::TestWithParam<EnforcementLevel>,
                            public prefs::mojom::ResetOnLoadObserver {
  public:
   PrefHashFilterTest()
-      : mock_pref_hash_store_(NULL),
+      : mock_pref_hash_store_(nullptr),
         pref_store_contents_(new base::DictionaryValue),
         mock_validation_delegate_record_(new MockValidationDelegateRecord),
         mock_validation_delegate_(mock_validation_delegate_record_),

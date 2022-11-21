@@ -23,7 +23,6 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/modules/v8/unsigned_long_or_unsigned_long_sequence.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
@@ -77,19 +76,18 @@ VibrationController::SanitizeVibrationPattern(
 }
 
 VibrationController::VibrationController(LocalFrame& frame)
-    : ExecutionContextLifecycleObserver(frame.GetDocument()),
-      PageVisibilityObserver(frame.GetDocument()->GetPage()),
+    : ExecutionContextLifecycleObserver(frame.DomWindow()),
+      PageVisibilityObserver(frame.GetPage()),
       vibration_manager_(frame.DomWindow()),
-      timer_do_vibrate_(
-          frame.GetDocument()->GetTaskRunner(TaskType::kMiscPlatformAPI),
-          this,
-          &VibrationController::DoVibrate),
+      timer_do_vibrate_(frame.GetTaskRunner(TaskType::kMiscPlatformAPI),
+                        this,
+                        &VibrationController::DoVibrate),
       is_running_(false),
       is_calling_cancel_(false),
       is_calling_vibrate_(false) {
   frame.GetBrowserInterfaceBroker().GetInterface(
       vibration_manager_.BindNewPipeAndPassReceiver(
-          frame.GetDocument()->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+          frame.GetTaskRunner(TaskType::kMiscPlatformAPI)));
 }
 
 VibrationController::~VibrationController() = default;
@@ -183,6 +181,11 @@ void VibrationController::DidCancel() {
 
 void VibrationController::ContextDestroyed() {
   Cancel();
+
+  // If the document context was destroyed, never call the mojo service again.
+  // TODO(crbug.com/1116948): Remove this line once vibration_manager_ switches
+  // to kForceWithContextObserver.
+  vibration_manager_.reset();
 }
 
 void VibrationController::PageVisibilityChanged() {
@@ -190,7 +193,7 @@ void VibrationController::PageVisibilityChanged() {
     Cancel();
 }
 
-void VibrationController::Trace(Visitor* visitor) {
+void VibrationController::Trace(Visitor* visitor) const {
   ExecutionContextLifecycleObserver::Trace(visitor);
   PageVisibilityObserver::Trace(visitor);
   visitor->Trace(vibration_manager_);

@@ -14,6 +14,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
@@ -139,27 +140,22 @@ void OutputController::ErrorStatisticsTracker::WedgeCheck() {
   }
 }
 
-OutputController::OutputController(
-    media::AudioManager* audio_manager,
-    EventHandler* handler,
-    const media::AudioParameters& params,
-    const std::string& output_device_id,
-    SyncReader* sync_reader,
-    StreamMonitorCoordinator* stream_monitor_coordinator,
-    const base::UnguessableToken& processing_id)
+OutputController::OutputController(media::AudioManager* audio_manager,
+                                   EventHandler* handler,
+                                   const media::AudioParameters& params,
+                                   const std::string& output_device_id,
+                                   SyncReader* sync_reader)
     : audio_manager_(audio_manager),
       params_(params),
       handler_(handler),
       task_runner_(audio_manager->GetTaskRunner()),
       construction_time_(base::TimeTicks::Now()),
       output_device_id_(output_device_id),
-      stream_(NULL),
+      stream_(nullptr),
       disable_local_output_(false),
       volume_(1.0),
       state_(kEmpty),
       sync_reader_(sync_reader),
-      stream_monitor_coordinator_(stream_monitor_coordinator),
-      processing_id_(processing_id),
       power_monitor_(
           params.sample_rate(),
           TimeDelta::FromMilliseconds(kPowerMeasurementTimeConstantMillis)) {
@@ -167,7 +163,6 @@ OutputController::OutputController(
   DCHECK(handler_);
   DCHECK(sync_reader_);
   DCHECK(task_runner_.get());
-  DCHECK(stream_monitor_coordinator_ || processing_id.is_empty());
 }
 
 OutputController::~OutputController() {
@@ -189,7 +184,6 @@ bool OutputController::CreateStream() {
 
 void OutputController::RecreateStreamWithTimingUMA(
     OutputController::RecreateReason reason) {
-  SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioOutputController.CreateTime");
   RecreateStream(reason);
 }
 
@@ -302,24 +296,10 @@ void OutputController::RecreateStream(OutputController::RecreateReason reason) {
   // output dispatcher which falls back to a fake stream if audio parameters
   // are invalid or if a physical stream can't be opened for some reason.
   state_ = kCreated;
-
-  if (processing_id_) {
-    // Ensure new monitors know that we're active.
-    stream_monitor_coordinator_->AddObserver(processing_id_, this);
-    // Ensure existing monitors do as well.
-    stream_monitor_coordinator_->ForEachMemberInGroup(
-        processing_id_,
-        base::BindRepeating(
-            [](OutputController* controller, StreamMonitor* monitor) {
-              monitor->OnStreamActive(controller);
-            },
-            this));
-  }
 }
 
 void OutputController::Play() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioOutputController.PlayTime");
   TRACE_EVENT0("audio", "OutputController::Play");
   SendLogMessage("%s([state=%s])", __func__, StateToString(state_));
 
@@ -366,7 +346,6 @@ void OutputController::StopStream() {
 
 void OutputController::Pause() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioOutputController.PauseTime");
   TRACE_EVENT0("audio", "OutputController::Pause");
   SendLogMessage("%s([state=%s])", __func__, StateToString(state_));
 
@@ -403,7 +382,6 @@ void OutputController::Flush() {
 void OutputController::Close() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   TRACE_EVENT0("audio", "OutputController::Close");
-  SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioOutputController.CloseTime");
   SendLogMessage("%s([state=%s])", __func__, StateToString(state_));
 
   if (state_ != kClosed) {
@@ -545,25 +523,11 @@ void OutputController::StopCloseAndClearStream() {
     // AudioManager.
     audio_manager_->RemoveOutputDeviceChangeListener(this);
 
-    // Only notify and remove ourselves if startup was successful.
-    if (processing_id_ && state_ != kEmpty) {
-      // Don't send out activation messages for now.
-      stream_monitor_coordinator_->RemoveObserver(processing_id_, this);
-      // Ensure everyone monitoring us knows we're no-longer active.
-      stream_monitor_coordinator_->ForEachMemberInGroup(
-          processing_id_,
-          base::BindRepeating(
-              [](OutputController* controller, StreamMonitor* monitor) {
-                monitor->OnStreamInactive(controller);
-              },
-              this));
-    }
-
     StopStream();
     stream_->Close();
     stats_tracker_.reset();
 
-    stream_ = NULL;
+    stream_ = nullptr;
   }
 
   state_ = kEmpty;
@@ -638,15 +602,6 @@ void OutputController::ToggleLocalOutput() {
   }
 }
 
-void OutputController::OnMemberJoinedGroup(StreamMonitor* monitor) {
-  // We're only observing the group when we're active.
-  monitor->OnStreamActive(this);
-}
-
-void OutputController::OnMemberLeftGroup(StreamMonitor* monitor) {
-  // Do nothing. The monitor will have already cleaned up.
-}
-
 void OutputController::OnDeviceChange() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   TRACE_EVENT0("audio", "OutputController::OnDeviceChange");
@@ -654,7 +609,6 @@ void OutputController::OnDeviceChange() {
   if (disable_local_output_)
     return;  // No actions need to be taken while local output is disabled.
 
-  SCOPED_UMA_HISTOGRAM_TIMER("Media.AudioOutputController.DeviceChangeTime");
   SendLogMessage("%s([state=%s])", __func__, StateToString(state_));
 
   // TODO(dalecurtis): Notify the renderer side that a device change has

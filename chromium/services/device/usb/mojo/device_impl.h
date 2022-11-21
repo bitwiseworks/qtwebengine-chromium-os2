@@ -68,7 +68,9 @@ class DeviceImpl : public mojom::UsbDevice, public device::UsbDevice::Observer {
       uint8_t alternate_setting,
       SetInterfaceAlternateSettingCallback callback) override;
   void Reset(ResetCallback callback) override;
-  void ClearHalt(uint8_t endpoint, ClearHaltCallback callback) override;
+  void ClearHalt(mojom::UsbTransferDirection direction,
+                 uint8_t endpoint_number,
+                 ClearHaltCallback callback) override;
   void ControlTransferIn(mojom::UsbControlTransferParamsPtr params,
                          uint32_t length,
                          uint32_t timeout,
@@ -104,7 +106,9 @@ class DeviceImpl : public mojom::UsbDevice, public device::UsbDevice::Observer {
   ScopedObserver<device::UsbDevice, device::UsbDevice::Observer> observer_;
 
   // The device handle. Will be null before the device is opened and after it
-  // has been closed.
+  // has been closed. |opening_| is set to true while the asynchronous open is
+  // in progress.
+  bool opening_ = false;
   scoped_refptr<UsbDeviceHandle> device_handle_;
 
   mojo::SelfOwnedReceiverRef<mojom::UsbDevice> receiver_;

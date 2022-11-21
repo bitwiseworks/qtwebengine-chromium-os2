@@ -367,6 +367,14 @@ static void ParseOldStyleNames(
       }
       result.enable_dtls_srtp.SetExact(ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kEnableRtpDataChannels)) {
+      bool value = ToBoolean(constraint.value_);
+      if (value) {
+        UseCounter::Count(context,
+                          WebFeature::kRTCConstraintEnableRtpDataChannelsTrue);
+      } else {
+        UseCounter::Count(context,
+                          WebFeature::kRTCConstraintEnableRtpDataChannelsFalse);
+      }
       result.enable_rtp_data_channels.SetExact(ToBoolean(constraint.value_));
     } else if (constraint.name_.Equals(kEnableDscp)) {
       result.enable_dscp.SetExact(ToBoolean(constraint.value_));
@@ -497,6 +505,7 @@ MediaConstraints Create(ExecutionContext* context,
 void CopyLongConstraint(const LongOrConstrainLongRange& blink_union_form,
                         NakedValueDisposition naked_treatment,
                         LongConstraint& web_form) {
+  web_form.SetIsPresent(true);
   if (blink_union_form.IsLong()) {
     switch (naked_treatment) {
       case NakedValueDisposition::kTreatAsIdeal:
@@ -526,6 +535,7 @@ void CopyLongConstraint(const LongOrConstrainLongRange& blink_union_form,
 void CopyDoubleConstraint(const DoubleOrConstrainDoubleRange& blink_union_form,
                           NakedValueDisposition naked_treatment,
                           DoubleConstraint& web_form) {
+  web_form.SetIsPresent(true);
   if (blink_union_form.IsDouble()) {
     switch (naked_treatment) {
       case NakedValueDisposition::kTreatAsIdeal:
@@ -552,11 +562,31 @@ void CopyDoubleConstraint(const DoubleOrConstrainDoubleRange& blink_union_form,
   }
 }
 
+void CopyBooleanOrDoubleConstraint(
+    const BooleanOrDoubleOrConstrainDoubleRange& blink_union_form,
+    NakedValueDisposition naked_treatment,
+    DoubleConstraint& web_form) {
+  if (blink_union_form.IsBoolean()) {
+    web_form.SetIsPresent(blink_union_form.GetAsBoolean());
+    return;
+  }
+  DoubleOrConstrainDoubleRange double_constraint;
+  if (blink_union_form.IsDouble()) {
+    double_constraint.SetDouble(blink_union_form.GetAsDouble());
+  } else {
+    DCHECK(blink_union_form.IsConstrainDoubleRange());
+    double_constraint.SetConstrainDoubleRange(
+        blink_union_form.GetAsConstrainDoubleRange());
+  }
+  CopyDoubleConstraint(double_constraint, naked_treatment, web_form);
+}
+
 void CopyStringConstraint(
     const StringOrStringSequenceOrConstrainDOMStringParameters&
         blink_union_form,
     NakedValueDisposition naked_treatment,
     StringConstraint& web_form) {
+  web_form.SetIsPresent(true);
   if (blink_union_form.IsString()) {
     switch (naked_treatment) {
       case NakedValueDisposition::kTreatAsIdeal:
@@ -601,6 +631,7 @@ void CopyBooleanConstraint(
     const BooleanOrConstrainBooleanParameters& blink_union_form,
     NakedValueDisposition naked_treatment,
     BooleanConstraint& web_form) {
+  web_form.SetIsPresent(true);
   if (blink_union_form.IsBoolean()) {
     switch (naked_treatment) {
       case NakedValueDisposition::kTreatAsIdeal:
@@ -687,6 +718,18 @@ void CopyConstraintSet(const MediaTrackConstraintSet* constraints_in,
   if (constraints_in->hasVideoKind()) {
     CopyStringConstraint(constraints_in->videoKind(), naked_treatment,
                          constraint_buffer.video_kind);
+  }
+  if (constraints_in->hasPan()) {
+    CopyBooleanOrDoubleConstraint(constraints_in->pan(), naked_treatment,
+                                  constraint_buffer.pan);
+  }
+  if (constraints_in->hasTilt()) {
+    CopyBooleanOrDoubleConstraint(constraints_in->tilt(), naked_treatment,
+                                  constraint_buffer.tilt);
+  }
+  if (constraints_in->hasZoom()) {
+    CopyBooleanOrDoubleConstraint(constraints_in->zoom(), naked_treatment,
+                                  constraint_buffer.zoom);
   }
 }
 
@@ -827,6 +870,27 @@ DoubleOrConstrainDoubleRange ConvertDouble(
   return output_union;
 }
 
+BooleanOrDoubleOrConstrainDoubleRange ConvertBooleanOrDouble(
+    const DoubleConstraint& input,
+    NakedValueDisposition naked_treatment) {
+  BooleanOrDoubleOrConstrainDoubleRange output_union;
+  if (UseNakedNumeric(input, naked_treatment)) {
+    output_union.SetDouble(GetNakedValue<double>(input, naked_treatment));
+  } else if (!input.IsEmpty()) {
+    ConstrainDoubleRange* output = ConstrainDoubleRange::Create();
+    if (input.HasExact())
+      output->setExact(input.Exact());
+    if (input.HasIdeal())
+      output->setIdeal(input.Ideal());
+    if (input.HasMin())
+      output->setMin(input.Min());
+    if (input.HasMax())
+      output->setMax(input.Max());
+    output_union.SetConstrainDoubleRange(output);
+  }
+  return output_union;
+}
+
 StringOrStringSequence ConvertStringSequence(
     const WebVector<WebString>& input) {
   StringOrStringSequence the_strings;
@@ -926,6 +990,12 @@ void ConvertConstraintSet(const MediaTrackConstraintSetPlatform& input,
     output->setGroupId(ConvertString(input.group_id, naked_treatment));
   if (!input.video_kind.IsEmpty())
     output->setVideoKind(ConvertString(input.video_kind, naked_treatment));
+  if (!input.pan.IsEmpty())
+    output->setPan(ConvertBooleanOrDouble(input.pan, naked_treatment));
+  if (!input.tilt.IsEmpty())
+    output->setTilt(ConvertBooleanOrDouble(input.tilt, naked_treatment));
+  if (!input.zoom.IsEmpty())
+    output->setZoom(ConvertBooleanOrDouble(input.zoom, naked_treatment));
   // TODO(hta): Decide the future of the nonstandard constraints.
   // If they go forward, they need to be added here.
   // https://crbug.com/605673
@@ -940,6 +1010,8 @@ MediaTrackConstraints* ConvertConstraints(const MediaConstraints& input) {
 
   HeapVector<Member<MediaTrackConstraintSet>> advanced_vector;
   for (const auto& it : input.Advanced()) {
+    if (it.IsEmpty())
+      continue;
     MediaTrackConstraintSet* element = MediaTrackConstraintSet::Create();
     ConvertConstraintSet(it, NakedValueDisposition::kTreatAsExact, element);
     advanced_vector.push_back(element);

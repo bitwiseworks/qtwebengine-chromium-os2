@@ -7,8 +7,10 @@
 
 #include "src/gpu/GrOpFlushState.h"
 
+#include "include/gpu/GrDirectContext.h"
 #include "src/core/SkConvertPixels.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrDrawOpAtlas.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrImageInfo.h"
@@ -22,7 +24,8 @@ GrOpFlushState::GrOpFlushState(GrGpu* gpu, GrResourceProvider* resourceProvider,
                                GrTokenTracker* tokenTracker,
                                sk_sp<GrBufferAllocPool::CpuBufferCache> cpuBufferCache)
         : fVertexPool(gpu, cpuBufferCache)
-        , fIndexPool(gpu, std::move(cpuBufferCache))
+        , fIndexPool(gpu, cpuBufferCache)
+        , fDrawIndirectPool(gpu, std::move(cpuBufferCache))
         , fGpu(gpu)
         , fResourceProvider(resourceProvider)
         , fTokenTracker(tokenTracker) {}
@@ -32,7 +35,8 @@ const GrCaps& GrOpFlushState::caps() const {
 }
 
 void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
-        const GrOp* op, const SkRect& chainBounds, const GrPipeline* pipeline) {
+        const GrOp* op, const SkRect& chainBounds, const GrPipeline* pipeline,
+        const GrUserStencilSettings* userStencilSettings) {
     SkASSERT(this->opsRenderPass());
 
     while (fCurrDraw != fDraws.end() && fCurrDraw->fOp == op) {
@@ -46,10 +50,13 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
         GrProgramInfo programInfo(this->proxy()->numSamples(),
                                   this->proxy()->numStencilSamples(),
                                   this->proxy()->backendFormat(),
-                                  this->outputView()->origin(),
+                                  this->writeView()->origin(),
                                   pipeline,
+                                  userStencilSettings,
                                   fCurrDraw->fGeometryProcessor,
-                                  fCurrDraw->fPrimitiveType);
+                                  fCurrDraw->fPrimitiveType,
+                                  0,
+                                  this->renderPassBarriers());
 
         this->bindPipelineAndScissorClip(programInfo, chainBounds);
         this->bindTextures(programInfo.primProc(), fCurrDraw->fPrimProcProxies,
@@ -66,6 +73,7 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
 void GrOpFlushState::preExecuteDraws() {
     fVertexPool.unmap();
     fIndexPool.unmap();
+    fDrawIndirectPool.unmap();
     for (auto& upload : fASAPUploads) {
         this->doUpload(upload);
     }
@@ -79,6 +87,7 @@ void GrOpFlushState::reset() {
     SkASSERT(fCurrUpload == fInlineUploads.end());
     fVertexPool.reset();
     fIndexPool.reset();
+    fDrawIndirectPool.reset();
     fArena.reset();
     fASAPUploads.reset();
     fInlineUploads.reset();
@@ -190,10 +199,10 @@ void GrOpFlushState::putBackVertices(int vertices, size_t vertexStride) {
 }
 
 GrAppliedClip GrOpFlushState::detachAppliedClip() {
-    return fOpArgs->appliedClip() ? std::move(*fOpArgs->appliedClip()) : GrAppliedClip();
+    return fOpArgs->appliedClip() ? std::move(*fOpArgs->appliedClip()) : GrAppliedClip::Disabled();
 }
 
-GrStrikeCache* GrOpFlushState::glyphCache() const {
+GrStrikeCache* GrOpFlushState::strikeCache() const {
     return fGpu->getContext()->priv().getGrStrikeCache();
 }
 
@@ -201,14 +210,17 @@ GrAtlasManager* GrOpFlushState::atlasManager() const {
     return fGpu->getContext()->priv().getAtlasManager();
 }
 
+GrSmallPathAtlasMgr* GrOpFlushState::smallPathAtlasManager() const {
+    return fGpu->getContext()->priv().getSmallPathAtlasMgr();
+}
+
 void GrOpFlushState::drawMesh(const GrSimpleMesh& mesh) {
     SkASSERT(mesh.fIsInitialized);
     if (!mesh.fIndexBuffer) {
-        this->bindBuffers(nullptr, nullptr, mesh.fVertexBuffer.get());
+        this->bindBuffers(nullptr, nullptr, mesh.fVertexBuffer);
         this->draw(mesh.fVertexCount, mesh.fBaseVertex);
     } else {
-        this->bindBuffers(mesh.fIndexBuffer.get(), nullptr, mesh.fVertexBuffer.get(),
-                          mesh.fPrimitiveRestart);
+        this->bindBuffers(mesh.fIndexBuffer, nullptr, mesh.fVertexBuffer, mesh.fPrimitiveRestart);
         if (0 == mesh.fPatternRepeatCount) {
             this->drawIndexed(mesh.fIndexCount, mesh.fBaseIndex, mesh.fMinIndexValue,
                               mesh.fMaxIndexValue, mesh.fBaseVertex);

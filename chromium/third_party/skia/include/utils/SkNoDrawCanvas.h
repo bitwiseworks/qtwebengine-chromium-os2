@@ -10,7 +10,6 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkCanvasVirtualEnforcer.h"
-#include "include/core/SkVertices.h"
 
 struct SkIRect;
 
@@ -72,7 +71,7 @@ protected:
                               const SkMatrix[], const SkPaint*, SrcRectConstraint) override {}
 
 private:
-    typedef SkCanvasVirtualEnforcer<SkCanvas> INHERITED;
+    using INHERITED = SkCanvasVirtualEnforcer<SkCanvas>;
 };
 
 #endif // SkNoDrawCanvas_DEFINED

@@ -28,9 +28,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as Host from '../host/host.js';
+import * as Root from '../root/root.js';
 
+import {ActionRegistry} from './ActionRegistry.js';
+import {ShortcutRegistry} from './ShortcutRegistry.js';
 import {SoftContextMenu} from './SoftContextMenu.js';
 
 /**
@@ -116,9 +122,7 @@ export class Item {
   }
 }
 
-/**
- * @unrestricted
- */
+
 export class Section {
   /**
    * @param {?ContextMenu} contextMenu
@@ -131,7 +135,7 @@ export class Section {
 
   /**
    * @param {string} label
-   * @param {function(?)} handler
+   * @param {function(?):*} handler
    * @param {boolean=} disabled
    * @return {!Item}
    */
@@ -168,7 +172,7 @@ export class Section {
    * @param {boolean=} optional
    */
   appendAction(actionId, label, optional) {
-    const action = self.UI.actionRegistry.action(actionId);
+    const action = ActionRegistry.instance().action(actionId);
     if (!action) {
       if (!optional) {
         console.error(`Action ${actionId} was not defined`);
@@ -179,7 +183,7 @@ export class Section {
       label = action.title();
     }
     const result = this.appendItem(label, action.execute.bind(action));
-    const shortcut = self.UI.shortcutRegistry.shortcutTitleForAction(actionId);
+    const shortcut = ShortcutRegistry.instance().shortcutTitleForAction(actionId);
     if (shortcut) {
       result.setShortcut(shortcut);
     }
@@ -199,7 +203,7 @@ export class Section {
 
   /**
    * @param {string} label
-   * @param {function()} handler
+   * @param {function():*} handler
    * @param {boolean=} checked
    * @param {boolean=} disabled
    * @return {!Item}
@@ -212,9 +216,7 @@ export class Section {
   }
 }
 
-/**
- * @unrestricted
- */
+
 export class SubMenu extends Item {
   /**
    * @param {?ContextMenu} contextMenu
@@ -345,7 +347,7 @@ export class SubMenu extends Item {
    * @param {string} location
    */
   appendItemsAtLocation(location) {
-    for (const extension of self.runtime.extensions('context-menu-item')) {
+    for (const extension of Root.Runtime.Runtime.instance().extensions('context-menu-item')) {
       const itemLocation = extension.descriptor()['location'] || '';
       if (!itemLocation.startsWith(location + '/')) {
         continue;
@@ -507,7 +509,7 @@ export class ContextMenu extends SubMenu {
 
   /**
    * @param {number} id
-   * @param {function(?)} handler
+   * @param {function(?):*} handler
    */
   _setHandler(id, handler) {
     if (handler) {
@@ -558,7 +560,7 @@ export class ContextMenu extends SubMenu {
    * @param {!Object} target
    */
   appendApplicableItems(target) {
-    this._pendingPromises.push(self.runtime.allInstances(Provider, target));
+    this._pendingPromises.push(Root.Runtime.Runtime.instance().allInstances(Provider, target));
     this._pendingTargets.push(target);
   }
 }

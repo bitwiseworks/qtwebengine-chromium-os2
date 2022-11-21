@@ -25,6 +25,15 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
     return input.registrable_domain();
   }
 
+  static bool schemefully_same(const net::SiteForCookies& input) {
+    return input.schemefully_same();
+  }
+
+  static std::string first_party_url(
+      const net::SiteForCookies& input) {
+    return input.first_party_url().spec();
+  }
+
   static bool Read(network::mojom::SiteForCookiesDataView data,
                    net::SiteForCookies* out);
 };

@@ -9,6 +9,7 @@
 
 #include <vector>
 
+#include "base/optional.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
@@ -23,12 +24,12 @@ inline base::StringPiece16 TruncateString16(const base::string16& string) {
   return base::StringPiece16(string).substr(0, 4 * 1024);
 }
 
-inline base::Optional<base::StringPiece16> TruncateNullableString16(
-    const base::NullableString16& string) {
-  if (string.is_null())
+inline base::Optional<base::StringPiece16> TruncateOptionalString16(
+    const base::Optional<base::string16>& string) {
+  if (!string)
     return base::nullopt;
 
-  return TruncateString16(string.string());
+  return TruncateString16(*string);
 }
 
 }  // namespace internal
@@ -46,17 +47,17 @@ struct BLINK_COMMON_EXPORT
 
   static base::Optional<base::StringPiece16> name(
       const ::blink::Manifest& manifest) {
-    return internal::TruncateNullableString16(manifest.name);
+    return internal::TruncateOptionalString16(manifest.name);
   }
 
   static base::Optional<base::StringPiece16> short_name(
       const ::blink::Manifest& manifest) {
-    return internal::TruncateNullableString16(manifest.short_name);
+    return internal::TruncateOptionalString16(manifest.short_name);
   }
 
   static base::Optional<base::StringPiece16> gcm_sender_id(
       const ::blink::Manifest& manifest) {
-    return internal::TruncateNullableString16(manifest.gcm_sender_id);
+    return internal::TruncateOptionalString16(manifest.gcm_sender_id);
   }
 
   static const GURL& start_url(const ::blink::Manifest& manifest) {
@@ -71,7 +72,12 @@ struct BLINK_COMMON_EXPORT
     return manifest.display;
   }
 
-  static blink::WebScreenOrientationLockType orientation(
+  static const std::vector<blink::mojom::DisplayMode> display_override(
+      const ::blink::Manifest& manifest) {
+    return manifest.display_override;
+  }
+
+  static device::mojom::ScreenOrientationLockType orientation(
       const ::blink::Manifest& manifest) {
     return manifest.orientation;
   }
@@ -110,6 +116,11 @@ struct BLINK_COMMON_EXPORT
   static const std::vector<::blink::Manifest::FileHandler>& file_handlers(
       const ::blink::Manifest& manifest) {
     return manifest.file_handlers;
+  }
+
+  static const std::vector<::blink::Manifest::ProtocolHandler>&
+  protocol_handlers(const ::blink::Manifest& manifest) {
+    return manifest.protocol_handlers;
   }
 
   static const std::vector<::blink::Manifest::RelatedApplication>&
@@ -161,12 +172,12 @@ struct BLINK_COMMON_EXPORT
 
   static base::Optional<base::StringPiece16> short_name(
       const ::blink::Manifest::ShortcutItem& shortcut) {
-    return internal::TruncateNullableString16(shortcut.short_name);
+    return internal::TruncateOptionalString16(shortcut.short_name);
   }
 
   static base::Optional<base::StringPiece16> description(
       const ::blink::Manifest::ShortcutItem& shortcut) {
-    return internal::TruncateNullableString16(shortcut.description);
+    return internal::TruncateOptionalString16(shortcut.description);
   }
 
   static const GURL& url(const ::blink::Manifest::ShortcutItem& shortcut) {
@@ -188,7 +199,7 @@ struct BLINK_COMMON_EXPORT
                  ::blink::Manifest::RelatedApplication> {
   static base::Optional<base::StringPiece16> platform(
       const ::blink::Manifest::RelatedApplication& related_application) {
-    return internal::TruncateNullableString16(related_application.platform);
+    return internal::TruncateOptionalString16(related_application.platform);
   }
 
   static const GURL& url(
@@ -198,7 +209,7 @@ struct BLINK_COMMON_EXPORT
 
   static base::Optional<base::StringPiece16> id(
       const ::blink::Manifest::RelatedApplication& related_application) {
-    return internal::TruncateNullableString16(related_application.id);
+    return internal::TruncateOptionalString16(related_application.id);
   }
 
   static bool Read(blink::mojom::ManifestRelatedApplicationDataView data,
@@ -234,15 +245,15 @@ struct BLINK_COMMON_EXPORT
                  ::blink::Manifest::ShareTargetParams> {
   static const base::Optional<base::StringPiece16> text(
       const ::blink::Manifest::ShareTargetParams& share_target_params) {
-    return internal::TruncateNullableString16(share_target_params.text);
+    return internal::TruncateOptionalString16(share_target_params.text);
   }
   static const base::Optional<base::StringPiece16> title(
       const ::blink::Manifest::ShareTargetParams& share_target_params) {
-    return internal::TruncateNullableString16(share_target_params.title);
+    return internal::TruncateOptionalString16(share_target_params.title);
   }
   static const base::Optional<base::StringPiece16> url(
       const ::blink::Manifest::ShareTargetParams& share_target_params) {
-    return internal::TruncateNullableString16(share_target_params.url);
+    return internal::TruncateOptionalString16(share_target_params.url);
   }
   static const std::vector<blink::Manifest::FileFilter>& files(
       const ::blink::Manifest::ShareTargetParams& share_target_params) {
@@ -301,6 +312,21 @@ struct BLINK_COMMON_EXPORT
 
 template <>
 struct BLINK_COMMON_EXPORT
+    StructTraits<blink::mojom::ManifestProtocolHandlerDataView,
+                 ::blink::Manifest::ProtocolHandler> {
+  static base::StringPiece16 protocol(
+      const ::blink::Manifest::ProtocolHandler& protocol) {
+    return internal::TruncateString16(protocol.protocol);
+  }
+  static const GURL& url(const ::blink::Manifest::ProtocolHandler& protocol) {
+    return protocol.url;
+  }
+  static bool Read(blink::mojom::ManifestProtocolHandlerDataView data,
+                   ::blink::Manifest::ProtocolHandler* out);
+};
+
+template <>
+struct BLINK_COMMON_EXPORT
     EnumTraits<blink::mojom::ManifestImageResource_Purpose,
                ::blink::Manifest::ImageResource::Purpose> {
   static blink::mojom::ManifestImageResource_Purpose ToMojom(
@@ -308,8 +334,8 @@ struct BLINK_COMMON_EXPORT
     switch (purpose) {
       case ::blink::Manifest::ImageResource::Purpose::ANY:
         return blink::mojom::ManifestImageResource_Purpose::ANY;
-      case ::blink::Manifest::ImageResource::Purpose::BADGE:
-        return blink::mojom::ManifestImageResource_Purpose::BADGE;
+      case ::blink::Manifest::ImageResource::Purpose::MONOCHROME:
+        return blink::mojom::ManifestImageResource_Purpose::MONOCHROME;
       case ::blink::Manifest::ImageResource::Purpose::MASKABLE:
         return blink::mojom::ManifestImageResource_Purpose::MASKABLE;
     }
@@ -322,8 +348,8 @@ struct BLINK_COMMON_EXPORT
       case blink::mojom::ManifestImageResource_Purpose::ANY:
         *out = ::blink::Manifest::ImageResource::Purpose::ANY;
         return true;
-      case blink::mojom::ManifestImageResource_Purpose::BADGE:
-        *out = ::blink::Manifest::ImageResource::Purpose::BADGE;
+      case blink::mojom::ManifestImageResource_Purpose::MONOCHROME:
+        *out = ::blink::Manifest::ImageResource::Purpose::MONOCHROME;
         return true;
       case blink::mojom::ManifestImageResource_Purpose::MASKABLE:
         *out = ::blink::Manifest::ImageResource::Purpose::MASKABLE;

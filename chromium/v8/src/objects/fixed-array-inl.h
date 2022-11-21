@@ -20,6 +20,7 @@
 #include "src/objects/slots.h"
 #include "src/roots/roots-inl.h"
 #include "src/sanitizer/tsan.h"
+#include "torque-generated/class-definitions-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -27,49 +28,27 @@
 namespace v8 {
 namespace internal {
 
-OBJECT_CONSTRUCTORS_IMPL(FixedArrayBase, HeapObject)
-OBJECT_CONSTRUCTORS_IMPL(FixedArray, FixedArrayBase)
-OBJECT_CONSTRUCTORS_IMPL(FixedDoubleArray, FixedArrayBase)
-OBJECT_CONSTRUCTORS_IMPL(ArrayList, FixedArray)
-OBJECT_CONSTRUCTORS_IMPL(ByteArray, FixedArrayBase)
-OBJECT_CONSTRUCTORS_IMPL(TemplateList, FixedArray)
-OBJECT_CONSTRUCTORS_IMPL(WeakFixedArray, HeapObject)
-OBJECT_CONSTRUCTORS_IMPL(WeakArrayList, HeapObject)
-
-FixedArrayBase::FixedArrayBase(Address ptr, AllowInlineSmiStorage allow_smi)
-    : HeapObject(ptr, allow_smi) {
-  SLOW_DCHECK(
-      (allow_smi == AllowInlineSmiStorage::kAllowBeingASmi && IsSmi()) ||
-      IsFixedArrayBase());
-}
-
-ByteArray::ByteArray(Address ptr, AllowInlineSmiStorage allow_smi)
-    : FixedArrayBase(ptr, allow_smi) {
-  SLOW_DCHECK(
-      (allow_smi == AllowInlineSmiStorage::kAllowBeingASmi && IsSmi()) ||
-      IsByteArray());
-}
+TQ_OBJECT_CONSTRUCTORS_IMPL(FixedArrayBase)
+FixedArrayBase::FixedArrayBase(Address ptr,
+                               HeapObject::AllowInlineSmiStorage allow_smi)
+    : TorqueGeneratedFixedArrayBase(ptr, allow_smi) {}
+TQ_OBJECT_CONSTRUCTORS_IMPL(FixedArray)
+TQ_OBJECT_CONSTRUCTORS_IMPL(FixedDoubleArray)
+TQ_OBJECT_CONSTRUCTORS_IMPL(ArrayList)
+TQ_OBJECT_CONSTRUCTORS_IMPL(ByteArray)
+ByteArray::ByteArray(Address ptr, HeapObject::AllowInlineSmiStorage allow_smi)
+    : TorqueGeneratedByteArray(ptr, allow_smi) {}
+TQ_OBJECT_CONSTRUCTORS_IMPL(TemplateList)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WeakFixedArray)
+TQ_OBJECT_CONSTRUCTORS_IMPL(WeakArrayList)
 
 NEVER_READ_ONLY_SPACE_IMPL(WeakArrayList)
 
-CAST_ACCESSOR(ArrayList)
-CAST_ACCESSOR(ByteArray)
-CAST_ACCESSOR(FixedArray)
-CAST_ACCESSOR(FixedArrayBase)
-CAST_ACCESSOR(FixedDoubleArray)
-CAST_ACCESSOR(TemplateList)
-CAST_ACCESSOR(WeakFixedArray)
-CAST_ACCESSOR(WeakArrayList)
-
-SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 SYNCHRONIZED_SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 
-SMI_ACCESSORS(WeakFixedArray, length, kLengthOffset)
 SYNCHRONIZED_SMI_ACCESSORS(WeakFixedArray, length, kLengthOffset)
 
-SMI_ACCESSORS(WeakArrayList, capacity, kCapacityOffset)
 SYNCHRONIZED_SMI_ACCESSORS(WeakArrayList, capacity, kCapacityOffset)
-SMI_ACCESSORS(WeakArrayList, length, kLengthOffset)
 
 Object FixedArrayBase::unchecked_synchronized_length() const {
   return ACQUIRE_READ_FIELD(*this, kLengthOffset);
@@ -143,6 +122,23 @@ void FixedArray::NoWriteBarrierSet(FixedArray array, int index, Object value) {
   RELAXED_WRITE_FIELD(array, offset, value);
 }
 
+Object FixedArray::synchronized_get(int index) const {
+  const Isolate* isolate = GetIsolateForPtrCompr(*this);
+  return synchronized_get(isolate, index);
+}
+
+Object FixedArray::synchronized_get(const Isolate* isolate, int index) const {
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
+  return ACQUIRE_READ_FIELD(*this, OffsetOfElementAt(index));
+}
+
+void FixedArray::synchronized_set(int index, Smi value) {
+  DCHECK_NE(map(), GetReadOnlyRoots().fixed_cow_array_map());
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
+  DCHECK(Object(value).IsSmi());
+  RELEASE_WRITE_FIELD(*this, OffsetOfElementAt(index), value);
+}
+
 void FixedArray::set_undefined(int index) {
   set_undefined(GetReadOnlyRoots(), index);
 }
@@ -212,14 +208,32 @@ void FixedArray::CopyElements(Isolate* isolate, int dst_index, FixedArray src,
   isolate->heap()->CopyRange(*this, dst_slot, src_slot, len, mode);
 }
 
+// Due to left- and right-trimming, concurrent visitors need to read the length
+// with acquire semantics.
+// TODO(ulan): Acquire should not be needed anymore.
+inline int FixedArray::AllocatedSize() {
+  return SizeFor(synchronized_length());
+}
+inline int WeakFixedArray::AllocatedSize() {
+  return SizeFor(synchronized_length());
+}
+inline int WeakArrayList::AllocatedSize() {
+  return SizeFor(synchronized_capacity());
+}
+
 // Perform a binary search in a fixed array.
 template <SearchMode search_mode, typename T>
 int BinarySearch(T* array, Name name, int valid_entries,
                  int* out_insertion_index) {
-  DCHECK(search_mode == ALL_ENTRIES || out_insertion_index == nullptr);
+  DCHECK_IMPLIES(search_mode == VALID_ENTRIES, out_insertion_index == nullptr);
   int low = 0;
+  // We have to search on all entries, even when search_mode == VALID_ENTRIES.
+  // This is because the InternalIndex might be different from the SortedIndex
+  // (i.e the first added item in {array} could be the last in the sorted
+  // index). After doing the binary search and getting the correct internal
+  // index we check to have the index lower than valid_entries, if needed.
   int high = array->number_of_entries() - 1;
-  uint32_t hash = name.hash_field();
+  uint32_t hash = name.hash();
   int limit = high;
 
   DCHECK(low <= high);
@@ -227,7 +241,7 @@ int BinarySearch(T* array, Name name, int valid_entries,
   while (low != high) {
     int mid = low + (high - low) / 2;
     Name mid_name = array->GetSortedKey(mid);
-    uint32_t mid_hash = mid_name.hash_field();
+    uint32_t mid_hash = mid_name.hash();
 
     if (mid_hash >= hash) {
       high = mid;
@@ -239,8 +253,13 @@ int BinarySearch(T* array, Name name, int valid_entries,
   for (; low <= limit; ++low) {
     int sort_index = array->GetSortedKeyIndex(low);
     Name entry = array->GetKey(InternalIndex(sort_index));
-    uint32_t current_hash = entry.hash_field();
+    uint32_t current_hash = entry.hash();
     if (current_hash != hash) {
+      // 'search_mode == ALL_ENTRIES' here and below is not needed since
+      // 'out_insertion_index != nullptr' implies 'search_mode == ALL_ENTRIES'.
+      // Having said that, when creating the template for <VALID_ENTRIES> these
+      // ifs can be elided by the C++ compiler if we add 'search_mode ==
+      // ALL_ENTRIES'.
       if (search_mode == ALL_ENTRIES && out_insertion_index != nullptr) {
         *out_insertion_index = sort_index + (current_hash > hash ? 0 : 1);
       }
@@ -266,12 +285,12 @@ template <SearchMode search_mode, typename T>
 int LinearSearch(T* array, Name name, int valid_entries,
                  int* out_insertion_index) {
   if (search_mode == ALL_ENTRIES && out_insertion_index != nullptr) {
-    uint32_t hash = name.hash_field();
+    uint32_t hash = name.hash();
     int len = array->number_of_entries();
     for (int number = 0; number < len; number++) {
       int sorted_index = array->GetSortedKeyIndex(number);
       Name entry = array->GetKey(InternalIndex(sorted_index));
-      uint32_t current_hash = entry.hash_field();
+      uint32_t current_hash = entry.hash();
       if (current_hash > hash) {
         *out_insertion_index = sorted_index;
         return T::kNotFound;
@@ -291,8 +310,9 @@ int LinearSearch(T* array, Name name, int valid_entries,
 }
 
 template <SearchMode search_mode, typename T>
-int Search(T* array, Name name, int valid_entries, int* out_insertion_index) {
-  SLOW_DCHECK(array->IsSortedNoDuplicates());
+int Search(T* array, Name name, int valid_entries, int* out_insertion_index,
+           bool concurrent_search) {
+  SLOW_DCHECK_IMPLIES(!concurrent_search, array->IsSortedNoDuplicates());
 
   if (valid_entries == 0) {
     if (search_mode == ALL_ENTRIES && out_insertion_index != nullptr) {
@@ -301,14 +321,14 @@ int Search(T* array, Name name, int valid_entries, int* out_insertion_index) {
     return T::kNotFound;
   }
 
-  // Fast case: do linear search for small arrays.
+  // Do linear search for small arrays, and for searches in the background
+  // thread.
   const int kMaxElementsForLinearSearch = 8;
-  if (valid_entries <= kMaxElementsForLinearSearch) {
+  if (valid_entries <= kMaxElementsForLinearSearch || concurrent_search) {
     return LinearSearch<search_mode>(array, name, valid_entries,
                                      out_insertion_index);
   }
 
-  // Slow case: perform binary search.
   return BinarySearch<search_mode>(array, name, valid_entries,
                                    out_insertion_index);
 }
@@ -316,7 +336,7 @@ int Search(T* array, Name name, int valid_entries, int* out_insertion_index) {
 double FixedDoubleArray::get_scalar(int index) {
   DCHECK(map() != GetReadOnlyRoots().fixed_cow_array_map() &&
          map() != GetReadOnlyRoots().fixed_array_map());
-  DCHECK(index >= 0 && index < this->length());
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
   DCHECK(!is_the_hole(index));
   return ReadField<double>(kHeaderSize + index * kDoubleSize);
 }
@@ -324,7 +344,7 @@ double FixedDoubleArray::get_scalar(int index) {
 uint64_t FixedDoubleArray::get_representation(int index) {
   DCHECK(map() != GetReadOnlyRoots().fixed_cow_array_map() &&
          map() != GetReadOnlyRoots().fixed_array_map());
-  DCHECK(index >= 0 && index < this->length());
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
   int offset = kHeaderSize + index * kDoubleSize;
   // Bug(v8:8875): Doubles may be unaligned.
   return base::ReadUnalignedValue<uint64_t>(field_address(offset));
@@ -342,6 +362,7 @@ Handle<Object> FixedDoubleArray::get(FixedDoubleArray array, int index,
 void FixedDoubleArray::set(int index, double value) {
   DCHECK(map() != GetReadOnlyRoots().fixed_cow_array_map() &&
          map() != GetReadOnlyRoots().fixed_array_map());
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
   int offset = kHeaderSize + index * kDoubleSize;
   if (std::isnan(value)) {
     WriteField<double>(offset, std::numeric_limits<double>::quiet_NaN());
@@ -358,6 +379,7 @@ void FixedDoubleArray::set_the_hole(Isolate* isolate, int index) {
 void FixedDoubleArray::set_the_hole(int index) {
   DCHECK(map() != GetReadOnlyRoots().fixed_cow_array_map() &&
          map() != GetReadOnlyRoots().fixed_array_map());
+  DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
   int offset = kHeaderSize + index * kDoubleSize;
   base::WriteUnalignedValue<uint64_t>(field_address(offset), kHoleNanInt64);
 }
@@ -392,28 +414,15 @@ MaybeObject WeakFixedArray::Get(int index) const {
 
 MaybeObject WeakFixedArray::Get(const Isolate* isolate, int index) const {
   DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(length()));
-  return TaggedField<MaybeObject>::Relaxed_Load(isolate, *this,
-                                                OffsetOfElementAt(index));
-}
-
-void WeakFixedArray::Set(int index, MaybeObject value) {
-  DCHECK_GE(index, 0);
-  DCHECK_LT(index, length());
-  int offset = OffsetOfElementAt(index);
-  RELAXED_WRITE_WEAK_FIELD(*this, offset, value);
-  WEAK_WRITE_BARRIER(*this, offset, value);
+  return objects(isolate, index);
 }
 
 void WeakFixedArray::Set(int index, MaybeObject value, WriteBarrierMode mode) {
-  DCHECK_GE(index, 0);
-  DCHECK_LT(index, length());
-  int offset = OffsetOfElementAt(index);
-  RELAXED_WRITE_WEAK_FIELD(*this, offset, value);
-  CONDITIONAL_WEAK_WRITE_BARRIER(*this, offset, value, mode);
+  set_objects(index, value, mode);
 }
 
 MaybeObjectSlot WeakFixedArray::data_start() {
-  return RawMaybeWeakField(kHeaderSize);
+  return RawMaybeWeakField(kObjectsOffset);
 }
 
 MaybeObjectSlot WeakFixedArray::RawFieldOfElementAt(int index) {
@@ -440,20 +449,15 @@ MaybeObject WeakArrayList::Get(int index) const {
 
 MaybeObject WeakArrayList::Get(const Isolate* isolate, int index) const {
   DCHECK_LT(static_cast<unsigned>(index), static_cast<unsigned>(capacity()));
-  return TaggedField<MaybeObject>::Relaxed_Load(isolate, *this,
-                                                OffsetOfElementAt(index));
+  return objects(isolate, index);
 }
 
 void WeakArrayList::Set(int index, MaybeObject value, WriteBarrierMode mode) {
-  DCHECK_GE(index, 0);
-  DCHECK_LT(index, this->capacity());
-  int offset = OffsetOfElementAt(index);
-  RELAXED_WRITE_WEAK_FIELD(*this, offset, value);
-  CONDITIONAL_WEAK_WRITE_BARRIER(*this, offset, value, mode);
+  set_objects(index, value, mode);
 }
 
 MaybeObjectSlot WeakArrayList::data_start() {
-  return RawMaybeWeakField(kHeaderSize);
+  return RawMaybeWeakField(kObjectsOffset);
 }
 
 void WeakArrayList::CopyElements(Isolate* isolate, int dst_index,

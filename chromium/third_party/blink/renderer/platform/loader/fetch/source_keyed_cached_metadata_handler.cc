@@ -18,7 +18,7 @@ const size_t SourceKeyedCachedMetadataHandler::kKeySize;
 class SourceKeyedCachedMetadataHandler::SingleKeyHandler final
     : public SingleCachedMetadataHandler {
  public:
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(parent_);
     SingleCachedMetadataHandler::Trace(visitor);
   }
@@ -37,6 +37,8 @@ class SourceKeyedCachedMetadataHandler::SingleKeyHandler final
   }
 
   void ClearCachedMetadata(ClearCacheType cache_type) override {
+    if (cache_type == kDiscardLocally)
+      return;
     parent_->cached_metadata_map_.erase(key_);
     if (cache_type == CachedMetadataHandler::kClearPersistentStorage)
       parent_->SendToPlatform();
@@ -104,6 +106,8 @@ SingleCachedMetadataHandler* SourceKeyedCachedMetadataHandler::HandlerForSource(
 
 void SourceKeyedCachedMetadataHandler::ClearCachedMetadata(
     CachedMetadataHandler::ClearCacheType cache_type) {
+  if (cache_type == kDiscardLocally)
+    return;
   cached_metadata_map_.clear();
   if (cache_type == CachedMetadataHandler::kClearPersistentStorage)
     SendToPlatform();

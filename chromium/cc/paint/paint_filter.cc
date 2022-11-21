@@ -701,7 +701,7 @@ sk_sp<PaintFilter> ImagePaintFilter::SnapshotWithImagesInternal(
   PaintImage decoded_paint_image =
       PaintImageBuilder::WithDefault()
           .set_id(image_.stable_id())
-          .set_image(decoded_sk_image, PaintImage::GetNextContentId())
+          .set_texture_image(decoded_sk_image, PaintImage::GetNextContentId())
           .TakePaintImage();
 
   return sk_make_sp<ImagePaintFilter>(std::move(decoded_paint_image), src_rect_,
@@ -801,8 +801,8 @@ bool MergePaintFilter::operator==(const MergePaintFilter& other) const {
 }
 
 MorphologyPaintFilter::MorphologyPaintFilter(MorphType morph_type,
-                                             int radius_x,
-                                             int radius_y,
+                                             float radius_x,
+                                             float radius_y,
                                              sk_sp<PaintFilter> input,
                                              const CropRect* crop_rect)
     : PaintFilter(kType, crop_rect, HasDiscardableImages(input)),

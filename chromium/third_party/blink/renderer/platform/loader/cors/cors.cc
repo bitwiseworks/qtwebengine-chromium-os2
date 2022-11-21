@@ -277,7 +277,7 @@ bool CheckIfRequestCanSkipPreflight(
 // This is the same as that function except using KURL and SecurityOrigin
 // instead of GURL and url::Origin. We can't combine them because converting
 // SecurityOrigin to url::Origin loses information about origins that are
-// whitelisted by SecurityPolicy.
+// allowed by SecurityPolicy.
 //
 // This function also doesn't use a |tainted_origin| flag because Blink loaders
 // mutate the origin instead of using such a flag.
@@ -352,6 +352,13 @@ Vector<String> CorsUnsafeRequestHeaderNames(const HTTPHeaderMap& headers) {
 
   Vector<String> header_names;
   for (const auto& name : network::cors::CorsUnsafeRequestHeaderNames(in))
+    header_names.push_back(WebString::FromLatin1(name));
+  return header_names;
+}
+
+PLATFORM_EXPORT Vector<String> PrivilegedNoCorsHeaderNames() {
+  Vector<String> header_names;
+  for (const auto& name : network::cors::PrivilegedNoCorsHeaderNames())
     header_names.push_back(WebString::FromLatin1(name));
   return header_names;
 }

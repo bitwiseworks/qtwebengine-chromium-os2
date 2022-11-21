@@ -18,12 +18,16 @@ class CORE_EXPORT LargestContentfulPaintCalculator final
     : public GarbageCollected<LargestContentfulPaintCalculator> {
  public:
   explicit LargestContentfulPaintCalculator(WindowPerformance*);
+  LargestContentfulPaintCalculator(const LargestContentfulPaintCalculator&) =
+      delete;
+  LargestContentfulPaintCalculator& operator=(
+      const LargestContentfulPaintCalculator&) = delete;
 
   void UpdateLargestContentPaintIfNeeded(
       base::Optional<base::WeakPtr<TextRecord>> largest_text,
       base::Optional<const ImageRecord*> largest_image);
 
-  void Trace(Visitor* visitor);
+  void Trace(Visitor* visitor) const;
 
  private:
   friend class LargestContentfulPaintCalculatorTest;
@@ -60,8 +64,6 @@ class CORE_EXPORT LargestContentfulPaintCalculator final
   LargestContentType last_type_ = LargestContentType::kUnknown;
 
   unsigned count_candidates_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(LargestContentfulPaintCalculator);
 };
 
 }  // namespace blink

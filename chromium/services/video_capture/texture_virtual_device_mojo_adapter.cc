@@ -5,11 +5,10 @@
 #include "services/video_capture/texture_virtual_device_mojo_adapter.h"
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
 #include "media/base/bind_to_current_loop.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/video_capture/public/mojom/constants.mojom.h"
 #include "services/video_capture/public/mojom/scoped_access_permission.mojom.h"
 

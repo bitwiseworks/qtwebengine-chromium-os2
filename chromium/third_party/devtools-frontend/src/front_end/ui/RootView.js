@@ -14,14 +14,16 @@ export class RootView extends VBox {
     this.markAsRoot();
     this.element.classList.add('root-view');
     this.registerRequiredCSS('ui/rootView.css');
-    this.element.setAttribute('spellcheck', false);
+    this.element.setAttribute('spellcheck', 'false');
   }
 
   /**
    * @param {!Document} document
    */
   attachToDocument(document) {
-    document.defaultView.addEventListener('resize', this.doResize.bind(this), false);
+    if (document.defaultView) {
+      document.defaultView.addEventListener('resize', this.doResize.bind(this), false);
+    }
     this._window = document.defaultView;
     this.doResize();
     this.show(/** @type {!Element} */ (document.body));

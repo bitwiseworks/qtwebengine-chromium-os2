@@ -5,8 +5,10 @@
 #include "components/printing/browser/print_manager_utils.h"
 
 #include "components/printing/browser/print_composite_client.h"
+#include "components/printing/common/print.mojom.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/browser/site_isolation_policy.h"
+#include "printing/mojom/print.mojom.h"
 #include "printing/print_settings.h"
 
 namespace printing {
@@ -44,7 +46,7 @@ void CreateCompositeClientIfNeeded(content::WebContents* web_contents,
 }
 
 void RenderParamsFromPrintSettings(const PrintSettings& settings,
-                                   PrintMsg_Print_Params* params) {
+                                   mojom::PrintParams* params) {
   params->page_size = settings.page_setup_device_units().physical_size();
   params->content_size.SetSize(
       settings.page_setup_device_units().content_area().width(),
@@ -68,8 +70,8 @@ void RenderParamsFromPrintSettings(const PrintSettings& settings,
   params->title = settings.title();
   params->url = settings.url();
   params->printed_doc_type = IsOopifEnabled() && settings.is_modifiable()
-                                 ? SkiaDocumentType::MSKP
-                                 : SkiaDocumentType::PDF;
+                                 ? mojom::SkiaDocumentType::kMSKP
+                                 : mojom::SkiaDocumentType::kPDF;
   params->pages_per_sheet = settings.pages_per_sheet();
 }
 

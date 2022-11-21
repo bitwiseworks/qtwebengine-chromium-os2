@@ -29,10 +29,15 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as Platform from '../platform/platform.js';
+import * as Root from '../root/root.js';
+import * as TextUtils from '../text_utils/text_utils.js';
+import * as ThemeSupport from '../theme_support/theme_support.js';
 
 import * as ARIAUtils from './ARIAUtils.js';
 import {Dialog} from './Dialog.js';
@@ -53,13 +58,11 @@ import {XLink} from './XLink.js';
 export const highlightedSearchResultClassName = 'highlighted-search-result';
 export const highlightedCurrentSearchResultClassName = 'current-search-result';
 
-export {markAsFocusedByKeyboard} from './utils/focus-changed.js';
-
 /**
  * @param {!Element} element
  * @param {?function(!MouseEvent): boolean} elementDragStart
- * @param {function(!MouseEvent)} elementDrag
- * @param {?function(!MouseEvent)} elementDragEnd
+ * @param {function(!MouseEvent):void} elementDrag
+ * @param {?function(!MouseEvent):void} elementDragEnd
  * @param {?string} cursor
  * @param {?string=} hoverCursor
  * @param {number=} startDelay
@@ -100,8 +103,8 @@ export function installDragHandle(
 /**
  * @param {!Element} targetElement
  * @param {?function(!MouseEvent):boolean} elementDragStart
- * @param {function(!MouseEvent)} elementDrag
- * @param {?function(!MouseEvent)} elementDragEnd
+ * @param {function(!MouseEvent):void} elementDrag
+ * @param {?function(!MouseEvent):void} elementDragEnd
  * @param {?string} cursor
  * @param {!Event} event
  */
@@ -145,8 +148,8 @@ class DragHandler {
   /**
    * @param {!Element} targetElement
    * @param {?function(!MouseEvent):boolean} elementDragStart
-   * @param {function(!MouseEvent)} elementDrag
-   * @param {?function(!MouseEvent)} elementDragEnd
+   * @param {function(!MouseEvent):void} elementDrag
+   * @param {?function(!MouseEvent):void} elementDragEnd
    * @param {?string} cursor
    * @param {!Event} event
    */
@@ -506,8 +509,8 @@ export function createReplacementString(wordString, event, customNumberHandler) 
 /**
  * @param {!Event} event
  * @param {!Element} element
- * @param {function(string,string)=} finishHandler
- * @param {function(string)=} suggestionHandler
+ * @param {function(string,string):void=} finishHandler
+ * @param {(function(string):*)=} suggestionHandler
  * @param {function(string, number, string):string=} customNumberHandler
  * @return {boolean}
  */
@@ -661,30 +664,6 @@ Number.secondsToString = function(seconds, higherResolution) {
 };
 
 /**
- * @param {number} bytes
- * @return {string}
- */
-Number.bytesToString = function(bytes) {
-  if (bytes < 1000) {
-    return Common.UIString.UIString('%.0f\xA0B', bytes);
-  }
-
-  const kilobytes = bytes / 1000;
-  if (kilobytes < 100) {
-    return Common.UIString.UIString('%.1f\xA0kB', kilobytes);
-  }
-  if (kilobytes < 1000) {
-    return Common.UIString.UIString('%.0f\xA0kB', kilobytes);
-  }
-
-  const megabytes = kilobytes / 1000;
-  if (megabytes < 100) {
-    return Common.UIString.UIString('%.1f\xA0MB', megabytes);
-  }
-  return Common.UIString.UIString('%.0f\xA0MB', megabytes);
-};
-
-/**
  * @param {number} num
  * @return {string}
  */
@@ -699,18 +678,18 @@ Number.withThousandsSeparator = function(num) {
 
 /**
  * @param {string} format
- * @param {?ArrayLike} substitutions
+ * @param {?ArrayLike<*>} substitutions
  * @return {!Element}
  */
 export function formatLocalized(format, substitutions) {
   const formatters = {s: substitution => substitution};
   /**
    * @param {!Element} a
-   * @param {string|!Element} b
+   * @param {*} b
    * @return {!Element}
    */
   function append(a, b) {
-    a.appendChild(typeof b === 'string' ? createTextNode(b) : b);
+    a.appendChild(typeof b === 'string' ? createTextNode(b) : /** @type {!Element} */ (b));
     return a;
   }
   return Platform.StringUtilities
@@ -777,19 +756,6 @@ function _windowFocused(document, event) {
   if (event.target.document.nodeType === Node.DOCUMENT_NODE) {
     document.body.classList.remove('inactive');
   }
-  UI._keyboardFocus = true;
-  const listener = () => {
-    const activeElement = document.deepActiveElement();
-    if (activeElement) {
-      activeElement.removeAttribute('data-keyboard-focus');
-    }
-    UI._keyboardFocus = false;
-  };
-  document.defaultView.requestAnimationFrame(() => {
-    UI._keyboardFocus = false;
-    document.removeEventListener('mousedown', listener, true);
-  });
-  document.addEventListener('mousedown', listener, true);
 }
 
 /**
@@ -800,14 +766,6 @@ function _windowBlurred(document, event) {
   if (event.target.document.nodeType === Node.DOCUMENT_NODE) {
     document.body.classList.add('inactive');
   }
-}
-
-/**
- * @param {!Element} element
- * @returns {boolean}
- */
-export function elementIsFocusedByKeyboard(element) {
-  return element.hasAttribute('data-keyboard-focus');
 }
 
 /**
@@ -843,13 +801,13 @@ export class ElementFocusRestorer {
  * @return {?Element}
  */
 export function highlightSearchResult(element, offset, length, domChanges) {
-  const result = highlightSearchResults(element, [new TextUtils.SourceRange(offset, length)], domChanges);
+  const result = highlightSearchResults(element, [new TextUtils.TextRange.SourceRange(offset, length)], domChanges);
   return result.length ? result[0] : null;
 }
 
 /**
  * @param {!Element} element
- * @param {!Array.<!TextUtils.SourceRange>} resultRanges
+ * @param {!Array.<!TextUtils.TextRange.SourceRange>} resultRanges
  * @param {!Array.<!Object>=} changes
  * @return {!Array.<!Element>}
  */
@@ -877,7 +835,7 @@ export function runCSSAnimationOnce(element, className) {
 
 /**
  * @param {!Element} element
- * @param {!Array.<!TextUtils.SourceRange>} resultRanges
+ * @param {!Array.<!TextUtils.TextRange.SourceRange>} resultRanges
  * @param {string} styleClass
  * @param {!Array.<!Object>=} changes
  * @return {!Array.<!Element>}
@@ -1033,7 +991,7 @@ class InvokeOnceHandlers {
 
   /**
    * @param {!Object} object
-   * @param {function()} method
+   * @param {function():void} method
    */
   add(object, method) {
     if (!this._handlers) {
@@ -1089,7 +1047,7 @@ export function endBatchUpdate() {
 
 /**
  * @param {!Object} object
- * @param {function()} method
+ * @param {function():void} method
  */
 export function invokeOnceAfterBatchUpdate(object, method) {
   if (!_postUpdateHandlers) {
@@ -1103,8 +1061,8 @@ export function invokeOnceAfterBatchUpdate(object, method) {
  * @param {!Function} func
  * @param {!Array.<{from:number, to:number}>} params
  * @param {number} duration
- * @param {function()=} animationComplete
- * @return {function()}
+ * @param {function():*=} animationComplete
+ * @return {function():void}
  */
 export function animateFunction(window, func, params, duration, animationComplete) {
   const start = window.performance.now();
@@ -1129,8 +1087,8 @@ export function animateFunction(window, func, params, duration, animationComplet
 export class LongClickController extends Common.ObjectWrapper.ObjectWrapper {
   /**
    * @param {!Element} element
-   * @param {function(!Event)} callback
-   * @param {function(!Event)} isEditKeyFunc
+   * @param {function(!Event):void} callback
+   * @param {function(!Event):void} isEditKeyFunc
    */
   constructor(element, callback, isEditKeyFunc = event => isEnterOrSpaceKey(event)) {
     super();
@@ -1138,6 +1096,9 @@ export class LongClickController extends Common.ObjectWrapper.ObjectWrapper {
     this._callback = callback;
     this._editKey = isEditKeyFunc;
     this._enable();
+
+    /** @type {{mouseUp: function(!Event):void, mouseDown: function(!Event):void, reset: function():void }} */
+    this._longClickData;
   }
 
   reset() {
@@ -1226,14 +1187,9 @@ export class LongClickController extends Common.ObjectWrapper.ObjectWrapper {
 
 LongClickController.TIME_MS = 200;
 
-function _trackKeyboardFocus() {
-  UI._keyboardFocus = true;
-  document.defaultView.requestAnimationFrame(() => void(UI._keyboardFocus = false));
-}
-
 /**
  * @param {!Document} document
- * @param {!Common.Settings.Setting} themeSetting
+ * @param {!Common.Settings.Setting<string>} themeSetting
  */
 export function initializeUIUtils(document, themeSetting) {
   document.body.classList.toggle('inactive', !document.hasFocus());
@@ -1241,16 +1197,10 @@ export function initializeUIUtils(document, themeSetting) {
   document.defaultView.addEventListener('blur', _windowBlurred.bind(UI, document), false);
   document.addEventListener('focus', focusChanged.bind(UI), true);
 
-  // Track which focus changes occur due to keyboard input.
-  // When focus changes from tab navigation (keydown).
-  // When focus() is called in keyboard initiated click events (keyup).
-  document.addEventListener('keydown', _trackKeyboardFocus, true);
-  document.addEventListener('keyup', _trackKeyboardFocus, true);
-
-  if (!self.UI.themeSupport) {
-    self.UI.themeSupport = new ThemeSupport(themeSetting);
+  if (!ThemeSupport.ThemeSupport.hasInstance()) {
+    ThemeSupport.ThemeSupport.instance({forceNew: true, setting: themeSetting});
   }
-  self.UI.themeSupport.applyTheme(document);
+  ThemeSupport.ThemeSupport.instance().applyTheme(document);
 
   const body = /** @type {!Element} */ (document.body);
   appendStyle(body, 'ui/inspectorStyle.css');
@@ -1267,13 +1217,16 @@ export function beautifyFunctionName(name) {
 
 /**
  * @param {string} text
- * @param {function(!Event)=} clickHandler
+ * @param {function(!Event):*=} clickHandler
  * @param {string=} className
  * @param {boolean=} primary
- * @return {!Element}
+ * @return {!HTMLButtonElement}
  */
 export function createTextButton(text, clickHandler, className, primary) {
-  const element = createElementWithClass('button', className || '');
+  const element = /** @type {!HTMLButtonElement} */ (document.createElement('button'));
+  if (className) {
+    element.className = className;
+  }
   element.textContent = text;
   element.classList.add('text-button');
   if (primary) {
@@ -1292,7 +1245,10 @@ export function createTextButton(text, clickHandler, className, primary) {
  * @return {!Element}
  */
 export function createInput(className, type) {
-  const element = createElementWithClass('input', className || '');
+  const element = document.createElement('input');
+  if (className) {
+    element.className = className;
+  }
   element.spellcheck = false;
   element.classList.add('harmony-input');
   if (type) {
@@ -1308,7 +1264,10 @@ export function createInput(className, type) {
  * @return {!Element}
  */
 export function createLabel(title, className, associatedControl) {
-  const element = createElementWithClass('label', className || '');
+  const element = document.createElement('label');
+  if (className) {
+    element.className = className;
+  }
   element.textContent = title;
   if (associatedControl) {
     ARIAUtils.bindLabelToControl(element, associatedControl);
@@ -1430,6 +1389,25 @@ export class CheckboxLabel extends HTMLSpanElement {
   }
 }
 
+export class DevToolsIconLabel extends HTMLSpanElement {
+  constructor() {
+    super();
+    const root = createShadowRootWithCoreStyles(this);
+    this._iconElement = Icon.create();
+    this._iconElement.style.setProperty('margin-right', '4px');
+    root.appendChild(this._iconElement);
+    root.createChild('slot');
+  }
+
+  /**
+     * @param {string} type
+     * @this {Element}
+     */
+  set type(type) {
+    this._iconElement.setIconType(type);
+  }
+}
+
 (function() {
 let labelId = 0;
 registerCustomElement('span', 'dt-radio', class extends HTMLSpanElement {
@@ -1461,30 +1439,14 @@ function radioClickHandler(event) {
   this.radioElement.dispatchEvent(new Event('change'));
 }
 
-registerCustomElement('span', 'dt-icon-label', class extends HTMLSpanElement {
-  constructor() {
-    super();
-    const root = createShadowRootWithCoreStyles(this);
-    this._iconElement = Icon.create();
-    this._iconElement.style.setProperty('margin-right', '4px');
-    root.appendChild(this._iconElement);
-    root.createChild('slot');
-  }
-
-  /**
-     * @param {string} type
-     * @this {Element}
-     */
-  set type(type) {
-    this._iconElement.setIconType(type);
-  }
-});
+registerCustomElement('span', 'dt-icon-label', DevToolsIconLabel);
 
 registerCustomElement('span', 'dt-slider', class extends HTMLSpanElement {
   constructor() {
     super();
     const root = createShadowRootWithCoreStyles(this, 'ui/slider.css');
-    this.sliderElement = createElementWithClass('input', 'dt-range-input');
+    this.sliderElement = document.createElement('input');
+    this.sliderElement.classList.add('dt-range-input');
     this.sliderElement.type = 'range';
     root.appendChild(this.sliderElement);
   }
@@ -1576,11 +1538,11 @@ registerCustomElement('div', 'dt-close-button', class extends HTMLDivElement {
 
 /**
  * @param {!Element} input
- * @param {function(string)} apply
+ * @param {function(string):void} apply
  * @param {function(string):{valid: boolean, errorMessage: (string|undefined)}} validate
  * @param {boolean} numeric
  * @param {number=} modifierMultiplier
- * @return {function(string)}
+ * @return {function(string):void}
  */
 export function bindInput(input, apply, validate, numeric, modifierMultiplier) {
   input.addEventListener('change', onChange, false);
@@ -1734,280 +1696,6 @@ export function measureTextWidth(context, text) {
 }
 
 /**
- * @unrestricted
- */
-export class ThemeSupport {
-  /**
-   * @param {!Common.Settings.Setting} setting
-   */
-  constructor(setting) {
-    const systemPreferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default';
-    this._themeName = setting.get() === 'systemPreferred' ? systemPreferredTheme : setting.get();
-    this._themableProperties = new Set([
-      'color', 'box-shadow', 'text-shadow', 'outline-color', 'background-image', 'background-color',
-      'border-left-color', 'border-right-color', 'border-top-color', 'border-bottom-color', '-webkit-border-image',
-      'fill', 'stroke'
-    ]);
-    /** @type {!Map<string, string>} */
-    this._cachedThemePatches = new Map();
-    this._setting = setting;
-    this._customSheets = new Set();
-  }
-
-  /**
-   * @return {boolean}
-   */
-  hasTheme() {
-    return this._themeName !== 'default';
-  }
-
-  /**
-   * @return {string}
-   */
-  themeName() {
-    return this._themeName;
-  }
-
-  /**
-   * @param {!Element|!ShadowRoot} element
-   */
-  injectHighlightStyleSheets(element) {
-    this._injectingStyleSheet = true;
-    appendStyle(element, 'ui/inspectorSyntaxHighlight.css');
-    if (this._themeName === 'dark') {
-      appendStyle(element, 'ui/inspectorSyntaxHighlightDark.css');
-    }
-    this._injectingStyleSheet = false;
-  }
-
-   /**
-   * @param {!Element|!ShadowRoot} element
-   */
-  injectCustomStyleSheets(element) {
-    for (const sheet of this._customSheets){
-      const styleElement = createElement('style');
-      styleElement.textContent = sheet;
-      element.appendChild(styleElement);
-    }
-  }
-
-  /**
-   * @return {boolean}
-   */
-  isForcedColorsMode() {
-    return window.matchMedia('(forced-colors: active)').matches;
-  }
-
-  /**
-   * @param {string} sheetText
-   */
-  addCustomStylesheet(sheetText) {
-    this._customSheets.add(sheetText);
-  }
-
-  /**
-   * @param {!Document} document
-   */
-  applyTheme(document) {
-    if (!this.hasTheme() || this.isForcedColorsMode()) {
-      return;
-    }
-
-    if (this._themeName === 'dark') {
-      document.documentElement.classList.add('-theme-with-dark-background');
-    }
-
-    const styleSheets = document.styleSheets;
-    const result = [];
-    for (let i = 0; i < styleSheets.length; ++i) {
-      result.push(this._patchForTheme(styleSheets[i].href, styleSheets[i]));
-    }
-    result.push('/*# sourceURL=inspector.css.theme */');
-
-    const styleElement = createElement('style');
-    styleElement.textContent = result.join('\n');
-    document.head.appendChild(styleElement);
-  }
-
-  /**
-   * @param {string} id
-   * @param {string} text
-   * @return {string}
-   * @suppressGlobalPropertiesCheck
-   */
-  themeStyleSheet(id, text) {
-    if (!this.hasTheme() || this._injectingStyleSheet || this.isForcedColorsMode()) {
-      return '';
-    }
-
-    let patch = this._cachedThemePatches.get(id);
-    if (!patch) {
-      const styleElement = createElement('style');
-      styleElement.textContent = text;
-      document.body.appendChild(styleElement);
-      patch = this._patchForTheme(id, styleElement.sheet);
-      document.body.removeChild(styleElement);
-    }
-    return patch;
-  }
-
-  /**
-   * @param {string} id
-   * @param {!StyleSheet} styleSheet
-   * @return {string}
-   */
-  _patchForTheme(id, styleSheet) {
-    const cached = this._cachedThemePatches.get(id);
-    if (cached) {
-      return cached;
-    }
-
-    try {
-      const rules = styleSheet.cssRules;
-      const result = [];
-      for (let j = 0; j < rules.length; ++j) {
-        if (rules[j] instanceof CSSImportRule) {
-          result.push(this._patchForTheme(rules[j].styleSheet.href, rules[j].styleSheet));
-          continue;
-        }
-        const output = [];
-        const style = rules[j].style;
-        const selectorText = rules[j].selectorText;
-        for (let i = 0; style && i < style.length; ++i) {
-          this._patchProperty(selectorText, style, style[i], output);
-        }
-        if (output.length) {
-          result.push(rules[j].selectorText + '{' + output.join('') + '}');
-        }
-      }
-
-      const fullText = result.join('\n');
-      this._cachedThemePatches.set(id, fullText);
-      return fullText;
-    } catch (e) {
-      this._setting.set('default');
-      return '';
-    }
-  }
-
-  /**
-   * @param {string} selectorText
-   * @param {!CSSStyleDeclaration} style
-   * @param {string} name
-   * @param {!Array<string>} output
-   *
-   * Theming API is primarily targeted at making dark theme look good.
-   * - If rule has ".-theme-preserve" in selector, it won't be affected.
-   * - One can create specializations for dark themes via body.-theme-with-dark-background selector in host context.
-   */
-  _patchProperty(selectorText, style, name, output) {
-    if (!this._themableProperties.has(name)) {
-      return;
-    }
-
-    const value = style.getPropertyValue(name);
-    if (!value || value === 'none' || value === 'inherit' || value === 'initial' || value === 'transparent') {
-      return;
-    }
-    if (name === 'background-image' && value.indexOf('gradient') === -1) {
-      return;
-    }
-
-    if (selectorText.indexOf('-theme-') !== -1) {
-      return;
-    }
-
-    let colorUsage = ThemeSupport.ColorUsage.Unknown;
-    if (name.indexOf('background') === 0 || name.indexOf('border') === 0) {
-      colorUsage |= ThemeSupport.ColorUsage.Background;
-    }
-    if (name.indexOf('background') === -1) {
-      colorUsage |= ThemeSupport.ColorUsage.Foreground;
-    }
-
-    output.push(name);
-    output.push(':');
-    const items = value.replace(Common.Color.Regex, '\0$1\0').split('\0');
-    for (let i = 0; i < items.length; ++i) {
-      output.push(this.patchColorText(items[i], /** @type {!ThemeSupport.ColorUsage} */ (colorUsage)));
-    }
-    if (style.getPropertyPriority(name)) {
-      output.push(' !important');
-    }
-    output.push(';');
-  }
-
-  /**
-   * @param {string} text
-   * @param {!ThemeSupport.ColorUsage} colorUsage
-   * @return {string}
-   */
-  patchColorText(text, colorUsage) {
-    const color = Common.Color.Color.parse(text);
-    if (!color) {
-      return text;
-    }
-    const outColor = this.patchColor(color, colorUsage);
-    let outText = outColor.asString(null);
-    if (!outText) {
-      outText = outColor.asString(outColor.hasAlpha() ? Common.Color.Format.RGBA : Common.Color.Format.RGB);
-    }
-    return outText || text;
-  }
-
-  /**
-   * @param {!Common.Color.Color} color
-   * @param {!ThemeSupport.ColorUsage} colorUsage
-   * @return {!Common.Color.Color}
-   */
-  patchColor(color, colorUsage) {
-    const hsla = color.hsla();
-    this._patchHSLA(hsla, colorUsage);
-    const rgba = [];
-    Common.Color.Color.hsl2rgb(hsla, rgba);
-    return new Common.Color.Color(rgba, color.format());
-  }
-
-  /**
-   * @param {!Array<number>} hsla
-   * @param {!ThemeSupport.ColorUsage} colorUsage
-   */
-  _patchHSLA(hsla, colorUsage) {
-    const hue = hsla[0];
-    const sat = hsla[1];
-    let lit = hsla[2];
-    const alpha = hsla[3];
-
-    switch (this._themeName) {
-      case 'dark': {
-        const minCap = colorUsage & ThemeSupport.ColorUsage.Background ? 0.14 : 0;
-        const maxCap = colorUsage & ThemeSupport.ColorUsage.Foreground ? 0.9 : 1;
-        lit = 1 - lit;
-        if (lit < minCap * 2) {
-          lit = minCap + lit / 2;
-        } else if (lit > 2 * maxCap - 1) {
-          lit = maxCap - 1 / 2 + lit / 2;
-        }
-        break;
-      }
-    }
-    hsla[0] = Platform.NumberUtilities.clamp(hue, 0, 1);
-    hsla[1] = Platform.NumberUtilities.clamp(sat, 0, 1);
-    hsla[2] = Platform.NumberUtilities.clamp(lit, 0, 1);
-    hsla[3] = Platform.NumberUtilities.clamp(alpha, 0, 1);
-  }
-}
-
-/**
- * @enum {number}
- */
-ThemeSupport.ColorUsage = {
-  Unknown: 0,
-  Foreground: 1 << 0,
-  Background: 1 << 1,
-};
-
-/**
  * @param {string} article
  * @param {string} title
  * @return {!Element}
@@ -2079,7 +1767,7 @@ export function loadImageFromData(data) {
 }
 
 /**
- * @param {function(!File)} callback
+ * @param {function(!File):*} callback
  * @return {!Node}
  */
 export function createFileSelectorElement(callback) {
@@ -2104,7 +1792,7 @@ export class MessageDialog {
   /**
    * @param {string} message
    * @param {!Document|!Element=} where
-   * @return {!Promise}
+   * @return {!Promise<void>}
    */
   static async show(message, where) {
     const dialog = new Dialog();
@@ -2195,7 +1883,7 @@ Renderer.render = async function(object, options) {
   if (!object) {
     throw new Error('Can\'t render ' + object);
   }
-  const renderer = await self.runtime.extension(Renderer, object).instance();
+  const renderer = await Root.Runtime.Runtime.instance().extension(Renderer, object).instance();
   return renderer ? renderer.render(object, options || {}) : null;
 };
 

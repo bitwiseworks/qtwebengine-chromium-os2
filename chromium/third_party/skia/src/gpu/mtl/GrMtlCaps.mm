@@ -10,11 +10,11 @@
 #include "include/core/SkRect.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "src/core/SkCompressedDataUtils.h"
+#include "src/gpu/GrBackendUtils.h"
 #include "src/gpu/GrProcessor.h"
 #include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/GrRenderTargetPriv.h"
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrSurfaceProxy.h"
@@ -264,7 +264,7 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
 
     fOversizedStencilSupport = true;
 
-    fMipMapSupport = true;   // always available in Metal
+    fMipmapSupport = true;   // always available in Metal
     fNPOTTextureTileSupport = true;  // always available in Metal
 
     fReuseScratchTextures = true; // Assuming this okay
@@ -279,8 +279,13 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
 
     if (@available(macOS 10.11, iOS 9.0, *)) {
         if (this->isMac() || 3 == fFamilyGroup) {
-            fInstanceAttribSupport = true;
+            fDrawInstancedSupport = true;
         }
+        // https://developer.apple.com/documentation/metal/mtlrendercommandencoder/specifying_drawing_and_dispatch_arguments_indirectly
+        // Metal does not appear to have a call that issues multiple indirect draws. Furthermore,
+        // the indirect draw structs are ordered differently than GL and Vulkan. For now we leave it
+        // unsupported and rely on polyfills in GrOpsRenderPass.
+        SkASSERT(!fNativeDrawIndirectSupport);
     }
 
     fMixedSamplesSupport = false;
@@ -311,24 +316,6 @@ static bool format_is_srgb(MTLPixelFormat format) {
 
 bool GrMtlCaps::isFormatSRGB(const GrBackendFormat& format) const {
     return format_is_srgb(GrBackendFormatAsMTLPixelFormat(format));
-}
-
-SkImage::CompressionType GrMtlCaps::compressionType(const GrBackendFormat& format) const {
-
-    switch (GrBackendFormatAsMTLPixelFormat(format)) {
-#ifdef SK_BUILD_FOR_IOS
-        case MTLPixelFormatETC2_RGB8:
-            // ETC2 uses the same compression layout as ETC1
-            return SkImage::CompressionType::kETC2_RGB8_UNORM;
-#else
-        case MTLPixelFormatBC1_RGBA:
-            return SkImage::CompressionType::kBC1_RGBA8_UNORM;
-#endif
-        default:
-            return SkImage::CompressionType::kNone;
-    }
-
-    SkUNREACHABLE;
 }
 
 bool GrMtlCaps::isFormatTexturable(const GrBackendFormat& format) const {
@@ -571,7 +558,7 @@ void GrMtlCaps::initFormatTable() {
         }
     }
 
-#ifdef SK_BUILD_FOR_IOS
+#if defined(SK_BUILD_FOR_IOS) && !TARGET_OS_SIMULATOR
     // Format: B5G6R5Unorm
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatB5G6R5Unorm)];
@@ -857,7 +844,7 @@ void GrMtlCaps::initFormatTable() {
 
     this->setColorType(GrColorType::kAlpha_8,          { MTLPixelFormatR8Unorm,
                                                          MTLPixelFormatA8Unorm });
-#ifdef SK_BUILD_FOR_IOS
+#if defined(SK_BUILD_FOR_IOS) && !TARGET_OS_SIMULATOR
     this->setColorType(GrColorType::kBGR_565,          { MTLPixelFormatB5G6R5Unorm });
     this->setColorType(GrColorType::kABGR_4444,        { MTLPixelFormatABGR4Unorm });
 #endif
@@ -895,12 +882,6 @@ bool GrMtlCaps::onAreColorTypeAndFormatCompatible(GrColorType ct,
                                                   const GrBackendFormat& format) const {
     MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
 
-    SkImage::CompressionType compression = GrMtlFormatToCompressionType(mtlFormat);
-    if (compression != SkImage::CompressionType::kNone) {
-        return ct == (SkCompressionTypeIsOpaque(compression) ? GrColorType::kRGB_888x
-                                                             : GrColorType::kRGBA_8888);
-    }
-
     const auto& info = this->getFormatInfo(mtlFormat);
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
         if (info.fColorTypeInfos[i].fColorType == ct) {
@@ -908,25 +889,6 @@ bool GrMtlCaps::onAreColorTypeAndFormatCompatible(GrColorType ct,
         }
     }
     return false;
-}
-
-GrColorType GrMtlCaps::getYUVAColorTypeFromBackendFormat(const GrBackendFormat& format,
-                                                         bool isAlphaChannel) const {
-    switch (GrBackendFormatAsMTLPixelFormat(format)) {
-        case MTLPixelFormatA8Unorm:           // fall through
-        case MTLPixelFormatR8Unorm:           return isAlphaChannel ? GrColorType::kAlpha_8
-                                                                    : GrColorType::kGray_8;
-        case MTLPixelFormatRG8Unorm:          return GrColorType::kRG_88;
-        case MTLPixelFormatRGBA8Unorm:        return GrColorType::kRGBA_8888;
-        case MTLPixelFormatBGRA8Unorm:        return GrColorType::kBGRA_8888;
-        case MTLPixelFormatRGB10A2Unorm:      return GrColorType::kRGBA_1010102;
-        case MTLPixelFormatR16Unorm:          return GrColorType::kAlpha_16;
-        case MTLPixelFormatR16Float:          return GrColorType::kAlpha_F16;
-        case MTLPixelFormatRG16Unorm:         return GrColorType::kRG_1616;
-        case MTLPixelFormatRGBA16Unorm:       return GrColorType::kRGBA_16161616;
-        case MTLPixelFormatRG16Float:         return GrColorType::kRG_F16;
-        default:                              return GrColorType::kUnknown;
-    }
 }
 
 GrBackendFormat GrMtlCaps::onGetDefaultBackendFormat(GrColorType ct) const {
@@ -962,7 +924,7 @@ GrBackendFormat GrMtlCaps::getBackendFormatFromCompressionType(
     SK_ABORT("Invalid compression type");
 }
 
-GrSwizzle GrMtlCaps::getReadSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
+GrSwizzle GrMtlCaps::onGetReadSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
     MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
     SkASSERT(mtlFormat != MTLPixelFormatInvalid);
     const auto& info = this->getFormatInfo(mtlFormat);
@@ -972,7 +934,9 @@ GrSwizzle GrMtlCaps::getReadSwizzle(const GrBackendFormat& format, GrColorType c
             return ctInfo.fReadSwizzle;
         }
     }
-    return GrSwizzle::RGBA();
+    SkDEBUGFAILF("Illegal color type (%d) and format (%d) combination.", colorType,
+                 static_cast<int>(mtlFormat));
+    return {};
 }
 
 GrSwizzle GrMtlCaps::getWriteSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
@@ -985,7 +949,9 @@ GrSwizzle GrMtlCaps::getWriteSwizzle(const GrBackendFormat& format, GrColorType 
             return ctInfo.fWriteSwizzle;
         }
     }
-    return GrSwizzle::RGBA();
+    SkDEBUGFAILF("Illegal color type (%d) and format (%d) combination.", colorType,
+                 static_cast<int>(mtlFormat));
+    return {};
 }
 
 uint64_t GrMtlCaps::computeFormatKey(const GrBackendFormat& format) const {
@@ -1018,9 +984,7 @@ GrCaps::SupportedWrite GrMtlCaps::supportedWritePixelsColorType(
 GrCaps::SupportedRead GrMtlCaps::onSupportedReadPixelsColorType(
         GrColorType srcColorType, const GrBackendFormat& srcBackendFormat,
         GrColorType dstColorType) const {
-    MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(srcBackendFormat);
-
-    SkImage::CompressionType compression = GrMtlFormatToCompressionType(mtlFormat);
+    SkImage::CompressionType compression = GrBackendFormatToCompressionType(srcBackendFormat);
     if (compression != SkImage::CompressionType::kNone) {
 #ifdef SK_BUILD_FOR_IOS
         // Reading back to kRGB_888x doesn't work on Metal/iOS (skbug.com/9839)
@@ -1034,6 +998,7 @@ GrCaps::SupportedRead GrMtlCaps::onSupportedReadPixelsColorType(
     // Metal requires the destination offset for copyFromTexture to be a multiple of the textures
     // pixels size.
     size_t offsetAlignment = GrColorTypeBytesPerPixel(srcColorType);
+    MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(srcBackendFormat);
 
     const auto& info = this->getFormatInfo(mtlFormat);
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
@@ -1056,9 +1021,7 @@ GrCaps::SupportedRead GrMtlCaps::onSupportedReadPixelsColorType(
  * pipeline. This includes blending information and primitive type. The pipeline is immutable
  * so any remaining dynamic state is set via the MtlRenderCmdEncoder.
  */
-GrProgramDesc GrMtlCaps::makeDesc(const GrRenderTarget* rt,
-                                  const GrProgramInfo& programInfo) const {
-
+GrProgramDesc GrMtlCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& programInfo) const {
     GrProgramDesc desc;
     if (!GrProgramDesc::Build(&desc, rt, programInfo, *this)) {
         SkASSERT(!desc.isValid());
@@ -1072,15 +1035,14 @@ GrProgramDesc GrMtlCaps::makeDesc(const GrRenderTarget* rt,
     b.add32(programInfo.numRasterSamples());
 
 #ifdef SK_DEBUG
-    if (rt && programInfo.pipeline().isStencilEnabled()) {
-        SkASSERT(rt->renderTargetPriv().getStencilAttachment());
+    if (rt && programInfo.isStencilEnabled()) {
+        SkASSERT(rt->getStencilAttachment());
     }
 #endif
 
-    b.add32(rt && rt->renderTargetPriv().getStencilAttachment()
-                                 ? this->preferredStencilFormat().fInternalFormat
-                                 : MTLPixelFormatInvalid);
-    b.add32((uint32_t)programInfo.pipeline().isStencilEnabled());
+    b.add32(rt && rt->getStencilAttachment() ? this->preferredStencilFormat().fInternalFormat
+                                             : MTLPixelFormatInvalid);
+    b.add32((uint32_t)programInfo.isStencilEnabled());
     // Stencil samples don't seem to be tracked in the MTLRenderPipeline
 
     programInfo.pipeline().genKey(&b, *this);
@@ -1090,13 +1052,12 @@ GrProgramDesc GrMtlCaps::makeDesc(const GrRenderTarget* rt,
     return desc;
 }
 
-
 #if GR_TEST_UTILS
 std::vector<GrCaps::TestFormatColorTypeCombination> GrMtlCaps::getTestingCombinations() const {
     std::vector<GrCaps::TestFormatColorTypeCombination> combos = {
         { GrColorType::kAlpha_8,          GrBackendFormat::MakeMtl(MTLPixelFormatA8Unorm)         },
         { GrColorType::kAlpha_8,          GrBackendFormat::MakeMtl(MTLPixelFormatR8Unorm)         },
-#ifdef SK_BUILD_FOR_IOS
+#if defined(SK_BUILD_FOR_IOS) && !TARGET_OS_SIMULATOR
         { GrColorType::kBGR_565,          GrBackendFormat::MakeMtl(MTLPixelFormatB5G6R5Unorm)     },
         { GrColorType::kABGR_4444,        GrBackendFormat::MakeMtl(MTLPixelFormatABGR4Unorm)      },
 #endif

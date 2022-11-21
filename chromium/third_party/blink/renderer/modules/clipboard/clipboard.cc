@@ -6,6 +6,7 @@
 
 #include <utility>
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_clipboard_item_options.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/clipboard/clipboard_promise.h"
 
@@ -17,7 +18,13 @@ Clipboard::Clipboard(ExecutionContext* context)
 }
 
 ScriptPromise Clipboard::read(ScriptState* script_state) {
-  return ClipboardPromise::CreateForRead(GetExecutionContext(), script_state);
+  return read(script_state, ClipboardItemOptions::Create());
+}
+
+ScriptPromise Clipboard::read(ScriptState* script_state,
+                              ClipboardItemOptions* options) {
+  return ClipboardPromise::CreateForRead(GetExecutionContext(), script_state,
+                                         options);
 }
 
 ScriptPromise Clipboard::readText(ScriptState* script_state) {
@@ -45,7 +52,7 @@ ExecutionContext* Clipboard::GetExecutionContext() const {
   return ExecutionContextClient::GetExecutionContext();
 }
 
-void Clipboard::Trace(Visitor* visitor) {
+void Clipboard::Trace(Visitor* visitor) const {
   EventTargetWithInlineData::Trace(visitor);
   ExecutionContextClient::Trace(visitor);
 }

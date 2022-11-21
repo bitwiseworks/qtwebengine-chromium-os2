@@ -5,9 +5,9 @@
 syntax = "proto2";
 
 option optimize_for = LITE_RUNTIME;
+option java_package = "org.chromium.components.metrics";
 
 option java_outer_classname = "ChromeUserMetricsExtensionProtos";
-option java_package = "org.chromium.components.metrics";
 
 package metrics;
 
@@ -37,6 +37,9 @@ message ChromeUserMetricsExtension {
 
     // UMA metrics from Android Webview.
     ANDROID_WEBVIEW = 20;
+
+    // Cast Assistant
+    CAST_ASSISTANT = 25;
 
     // Cast receivers, e.g. Chromecast
     CAST = 35;

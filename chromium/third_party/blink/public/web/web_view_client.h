@@ -32,8 +32,10 @@
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_VIEW_CLIENT_H_
 
 #include "base/strings/string_piece.h"
+#include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
-#include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/common/feature_policy/feature_policy_features.h"
+#include "third_party/blink/public/mojom/page/page_visibility_state.mojom-forward.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_ax_enums.h"
 #include "third_party/blink/public/web/web_frame.h"
@@ -42,15 +44,10 @@
 namespace blink {
 
 class WebPagePopup;
-class WebURL;
 class WebURLRequest;
 class WebView;
-namespace mojom {
-enum class WebSandboxFlags;
-}
 struct WebRect;
 struct WebSize;
-struct WebTextAutosizerPageInfo;
 struct WebWindowFeatures;
 
 class WebViewClient {
@@ -71,8 +68,8 @@ class WebViewClient {
       const WebWindowFeatures& features,
       const WebString& name,
       WebNavigationPolicy policy,
-      mojom::WebSandboxFlags,
-      const FeaturePolicy::FeatureState&,
+      network::mojom::WebSandboxFlags,
+      const FeaturePolicyFeatureState&,
       const SessionStorageNamespaceId& session_storage_namespace_id) {
     return nullptr;
   }
@@ -87,11 +84,6 @@ class WebViewClient {
 
   // Misc ----------------------------------------------------------------
 
-  // Called when the window for this WebView should be closed. The WebView
-  // and its frame tree will be closed asynchronously as a result of this
-  // request.
-  virtual void CloseWindowSoon() {}
-
   // Called when a region of the WebView needs to be re-painted. This is only
   // for non-composited WebViews that exist to contribute to a "parent" WebView
   // painting. Otherwise invalidations are transmitted to the compositor through
@@ -104,13 +96,11 @@ class WebViewClient {
   // should be printed.
   virtual void PrintPage(WebLocalFrame*) {}
 
+  virtual void OnPageVisibilityChanged(mojom::PageVisibilityState visibility) {}
+
+  virtual void OnPageFrozenChanged(bool frozen) {}
+
   // UI ------------------------------------------------------------------
-
-  // Called when hovering over an anchor with the given URL.
-  virtual void SetMouseOverURL(const WebURL&) {}
-
-  // Called when keyboard focus switches to an anchor with the given URL.
-  virtual void SetKeyboardFocusURL(const WebURL&) {}
 
   // Called to determine if drag-n-drop operations may initiate a page
   // navigation.
@@ -146,7 +136,10 @@ class WebViewClient {
   virtual void DidAutoResize(const WebSize& new_size) {}
 
   // Called when the View acquires focus.
-  virtual void DidFocus(WebLocalFrame* calling_frame) {}
+  virtual void DidFocus() {}
+
+  // Called when the View's zoom has changed.
+  virtual void ZoomLevelChanged() {}
 
   // Session history -----------------------------------------------------
 
@@ -164,15 +157,6 @@ class WebViewClient {
   virtual void DidUpdateInspectorSetting(const WebString& key,
                                          const WebString& value) {}
 
-  // Zoom ----------------------------------------------------------------
-
-  // Informs the browser that page metrics relevant to Blink's TextAutosizer
-  // have changed, so that they can be shared with other renderers. Only called
-  // in the renderer hosting the local main frame. The browser will share this
-  // information with other renderers that have frames in the page.
-  virtual void DidUpdateTextAutosizerPageInfo(const WebTextAutosizerPageInfo&) {
-  }
-
   // Gestures -------------------------------------------------------------
 
   virtual bool CanHandleGestureEvent() { return false; }
@@ -180,6 +164,10 @@ class WebViewClient {
   // Policies -------------------------------------------------------------
 
   virtual bool AllowPopupsDuringPageUnload() { return false; }
+
+  // History -------------------------------------------------------------
+  virtual void OnSetHistoryOffsetAndLength(int history_offset,
+                                           int history_length) {}
 };
 
 }  // namespace blink

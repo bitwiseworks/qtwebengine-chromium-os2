@@ -542,6 +542,15 @@ ScriptValue WebGL2RenderingContextBase::getInternalformatParameter(
     case GL_R16F:
     case GL_RG16F:
     case GL_RGBA16F:
+      if (!ExtensionEnabled(kEXTColorBufferFloatName) &&
+          !ExtensionEnabled(kEXTColorBufferHalfFloatName)) {
+        SynthesizeGLError(
+            GL_INVALID_ENUM, "getInternalformatParameter",
+            "invalid internalformat when EXT_color_buffer_[half_]float "
+            "is not enabled");
+        return ScriptValue::CreateNull(script_state->GetIsolate());
+      }
+      break;
     case GL_R32F:
     case GL_RG32F:
     case GL_RGBA32F:
@@ -836,14 +845,6 @@ void WebGL2RenderingContextBase::RenderbufferStorageHelper(
   if (!samples) {
     ContextGL()->RenderbufferStorage(target, internalformat, width, height);
   } else {
-    GLint max_number_of_samples = 0;
-    ContextGL()->GetInternalformativ(target, internalformat, GL_SAMPLES, 1,
-                                     &max_number_of_samples);
-    if (samples > max_number_of_samples) {
-      SynthesizeGLError(GL_INVALID_OPERATION, function_name,
-                        "samples out of range");
-      return;
-    }
     ContextGL()->RenderbufferStorageMultisampleCHROMIUM(
         target, samples, internalformat, width, height);
   }
@@ -913,6 +914,16 @@ void WebGL2RenderingContextBase::RenderbufferStorageImpl(
     case GL_R16F:
     case GL_RG16F:
     case GL_RGBA16F:
+      if (!ExtensionEnabled(kEXTColorBufferFloatName) &&
+          !ExtensionEnabled(kEXTColorBufferHalfFloatName)) {
+        SynthesizeGLError(
+            GL_INVALID_ENUM, function_name,
+            "EXT_color_buffer_float/EXT_color_buffer_half_float not enabled");
+        return;
+      }
+      RenderbufferStorageHelper(target, samples, internalformat, width, height,
+                                function_name);
+      break;
     case GL_R32F:
     case GL_RG32F:
     case GL_RGBA32F:
@@ -4696,6 +4707,36 @@ ScriptValue WebGL2RenderingContextBase::getIndexedParameter(
       ContextGL()->GetInteger64i_v(target, index, &value);
       return WebGLAny(script_state, value);
     }
+    case GL_BLEND_EQUATION_RGB:
+    case GL_BLEND_EQUATION_ALPHA:
+    case GL_BLEND_SRC_RGB:
+    case GL_BLEND_SRC_ALPHA:
+    case GL_BLEND_DST_RGB:
+    case GL_BLEND_DST_ALPHA: {
+      if (!ExtensionEnabled(kOESDrawBuffersIndexed)) {
+        // return null
+        SynthesizeGLError(GL_INVALID_ENUM, "getIndexedParameter",
+                          "invalid parameter name");
+        return ScriptValue::CreateNull(script_state->GetIsolate());
+      }
+      GLint value = -1;
+      ContextGL()->GetIntegeri_v(target, index, &value);
+      return WebGLAny(script_state, value);
+    }
+    case GL_COLOR_WRITEMASK: {
+      if (!ExtensionEnabled(kOESDrawBuffersIndexed)) {
+        // Enum validation has to happen here to return null
+        // instead of an array to pass
+        // conformance2/state/gl-object-get-calls.html
+        SynthesizeGLError(GL_INVALID_ENUM, "getIndexedParameter",
+                          "invalid parameter name");
+        return ScriptValue::CreateNull(script_state->GetIsolate());
+      }
+      Vector<bool> values(4);
+      ContextGL()->GetBooleani_v(target, index,
+                                 reinterpret_cast<GLboolean*>(values.data()));
+      return WebGLAny(script_state, values);
+    }
     default:
       SynthesizeGLError(GL_INVALID_ENUM, "getIndexedParameter",
                         "invalid parameter name");
@@ -5737,7 +5778,7 @@ ScriptValue WebGL2RenderingContextBase::getFramebufferAttachmentParameter(
   return ScriptValue::CreateNull(script_state->GetIsolate());
 }
 
-void WebGL2RenderingContextBase::Trace(Visitor* visitor) {
+void WebGL2RenderingContextBase::Trace(Visitor* visitor) const {
   visitor->Trace(read_framebuffer_binding_);
   visitor->Trace(transform_feedback_binding_);
   visitor->Trace(default_transform_feedback_);

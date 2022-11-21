@@ -28,11 +28,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as HostModule from '../host/host.js';
 import * as Platform from '../platform/platform.js';
 import * as ProtocolClient from '../protocol_client/protocol_client.js';
+import * as Root from '../root/root.js';
+import * as TextUtils from '../text_utils/text_utils.js';
 
+import {CSSFontFace} from './CSSFontFace.js';
 import {CSSMatchedStyles} from './CSSMatchedStyles.js';
 import {CSSMedia} from './CSSMedia.js';
 import {CSSStyleRule} from './CSSRule.js';
@@ -76,6 +82,17 @@ export class CSSModel extends SDKModel {
 
     /** @type {boolean} */
     this._isRuleUsageTrackingEnabled = false;
+
+    /** @type {!Map<string, !CSSFontFace>} */
+    this._fontFaces = new Map();
+
+    /** @type {?CSSPropertyTracker} */
+    this._cssPropertyTracker = null;  // TODO: support multiple trackers when we refactor the backend
+    this._isCSSPropertyTrackingEnabled = false;
+    this._isTrackingRequestPending = false;
+    /** @type {!Map<number, !Array<!Protocol.CSS.CSSComputedStyleProperty>>} */
+    this._trackedCSSProperties = new Map();
+    this._stylePollingThrottler = new Common.Throttler.Throttler(StylePollingInterval);
 
     this._sourceMapManager.setEnabled(Common.Settings.Settings.instance().moduleSetting('cssSourceMapsEnabled').get());
     Common.Settings.Settings.instance()
@@ -174,7 +191,7 @@ export class CSSModel extends SDKModel {
 
   /**
    * @param {!Protocol.CSS.StyleSheetId} styleSheetId
-   * @param {!TextUtils.TextRange} range
+   * @param {!TextUtils.TextRange.TextRange} range
    * @param {string} text
    * @param {boolean} majorChange
    * @return {!Promise<boolean>}
@@ -200,7 +217,7 @@ export class CSSModel extends SDKModel {
 
   /**
    * @param {!Protocol.CSS.StyleSheetId} styleSheetId
-   * @param {!TextUtils.TextRange} range
+   * @param {!TextUtils.TextRange.TextRange} range
    * @param {string} text
    * @return {!Promise<boolean>}
    */
@@ -225,7 +242,7 @@ export class CSSModel extends SDKModel {
 
   /**
    * @param {!Protocol.CSS.StyleSheetId} styleSheetId
-   * @param {!TextUtils.TextRange} range
+   * @param {!TextUtils.TextRange.TextRange} range
    * @param {string} text
    * @return {!Promise<boolean>}
    */
@@ -263,8 +280,14 @@ export class CSSModel extends SDKModel {
     return {timestamp, coverage};
   }
 
+  setLocalFontsEnabled(enabled) {
+    return this._agent.invoke_setLocalFontsEnabled({
+      enabled,
+    });
+  }
+
   /**
-   * @return {!Promise}
+   * @return {!Promise<?>}
    */
   stopCoverage() {
     this._isRuleUsageTrackingEnabled = false;
@@ -287,7 +310,7 @@ export class CSSModel extends SDKModel {
   }
 
   /**
-   * @return {!Promise}
+   * @return {!Promise<?>}
    */
   async _enable() {
     await this._agent.enable();
@@ -439,7 +462,7 @@ export class CSSModel extends SDKModel {
 
   /**
    * @param {!Protocol.CSS.StyleSheetId} styleSheetId
-   * @param {!TextUtils.TextRange} range
+   * @param {!TextUtils.TextRange.TextRange} range
    * @param {string} newMediaText
    * @return {!Promise<boolean>}
    */
@@ -465,7 +488,7 @@ export class CSSModel extends SDKModel {
   /**
    * @param {!Protocol.CSS.StyleSheetId} styleSheetId
    * @param {string} ruleText
-   * @param {!TextUtils.TextRange} ruleLocation
+   * @param {!TextUtils.TextRange.TextRange} ruleLocation
    * @return {!Promise<?CSSStyleRule>}
    */
   async addRule(styleSheetId, ruleText, ruleLocation) {
@@ -509,8 +532,21 @@ export class CSSModel extends SDKModel {
     this.dispatchEventToListeners(Events.MediaQueryResultChanged);
   }
 
-  fontsUpdated() {
+  /**
+   * @param {?Protocol.CSS.FontFace=} fontFace
+   */
+  fontsUpdated(fontFace) {
+    if (fontFace) {
+      this._fontFaces.set(fontFace.src, new CSSFontFace(fontFace));
+    }
     this.dispatchEventToListeners(Events.FontsUpdated);
+  }
+
+  /**
+   * @return {!Array<!CSSFontFace>}
+   */
+  fontFaces() {
+    return [...this._fontFaces.values()];
   }
 
   /**
@@ -692,18 +728,24 @@ export class CSSModel extends SDKModel {
     }
   }
 
-  /**
-   * @override
-   * @return {!Promise}
-   */
-  suspendModel() {
-    this._isEnabled = false;
-    return this._agent.disable().then(this._resetStyleSheets.bind(this));
+  _resetFontFaces() {
+    this._fontFaces.clear();
   }
 
   /**
    * @override
-   * @return {!Promise}
+   * @return {!Promise<?>}
+   */
+  async suspendModel() {
+    this._isEnabled = false;
+    await this._agent.disable();
+    this._resetStyleSheets();
+    this._resetFontFaces();
+  }
+
+  /**
+   * @override
+   * @return {!Promise<?>}
    */
   async resumeModel() {
     return this._enable();
@@ -739,9 +781,67 @@ export class CSSModel extends SDKModel {
   }
 
   /**
+   @param {!Array.<!Protocol.CSS.CSSComputedStyleProperty>} propertiesToTrack
+   */
+  createCSSPropertyTracker(propertiesToTrack) {
+    const gridStyleTracker = new CSSPropertyTracker(this, propertiesToTrack);
+    return gridStyleTracker;
+  }
+
+  /**
+   * @param {!CSSPropertyTracker} cssPropertyTracker
+   */
+  enableCSSPropertyTracker(cssPropertyTracker) {
+    const propertiesToTrack = cssPropertyTracker.getTrackedProperties();
+    if (propertiesToTrack.length === 0) {
+      return;
+    }
+    this._agent.invoke_trackComputedStyleUpdates({propertiesToTrack});
+    this._isCSSPropertyTrackingEnabled = true;
+    this._cssPropertyTracker = cssPropertyTracker;
+    this._pollComputedStyleUpdates();
+  }
+
+  // Since we only support one tracker at a time, this call effectively disables
+  // style tracking.
+  disableCSSPropertyTracker() {
+    this._isCSSPropertyTrackingEnabled = false;
+    this._cssPropertyTracker = null;
+    // Sending an empty list to the backend signals the close of style tracking
+    this._agent.invoke_trackComputedStyleUpdates({propertiesToTrack: []});
+  }
+
+  async _pollComputedStyleUpdates() {
+    if (this._isTrackingRequestPending) {
+      return;
+    }
+
+    if (this._isCSSPropertyTrackingEnabled) {
+      this._isTrackingRequestPending = true;
+      const result = await this._agent.invoke_takeComputedStyleUpdates();
+      this._isTrackingRequestPending = false;
+
+      if (result.getError() || !result.nodeIds || !this._isCSSPropertyTrackingEnabled) {
+        return;
+      }
+
+      this._cssPropertyTracker.dispatchEventToListeners(CSSPropertyTrackerEvents.TrackedCSSPropertiesUpdated, {
+        domNodes: result.nodeIds.map(nodeId => this._domModel.nodeForId(nodeId)),
+      });
+    }
+
+    if (this._isCSSPropertyTrackingEnabled) {
+      this._stylePollingThrottler.schedule(this._pollComputedStyleUpdates.bind(this));
+    }
+  }
+
+  /**
    * @override
    */
   dispose() {
+    if (Root.Runtime.experiments.isEnabled('cssGridFeatures')) {
+      this.disableCSSPropertyTracker();
+    }
     super.dispose();
     this._sourceMapManager.dispose();
   }
@@ -755,25 +855,23 @@ export const Events = {
   PseudoStateForced: Symbol('PseudoStateForced'),
   StyleSheetAdded: Symbol('StyleSheetAdded'),
   StyleSheetChanged: Symbol('StyleSheetChanged'),
-  StyleSheetRemoved: Symbol('StyleSheetRemoved')
+  StyleSheetRemoved: Symbol('StyleSheetRemoved'),
 };
 
 const PseudoStateMarker = 'pseudo-state-marker';
 
-/**
- * @unrestricted
- */
+
 export class Edit {
   /**
    * @param {!Protocol.CSS.StyleSheetId} styleSheetId
-   * @param {!TextUtils.TextRange} oldRange
+   * @param {!TextUtils.TextRange.TextRange} oldRange
    * @param {string} newText
    * @param {?Object} payload
    */
   constructor(styleSheetId, oldRange, newText, payload) {
     this.styleSheetId = styleSheetId;
     this.oldRange = oldRange;
-    this.newRange = TextUtils.TextRange.fromEdit(oldRange, newText);
+    this.newRange = TextUtils.TextRange.TextRange.fromEdit(oldRange, newText);
     this.newText = newText;
     this.payload = payload;
   }
@@ -829,9 +927,10 @@ class CSSDispatcher {
 
   /**
    * @override
+   * @param {?Protocol.CSS.FontFace=} fontFace
    */
-  fontsUpdated() {
-    this._cssModel.fontsUpdated();
+  fontsUpdated(fontFace) {
+    this._cssModel.fontsUpdated(fontFace);
   }
 
   /**
@@ -859,9 +958,7 @@ class CSSDispatcher {
   }
 }
 
-/**
- * @unrestricted
- */
+
 class ComputedStyleLoader {
   /**
    * @param {!CSSModel} cssModel
@@ -904,9 +1001,7 @@ class ComputedStyleLoader {
   }
 }
 
-/**
- * @unrestricted
- */
+
 export class InlineStyleResult {
   /**
    * @param {?CSSStyleDeclaration} inlineStyle
@@ -917,6 +1012,40 @@ export class InlineStyleResult {
     this.attributesStyle = attributesStyle;
   }
 }
+
+export class CSSPropertyTracker extends Common.ObjectWrapper.ObjectWrapper {
+  /**
+   * @param {!CSSModel} cssModel
+   * @param {!Array.<!Protocol.CSS.CSSComputedStyleProperty>} propertiesToTrack
+   */
+  constructor(cssModel, propertiesToTrack) {
+    super();
+    this._cssModel = cssModel;
+    this._properties = propertiesToTrack;
+  }
+
+  start() {
+    this._cssModel.enableCSSPropertyTracker(this);
+  }
+
+  stop() {
+    this._cssModel.disableCSSPropertyTracker();
+  }
+
+  /**
+   * @return {!Array.<!Protocol.CSS.CSSComputedStyleProperty>}
+   */
+  getTrackedProperties() {
+    return this._properties;
+  }
+}
+
+const StylePollingInterval = 1000;  // throttling interval for style polling, in milliseconds
+
+/** @enum {symbol} */
+export const CSSPropertyTrackerEvents = {
+  TrackedCSSPropertiesUpdated: Symbol('TrackedCSSPropertiesUpdated'),
+};
 
 SDKModel.register(CSSModel, Capability.DOM, true);
 

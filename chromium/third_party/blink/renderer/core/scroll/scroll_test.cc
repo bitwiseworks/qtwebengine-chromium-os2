@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/root_frame_viewport.h"
@@ -269,7 +270,13 @@ TEST_F(ScrollAnimatorSimTest, TestRootFrameBothViewportsUserScrollCallBack) {
 
 // Test that the callback of user scroll will be executed when the animation
 // finishes at ScrollAnimator::TickAnimation for div user scroll.
-TEST_F(ScrollAnimatorSimTest, TestDivUserScrollCallBack) {
+#if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
+// Flaky under sanitizers, see http://crbug.com/1092550
+#define MAYBE_TestDivUserScrollCallBack DISABLED_TestDivUserScrollCallBack
+#else
+#define MAYBE_TestDivUserScrollCallBack TestDivUserScrollCallBack
+#endif
+TEST_F(ScrollAnimatorSimTest, MAYBE_TestDivUserScrollCallBack) {
   GetDocument().GetSettings()->SetScrollAnimatorEnabled(true);
   WebView().MainFrameWidget()->Resize(WebSize(800, 500));
   SimRequest request("https://example.com/test.html", "text/html");
@@ -414,10 +421,10 @@ class ScrollInfacesUseCounterSimTest : public SimTest {
         )HTML");
     auto& document = GetDocument();
     auto* style = document.getElementById("scroller")->style();
-    style->setProperty(document.ToExecutionContext(), "direction", direction,
-                       String(), ASSERT_NO_EXCEPTION);
-    style->setProperty(document.ToExecutionContext(), "writing-mode",
-                       writing_mode, String(), ASSERT_NO_EXCEPTION);
+    style->setProperty(&Window(), "direction", direction, String(),
+                       ASSERT_NO_EXCEPTION);
+    style->setProperty(&Window(), "writing-mode", writing_mode, String(),
+                       ASSERT_NO_EXCEPTION);
     Compositor().BeginFrame();
     EXPECT_FALSE(document.IsUseCounted(
         WebFeature::

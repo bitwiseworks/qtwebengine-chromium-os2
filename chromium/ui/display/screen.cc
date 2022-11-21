@@ -4,6 +4,10 @@
 
 #include "ui/display/screen.h"
 
+#include <utility>
+
+#include "base/check.h"
+#include "base/notreached.h"
 #include "ui/display/display.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/rect.h"
@@ -22,7 +26,7 @@ Screen::~Screen() = default;
 
 // static
 Screen* Screen::GetScreen() {
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
   // TODO(scottmg): https://crbug.com/558054
   if (!g_screen)
     g_screen = CreateNativeScreen();
@@ -31,8 +35,8 @@ Screen* Screen::GetScreen() {
 }
 
 // static
-void Screen::SetScreenInstance(Screen* instance) {
-  g_screen = instance;
+Screen* Screen::SetScreenInstance(Screen* instance) {
+  return std::exchange(g_screen, instance);
 }
 
 Display Screen::GetDisplayNearestView(gfx::NativeView view) const {
@@ -41,6 +45,12 @@ Display Screen::GetDisplayNearestView(gfx::NativeView view) const {
 
 display::Display Screen::GetDisplayForNewWindows() const {
   display::Display display;
+  // Scoped value can override if it is set.
+  if (scoped_display_id_for_new_windows_ != kInvalidDisplayId &&
+      GetDisplayWithDisplayId(scoped_display_id_for_new_windows_, &display)) {
+    return display;
+  }
+
   if (GetDisplayWithDisplayId(display_id_for_new_windows_, &display))
     return display;
 
@@ -53,15 +63,19 @@ void Screen::SetDisplayForNewWindows(int64_t display_id) {
   display_id_for_new_windows_ = display_id;
 }
 
-gfx::Rect Screen::ScreenToDIPRectInWindow(gfx::NativeView view,
+void Screen::SetScreenSaverSuspended(bool suspend) {
+  NOTIMPLEMENTED_LOG_ONCE();
+}
+
+gfx::Rect Screen::ScreenToDIPRectInWindow(gfx::NativeWindow window,
                                           const gfx::Rect& screen_rect) const {
-  float scale = GetDisplayNearestView(view).device_scale_factor();
+  float scale = GetDisplayNearestWindow(window).device_scale_factor();
   return ScaleToEnclosingRect(screen_rect, 1.0f / scale);
 }
 
-gfx::Rect Screen::DIPToScreenRectInWindow(gfx::NativeView view,
+gfx::Rect Screen::DIPToScreenRectInWindow(gfx::NativeWindow window,
                                           const gfx::Rect& dip_rect) const {
-  float scale = GetDisplayNearestView(view).device_scale_factor();
+  float scale = GetDisplayNearestWindow(window).device_scale_factor();
   return ScaleToEnclosingRect(dip_rect, scale);
 }
 
@@ -85,6 +99,17 @@ void Screen::SetPanelRotationForTesting(int64_t display_id,
 std::string Screen::GetCurrentWorkspace() {
   NOTIMPLEMENTED_LOG_ONCE();
   return {};
+}
+
+void Screen::SetScopedDisplayForNewWindows(int64_t display_id) {
+  if (display_id == scoped_display_id_for_new_windows_)
+    return;
+  // Only allow set and clear, not switch.
+  DCHECK(display_id == kInvalidDisplayId ^
+         scoped_display_id_for_new_windows_ == kInvalidDisplayId)
+      << "display_id=" << display_id << ", scoped_display_id_for_new_windows_="
+      << scoped_display_id_for_new_windows_;
+  scoped_display_id_for_new_windows_ = display_id;
 }
 
 }  // namespace display

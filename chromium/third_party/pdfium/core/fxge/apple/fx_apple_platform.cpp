@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_system.h"
 #include "core/fxge/apple/fx_mac_impl.h"
 #include "core/fxge/cfx_cliprgn.h"
@@ -21,11 +22,11 @@
 #include "core/fxge/text_char_pos.h"
 #include "third_party/base/span.h"
 
-#ifndef _SKIA_SUPPORT_
+#if !defined(_SKIA_SUPPORT_)
 #include "core/fxge/agg/fx_agg_driver.h"
 #endif
 
-#ifndef _SKIA_SUPPORT_
+#if !defined(_SKIA_SUPPORT_)
 
 #if defined(OS_IOS)
 #include <CoreGraphics/CoreGraphics.h>
@@ -62,7 +63,7 @@ bool CGDrawGlyphRun(CGContextRef pContext,
     if (!pFont->GetPlatformFont())
       return false;
   }
-  std::vector<uint16_t> glyph_indices(nChars);
+  std::vector<uint16_t, FxAllocAllocator<uint16_t>> glyph_indices(nChars);
   std::vector<CGPoint> glyph_positions(nChars);
   for (int i = 0; i < nChars; i++) {
     glyph_indices[i] =
@@ -105,12 +106,14 @@ void CFX_AggDeviceDriver::DestroyPlatform() {
   }
 }
 
-bool CFX_AggDeviceDriver::DrawDeviceText(int nChars,
-                                         const TextCharPos* pCharPos,
-                                         CFX_Font* pFont,
-                                         const CFX_Matrix& mtObject2Device,
-                                         float font_size,
-                                         uint32_t argb) {
+bool CFX_AggDeviceDriver::DrawDeviceText(
+    int nChars,
+    const TextCharPos* pCharPos,
+    CFX_Font* pFont,
+    const CFX_Matrix& mtObject2Device,
+    float font_size,
+    uint32_t argb,
+    const CFX_TextRenderOptions& /*options*/) {
   if (!pFont)
     return false;
 
@@ -164,7 +167,7 @@ bool CFX_AggDeviceDriver::DrawDeviceText(int nChars,
   return ret;
 }
 
-#endif  // _SKIA_SUPPORT_
+#endif  // !defined(_SKIA_SUPPORT_)
 
 void CFX_GlyphCache::InitPlatform() {}
 
@@ -174,7 +177,7 @@ std::unique_ptr<CFX_GlyphBitmap> CFX_GlyphCache::RenderGlyph_Nativetext(
     const CFX_Font* pFont,
     uint32_t glyph_index,
     const CFX_Matrix& matrix,
-    uint32_t dest_width,
+    int dest_width,
     int anti_alias) {
   return nullptr;
 }

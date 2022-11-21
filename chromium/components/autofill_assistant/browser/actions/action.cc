@@ -128,6 +128,18 @@ std::ostream& operator<<(std::ostream& out,
     case ActionProto::ActionInfoCase::kShowGenericUi:
       out << "ShowGenericUi";
       break;
+    case ActionProto::ActionInfoCase::kGeneratePasswordForFormField:
+      out << "GeneratePasswordForFormField";
+      break;
+    case ActionProto::kSaveGeneratedPassword:
+      out << "SaveGeneratedPassword";
+      break;
+    case ActionProto::ActionInfoCase::kConfigureUiState:
+      out << "ConfigureUiState";
+      break;
+    case ActionProto::ActionInfoCase::kPresaveGeneratedPassword:
+      out << "PresaveGeneratedPassword";
+      break;
     case ActionProto::ActionInfoCase::ACTION_INFO_NOT_SET:
       out << "ACTION_INFO_NOT_SET";
       break;

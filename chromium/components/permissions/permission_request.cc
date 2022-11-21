@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/permissions/permission_request.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 
 namespace permissions {
@@ -17,14 +18,11 @@ ContentSettingsType PermissionRequest::GetContentSettingsType() const {
   return ContentSettingsType::DEFAULT;
 }
 
-base::string16 PermissionRequest::GetMessageTextWarningFragment() const {
-  return base::string16();
+#if !defined(OS_ANDROID)
+base::Optional<base::string16> PermissionRequest::GetChipText() const {
+  return base::nullopt;
 }
-
-GURL PermissionRequest::GetEmbeddingOrigin() const {
-  NOTREACHED();
-  return GURL();
-}
+#endif
 
 #if defined(OS_ANDROID)
 base::string16 PermissionRequest::GetQuietTitleText() const {

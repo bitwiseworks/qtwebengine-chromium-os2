@@ -19,23 +19,23 @@ namespace blink {
 LocalFrame* SingleChildLocalFrameClient::CreateFrame(
     const AtomicString& name,
     HTMLFrameOwnerElement* owner_element) {
-  DCHECK(!child_) << "This test helper only supports one child frame.";
 
   LocalFrame* parent_frame = owner_element->GetDocument().GetFrame();
   auto* child_client =
       MakeGarbageCollected<LocalFrameClientWithParent>(parent_frame);
-  child_ = MakeGarbageCollected<LocalFrame>(
-      child_client, *parent_frame->GetPage(), owner_element,
-      &parent_frame->window_agent_factory(), nullptr);
-  child_->CreateView(IntSize(500, 500), Color::kTransparent);
-  child_->Init();
+  LocalFrame* child = MakeGarbageCollected<LocalFrame>(
+      child_client, *parent_frame->GetPage(), owner_element, parent_frame,
+      nullptr, FrameInsertType::kInsertInConstructor,
+      base::UnguessableToken::Create(), &parent_frame->window_agent_factory(),
+      nullptr);
+  child->CreateView(IntSize(500, 500), Color::kTransparent);
+  child->Init(nullptr);
 
-  return child_.Get();
+  return child;
 }
 
 void LocalFrameClientWithParent::Detached(FrameDetachType) {
-  static_cast<SingleChildLocalFrameClient*>(Parent()->Client())
-      ->DidDetachChild();
+  parent_->RemoveChild(parent_->FirstChild());
 }
 
 void RenderingTestChromeClient::InjectGestureScrollEvent(
@@ -49,9 +49,9 @@ void RenderingTestChromeClient::InjectGestureScrollEvent(
   // would be added to the event queue and handled asynchronously but immediate
   // handling is sufficient to test scrollbar dragging.
   std::unique_ptr<WebGestureEvent> gesture_event =
-      ui::GenerateInjectedScrollGesture(injected_type, base::TimeTicks::Now(),
-                                        device, gfx::PointF(0, 0), delta,
-                                        granularity);
+      WebGestureEvent::GenerateInjectedScrollGesture(
+          injected_type, base::TimeTicks::Now(), device, gfx::PointF(0, 0),
+          delta, granularity);
   if (injected_type == WebInputEvent::Type::kGestureScrollBegin) {
     gesture_event->data.scroll_begin.scrollable_area_element_id =
         scrollable_area_element_id.GetStableId();
@@ -126,9 +126,7 @@ void RenderingTest::SetChildFrameHTML(const String& html) {
 
   // Setting HTML implies the frame loads contents, so we need to advance the
   // state machine to leave the initial empty document state.
-  auto* state_machine = ChildDocument().GetFrame()->Loader().StateMachine();
-  if (state_machine->IsDisplayingInitialEmptyDocument())
-    state_machine->AdvanceTo(FrameLoaderStateMachine::kCommittedFirstRealLoad);
+  ChildDocument().OverrideIsInitialEmptyDocument();
   // And let the frame view exit the initial throttled state.
   ChildDocument().View()->BeginLifecycleUpdates();
 }

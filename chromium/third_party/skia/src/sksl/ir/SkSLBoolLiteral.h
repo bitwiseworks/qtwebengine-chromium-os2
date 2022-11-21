@@ -16,44 +16,45 @@ namespace SkSL {
 /**
  * Represents 'true' or 'false'.
  */
-struct BoolLiteral : public Expression {
-    BoolLiteral(const Context& context, int offset, bool value)
-    : INHERITED(offset, kBoolLiteral_Kind, *context.fBool_Type)
-    , fValue(value) {}
+class BoolLiteral : public Expression {
+public:
+    static constexpr Kind kExpressionKind = Kind::kBoolLiteral;
 
-#ifdef SK_DEBUG
-    String description() const override {
-        return String(fValue ? "true" : "false");
+    BoolLiteral(const Context& context, int offset, bool value)
+    : INHERITED(offset, BoolLiteralData{context.fBool_Type.get(), value}) {}
+
+    bool value() const {
+        return this->boolLiteralData().fValue;
     }
-#endif
+
+    String description() const override {
+        return String(this->value() ? "true" : "false");
+    }
 
     bool hasProperty(Property property) const override {
         return false;
     }
 
-    bool isConstant() const override {
+    bool isCompileTimeConstant() const override {
         return true;
     }
 
     bool compareConstant(const Context& context, const Expression& other) const override {
-        BoolLiteral& b = (BoolLiteral&) other;
-        return fValue == b.fValue;
+        const BoolLiteral& b = other.as<BoolLiteral>();
+        return this->value() == b.value();
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new BoolLiteral(fOffset, fValue, &fType));
+        return std::unique_ptr<Expression>(new BoolLiteral(fOffset, this->value(), &this->type()));
     }
-
-    const bool fValue;
-
-    typedef Expression INHERITED;
 
 private:
     BoolLiteral(int offset, bool value, const Type* type)
-    : INHERITED(offset, kBoolLiteral_Kind, *type)
-    , fValue(value) {}
+    : INHERITED(offset, BoolLiteralData{type, value}) {}
+
+    using INHERITED = Expression;
 };
 
-} // namespace
+}  // namespace SkSL
 
 #endif

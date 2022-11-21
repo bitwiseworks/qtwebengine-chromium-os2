@@ -42,6 +42,7 @@
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/common/loader/loading_behavior_flag.h"
 #include "third_party/blink/public/common/navigation/triggering_event_info.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/frame/navigation_initiator.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/portal/portal.mojom-blink-forward.h"
@@ -49,6 +50,7 @@
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
+#include "third_party/blink/public/platform/web_impression.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/public/web/web_history_commit_type.h"
@@ -56,12 +58,9 @@
 #include "third_party/blink/public/web/web_manifest_manager.h"
 #include "third_party/blink/public/web/web_navigation_params.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/icon_url.h"
 #include "third_party/blink/renderer/core/frame/frame_client.h"
 #include "third_party/blink/renderer/core/frame/frame_types.h"
-#include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/remote_frame.h"
 #include "third_party/blink/renderer/core/html/link_resource.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
@@ -83,7 +82,6 @@ enum class WebFeature : int32_t;
 
 class AssociatedInterfaceProvider;
 class ContentSecurityPolicy;
-class Document;
 class DocumentLoader;
 class HTMLFormElement;
 class HTMLFrameOwnerElement;
@@ -92,11 +90,13 @@ class HTMLPortalElement;
 class HTMLPlugInElement;
 class HistoryItem;
 class KURL;
+class LocalDOMWindow;
+class LocalFrame;
 class WebPluginContainerImpl;
+class RemoteFrame;
 class ResourceError;
 class ResourceRequest;
 class ResourceResponse;
-class SecurityOrigin;
 class WebContentCaptureClient;
 class WebDedicatedWorkerHostFactoryClient;
 class WebLocalFrame;
@@ -131,9 +131,10 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
                                                WebHistoryCommitType,
                                                bool content_initiated) {}
   virtual void DispatchDidReceiveTitle(const String&) = 0;
-  virtual void DispatchDidCommitLoad(HistoryItem*,
-                                     WebHistoryCommitType,
-                                     GlobalObjectReusePolicy) = 0;
+  virtual void DispatchDidCommitLoad(
+      HistoryItem*,
+      WebHistoryCommitType,
+      bool should_reset_browser_interface_broker) = 0;
   virtual void DispatchDidFailLoad(const ResourceError&,
                                    WebHistoryCommitType) = 0;
   virtual void DispatchDidFinishDocumentLoad() = 0;
@@ -142,11 +143,10 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   virtual void BeginNavigation(
       const ResourceRequest&,
       mojom::RequestContextFrameType,
-      Document* origin_document,
+      LocalDOMWindow* origin_window,
       DocumentLoader*,
       WebNavigationType,
       NavigationPolicy,
-      bool has_transient_activation,
       WebFrameLoadType,
       bool is_client_redirect,
       TriggeringEventInfo,
@@ -156,6 +156,7 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       mojo::PendingRemote<mojom::blink::BlobURLToken>,
       base::TimeTicks input_start_time,
       const String& href_translate,
+      const base::Optional<WebImpression>& impression,
       WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>
           initiator_csp,
       network::mojom::blink::CSPSourcePtr initiator_self_source,
@@ -169,16 +170,7 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual bool NavigateBackForward(int offset) const = 0;
 
-  // The indicated security origin has run active content (such as a script)
-  // from an insecure source.  Note that the insecure content can spread to
-  // other frames in the same origin.
-  virtual void DidRunInsecureContent(const SecurityOrigin*, const KURL&) = 0;
   virtual void DidDispatchPingLoader(const KURL&) = 0;
-
-  // The frame displayed content with certificate errors with given URL.
-  virtual void DidDisplayContentWithCertificateErrors() = 0;
-  // The frame ran content with certificate errors with the given URL.
-  virtual void DidRunContentWithCertificateErrors() = 0;
 
   // Will be called when |PerformanceTiming| events are updated
   virtual void DidChangePerformanceTiming() {}
@@ -205,6 +197,13 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   // Reports that visible elements in the frame shifted (bit.ly/lsm-explainer).
   virtual void DidObserveLayoutShift(double score, bool after_input_or_scroll) {
   }
+
+  // Reports the number of LayoutBlock creation, and LayoutObject::UpdateLayout
+  // calls. All values are deltas since the last calls of this function.
+  virtual void DidObserveLayoutNg(uint32_t all_block_count,
+                                  uint32_t ng_block_count,
+                                  uint32_t all_call_count,
+                                  uint32_t ng_call_count) {}
 
   // Reports lazy loaded behavior when the frame or image is fully deferred or
   // if the frame or image is loaded after being deferred. Called every time the
@@ -246,8 +245,9 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   // Creates a portal for the |HTMLPortalElement| and binds the other end of the
   // |mojo::PendingAssociatedReceiver<mojom::blink::Portal>|. Returns a pair of
-  // a RemoteFrame and a token that identifies the portal.
-  virtual std::pair<RemoteFrame*, base::UnguessableToken> CreatePortal(
+  // a RemoteFrame and a token that identifies the portal. If the returned
+  // RemoteFrame is nullptr, then the PortalToken is meaningless.
+  virtual std::pair<RemoteFrame*, PortalToken> CreatePortal(
       HTMLPortalElement*,
       mojo::PendingAssociatedReceiver<mojom::blink::Portal>,
       mojo::PendingAssociatedRemote<mojom::blink::PortalClient>) = 0;
@@ -280,7 +280,7 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       HTMLMediaElement&) = 0;
 
   virtual void DidCreateInitialEmptyDocument() = 0;
-  virtual void DidCommitJavascriptUrlNavigation(DocumentLoader*) = 0;
+  virtual void DidCommitDocumentReplacementNavigation(DocumentLoader*) = 0;
   virtual void DispatchDidClearWindowObjectInMainWorld() = 0;
   virtual void DocumentElementAvailable() = 0;
   virtual void RunScriptsAtDocumentElementAvailable() = 0;
@@ -304,14 +304,10 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual void DidChangeName(const String&) {}
 
-  virtual void DidChangeFramePolicy(Frame* child_frame, const FramePolicy&) {}
-
   virtual void DidSetFramePolicyHeaders(
-      mojom::blink::WebSandboxFlags,
+      network::mojom::blink::WebSandboxFlags,
       const ParsedFeaturePolicy& feature_policy_header,
-      const DocumentPolicy::FeatureState& document_policy_header) {}
-
-  virtual void DidChangeFrameOwnerProperties(HTMLFrameOwnerElement*) {}
+      const DocumentPolicyFeatureState& document_policy_header) {}
 
   virtual std::unique_ptr<WebServiceWorkerProvider>
   CreateServiceWorkerProvider() = 0;
@@ -396,6 +392,12 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual std::unique_ptr<WebContentSettingsClient>
   CreateWorkerContentSettingsClient() {
+    return nullptr;
+  }
+
+  virtual std::unique_ptr<media::SpeechRecognitionClient>
+  CreateSpeechRecognitionClient(
+      media::SpeechRecognitionClient::OnReadyCallback callback) {
     return nullptr;
   }
 

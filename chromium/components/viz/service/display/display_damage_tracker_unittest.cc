@@ -4,9 +4,11 @@
 
 #include "components/viz/service/display/display_damage_tracker.h"
 
+#include <utility>
+
 #include "base/test/null_task_runner.h"
 #include "components/viz/common/quads/compositor_frame.h"
-#include "components/viz/common/quads/render_pass.h"
+#include "components/viz/common/quads/compositor_render_pass.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/service/display/display_resource_provider.h"
@@ -16,6 +18,7 @@
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/fake_external_begin_frame_source.h"
+#include "components/viz/test/mock_compositor_frame_sink_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace viz {
@@ -58,7 +61,7 @@ class DisplayDamageTrackerTest : public testing::Test {
     Client(FrameSinkManagerImpl* manager, FrameSinkId frame_sink_id)
         : frame_sink_id_(frame_sink_id),
           support_(
-              std::make_unique<CompositorFrameSinkSupport>(nullptr,
+              std::make_unique<CompositorFrameSinkSupport>(&client_,
                                                            manager,
                                                            frame_sink_id,
                                                            /*is_root=*/true)) {
@@ -68,8 +71,7 @@ class DisplayDamageTrackerTest : public testing::Test {
 
     SurfaceId MakeNewSurfaceId() {
       id_allocator_.GenerateId();
-      local_surface_id_ =
-          id_allocator_.GetCurrentLocalSurfaceIdAllocation().local_surface_id();
+      local_surface_id_ = id_allocator_.GetCurrentLocalSurfaceId();
       return SurfaceId(frame_sink_id_, local_surface_id_);
     }
 
@@ -78,11 +80,11 @@ class DisplayDamageTrackerTest : public testing::Test {
     }
 
     void SubmitCompositorFrame(const BeginFrameArgs& args) {
-      RenderPassList pass_list;
-      auto pass = RenderPass::Create();
+      CompositorRenderPassList pass_list;
+      auto pass = CompositorRenderPass::Create();
       pass->output_rect = gfx::Rect(0, 0, 100, 100);
       pass->damage_rect = gfx::Rect(10, 10, 1, 1);
-      pass->id = 1u;
+      pass->id = CompositorRenderPassId{1u};
       pass_list.push_back(std::move(pass));
 
       BeginFrameAck ack;
@@ -97,6 +99,7 @@ class DisplayDamageTrackerTest : public testing::Test {
       support_->SubmitCompositorFrame(local_surface_id_, std::move(frame));
     }
 
+    MockCompositorFrameSinkClient client_;
     FrameSinkId frame_sink_id_;
     LocalSurfaceId local_surface_id_;
     std::unique_ptr<CompositorFrameSinkSupport> support_;

@@ -36,14 +36,7 @@ SSLBlockingPageBase::SSLBlockingPageBase(
 SSLBlockingPageBase::~SSLBlockingPageBase() = default;
 
 void SSLBlockingPageBase::OnInterstitialClosing() {
-  UpdateMetricsAfterSecurityInterstitial();
   cert_report_helper_->FinishCertCollection();
-}
-
-void SSLBlockingPageBase::OverrideRendererPrefs(
-    blink::mojom::RendererPreferences* prefs) {
-  if (renderer_pref_callback_)
-    renderer_pref_callback_.Run(web_contents(), prefs);
 }
 
 void SSLBlockingPageBase::SetSSLCertReporterForTesting(

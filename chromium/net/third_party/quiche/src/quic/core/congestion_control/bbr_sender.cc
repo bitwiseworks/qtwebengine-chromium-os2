@@ -32,10 +32,6 @@ const float kDefaultHighGain = 2.885f;
 const float kDerivedHighGain = 2.773f;
 // The newly derived CWND gain for STARTUP, 2.
 const float kDerivedHighCWNDGain = 2.0f;
-// The gain used in STARTUP after loss has been detected.
-// 1.5 is enough to allow for 25% exogenous loss and still observe a 25% growth
-// in measured bandwidth.
-const float kStartupAfterLossGain = 1.5f;
 // The cycle of gains used during the PROBE_BW stage.
 const float kPacingGain[] = {1.25, 0.75, 1, 1, 1, 1, 1, 1};
 
@@ -106,8 +102,6 @@ BbrSender::BbrSender(QuicTime now,
       congestion_window_gain_constant_(
           static_cast<float>(GetQuicFlag(FLAGS_quic_bbr_cwnd_gain))),
       num_startup_rtts_(kRoundTripsWithoutGrowthBeforeExitingStartup),
-      exit_startup_on_loss_(
-          GetQuicReloadableFlag(quic_bbr_default_exit_startup_on_loss)),
       cycle_current_offset_(0),
       last_cycle_start_(QuicTime::Zero()),
       is_at_full_bandwidth_(false),
@@ -118,7 +112,6 @@ BbrSender::BbrSender(QuicTime now,
       probe_rtt_round_passed_(false),
       last_sample_is_app_limited_(false),
       has_non_app_limited_sample_(false),
-      flexible_app_limited_(false),
       recovery_state_(NOT_IN_RECOVERY),
       recovery_window_(max_congestion_window_),
       slower_startup_(false),
@@ -126,9 +119,10 @@ BbrSender::BbrSender(QuicTime now,
       enable_ack_aggregation_during_startup_(false),
       expire_ack_aggregation_in_startup_(false),
       drain_to_target_(false),
-      network_parameters_adjusted_(false),
-      bytes_lost_with_network_parameters_adjusted_(0),
-      bytes_lost_multiplier_with_network_parameters_adjusted_(2),
+      detect_overshooting_(false),
+      bytes_lost_while_detecting_overshooting_(0),
+      bytes_lost_multiplier_while_detecting_overshooting_(2),
+      cwnd_to_calculate_min_pacing_rate_(initial_congestion_window_),
       max_congestion_window_with_network_parameters_adjusted_(
           kMaxInitialCongestionWindow * kDefaultTCPMSS) {
   if (stats_) {
@@ -138,10 +132,7 @@ BbrSender::BbrSender(QuicTime now,
     stats_->slowstart_duration = QuicTimeAccumulator();
   }
   EnterStartupMode(now);
-  if (exit_startup_on_loss_) {
-    QUIC_RELOADABLE_FLAG_COUNT(quic_bbr_default_exit_startup_on_loss);
-    set_high_cwnd_gain(kDerivedHighCWNDGain);
-  }
+  set_high_cwnd_gain(kDerivedHighCWNDGain);
 }
 
 BbrSender::~BbrSender() {}
@@ -151,6 +142,8 @@ void BbrSender::SetInitialCongestionWindowInPackets(
   if (mode_ == STARTUP) {
     initial_congestion_window_ = congestion_window * kDefaultTCPMSS;
     congestion_window_ = congestion_window * kDefaultTCPMSS;
+    cwnd_to_calculate_min_pacing_rate_ = std::min(
+        initial_congestion_window_, cwnd_to_calculate_min_pacing_rate_);
   }
 }
 
@@ -203,14 +196,8 @@ QuicByteCount BbrSender::GetCongestionWindow() const {
     return ProbeRttCongestionWindow();
   }
 
-  if (exit_startup_on_loss_) {
-    if (InRecovery()) {
-      return std::min(congestion_window_, recovery_window_);
-    }
-  } else {
-    if (InRecovery() && !(rate_based_startup_ && mode_ == STARTUP)) {
-      return std::min(congestion_window_, recovery_window_);
-    }
+  if (InRecovery()) {
+    return std::min(congestion_window_, recovery_window_);
   }
 
   return congestion_window_;
@@ -231,12 +218,7 @@ bool BbrSender::ShouldSendProbingPacket() const {
 
   // TODO(b/77975811): If the pipe is highly under-utilized, consider not
   // sending a probing transmission, because the extra bandwidth is not needed.
-  // If flexible_app_limited is enabled, check if the pipe is sufficiently full.
-  if (flexible_app_limited_) {
-    return !IsPipeSufficientlyFull();
-  } else {
-    return true;
-  }
+  return true;
 }
 
 bool BbrSender::IsPipeSufficientlyFull() const {
@@ -259,33 +241,20 @@ bool BbrSender::IsPipeSufficientlyFull() const {
 
 void BbrSender::SetFromConfig(const QuicConfig& config,
                               Perspective perspective) {
-  if (config.HasClientRequestedIndependentOption(kLRTT, perspective)) {
-    exit_startup_on_loss_ = true;
-  }
   if (config.HasClientRequestedIndependentOption(k1RTT, perspective)) {
     num_startup_rtts_ = 1;
   }
   if (config.HasClientRequestedIndependentOption(k2RTT, perspective)) {
     num_startup_rtts_ = 2;
   }
-  if (!exit_startup_on_loss_ &&
-      config.HasClientRequestedIndependentOption(kBBRS, perspective)) {
-    slower_startup_ = true;
-  }
   if (config.HasClientRequestedIndependentOption(kBBR3, perspective)) {
     drain_to_target_ = true;
   }
-  if (!exit_startup_on_loss_ &&
-      config.HasClientRequestedIndependentOption(kBBS1, perspective)) {
-    rate_based_startup_ = true;
+  if (config.HasClientRequestedIndependentOption(kBWM3, perspective)) {
+    bytes_lost_multiplier_while_detecting_overshooting_ = 3;
   }
-  if (GetQuicReloadableFlag(quic_bbr_mitigate_overly_large_bandwidth_sample)) {
-    if (config.HasClientRequestedIndependentOption(kBWM3, perspective)) {
-      bytes_lost_multiplier_with_network_parameters_adjusted_ = 3;
-    }
-    if (config.HasClientRequestedIndependentOption(kBWM4, perspective)) {
-      bytes_lost_multiplier_with_network_parameters_adjusted_ = 4;
-    }
+  if (config.HasClientRequestedIndependentOption(kBWM4, perspective)) {
+    bytes_lost_multiplier_while_detecting_overshooting_ = 4;
   }
   if (config.HasClientRequestedIndependentOption(kBBR4, perspective)) {
     sampler_.SetMaxAckHeightTrackerWindowLength(2 * kBandwidthWindowSize);
@@ -293,19 +262,10 @@ void BbrSender::SetFromConfig(const QuicConfig& config,
   if (config.HasClientRequestedIndependentOption(kBBR5, perspective)) {
     sampler_.SetMaxAckHeightTrackerWindowLength(4 * kBandwidthWindowSize);
   }
-  if (GetQuicReloadableFlag(quic_bbr_flexible_app_limited) &&
-      config.HasClientRequestedIndependentOption(kBBR9, perspective)) {
-    QUIC_RELOADABLE_FLAG_COUNT(quic_bbr_flexible_app_limited);
-    flexible_app_limited_ = true;
-  }
   if (config.HasClientRequestedIndependentOption(kBBQ1, perspective)) {
     set_high_gain(kDerivedHighGain);
     set_high_cwnd_gain(kDerivedHighGain);
     set_drain_gain(1.f / kDerivedHighGain);
-  }
-  if (!exit_startup_on_loss_ &&
-      config.HasClientRequestedIndependentOption(kBBQ2, perspective)) {
-    set_high_cwnd_gain(kDerivedHighCWNDGain);
   }
   if (config.HasClientRequestedIndependentOption(kBBQ3, perspective)) {
     enable_ack_aggregation_during_startup_ = true;
@@ -320,11 +280,20 @@ void BbrSender::SetFromConfig(const QuicConfig& config,
     max_congestion_window_with_network_parameters_adjusted_ =
         100 * kDefaultTCPMSS;
   }
-  if (GetQuicReloadableFlag(
-          quic_avoid_overestimate_bandwidth_with_aggregation) &&
-      config.HasClientRequestedIndependentOption(kBSAO, perspective)) {
-    QUIC_RELOADABLE_FLAG_COUNT_N(
-        quic_avoid_overestimate_bandwidth_with_aggregation, 3, 4);
+  if (config.HasClientRequestedIndependentOption(kDTOS, perspective)) {
+    detect_overshooting_ = true;
+    // DTOS would allow pacing rate drop to IW 10 / min_rtt if overshooting is
+    // detected.
+    cwnd_to_calculate_min_pacing_rate_ =
+        std::min(initial_congestion_window_, 10 * kDefaultTCPMSS);
+  }
+
+  ApplyConnectionOptions(config.ClientRequestedIndependentOptions(perspective));
+}
+
+void BbrSender::ApplyConnectionOptions(
+    const QuicTagVector& connection_options) {
+  if (ContainsQuicTag(connection_options, kBSAO)) {
     sampler_.EnableOverestimateAvoidance();
   }
 }
@@ -333,9 +302,7 @@ void BbrSender::AdjustNetworkParameters(const NetworkParams& params) {
   const QuicBandwidth& bandwidth = params.bandwidth;
   const QuicTime::Delta& rtt = params.rtt;
 
-  if (params.quic_bbr_donot_inject_bandwidth) {
-    QUIC_RELOADABLE_FLAG_COUNT(quic_bbr_donot_inject_bandwidth);
-  } else if (!bandwidth.IsZero()) {
+  if (!params.quic_bbr_donot_inject_bandwidth && !bandwidth.IsZero()) {
     max_bandwidth_.Update(bandwidth, round_trip_count_);
   }
   if (!rtt.IsZero() && (min_rtt_ > rtt || min_rtt_.IsZero())) {
@@ -347,12 +314,20 @@ void BbrSender::AdjustNetworkParameters(const NetworkParams& params) {
       // Ignore bad bandwidth samples.
       return;
     }
+
+    auto cwnd_bootstrapping_rtt = params.quic_bbr_donot_inject_bandwidth
+                                      ? GetMinRtt()
+                                      : rtt_stats_->SmoothedOrInitialRtt();
+    if (params.max_initial_congestion_window > 0) {
+      max_congestion_window_with_network_parameters_adjusted_ =
+          params.max_initial_congestion_window * kDefaultTCPMSS;
+    }
     const QuicByteCount new_cwnd = std::max(
         kMinInitialCongestionWindow * kDefaultTCPMSS,
         std::min(max_congestion_window_with_network_parameters_adjusted_,
-                 bandwidth * (params.quic_bbr_donot_inject_bandwidth
-                                  ? GetMinRtt()
-                                  : rtt_stats_->SmoothedOrInitialRtt())));
+                 bandwidth * cwnd_bootstrapping_rtt));
+
+    stats_->cwnd_bootstrapping_rtt_us = cwnd_bootstrapping_rtt.ToMicroseconds();
     if (!rtt_stats_->smoothed_rtt().IsZero()) {
       QUIC_CODE_COUNT(quic_smoothed_rtt_available);
     } else if (rtt_stats_->initial_rtt() !=
@@ -378,12 +353,7 @@ void BbrSender::AdjustNetworkParameters(const NetworkParams& params) {
       QuicBandwidth new_pacing_rate =
           QuicBandwidth::FromBytesAndTimeDelta(congestion_window_, GetMinRtt());
       pacing_rate_ = std::max(pacing_rate_, new_pacing_rate);
-      if (GetQuicReloadableFlag(
-              quic_bbr_mitigate_overly_large_bandwidth_sample)) {
-        QUIC_RELOADABLE_FLAG_COUNT_N(
-            quic_bbr_mitigate_overly_large_bandwidth_sample, 1, 4);
-        network_parameters_adjusted_ = true;
-      }
+      detect_overshooting_ = true;
     }
   }
 }
@@ -428,10 +398,8 @@ void BbrSender::OnCongestionEvent(bool /*rtt_updated*/,
   // packets in |acked_packets| did not generate valid samples. (e.g. ack of
   // ack-only packets). In both cases, sampler_.total_bytes_acked() will not
   // change.
-  if (!fix_zero_bw_on_loss_only_event_ ||
-      (total_bytes_acked_before != sampler_.total_bytes_acked())) {
-    QUIC_BUG_IF((total_bytes_acked_before != sampler_.total_bytes_acked()) &&
-                sample.sample_max_bandwidth.IsZero())
+  if (total_bytes_acked_before != sampler_.total_bytes_acked()) {
+    QUIC_LOG_IF(WARNING, sample.sample_max_bandwidth.IsZero())
         << sampler_.total_bytes_acked() - total_bytes_acked_before
         << " bytes from " << acked_packets.size()
         << " packets have been acked, but sample_max_bandwidth is zero.";
@@ -439,15 +407,8 @@ void BbrSender::OnCongestionEvent(bool /*rtt_updated*/,
         sample.sample_max_bandwidth > max_bandwidth_.GetBest()) {
       max_bandwidth_.Update(sample.sample_max_bandwidth, round_trip_count_);
     }
-  } else {
-    if (acked_packets.empty()) {
-      QUIC_RELOADABLE_FLAG_COUNT_N(quic_bbr_fix_zero_bw_on_loss_only_event, 1,
-                                   4);
-    } else {
-      QUIC_RELOADABLE_FLAG_COUNT_N(quic_bbr_fix_zero_bw_on_loss_only_event, 2,
-                                   4);
-    }
   }
+
   if (!sample.sample_rtt.IsInfinite()) {
     min_rtt_expired = MaybeUpdateMinRtt(event_time, sample.sample_rtt);
   }
@@ -503,7 +464,13 @@ CongestionControlType BbrSender::GetCongestionControlType() const {
 }
 
 QuicTime::Delta BbrSender::GetMinRtt() const {
-  return !min_rtt_.IsZero() ? min_rtt_ : rtt_stats_->initial_rtt();
+  if (!min_rtt_.IsZero()) {
+    return min_rtt_;
+  }
+  // min_rtt could be available if the handshake packet gets neutered then
+  // gets acknowledged. This could only happen for QUIC crypto where we do not
+  // drop keys.
+  return rtt_stats_->MinOrInitialRtt();
 }
 
 QuicByteCount BbrSender::GetTargetCongestionWindow(float gain) const {
@@ -670,10 +637,6 @@ void BbrSender::OnExitStartup(QuicTime now) {
 
 bool BbrSender::ShouldExitStartupDueToLoss(
     const SendTimeState& last_packet_send_state) const {
-  if (!exit_startup_on_loss_) {
-    return false;
-  }
-
   if (num_loss_events_in_round_ <
           GetQuicFlag(FLAGS_quic_bbr2_default_startup_full_loss_count) ||
       !last_packet_send_state.is_valid) {
@@ -744,7 +707,7 @@ void BbrSender::UpdateRecoveryState(QuicPacketNumber last_acked_packet,
                                     bool has_losses,
                                     bool is_round_start) {
   // Disable recovery in startup, if loss-based exit is enabled.
-  if (exit_startup_on_loss_ && !is_at_full_bandwidth_) {
+  if (!is_at_full_bandwidth_) {
     return;
   }
 
@@ -802,49 +765,28 @@ void BbrSender::CalculatePacingRate(QuicByteCount bytes_lost) {
     return;
   }
 
-  if (network_parameters_adjusted_) {
-    bytes_lost_with_network_parameters_adjusted_ += bytes_lost;
+  if (detect_overshooting_) {
+    bytes_lost_while_detecting_overshooting_ += bytes_lost;
     // Check for overshooting with network parameters adjusted when pacing rate
     // > target_rate and loss has been detected.
     if (pacing_rate_ > target_rate &&
-        bytes_lost_with_network_parameters_adjusted_ > 0) {
-      QUIC_RELOADABLE_FLAG_COUNT_N(
-          quic_bbr_mitigate_overly_large_bandwidth_sample, 2, 4);
+        bytes_lost_while_detecting_overshooting_ > 0) {
       if (has_non_app_limited_sample_ ||
-          bytes_lost_with_network_parameters_adjusted_ *
-                  bytes_lost_multiplier_with_network_parameters_adjusted_ >
+          bytes_lost_while_detecting_overshooting_ *
+                  bytes_lost_multiplier_while_detecting_overshooting_ >
               initial_congestion_window_) {
         // We are fairly sure overshoot happens if 1) there is at least one
         // non app-limited bw sample or 2) half of IW gets lost. Slow pacing
         // rate.
-        if (has_non_app_limited_sample_) {
-          QUIC_RELOADABLE_FLAG_COUNT_N(
-              quic_bbr_mitigate_overly_large_bandwidth_sample, 3, 4);
-        } else {
-          QUIC_RELOADABLE_FLAG_COUNT_N(
-              quic_bbr_mitigate_overly_large_bandwidth_sample, 4, 4);
-        }
-        // Do not let the pacing rate drop below the connection's initial pacing
-        // rate.
-        pacing_rate_ =
-            std::max(target_rate, QuicBandwidth::FromBytesAndTimeDelta(
-                                      initial_congestion_window_, GetMinRtt()));
+        pacing_rate_ = std::max(
+            target_rate, QuicBandwidth::FromBytesAndTimeDelta(
+                             cwnd_to_calculate_min_pacing_rate_, GetMinRtt()));
         if (stats_) {
           stats_->overshooting_detected_with_network_parameters_adjusted = true;
         }
-        bytes_lost_with_network_parameters_adjusted_ = 0;
-        network_parameters_adjusted_ = false;
+        bytes_lost_while_detecting_overshooting_ = 0;
+        detect_overshooting_ = false;
       }
-    }
-  }
-
-  if (!exit_startup_on_loss_) {
-    // Slow the pacing rate in STARTUP once loss has ever been detected.
-    const bool has_ever_detected_loss = end_recovery_at_.IsInitialized();
-    if (slower_startup_ && has_ever_detected_loss &&
-        has_non_app_limited_sample_) {
-      pacing_rate_ = kStartupAfterLossGain * BandwidthEstimate();
-      return;
     }
   }
 
@@ -893,10 +835,6 @@ void BbrSender::CalculateCongestionWindow(QuicByteCount bytes_acked,
 
 void BbrSender::CalculateRecoveryWindow(QuicByteCount bytes_acked,
                                         QuicByteCount bytes_lost) {
-  if (!exit_startup_on_loss_ && rate_based_startup_ && mode_ == STARTUP) {
-    return;
-  }
-
   if (recovery_state_ == NOT_IN_RECOVERY) {
     return;
   }
@@ -920,16 +858,9 @@ void BbrSender::CalculateRecoveryWindow(QuicByteCount bytes_acked,
     recovery_window_ += bytes_acked;
   }
 
-  // Sanity checks.  Ensure that we always allow to send at least an MSS or
-  // |bytes_acked| in response, whichever is larger.
+  // Always allow sending at least |bytes_acked| in response.
   recovery_window_ = std::max(
       recovery_window_, unacked_packets_->bytes_in_flight() + bytes_acked);
-  if (GetQuicReloadableFlag(quic_bbr_one_mss_conservation)) {
-    QUIC_RELOADABLE_FLAG_COUNT(quic_bbr_one_mss_conservation);
-    recovery_window_ =
-        std::max(recovery_window_,
-                 unacked_packets_->bytes_in_flight() + kMaxSegmentSize);
-  }
   recovery_window_ = std::max(min_congestion_window_, recovery_window_);
 }
 
@@ -941,9 +872,6 @@ std::string BbrSender::GetDebugState() const {
 
 void BbrSender::OnApplicationLimited(QuicByteCount bytes_in_flight) {
   if (bytes_in_flight >= GetCongestionWindow()) {
-    return;
-  }
-  if (flexible_app_limited_ && IsPipeSufficientlyFull()) {
     return;
   }
 

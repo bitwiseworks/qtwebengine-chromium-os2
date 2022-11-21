@@ -8,6 +8,7 @@
 #ifndef SkottieEffects_DEFINED
 #define SkottieEffects_DEFINED
 
+#include "modules/skottie/src/Composition.h"
 #include "modules/skottie/src/SkottiePriv.h"
 #include "modules/skottie/src/animator/Animator.h"
 
@@ -22,7 +23,7 @@ namespace internal {
 
 class EffectBuilder final : public SkNoncopyable {
 public:
-    EffectBuilder(const AnimationBuilder*, const SkSize&);
+    EffectBuilder(const AnimationBuilder*, const SkSize&, CompositionBuilder*);
 
     sk_sp<sksg::RenderNode> attachEffects(const skjson::ArrayValue&,
                                           sk_sp<sksg::RenderNode>) const;
@@ -32,50 +33,67 @@ public:
 
     static const skjson::Value& GetPropValue(const skjson::ArrayValue& jprops, size_t prop_index);
 
+    LayerBuilder* getLayerBuilder(int layer_index) const {
+        return fCompBuilder->layerBuilder(layer_index);
+    }
+
 private:
     using EffectBuilderT = sk_sp<sksg::RenderNode>(EffectBuilder::*)(const skjson::ArrayValue&,
                                                                      sk_sp<sksg::RenderNode>) const;
 
-    sk_sp<sksg::RenderNode> attachDropShadowEffect    (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachFillEffect          (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachGaussianBlurEffect  (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachGradientEffect      (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachHueSaturationEffect (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachInvertEffect        (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachEasyLevelsEffect    (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachLinearWipeEffect    (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachMotionTileEffect    (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachProLevelsEffect     (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachRadialWipeEffect    (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachTintEffect          (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachTransformEffect     (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachTritoneEffect       (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachVenetianBlindsEffect(const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
-    sk_sp<sksg::RenderNode> attachShiftChannelsEffect (const skjson::ArrayValue&,
-                                                       sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachBrightnessContrastEffect(const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachCornerPinEffect         (const skjson::ArrayValue&,
+                                                            sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachDisplacementMapEffect   (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachDropShadowEffect        (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachFillEffect              (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachGaussianBlurEffect      (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachGradientEffect          (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachHueSaturationEffect     (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachInvertEffect            (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachEasyLevelsEffect        (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachLinearWipeEffect        (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachMotionTileEffect        (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachProLevelsEffect         (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachRadialWipeEffect        (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachTintEffect              (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachTransformEffect         (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachTritoneEffect           (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachVenetianBlindsEffect    (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachShiftChannelsEffect     (const skjson::ArrayValue&,
+                                                           sk_sp<sksg::RenderNode>) const;
 
     sk_sp<sksg::RenderNode> attachDropShadowStyle(const skjson::ObjectValue&,
                                                   sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachInnerShadowStyle(const skjson::ObjectValue&,
+                                                   sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachInnerGlowStyle(const skjson::ObjectValue&,
+                                                 sk_sp<sksg::RenderNode>) const;
+    sk_sp<sksg::RenderNode> attachOuterGlowStyle(const skjson::ObjectValue&,
+                                                 sk_sp<sksg::RenderNode>) const;
 
     EffectBuilderT findBuilder(const skjson::ObjectValue&) const;
 
-    const AnimationBuilder*   fBuilder;
-    const SkSize              fLayerSize;
+    const AnimationBuilder* fBuilder;
+    CompositionBuilder*     fCompBuilder;
+    const SkSize            fLayerSize;
 };
 
 // Syntactic sugar/helper.

@@ -11,6 +11,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/resources/bitmap_allocation.h"
@@ -37,13 +38,28 @@ enum class SendBeginFrameResult {
   kSendBlockedEmbedded = 5,
   kThrottleUndrawnFrames = 6,
   kSendDefault = 7,
-  kMaxValue = kSendDefault
+  kThrottleAsRequested = 8,
+  kMaxValue = kThrottleAsRequested
 };
 
 void RecordShouldSendBeginFrame(SendBeginFrameResult result) {
   TRACE_EVENT1("viz", "ShouldNotSendBeginFrame", "reason", result);
   UMA_HISTOGRAM_ENUMERATION(
       "Compositing.CompositorFrameSinkSupport.ShouldSendBeginFrame", result);
+}
+
+void AdjustPresentationFeedback(gfx::PresentationFeedback* feedback,
+                                base::TimeTicks swap_start) {
+  // Swap start to end breakdown is always reported if ready timestamp is
+  // available. The other timestamps are adjusted to assume 0 delay in those
+  // stages if the breakdown is not available.
+  if (feedback->ready_timestamp.is_null())
+    return;
+
+  feedback->available_timestamp =
+      std::max(feedback->available_timestamp, swap_start);
+  feedback->latch_timestamp =
+      std::max(feedback->latch_timestamp, feedback->ready_timestamp);
 }
 
 }  // namespace
@@ -127,6 +143,10 @@ void CompositorFrameSinkSupport::SetBeginFrameSource(
   }
   begin_frame_source_ = begin_frame_source;
   UpdateNeedsBeginFramesInternal();
+}
+
+void CompositorFrameSinkSupport::ThrottleBeginFrame(base::TimeDelta interval) {
+  begin_frame_interval_ = interval;
 }
 
 void CompositorFrameSinkSupport::OnSurfaceActivated(Surface* surface) {
@@ -319,6 +339,22 @@ bool CompositorFrameSinkSupport::WantsAnimateOnlyBeginFrames() const {
   return wants_animate_only_begin_frames_;
 }
 
+void CompositorFrameSinkSupport::InitializeCompositorFrameSinkType(
+    mojom::CompositorFrameSinkType type) {
+  if (frame_sink_type_ != mojom::CompositorFrameSinkType::kUnspecified ||
+      type == mojom::CompositorFrameSinkType::kUnspecified) {
+    return;
+  }
+  frame_sink_type_ = type;
+}
+
+base::TimeDelta CompositorFrameSinkSupport::GetPreferredFrameInterval(
+    mojom::CompositorFrameSinkType* type) const {
+  if (type)
+    *type = frame_sink_type_;
+  return preferred_frame_interval_;
+}
+
 bool CompositorFrameSinkSupport::IsRoot() const {
   return is_root_;
 }
@@ -411,8 +447,9 @@ SubmitResult CompositorFrameSinkSupport::MaybeSubmitCompositorFrame(
   frame.metadata.begin_frame_ack.has_damage = true;
   DCHECK(frame.metadata.begin_frame_ack.frame_id.IsSequenceValid());
 
-  if (!ui::LatencyInfo::Verify(frame.metadata.latency_info,
-                               "RenderWidgetHostImpl::OnSwapCompositorFrame")) {
+  if (!ui::LatencyInfo::Verify(
+          frame.metadata.latency_info,
+          "CompositorFrameSinkSupport::MaybeSubmitCompositorFrame")) {
     for (auto& info : frame.metadata.latency_info) {
       info.Terminate();
     }
@@ -441,10 +478,10 @@ SubmitResult CompositorFrameSinkSupport::MaybeSubmitCompositorFrame(
   // |frame.metadata.frame_token| instead of maintaining a |last_frame_index_|.
   uint64_t frame_index = ++last_frame_index_;
 
-  if (frame.metadata.preferred_frame_interval) {
-    frame_sink_manager_->SetPreferredFrameIntervalForFrameSinkId(
-        frame_sink_id_, *frame.metadata.preferred_frame_interval);
-  }
+  if (frame.metadata.preferred_frame_interval)
+    preferred_frame_interval_ = *frame.metadata.preferred_frame_interval;
+  else
+    preferred_frame_interval_ = BeginFrameArgs::MinInterval();
 
   Surface* prev_surface =
       surface_manager_->GetSurfaceForId(last_created_surface_id_);
@@ -606,6 +643,8 @@ void CompositorFrameSinkSupport::DidPresentCompositorFrame(
   details.draw_start_timestamp = draw_start_timestamp;
   details.swap_timings = swap_timings;
   details.presentation_feedback = feedback;
+  AdjustPresentationFeedback(&details.presentation_feedback,
+                             swap_timings.swap_start);
   pending_received_frame_times_.erase(received_frame_timestamp);
 
   // We should only ever get one PresentationFeedback per frame_token.
@@ -651,10 +690,6 @@ void CompositorFrameSinkSupport::UpdateDisplayRootReference(
 }
 
 void CompositorFrameSinkSupport::OnBeginFrame(const BeginFrameArgs& args) {
-  if (last_activated_surface_id_.is_valid())
-    surface_manager_->SurfaceDamageExpected(last_activated_surface_id_, args);
-  last_begin_frame_args_ = args;
-
   if (compositor_frame_callback_) {
     callback_received_begin_frame_ = true;
     UpdateNeedsBeginFramesInternal();
@@ -664,6 +699,10 @@ void CompositorFrameSinkSupport::OnBeginFrame(const BeginFrameArgs& args) {
   CheckPendingSurfaces();
 
   if (client_ && ShouldSendBeginFrame(args.frame_time)) {
+    if (last_activated_surface_id_.is_valid())
+      surface_manager_->SurfaceDamageExpected(last_activated_surface_id_, args);
+    last_begin_frame_args_ = args;
+
     BeginFrameArgs copy_args = args;
     copy_args.trace_id = ComputeTraceId();
     TRACE_EVENT_WITH_FLOW1("viz,benchmark", "Graphics.Pipeline",
@@ -799,9 +838,21 @@ int64_t CompositorFrameSinkSupport::ComputeTraceId() {
 
 bool CompositorFrameSinkSupport::ShouldSendBeginFrame(
     base::TimeTicks frame_time) {
+  // We should throttle OnBeginFrame() if it has been less than
+  // |begin_frame_interval_| since the last one was sent because clients have
+  // requested to update at such rate.
+  const bool should_throttle_as_requested =
+      begin_frame_interval_ > base::TimeDelta() &&
+      (frame_time - last_frame_time_) < begin_frame_interval_;
+  // We might throttle this OnBeginFrame() if it's been less than a second since
+  // the last one was sent, either because clients are unresponsive or have
+  // submitted too many undrawn frames.
+  const bool can_throttle_if_unresponsive_or_excessive =
+      frame_time - last_frame_time_ < base::TimeDelta::FromSeconds(1);
+
   // If there are pending timing details from the previous frame(s),
   // then the client needs to receive the begin-frame.
-  if (!frame_timing_details_.empty()) {
+  if (!frame_timing_details_.empty() && !should_throttle_as_requested) {
     RecordShouldSendBeginFrame(SendBeginFrameResult::kSendFrameTiming);
     return true;
   }
@@ -817,13 +868,9 @@ bool CompositorFrameSinkSupport::ShouldSendBeginFrame(
     return false;
   }
 
-  // We might throttle this OnBeginFrame() if it's been less than a second since
-  // the last one was sent.
-  bool can_throttle =
-      (frame_time - last_frame_time_) < base::TimeDelta::FromSeconds(1);
-
   // Throttle clients that are unresponsive.
-  if (can_throttle && begin_frame_tracker_.ShouldThrottleBeginFrame()) {
+  if (can_throttle_if_unresponsive_or_excessive &&
+      begin_frame_tracker_.ShouldThrottleBeginFrame()) {
     RecordShouldSendBeginFrame(
         SendBeginFrameResult::kThrottleUnresponsiveClient);
     return false;
@@ -841,6 +888,11 @@ bool CompositorFrameSinkSupport::ShouldSendBeginFrame(
     return true;
   }
 
+  if (should_throttle_as_requested) {
+    RecordShouldSendBeginFrame(SendBeginFrameResult::kThrottleAsRequested);
+    return false;
+  }
+
   Surface* surface =
       surface_manager_->GetSurfaceForId(last_activated_surface_id_);
 
@@ -856,7 +908,8 @@ bool CompositorFrameSinkSupport::ShouldSendBeginFrame(
 
   // Throttle clients that have submitted too many undrawn frames.
   uint64_t num_undrawn_frames = active_frame_index - last_drawn_frame_index_;
-  if (can_throttle && num_undrawn_frames > kUndrawnFrameLimit) {
+  if (can_throttle_if_unresponsive_or_excessive &&
+      num_undrawn_frames > kUndrawnFrameLimit) {
     RecordShouldSendBeginFrame(SendBeginFrameResult::kThrottleUndrawnFrames);
     return false;
   }

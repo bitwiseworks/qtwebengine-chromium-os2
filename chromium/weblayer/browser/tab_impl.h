@@ -6,13 +6,13 @@
 #define WEBLAYER_BROWSER_TAB_IMPL_H_
 
 #include <memory>
+#include <set>
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
-#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "components/find_in_page/find_result_observer.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -23,22 +23,40 @@
 
 #if defined(OS_ANDROID)
 #include "base/android/scoped_java_ref.h"
+#include "weblayer/browser/browser_controls_navigation_state_handler_delegate.h"
 #endif
+
+namespace js_injection {
+class JsCommunicationHost;
+}
 
 namespace autofill {
 class AutofillProvider;
 }  // namespace autofill
 
+namespace blink {
+namespace web_pref {
+struct WebPreferences;
+}
+}  // namespace blink
+
 namespace content {
+class RenderWidgetHostView;
 class WebContents;
 struct ContextMenuParams;
 }
+
+namespace gfx {
+class Rect;
+class Size;
+}  // namespace gfx
 
 namespace sessions {
 class SessionTabHelperDelegate;
 }
 
 namespace weblayer {
+class BrowserControlsNavigationStateHandler;
 class BrowserImpl;
 class FullscreenDelegate;
 class NavigationControllerImpl;
@@ -46,28 +64,58 @@ class NewTabDelegate;
 class ProfileImpl;
 
 #if defined(OS_ANDROID)
-class TopControlsContainerView;
+class BrowserControlsContainerView;
 enum class ControlsVisibilityReason;
+class WebMessageHostFactoryProxy;
 #endif
 
 class TabImpl : public Tab,
                 public content::WebContentsDelegate,
                 public content::WebContentsObserver,
+#if defined(OS_ANDROID)
+                public BrowserControlsNavigationStateHandlerDelegate,
+#endif
                 public find_in_page::FindResultObserver {
  public:
+  enum class ScreenShotErrors {
+    kNone = 0,
+    kScaleOutOfRange,
+    kTabNotActive,
+    kWebContentsNotVisible,
+    kNoSurface,
+    kNoRenderWidgetHostView,
+    kNoWindowAndroid,
+    kEmptyViewport,
+    kHiddenByControls,
+    kScaledToEmpty,
+    kCaptureFailed,
+    kBitmapAllocationFailed,
+  };
+
+  class DataObserver {
+   public:
+    // Called when SetData() is called on |tab|.
+    virtual void OnDataChanged(
+        TabImpl* tab,
+        const std::map<std::string, std::string>& data) = 0;
+  };
+
   // TODO(sky): investigate a better way to not have so many ifdefs.
 #if defined(OS_ANDROID)
   TabImpl(ProfileImpl* profile,
-          const base::android::JavaParamRef<jobject>& java_impl);
+          const base::android::JavaParamRef<jobject>& java_impl,
+          std::unique_ptr<content::WebContents> web_contents);
 #endif
   explicit TabImpl(ProfileImpl* profile,
-                   std::unique_ptr<content::WebContents> = nullptr,
+                   std::unique_ptr<content::WebContents> web_contents,
                    const std::string& guid = std::string());
   ~TabImpl() override;
 
   // Returns the TabImpl from the specified WebContents (which may be null), or
   // null if |web_contents| was not created by a TabImpl.
   static TabImpl* FromWebContents(content::WebContents* web_contents);
+
+  static std::set<TabImpl*> GetAllTabImpl();
 
   ProfileImpl* profile() { return profile_; }
 
@@ -77,6 +125,10 @@ class TabImpl : public Tab,
   content::WebContents* web_contents() const { return web_contents_.get(); }
 
   bool has_new_tab_delegate() const { return new_tab_delegate_ != nullptr; }
+  NewTabDelegate* new_tab_delegate() const { return new_tab_delegate_; }
+
+  // Called from Browser when this Tab is losing active status.
+  void OnLosingActive();
 
   bool IsActive();
 
@@ -94,13 +146,11 @@ class TabImpl : public Tab,
   // on the Java side to have the desired effect.
   static void DisableAutofillSystemIntegrationForTesting();
 
-  base::android::ScopedJavaLocalRef<jobject> GetWebContents(
+  base::android::ScopedJavaLocalRef<jobject> GetWebContents(JNIEnv* env);
+  void SetBrowserControlsContainerViews(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void SetTopControlsContainerView(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& caller,
-      jlong native_top_controls_container_view);
+      jlong native_top_browser_controls_container_view,
+      jlong native_bottom_browser_controls_container_view);
   void ExecuteScript(JNIEnv* env,
                      const base::android::JavaParamRef<jstring>& script,
                      bool use_separate_isolate,
@@ -116,19 +166,50 @@ class TabImpl : public Tab,
   void OnAutofillProviderChanged(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& autofill_provider);
-
-  void UpdateBrowserControlsState(JNIEnv* env, jint constraint);
+  void UpdateBrowserControlsConstraint(JNIEnv* env,
+                                       jint constraint,
+                                       jboolean animate);
 
   base::android::ScopedJavaLocalRef<jstring> GetGuid(JNIEnv* env);
+  void CaptureScreenShot(
+      JNIEnv* env,
+      jfloat scale,
+      const base::android::JavaParamRef<jobject>& value_callback);
+
+  jboolean SetData(JNIEnv* env,
+                   const base::android::JavaParamRef<jobjectArray>& data);
+  base::android::ScopedJavaLocalRef<jobjectArray> GetData(JNIEnv* env);
+  jboolean IsRendererControllingBrowserControlsOffsets(JNIEnv* env);
+  base::android::ScopedJavaLocalRef<jstring> RegisterWebMessageCallback(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& js_object_name,
+      const base::android::JavaParamRef<jobjectArray>& origins,
+      const base::android::JavaParamRef<jobject>& client);
+  void UnregisterWebMessageCallback(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& js_object_name);
+  jboolean CanTranslate(JNIEnv* env);
+  void ShowTranslateUi(JNIEnv* env);
+  void RemoveTabFromBrowserBeforeDestroying(JNIEnv* env);
+  void SetTranslateTargetLanguage(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jstring>& translate_target_lang);
 #endif
 
   ErrorPageDelegate* error_page_delegate() { return error_page_delegate_; }
-  FullscreenDelegate* fullscreen_delegate() { return fullscreen_delegate_; }
+
+  void AddDataObserver(DataObserver* observer);
+  void RemoveDataObserver(DataObserver* observer);
+
+  GoogleAccountsDelegate* google_accounts_delegate() {
+    return google_accounts_delegate_;
+  }
 
   // Tab:
   void SetErrorPageDelegate(ErrorPageDelegate* delegate) override;
   void SetFullscreenDelegate(FullscreenDelegate* delegate) override;
   void SetNewTabDelegate(NewTabDelegate* delegate) override;
+  void SetGoogleAccountsDelegate(GoogleAccountsDelegate* delegate) override;
   void AddObserver(TabObserver* observer) override;
   void RemoveObserver(TabObserver* observer) override;
   NavigationController* GetNavigationController() override;
@@ -136,12 +217,22 @@ class TabImpl : public Tab,
                      bool use_separate_isolate,
                      JavaScriptResultCallback callback) override;
   const std::string& GetGuid() override;
+  void SetData(const std::map<std::string, std::string>& data) override;
+  const std::map<std::string, std::string>& GetData() override;
+  base::string16 AddWebMessageHostFactory(
+      std::unique_ptr<WebMessageHostFactory> factory,
+      const base::string16& js_object_name,
+      const std::vector<std::string>& js_origins) override;
+  void RemoveWebMessageHostFactory(
+      const base::string16& js_object_name) override;
+  std::unique_ptr<FaviconFetcher> CreateFaviconFetcher(
+      FaviconFetcherDelegate* delegate) override;
 #if !defined(OS_ANDROID)
   void AttachToView(views::WebView* web_view) override;
 #endif
 
   void WebPreferencesChanged();
-  bool GetPasswordEchoEnabled();
+  void SetWebPreferences(blink::web_pref::WebPreferences* prefs);
 
   // Executes |script| with a user gesture.
   void ExecuteScriptWithUserGestureForTests(const base::string16& script);
@@ -166,15 +257,30 @@ class TabImpl : public Tab,
       const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions)
       override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
-                      std::unique_ptr<content::FileSelectListener> listener,
+                      scoped_refptr<content::FileSelectListener> listener,
                       const blink::mojom::FileChooserParams& params) override;
+  void CreateSmsPrompt(content::RenderFrameHost*,
+                       const url::Origin&,
+                       const std::string& one_time_code,
+                       base::OnceClosure on_confirm,
+                       base::OnceClosure on_cancel) override;
   int GetTopControlsHeight() override;
+  int GetTopControlsMinHeight() override;
+  int GetBottomControlsHeight() override;
   bool DoBrowserControlsShrinkRendererSize(
-      const content::WebContents* web_contents) override;
+      content::WebContents* web_contents) override;
+  bool OnlyExpandTopControlsAtPageTop() override;
+  bool ShouldAnimateBrowserControlsHeightChanges() override;
   bool EmbedsFullscreenWidget() override;
-  void EnterFullscreenModeForTab(
+  void RequestMediaAccessPermission(
       content::WebContents* web_contents,
-      const GURL& origin,
+      const content::MediaStreamRequest& request,
+      content::MediaResponseCallback callback) override;
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
+                                  const GURL& security_origin,
+                                  blink::mojom::MediaStreamType type) override;
+  void EnterFullscreenModeForTab(
+      content::RenderFrameHost* requesting_frame,
       const blink::mojom::FullscreenOptions& options) override;
   void ExitFullscreenModeForTab(content::WebContents* web_contents) override;
   bool IsFullscreenForTabOrPending(
@@ -183,6 +289,7 @@ class TabImpl : public Tab,
       const content::WebContents* web_contents) override;
   void AddNewContents(content::WebContents* source,
                       std::unique_ptr<content::WebContents> new_contents,
+                      const GURL& target_url,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
                       bool user_gesture,
@@ -199,16 +306,35 @@ class TabImpl : public Tab,
                            int version,
                            const std::vector<gfx::RectF>& rects,
                            const gfx::RectF& active_rect) override;
+
+  // Pointer arguments are outputs. Check the preconditions for capturing a
+  // screenshot and either set all outputs, or return an error code, in which
+  // case the state of output arguments is undefined.
+  ScreenShotErrors PrepareForCaptureScreenShot(
+      float scale,
+      content::RenderWidgetHostView** rwhv,
+      gfx::Rect* src_rect,
+      gfx::Size* output_size);
+
+  void UpdateBrowserControlsState(content::BrowserControlsState new_state,
+                                  bool animate);
 #endif
 
   // content::WebContentsObserver:
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override;
   void RenderProcessGone(base::TerminationStatus status) override;
   void DidChangeVisibleSecurityState() override;
 
   // find_in_page::FindResultObserver:
   void OnFindResultAvailable(content::WebContents* web_contents) override;
+
+#if defined(OS_ANDROID)
+  // BrowserControlsNavigationStateHandlerDelegate:
+  void OnBrowserControlsStateStateChanged(
+      ControlsVisibilityReason reason,
+      content::BrowserControlsState state) override;
+  void OnUpdateBrowserControlsStateBecauseOfProcessSwitch(
+      bool did_commit) override;
+#endif
 
   // Called from closure supplied to delegate to exit fullscreen.
   void OnExitFullscreen();
@@ -220,7 +346,7 @@ class TabImpl : public Tab,
   // Returns the FindTabHelper for the page, or null if none exists.
   find_in_page::FindTabHelper* GetFindTabHelper();
 
-  sessions::SessionTabHelperDelegate* GetSessionServiceTabHelperDelegate(
+  static sessions::SessionTabHelperDelegate* GetSessionServiceTabHelperDelegate(
       content::WebContents* web_contents);
 
 #if defined(OS_ANDROID)
@@ -230,19 +356,37 @@ class TabImpl : public Tab,
 
   void UpdateBrowserVisibleSecurityStateIfNecessary();
 
+  bool SetDataInternal(const std::map<std::string, std::string>& data);
+
   BrowserImpl* browser_ = nullptr;
   ErrorPageDelegate* error_page_delegate_ = nullptr;
   FullscreenDelegate* fullscreen_delegate_ = nullptr;
   NewTabDelegate* new_tab_delegate_ = nullptr;
+  GoogleAccountsDelegate* google_accounts_delegate_ = nullptr;
   ProfileImpl* profile_;
   std::unique_ptr<content::WebContents> web_contents_;
   std::unique_ptr<NavigationControllerImpl> navigation_controller_;
   base::ObserverList<TabObserver>::Unchecked observers_;
   std::unique_ptr<i18n::LocaleChangeSubscription> locale_change_subscription_;
+
 #if defined(OS_ANDROID)
-  TopControlsContainerView* top_controls_container_view_ = nullptr;
+  BrowserControlsContainerView* top_controls_container_view_ = nullptr;
+  BrowserControlsContainerView* bottom_controls_container_view_ = nullptr;
   base::android::ScopedJavaGlobalRef<jobject> java_impl_;
-  base::OneShotTimer update_browser_controls_state_timer_;
+  std::unique_ptr<BrowserControlsNavigationStateHandler>
+      browser_controls_navigation_state_handler_;
+
+  // Last value supplied to UpdateBrowserControlsConstraint(). This *constraint*
+  // can be SHOWN, if for example a modal dialog is forcing the controls to be
+  // visible, HIDDEN, if for example fullscreen is forcing the controls to be
+  // hidden, or BOTH, if either state is viable (e.g. during normal browsing).
+  // When BOTH, the actual current state could be showing or hidden.
+  content::BrowserControlsState
+      current_browser_controls_visibility_constraint_ =
+          content::BROWSER_CONTROLS_STATE_SHOWN;
+
+  std::map<std::string, std::unique_ptr<WebMessageHostFactoryProxy>>
+      js_name_to_proxy_;
 #endif
 
   bool is_fullscreen_ = false;
@@ -253,7 +397,12 @@ class TabImpl : public Tab,
 
   const std::string guid_;
 
+  std::map<std::string, std::string> data_;
+  base::ObserverList<DataObserver>::Unchecked data_observers_;
+
   base::string16 title_;
+
+  std::unique_ptr<js_injection::JsCommunicationHost> js_communication_host_;
 
   base::WeakPtrFactory<TabImpl> weak_ptr_factory_{this};
 

@@ -9,21 +9,14 @@
   "files.trimTrailingWhitespace": true,
   "files.exclude": {
     "*.tmp.txt": true,
-    ".babelrc": true,
     ".gitignore": true,
-    ".prettierignore": true,
     ".travis.yml": true,
     ".tscache": true,
-    ".vscode": true,
+    "deploy_key.enc": true,
     "node_modules": true,
     "out": true,
-    "prettier.config.js": true,
-    "third_party": true,
-    "tsconfig.json": true,
-    "tsconfig.web.json": true,
-    "tslint.json": true,
-    "yarn-error.log": true,
-    "yarn.lock": true
+    "out-wpt": true,
+    "package-lock.json": true
   },
   "typescript.preferences.importModuleSpecifier": "relative",
   "typescript.preferences.quoteStyle": "single"

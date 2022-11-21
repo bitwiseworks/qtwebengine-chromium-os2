@@ -6,6 +6,7 @@
 
 #include "base/stl_util.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
@@ -30,9 +31,11 @@ static constexpr WebFeature kWebFeatureMapping[] = {
     WebFeature::kClientHintsUAModel,
     WebFeature::kClientHintsUAMobile,
     WebFeature::kClientHintsUAFullVersion,
+    WebFeature::kClientHintsUAPlatformVersion,
 };
 
-static_assert(static_cast<int>(mojom::WebClientHintsType::kMaxValue) + 1 ==
+static_assert(static_cast<int>(network::mojom::WebClientHintsType::kMaxValue) +
+                      1 ==
                   base::size(kWebFeatureMapping),
               "unhandled client hint type");
 
@@ -43,14 +46,9 @@ FrameClientHintsPreferencesContext::FrameClientHintsPreferencesContext(
     : frame_(frame) {}
 
 void FrameClientHintsPreferencesContext::CountClientHints(
-    mojom::WebClientHintsType type) {
+    network::mojom::WebClientHintsType type) {
   UseCounter::Count(*frame_->GetDocument(),
                     kWebFeatureMapping[static_cast<int32_t>(type)]);
-}
-
-void FrameClientHintsPreferencesContext::CountPersistentClientHintHeaders() {
-  UseCounter::Count(*frame_->GetDocument(),
-                    WebFeature::kPersistentClientHintHeader);
 }
 
 }  // namespace blink

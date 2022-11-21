@@ -107,9 +107,6 @@ class CredentialManagerTestingContext {
   CredentialManagerTestingContext(
       MockCredentialManager* mock_credential_manager)
       : dummy_context_(KURL("https://example.test")) {
-    dummy_context_.GetDocument().SetSecureContextModeForTesting(
-        SecureContextMode::kSecureContext);
-
     dummy_context_.GetFrame().GetBrowserInterfaceBroker().SetBinderForTesting(
         ::blink::mojom::blink::CredentialManager::Name_,
         WTF::BindRepeating(
@@ -159,9 +156,6 @@ TEST(CredentialsContainerTest, PendingGetRequest_NoGCCycles) {
     mock_credential_manager.WaitForCallToGet();
   }
 
-  V8GCController::CollectAllGarbageForTesting(
-      v8::Isolate::GetCurrent(),
-      v8::EmbedderHeapTracer::EmbedderStackState::kEmpty);
   ThreadState::Current()->CollectAllGarbageForTesting();
 
   ASSERT_TRUE(document_observer.WasCollected());
@@ -177,7 +171,6 @@ TEST(CredentialsContainerTest,
   MockCredentialManager mock_credential_manager;
   CredentialManagerTestingContext context(&mock_credential_manager);
 
-  auto* proxy = CredentialManagerProxy::From(*context.GetDocument());
   auto promise = MakeGarbageCollected<CredentialsContainer>()->get(
       context.GetScriptState(), CredentialRequestOptions::Create());
   mock_credential_manager.WaitForCallToGet();
@@ -185,7 +178,6 @@ TEST(CredentialsContainerTest,
   context.Frame()->DomWindow()->FrameDestroyed();
 
   mock_credential_manager.InvokeGetCallback();
-  proxy->FlushCredentialManagerConnectionForTesting();
 
   EXPECT_EQ(v8::Promise::kPending,
             promise.V8Value().As<v8::Promise>()->State());

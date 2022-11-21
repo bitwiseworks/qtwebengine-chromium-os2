@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/callback.h"
+#include "base/no_destructor.h"
 #include "base/test/task_environment.h"
 #include "net/base/load_flags.h"
 #include "net/base/request_priority.h"
@@ -14,6 +15,7 @@
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/trust_token_parameterization.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/trust_tokens/proto/public.pb.h"
@@ -63,11 +65,14 @@ class FixedKeyCommitmentGetter : public TrustTokenKeyCommitmentGetter {
   mojom::TrustTokenKeyCommitmentResultPtr result_;
 };
 
+base::NoDestructor<FixedKeyCommitmentGetter> g_fixed_key_commitment_getter{};
+
 // MockCryptographer mocks out the cryptographic operations underlying Trust
 // Tokens issuance.
 class MockCryptographer
     : public TrustTokenRequestIssuanceHelper::Cryptographer {
  public:
+  MOCK_METHOD1(Initialize, bool(int issuer_configured_batch_size));
   MOCK_METHOD1(AddKey, bool(base::StringPiece key));
   MOCK_METHOD1(BeginIssuance, base::Optional<std::string>(size_t num_tokens));
   MOCK_METHOD1(
@@ -80,24 +85,25 @@ class MockCryptographer
 // Check that issuance fails if it would result in too many issuers being
 // configured for the issuance top-level origin.
 TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfTooManyIssuers) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  auto issuer = url::Origin::Create(GURL("https://issuer.com/"));
-  auto toplevel = url::Origin::Create(GURL("https://toplevel.com/"));
+  auto issuer = *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
+  auto toplevel =
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/"));
 
   // Associate the toplevel with the cap's worth of issuers different from
   // |issuer|. (The cap is guaranteed to be quite small because of privacy
   // requirements of the Trust Tokens protocol.)
   for (int i = 0; i < kTrustTokenPerToplevelMaxNumberOfAssociatedIssuers; ++i) {
     ASSERT_TRUE(store->SetAssociation(
-        url::Origin::Create(
+        *SuitableTrustTokenOrigin::Create(
             GURL(base::StringPrintf("https://issuer%d.com/", i))),
         toplevel));
   }
 
-  TrustTokenRequestIssuanceHelper helper(
-      toplevel, store.get(), std::make_unique<FixedKeyCommitmentGetter>(),
-      std::make_unique<MockCryptographer>());
+  TrustTokenRequestIssuanceHelper helper(toplevel, store.get(),
+                                         g_fixed_key_commitment_getter.get(),
+                                         std::make_unique<MockCryptographer>());
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -108,9 +114,9 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfTooManyIssuers) {
 // Check that issuance fails if the number of tokens stored for the issuer is
 // already at capacity.
 TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfAtCapacity) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  auto issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  auto issuer = *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   // Fill up the store with tokens; issuance should fail the tokens for |issuer|
   // are at capacity.
@@ -119,8 +125,8 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfAtCapacity) {
                    /*issuing_key=*/"");
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::make_unique<FixedKeyCommitmentGetter>(),
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), g_fixed_key_commitment_getter.get(),
       std::make_unique<MockCryptographer>());
 
   auto request = MakeURLRequest("https://issuer.com/");
@@ -131,42 +137,78 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfAtCapacity) {
 
 // Check that issuance fails if its key commitment request fails.
 TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfKeyCommitmentFails) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   // Have the key commitment getter return nullptr, denoting that the key
   // commitment fetch failed.
+  auto getter = std::make_unique<FixedKeyCommitmentGetter>(issuer, nullptr);
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::make_unique<FixedKeyCommitmentGetter>(issuer, nullptr),
-      std::make_unique<MockCryptographer>());
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::make_unique<MockCryptographer>());
 
   auto request = MakeURLRequest("https://issuer.com/");
-  request->set_initiator(url::Origin::Create(GURL("https://issuer.com/")));
+  request->set_initiator(
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/")));
 
   EXPECT_EQ(ExecuteBeginOperationAndWaitForResult(&helper, request.get()),
             mojom::TrustTokenOperationStatus::kFailedPrecondition);
 }
 
-// Reject if one of the keys in the commitment is malformed.
-TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfAddingKeyFails) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+// Reject if initializing the cryptography delegate fails.
+TEST_F(TrustTokenRequestIssuanceHelperTest,
+       RejectsIfInitializingCryptographerFails) {
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(false));
+
+  TrustTokenRequestIssuanceHelper helper(
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
+
+  auto request = MakeURLRequest("https://issuer.com/");
+  request->set_initiator(issuer);
+
+  EXPECT_EQ(ExecuteBeginOperationAndWaitForResult(&helper, request.get()),
+            mojom::TrustTokenOperationStatus::kInternalError);
+}
+
+// Reject if one of the keys in the commitment is malformed.
+TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfAddingKeyFails) {
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
+
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
+
+  auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
+  key_commitment_result->keys.push_back(
+      mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
+  auto getter = std::make_unique<FixedKeyCommitmentGetter>(
+      issuer, std::move(key_commitment_result));
+
+  auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(false));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -178,25 +220,29 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfAddingKeyFails) {
 // Reject if there's an error getting blinded, unsigned tokens from BoringSSL.
 TEST_F(TrustTokenRequestIssuanceHelperTest,
        RejectsIfGettingBlindedTokensFails) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   // Return nullopt, denoting an error, when the issuance helper requests
   // blinded, unsigned tokens.
   EXPECT_CALL(*cryptographer, BeginIssuance(_)).WillOnce(Return(base::nullopt));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -211,27 +257,31 @@ TEST_F(TrustTokenRequestIssuanceHelperTest,
 // Check that the issuance helper sets the Sec-Trust-Token header on the
 // outgoing request.
 TEST_F(TrustTokenRequestIssuanceHelperTest, SetsRequestHeader) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   // The result of providing blinded, unsigned tokens should be the exact value
   // of the Sec-Trust-Token header attached to the request.
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
           Return(std::string("this string contains some blinded tokens")));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -248,27 +298,31 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, SetsRequestHeader) {
 // Check that the issuance helper sets the LOAD_BYPASS_CACHE flag on the
 // outgoing request.
 TEST_F(TrustTokenRequestIssuanceHelperTest, SetsLoadFlag) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   // The result of providing blinded, unsigned tokens should be the exact value
   // of the Sec-Trust-Token header attached to the request.
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
           Return(std::string("this string contains some blinded tokens")));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -281,25 +335,29 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, SetsLoadFlag) {
 // Check that the issuance helper rejects responses lacking the Sec-Trust-Token
 // response header.
 TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfResponseOmitsHeader) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
           Return(std::string("this string contains some blinded tokens")));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -310,24 +368,28 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfResponseOmitsHeader) {
   auto response_head = mojom::URLResponseHead::New();
   response_head->headers =
       net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\r\n");
-  EXPECT_EQ(helper.Finalize(response_head.get()),
+  EXPECT_EQ(ExecuteFinalizeAndWaitForResult(&helper, response_head.get()),
             mojom::TrustTokenOperationStatus::kBadResponse);
 }
 
 // Check that the issuance helper handles an issuance response rejected by the
 // underlying cryptographic library.
 TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfResponseIsUnusable) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
@@ -337,8 +399,8 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfResponseIsUnusable) {
   EXPECT_CALL(*cryptographer, ConfirmIssuance(_)).WillOnce(ReturnNull());
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -349,11 +411,11 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfResponseIsUnusable) {
   auto response_head = mojom::URLResponseHead::New();
   response_head->headers =
       net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\r\n");
-  response_head->headers->AddHeader(base::StringPrintf(
-      "%s: %s", kTrustTokensSecTrustTokenHeader,
+  response_head->headers->SetHeader(
+      kTrustTokensSecTrustTokenHeader,
       "response from issuer (this value will be ignored, since "
-      "Cryptographer::ConfirmResponse is mocked out)"));
-  EXPECT_EQ(helper.Finalize(response_head.get()),
+      "Cryptographer::ConfirmResponse is mocked out)");
+  EXPECT_EQ(ExecuteFinalizeAndWaitForResult(&helper, response_head.get()),
             mojom::TrustTokenOperationStatus::kBadResponse);
 
   // Verify that Finalize correctly stripped the response header.
@@ -364,17 +426,21 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsIfResponseIsUnusable) {
 // Check that, when preconditions are met and the underlying cryptographic steps
 // successfully complete, the begin/finalize methods succeed.
 TEST_F(TrustTokenRequestIssuanceHelperTest, Success) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
@@ -383,8 +449,8 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, Success) {
       .WillOnce(Return(ByMove(std::make_unique<UnblindedTokens>())));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -395,11 +461,11 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, Success) {
   auto response_head = mojom::URLResponseHead::New();
   response_head->headers =
       net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\r\n");
-  response_head->headers->AddHeader(base::StringPrintf(
-      "%s: %s", kTrustTokensSecTrustTokenHeader,
+  response_head->headers->SetHeader(
+      kTrustTokensSecTrustTokenHeader,
       "response from issuer (this value will be ignored, since "
-      "Cryptographer::ConfirmResponse is mocked out)"));
-  EXPECT_EQ(helper.Finalize(response_head.get()),
+      "Cryptographer::ConfirmResponse is mocked out)");
+  EXPECT_EQ(ExecuteFinalizeAndWaitForResult(&helper, response_head.get()),
             mojom::TrustTokenOperationStatus::kOk);
 
   // Verify that Finalize correctly stripped the response header.
@@ -410,25 +476,29 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, Success) {
 // Check that a successful Begin call associates the issuer with the issuance
 // toplevel origin.
 TEST_F(TrustTokenRequestIssuanceHelperTest, AssociatesIssuerWithToplevel) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
   key_commitment_result->keys.push_back(
       mojom::TrustTokenVerificationKey::New());
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
           Return(std::string("this string contains some blinded tokens")));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -438,20 +508,23 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, AssociatesIssuerWithToplevel) {
 
   // After the operation has successfully begun, the issuer and the toplevel
   // should be associated.
-  EXPECT_TRUE(store->IsAssociated(
-      issuer, url::Origin::Create(GURL("https://toplevel.com/"))));
+  EXPECT_TRUE(store->IsAssociated(issuer, *SuitableTrustTokenOrigin::Create(
+                                              GURL("https://toplevel.com/"))));
 }
 
 // Check that a successful end-to-end Begin/Finalize flow stores the obtained
 // trust tokens in the trust token store.
 TEST_F(TrustTokenRequestIssuanceHelperTest, StoresObtainedTokens) {
-  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateInMemory();
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
 
-  url::Origin issuer = url::Origin::Create(GURL("https://issuer.com/"));
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
 
   auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
-  key_commitment_result->keys.push_back(mojom::TrustTokenVerificationKey::New(
-      "key", /*expiry=*/base::Time(), /*label=*/0));
+  key_commitment_result->keys.push_back(
+      mojom::TrustTokenVerificationKey::New("key", /*expiry=*/base::Time()));
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize);
   auto getter = std::make_unique<FixedKeyCommitmentGetter>(
       issuer, std::move(key_commitment_result));
 
@@ -463,6 +536,7 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, StoresObtainedTokens) {
   unblinded_tokens->tokens.push_back("a signed, unblinded token");
 
   auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
   EXPECT_CALL(*cryptographer, BeginIssuance(_))
       .WillOnce(
@@ -471,8 +545,8 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, StoresObtainedTokens) {
       .WillOnce(Return(ByMove(std::move((unblinded_tokens)))));
 
   TrustTokenRequestIssuanceHelper helper(
-      url::Origin::Create(GURL("https://toplevel.com/")), store.get(),
-      std::move(getter), std::move(cryptographer));
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
 
   auto request = MakeURLRequest("https://issuer.com/");
   request->set_initiator(issuer);
@@ -483,11 +557,11 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, StoresObtainedTokens) {
   auto response_head = mojom::URLResponseHead::New();
   response_head->headers =
       net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\r\n");
-  response_head->headers->AddHeader(base::StringPrintf(
-      "%s: %s", kTrustTokensSecTrustTokenHeader,
+  response_head->headers->SetHeader(
+      kTrustTokensSecTrustTokenHeader,
       "response from issuer (this value will be ignored, since "
-      "Cryptographer::ConfirmResponse is mocked out)"));
-  EXPECT_EQ(helper.Finalize(response_head.get()),
+      "Cryptographer::ConfirmResponse is mocked out)");
+  EXPECT_EQ(ExecuteFinalizeAndWaitForResult(&helper, response_head.get()),
             mojom::TrustTokenOperationStatus::kOk);
 
   // After the operation has successfully finished, the trust tokens parsed from
@@ -498,4 +572,67 @@ TEST_F(TrustTokenRequestIssuanceHelperTest, StoresObtainedTokens) {
       store->RetrieveMatchingTokens(issuer, std::move(match_all_keys)),
       ElementsAre(Property(&TrustToken::body, "a signed, unblinded token")));
 }
+
+TEST_F(TrustTokenRequestIssuanceHelperTest, RejectsUnsuitableInsecureIssuer) {
+  auto store = TrustTokenStore::CreateForTesting();
+  TrustTokenRequestIssuanceHelper helper(
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), g_fixed_key_commitment_getter.get(),
+      std::make_unique<MockCryptographer>());
+
+  auto request = MakeURLRequest("http://insecure-issuer.com/");
+
+  EXPECT_EQ(ExecuteBeginOperationAndWaitForResult(&helper, request.get()),
+            mojom::TrustTokenOperationStatus::kInvalidArgument);
+}
+
+TEST_F(TrustTokenRequestIssuanceHelperTest,
+       RejectsUnsuitableNonHttpNonHttpsIssuer) {
+  auto store = TrustTokenStore::CreateForTesting();
+  TrustTokenRequestIssuanceHelper helper(
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), g_fixed_key_commitment_getter.get(),
+      std::make_unique<MockCryptographer>());
+
+  auto request = MakeURLRequest("file:///non-https-issuer.txt");
+
+  EXPECT_EQ(ExecuteBeginOperationAndWaitForResult(&helper, request.get()),
+            mojom::TrustTokenOperationStatus::kInvalidArgument);
+}
+
+TEST_F(TrustTokenRequestIssuanceHelperTest, RespectsMaximumBatchsize) {
+  std::unique_ptr<TrustTokenStore> store = TrustTokenStore::CreateForTesting();
+
+  SuitableTrustTokenOrigin issuer =
+      *SuitableTrustTokenOrigin::Create(GURL("https://issuer.com/"));
+
+  auto key_commitment_result = mojom::TrustTokenKeyCommitmentResult::New();
+  key_commitment_result->keys.push_back(
+      mojom::TrustTokenVerificationKey::New("key", /*expiry=*/base::Time()));
+  key_commitment_result->batch_size =
+      static_cast<int>(kMaximumTrustTokenIssuanceBatchSize + 1);
+  auto getter = std::make_unique<FixedKeyCommitmentGetter>(
+      issuer, std::move(key_commitment_result));
+
+  auto cryptographer = std::make_unique<MockCryptographer>();
+  EXPECT_CALL(*cryptographer, Initialize(_)).WillOnce(Return(true));
+  EXPECT_CALL(*cryptographer, AddKey(_)).WillOnce(Return(true));
+
+  // The batch size should be clamped to the configured maximum.
+  EXPECT_CALL(*cryptographer,
+              BeginIssuance(kMaximumTrustTokenIssuanceBatchSize))
+      .WillOnce(
+          Return(std::string("this string contains some blinded tokens")));
+
+  TrustTokenRequestIssuanceHelper helper(
+      *SuitableTrustTokenOrigin::Create(GURL("https://toplevel.com/")),
+      store.get(), getter.get(), std::move(cryptographer));
+
+  auto request = MakeURLRequest("https://issuer.com/");
+  request->set_initiator(issuer);
+
+  ASSERT_EQ(ExecuteBeginOperationAndWaitForResult(&helper, request.get()),
+            mojom::TrustTokenOperationStatus::kOk);
+}
+
 }  // namespace network

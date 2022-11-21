@@ -12,11 +12,11 @@
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/hash/hash.h"
-#include "base/logging.h"
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
 #include "base/test/mock_entropy_provider.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "net/base/cache_type.h"
@@ -78,8 +78,6 @@ class MockSimpleIndexFile : public SimpleIndexFile,
                    SimpleIndex::IndexWriteToDiskReason reason,
                    const SimpleIndex::EntrySet& entry_set,
                    uint64_t cache_size,
-                   const base::TimeTicks& start,
-                   bool app_on_background,
                    base::OnceClosure callback) override {
     disk_writes_++;
     disk_write_entry_set_ = entry_set;
@@ -184,6 +182,13 @@ class SimpleIndexTest : public net::TestWithTaskEnvironment,
 class SimpleIndexAppCacheTest : public SimpleIndexTest {
  protected:
   net::CacheType CacheType() const override { return net::APP_CACHE; }
+};
+
+class SimpleIndexCodeCacheTest : public SimpleIndexTest {
+ protected:
+  net::CacheType CacheType() const override {
+    return net::GENERATED_BYTE_CODE_CACHE;
+  }
 };
 
 TEST_F(EntryMetadataTest, Basics) {
@@ -632,6 +637,36 @@ TEST_F(SimpleIndexTest, EvictBySize) {
   EXPECT_FALSE(index()->Has(hashes_.at<2>()));
   EXPECT_TRUE(index()->Has(hashes_.at<3>()));
   ASSERT_EQ(1u, last_doom_entry_hashes().size());
+}
+
+TEST_F(SimpleIndexCodeCacheTest, DisableEvictBySize) {
+  base::Time now(base::Time::Now());
+  index()->SetMaxSize(50000);
+  InsertIntoIndexFileReturn(hashes_.at<1>(), now - base::TimeDelta::FromDays(2),
+                            475u);
+  InsertIntoIndexFileReturn(hashes_.at<2>(), now - base::TimeDelta::FromDays(1),
+                            40000u);
+  ReturnIndexFile();
+  WaitForTimeChange();
+
+  index()->Insert(hashes_.at<3>());
+  // Confirm index is as expected: No eviction, everything there.
+  EXPECT_EQ(3, index()->GetEntryCount());
+  EXPECT_EQ(0, doom_entries_calls());
+  EXPECT_TRUE(index()->Has(hashes_.at<1>()));
+  EXPECT_TRUE(index()->Has(hashes_.at<2>()));
+  EXPECT_TRUE(index()->Has(hashes_.at<3>()));
+
+  // Trigger an eviction, and make sure the right things are tossed.
+  // Since evict by size is supposed to be disabled, it evicts in LRU order,
+  // so entries 1 and 2 are both kicked out.
+  index()->UpdateEntrySize(hashes_.at<3>(), 40000u);
+  EXPECT_EQ(1, doom_entries_calls());
+  EXPECT_EQ(1, index()->GetEntryCount());
+  EXPECT_FALSE(index()->Has(hashes_.at<1>()));
+  EXPECT_FALSE(index()->Has(hashes_.at<2>()));
+  EXPECT_TRUE(index()->Has(hashes_.at<3>()));
+  ASSERT_EQ(2u, last_doom_entry_hashes().size());
 }
 
 // Same as test above, but using much older entries to make sure that small

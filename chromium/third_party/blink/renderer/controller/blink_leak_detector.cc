@@ -15,7 +15,6 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/testing/internal_settings.h"
 #include "third_party/blink/renderer/core/workers/dedicated_worker_messaging_proxy.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
@@ -82,9 +81,7 @@ void BlinkLeakDetector::TimerFiredGC(TimerBase*) {
   // clean-up tasks to the next event loop. E.g. the third GC is necessary for
   // cleaning up Document after the worker object has been reclaimed.
 
-  V8GCController::CollectAllGarbageForTesting(
-      V8PerIsolateData::MainThreadIsolate(),
-      v8::EmbedderHeapTracer::EmbedderStackState::kEmpty);
+  ThreadState::Current()->CollectAllGarbageForTesting();
   CoreInitializer::GetInstance()
       .CollectAllGarbageForAnimationAndPaintWorkletForTesting();
   // Note: Oilpan precise GC is scheduled at the end of the event loop.

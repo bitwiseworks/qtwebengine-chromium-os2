@@ -5,8 +5,32 @@
 /**
  * @fileoverview The 'certificate-manager' component manages SSL certificates.
  */
+import '../../cr_elements/cr_tabs/cr_tabs.m.js';
+import '../../cr_elements/hidden_style_css.m.js';
+import 'chrome://resources/polymer/v3_0/iron-pages/iron-pages.js';
+import './ca_trust_edit_dialog.js';
+import './certificate_delete_confirmation_dialog.js';
+import './certificate_list.js';
+import './certificate_password_decryption_dialog.js';
+import './certificate_password_encryption_dialog.js';
+import './certificates_error_dialog.js';
+import './certificate_provisioning_list.js';
+
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {assert} from '../../js/assert.m.js';
+import {focusWithoutInk} from '../../js/cr/ui/focus_without_ink.m.js';
+import {I18nBehavior} from '../../js/i18n_behavior.m.js';
+import {loadTimeData} from '../../js/load_time_data.m.js';
+import {WebUIListenerBehavior} from '../../js/web_ui_listener_behavior.m.js';
+
+import {CertificateAction, CertificateActionEvent, CertificatesErrorEventDetail} from './certificate_manager_types.js';
+import {CertificatesBrowserProxyImpl, CertificatesError, CertificatesImportError, CertificatesOrgGroup, CertificateSubnode, CertificateType} from './certificates_browser_proxy.js';
+
 Polymer({
   is: 'certificate-manager',
+
+  _template: html`{__html_template__}`,
 
   behaviors: [I18nBehavior, WebUIListenerBehavior],
 
@@ -141,8 +165,7 @@ Polymer({
         this.setClientImportAllowed.bind(this));
     this.addWebUIListener(
         'ca-import-allowed-changed', this.setCAImportAllowed.bind(this));
-    certificate_manager.CertificatesBrowserProxyImpl.getInstance()
-        .refreshCertificates();
+    CertificatesBrowserProxyImpl.getInstance().refreshCertificates();
   },
 
   /** @private */
@@ -234,7 +257,7 @@ Polymer({
       const dialog = this.$$(dialogTagName);
       dialog.addEventListener('close', () => {
         this.set(domIfBooleanName, false);
-        cr.ui.focusWithoutInk(assert(this.activeDialogAnchor_));
+        focusWithoutInk(assert(this.activeDialogAnchor_));
       });
     });
   },

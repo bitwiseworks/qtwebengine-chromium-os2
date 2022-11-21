@@ -9,18 +9,28 @@
 #include <string>
 #include <vector>
 
-#include "content/browser/accessibility/accessibility_tree_formatter_browser.h"
+#include "content/browser/accessibility/accessibility_tree_formatter_base.h"
 
 namespace content {
 
 class CONTENT_EXPORT AccessibilityTreeFormatterBlink
-    : public AccessibilityTreeFormatterBrowser {
+    : public AccessibilityTreeFormatterBase {
  public:
   explicit AccessibilityTreeFormatterBlink();
   ~AccessibilityTreeFormatterBlink() override;
 
+  std::unique_ptr<base::DictionaryValue> BuildAccessibilityTree(
+      BrowserAccessibility* root) override;
+
+  std::unique_ptr<base::DictionaryValue> BuildAccessibilityTreeForWindow(
+      gfx::AcceleratedWidget widget) override;
+
+  std::unique_ptr<base::DictionaryValue> BuildAccessibilityTreeForSelector(
+      const TreeSelector& selector) override;
+
   void AddDefaultFilters(
       std::vector<PropertyFilter>* property_filters) override;
+
   static std::unique_ptr<AccessibilityTreeFormatter> CreateBlink();
 
  private:
@@ -29,12 +39,19 @@ class CONTENT_EXPORT AccessibilityTreeFormatterBlink
   const std::string GetAllowString() override;
   const std::string GetDenyString() override;
   const std::string GetDenyNodeString() override;
-  uint32_t ChildCount(const BrowserAccessibility& node) const override;
+  const std::string GetRunUntilEventString() override;
+
+  void RecursiveBuildAccessibilityTree(const BrowserAccessibility& node,
+                                       base::DictionaryValue* dict) const;
+
+  uint32_t ChildCount(const BrowserAccessibility& node) const;
   BrowserAccessibility* GetChild(const BrowserAccessibility& node,
-                                 uint32_t i) const override;
+                                 uint32_t i) const;
+
   void AddProperties(const BrowserAccessibility& node,
-                     base::DictionaryValue* dict) override;
-  base::string16 ProcessTreeForOutput(
+                     base::DictionaryValue* dict) const;
+
+  std::string ProcessTreeForOutput(
       const base::DictionaryValue& node,
       base::DictionaryValue* filtered_dict_result = nullptr) override;
 };

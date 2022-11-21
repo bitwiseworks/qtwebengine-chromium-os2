@@ -7,8 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "discovery/common/config.h"
 #include "discovery/mdns/public/mdns_constants.h"
-#include "util/logging.h"
+#include "util/osp_logging.h"
 
 namespace openscreen {
 namespace discovery {
@@ -27,6 +28,17 @@ bool TryParseDnsType(uint16_t to_parse, DnsType* type) {
 
 }  // namespace
 
+MdnsReader::MdnsReader(const Config& config,
+                       const uint8_t* buffer,
+                       size_t length)
+    : BigEndianReader(buffer, length),
+      kMaximumAllowedRdataSize(
+          static_cast<size_t>(config.maximum_valid_rdata_size)) {
+  // TODO(rwkeane): Validate |maximum_valid_rdata_size| > MaxWireSize() for
+  // rdata types A, AAAA, SRV, PTR.
+  OSP_DCHECK_GT(config.maximum_valid_rdata_size, 0);
+}
+
 bool MdnsReader::Read(TxtRecordRdata::Entry* out) {
   Cursor cursor(this);
   uint8_t entry_length;
@@ -44,7 +56,7 @@ bool MdnsReader::Read(TxtRecordRdata::Entry* out) {
 }
 
 // RFC 1035: https://www.ietf.org/rfc/rfc1035.txt
-// See section 4.1.4. Message compression
+// See section 4.1.4. Message compression.
 bool MdnsReader::Read(DomainName* out) {
   OSP_DCHECK(out);
   const uint8_t* position = current();
@@ -118,6 +130,10 @@ bool MdnsReader::Read(RawRecordRdata* out) {
   Cursor cursor(this);
   uint16_t record_length;
   if (Read(&record_length)) {
+    if (record_length > kMaximumAllowedRdataSize) {
+      return false;
+    }
+
     std::vector<uint8_t> buffer(record_length);
     if (Read(buffer.size(), buffer.data())) {
       ErrorOr<RawRecordRdata> rdata =
@@ -200,6 +216,9 @@ bool MdnsReader::Read(TxtRecordRdata* out) {
   if (!Read(&record_length)) {
     return false;
   }
+  if (record_length > kMaximumAllowedRdataSize) {
+    return false;
+  }
   std::vector<TxtRecordRdata::Entry> texts;
   while (cursor.delta() < sizeof(record_length) + record_length) {
     TxtRecordRdata::Entry entry;
@@ -231,6 +250,9 @@ bool MdnsReader::Read(NsecRecordRdata* out) {
   uint16_t record_length;
   DomainName next_record_name;
   if (!Read(&record_length) || !Read(&next_record_name)) {
+    return false;
+  }
+  if (record_length > kMaximumAllowedRdataSize) {
     return false;
   }
 
@@ -300,8 +322,8 @@ bool MdnsReader::Read(MdnsQuestion* out) {
   return false;
 }
 
-bool MdnsReader::Read(MdnsMessage* out) {
-  OSP_DCHECK(out);
+ErrorOr<MdnsMessage> MdnsReader::Read() {
+  MdnsMessage out;
   Cursor cursor(this);
   Header header;
   std::vector<MdnsQuestion> questions;
@@ -312,26 +334,26 @@ bool MdnsReader::Read(MdnsMessage* out) {
       Read(header.answer_count, &answers) &&
       Read(header.authority_record_count, &authority_records) &&
       Read(header.additional_record_count, &additional_records)) {
-    // TODO(yakimakha): Skip messages with non-zero opcode and rcode.
-    // One way to do this is to change the method signature to return
-    // ErrorOr<MdnsMessage> and return different error codes for failure to read
-    // and for messages that were read successfully but are non-conforming.
+    if (!IsValidFlagsSection(header.flags)) {
+      return Error::Code::kMdnsNonConformingFailure;
+    }
+
     ErrorOr<MdnsMessage> message = MdnsMessage::TryCreate(
         header.id, GetMessageType(header.flags), questions, answers,
         authority_records, additional_records);
     if (message.is_error()) {
-      return false;
+      return std::move(message.error());
     }
-    *out = std::move(message.value());
+    out = std::move(message.value());
 
     if (IsMessageTruncated(header.flags)) {
-      out->set_truncated();
+      out.set_truncated();
     }
 
     cursor.Commit();
-    return true;
+    return out;
   }
-  return false;
+  return Error::Code::kMdnsReadFailure;
 }
 
 bool MdnsReader::Read(IPAddress::Version version, IPAddress* out) {

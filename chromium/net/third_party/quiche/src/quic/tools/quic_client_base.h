@@ -102,9 +102,14 @@ class QuicClientBase {
   // Wait for events until the stream with the given ID is closed.
   void WaitForStreamToClose(QuicStreamId id);
 
-  // Wait for events until the handshake is confirmed.
-  // Returns true if the crypto handshake succeeds, false otherwise.
-  QUIC_MUST_USE_RESULT bool WaitForCryptoHandshakeConfirmed();
+  // Wait for 1-RTT keys become available.
+  // Returns true once 1-RTT keys are available, false otherwise.
+  QUIC_MUST_USE_RESULT bool WaitForOneRttKeysAvailable();
+
+  // Wait for handshake state proceeds to HANDSHAKE_CONFIRMED.
+  // In QUIC crypto, this does the same as WaitForOneRttKeysAvailable, while in
+  // TLS, this waits for HANDSHAKE_DONE frame is received.
+  QUIC_MUST_USE_RESULT bool WaitForHandshakeConfirmed();
 
   // Wait up to 50ms, and handle any events which occur.
   // Returns true if there are any outstanding requests.
@@ -120,9 +125,10 @@ class QuicClientBase {
   bool ChangeEphemeralPort();
 
   QuicSession* session();
+  const QuicSession* session() const;
 
   bool connected() const;
-  bool goaway_received() const;
+  virtual bool goaway_received() const;
 
   const QuicServerId& server_id() const { return server_id_; }
 
@@ -230,6 +236,14 @@ class QuicClientBase {
     connection_debug_visitor_ = connection_debug_visitor;
   }
 
+  void set_server_connection_id_length(uint8_t server_connection_id_length) {
+    server_connection_id_length_ = server_connection_id_length;
+  }
+
+  void set_client_connection_id_length(uint8_t client_connection_id_length) {
+    client_connection_id_length_ = client_connection_id_length;
+  }
+
  protected:
   // TODO(rch): Move GetNumSentClientHellosFromSession and
   // GetNumReceivedServerConfigUpdatesFromSession into a new/better
@@ -262,10 +276,6 @@ class QuicClientBase {
   // cached server config contains a server-designated ID, that ID will be
   // returned.  Otherwise, the next random ID will be returned.
   QuicConnectionId GetNextConnectionId();
-
-  // Returns the next server-designated ConnectionId from the cached config for
-  // |server_id_|, if it exists.  Otherwise, returns 0.
-  QuicConnectionId GetNextServerDesignatedConnectionId();
 
   // Generates a new, random connection ID (as opposed to a server-designated
   // connection ID).
@@ -352,6 +362,14 @@ class QuicClientBase {
   // The debug visitor set on the connection right after it is constructed.
   // Not owned, must be valid for the lifetime of the QuicClientBase instance.
   QuicConnectionDebugVisitor* connection_debug_visitor_;
+
+  // GenerateNewConnectionId creates a random connection ID of this length.
+  // Defaults to 8.
+  uint8_t server_connection_id_length_;
+
+  // GetClientConnectionId creates a random connection ID of this length.
+  // Defaults to 0.
+  uint8_t client_connection_id_length_;
 };
 
 }  // namespace quic

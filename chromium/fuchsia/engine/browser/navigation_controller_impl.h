@@ -33,6 +33,11 @@ class NavigationControllerImpl : public fuchsia::web::NavigationController,
       fidl::InterfaceHandle<fuchsia::web::NavigationEventListener> listener);
 
  private:
+  // Returns a NavigationState reflecting the current state of |web_contents_|'s
+  // visible navigation entry, taking into account |is_main_document_loaded_|
+  // and |uncommitted_load_error_| states.
+  fuchsia::web::NavigationState GetVisibleNavigationState() const;
+
   // Processes the most recent changes to the browser's navigation state and
   // triggers the publishing of change events.
   void OnNavigationEntryChanged();
@@ -52,12 +57,13 @@ class NavigationControllerImpl : public fuchsia::web::NavigationController,
   void GetVisibleEntry(GetVisibleEntryCallback callback) final;
 
   // content::WebContentsObserver implementation.
-  void TitleWasSet(content::NavigationEntry*) override;
-  void DocumentAvailableInMainFrame() override;
+  void TitleWasSet(content::NavigationEntry*) final;
+  void DocumentAvailableInMainFrame() final;
   void DidFinishLoad(content::RenderFrameHost* render_frame_host,
-                     const GURL& validated_url) override;
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override;
+                     const GURL& validated_url) final;
+  void RenderProcessGone(base::TerminationStatus status) final;
+  void DidStartNavigation(content::NavigationHandle* navigation_handle) final;
+  void DidFinishNavigation(content::NavigationHandle* navigation_handle) final;
 
   content::WebContents* const web_contents_;
 
@@ -72,6 +78,9 @@ class NavigationControllerImpl : public fuchsia::web::NavigationController,
 
   // True once the main document finishes loading.
   bool is_main_document_loaded_ = false;
+
+  // True if navigation failed due to an error during page load.
+  bool uncommitted_load_error_ = false;
 
   base::WeakPtrFactory<NavigationControllerImpl> weak_factory_;
 

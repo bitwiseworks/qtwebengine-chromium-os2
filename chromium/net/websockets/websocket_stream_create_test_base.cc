@@ -12,6 +12,7 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/log/net_log_with_source.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/websockets/websocket_basic_handshake_stream.h"
 #include "net/websockets/websocket_handshake_request_info.h"
 #include "net/websockets/websocket_handshake_response_info.h"
@@ -27,8 +28,8 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
     : public WebSocketStream::ConnectDelegate {
  public:
   TestConnectDelegate(WebSocketStreamCreateTestBase* owner,
-                      const base::Closure& done_callback)
-      : owner_(owner), done_callback_(done_callback) {}
+                      base::OnceClosure done_callback)
+      : owner_(owner), done_callback_(std::move(done_callback)) {}
 
   void OnCreateRequest(URLRequest* request) override {
     owner_->url_request_ = request;
@@ -41,13 +42,13 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
       ADD_FAILURE();
     owner_->response_info_ = std::move(response);
     stream.swap(owner_->stream_);
-    done_callback_.Run();
+    std::move(done_callback_).Run();
   }
 
   void OnFailure(const std::string& message) override {
     owner_->has_failed_ = true;
     owner_->failure_message_ = message;
-    done_callback_.Run();
+    std::move(done_callback_).Run();
   }
 
   void OnStartOpeningHandshake(
@@ -82,7 +83,7 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
 
  private:
   WebSocketStreamCreateTestBase* owner_;
-  base::Closure done_callback_;
+  base::OnceClosure done_callback_;
   DISALLOW_COPY_AND_ASSIGN(TestConnectDelegate);
 };
 
@@ -96,16 +97,16 @@ void WebSocketStreamCreateTestBase::CreateAndConnectStream(
     const std::vector<std::string>& sub_protocols,
     const url::Origin& origin,
     const SiteForCookies& site_for_cookies,
-    const net::NetworkIsolationKey& network_isolation_key,
+    const IsolationInfo& isolation_info,
     const HttpRequestHeaders& additional_headers,
     std::unique_ptr<base::OneShotTimer> timer) {
   auto connect_delegate = std::make_unique<TestConnectDelegate>(
       this, connect_run_loop_.QuitClosure());
   auto api_delegate = std::make_unique<TestWebSocketStreamRequestAPI>();
   stream_request_ = WebSocketStream::CreateAndConnectStreamForTesting(
-      socket_url, sub_protocols, origin, site_for_cookies,
-      network_isolation_key, additional_headers,
-      url_request_context_host_.GetURLRequestContext(), NetLogWithSource(),
+      socket_url, sub_protocols, origin, site_for_cookies, isolation_info,
+      additional_headers, url_request_context_host_.GetURLRequestContext(),
+      NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS,
       std::move(connect_delegate),
       timer ? std::move(timer) : std::make_unique<base::OneShotTimer>(),
       std::move(api_delegate));

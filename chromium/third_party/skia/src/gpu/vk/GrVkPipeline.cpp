@@ -158,7 +158,7 @@ static VkPrimitiveTopology gr_primitive_type_to_vk_topology(GrPrimitiveType prim
         case GrPrimitiveType::kPath:
             SK_ABORT("Unsupported primitive type");
     }
-    SK_ABORT("invalid GrPrimitiveType");
+    SkUNREACHABLE;
 }
 
 static void setup_input_assembly_state(GrPrimitiveType primitiveType,
@@ -669,8 +669,6 @@ void GrVkPipeline::SetDynamicBlendConstantState(GrVkGpu* gpu,
         floatColors[1] = blendConst.fG;
         floatColors[2] = blendConst.fB;
         floatColors[3] = blendConst.fA;
-    } else {
-        memset(floatColors, 0, 4 * sizeof(float));
+        cmdBuffer->setBlendConstants(gpu, floatColors);
     }
-    cmdBuffer->setBlendConstants(gpu, floatColors);
 }

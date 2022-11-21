@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as DataGrid from '../data_grid/data_grid.js';
 import * as UI from '../ui/ui.js';
 
-import {Event, MediaChangeTypeKeys} from './MediaModel.js';  // eslint-disable-line no-unused-vars
+import {PlayerEvent} from './MediaModel.js';  // eslint-disable-line no-unused-vars
 
 /**
  * @typedef {{
@@ -40,7 +43,7 @@ export class EventNode extends DataGrid.DataGrid.DataGridNode {
   /**
    * @override
    * @param {string} columnId
-   * @return {!Element}
+   * @return {!HTMLElement}
    */
   createCell(columnId) {
     const cell = this.createTD(columnId);
@@ -74,10 +77,10 @@ export class PlayerEventsView extends UI.Widget.VBox {
         id: MediaEventColumnKeys.Timestamp,
         title: ls`Timestamp`,
         weight: 1,
-        sortingFunction: DataGrid.SortableDataGrid.SortableDataGrid.NumericComparator.bind(
-            null, MediaEventColumnKeys.Timestamp)
+        sortingFunction:
+            DataGrid.SortableDataGrid.SortableDataGrid.NumericComparator.bind(null, MediaEventColumnKeys.Timestamp)
       },
-      {id: MediaEventColumnKeys.Event, title: ls`Event Name`, weight: 2},
+      {id: MediaEventColumnKeys.Event, title: ls`Event name`, weight: 2},
       {id: MediaEventColumnKeys.Value, title: ls`Value`, weight: 7}
     ]);
 
@@ -99,41 +102,41 @@ export class PlayerEventsView extends UI.Widget.VBox {
     // TODO(tmathmeyer) SortableDataGrid doesn't play nice with nested JSON
     // renderers, since they can change size, and this breaks the visible
     // element computation in ViewportDataGrid.
-    const datagrid = new DataGrid.DataGrid.DataGridImpl({displayName: ls`Event Display`, columns: gridColumnDescs});
+    const datagrid = new DataGrid.DataGrid.DataGridImpl({displayName: ls`Event display`, columns: gridColumnDescs});
     datagrid.asWidget().contentElement.classList.add('no-border-top-datagrid');
     return datagrid;
   }
 
   /**
-   * @param {string} playerID
-   * @param {!Array.<!Event>} changes
-   * @param {!MediaChangeTypeKeys} change_type
+   * @param {!PlayerEvent} event
    */
-  renderChanges(playerID, changes, change_type) {
-    if (this._firstEventTime === 0 && changes.length > 0) {
-      this._firstEventTime = changes[0].timestamp;
+  onEvent(event) {
+    if (this._firstEventTime === 0) {
+      this._firstEventTime = event.timestamp;
     }
 
-    for (const event of changes) {
-      this.addEvent(this._subtractFirstEventTime(event));
-    }
-  }
-
-  /**
-   * @param {!Event} event
-   */
-  addEvent(event) {
+    event = this._subtractFirstEventTime(event);
     const stringified = /** @type {string} */ (event.value);
-    const json = JSON.parse(stringified);
-    event.event = json.event;
-    delete json['event'];
-    event.value = json;
-    const node = new EventNode(event);
-    this._dataGrid.rootNode().appendChild(node);
+    try {
+      const json = JSON.parse(stringified);
+      event.event = json.event;
+      delete json['event'];
+      event.value = json;
+      const node = new EventNode(event);
+      const scroll = this._dataGrid.scrollContainer;
+      const isAtBottom = scroll.scrollTop === (scroll.scrollHeight - scroll.offsetHeight);
+      this._dataGrid.rootNode().appendChild(node);
+      if (isAtBottom) {
+        scroll.scrollTop = scroll.scrollHeight;
+      }
+    } catch (e) {
+      // If this is a legacy message event, ignore it for now until they
+      // are handled.
+    }
   }
 
   /**
-   * @param {!Event} event
+   * @param {!PlayerEvent} event
    */
   _subtractFirstEventTime(event) {
     event.displayTimestamp = (event.timestamp - this._firstEventTime).toFixed(3);

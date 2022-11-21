@@ -5,6 +5,10 @@
 #ifndef COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_DECORATORS_PAGE_LIVE_STATE_DECORATOR_H_
 #define COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_DECORATORS_PAGE_LIVE_STATE_DECORATOR_H_
 
+#include "components/performance_manager/public/graph/graph.h"
+#include "components/performance_manager/public/graph/node_data_describer.h"
+#include "components/performance_manager/public/graph/page_node.h"
+
 namespace content {
 class WebContents;
 }  // namespace content
@@ -17,13 +21,14 @@ class PageNode;
 // All the functions that take a WebContents* as a parameter should only be
 // called from the UI thread, the event will be forwarded to the corresponding
 // PageNode on the Performance Manager's sequence.
-class PageLiveStateDecorator {
+class PageLiveStateDecorator : public GraphOwnedDefaultImpl,
+                               public NodeDataDescriberDefaultImpl {
  public:
   class Data;
 
   // This object should only be used via its static methods.
-  PageLiveStateDecorator() = delete;
-  ~PageLiveStateDecorator() = delete;
+  PageLiveStateDecorator() = default;
+  ~PageLiveStateDecorator() override = default;
   PageLiveStateDecorator(const PageLiveStateDecorator& other) = delete;
   PageLiveStateDecorator& operator=(const PageLiveStateDecorator&) = delete;
 
@@ -43,8 +48,10 @@ class PageLiveStateDecorator {
                                         bool is_capturing_audio);
   static void OnIsBeingMirroredChanged(content::WebContents* contents,
                                        bool is_being_mirrored);
-  static void OnIsCapturingDesktopChanged(content::WebContents* contents,
-                                          bool is_capturing_desktop);
+  static void OnIsCapturingWindowChanged(content::WebContents* contents,
+                                         bool is_capturing_window);
+  static void OnIsCapturingDisplayChanged(content::WebContents* contents,
+                                          bool is_capturing_display);
 
   // Set the auto discardable property. This indicates whether or not the page
   // can be discarded during an intervention.
@@ -53,6 +60,14 @@ class PageLiveStateDecorator {
 
   static void SetWasDiscarded(content::WebContents* contents,
                               bool was_discarded);
+
+ private:
+  // GraphOwned implementation:
+  void OnPassedToGraph(Graph* graph) override;
+  void OnTakenFromGraph(Graph* graph) override;
+
+  // NodeDataDescriber implementation:
+  base::Value DescribePageNodeData(const PageNode* node) const override;
 };
 
 class PageLiveStateDecorator::Data {
@@ -67,7 +82,8 @@ class PageLiveStateDecorator::Data {
   virtual bool IsCapturingVideo() const = 0;
   virtual bool IsCapturingAudio() const = 0;
   virtual bool IsBeingMirrored() const = 0;
-  virtual bool IsCapturingDesktop() const = 0;
+  virtual bool IsCapturingWindow() const = 0;
+  virtual bool IsCapturingDisplay() const = 0;
   virtual bool IsAutoDiscardable() const = 0;
   virtual bool WasDiscarded() const = 0;
 

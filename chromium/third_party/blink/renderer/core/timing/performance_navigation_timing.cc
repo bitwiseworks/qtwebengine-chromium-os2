@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/document_timing.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/document_load_timing.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
@@ -56,7 +57,8 @@ PerformanceNavigationTiming::PerformanceNavigationTiming(
                : g_empty_atom,
           time_origin,
           SecurityOrigin::IsSecure(frame->GetDocument()->Url()),
-          std::move(server_timing)),
+          std::move(server_timing),
+          frame->DomWindow()),
       ExecutionContextClient(frame),
       resource_timing_info_(info) {
   DCHECK(frame);
@@ -74,7 +76,7 @@ PerformanceEntryType PerformanceNavigationTiming::EntryTypeEnum() const {
   return PerformanceEntry::EntryType::kNavigation;
 }
 
-void PerformanceNavigationTiming::Trace(Visitor* visitor) {
+void PerformanceNavigationTiming::Trace(Visitor* visitor) const {
   ExecutionContextClient::Trace(visitor);
   PerformanceResourceTiming::Trace(visitor);
 }
@@ -151,7 +153,7 @@ AtomicString PerformanceNavigationTiming::initiatorType() const {
 
 bool PerformanceNavigationTiming::GetAllowRedirectDetails() const {
   blink::ExecutionContext* context =
-      GetFrame() ? GetFrame()->GetDocument()->ToExecutionContext() : nullptr;
+      GetFrame() ? GetFrame()->DomWindow() : nullptr;
   const blink::SecurityOrigin* security_origin = nullptr;
   if (context)
     security_origin = context->GetSecurityOrigin();
@@ -316,4 +318,4 @@ void PerformanceNavigationTiming::BuildJSONValue(
   builder.AddString("type", type());
   builder.AddNumber("redirectCount", redirectCount());
 }
-}
+}  // namespace blink

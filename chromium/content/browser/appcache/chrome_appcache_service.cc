@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/files/file_path.h"
-#include "base/task/post_task.h"
 #include "content/browser/appcache/appcache_storage_impl.h"
 #include "content/browser/loader/navigation_url_loader_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -37,8 +36,8 @@ void ChromeAppCacheService::Initialize(
   browser_context_ = browser_context;
 
   // Init our base class.
-  AppCacheServiceImpl::Initialize(cache_path_);
   set_appcache_policy(this);
+  AppCacheServiceImpl::Initialize(cache_path_);
   set_special_storage_policy(special_storage_policy.get());
 }
 
@@ -56,18 +55,28 @@ void ChromeAppCacheService::Shutdown() {
   partition_ = nullptr;
 }
 
-bool ChromeAppCacheService::CanLoadAppCache(const GURL& manifest_url,
-                                            const GURL& first_party) {
+bool ChromeAppCacheService::CanLoadAppCache(
+    const GURL& manifest_url,
+    const GURL& site_for_cookies,
+    const base::Optional<url::Origin>& top_frame_origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return GetContentClient()->browser()->AllowAppCache(manifest_url, first_party,
-                                                      browser_context_);
+  return GetContentClient()->browser()->AllowAppCache(
+      manifest_url, site_for_cookies, top_frame_origin, browser_context_);
 }
 
 bool ChromeAppCacheService::CanCreateAppCache(
-    const GURL& manifest_url, const GURL& first_party) {
+    const GURL& manifest_url,
+    const GURL& site_for_cookies,
+    const base::Optional<url::Origin>& top_frame_origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return GetContentClient()->browser()->AllowAppCache(manifest_url, first_party,
-                                                      browser_context_);
+  return GetContentClient()->browser()->AllowAppCache(
+      manifest_url, site_for_cookies, top_frame_origin, browser_context_);
+}
+
+bool ChromeAppCacheService::IsOriginTrialRequiredForAppCache() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  return GetContentClient()->browser()->IsOriginTrialRequiredForAppCache(
+      browser_context_);
 }
 
 ChromeAppCacheService::~ChromeAppCacheService() = default;
@@ -78,7 +87,7 @@ void ChromeAppCacheService::DeleteOnCorrectThread() const {
     return;
   }
   if (BrowserThread::IsThreadInitialized(BrowserThread::UI)) {
-    base::DeleteSoon(FROM_HERE, {BrowserThread::UI}, this);
+    GetUIThreadTaskRunner({})->DeleteSoon(FROM_HERE, this);
     return;
   }
   // Better to leak than crash on shutdown.

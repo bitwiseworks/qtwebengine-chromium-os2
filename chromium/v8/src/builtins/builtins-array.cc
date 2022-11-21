@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/base/logging.h"
 #include "src/builtins/builtins-utils-inl.h"
 #include "src/builtins/builtins.h"
 #include "src/codegen/code-factory.h"
@@ -471,6 +472,15 @@ BUILTIN(ArrayPop) {
     uint32_t new_length = len - 1;
     ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
         isolate, result, JSReceiver::GetElement(isolate, array, new_length));
+
+    // The length could have become read-only during the last GetElement() call,
+    // so check again.
+    if (JSArray::HasReadOnlyLength(array)) {
+      THROW_NEW_ERROR_RETURN_FAILURE(
+          isolate, NewTypeError(MessageTemplate::kStrictReadOnlyProperty,
+                                isolate->factory()->length_string(),
+                                Object::TypeOf(isolate, array), array));
+    }
     JSArray::SetLength(array, new_length);
   }
 
@@ -639,11 +649,14 @@ class ArrayConcatVisitor {
         index_offset_(0u),
         bit_field_(FastElementsField::encode(fast_elements) |
                    ExceedsLimitField::encode(false) |
-                   IsFixedArrayField::encode(storage->IsFixedArray()) |
+                   IsFixedArrayField::encode(storage->IsFixedArray(isolate)) |
                    HasSimpleElementsField::encode(
-                       storage->IsFixedArray() ||
-                       !storage->map().IsCustomElementsReceiverMap())) {
-    DCHECK(!(this->fast_elements() && !is_fixed_array()));
+                       storage->IsFixedArray(isolate) ||
+                       // Don't take fast path for storages that might have
+                       // side effects when storing to them.
+                       (!storage->map(isolate).IsCustomElementsReceiverMap() &&
+                        !storage->IsJSTypedArray(isolate)))) {
+    DCHECK_IMPLIES(this->fast_elements(), is_fixed_array());
   }
 
   ~ArrayConcatVisitor() { clear_storage(); }
@@ -1053,8 +1066,8 @@ bool IterateElements(Isolate* isolate, Handle<JSReceiver> receiver,
     return IterateElementsSlow(isolate, receiver, length, visitor);
   }
 
-  if (!HasOnlySimpleElements(isolate, *receiver) ||
-      !visitor->has_simple_elements()) {
+  if (!visitor->has_simple_elements() ||
+      !HasOnlySimpleElements(isolate, *receiver)) {
     return IterateElementsSlow(isolate, receiver, length, visitor);
   }
   Handle<JSObject> array = Handle<JSObject>::cast(receiver);
@@ -1070,6 +1083,9 @@ bool IterateElements(Isolate* isolate, Handle<JSReceiver> receiver,
     case HOLEY_SEALED_ELEMENTS:
     case HOLEY_NONEXTENSIBLE_ELEMENTS:
     case HOLEY_ELEMENTS: {
+      // Disallow execution so the cached elements won't change mid execution.
+      DisallowJavascriptExecution no_js(isolate);
+
       // Run through the elements FixedArray and use HasElement and GetElement
       // to check the prototype for missing elements.
       Handle<FixedArray> elements(FixedArray::cast(array->elements()), isolate);
@@ -1096,6 +1112,9 @@ bool IterateElements(Isolate* isolate, Handle<JSReceiver> receiver,
     }
     case HOLEY_DOUBLE_ELEMENTS:
     case PACKED_DOUBLE_ELEMENTS: {
+      // Disallow execution so the cached elements won't change mid execution.
+      DisallowJavascriptExecution no_js(isolate);
+
       // Empty array is FixedArray but not FixedDoubleArray.
       if (length == 0) break;
       // Run through the elements FixedArray and use HasElement and GetElement
@@ -1132,6 +1151,9 @@ bool IterateElements(Isolate* isolate, Handle<JSReceiver> receiver,
     }
 
     case DICTIONARY_ELEMENTS: {
+      // Disallow execution so the cached dictionary won't change mid execution.
+      DisallowJavascriptExecution no_js(isolate);
+
       Handle<NumberDictionary> dict(array->element_dictionary(), isolate);
       std::vector<uint32_t> indices;
       indices.reserve(dict->Capacity() / 2);

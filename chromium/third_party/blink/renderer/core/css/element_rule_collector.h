@@ -23,7 +23,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_ELEMENT_RULE_COLLECTOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_ELEMENT_RULE_COLLECTOR_H_
 
-#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/css/css_rule_list.h"
 #include "third_party/blink/renderer/core/css/pseudo_style_request.h"
@@ -76,7 +75,7 @@ class MatchedRule {
     return GetRuleData()->Specificity() + specificity_;
   }
   const CSSStyleSheet* ParentStyleSheet() const { return parent_style_sheet_; }
-  void Trace(Visitor* visitor) {
+  void Trace(Visitor* visitor) const {
     visitor->Trace(parent_style_sheet_);
     visitor->Trace(rule_data_);
   }
@@ -113,6 +112,8 @@ class ElementRuleCollector {
                        MatchResult&,
                        ComputedStyle*,
                        EInsideLink);
+  ElementRuleCollector(const ElementRuleCollector&) = delete;
+  ElementRuleCollector& operator=(const ElementRuleCollector&) = delete;
   ~ElementRuleCollector();
 
   void SetMode(SelectorChecker::Mode mode) { mode_ = mode; }
@@ -199,7 +200,6 @@ class ElementRuleCollector {
   Member<RuleIndexList> css_rule_list_;
   Member<StyleRuleList> style_rule_list_;
   MatchResult& result_;
-  DISALLOW_COPY_AND_ASSIGN(ElementRuleCollector);
 };
 
 }  // namespace blink

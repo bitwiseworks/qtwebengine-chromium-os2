@@ -34,8 +34,6 @@ namespace base {
 class TaskRunner;
 }
 
-class StartupTraceWriter;
-class StartupTraceWriterRegistry;
 class SharedMemory;
 class TraceWriter;
 
@@ -103,31 +101,6 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   virtual void BindStartupTargetBuffer(uint16_t target_buffer_reservation_id,
                                        BufferID target_buffer_id) = 0;
 
-  // Binds the provided unbound StartupTraceWriterRegistry to the arbiter's SMB.
-  // Normally this happens when the perfetto service has been initialized and we
-  // want to rebind all the writers created in the early startup phase.
-  //
-  // All StartupTraceWriters created by the registry are bound to the arbiter
-  // and the given target buffer. The writers may not be bound immediately if
-  // they are concurrently being written to or if this method isn't called on
-  // the arbiter's TaskRunner. The registry will retry on the arbiter's
-  // TaskRunner until all writers were bound successfully.
-  //
-  // The commit of the StartupTraceWriters' locally buffered data to the SMB is
-  // rate limited to avoid exhausting the SMB, and may continue asynchronously
-  // even after all writers were bound.
-  //
-  // By calling this method, the registry's ownership is transferred to the
-  // arbiter. The arbiter will delete the registry once all writers were bound.
-  //
-  // DEPRECATED. See SharedMemoryArbiter::CreateUnboundInstance() for a
-  // replacement.
-  //
-  // TODO(eseckler): Remove StartupTraceWriter support.
-  virtual void BindStartupTraceWriterRegistry(
-      std::unique_ptr<StartupTraceWriterRegistry>,
-      BufferID target_buffer) = 0;
-
   // Treat the reservation as resolved to an invalid buffer. Commits for this
   // reservation will be flushed to the service ASAP. The service will free
   // committed chunks but otherwise ignore them. The producer can call this
@@ -139,6 +112,37 @@ class PERFETTO_EXPORT SharedMemoryArbiter {
   // Notifies the service that all data for the given FlushRequestID has been
   // committed in the shared memory buffer. Should only be called while bound.
   virtual void NotifyFlushComplete(FlushRequestID) = 0;
+
+  // Sets the duration during which commits are batched. Args:
+  // |batch_commits_duration_ms|: The length of the period, during which commits
+  // by all trace writers are accumulated, before being sent to the service.
+  // When the period ends, all accumulated commits are flushed. On the first
+  // commit after the last flush, another delayed flush is scheduled to run in
+  // |batch_commits_duration_ms|. If an immediate flush occurs (via
+  // FlushPendingCommitDataRequests()) during a batching period, any
+  // accumulated commits up to that point will be sent to the service
+  // immediately. And when the batching period ends, the commits that occurred
+  // after the immediate flush will also be sent to the service.
+  //
+  // If the duration has already been set to a non-zero value before this method
+  // is called, and there is already a scheduled flush with the previously-set
+  // duration, the new duration will take effect after the scheduled flush
+  // occurs.
+  //
+  // If |batch_commits_duration_ms| is non-zero, batched data that hasn't been
+  // sent could be lost at the end of a tracing session. To avoid this,
+  // producers should make sure that FlushPendingCommitDataRequests is called
+  // after the last TraceWriter write and before the service has stopped
+  // listening for commits from the tracing session's data sources (i.e.
+  // data sources should stop asynchronously, see
+  // DataSourceDescriptor.will_notify_on_stop=true).
+  virtual void SetBatchCommitsDuration(uint32_t batch_commits_duration_ms) = 0;
+
+  // Forces an immediate commit of the completed packets, without waiting for
+  // the next task or for a batching period to end. Should only be called while
+  // bound.
+  virtual void FlushPendingCommitDataRequests(
+      std::function<void()> callback = {}) = 0;
 
   // Create a bound arbiter instance. Args:
   // |SharedMemory|: the shared memory buffer to use.

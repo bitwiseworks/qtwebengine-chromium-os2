@@ -32,7 +32,7 @@ import * as Common from '../common/common.js';
 import * as Platform from '../platform/platform.js';
 import * as Root from '../root/root.js';
 
-import {ContextMenuDescriptor, EventDescriptors, Events, InspectorFrontendHostAPI, LoadNetworkResourceResult} from './InspectorFrontendHostAPI.js';  // eslint-disable-line no-unused-vars
+import {ContextMenuDescriptor, EnumeratedHistogram, EventDescriptors, Events, InspectorFrontendHostAPI, LoadNetworkResourceResult} from './InspectorFrontendHostAPI.js';  // eslint-disable-line no-unused-vars
 import {streamWrite as resourceLoaderStreamWrite} from './ResourceLoader.js';
 
 /**
@@ -221,12 +221,20 @@ export class InspectorFrontendHostStub {
   close(url) {
     const buffer = this._urlsBeingSaved.get(url) || [];
     this._urlsBeingSaved.delete(url);
-    const fileName = url ? Platform.StringUtilities.trimURL(url).removeURLFragment() : '';
+    let fileName = '';
+
+    if (url) {
+      const trimmed = Platform.StringUtilities.trimURL(url);
+      fileName = Platform.StringUtilities.removeURLFragment(trimmed);
+    }
+
     const link = document.createElement('a');
     link.download = fileName;
     const blob = new Blob([buffer.join('')], {type: 'text/plain'});
-    link.href = URL.createObjectURL(blob);
+    const blobUrl = URL.createObjectURL(blob);
+    link.href = blobUrl;
     link.click();
+    URL.revokeObjectURL(blobUrl);
   }
 
   /**
@@ -238,7 +246,7 @@ export class InspectorFrontendHostStub {
 
   /**
    * @override
-   * @param {string} actionName
+   * @param {!EnumeratedHistogram} actionName
    * @param {number} actionCode
    * @param {number} bucketSize
    */

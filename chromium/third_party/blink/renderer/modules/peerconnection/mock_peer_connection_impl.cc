@@ -9,7 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "third_party/blink/renderer/modules/peerconnection/mock_data_channel_impl.h"
 #include "third_party/blink/renderer/modules/peerconnection/mock_peer_connection_dependency_factory.h"
@@ -330,9 +331,18 @@ MockPeerConnectionImpl::MockPeerConnectionImpl(
       getstats_result_(true),
       sdp_mline_index_(-1),
       observer_(observer) {
+  // TODO(hbos): Remove once no longer mandatory to implement.
   ON_CALL(*this, SetLocalDescription(_, _))
       .WillByDefault(testing::Invoke(
           this, &MockPeerConnectionImpl::SetLocalDescriptionWorker));
+  ON_CALL(*this, SetLocalDescriptionForMock(_, _))
+      .WillByDefault(testing::Invoke(
+          [this](
+              std::unique_ptr<webrtc::SessionDescriptionInterface>* desc,
+              rtc::scoped_refptr<webrtc::SetLocalDescriptionObserverInterface>*
+                  observer) {
+            SetLocalDescriptionWorker(nullptr, desc->release());
+          }));
   // TODO(hbos): Remove once no longer mandatory to implement.
   ON_CALL(*this, SetRemoteDescription(_, _))
       .WillByDefault(testing::Invoke(

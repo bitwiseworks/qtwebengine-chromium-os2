@@ -26,6 +26,9 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as Platform from '../platform/platform.js';
 import * as TextUtils from '../text_utils/text_utils.js';
@@ -67,6 +70,7 @@ export class FontView extends UI.View.SimpleView {
     const url = content ? TextUtils.ContentProvider.contentAsDataURL(content, this._mimeType, true) : this._url;
     this.fontStyleElement.textContent =
         Platform.StringUtilities.sprintf('@font-face { font-family: "%s"; src: url(%s); }', uniqueFontName, url);
+    this.updateFontPreviewSize();
   }
 
   _createContentIfNeeded() {

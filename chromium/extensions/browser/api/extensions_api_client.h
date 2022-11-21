@@ -55,7 +55,7 @@ class NetworkingCastPrivateDelegate;
 class NonNativeFileSystemDelegate;
 class RulesCacheDelegate;
 class SettingsObserver;
-class SupervisedUserServiceDelegate;
+class SupervisedUserExtensionsDelegate;
 class ValueStoreCache;
 class ValueStoreFactory;
 class VirtualKeyboardDelegate;
@@ -170,8 +170,8 @@ class ExtensionsAPIClient {
 
   // Creates a delegate for calling into the SupervisedUserService from the
   // Management API.
-  virtual std::unique_ptr<SupervisedUserServiceDelegate>
-  CreateSupervisedUserServiceDelegate() const;
+  virtual std::unique_ptr<SupervisedUserExtensionsDelegate>
+  CreateSupervisedUserExtensionsDelegate() const;
 
   // Creates and returns the DisplayInfoProvider used by the
   // chrome.system.display extension API.
@@ -208,8 +208,8 @@ class ExtensionsAPIClient {
       const std::vector<char>& image_data,
       api::clipboard::ImageType type,
       AdditionalDataItemList additional_items,
-      const base::Closure& success_callback,
-      const base::Callback<void(const std::string&)>& error_callback);
+      base::OnceClosure success_callback,
+      base::OnceCallback<void(const std::string&)> error_callback);
 #endif
 
   virtual AutomationInternalApiDelegate* GetAutomationInternalApiDelegate();

@@ -47,11 +47,11 @@ using testing::Test;
 using testing::_;
 
 struct MockCFIReporter: public DwarfCFIToModule::Reporter {
-  MockCFIReporter(const string &file, const string &section)
+  MockCFIReporter(const string& file, const string& section)
       : Reporter(file, section) { }
   MOCK_METHOD2(UnnamedRegister, void(size_t offset, int reg));
-  MOCK_METHOD2(UndefinedNotSupported, void(size_t offset, const string &reg));
-  MOCK_METHOD2(ExpressionsNotSupported, void(size_t offset, const string &reg));
+  MOCK_METHOD2(UndefinedNotSupported, void(size_t offset, const string& reg));
+  MOCK_METHOD2(ExpressionsNotSupported, void(size_t offset, const string& reg));
 };
 
 struct DwarfCFIToModuleFixture {
@@ -80,7 +80,7 @@ struct DwarfCFIToModuleFixture {
   vector<string> register_names;
   MockCFIReporter reporter;
   DwarfCFIToModule handler;
-  vector<Module::StackFrameEntry *> entries;
+  vector<Module::StackFrameEntry*> entries;
 };
 
 class Entry: public DwarfCFIToModuleFixture, public Test { };
@@ -125,7 +125,7 @@ struct RuleFixture: public DwarfCFIToModuleFixture {
     EXPECT_EQ(entry_address, entries[0]->address);
     EXPECT_EQ(entry_size, entries[0]->size);
   }
-  uint64 entry_address, entry_size;
+  uint64_t entry_address, entry_size;
   unsigned return_reg;
 };
 

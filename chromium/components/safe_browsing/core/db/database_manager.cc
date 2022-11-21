@@ -138,7 +138,7 @@ void SafeBrowsingDatabaseManager::StopOnIOThread(bool shutdown) {
   v4_get_hash_protocol_manager_.reset();
 }
 
-std::unique_ptr<base::CallbackList<void()>::Subscription>
+std::unique_ptr<base::RepeatingClosureList::Subscription>
 SafeBrowsingDatabaseManager::RegisterDatabaseUpdatedCallback(
     const OnDatabaseUpdated& cb) {
   return update_complete_callback_list_.Add(cb);
@@ -147,11 +147,6 @@ SafeBrowsingDatabaseManager::RegisterDatabaseUpdatedCallback(
 void SafeBrowsingDatabaseManager::NotifyDatabaseUpdateFinished() {
   DCHECK(CurrentlyOnThread(ThreadID::UI));
   update_complete_callback_list_.Notify();
-}
-
-std::string SafeBrowsingDatabaseManager::GetSafetyNetId() const {
-  NOTREACHED() << "Only implemented on Android";
-  return "";
 }
 
 SafeBrowsingDatabaseManager::SafeBrowsingApiCheck::SafeBrowsingApiCheck(

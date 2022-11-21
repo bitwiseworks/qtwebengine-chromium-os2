@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as TextEditor from '../text_editor/text_editor.js';
 import * as TextUtils from '../text_utils/text_utils.js';
@@ -20,7 +23,8 @@ export class SourcesTextEditor extends TextEditor.CodeMirrorTextEditor.CodeMirro
       lineNumbers: true,
       lineWrapping: false,
       bracketMatchingSetting: Common.Settings.Settings.instance().moduleSetting('textEditorBracketMatching'),
-      padBottom: Common.Settings.Settings.instance().moduleSetting('allowScrollPastEof').get()
+      padBottom: Common.Settings.Settings.instance().moduleSetting('allowScrollPastEof').get(),
+      lineWiseCopyCut: true,
     };
     if (codeMirrorOptions) {
       Object.assign(defaultCodeMirrorOptions, codeMirrorOptions);
@@ -104,7 +108,8 @@ export class SourcesTextEditor extends TextEditor.CodeMirrorTextEditor.CodeMirro
    */
   attachInfobar(infobar) {
     if (!this._infoBarDiv) {
-      this._infoBarDiv = createElementWithClass('div', 'flex-none');
+      this._infoBarDiv = document.createElement('div');
+      this._infoBarDiv.classList.add('flex-none');
       this.element.insertBefore(this._infoBarDiv, this.element.firstChild);
     }
     this._infoBarDiv.appendChild(infobar.element);
@@ -365,7 +370,13 @@ export class SourcesTextEditor extends TextEditor.CodeMirrorTextEditor.CodeMirro
    */
   hasLineClass(lineNumber, className) {
     const lineInfo = this.codeMirror().lineInfo(lineNumber);
-    const wrapClass = lineInfo.wrapClass || '';
+    if (!lineInfo) {
+      return false;
+    }
+    const wrapClass = lineInfo.wrapClass;
+    if (!wrapClass) {
+      return false;
+    }
     const classNames = wrapClass.split(' ');
     return classNames.indexOf(className) !== -1;
   }

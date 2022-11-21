@@ -28,12 +28,16 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';
 import * as Components from '../components/components.js';
 import * as DataGrid from '../data_grid/data_grid.js';
 import * as Host from '../host/host.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
+import * as Platform from '../platform/platform.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
 import * as Workspace from '../workspace/workspace.js';
@@ -238,9 +242,16 @@ export class NetworkNode extends DataGrid.SortableDataGrid.SortableDataGridNode 
   }
 
   /**
+   * @return {string}
+   */
+  displayType() {
+    return '';
+  }
+
+  /**
    * @override
    * @param {string} columnId
-   * @return {!Element}
+   * @return {!HTMLElement}
    */
   createCell(columnId) {
     const cell = this.createTD(columnId);
@@ -493,7 +504,7 @@ export class NetworkRequestNode extends NetworkNode {
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static NameComparator(a, b) {
@@ -503,7 +514,7 @@ export class NetworkRequestNode extends NetworkNode {
       const aRequest = a.requestOrFirstKnownChildRequest();
       const bRequest = b.requestOrFirstKnownChildRequest();
       if (aRequest && bRequest) {
-        return aRequest.indentityCompare(bRequest);
+        return aRequest.identityCompare(bRequest);
       }
       return aRequest ? -1 : 1;
     }
@@ -512,7 +523,7 @@ export class NetworkRequestNode extends NetworkNode {
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static RemoteAddressComparator(a, b) {
@@ -530,12 +541,12 @@ export class NetworkRequestNode extends NetworkNode {
     if (bRemoteAddress > aRemoteAddress) {
       return -1;
     }
-    return aRequest.indentityCompare(bRequest);
+    return aRequest.identityCompare(bRequest);
   }
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static SizeComparator(a, b) {
@@ -552,12 +563,12 @@ export class NetworkRequestNode extends NetworkNode {
       return -1;
     }
     return (aRequest.transferSize - bRequest.transferSize) || (aRequest.resourceSize - bRequest.resourceSize) ||
-        aRequest.indentityCompare(bRequest);
+        aRequest.identityCompare(bRequest);
   }
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static TypeComparator(a, b) {
@@ -576,12 +587,12 @@ export class NetworkRequestNode extends NetworkNode {
     if (bSimpleType > aSimpleType) {
       return -1;
     }
-    return aRequest.indentityCompare(bRequest);
+    return aRequest.identityCompare(bRequest);
   }
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static InitiatorComparator(a, b) {
@@ -601,7 +612,7 @@ export class NetworkRequestNode extends NetworkNode {
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static RequestCookiesCountComparator(a, b) {
@@ -611,9 +622,9 @@ export class NetworkRequestNode extends NetworkNode {
     if (!aRequest || !bRequest) {
       return !aRequest ? -1 : 1;
     }
-    const aScore = aRequest.requestCookies.length;
-    const bScore = bRequest.requestCookies.length;
-    return (aScore - bScore) || aRequest.indentityCompare(bRequest);
+    const aScore = aRequest.includedRequestCookies().length;
+    const bScore = bRequest.includedRequestCookies().length;
+    return (aScore - bScore) || aRequest.identityCompare(bRequest);
   }
 
   // TODO(allada) This function deserves to be in a network-common of some sort.
@@ -631,12 +642,12 @@ export class NetworkRequestNode extends NetworkNode {
     }
     const aScore = aRequest.responseCookies ? aRequest.responseCookies.length : 0;
     const bScore = bRequest.responseCookies ? bRequest.responseCookies.length : 0;
-    return (aScore - bScore) || aRequest.indentityCompare(bRequest);
+    return (aScore - bScore) || aRequest.identityCompare(bRequest);
   }
 
   /**
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static PriorityComparator(a, b) {
@@ -653,13 +664,13 @@ export class NetworkRequestNode extends NetworkNode {
     let bScore = bPriority ? PerfUI.NetworkPriorities.networkPriorityWeight(bPriority) : 0;
     bScore = bScore || 0;
 
-    return aScore - bScore || aRequest.indentityCompare(bRequest);
+    return aScore - bScore || aRequest.identityCompare(bRequest);
   }
 
   /**
    * @param {string} propertyName
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static RequestPropertyComparator(propertyName, a, b) {
@@ -671,15 +682,34 @@ export class NetworkRequestNode extends NetworkNode {
     const aValue = aRequest[propertyName];
     const bValue = bRequest[propertyName];
     if (aValue === bValue) {
-      return aRequest.indentityCompare(bRequest);
+      return aRequest.identityCompare(bRequest);
     }
     return aValue > bValue ? 1 : -1;
   }
 
   /**
+   * @param {!NetworkNode} a
+   * @param {!NetworkNode} b
+   * @return {number}
+   */
+  static RequestURLComparator(a, b) {
+    const aRequest = a.requestOrFirstKnownChildRequest();
+    const bRequest = b.requestOrFirstKnownChildRequest();
+    if (!aRequest || !bRequest) {
+      return !aRequest ? -1 : 1;
+    }
+    const aURL = aRequest.url();
+    const bURL = bRequest.url();
+    if (aURL === bURL) {
+      return aRequest.identityCompare(bRequest);
+    }
+    return aURL > bURL ? 1 : -1;
+  }
+
+  /**
    * @param {string} propertyName
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static ResponseHeaderStringComparator(propertyName, a, b) {
@@ -691,13 +721,13 @@ export class NetworkRequestNode extends NetworkNode {
     }
     const aValue = String(aRequest.responseHeaderValue(propertyName) || '');
     const bValue = String(bRequest.responseHeaderValue(propertyName) || '');
-    return aValue.localeCompare(bValue) || aRequest.indentityCompare(bRequest);
+    return aValue.localeCompare(bValue) || aRequest.identityCompare(bRequest);
   }
 
   /**
    * @param {string} propertyName
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static ResponseHeaderNumberComparator(propertyName, a, b) {
@@ -714,7 +744,7 @@ export class NetworkRequestNode extends NetworkNode {
         parseFloat(bRequest.responseHeaderValue(propertyName)) :
         -Infinity;
     if (aValue === bValue) {
-      return aRequest.indentityCompare(bRequest);
+      return aRequest.identityCompare(bRequest);
     }
     return aValue > bValue ? 1 : -1;
   }
@@ -722,7 +752,7 @@ export class NetworkRequestNode extends NetworkNode {
   /**
    * @param {string} propertyName
    * @param {!NetworkNode} a
-   * @param {!Network.NetworkNode} b
+   * @param {!NetworkNode} b
    * @return {number}
    */
   static ResponseHeaderDateComparator(propertyName, a, b) {
@@ -737,7 +767,7 @@ export class NetworkRequestNode extends NetworkNode {
     const aValue = aHeader ? new Date(aHeader).getTime() : -Infinity;
     const bValue = bHeader ? new Date(bHeader).getTime() : -Infinity;
     if (aValue === bValue) {
-      return aRequest.indentityCompare(bRequest);
+      return aRequest.identityCompare(bRequest);
     }
     return aValue > bValue ? 1 : -1;
   }
@@ -748,7 +778,7 @@ export class NetworkRequestNode extends NetworkNode {
   showingInitiatorChainChanged() {
     const showInitiatorChain = this.showingInitiatorChain();
 
-    const initiatorGraph = self.SDK.networkLog.initiatorGraphForRequest(this._request);
+    const initiatorGraph = SDK.NetworkLog.NetworkLog.instance().initiatorGraphForRequest(this._request);
     for (const request of initiatorGraph.initiators) {
       if (request === this._request) {
         continue;
@@ -810,6 +840,7 @@ export class NetworkRequestNode extends NetworkNode {
   }
 
   /**
+   * @override
    * @return {string}
    */
   displayType() {
@@ -820,6 +851,10 @@ export class NetworkRequestNode extends NetworkNode {
     if (resourceType === Common.ResourceType.resourceTypes.Other ||
         resourceType === Common.ResourceType.resourceTypes.Image) {
       simpleType = mimeType.replace(/^(application|image)\//, '');
+    }
+
+    if (this._request.isRedirect()) {
+      simpleType += ' / ' + ls`Redirect`;
     }
 
     return simpleType;
@@ -890,7 +925,8 @@ export class NetworkRequestNode extends NetworkNode {
   _setTextAndTitleAndLink(element, cellText, linkText, handler) {
     element.createTextChild(cellText);
     element.createChild('span', 'separator-in-cell');
-    const link = createElementWithClass('span', 'devtools-link');
+    const link = document.createElement('span');
+    link.classList.add('devtools-link');
     link.textContent = linkText;
     link.addEventListener('click', handler);
     element.appendChild(link);
@@ -941,7 +977,7 @@ export class NetworkRequestNode extends NetworkNode {
         break;
       }
       case 'cookies': {
-        this._setTextAndTitle(cell, this._arrayLength(this._request.requestCookies));
+        this._setTextAndTitle(cell, this._arrayLength(this._request.includedRequestCookies()));
         break;
       }
       case 'setcookies': {
@@ -1050,14 +1086,17 @@ export class NetworkRequestNode extends NetworkNode {
       });
       let iconElement;
       if (this._request.resourceType() === Common.ResourceType.resourceTypes.Image) {
-        const previewImage = createElementWithClass('img', 'image-network-icon-preview');
+        const previewImage = document.createElement('img');
+        previewImage.classList.add('image-network-icon-preview');
         previewImage.alt = this._request.resourceType().title();
-        this._request.populateImageSource(previewImage);
+        this._request.populateImageSource(/** @type {!HTMLImageElement} */ (previewImage));
 
-        iconElement = createElementWithClass('div', 'icon');
+        iconElement = document.createElement('div');
+        iconElement.classList.add('icon');
         iconElement.appendChild(previewImage);
       } else {
-        iconElement = createElementWithClass('img', 'icon');
+        iconElement = document.createElement('img');
+        iconElement.classList.add('icon');
         iconElement.alt = this._request.resourceType().title();
       }
       iconElement.classList.add(this._request.resourceType().name());
@@ -1171,7 +1210,7 @@ export class NetworkRequestNode extends NetworkNode {
   _renderInitiatorCell(cell) {
     this._initiatorCell = cell;
     const request = this._request;
-    const initiator = self.SDK.networkLog.initiatorInfoForRequest(request);
+    const initiator = SDK.NetworkLog.NetworkLog.instance().initiatorInfoForRequest(request);
 
     const timing = request.timing;
     if (timing && timing.pushStart) {
@@ -1252,7 +1291,7 @@ export class NetworkRequestNode extends NetworkNode {
    * @param {!Element} cell
    */
   _renderSizeCell(cell) {
-    const resourceSize = Number.bytesToString(this._request.resourceSize);
+    const resourceSize = Platform.NumberUtilities.bytesToString(this._request.resourceSize);
 
     if (this._request.cachedInMemory()) {
       cell.createTextChild(ls`(memory cache)`);
@@ -1277,7 +1316,7 @@ export class NetworkRequestNode extends NetworkNode {
       cell.title = ls`Served from disk cache, resource size: ${resourceSize}`;
       cell.classList.add('network-dim-cell');
     } else {
-      const transferSize = Number.bytesToString(this._request.transferSize);
+      const transferSize = Platform.NumberUtilities.bytesToString(this._request.transferSize);
       cell.createTextChild(transferSize);
       cell.title = `${transferSize} transferred over network, resource size: ${resourceSize}`;
     }

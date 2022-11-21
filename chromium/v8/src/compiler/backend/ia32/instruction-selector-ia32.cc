@@ -277,6 +277,23 @@ void VisitRRSimd(InstructionSelector* selector, Node* node,
   }
 }
 
+// TODO(v8:9198): Like VisitRROFloat, but for SIMD. SSE requires operand1 to be
+// a register as we don't have memory alignment yet. For AVX, memory operands
+// are fine, but can have performance issues if not aligned to 16/32 bytes
+// (based on load size), see SDM Vol 1, chapter 14.9
+void VisitRROSimd(InstructionSelector* selector, Node* node,
+                  ArchOpcode avx_opcode, ArchOpcode sse_opcode) {
+  IA32OperandGenerator g(selector);
+  InstructionOperand operand0 = g.UseRegister(node->InputAt(0));
+  if (selector->IsSupported(AVX)) {
+    selector->Emit(avx_opcode, g.DefineAsRegister(node), operand0,
+                   g.Use(node->InputAt(1)));
+  } else {
+    selector->Emit(sse_opcode, g.DefineSameAsFirst(node), operand0,
+                   g.UseRegister(node->InputAt(1)));
+  }
+}
+
 void VisitRRISimd(InstructionSelector* selector, Node* node,
                   ArchOpcode opcode) {
   IA32OperandGenerator g(selector);
@@ -314,7 +331,7 @@ void VisitRROSimdShift(InstructionSelector* selector, Node* node,
   } else {
     InstructionOperand operand0 = g.UseUniqueRegister(node->InputAt(0));
     InstructionOperand operand1 = g.UseUniqueRegister(node->InputAt(1));
-    InstructionOperand temps[] = {g.TempSimd128Register()};
+    InstructionOperand temps[] = {g.TempSimd128Register(), g.TempRegister()};
     selector->Emit(opcode, g.DefineSameAsFirst(node), operand0, operand1,
                    arraysize(temps), temps);
   }
@@ -465,6 +482,10 @@ void InstructionSelector::VisitStore(Node* node) {
   WriteBarrierKind write_barrier_kind = store_rep.write_barrier_kind();
   MachineRepresentation rep = store_rep.representation();
 
+  if (FLAG_enable_unconditional_write_barriers && CanBeTaggedPointer(rep)) {
+    write_barrier_kind = kFullWriteBarrier;
+  }
+
   if (write_barrier_kind != kNoWriteBarrier &&
       V8_LIKELY(!FLAG_disable_write_barriers)) {
     DCHECK(CanBeTaggedPointer(rep));
@@ -577,11 +598,7 @@ void VisitBinop(InstructionSelector* selector, Node* node,
     inputs[input_count++] = g.UseRegister(left);
     inputs[input_count++] = g.UseImmediate(right);
   } else {
-    int effect_level = selector->GetEffectLevel(node);
-    if (cont->IsBranch()) {
-      effect_level = selector->GetEffectLevel(
-          cont->true_block()->PredecessorAt(0)->control_input());
-    }
+    int effect_level = selector->GetEffectLevel(node, cont);
     if (node->op()->HasProperty(Operator::kCommutative) &&
         g.CanBeBetterLeftOperand(right) &&
         (!g.CanBeBetterLeftOperand(left) ||
@@ -643,11 +660,7 @@ void InstructionSelector::VisitStackPointerGreaterThan(
   InstructionCode opcode =
       kArchStackPointerGreaterThan | MiscField::encode(static_cast<int>(kind));
 
-  int effect_level = GetEffectLevel(node);
-  if (cont->IsBranch()) {
-    effect_level =
-        GetEffectLevel(cont->true_block()->PredecessorAt(0)->control_input());
-  }
+  int effect_level = GetEffectLevel(node, cont);
 
   IA32OperandGenerator g(this);
 
@@ -895,6 +908,10 @@ void InstructionSelector::VisitWord32PairSar(Node* node) {
   VisitWord32PairShift(this, kIA32SarPair, node);
 }
 
+void InstructionSelector::VisitWord32Rol(Node* node) {
+  VisitShift(this, node, kIA32Rol);
+}
+
 void InstructionSelector::VisitWord32Ror(Node* node) {
   VisitShift(this, node, kIA32Ror);
 }
@@ -937,7 +954,16 @@ void InstructionSelector::VisitWord32Ror(Node* node) {
   V(Float64RoundTruncate, kSSEFloat64Round | MiscField::encode(kRoundToZero)) \
   V(Float32RoundTiesEven,                                                     \
     kSSEFloat32Round | MiscField::encode(kRoundToNearest))                    \
-  V(Float64RoundTiesEven, kSSEFloat64Round | MiscField::encode(kRoundToNearest))
+  V(Float64RoundTiesEven,                                                     \
+    kSSEFloat64Round | MiscField::encode(kRoundToNearest))                    \
+  V(F32x4Ceil, kIA32F32x4Round | MiscField::encode(kRoundUp))                 \
+  V(F32x4Floor, kIA32F32x4Round | MiscField::encode(kRoundDown))              \
+  V(F32x4Trunc, kIA32F32x4Round | MiscField::encode(kRoundToZero))            \
+  V(F32x4NearestInt, kIA32F32x4Round | MiscField::encode(kRoundToNearest))    \
+  V(F64x2Ceil, kIA32F64x2Round | MiscField::encode(kRoundUp))                 \
+  V(F64x2Floor, kIA32F64x2Round | MiscField::encode(kRoundDown))              \
+  V(F64x2Trunc, kIA32F64x2Round | MiscField::encode(kRoundToZero))            \
+  V(F64x2NearestInt, kIA32F64x2Round | MiscField::encode(kRoundToNearest))
 
 #define RRO_FLOAT_OP_LIST(V)                    \
   V(Float32Add, kAVXFloat32Add, kSSEFloat32Add) \
@@ -1243,7 +1269,7 @@ void InstructionSelector::EmitPrepareResults(
     Node* node) {
   IA32OperandGenerator g(this);
 
-  int reverse_slot = 0;
+  int reverse_slot = 1;
   for (PushParameter output : *results) {
     if (!output.location.IsCallerFrameSlot()) continue;
     // Skip any alignment holes in nodes.
@@ -1253,6 +1279,8 @@ void InstructionSelector::EmitPrepareResults(
         MarkAsFloat32(output.node);
       } else if (output.location.GetType() == MachineType::Float64()) {
         MarkAsFloat64(output.node);
+      } else if (output.location.GetType() == MachineType::Simd128()) {
+        MarkAsSimd128(output.node);
       }
       Emit(kIA32Peek, g.DefineAsRegister(output.node),
            g.UseImmediate(reverse_slot));
@@ -1408,11 +1436,7 @@ void VisitWordCompare(InstructionSelector* selector, Node* node,
   InstructionCode narrowed_opcode =
       TryNarrowOpcodeSize(opcode, left, right, cont);
 
-  int effect_level = selector->GetEffectLevel(node);
-  if (cont->IsBranch()) {
-    effect_level = selector->GetEffectLevel(
-        cont->true_block()->PredecessorAt(0)->control_input());
-  }
+  int effect_level = selector->GetEffectLevel(node, cont);
 
   // If one of the two inputs is an immediate, make sure it's on the right, or
   // if one of the two inputs is a memory operand, make sure it's on the left.
@@ -2096,6 +2120,7 @@ void InstructionSelector::VisitWord32AtomicPairCompareExchange(Node* node) {
 #define SIMD_BINOP_UNIFIED_SSE_AVX_LIST(V) \
   V(I64x2Add)                              \
   V(I64x2Sub)                              \
+  V(I32x4DotI16x8S)                        \
   V(I16x8RoundingAverageU)                 \
   V(I8x16RoundingAverageU)
 
@@ -2109,6 +2134,7 @@ void InstructionSelector::VisitWord32AtomicPairCompareExchange(Node* node) {
   V(I32x4UConvertI16x8Low)  \
   V(I32x4UConvertI16x8High) \
   V(I32x4Abs)               \
+  V(I32x4BitMask)           \
   V(I16x8SConvertI8x16Low)  \
   V(I16x8SConvertI8x16High) \
   V(I16x8Neg)               \
@@ -2116,7 +2142,8 @@ void InstructionSelector::VisitWord32AtomicPairCompareExchange(Node* node) {
   V(I16x8UConvertI8x16High) \
   V(I16x8Abs)               \
   V(I8x16Neg)               \
-  V(I8x16Abs)
+  V(I8x16Abs)               \
+  V(I8x16BitMask)
 
 #define SIMD_UNOP_PREFIX_LIST(V) \
   V(F32x4Abs)                    \
@@ -2125,14 +2152,14 @@ void InstructionSelector::VisitWord32AtomicPairCompareExchange(Node* node) {
   V(S128Not)
 
 #define SIMD_ANYTRUE_LIST(V) \
-  V(S1x4AnyTrue)             \
-  V(S1x8AnyTrue)             \
-  V(S1x16AnyTrue)
+  V(V32x4AnyTrue)            \
+  V(V16x8AnyTrue)            \
+  V(V8x16AnyTrue)
 
 #define SIMD_ALLTRUE_LIST(V) \
-  V(S1x4AllTrue)             \
-  V(S1x8AllTrue)             \
-  V(S1x16AllTrue)
+  V(V32x4AllTrue)            \
+  V(V16x8AllTrue)            \
+  V(V8x16AllTrue)
 
 #define SIMD_SHIFT_OPCODES_UNIFED_SSE_AVX(V) \
   V(I64x2Shl)                                \
@@ -2144,11 +2171,35 @@ void InstructionSelector::VisitWord32AtomicPairCompareExchange(Node* node) {
   V(I16x8ShrS)                               \
   V(I16x8ShrU)
 
+void InstructionSelector::VisitS128Const(Node* node) {
+  IA32OperandGenerator g(this);
+  static const int kUint32Immediates = kSimd128Size / sizeof(uint32_t);
+  uint32_t val[kUint32Immediates];
+  memcpy(val, S128ImmediateParameterOf(node->op()).data(), kSimd128Size);
+  // If all bytes are zeros or ones, avoid emitting code for generic constants
+  bool all_zeros = !(val[0] || val[1] || val[2] || val[3]);
+  bool all_ones = val[0] == UINT32_MAX && val[1] == UINT32_MAX &&
+                  val[2] == UINT32_MAX && val[3] == UINT32_MAX;
+  InstructionOperand dst = g.DefineAsRegister(node);
+  if (all_zeros) {
+    Emit(kIA32S128Zero, dst);
+  } else if (all_ones) {
+    Emit(kIA32S128AllOnes, dst);
+  } else {
+    InstructionOperand inputs[kUint32Immediates];
+    for (int i = 0; i < kUint32Immediates; ++i) {
+      inputs[i] = g.UseImmediate(val[i]);
+    }
+    InstructionOperand temp(g.TempRegister());
+    Emit(kIA32S128Const, 1, &dst, kUint32Immediates, inputs, 1, &temp);
+  }
+}
+
 void InstructionSelector::VisitF64x2Min(Node* node) {
   IA32OperandGenerator g(this);
   InstructionOperand temps[] = {g.TempSimd128Register()};
   InstructionOperand operand0 = g.UseUniqueRegister(node->InputAt(0));
-  InstructionOperand operand1 = g.UseUnique(node->InputAt(1));
+  InstructionOperand operand1 = g.UseUniqueRegister(node->InputAt(1));
 
   if (IsSupported(AVX)) {
     Emit(kIA32F64x2Min, g.DefineAsRegister(node), operand0, operand1,
@@ -2163,7 +2214,7 @@ void InstructionSelector::VisitF64x2Max(Node* node) {
   IA32OperandGenerator g(this);
   InstructionOperand temps[] = {g.TempSimd128Register()};
   InstructionOperand operand0 = g.UseUniqueRegister(node->InputAt(0));
-  InstructionOperand operand1 = g.UseUnique(node->InputAt(1));
+  InstructionOperand operand1 = g.UseUniqueRegister(node->InputAt(1));
   if (IsSupported(AVX)) {
     Emit(kIA32F64x2Max, g.DefineAsRegister(node), operand0, operand1,
          arraysize(temps), temps);
@@ -2366,10 +2417,15 @@ SIMD_SHIFT_OPCODES_UNIFED_SSE_AVX(VISIT_SIMD_SHIFT_UNIFIED_SSE_AVX)
 #undef VISIT_SIMD_SHIFT_UNIFIED_SSE_AVX
 #undef SIMD_SHIFT_OPCODES_UNIFED_SSE_AVX
 
-#define VISIT_SIMD_UNOP(Opcode)                                             \
-  void InstructionSelector::Visit##Opcode(Node* node) {                     \
-    IA32OperandGenerator g(this);                                           \
-    Emit(kIA32##Opcode, g.DefineAsRegister(node), g.Use(node->InputAt(0))); \
+// TODO(v8:9198): SSE requires operand0 to be a register as we don't have memory
+// alignment yet. For AVX, memory operands are fine, but can have performance
+// issues if not aligned to 16/32 bytes (based on load size), see SDM Vol 1,
+// chapter 14.9
+#define VISIT_SIMD_UNOP(Opcode)                         \
+  void InstructionSelector::Visit##Opcode(Node* node) { \
+    IA32OperandGenerator g(this);                       \
+    Emit(kIA32##Opcode, g.DefineAsRegister(node),       \
+         g.UseRegister(node->InputAt(0)));              \
   }
 SIMD_UNOP_LIST(VISIT_SIMD_UNOP)
 #undef VISIT_SIMD_UNOP
@@ -2401,23 +2457,23 @@ SIMD_ANYTRUE_LIST(VISIT_SIMD_ANYTRUE)
     IA32OperandGenerator g(this);                                             \
     InstructionOperand temps[] = {g.TempRegister(), g.TempSimd128Register()}; \
     Emit(kIA32##Opcode, g.DefineAsRegister(node),                             \
-         g.UseUnique(node->InputAt(0)), arraysize(temps), temps);             \
+         g.UseUniqueRegister(node->InputAt(0)), arraysize(temps), temps);     \
   }
 SIMD_ALLTRUE_LIST(VISIT_SIMD_ALLTRUE)
 #undef VISIT_SIMD_ALLTRUE
 #undef SIMD_ALLTRUE_LIST
 
-#define VISIT_SIMD_BINOP(Opcode)                           \
-  void InstructionSelector::Visit##Opcode(Node* node) {    \
-    VisitRROFloat(this, node, kAVX##Opcode, kSSE##Opcode); \
+#define VISIT_SIMD_BINOP(Opcode)                          \
+  void InstructionSelector::Visit##Opcode(Node* node) {   \
+    VisitRROSimd(this, node, kAVX##Opcode, kSSE##Opcode); \
   }
 SIMD_BINOP_LIST(VISIT_SIMD_BINOP)
 #undef VISIT_SIMD_BINOP
 #undef SIMD_BINOP_LIST
 
-#define VISIT_SIMD_BINOP_UNIFIED_SSE_AVX(Opcode)             \
-  void InstructionSelector::Visit##Opcode(Node* node) {      \
-    VisitRROFloat(this, node, kIA32##Opcode, kIA32##Opcode); \
+#define VISIT_SIMD_BINOP_UNIFIED_SSE_AVX(Opcode)            \
+  void InstructionSelector::Visit##Opcode(Node* node) {     \
+    VisitRROSimd(this, node, kIA32##Opcode, kIA32##Opcode); \
   }
 SIMD_BINOP_UNIFIED_SSE_AVX_LIST(VISIT_SIMD_BINOP_UNIFIED_SSE_AVX)
 #undef VISIT_SIMD_BINOP_UNIFIED_SSE_AVX
@@ -2437,6 +2493,13 @@ void VisitPack(InstructionSelector* selector, Node* node, ArchOpcode avx_opcode,
 
 void InstructionSelector::VisitI16x8UConvertI32x4(Node* node) {
   VisitPack(this, node, kAVXI16x8UConvertI32x4, kSSEI16x8UConvertI32x4);
+}
+
+void InstructionSelector::VisitI16x8BitMask(Node* node) {
+  IA32OperandGenerator g(this);
+  InstructionOperand temps[] = {g.TempSimd128Register()};
+  Emit(kIA32I16x8BitMask, g.DefineAsRegister(node),
+       g.UseUniqueRegister(node->InputAt(0)), arraysize(temps), temps);
 }
 
 void InstructionSelector::VisitI8x16UConvertI16x8(Node* node) {
@@ -2487,31 +2550,6 @@ void InstructionSelector::VisitInt64AbsWithOverflow(Node* node) {
 }
 
 namespace {
-
-// Packs a 4 lane shuffle into a single imm8 suitable for use by pshufd,
-// pshuflw, and pshufhw.
-uint8_t PackShuffle4(uint8_t* shuffle) {
-  return (shuffle[0] & 3) | ((shuffle[1] & 3) << 2) | ((shuffle[2] & 3) << 4) |
-         ((shuffle[3] & 3) << 6);
-}
-
-// Gets an 8 bit lane mask suitable for 16x8 pblendw.
-uint8_t PackBlend8(const uint8_t* shuffle16x8) {
-  int8_t result = 0;
-  for (int i = 0; i < 8; ++i) {
-    result |= (shuffle16x8[i] >= 8 ? 1 : 0) << i;
-  }
-  return result;
-}
-
-// Gets an 8 bit lane mask suitable for 32x4 pblendw.
-uint8_t PackBlend4(const uint8_t* shuffle32x4) {
-  int8_t result = 0;
-  for (int i = 0; i < 4; ++i) {
-    result |= (shuffle32x4[i] >= 4 ? 0x3 : 0) << (i * 2);
-  }
-  return result;
-}
 
 // Returns true if shuffle can be decomposed into two 16x4 half shuffles
 // followed by a 16x8 blend.
@@ -2649,7 +2687,7 @@ bool TryMatchArchShuffle(const uint8_t* shuffle, const ShuffleEntry* table,
 
 }  // namespace
 
-void InstructionSelector::VisitS8x16Shuffle(Node* node) {
+void InstructionSelector::VisitI8x16Shuffle(Node* node) {
   uint8_t shuffle[kSimd128Size];
   bool is_swizzle;
   CanonicalizeShuffle(node, shuffle, &is_swizzle);
@@ -2666,16 +2704,19 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
   // AVX and swizzles don't generally need DefineSameAsFirst to avoid a move.
   bool no_same_as_first = use_avx || is_swizzle;
   // We generally need UseRegister for input0, Use for input1.
+  // TODO(v8:9198): We don't have 16-byte alignment for SIMD operands yet, but
+  // we retain this logic (continue setting these in the various shuffle match
+  // clauses), but ignore it when selecting registers or slots.
   bool src0_needs_reg = true;
   bool src1_needs_reg = false;
-  ArchOpcode opcode = kIA32S8x16Shuffle;  // general shuffle is the default
+  ArchOpcode opcode = kIA32I8x16Shuffle;  // general shuffle is the default
 
   uint8_t offset;
   uint8_t shuffle32x4[4];
   uint8_t shuffle16x8[8];
   int index;
   const ShuffleEntry* arch_shuffle;
-  if (TryMatchConcat(shuffle, &offset)) {
+  if (wasm::SimdShuffle::TryMatchConcat(shuffle, &offset)) {
     // Swap inputs from the normal order for (v)palignr.
     SwapShuffleInputs(node);
     is_swizzle = false;  // It's simpler to just handle the general case.
@@ -2692,10 +2733,10 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
     // same-as-first.
     src1_needs_reg = use_avx && arch_shuffle->src1_needs_reg;
     no_same_as_first = use_avx;
-  } else if (TryMatch32x4Shuffle(shuffle, shuffle32x4)) {
-    uint8_t shuffle_mask = PackShuffle4(shuffle32x4);
+  } else if (wasm::SimdShuffle::TryMatch32x4Shuffle(shuffle, shuffle32x4)) {
+    uint8_t shuffle_mask = wasm::SimdShuffle::PackShuffle4(shuffle32x4);
     if (is_swizzle) {
-      if (TryMatchIdentity(shuffle)) {
+      if (wasm::SimdShuffle::TryMatchIdentity(shuffle)) {
         // Bypass normal shuffle code generation in this case.
         EmitIdentity(node);
         return;
@@ -2712,9 +2753,9 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
     } else {
       // 2 operand shuffle
       // A blend is more efficient than a general 32x4 shuffle; try it first.
-      if (TryMatchBlend(shuffle)) {
+      if (wasm::SimdShuffle::TryMatchBlend(shuffle)) {
         opcode = kIA32S16x8Blend;
-        uint8_t blend_mask = PackBlend4(shuffle32x4);
+        uint8_t blend_mask = wasm::SimdShuffle::PackBlend4(shuffle32x4);
         imms[imm_count++] = blend_mask;
       } else {
         opcode = kIA32S32x4Shuffle;
@@ -2725,17 +2766,17 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
         src0_needs_reg = true;
         src1_needs_reg = true;
         imms[imm_count++] = shuffle_mask;
-        int8_t blend_mask = PackBlend4(shuffle32x4);
+        int8_t blend_mask = wasm::SimdShuffle::PackBlend4(shuffle32x4);
         imms[imm_count++] = blend_mask;
       }
     }
-  } else if (TryMatch16x8Shuffle(shuffle, shuffle16x8)) {
+  } else if (wasm::SimdShuffle::TryMatch16x8Shuffle(shuffle, shuffle16x8)) {
     uint8_t blend_mask;
-    if (TryMatchBlend(shuffle)) {
+    if (wasm::SimdShuffle::TryMatchBlend(shuffle)) {
       opcode = kIA32S16x8Blend;
-      blend_mask = PackBlend8(shuffle16x8);
+      blend_mask = wasm::SimdShuffle::PackBlend8(shuffle16x8);
       imms[imm_count++] = blend_mask;
-    } else if (TryMatchDup<8>(shuffle, &index)) {
+    } else if (wasm::SimdShuffle::TryMatchSplat<8>(shuffle, &index)) {
       opcode = kIA32S16x8Dup;
       src0_needs_reg = false;
       imms[imm_count++] = index;
@@ -2744,26 +2785,26 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
       // Half-shuffles don't need DefineSameAsFirst or UseRegister(src0).
       no_same_as_first = true;
       src0_needs_reg = false;
-      uint8_t mask_lo = PackShuffle4(shuffle16x8);
-      uint8_t mask_hi = PackShuffle4(shuffle16x8 + 4);
+      uint8_t mask_lo = wasm::SimdShuffle::PackShuffle4(shuffle16x8);
+      uint8_t mask_hi = wasm::SimdShuffle::PackShuffle4(shuffle16x8 + 4);
       imms[imm_count++] = mask_lo;
       imms[imm_count++] = mask_hi;
       if (!is_swizzle) imms[imm_count++] = blend_mask;
     }
-  } else if (TryMatchDup<16>(shuffle, &index)) {
+  } else if (wasm::SimdShuffle::TryMatchSplat<16>(shuffle, &index)) {
     opcode = kIA32S8x16Dup;
     no_same_as_first = use_avx;
     src0_needs_reg = true;
     imms[imm_count++] = index;
   }
-  if (opcode == kIA32S8x16Shuffle) {
+  if (opcode == kIA32I8x16Shuffle) {
     // Use same-as-first for general swizzle, but not shuffle.
     no_same_as_first = !is_swizzle;
     src0_needs_reg = !no_same_as_first;
-    imms[imm_count++] = Pack4Lanes(shuffle);
-    imms[imm_count++] = Pack4Lanes(shuffle + 4);
-    imms[imm_count++] = Pack4Lanes(shuffle + 8);
-    imms[imm_count++] = Pack4Lanes(shuffle + 12);
+    imms[imm_count++] = wasm::SimdShuffle::Pack4Lanes(shuffle);
+    imms[imm_count++] = wasm::SimdShuffle::Pack4Lanes(shuffle + 4);
+    imms[imm_count++] = wasm::SimdShuffle::Pack4Lanes(shuffle + 8);
+    imms[imm_count++] = wasm::SimdShuffle::Pack4Lanes(shuffle + 12);
     temps[temp_count++] = g.TempRegister();
   }
 
@@ -2772,16 +2813,18 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
   Node* input0 = node->InputAt(0);
   InstructionOperand dst =
       no_same_as_first ? g.DefineAsRegister(node) : g.DefineSameAsFirst(node);
-  InstructionOperand src0 =
-      src0_needs_reg ? g.UseRegister(input0) : g.Use(input0);
+  // TODO(v8:9198): Use src0_needs_reg when we have memory alignment for SIMD.
+  InstructionOperand src0 = g.UseRegister(input0);
+  USE(src0_needs_reg);
 
   int input_count = 0;
   InstructionOperand inputs[2 + kMaxImms + kMaxTemps];
   inputs[input_count++] = src0;
   if (!is_swizzle) {
     Node* input1 = node->InputAt(1);
-    inputs[input_count++] =
-        src1_needs_reg ? g.UseRegister(input1) : g.Use(input1);
+    // TODO(v8:9198): Use src1_needs_reg when we have memory alignment for SIMD.
+    inputs[input_count++] = g.UseRegister(input1);
+    USE(src1_needs_reg);
   }
   for (int i = 0; i < imm_count; ++i) {
     inputs[input_count++] = g.UseImmediate(imms[i]);
@@ -2789,12 +2832,40 @@ void InstructionSelector::VisitS8x16Shuffle(Node* node) {
   Emit(opcode, 1, &dst, input_count, inputs, temp_count, temps);
 }
 
-void InstructionSelector::VisitS8x16Swizzle(Node* node) {
+void InstructionSelector::VisitI8x16Swizzle(Node* node) {
   IA32OperandGenerator g(this);
   InstructionOperand temps[] = {g.TempSimd128Register()};
-  Emit(kIA32S8x16Swizzle, g.DefineSameAsFirst(node),
+  Emit(kIA32I8x16Swizzle, g.DefineSameAsFirst(node),
        g.UseRegister(node->InputAt(0)), g.UseUniqueRegister(node->InputAt(1)),
        arraysize(temps), temps);
+}
+
+namespace {
+void VisitPminOrPmax(InstructionSelector* selector, Node* node,
+                     ArchOpcode opcode) {
+  // Due to the way minps/minpd work, we want the dst to be same as the second
+  // input: b = pmin(a, b) directly maps to minps b a.
+  IA32OperandGenerator g(selector);
+  selector->Emit(opcode, g.DefineSameAsFirst(node),
+                 g.UseRegister(node->InputAt(1)),
+                 g.UseRegister(node->InputAt(0)));
+}
+}  // namespace
+
+void InstructionSelector::VisitF32x4Pmin(Node* node) {
+  VisitPminOrPmax(this, node, kIA32F32x4Pmin);
+}
+
+void InstructionSelector::VisitF32x4Pmax(Node* node) {
+  VisitPminOrPmax(this, node, kIA32F32x4Pmax);
+}
+
+void InstructionSelector::VisitF64x2Pmin(Node* node) {
+  VisitPminOrPmax(this, node, kIA32F64x2Pmin);
+}
+
+void InstructionSelector::VisitF64x2Pmax(Node* node) {
+  VisitPminOrPmax(this, node, kIA32F64x2Pmax);
 }
 
 // static
@@ -2802,7 +2873,7 @@ MachineOperatorBuilder::Flags
 InstructionSelector::SupportedMachineOperatorFlags() {
   MachineOperatorBuilder::Flags flags =
       MachineOperatorBuilder::kWord32ShiftIsSafe |
-      MachineOperatorBuilder::kWord32Ctz;
+      MachineOperatorBuilder::kWord32Ctz | MachineOperatorBuilder::kWord32Rol;
   if (CpuFeatures::IsSupported(POPCNT)) {
     flags |= MachineOperatorBuilder::kWord32Popcnt;
   }

@@ -11,11 +11,14 @@
 #include "base/files/file.h"
 #include "base/synchronization/lock.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "third_party/blink/public/mojom/disk_allocator.mojom-blink.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 #include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 
 namespace blink {
+
+class DiskDataMetadata;
 
 // Stores data onto a single file.
 //
@@ -29,28 +32,11 @@ namespace blink {
 // - Writes can be done from any thread.
 // - public methods are thread-safe, and unless otherwise noted, can be called
 //   from any thread.
-class PLATFORM_EXPORT DiskDataAllocator {
+class PLATFORM_EXPORT DiskDataAllocator : public mojom::blink::DiskAllocator {
  public:
-  class Metadata {
-   public:
-    int64_t start_offset() const { return start_offset_; }
-    size_t size() const { return size_; }
-
-   private:
-    Metadata(int64_t start_offset, size_t size)
-        : start_offset_(start_offset), size_(size) {}
-    Metadata(Metadata&& other) = default;
-    Metadata(const Metadata& other) = default;
-    Metadata& operator=(const Metadata& other) = default;
-
-    int64_t start_offset_;
-    size_t size_;
-
-    friend class DiskDataAllocator;
-  };
 
   // Must be called on the main thread.
-  void ProvideTemporaryFile(::base::File file);
+  void ProvideTemporaryFile(::base::File file) override;
 
   // Whether writes may succeed. This is not a guarantee. However, when this
   // returns false, writes will fail.
@@ -58,21 +44,32 @@ class PLATFORM_EXPORT DiskDataAllocator {
 
   // Returns |nullptr| in case of error.
   // Note that this performs a blocking disk write.
-  std::unique_ptr<Metadata> Write(const void* data, size_t size);
+  std::unique_ptr<DiskDataMetadata> Write(const void* data, size_t size);
 
-  // Returns |false| in case of error.
+  // Reads data. A read failure is fatal.
   // Must be called from the main thread.
   // Can be called at any time before |Discard()| destroys |metadata|.
   //
   // |data| must point to an area large enough to fit a |metadata.size|-ed
   // array. Note that this performs a blocking disk read.
-  bool Read(const Metadata& metadata, void* data);
+  void Read(const DiskDataMetadata& metadata, void* data);
 
   // Discards existing data pointed at by |metadata|.
-  void Discard(std::unique_ptr<Metadata> metadata);
+  void Discard(std::unique_ptr<DiskDataMetadata> metadata);
 
-  virtual ~DiskDataAllocator();
+  ~DiskDataAllocator() override;
   static DiskDataAllocator& Instance();
+  static void Bind(mojo::PendingReceiver<mojom::blink::DiskAllocator> receiver);
+
+  int64_t disk_footprint() {
+    MutexLocker locker(mutex_);
+    return file_tail_;
+  }
+
+  size_t free_chunks_size() {
+    MutexLocker locker(mutex_);
+    return free_chunks_size_;
+  }
 
  protected:
   // Protected methods for testing.
@@ -80,8 +77,9 @@ class PLATFORM_EXPORT DiskDataAllocator {
   void set_may_write_for_testing(bool may_write) LOCKS_EXCLUDED(mutex_);
 
  private:
-  Metadata FindChunk(size_t size) EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-  void ReleaseChunk(const Metadata& metadata) EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  DiskDataMetadata FindChunk(size_t size) EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  void ReleaseChunk(const DiskDataMetadata& metadata)
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Virtual for testing.
   virtual int DoWrite(int64_t offset, const char* data, int size)
@@ -89,6 +87,7 @@ class PLATFORM_EXPORT DiskDataAllocator {
   // CHECK()s that the read is successful.
   virtual void DoRead(int64_t offset, char* data, int size);
 
+  mojo::Receiver<mojom::blink::DiskAllocator> receiver_{this};
   base::File file_;  // May be invalid.
 
  protected:  // For testing.

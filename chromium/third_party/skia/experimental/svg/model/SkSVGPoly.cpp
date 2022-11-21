@@ -14,10 +14,8 @@
 SkSVGPoly::SkSVGPoly(SkSVGTag t) : INHERITED(t) {}
 
 void SkSVGPoly::setPoints(const SkSVGPointsType& pts) {
-    fPath.reset();
-    fPath.addPoly(pts.value().begin(),
-                  pts.value().count(),
-                  this->tag() == SkSVGTag::kPolygon); // only polygons are auto-closed
+    fPath = SkPath::Polygon(pts.begin(), pts.count(),
+                            this->tag() == SkSVGTag::kPolygon); // only polygons are auto-closed
 }
 
 void SkSVGPoly::onSetAttribute(SkSVGAttribute attr, const SkSVGValue& v) {
@@ -43,7 +41,7 @@ SkPath SkSVGPoly::onAsPath(const SkSVGRenderContext& ctx) const {
     SkPath path = fPath;
 
     // clip-rule can be inherited and needs to be applied at clip time.
-    path.setFillType(ctx.presentationContext().fInherited.fClipRule.get()->asFillType());
+    path.setFillType(ctx.presentationContext().fInherited.fClipRule->asFillType());
 
     this->mapToParent(&path);
     return path;

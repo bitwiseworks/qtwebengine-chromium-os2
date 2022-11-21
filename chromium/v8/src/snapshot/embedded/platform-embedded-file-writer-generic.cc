@@ -67,6 +67,9 @@ void PlatformEmbeddedFileWriterGeneric::DeclarePointerToSymbol(
 
 void PlatformEmbeddedFileWriterGeneric::DeclareSymbolGlobal(const char* name) {
   fprintf(fp_, ".global %s%s\n", SYMBOL_PREFIX, name);
+  // These symbols are not visible outside of the final binary, this allows for
+  // reduced binary size, and less work for the dynamic linker.
+  fprintf(fp_, ".hidden %s\n", name);
 }
 
 void PlatformEmbeddedFileWriterGeneric::AlignToCodeAlignment() {
@@ -97,6 +100,10 @@ void PlatformEmbeddedFileWriterGeneric::SourceInfo(int fileid,
 
 void PlatformEmbeddedFileWriterGeneric::DeclareFunctionBegin(const char* name,
                                                              uint32_t size) {
+  if (ENABLE_CONTROL_FLOW_INTEGRITY_BOOL) {
+    DeclareSymbolGlobal(name);
+  }
+
   DeclareLabel(name);
 
   if (target_arch_ == EmbeddedTargetArch::kArm ||
@@ -113,10 +120,6 @@ void PlatformEmbeddedFileWriterGeneric::DeclareFunctionBegin(const char* name,
 }
 
 void PlatformEmbeddedFileWriterGeneric::DeclareFunctionEnd(const char* name) {}
-
-int PlatformEmbeddedFileWriterGeneric::HexLiteral(uint64_t value) {
-  return fprintf(fp_, "0x%" PRIx64, value);
-}
 
 void PlatformEmbeddedFileWriterGeneric::FilePrologue() {
   // TODO(v8:10026): Add ELF note required for BTI.
@@ -144,6 +147,18 @@ void PlatformEmbeddedFileWriterGeneric::FileEpilogue() {
 int PlatformEmbeddedFileWriterGeneric::IndentedDataDirective(
     DataDirective directive) {
   return fprintf(fp_, "  %s ", DirectiveAsString(directive));
+}
+
+DataDirective PlatformEmbeddedFileWriterGeneric::ByteChunkDataDirective()
+    const {
+#if defined(V8_TARGET_ARCH_MIPS) || defined(V8_TARGET_ARCH_MIPS64)
+  // MIPS uses a fixed 4 byte instruction set, using .long
+  // to prevent any unnecessary padding.
+  return kLong;
+#else
+  // Other ISAs just listen to the base
+  return PlatformEmbeddedFileWriterBase::ByteChunkDataDirective();
+#endif
 }
 
 #undef SYMBOL_PREFIX

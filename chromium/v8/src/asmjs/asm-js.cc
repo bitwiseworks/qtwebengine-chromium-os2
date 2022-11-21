@@ -201,8 +201,8 @@ class AsmJsCompilationJob final : public UnoptimizedCompilationJob {
   Status FinalizeJobImpl(Handle<SharedFunctionInfo> shared_info,
                          Isolate* isolate) final;
   Status FinalizeJobImpl(Handle<SharedFunctionInfo> shared_info,
-                         OffThreadIsolate* isolate) final {
-    UNREACHABLE();
+                         LocalIsolate* isolate) final {
+    return CompilationJob::RETRY_ON_MAIN_THREAD;
   }
 
  private:
@@ -223,7 +223,7 @@ class AsmJsCompilationJob final : public UnoptimizedCompilationJob {
 
 UnoptimizedCompilationJob::Status AsmJsCompilationJob::ExecuteJobImpl() {
   // Step 1: Translate asm.js module to WebAssembly module.
-  Zone* compile_zone = compilation_info()->zone();
+  Zone* compile_zone = &zone_;
   Zone translate_zone(allocator_, ZONE_NAME);
 
   Utf16CharacterStream* stream = parse_info()->character_stream();
@@ -240,9 +240,9 @@ UnoptimizedCompilationJob::Status AsmJsCompilationJob::ExecuteJobImpl() {
     }
     return FAILED;
   }
-  module_ = new (compile_zone) wasm::ZoneBuffer(compile_zone);
+  module_ = compile_zone->New<wasm::ZoneBuffer>(compile_zone);
   parser.module_builder()->WriteTo(module_);
-  asm_offsets_ = new (compile_zone) wasm::ZoneBuffer(compile_zone);
+  asm_offsets_ = compile_zone->New<wasm::ZoneBuffer>(compile_zone);
   parser.module_builder()->WriteAsmJsOffsetTable(asm_offsets_);
   stdlib_uses_ = *parser.stdlib_uses();
 
@@ -277,8 +277,8 @@ UnoptimizedCompilationJob::Status AsmJsCompilationJob::FinalizeJobImpl(
 
   RecordHistograms(isolate);
   ReportCompilationSuccess(handle(Script::cast(shared_info->script()), isolate),
-                           compilation_info()->literal()->position(),
-                           compile_time_, module_->size());
+                           shared_info->StartPosition(), compile_time_,
+                           module_->size());
   return SUCCEEDED;
 }
 
@@ -297,7 +297,7 @@ inline bool IsValidAsmjsMemorySize(size_t size) {
   // Enforce asm.js spec minimum size.
   if (size < (1u << 12u)) return false;
   // Enforce engine-limited and flag-limited maximum allocation size.
-  if (size > wasm::max_initial_mem_pages() * uint64_t{wasm::kWasmPageSize}) {
+  if (size > wasm::max_mem_pages() * uint64_t{wasm::kWasmPageSize}) {
     return false;
   }
   // Enforce power-of-2 sizes for 2^12 - 2^24.
@@ -331,6 +331,13 @@ MaybeHandle<Object> AsmJs::InstantiateAsmWasm(Isolate* isolate,
   // TODO(asmjs): The position currently points to the module definition
   // but should instead point to the instantiation site (more intuitive).
   int position = shared->StartPosition();
+
+  // Check that the module is not instantiated as a generator or async function.
+  if (IsResumableFunction(shared->scope_info().function_kind())) {
+    ReportInstantiationFailure(script, position,
+                               "Cannot be instantiated as resumable function");
+    return MaybeHandle<Object>();
+  }
 
   // Check that all used stdlib members are valid.
   bool stdlib_use_of_typed_array_present = false;

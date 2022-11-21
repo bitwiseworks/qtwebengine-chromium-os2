@@ -11,13 +11,13 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
@@ -28,16 +28,17 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/notification_types.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/image_util.h"
@@ -112,10 +113,9 @@ void ExtensionActionAPI::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-bool ExtensionActionAPI::ShowExtensionActionPopup(
+bool ExtensionActionAPI::ShowExtensionActionPopupForAPICall(
     const Extension* extension,
-    Browser* browser,
-    bool grant_active_tab_permissions) {
+    Browser* browser) {
   ExtensionAction* extension_action =
       ExtensionActionManager::Get(browser_context_)->GetExtensionAction(
           *extension);
@@ -131,8 +131,8 @@ bool ExtensionActionAPI::ShowExtensionActionPopup(
   // The ExtensionsContainer could be null if, e.g., this is a popup window with
   // no toolbar.
   return extensions_container &&
-         extensions_container->ShowToolbarActionPopup(
-             extension->id(), grant_active_tab_permissions);
+         extensions_container->ShowToolbarActionPopupForAPICall(
+             extension->id());
 }
 
 void ExtensionActionAPI::NotifyChange(ExtensionAction* extension_action,
@@ -150,8 +150,6 @@ void ExtensionActionAPI::DispatchExtensionActionClicked(
   const char* event_name = NULL;
   switch (extension_action.action_type()) {
     case ActionInfo::TYPE_ACTION:
-      // TODO(https://crbug.com/893373): Add testing for this API (currently
-      // restricted to trunk).
       histogram_value = events::ACTION_ON_CLICKED;
       event_name = "action.onClicked";
       break;
@@ -241,11 +239,10 @@ void ExtensionActionAPI::Shutdown() {
 //
 
 ExtensionActionFunction::ExtensionActionFunction()
-    : details_(NULL),
+    : details_(nullptr),
       tab_id_(ExtensionAction::kDefaultTabId),
-      contents_(NULL),
-      extension_action_(NULL) {
-}
+      contents_(nullptr),
+      extension_action_(nullptr) {}
 
 ExtensionActionFunction::~ExtensionActionFunction() {
 }
@@ -357,7 +354,26 @@ void ExtensionActionSetIconFunction::SetReportErrorForInvisibleIconForTesting(
 
 ExtensionFunction::ResponseAction
 ExtensionActionSetIconFunction::RunExtensionAction() {
-  EXTENSION_FUNCTION_VALIDATE(details_);
+  // TODO(devlin): Temporary logging to track down https://crbug.com/1087948.
+  // Remove this (and the redundant `if (!x) { VALIDATE(x); }`) checks after
+  // the bug is fixed.
+  // Don't reorder or remove values.
+  enum class FailureType {
+    kFailedToParseDetails = 0,
+    kFailedToDecodeCanvas = 1,
+    kFailedToUnpickleCanvas = 2,
+    kNoImageDataOrIconIndex = 3,
+    kMaxValue = kNoImageDataOrIconIndex,
+  };
+
+  auto log_set_icon_failure = [](FailureType type) {
+    base::UmaHistogramEnumeration("Extensions.ActionSetIconFailureType", type);
+  };
+
+  if (!details_) {
+    log_set_icon_failure(FailureType::kFailedToParseDetails);
+    EXTENSION_FUNCTION_VALIDATE(details_);
+  }
 
   // setIcon can take a variant argument: either a dictionary of canvas
   // ImageData, or an icon index.
@@ -366,8 +382,23 @@ ExtensionActionSetIconFunction::RunExtensionAction() {
   if (details_->GetDictionary("imageData", &canvas_set)) {
     gfx::ImageSkia icon;
 
-    EXTENSION_FUNCTION_VALIDATE(
-        ExtensionAction::ParseIconFromCanvasDictionary(*canvas_set, &icon));
+    ExtensionAction::IconParseResult parse_result =
+        ExtensionAction::ParseIconFromCanvasDictionary(*canvas_set, &icon);
+
+    if (parse_result != ExtensionAction::IconParseResult::kSuccess) {
+      switch (parse_result) {
+        case ExtensionAction::IconParseResult::kDecodeFailure:
+          log_set_icon_failure(FailureType::kFailedToDecodeCanvas);
+          break;
+        case ExtensionAction::IconParseResult::kUnpickleFailure:
+          log_set_icon_failure(FailureType::kFailedToUnpickleCanvas);
+          break;
+        case ExtensionAction::IconParseResult::kSuccess:
+          NOTREACHED();
+          break;
+      }
+      EXTENSION_FUNCTION_VALIDATE(false);
+    }
 
     if (icon.isNull())
       return RespondNow(Error("Icon invalid."));
@@ -392,6 +423,7 @@ ExtensionActionSetIconFunction::RunExtensionAction() {
     // Obsolete argument: ignore it.
     return RespondNow(NoArguments());
   } else {
+    log_set_icon_failure(FailureType::kNoImageDataOrIconIndex);
     EXTENSION_FUNCTION_VALIDATE(false);
   }
   NotifyChange();
@@ -519,9 +551,9 @@ ExtensionFunction::ResponseAction BrowserActionOpenPopupFunction::Run() {
   // extension can operate incognito, then check the last active incognito, too.
   if ((!browser || !browser->window()->IsActive()) &&
       util::IsIncognitoEnabled(extension()->id(), profile) &&
-      profile->HasOffTheRecordProfile()) {
+      profile->HasPrimaryOTRProfile()) {
     browser =
-        chrome::FindLastActiveWithProfile(profile->GetOffTheRecordProfile());
+        chrome::FindLastActiveWithProfile(profile->GetPrimaryOTRProfile());
   }
 
   // If there's no active browser, or the Toolbar isn't visible, abort.
@@ -530,8 +562,8 @@ ExtensionFunction::ResponseAction BrowserActionOpenPopupFunction::Run() {
   // fixed.
   if (!browser || !browser->window()->IsActive() ||
       !browser->window()->IsToolbarVisible() ||
-      !ExtensionActionAPI::Get(profile)->ShowExtensionActionPopup(
-          extension_.get(), browser, false)) {
+      !ExtensionActionAPI::Get(profile)->ShowExtensionActionPopupForAPICall(
+          extension_.get(), browser)) {
     return RespondNow(Error(kOpenPopupError));
   }
 

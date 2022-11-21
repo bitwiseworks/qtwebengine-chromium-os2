@@ -7,9 +7,7 @@
 
 #include "base/containers/span.h"
 #include "device/vr/public/mojom/vr_service.mojom-blink.h"
-#include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
-#include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
@@ -19,8 +17,12 @@
 #include "third_party/blink/renderer/modules/xr/xr_frame_request_callback_collection.h"
 #include "third_party/blink/renderer/modules/xr/xr_input_source.h"
 #include "third_party/blink/renderer/modules/xr/xr_input_source_array.h"
+#include "third_party/blink/renderer/modules/xr/xr_reference_space.h"
 #include "third_party/blink/renderer/platform/geometry/double_size.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
@@ -39,9 +41,11 @@ class V8XRFrameRequestCallback;
 class XRAnchor;
 class XRAnchorSet;
 class XRCanvasInputProvider;
+class XRDepthInformation;
 class XRDOMOverlayState;
 class XRHitTestOptionsInit;
 class XRHitTestSource;
+class XRLightProbe;
 class XRReferenceSpace;
 class XRRenderState;
 class XRRenderStateInit;
@@ -53,7 +57,6 @@ class XRViewData;
 class XRWebGLLayer;
 class XRWorldInformation;
 class XRWorldTrackingState;
-class XRWorldTrackingStateInit;
 
 using XRSessionFeatureSet = HashSet<device::mojom::XRSessionFeature>;
 
@@ -63,7 +66,6 @@ class XRSession final
       public device::mojom::blink::XRInputSourceButtonListener,
       public ActiveScriptWrappable<XRSession> {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(XRSession);
 
  public:
   // Error strings used outside of XRSession:
@@ -73,12 +75,24 @@ class XRSession final
       "The operation was unable to retrieve a matrix from passed in space and "
       "could not be completed.";
   static constexpr char kNoSpaceSpecified[] = "No XRSpace specified.";
+  static constexpr char kAnchorsFeatureNotSupported[] =
+      "Anchors feature is not supported by the session.";
+
+  // Runs all the video.requestVideoFrameCallback() callbacks associated with
+  // one HTMLVideoElement. |double| is the |high_res_now_ms|, derived from
+  // MonotonicTimeToZeroBasedDocumentTime(|current_frame_time|), to be passed as
+  // the "now" parameter when executing rVFC callbacks. In other words, a
+  // video.rVFC and an xrSession.rAF callback share the same "now" parameters if
+  // they are run in the same turn of the render loop.
+  using ExecuteVfcCallback = base::OnceCallback<void(double)>;
 
   enum EnvironmentBlendMode {
     kBlendModeOpaque = 0,
     kBlendModeAdditive,
     kBlendModeAlphaBlend
   };
+
+  enum InteractionMode { kInteractionModeScreen = 0, kInteractionModeWorld };
 
   struct MetricsReporter {
     explicit MetricsReporter(
@@ -101,18 +115,23 @@ class XRSession final
                 client_receiver,
             device::mojom::blink::XRSessionMode mode,
             EnvironmentBlendMode environment_blend_mode,
+            InteractionMode interaction_mode,
             bool uses_input_eventing,
+            float default_framebuffer_scale,
             bool sensorless_session,
             XRSessionFeatureSet enabled_features);
   ~XRSession() override = default;
 
   XRSystem* xr() const { return xr_; }
   const String& environmentBlendMode() const { return blend_mode_string_; }
+  const String& interactionMode() const { return interaction_mode_string_; }
   XRDOMOverlayState* domOverlayState() const { return dom_overlay_state_; }
   const String visibilityState() const;
   XRRenderState* renderState() const { return render_state_; }
   XRWorldTrackingState* worldTrackingState() { return world_tracking_state_; }
+
   XRSpace* viewerSpace() const;
+
   XRAnchorSet* TrackedAnchors() const;
 
   bool immersive() const;
@@ -129,32 +148,55 @@ class XRSession final
 
   void updateRenderState(XRRenderStateInit* render_state_init,
                          ExceptionState& exception_state);
-  void updateWorldTrackingState(
-      XRWorldTrackingStateInit* world_tracking_state_init,
-      ExceptionState& exception_state);
   ScriptPromise requestReferenceSpace(ScriptState* script_state,
                                       const String& type,
                                       ExceptionState&);
 
   // Helper, not IDL-exposed
-  // |offset_space_from_anchor| is a matrix describing transform from offset
-  // space to the initial anchor's position.
-  // |mojo_from_offset_space| can be obtained from XRSpace and describes
-  // transform from mojo space to the offset space in which the anchor pose is
-  // expressed.
-  // |plane_id| - optional, id of the plane to which the anchor should be
-  // attached.
-  ScriptPromise CreateAnchor(
+  // |native_origin_from_anchor| is a matrix describing transform between native
+  // origin and the initial anchor's position.
+  // |native_origin_information| describes native origin relative to which the
+  // transform is expressed.
+  ScriptPromise CreateAnchorHelper(
       ScriptState* script_state,
-      const blink::TransformationMatrix& offset_space_from_anchor,
-      const blink::TransformationMatrix& mojo_from_offset_space,
-      base::Optional<uint64_t> plane_id,
+      const blink::TransformationMatrix& native_origin_from_anchor,
+      const device::mojom::blink::XRNativeOriginInformation&
+          native_origin_information,
       ExceptionState& exception_state);
+
+  // Helper, not IDL-exposed
+  // |native_origin_from_anchor| is a matrix describing transform between native
+  // origin and the initial anchor's position.
+  // |native_origin_information| describes native origin relative to which the
+  // transform is expressed.
+  // |plane_id| is the id of the plane to which the anchor should be attached.
+  ScriptPromise CreatePlaneAnchorHelper(
+      ScriptState* script_state,
+      const blink::TransformationMatrix& native_origin_from_anchor,
+      const device::mojom::blink::XRNativeOriginInformation&
+          native_origin_information,
+      uint64_t plane_id,
+      ExceptionState& exception_state);
+
+  // Helper POD type containing the information needed for anchor creation in
+  // case the anchor needs to be transformed to be expressed relative to a
+  // stationary reference space.
+  struct ReferenceSpaceInformation {
+    device::mojom::blink::XRNativeOriginInformation native_origin;
+    blink::TransformationMatrix mojo_from_space;
+  };
+
+  // Helper for anchor creation - returns information about the reference space
+  // type and its transform. The resulting reference space will be well-suited
+  // for anchor creation (i.e. the native origin set in the struct will be
+  // describing a stationary space). If a stationary reference space is not
+  // available, the method returns nullopt.
+  base::Optional<ReferenceSpaceInformation> GetStationaryReferenceSpace() const;
 
   int requestAnimationFrame(V8XRFrameRequestCallback* callback);
   void cancelAnimationFrame(int id);
 
-  XRInputSourceArray* inputSources() const;
+  XRInputSourceArray* inputSources(ScriptState*) const;
 
   ScriptPromise requestHitTestSource(ScriptState* script_state,
                                      XRHitTestOptionsInit* options,
@@ -163,6 +205,8 @@ class XRSession final
       ScriptState* script_state,
       XRTransientInputHitTestOptionsInit* options_init,
       ExceptionState& exception_state);
+
+  ScriptPromise requestLightProbe(ScriptState* script_state, ExceptionState&);
 
   // Called by JavaScript to manually end the session.
   ScriptPromise end(ScriptState* script_state, ExceptionState&);
@@ -199,14 +243,16 @@ class XRSession final
   const AtomicString& InterfaceName() const override;
 
   void OnFocusChanged();
-  void OnFrame(double timestamp,
-               const base::Optional<gpu::MailboxHolder>& output_mailbox_holder);
+  void OnFrame(
+      double timestamp,
+      const base::Optional<gpu::MailboxHolder>& output_mailbox_holder,
+      const base::Optional<gpu::MailboxHolder>& camera_image_mailbox_holder);
 
   // XRInputSourceButtonListener
   void OnButtonEvent(
       device::mojom::blink::XRInputSourceStatePtr input_source) override;
 
-  Vector<XRViewData>& views();
+  const HeapVector<Member<XRViewData>>& views();
 
   void AddTransientInputSource(XRInputSource* input_source);
   void RemoveTransientInputSource(XRInputSource* input_source);
@@ -250,9 +296,9 @@ class XRSession final
   // existing. Intended to be used by XRFrame to implement
   // XRFrame.getHitTestResults() &
   // XRFrame.getHitTestResultsForTransientInput().
-  bool ValidateHitTestSourceExists(XRHitTestSource* hit_test_source);
+  bool ValidateHitTestSourceExists(XRHitTestSource* hit_test_source) const;
   bool ValidateHitTestSourceExists(
-      XRTransientInputHitTestSource* hit_test_source);
+      XRTransientInputHitTestSource* hit_test_source) const;
 
   // Removes hit test source (effectively unsubscribing from the hit test).
   // Intended to be used by hit test source interfaces (XRHitTestSource and
@@ -264,14 +310,25 @@ class XRSession final
   void SetXRDisplayInfo(device::mojom::blink::VRDisplayInfoPtr display_info);
 
   bool UsesInputEventing() { return uses_input_eventing_; }
+  bool LightEstimationEnabled() { return !!world_light_probe_; }
 
-  void Trace(Visitor* visitor) override;
+  void Trace(Visitor* visitor) const override;
 
   // ScriptWrappable
   bool HasPendingActivity() const override;
 
   bool CanReportPoses() const;
-  base::Optional<TransformationMatrix> MojoFromViewer() const;
+
+  // Returns current transform from mojo space to the space of the passed in
+  // type. May return nullopt if poses cannot be reported or if the transform is
+  // unknown.
+  // Note: currently, the information about the mojo_from_-floor-type spaces is
+  // stored elsewhere, this method will not work for those reference space
+  // types.
+  base::Optional<TransformationMatrix> GetMojoFrom(
+      device::mojom::blink::XRReferenceSpaceType space_type) const;
+
+  XRDepthInformation* GetDepthInformation() const;
 
   // Creates presentation frame based on current state of the session.
   // State currently used in XRFrame creation is mojo_from_viewer_ and
@@ -299,6 +356,10 @@ class XRSession final
 
   // Sets the metrics reporter for this session. This should only be done once.
   void SetMetricsReporter(std::unique_ptr<MetricsReporter> reporter);
+
+  // Queues up the execution of video.requestVideoFrameCallback() callbacks for
+  // a specific HTMLVideoELement, for the next requestAnimationFrame() call.
+  void ScheduleVideoFrameCallbacksExecution(ExecuteVfcCallback);
 
  private:
   class XRSessionResizeObserverDelegate;
@@ -365,18 +426,24 @@ class XRSession final
       const device::mojom::blink::XRHitTestSubscriptionResultsData*
           hit_test_data);
 
+  void ProcessDepthData(device::mojom::blink::XRDepthDataPtr depth_data);
+
   void HandleShutdown();
+
+  void ExecuteVideoFrameCallbacks(double timestamp);
 
   const Member<XRSystem> xr_;
   const device::mojom::blink::XRSessionMode mode_;
   const bool environment_integration_;
   String blend_mode_string_;
+  String interaction_mode_string_;
   XRVisibilityState device_visibility_state_ = XRVisibilityState::VISIBLE;
   XRVisibilityState visibility_state_ = XRVisibilityState::VISIBLE;
   String visibility_state_string_;
   Member<XRRenderState> render_state_;
   Member<XRWorldTrackingState> world_tracking_state_;
   Member<XRWorldInformation> world_information_;
+  Member<XRLightProbe> world_light_probe_;
   HeapVector<Member<XRRenderStateInit>> pending_render_state_;
 
   // Handle delayed events and promises for session shutdown. A JS-initiated
@@ -393,31 +460,64 @@ class XRSession final
   XRSessionFeatureSet enabled_features_;
   std::unique_ptr<MetricsReporter> metrics_reporter_;
 
+  // From device's perspective, anchor creation is a multi-step process:
+  // - phase 1: application asked to create the anchor, blink has reached out to
+  // the device & does not know anything about the anchor yet.
+  // - phase 2: device returned anchor ID to blink, but blink cannot
+  // "materialize" the XRAnchor object & resolve the promise yet since it needs
+  // to wait for more information about the anchor that will arrive through the
+  // callback to XRFrameDataProvider's GetFrameData call.
+  // - phase 3: device returned anchor information through XRFrameData, blink
+  // can now construct XRAnchor object and resolve app's promise.
+  //
+  // This is done to ensure that from application's perspective, the anchor
+  // creation promises get resolved only when the XRAnchor object is already
+  // fully constructed.
+  //
+  // Anchor promises that are in phase 1 of creation live in
+  // |create_anchor_promises_|, anchor promises in phase 2 live in
+  // |anchor_ids_to_pending_anchor_promises_|, and anchors that got created in
+  // phase 3 live in |anchor_ids_to_anchors_|.
+
   bool is_tracked_anchors_null_ = true;
   HeapHashMap<uint64_t, Member<XRAnchor>> anchor_ids_to_anchors_;
 
   // Set of promises returned from CreateAnchor that are still in-flight to the
   // device. Once the device calls us back with the newly created anchor id, the
-  // resolver will be moved to |newly_created_anchor_ids_to_resolvers_|.
+  // resolver will be moved to |anchor_ids_to_pending_anchor_promises_|.
   HeapHashSet<Member<ScriptPromiseResolver>> create_anchor_promises_;
   // Promises for which anchors have already been created on the device side but
   // have not yet been resolved as their data is not yet available to blink.
   // Next frame update should contain the necessary data - the promise will be
   // resolved then.
   HeapHashMap<uint64_t, Member<ScriptPromiseResolver>>
-      newly_created_anchor_ids_to_resolvers_;
+      anchor_ids_to_pending_anchor_promises_;
 
   // Mapping of hit test source ids (aka hit test subscription ids) to hit test
   // sources. Hit test source has to be stored via weak member - JavaScript side
-  // will communicate that it's no longer interested in the subscription by
+  // can communicate that it's no longer interested in the subscription by
   // dropping all its references to the hit test source & we need to make sure
-  // that we don't keep the XRHitTestSources alive.
+  // that we don't keep the XRHitTestSources alive. HeapHashMap entries will
+  // automatically be removed when the hit test sources get reclaimed, so we
+  // need to maintain additional sets with their IDs to be able to clean them up
+  // on the device - this is done in |hit_test_source_ids_| and
+  // |hit_test_source_for_transient_input_ids_|.
+  // For the specifics of HeapHashMap<Key, WeakMember<Value>> behavior, see:
+  // https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/renderer/platform/heap/BlinkGCAPIReference.md#weak-collections
   HeapHashMap<uint64_t, WeakMember<XRHitTestSource>>
       hit_test_source_ids_to_hit_test_sources_;
   HeapHashMap<uint64_t, WeakMember<XRTransientInputHitTestSource>>
       hit_test_source_ids_to_transient_input_hit_test_sources_;
 
-  Vector<XRViewData> views_;
+  // The entries in the above hash sets will be automatically removed by garbage
+  // collection once the application drops all references to them. To avoid
+  // introducing pre-finalizers on hit test sources, store the set of IDs that
+  // we know about. We will then subsequently cross-reference the sets with hash
+  // maps and notify the device about hit test sources that are no longer alive.
+  HashSet<uint64_t> hit_test_source_ids_;
+  HashSet<uint64_t> hit_test_source_for_transient_input_ids_;
+
+  HeapVector<Member<XRViewData>> views_;
 
   Member<XRInputSourceArray> input_sources_;
   Member<XRWebGLLayer> prev_base_layer_;
@@ -435,13 +535,24 @@ class XRSession final
   unsigned int stage_parameters_id_ = 0;
   device::mojom::blink::VRDisplayInfoPtr display_info_;
 
-  mojo::Receiver<device::mojom::blink::XRSessionClient> client_receiver_;
-  mojo::AssociatedReceiver<device::mojom::blink::XRInputSourceButtonListener>
-      input_receiver_{this};
+  HeapMojoReceiver<device::mojom::blink::XRSessionClient,
+                   XRSession,
+                   HeapMojoWrapperMode::kWithoutContextObserver>
+      client_receiver_;
+  HeapMojoAssociatedReceiver<device::mojom::blink::XRInputSourceButtonListener,
+                             XRSession,
+                             HeapMojoWrapperMode::kWithoutContextObserver>
+      input_receiver_;
+
+  // Used to schedule video.rVFC callbacks for immersive sessions.
+  Vector<ExecuteVfcCallback> vfc_execution_queue_;
 
   Member<XRFrameRequestCallbackCollection> callback_collection_;
   // Viewer pose in mojo space.
   std::unique_ptr<TransformationMatrix> mojo_from_viewer_;
+
+  // Current depth data buffer.
+  device::mojom::blink::XRDepthDataUpdatedPtr depth_data_;
 
   bool pending_frame_ = false;
   bool resolving_frame_ = false;
@@ -459,6 +570,7 @@ class XRSession final
   int output_height_ = 1;
 
   bool uses_input_eventing_ = false;
+  float default_framebuffer_scale_ = 1.0;
 
   // Indicates that this is a sensorless session which should only support the
   // identity reference space.

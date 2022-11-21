@@ -42,7 +42,7 @@
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/public/platform/web_vector.h"
-#include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/subresource_filter.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
@@ -143,16 +143,14 @@ void WebDocumentLoaderImpl::DetachFromFrame(bool flush_microtask_queue) {
 void WebDocumentLoaderImpl::SetSubresourceFilter(
     WebDocumentSubresourceFilter* subresource_filter) {
   DocumentLoader::SetSubresourceFilter(MakeGarbageCollected<SubresourceFilter>(
-      GetFrame()->GetDocument()->ToExecutionContext(),
-      base::WrapUnique(subresource_filter)));
+      GetFrame()->DomWindow(), base::WrapUnique(subresource_filter)));
 }
 
 void WebDocumentLoaderImpl::SetLoadingHintsProvider(
     std::unique_ptr<blink::WebLoadingHintsProvider> loading_hints_provider) {
   DocumentLoader::SetPreviewsResourceLoadingHints(
       PreviewsResourceLoadingHints::CreateFromLoadingHintsProvider(
-          *GetFrame()->GetDocument()->ToExecutionContext(),
-          std::move(loading_hints_provider)));
+          *GetFrame()->DomWindow(), std::move(loading_hints_provider)));
 }
 
 void WebDocumentLoaderImpl::SetServiceWorkerNetworkProvider(
@@ -177,7 +175,7 @@ bool WebDocumentLoaderImpl::HasBeenLoadedAsWebArchive() const {
   return archive_ || (archive_load_result_ != mojom::MHTMLLoadResult::kSuccess);
 }
 
-WebURLRequest::PreviewsState WebDocumentLoaderImpl::GetPreviewsState() const {
+PreviewsState WebDocumentLoaderImpl::GetPreviewsState() const {
   return DocumentLoader::GetPreviewsState();
 }
 
@@ -198,7 +196,7 @@ bool WebDocumentLoaderImpl::IsListingFtpDirectory() const {
   return DocumentLoader::IsListingFtpDirectory();
 }
 
-void WebDocumentLoaderImpl::Trace(Visitor* visitor) {
+void WebDocumentLoaderImpl::Trace(Visitor* visitor) const {
   DocumentLoader::Trace(visitor);
 }
 

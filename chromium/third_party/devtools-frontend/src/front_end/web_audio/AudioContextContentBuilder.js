@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as UI from '../ui/ui.js';
 
 export class ContextDetailBuilder {
@@ -10,7 +13,8 @@ export class ContextDetailBuilder {
    */
   constructor(context) {
     this._fragment = createDocumentFragment();
-    this._container = createElementWithClass('div', 'context-detail-container');
+    this._container = document.createElement('div');
+    this._container.classList.add('context-detail-container');
     this._fragment.appendChild(this._container);
     this._build(context);
   }

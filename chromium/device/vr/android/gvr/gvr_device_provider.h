@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "device/vr/vr_device_provider.h"
+#include "device/vr/public/cpp/vr_device_provider.h"
 #include "device/vr/vr_export.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 
@@ -24,6 +24,7 @@ class DEVICE_VR_EXPORT GvrDeviceProvider : public VRDeviceProvider {
   void Initialize(
       base::RepeatingCallback<void(mojom::XRDeviceId,
                                    mojom::VRDisplayInfoPtr,
+                                   mojom::XRDeviceDataPtr,
                                    mojo::PendingRemote<mojom::XRRuntime>)>
           add_device_callback,
       base::RepeatingCallback<void(mojom::XRDeviceId)> remove_device_callback,

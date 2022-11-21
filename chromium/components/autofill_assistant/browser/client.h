@@ -17,11 +17,15 @@ class PersonalDataManager;
 
 namespace password_manager {
 class PasswordManagerClient;
-}
+}  // namespace password_manager
+
+namespace version_info {
+enum class Channel;
+}  // namespace version_info
 
 namespace autofill_assistant {
 class AccessTokenFetcher;
-class WebsiteLoginFetcher;
+class WebsiteLoginManager;
 
 // A client interface that needs to be supplied to the controller by the
 // embedder.
@@ -38,12 +42,17 @@ class Client {
   // Destroys the UI immediately.
   virtual void DestroyUI() = 0;
 
-  // Returns the API key to be used for requests to the backend.
-  virtual std::string GetApiKey() const = 0;
+  // Returns the channel for the installation (canary, dev, beta, stable).
+  // Returns unknown otherwise.
+  virtual version_info::Channel GetChannel() const = 0;
 
   // Returns the e-mail address that corresponds to the auth credentials. Might
   // be empty.
-  virtual std::string GetAccountEmailAddress() const = 0;
+  virtual std::string GetEmailAddressForAccessTokenAccount() const = 0;
+
+  // Returns the e-mail address used to sign into Chrome, or an empty string if
+  // the user is not signed in.
+  virtual std::string GetChromeSignedInEmailAddress() const = 0;
 
   // Returns the AccessTokenFetcher to use to get oauth credentials.
   virtual AccessTokenFetcher* GetAccessTokenFetcher() = 0;
@@ -56,10 +65,7 @@ class Client {
       const = 0;
 
   // Returns the currently active login fetcher.
-  virtual WebsiteLoginFetcher* GetWebsiteLoginFetcher() const = 0;
-
-  // Returns the server URL to be used for requests to the backend.
-  virtual std::string GetServerUrl() const = 0;
+  virtual WebsiteLoginManager* GetWebsiteLoginManager() const = 0;
 
   // Returns the locale.
   virtual std::string GetLocale() const = 0;
@@ -70,12 +76,23 @@ class Client {
   // Returns details about the device.
   virtual DeviceContext GetDeviceContext() const = 0;
 
+  // Returns whether a11y (talkback and touch exploration) is enabled or not.
+  virtual bool IsAccessibilityEnabled() const = 0;
+
   // Returns current WebContents.
   virtual content::WebContents* GetWebContents() const = 0;
 
   // Stops autofill assistant for the current WebContents, both controller
   // and UI.
+  // The reason is ignored if RecordDropOut has been previously called.
   virtual void Shutdown(Metrics::DropOutReason reason) = 0;
+
+  // Records the reason of the drop out. Any subsequent reason for the current
+  // run will be ignored.
+  virtual void RecordDropOut(Metrics::DropOutReason reason) = 0;
+
+  // Whether this client has had an UI.
+  virtual bool HasHadUI() const = 0;
 
  protected:
   Client() = default;

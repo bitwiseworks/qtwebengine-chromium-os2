@@ -22,6 +22,7 @@
 #include "ui/views/animation/slide_out_controller.h"
 #include "ui/views/animation/slide_out_controller_delegate.h"
 #include "ui/views/controls/focus_ring.h"
+#include "ui/views/controls/highlight_path_generator.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/view.h"
 
@@ -165,6 +166,16 @@ class MESSAGE_CENTER_EXPORT MessageView
   std::string notification_id() const { return notification_id_; }
 
  protected:
+  class HighlightPathGenerator : public views::HighlightPathGenerator {
+   public:
+    HighlightPathGenerator();
+    HighlightPathGenerator(const HighlightPathGenerator&) = delete;
+    HighlightPathGenerator& operator=(const HighlightPathGenerator&) = delete;
+
+    // views::HighlightPathGenerator:
+    SkPath GetHighlightPath(const views::View* view) override;
+  };
+
   virtual void UpdateControlButtonsVisibility();
 
   // Changes the background color and schedules a paint.
@@ -174,14 +185,16 @@ class MESSAGE_CENTER_EXPORT MessageView
 
   views::ScrollView* scroller() { return scroller_; }
 
+  base::ObserverList<Observer>::Unchecked* observers() { return &observers_; }
+
   bool is_nested() const { return is_nested_; }
 
-  base::ObserverList<Observer>::Unchecked* observers() { return &observers_; }
+  views::FocusRing* focus_ring() { return focus_ring_; }
+
+  int bottom_radius() const { return bottom_radius_; }
 
  private:
   friend class test::MessagePopupCollectionTest;
-
-  class HighlightPathGenerator;
 
   // Gets the highlight path for the notification based on bounds and corner
   // radii.
@@ -195,6 +208,9 @@ class MESSAGE_CENTER_EXPORT MessageView
 
   // Sets the border if |is_nested_| is true.
   void SetNestedBorderIfNecessary();
+
+  // Updates the background painter using the themed background color and radii.
+  void UpdateBackgroundPainter();
 
   std::string notification_id_;
   views::ScrollView* scroller_ = nullptr;
@@ -219,7 +235,7 @@ class MESSAGE_CENTER_EXPORT MessageView
   bool disable_slide_ = false;
 
   views::FocusManager* focus_manager_ = nullptr;
-  std::unique_ptr<views::FocusRing> focus_ring_;
+  views::FocusRing* focus_ring_ = nullptr;
 
   // Radius values used to determine the rounding for the rounded rectangular
   // shape of the notification.

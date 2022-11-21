@@ -69,9 +69,9 @@ jumbo_component("wm") {
     "//skia",
     "//ui/aura",
     "//ui/base",
-    "//ui/base/cursor",
+    "//ui/base/cursor:cursor_base",
+    "//ui/base/cursor/mojom:cursor_type",
     "//ui/base/ime",
-    "//ui/base/mojom:cursor_type",
     "//ui/compositor",
     "//ui/compositor_extra",
     "//ui/display",
@@ -85,11 +85,6 @@ jumbo_component("wm") {
     "//ui/resources",
     "//ui/wm/public",
   ]
-
-  if (use_x11) {
-    configs += [ "//build/config/linux:x11" ]
-    deps += [ "//ui/events/devices/x11" ]
-  }
 
   if (is_chromeos) {
     sources += [
@@ -108,7 +103,7 @@ jumbo_static_library("test_support") {
     "test/wm_test_helper.h",
   ]
 
-  public_deps = [ "//ui/base/cursor" ]
+  public_deps = [ "//ui/base/cursor:cursor_base" ]
 
   deps = [
     ":wm",
@@ -124,6 +119,8 @@ jumbo_static_library("test_support") {
 }
 
 test("wm_unittests") {
+  use_xvfb = use_xvfb_in_this_config
+
   sources = [
     "core/capture_controller_unittest.cc",
     "core/compound_event_filter_unittest.cc",
@@ -149,9 +146,9 @@ test("wm_unittests") {
     "//testing/gtest",
     "//ui/aura:test_support",
     "//ui/base:test_support",
-    "//ui/base/cursor",
+    "//ui/base/cursor:cursor_base",
+    "//ui/base/cursor/mojom:cursor_type",
     "//ui/base/ime",
-    "//ui/base/mojom:cursor_type",
     "//ui/compositor:test_support",
     "//ui/compositor_extra",
     "//ui/events:test_support",

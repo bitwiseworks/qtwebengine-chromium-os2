@@ -24,10 +24,10 @@
 
 #include "perfetto/base/compiler.h"
 #include "perfetto/protozero/proto_decoder.h"
-#include "src/trace_processor/stack_profile_tracker.h"
+#include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/trace_blob_view.h"
-#include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 #include "protos/perfetto/trace/trace_packet_defaults.pbzero.h"
 #include "protos/perfetto/trace/track_event/track_event.pbzero.h"
@@ -224,7 +224,7 @@ class PacketSequenceStateGeneration {
 class PacketSequenceState {
  public:
   PacketSequenceState(TraceProcessorContext* context)
-      : context_(context), stack_profile_tracker_(context) {
+      : context_(context), sequence_stack_profile_tracker_(context) {
     generations_.emplace_back(
         new PacketSequenceStateGeneration(this, generations_.size()));
   }
@@ -297,8 +297,8 @@ class PacketSequenceState {
 
   bool IsIncrementalStateValid() const { return !packet_loss_; }
 
-  StackProfileTracker& stack_profile_tracker() {
-    return stack_profile_tracker_;
+  SequenceStackProfileTracker& sequence_stack_profile_tracker() {
+    return sequence_stack_profile_tracker_;
   }
 
   // Returns a pointer to the current generation.
@@ -351,7 +351,7 @@ class PacketSequenceState {
   int64_t track_event_thread_instruction_count_ = 0;
 
   GenerationList generations_;
-  StackProfileTracker stack_profile_tracker_;
+  SequenceStackProfileTracker sequence_stack_profile_tracker_;
 };
 
 template <uint32_t FieldId, typename MessageType>

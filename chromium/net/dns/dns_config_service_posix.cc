@@ -14,6 +14,7 @@
 #include "base/files/file_path_watcher.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
@@ -29,7 +30,7 @@
 #include "net/dns/public/dns_protocol.h"
 #include "net/dns/serial_worker.h"
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
 #include "net/dns/dns_config_watcher_mac.h"
 #endif
 
@@ -95,11 +96,11 @@ class DnsConfigWatcher : public NetworkChangeNotifier::NetworkChangeObserver {
   CallbackType callback_;
 };
 
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
 
-// DnsConfigWatcher for OS_MACOSX is in dns_config_watcher_mac.{hh,cc}.
+// DnsConfigWatcher for OS_MAC is in dns_config_watcher_mac.{hh,cc}.
 
-#else  // !defined(OS_IOS) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
+#else  // !defined(OS_IOS) && !defined(OS_ANDROID) && !defined(OS_MAC)
 
 #ifndef _PATH_RESCONF  // Normally defined in <resolv.h>
 #define _PATH_RESCONF "/etc/resolv.conf"
@@ -168,14 +169,14 @@ ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
     result = CONFIG_PARSE_POSIX_RES_INIT_FAILED;
   }
   // Prefer res_ndestroy where available.
-#if defined(OS_MACOSX) || defined(OS_FREEBSD)
+#if defined(OS_APPLE) || defined(OS_FREEBSD)
   res_ndestroy(&res);
 #else
   res_nclose(&res);
-#endif  // defined(OS_MACOSX) || defined(OS_FREEBSD)
+#endif  // defined(OS_APPLE) || defined(OS_FREEBSD)
 #endif  // defined(OS_OPENBSD)
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MAC)
   ConfigParsePosixResult error = DnsConfigWatcher::CheckDnsConfig();
   switch (error) {
     case CONFIG_PARSE_POSIX_OK:
@@ -187,7 +188,7 @@ ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
     default:
       return error;
   }
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+#endif  // defined(OS_MAC)
   // Override timeout value to match default setting on Windows.
   dns_config->timeout = kDnsDefaultTimeout;
   return result;
@@ -477,7 +478,7 @@ ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
 
   dns_config->nameservers.clear();
 
-#if defined(OS_MACOSX) || defined(OS_FREEBSD)
+#if defined(OS_APPLE) || defined(OS_FREEBSD)
   union res_sockaddr_union addresses[MAXNS];
   int nscount = res_getservers(const_cast<res_state>(&res), addresses, MAXNS);
   DCHECK_GE(nscount, 0);
@@ -491,7 +492,7 @@ ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
     }
     dns_config->nameservers.push_back(ipe);
   }
-#elif defined(OS_LINUX)
+#elif defined(OS_LINUX) || defined(OS_CHROMEOS)
   static_assert(std::extent<decltype(res.nsaddr_list)>() >= MAXNS &&
                     std::extent<decltype(res._u._ext.nsaddrs)>() >= MAXNS,
                 "incompatible libresolv res_state");
@@ -516,7 +517,8 @@ ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
       return CONFIG_PARSE_POSIX_BAD_ADDRESS;
     dns_config->nameservers.push_back(ipe);
   }
-#else  // !(defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_FREEBSD))
+#else   // !(defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_APPLE) ||
+        // defined(OS_FREEBSD))
   DCHECK_LE(res.nscount, MAXNS);
   for (int i = 0; i < res.nscount; ++i) {
     IPEndPoint ipe;
@@ -527,7 +529,7 @@ ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
     }
     dns_config->nameservers.push_back(ipe);
   }
-#endif  // defined(OS_MACOSX) || defined(OS_FREEBSD)
+#endif  // defined(OS_APPLE) || defined(OS_FREEBSD)
 
   dns_config->search.clear();
   for (int i = 0; (i < MAXDNSRCH) && res.dnsrch[i]; ++i) {

@@ -192,7 +192,7 @@ protected:
     void onDraw(SkCanvas* canvas) override {
         SkBlendMode mode = SkBlendMode::kDstOver;
 
-        SkMatrix lm = SkMatrix::MakeTrans(0, squareLength * 0.5f);
+        SkMatrix lm = SkMatrix::Translate(0, squareLength * 0.5f);
 
         sk_sp<SkShader> shaders[] = {
             // gradient should appear over color bitmap
@@ -241,7 +241,7 @@ private:
     sk_sp<SkShader> fAlpha8BitmapShader;
     sk_sp<SkShader> fLinearGradientShader;
 
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 DEF_GM( return new ComposeShaderBitmapGM(false); )
 DEF_GM( return new ComposeShaderBitmapGM(true); )

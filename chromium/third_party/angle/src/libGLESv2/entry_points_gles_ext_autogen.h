@@ -120,6 +120,48 @@ ANGLE_EXPORT void GL_APIENTRY DrawElementsInstancedANGLE(GLenum mode,
                                                          GLsizei primcount);
 ANGLE_EXPORT void GL_APIENTRY VertexAttribDivisorANGLE(GLuint index, GLuint divisor);
 
+// GL_ANGLE_memory_object_flags
+ANGLE_EXPORT void GL_APIENTRY TexStorageMemFlags2DANGLE(GLenum target,
+                                                        GLsizei levels,
+                                                        GLenum internalFormat,
+                                                        GLsizei width,
+                                                        GLsizei height,
+                                                        GLuint memory,
+                                                        GLuint64 offset,
+                                                        GLbitfield createFlags,
+                                                        GLbitfield usageFlags);
+ANGLE_EXPORT void GL_APIENTRY TexStorageMemFlags2DMultisampleANGLE(GLenum target,
+                                                                   GLsizei samples,
+                                                                   GLenum internalFormat,
+                                                                   GLsizei width,
+                                                                   GLsizei height,
+                                                                   GLboolean fixedSampleLocations,
+                                                                   GLuint memory,
+                                                                   GLuint64 offset,
+                                                                   GLbitfield createFlags,
+                                                                   GLbitfield usageFlags);
+ANGLE_EXPORT void GL_APIENTRY TexStorageMemFlags3DANGLE(GLenum target,
+                                                        GLsizei levels,
+                                                        GLenum internalFormat,
+                                                        GLsizei width,
+                                                        GLsizei height,
+                                                        GLsizei depth,
+                                                        GLuint memory,
+                                                        GLuint64 offset,
+                                                        GLbitfield createFlags,
+                                                        GLbitfield usageFlags);
+ANGLE_EXPORT void GL_APIENTRY TexStorageMemFlags3DMultisampleANGLE(GLenum target,
+                                                                   GLsizei samples,
+                                                                   GLenum internalFormat,
+                                                                   GLsizei width,
+                                                                   GLsizei height,
+                                                                   GLsizei depth,
+                                                                   GLboolean fixedSampleLocations,
+                                                                   GLuint memory,
+                                                                   GLuint64 offset,
+                                                                   GLbitfield createFlags,
+                                                                   GLbitfield usageFlags);
+
 // GL_ANGLE_memory_object_fuchsia
 ANGLE_EXPORT void GL_APIENTRY ImportMemoryZirconHandleANGLE(GLuint memory,
                                                             GLuint64 size,
@@ -605,6 +647,8 @@ ANGLE_EXPORT void GL_APIENTRY CoverageModulationCHROMIUM(GLenum components);
 // GL_CHROMIUM_lose_context
 ANGLE_EXPORT void GL_APIENTRY LoseContextCHROMIUM(GLenum current, GLenum other);
 
+// GL_EXT_EGL_image_array
+
 // GL_EXT_blend_func_extended
 ANGLE_EXPORT void GL_APIENTRY BindFragDataLocationEXT(GLuint program,
                                                       GLuint color,
@@ -617,6 +661,12 @@ ANGLE_EXPORT GLint GL_APIENTRY GetFragDataIndexEXT(GLuint program, const GLchar 
 ANGLE_EXPORT GLint GL_APIENTRY GetProgramResourceLocationIndexEXT(GLuint program,
                                                                   GLenum programInterface,
                                                                   const GLchar *name);
+
+// GL_EXT_buffer_storage
+ANGLE_EXPORT void GL_APIENTRY BufferStorageEXT(GLenum target,
+                                               GLsizeiptr size,
+                                               const void *data,
+                                               GLbitfield flags);
 
 // GL_EXT_debug_marker
 ANGLE_EXPORT void GL_APIENTRY InsertEventMarkerEXT(GLsizei length, const GLchar *marker);
@@ -831,6 +881,14 @@ ANGLE_EXPORT void GL_APIENTRY WaitSemaphoreEXT(GLuint semaphore,
 // GL_EXT_semaphore_fd
 ANGLE_EXPORT void GL_APIENTRY ImportSemaphoreFdEXT(GLuint semaphore, GLenum handleType, GLint fd);
 
+// GL_EXT_texture_buffer
+ANGLE_EXPORT void GL_APIENTRY TexBufferEXT(GLenum target, GLenum internalformat, GLuint buffer);
+ANGLE_EXPORT void GL_APIENTRY TexBufferRangeEXT(GLenum target,
+                                                GLenum internalformat,
+                                                GLuint buffer,
+                                                GLintptr offset,
+                                                GLsizeiptr size);
+
 // GL_EXT_texture_compression_bptc
 
 // GL_EXT_texture_compression_dxt1
@@ -841,9 +899,13 @@ ANGLE_EXPORT void GL_APIENTRY ImportSemaphoreFdEXT(GLuint semaphore, GLenum hand
 
 // GL_EXT_texture_compression_s3tc_srgb
 
+// GL_EXT_texture_cube_map_array
+
 // GL_EXT_texture_filter_anisotropic
 
 // GL_EXT_texture_format_BGRA8888
+
+// GL_EXT_texture_sRGB_R8
 
 // GL_EXT_texture_storage
 ANGLE_EXPORT void GL_APIENTRY TexStorage1DEXT(GLenum target,
@@ -1117,6 +1179,14 @@ ANGLE_EXPORT void GL_APIENTRY TexParameterIuivOES(GLenum target,
                                                   GLenum pname,
                                                   const GLuint *params);
 
+// GL_OES_texture_buffer
+ANGLE_EXPORT void GL_APIENTRY TexBufferOES(GLenum target, GLenum internalformat, GLuint buffer);
+ANGLE_EXPORT void GL_APIENTRY TexBufferRangeOES(GLenum target,
+                                                GLenum internalformat,
+                                                GLuint buffer,
+                                                GLintptr offset,
+                                                GLsizeiptr size);
+
 // GL_OES_texture_cube_map
 ANGLE_EXPORT void GL_APIENTRY GetTexGenfvOES(GLenum coord, GLenum pname, GLfloat *params);
 ANGLE_EXPORT void GL_APIENTRY GetTexGenivOES(GLenum coord, GLenum pname, GLint *params);
@@ -1128,7 +1198,11 @@ ANGLE_EXPORT void GL_APIENTRY TexGenivOES(GLenum coord, GLenum pname, const GLin
 ANGLE_EXPORT void GL_APIENTRY TexGenxOES(GLenum coord, GLenum pname, GLfixed param);
 ANGLE_EXPORT void GL_APIENTRY TexGenxvOES(GLenum coord, GLenum pname, const GLfixed *params);
 
+// GL_OES_texture_cube_map_array
+
 // GL_OES_texture_half_float
+
+// GL_OES_texture_stencil8
 
 // GL_OES_texture_storage_multisample_2d_array
 ANGLE_EXPORT void GL_APIENTRY TexStorage3DMultisampleOES(GLenum target,
@@ -1323,6 +1397,11 @@ ANGLE_EXPORT void GL_APIENTRY BufferDataContextANGLE(GLeglContext ctx,
                                                      GLsizeiptr size,
                                                      const void *data,
                                                      GLenum usage);
+ANGLE_EXPORT void GL_APIENTRY BufferStorageEXTContextANGLE(GLeglContext ctx,
+                                                           GLenum target,
+                                                           GLsizeiptr size,
+                                                           const void *data,
+                                                           GLbitfield flags);
 ANGLE_EXPORT void GL_APIENTRY BufferStorageMemEXTContextANGLE(GLeglContext ctx,
                                                               GLenum target,
                                                               GLsizeiptr size,
@@ -3069,12 +3148,32 @@ ANGLE_EXPORT void GL_APIENTRY TexBufferContextANGLE(GLeglContext ctx,
                                                     GLenum target,
                                                     GLenum internalformat,
                                                     GLuint buffer);
+ANGLE_EXPORT void GL_APIENTRY TexBufferEXTContextANGLE(GLeglContext ctx,
+                                                       GLenum target,
+                                                       GLenum internalformat,
+                                                       GLuint buffer);
+ANGLE_EXPORT void GL_APIENTRY TexBufferOESContextANGLE(GLeglContext ctx,
+                                                       GLenum target,
+                                                       GLenum internalformat,
+                                                       GLuint buffer);
 ANGLE_EXPORT void GL_APIENTRY TexBufferRangeContextANGLE(GLeglContext ctx,
                                                          GLenum target,
                                                          GLenum internalformat,
                                                          GLuint buffer,
                                                          GLintptr offset,
                                                          GLsizeiptr size);
+ANGLE_EXPORT void GL_APIENTRY TexBufferRangeEXTContextANGLE(GLeglContext ctx,
+                                                            GLenum target,
+                                                            GLenum internalformat,
+                                                            GLuint buffer,
+                                                            GLintptr offset,
+                                                            GLsizeiptr size);
+ANGLE_EXPORT void GL_APIENTRY TexBufferRangeOESContextANGLE(GLeglContext ctx,
+                                                            GLenum target,
+                                                            GLenum internalformat,
+                                                            GLuint buffer,
+                                                            GLintptr offset,
+                                                            GLsizeiptr size);
 ANGLE_EXPORT void GL_APIENTRY TexCoordPointerContextANGLE(GLeglContext ctx,
                                                           GLint size,
                                                           GLenum type,
@@ -4196,6 +4295,52 @@ ANGLE_EXPORT void GL_APIENTRY GetRenderbufferImageANGLEContextANGLE(GLeglContext
                                                                     GLenum format,
                                                                     GLenum type,
                                                                     void *pixels);
+ANGLE_EXPORT void GL_APIENTRY TexStorageMemFlags2DANGLEContextANGLE(GLeglContext ctx,
+                                                                    GLenum target,
+                                                                    GLsizei levels,
+                                                                    GLenum internalFormat,
+                                                                    GLsizei width,
+                                                                    GLsizei height,
+                                                                    GLuint memory,
+                                                                    GLuint64 offset,
+                                                                    GLbitfield createFlags,
+                                                                    GLbitfield usageFlags);
+ANGLE_EXPORT void GL_APIENTRY
+TexStorageMemFlags2DMultisampleANGLEContextANGLE(GLeglContext ctx,
+                                                 GLenum target,
+                                                 GLsizei samples,
+                                                 GLenum internalFormat,
+                                                 GLsizei width,
+                                                 GLsizei height,
+                                                 GLboolean fixedSampleLocations,
+                                                 GLuint memory,
+                                                 GLuint64 offset,
+                                                 GLbitfield createFlags,
+                                                 GLbitfield usageFlags);
+ANGLE_EXPORT void GL_APIENTRY TexStorageMemFlags3DANGLEContextANGLE(GLeglContext ctx,
+                                                                    GLenum target,
+                                                                    GLsizei levels,
+                                                                    GLenum internalFormat,
+                                                                    GLsizei width,
+                                                                    GLsizei height,
+                                                                    GLsizei depth,
+                                                                    GLuint memory,
+                                                                    GLuint64 offset,
+                                                                    GLbitfield createFlags,
+                                                                    GLbitfield usageFlags);
+ANGLE_EXPORT void GL_APIENTRY
+TexStorageMemFlags3DMultisampleANGLEContextANGLE(GLeglContext ctx,
+                                                 GLenum target,
+                                                 GLsizei samples,
+                                                 GLenum internalFormat,
+                                                 GLsizei width,
+                                                 GLsizei height,
+                                                 GLsizei depth,
+                                                 GLboolean fixedSampleLocations,
+                                                 GLuint memory,
+                                                 GLuint64 offset,
+                                                 GLbitfield createFlags,
+                                                 GLbitfield usageFlags);
 ANGLE_EXPORT void GL_APIENTRY ImportMemoryZirconHandleANGLEContextANGLE(GLeglContext ctx,
                                                                         GLuint memory,
                                                                         GLuint64 size,

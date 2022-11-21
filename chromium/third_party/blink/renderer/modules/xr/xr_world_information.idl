@@ -7,10 +7,9 @@
 [
     SecureContext,
     Exposed=Window,
-    RuntimeEnabled=WebXRIncubations
+    RuntimeEnabled=WebXRPlaneDetection
 ]
 interface XRWorldInformation {
    readonly attribute XRPlaneSet? detectedPlanes;
-   readonly attribute XRLightEstimation? lightEstimation;
 };
 

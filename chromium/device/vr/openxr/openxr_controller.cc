@@ -6,7 +6,8 @@
 
 #include <stdint.h>
 
-#include "base/logging.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "device/gamepad/public/cpp/gamepads.h"
 #include "device/vr/openxr/openxr_util.h"
@@ -67,6 +68,7 @@ XrResult OpenXrController::Initialize(
     XrInstance instance,
     XrSession session,
     const OpenXRPathHelper* path_helper,
+    const OpenXrExtensionHelper& extension_helper,
     std::map<XrPath, std::vector<XrActionSuggestedBinding>>* bindings) {
   DCHECK(bindings);
   type_ = type;
@@ -94,7 +96,7 @@ XrResult OpenXrController::Initialize(
 
   RETURN_IF_XR_FAILED(InitializeControllerActions());
 
-  SuggestBindings(bindings);
+  SuggestBindings(extension_helper, bindings);
   RETURN_IF_XR_FAILED(InitializeControllerSpaces());
 
   return XR_SUCCESS;
@@ -131,18 +133,31 @@ XrResult OpenXrController::InitializeControllerActions() {
 }
 
 XrResult OpenXrController::SuggestBindings(
+    const OpenXrExtensionHelper& extension_helper,
     std::map<XrPath, std::vector<XrActionSuggestedBinding>>* bindings) const {
   const std::string binding_prefix = GetTopLevelUserPath(type_);
 
   for (auto interaction_profile : kOpenXrControllerInteractionProfiles) {
+    // If the interaction profile is defined by an extension, check it here,
+    // otherwise continue
+    const bool extension_required =
+        interaction_profile.required_extension != nullptr;
+    if (extension_required) {
+      const bool extension_enabled = extension_helper.ExtensionSupported(
+          interaction_profile.required_extension);
+      if (!extension_enabled) {
+        continue;
+      }
+    }
+
     XrPath interaction_profile_path =
         path_helper_->GetInteractionProfileXrPath(interaction_profile.type);
-    RETURN_IF_XR_FAILED(SuggestActionBinding(bindings, interaction_profile_path,
-                                             grip_pose_action_,
-                                             binding_prefix + "/input/grip"));
-    RETURN_IF_XR_FAILED(SuggestActionBinding(bindings, interaction_profile_path,
-                                             pointer_pose_action_,
-                                             binding_prefix + "/input/aim"));
+    RETURN_IF_XR_FAILED(SuggestActionBinding(
+        bindings, interaction_profile_path, grip_pose_action_,
+        binding_prefix + "/input/grip/pose"));
+    RETURN_IF_XR_FAILED(SuggestActionBinding(
+        bindings, interaction_profile_path, pointer_pose_action_,
+        binding_prefix + "/input/aim/pose"));
 
     const OpenXrButtonPathMap* button_maps;
     size_t button_map_size;
@@ -235,10 +250,8 @@ mojom::XRInputSourceDescriptionPtr OpenXrController::GetDescription(
         path_helper_->GetInputProfiles(interaction_profile_);
   }
 
-  if (!description_->input_from_pointer) {
-    description_->input_from_pointer =
-        GetPointerFromGripTransform(predicted_display_time);
-  }
+  description_->input_from_pointer =
+      GetPointerFromGripTransform(predicted_display_time);
 
   return description_.Clone();
 }

@@ -27,6 +27,7 @@
 #include "gpu/command_buffer/service/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image_representation.h"
 #include "gpu/command_buffer/service/webgpu_decoder.h"
+#include "gpu/config/gpu_preferences.h"
 #include "ipc/ipc_channel.h"
 
 namespace gpu {
@@ -315,7 +316,8 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
                     CommandBufferServiceBase* command_buffer_service,
                     SharedImageManager* shared_image_manager,
                     MemoryTracker* memory_tracker,
-                    gles2::Outputter* outputter);
+                    gles2::Outputter* outputter,
+                    const GpuPreferences& gpu_preferences);
   ~WebGPUDecoderImpl() override;
 
   // WebGPUDecoder implementation
@@ -330,7 +332,7 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
     NOTREACHED();
     return nullptr;
   }
-  void Destroy(bool have_context) override {}
+  void Destroy(bool have_context) override;
   bool MakeCurrent() override { return true; }
   gl::GLContext* GetGLContext() override { return nullptr; }
   gl::GLSurface* GetGLSurface() override {
@@ -433,10 +435,7 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
                           const volatile void* buffer,
                           int num_entries,
                           int* entries_processed) override;
-  base::StringPiece GetLogPrefix() override {
-    NOTIMPLEMENTED();
-    return "";
-  }
+  base::StringPiece GetLogPrefix() override { return "WebGPUDecoderImpl"; }
   void BindImage(uint32_t client_texture_id,
                  uint32_t texture_target,
                  gl::GLImage* image,
@@ -555,7 +554,7 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
       const WGPUDeviceProperties& requested_device_properties);
 
   void SendAdapterProperties(DawnRequestAdapterSerial request_adapter_serial,
-                             uint32_t adapter_service_id,
+                             int32_t adapter_service_id,
                              const dawn_native::Adapter& adapter);
   void SendRequestedDeviceInfo(DawnDeviceClientID device_client_id,
                                bool is_request_device_success);
@@ -591,9 +590,11 @@ WebGPUDecoder* CreateWebGPUDecoderImpl(
     CommandBufferServiceBase* command_buffer_service,
     SharedImageManager* shared_image_manager,
     MemoryTracker* memory_tracker,
-    gles2::Outputter* outputter) {
+    gles2::Outputter* outputter,
+    const GpuPreferences& gpu_preferences) {
   return new WebGPUDecoderImpl(client, command_buffer_service,
-                               shared_image_manager, memory_tracker, outputter);
+                               shared_image_manager, memory_tracker, outputter,
+                               gpu_preferences);
 }
 
 WebGPUDecoderImpl::WebGPUDecoderImpl(
@@ -601,7 +602,8 @@ WebGPUDecoderImpl::WebGPUDecoderImpl(
     CommandBufferServiceBase* command_buffer_service,
     SharedImageManager* shared_image_manager,
     MemoryTracker* memory_tracker,
-    gles2::Outputter* outputter)
+    gles2::Outputter* outputter,
+    const GpuPreferences& gpu_preferences)
     : WebGPUDecoder(client, command_buffer_service, outputter),
       shared_image_representation_factory_(
           std::make_unique<SharedImageRepresentationFactory>(
@@ -611,9 +613,15 @@ WebGPUDecoderImpl::WebGPUDecoderImpl(
       memory_transfer_service_(new DawnServiceMemoryTransferService(this)),
       dawn_instance_(new dawn_native::Instance()) {
   dawn_instance_->SetPlatform(dawn_platform_.get());
+  dawn_instance_->EnableBackendValidation(
+      gpu_preferences.enable_dawn_backend_validation);
 }
 
 WebGPUDecoderImpl::~WebGPUDecoderImpl() {
+  Destroy(false);
+}
+
+void WebGPUDecoderImpl::Destroy(bool have_context) {
   dawn_device_and_wire_servers_.clear();
 }
 
@@ -639,6 +647,13 @@ error::Error WebGPUDecoderImpl::InitDawnDeviceAndSetWireServer(
   dawn_native::DeviceDescriptor device_descriptor;
   if (request_device_properties.textureCompressionBC) {
     device_descriptor.requiredExtensions.push_back("texture_compression_bc");
+  }
+  if (request_device_properties.shaderFloat16) {
+    device_descriptor.requiredExtensions.push_back("shader_float16");
+  }
+
+  if (request_device_properties.timestampQuery) {
+    device_descriptor.requiredExtensions.push_back("timestamp_query");
   }
 
   WGPUDevice wgpu_device =
@@ -805,9 +820,15 @@ error::Error WebGPUDecoderImpl::DoCommands(unsigned int num_commands,
 
 void WebGPUDecoderImpl::SendAdapterProperties(
     DawnRequestAdapterSerial request_adapter_serial,
-    uint32_t adapter_service_id,
+    int32_t adapter_service_id,
     const dawn_native::Adapter& adapter) {
-  WGPUDeviceProperties adapter_properties = adapter.GetAdapterProperties();
+  WGPUDeviceProperties adapter_properties =
+      (adapter) ? adapter.GetAdapterProperties() : WGPUDeviceProperties{};
+
+  if (!adapter) {
+    // If there's no adapter, the adapter_service_id should be -1
+    DCHECK_EQ(adapter_service_id, -1);
+  }
 
   size_t serialized_adapter_properties_size =
       dawn_wire::SerializedWGPUDevicePropertiesSize(&adapter_properties);
@@ -861,7 +882,10 @@ error::Error WebGPUDecoderImpl::HandleRequestAdapter(
 
   int32_t requested_adapter_index = GetPreferredAdapterIndex(power_preference);
   if (requested_adapter_index < 0) {
-    return error::kLostContext;
+    // There are no adapters to return since webgpu is not supported here
+    SendAdapterProperties(request_adapter_serial, requested_adapter_index,
+                          nullptr);
+    return error::kNoError;
   }
 
   // Currently we treat the index of the adapter in dawn_adapters_ as the id of
@@ -869,8 +893,7 @@ error::Error WebGPUDecoderImpl::HandleRequestAdapter(
   DCHECK_LT(static_cast<size_t>(requested_adapter_index),
             dawn_adapters_.size());
   const dawn_native::Adapter& adapter = dawn_adapters_[requested_adapter_index];
-  SendAdapterProperties(request_adapter_serial,
-                        static_cast<uint32_t>(requested_adapter_index),
+  SendAdapterProperties(request_adapter_serial, requested_adapter_index,
                         adapter);
 
   return error::kNoError;

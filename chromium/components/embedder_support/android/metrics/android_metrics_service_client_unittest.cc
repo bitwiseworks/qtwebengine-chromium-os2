@@ -11,12 +11,12 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics/metrics_switches.h"
 #include "components/prefs/testing_pref_service.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace metrics {
@@ -71,9 +71,9 @@ class TestClient : public AndroidMetricsServiceClient {
   using AndroidMetricsServiceClient::IsInSample;
 
  protected:
-  void InitInternal() override {}
-
   void OnMetricsStart() override {}
+
+  void OnMetricsNotStarted() override {}
 
   int GetSampleBucketValue() override { return sample_bucket_value_; }
 
@@ -92,11 +92,6 @@ class TestClient : public AndroidMetricsServiceClient {
     return package_name_rate_per_mille_;
   }
 
-  bool ShouldWakeMetricsService() override {
-    NOTREACHED();
-    return true;
-  }
-
   void RegisterAdditionalMetricsProviders(MetricsService* service) override {}
 
  private:
@@ -109,7 +104,7 @@ class TestClient : public AndroidMetricsServiceClient {
 
 std::unique_ptr<TestingPrefServiceSimple> CreateTestPrefs() {
   auto prefs = std::make_unique<TestingPrefServiceSimple>();
-  metrics::MetricsService::RegisterPrefs(prefs->registry());
+  AndroidMetricsServiceClient::RegisterPrefs(prefs->registry());
   return prefs;
 }
 
@@ -136,7 +131,7 @@ class AndroidMetricsServiceClientTest : public testing::Test {
   ~AndroidMetricsServiceClientTest() override = default;
 
  private:
-  base::test::TaskEnvironment task_environment_;
+  content::BrowserTaskEnvironment task_environment_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(AndroidMetricsServiceClientTest);

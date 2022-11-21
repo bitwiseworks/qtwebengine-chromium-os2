@@ -15,6 +15,7 @@
 #include "dawn_native/vulkan/UtilsVulkan.h"
 
 #include "common/Assert.h"
+#include "dawn_native/EnumMaskIterator.h"
 #include "dawn_native/Format.h"
 #include "dawn_native/vulkan/Forward.h"
 #include "dawn_native/vulkan/TextureVk.h"
@@ -23,25 +24,47 @@ namespace dawn_native { namespace vulkan {
 
     VkCompareOp ToVulkanCompareOp(wgpu::CompareFunction op) {
         switch (op) {
-            case wgpu::CompareFunction::Always:
-                return VK_COMPARE_OP_ALWAYS;
-            case wgpu::CompareFunction::Equal:
-                return VK_COMPARE_OP_EQUAL;
-            case wgpu::CompareFunction::Greater:
-                return VK_COMPARE_OP_GREATER;
-            case wgpu::CompareFunction::GreaterEqual:
-                return VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case wgpu::CompareFunction::Never:
+                return VK_COMPARE_OP_NEVER;
             case wgpu::CompareFunction::Less:
                 return VK_COMPARE_OP_LESS;
             case wgpu::CompareFunction::LessEqual:
                 return VK_COMPARE_OP_LESS_OR_EQUAL;
-            case wgpu::CompareFunction::Never:
-                return VK_COMPARE_OP_NEVER;
+            case wgpu::CompareFunction::Greater:
+                return VK_COMPARE_OP_GREATER;
+            case wgpu::CompareFunction::GreaterEqual:
+                return VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case wgpu::CompareFunction::Equal:
+                return VK_COMPARE_OP_EQUAL;
             case wgpu::CompareFunction::NotEqual:
                 return VK_COMPARE_OP_NOT_EQUAL;
-            default:
+            case wgpu::CompareFunction::Always:
+                return VK_COMPARE_OP_ALWAYS;
+
+            case wgpu::CompareFunction::Undefined:
                 UNREACHABLE();
         }
+    }
+
+    // Convert Dawn texture aspects to  Vulkan texture aspect flags
+    VkImageAspectFlags VulkanAspectMask(const Aspect& aspects) {
+        VkImageAspectFlags flags = 0;
+        for (Aspect aspect : IterateEnumMask(aspects)) {
+            switch (aspect) {
+                case Aspect::Color:
+                    flags |= VK_IMAGE_ASPECT_COLOR_BIT;
+                    break;
+                case Aspect::Depth:
+                    flags |= VK_IMAGE_ASPECT_DEPTH_BIT;
+                    break;
+                case Aspect::Stencil:
+                    flags |= VK_IMAGE_ASPECT_STENCIL_BIT;
+                    break;
+                case Aspect::None:
+                    UNREACHABLE();
+            }
+        }
+        return flags;
     }
 
     // Vulkan SPEC requires the source/destination region specified by each element of
@@ -68,30 +91,52 @@ namespace dawn_native { namespace vulkan {
     VkBufferImageCopy ComputeBufferImageCopyRegion(const BufferCopy& bufferCopy,
                                                    const TextureCopy& textureCopy,
                                                    const Extent3D& copySize) {
+        TextureDataLayout passDataLayout;
+        passDataLayout.offset = bufferCopy.offset;
+        passDataLayout.rowsPerImage = bufferCopy.rowsPerImage;
+        passDataLayout.bytesPerRow = bufferCopy.bytesPerRow;
+        return ComputeBufferImageCopyRegion(passDataLayout, textureCopy, copySize);
+    }
+
+    VkBufferImageCopy ComputeBufferImageCopyRegion(const TextureDataLayout& dataLayout,
+                                                   const TextureCopy& textureCopy,
+                                                   const Extent3D& copySize) {
         const Texture* texture = ToBackend(textureCopy.texture.Get());
 
         VkBufferImageCopy region;
 
-        region.bufferOffset = bufferCopy.offset;
+        region.bufferOffset = dataLayout.offset;
         // In Vulkan the row length is in texels while it is in bytes for Dawn
-        const Format& format = texture->GetFormat();
-        ASSERT(bufferCopy.rowPitch % format.blockByteSize == 0);
-        region.bufferRowLength = bufferCopy.rowPitch / format.blockByteSize * format.blockWidth;
-        region.bufferImageHeight = bufferCopy.imageHeight;
+        const TexelBlockInfo& blockInfo =
+            texture->GetFormat().GetTexelBlockInfo(textureCopy.aspect);
+        ASSERT(dataLayout.bytesPerRow % blockInfo.blockByteSize == 0);
+        region.bufferRowLength =
+            dataLayout.bytesPerRow / blockInfo.blockByteSize * blockInfo.blockWidth;
+        region.bufferImageHeight = dataLayout.rowsPerImage;
 
-        region.imageSubresource.aspectMask = texture->GetVkAspectMask();
+        region.imageSubresource.aspectMask = VulkanAspectMask(textureCopy.aspect);
         region.imageSubresource.mipLevel = textureCopy.mipLevel;
-        region.imageSubresource.baseArrayLayer = textureCopy.arrayLayer;
-        region.imageSubresource.layerCount = 1;
 
-        region.imageOffset.x = textureCopy.origin.x;
-        region.imageOffset.y = textureCopy.origin.y;
-        region.imageOffset.z = textureCopy.origin.z;
+        switch (textureCopy.texture->GetDimension()) {
+            case wgpu::TextureDimension::e2D: {
+                region.imageOffset.x = textureCopy.origin.x;
+                region.imageOffset.y = textureCopy.origin.y;
+                region.imageOffset.z = 0;
 
-        Extent3D imageExtent = ComputeTextureCopyExtent(textureCopy, copySize);
-        region.imageExtent.width = imageExtent.width;
-        region.imageExtent.height = imageExtent.height;
-        region.imageExtent.depth = copySize.depth;
+                region.imageSubresource.baseArrayLayer = textureCopy.origin.z;
+                region.imageSubresource.layerCount = copySize.depth;
+
+                Extent3D imageExtent = ComputeTextureCopyExtent(textureCopy, copySize);
+                region.imageExtent.width = imageExtent.width;
+                region.imageExtent.height = imageExtent.height;
+                region.imageExtent.depth = 1;
+                break;
+            }
+
+            case wgpu::TextureDimension::e1D:
+            case wgpu::TextureDimension::e3D:
+                UNREACHABLE();
+        }
 
         return region;
     }

@@ -51,6 +51,8 @@ class MockMessagePopupCollection : public DesktopMessagePopupCollection {
     is_primary_display_ = is_primary_display;
   }
 
+  void set_is_fullscreen(bool is_fullscreen) { is_fullscreen_ = is_fullscreen; }
+
   void set_new_popup_height(int new_popup_height) {
     new_popup_height_ = new_popup_height;
   }
@@ -83,6 +85,11 @@ class MockMessagePopupCollection : public DesktopMessagePopupCollection {
     return is_primary_display_;
   }
 
+  bool BlockForMixedFullscreen(
+      const Notification& notification) const override {
+    return is_fullscreen_;
+  }
+
  private:
   gfx::NativeWindow context_;
 
@@ -90,6 +97,7 @@ class MockMessagePopupCollection : public DesktopMessagePopupCollection {
 
   bool popup_timer_started_ = false;
   bool is_primary_display_ = true;
+  bool is_fullscreen_ = false;
   int new_popup_height_ = 84;
 
   DISALLOW_COPY_AND_ASSIGN(MockMessagePopupCollection);
@@ -430,7 +438,7 @@ TEST_F(MessagePopupCollectionTest, UpdateContents) {
 }
 
 // Failiing on MacOS 10.10. https://crbug.com/1047503
-#if defined(OS_MACOSX)
+#if defined(OS_APPLE)
 #define MAYBE_UpdateContentsCausesPopupClose \
   DISABLED_UpdateContentsCausesPopupClose
 #else
@@ -503,6 +511,20 @@ TEST_F(MessagePopupCollectionTest, NotShowCustomOnSubDisplay) {
   EXPECT_EQ(0u, GetPopupCounts());
 }
 
+TEST_F(MessagePopupCollectionTest, MixedFullscreenShow) {
+  popup_collection()->set_is_fullscreen(false);
+  AddNotification();
+  EXPECT_TRUE(IsAnimating());
+  EXPECT_EQ(1u, GetPopupCounts());
+}
+
+TEST_F(MessagePopupCollectionTest, MixedFullscreenBlock) {
+  popup_collection()->set_is_fullscreen(true);
+  AddNotification();
+  EXPECT_FALSE(IsAnimating());
+  EXPECT_EQ(0u, GetPopupCounts());
+}
+
 TEST_F(MessagePopupCollectionTest, NotificationsMoveDown) {
   std::vector<std::string> ids;
   for (size_t i = 0; i < kMaxVisiblePopupNotifications + 1; ++i)
@@ -546,6 +568,48 @@ TEST_F(MessagePopupCollectionTest, NotificationsMoveDown) {
 
   AnimateToEnd();
   EXPECT_EQ(1.0f, GetPopup(ids.back())->GetOpacity());
+  EXPECT_FALSE(IsAnimating());
+}
+
+TEST_F(MessagePopupCollectionTest, NotificationsMoveDownInverse) {
+  popup_collection()->set_inverse();
+
+  std::vector<std::string> ids;
+  for (size_t i = 0; i < kMaxVisiblePopupNotifications; ++i)
+    ids.push_back(AddNotification());
+
+  std::string dismissed_id = ids[kMaxVisiblePopupNotifications - 1];
+  std::string new_bottom_id = ids[kMaxVisiblePopupNotifications - 2];
+
+  AnimateUntilIdle();
+
+  EXPECT_EQ(kMaxVisiblePopupNotifications, GetPopupCounts());
+  EXPECT_FALSE(IsAnimating());
+
+  gfx::Rect dismissed = GetPopup(dismissed_id)->GetBoundsInScreen();
+
+  MessageCenter::Get()->MarkSinglePopupAsShown(dismissed_id, false);
+  EXPECT_TRUE(IsAnimating());
+
+  AnimateToMiddle();
+  EXPECT_GT(1.0f, GetPopup(dismissed_id)->GetOpacity());
+  EXPECT_EQ(dismissed_id, GetPopup(dismissed_id)->id());
+
+  AnimateToEnd();
+  EXPECT_EQ(ids[1], GetPopup(new_bottom_id)->id());
+  EXPECT_TRUE(IsAnimating());
+
+  gfx::Rect before = GetPopup(new_bottom_id)->GetBoundsInScreen();
+
+  AnimateToMiddle();
+  gfx::Rect moving = GetPopup(new_bottom_id)->GetBoundsInScreen();
+  EXPECT_GT(moving.bottom(), before.bottom());
+  EXPECT_GT(dismissed.bottom(), moving.bottom());
+
+  AnimateToEnd();
+  gfx::Rect after = GetPopup(new_bottom_id)->GetBoundsInScreen();
+  EXPECT_EQ(dismissed, after);
+  EXPECT_EQ(kMaxVisiblePopupNotifications - 1, GetPopupCounts());
   EXPECT_FALSE(IsAnimating());
 }
 

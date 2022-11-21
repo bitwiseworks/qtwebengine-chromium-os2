@@ -93,7 +93,7 @@ namespace torque {
   AST_STATEMENT_NODE_KIND_LIST(V)       \
   AST_DECLARATION_NODE_KIND_LIST(V)     \
   V(Identifier)                         \
-  V(LabelBlock)                         \
+  V(TryHandler)                         \
   V(ClassBody)
 
 struct AstNode {
@@ -204,7 +204,7 @@ struct EnumDescription {
 
 class Ast {
  public:
-  Ast() {}
+  Ast() = default;
 
   std::vector<Declaration*>& declarations() { return declarations_; }
   const std::vector<Declaration*>& declarations() const {
@@ -580,10 +580,11 @@ struct AssumeTypeImpossibleExpression : Expression {
 struct NewExpression : Expression {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(NewExpression)
   NewExpression(SourcePosition pos, TypeExpression* type,
-                std::vector<NameAndExpression> initializers)
+                std::vector<NameAndExpression> initializers, bool pretenured)
       : Expression(kKind, pos),
         type(type),
-        initializers(std::move(initializers)) {}
+        initializers(std::move(initializers)),
+        pretenured(pretenured) {}
 
   void VisitAllSubExpressions(VisitCallback callback) override {
     for (auto& initializer : initializers) {
@@ -594,6 +595,7 @@ struct NewExpression : Expression {
 
   TypeExpression* type;
   std::vector<NameAndExpression> initializers;
+  bool pretenured;
 };
 
 enum class ImplicitKind { kNoImplicit, kJSImplicit, kImplicit };
@@ -707,13 +709,14 @@ struct DebugStatement : Statement {
 
 struct AssertStatement : Statement {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(AssertStatement)
-  AssertStatement(SourcePosition pos, bool debug_only, Expression* expression,
+  enum class AssertKind { kAssert, kCheck, kStaticAssert };
+  AssertStatement(SourcePosition pos, AssertKind kind, Expression* expression,
                   std::string source)
       : Statement(kKind, pos),
-        debug_only(debug_only),
+        kind(kind),
         expression(expression),
         source(std::move(source)) {}
-  bool debug_only;
+  AssertKind kind;
   Expression* expression;
   std::string source;
 };
@@ -780,14 +783,17 @@ struct ForLoopStatement : Statement {
   Statement* body;
 };
 
-struct LabelBlock : AstNode {
-  DEFINE_AST_NODE_LEAF_BOILERPLATE(LabelBlock)
-  LabelBlock(SourcePosition pos, Identifier* label,
+struct TryHandler : AstNode {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(TryHandler)
+  enum class HandlerKind { kCatch, kLabel };
+  TryHandler(SourcePosition pos, HandlerKind handler_kind, Identifier* label,
              const ParameterList& parameters, Statement* body)
       : AstNode(kKind, pos),
+        handler_kind(handler_kind),
         label(label),
         parameters(parameters),
         body(std::move(body)) {}
+  HandlerKind handler_kind;
   Identifier* label;
   ParameterList parameters;
   Statement* body;
@@ -802,15 +808,13 @@ struct StatementExpression : Expression {
 
 struct TryLabelExpression : Expression {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(TryLabelExpression)
-  TryLabelExpression(SourcePosition pos, bool catch_exceptions,
-                     Expression* try_expression, LabelBlock* label_block)
+  TryLabelExpression(SourcePosition pos, Expression* try_expression,
+                     TryHandler* label_block)
       : Expression(kKind, pos),
-        catch_exceptions(catch_exceptions),
         try_expression(try_expression),
         label_block(label_block) {}
-  bool catch_exceptions;
   Expression* try_expression;
-  LabelBlock* label_block;
+  TryHandler* label_block;
 };
 
 struct BlockStatement : Statement {
@@ -1175,8 +1179,7 @@ struct ClassBody : AstNode {
 struct ClassDeclaration : TypeDeclaration {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(ClassDeclaration)
   ClassDeclaration(SourcePosition pos, Identifier* name, ClassFlags flags,
-                   base::Optional<TypeExpression*> super,
-                   base::Optional<std::string> generates,
+                   TypeExpression* super, base::Optional<std::string> generates,
                    std::vector<Declaration*> methods,
                    std::vector<ClassFieldExpression> fields,
                    InstanceTypeConstraints instance_type_constraints)
@@ -1188,7 +1191,7 @@ struct ClassDeclaration : TypeDeclaration {
         fields(std::move(fields)),
         instance_type_constraints(std::move(instance_type_constraints)) {}
   ClassFlags flags;
-  base::Optional<TypeExpression*> super;
+  TypeExpression* super;
   base::Optional<std::string> generates;
   std::vector<Declaration*> methods;
   std::vector<ClassFieldExpression> fields;

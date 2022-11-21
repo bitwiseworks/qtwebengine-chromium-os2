@@ -49,7 +49,7 @@ class CustomStatesTokenList : public DOMTokenList {
 ElementInternals::ElementInternals(HTMLElement& target) : target_(target) {
 }
 
-void ElementInternals::Trace(Visitor* visitor) {
+void ElementInternals::Trace(Visitor* visitor) const {
   visitor->Trace(target_);
   visitor->Trace(value_);
   visitor->Trace(state_);
@@ -238,6 +238,13 @@ bool ElementInternals::HasState(const AtomicString& state) const {
   return custom_states_ && custom_states_->contains(state);
 }
 
+ShadowRoot* ElementInternals::shadowRoot() const {
+  if (ShadowRoot* shadow_root = Target().AuthorShadowRoot()) {
+    return shadow_root->IsAvailableToElementInternals() ? shadow_root : nullptr;
+  }
+  return nullptr;
+}
+
 const AtomicString& ElementInternals::FastGetAttribute(
     const QualifiedName& attribute) const {
   return accessibility_semantics_map_.at(attribute);
@@ -321,38 +328,15 @@ void ElementInternals::SetElementArrayAttribute(
   }
 }
 
-HeapVector<Member<Element>> ElementInternals::GetElementArrayAttribute(
-    const QualifiedName& name,
-    bool is_null) {
-  is_null = true;
-  auto iter = explicitly_set_attr_elements_map_.find(name);
-  if (iter != explicitly_set_attr_elements_map_.end()) {
-    is_null = false;
-    return *(iter->value);
-  }
-  return HeapVector<Member<Element>>();
-}
-
-void ElementInternals::SetElementArrayAttribute(
-    const QualifiedName& name,
-    HeapVector<Member<Element>> elements,
-    bool is_null) {
-  if (is_null) {
-    explicitly_set_attr_elements_map_.erase(name);
-    return;
-  }
-  explicitly_set_attr_elements_map_.Set(
-      name, MakeGarbageCollected<HeapVector<Member<Element>>>(elements));
-}
-
 bool ElementInternals::IsTargetFormAssociated() const {
   if (Target().IsFormAssociatedCustomElement())
     return true;
   // Custom element could be in the process of upgrading here, during which
-  // it will have state kFailed according to:
+  // it will have state kFailed or kPreCustomized according to:
   // https://html.spec.whatwg.org/multipage/custom-elements.html#upgrades
   if (Target().GetCustomElementState() != CustomElementState::kUndefined &&
-      Target().GetCustomElementState() != CustomElementState::kFailed) {
+      Target().GetCustomElementState() != CustomElementState::kFailed &&
+      Target().GetCustomElementState() != CustomElementState::kPreCustomized) {
     return false;
   }
   // An element is in "undefined" state in its constructor JavaScript code.

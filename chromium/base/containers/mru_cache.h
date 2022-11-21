@@ -25,8 +25,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "base/logging.h"
-#include "base/macros.h"
+#include "base/check.h"
 
 namespace base {
 namespace trace_event {
@@ -82,6 +81,9 @@ class MRUCacheBase {
   // can pass NO_AUTO_EVICT to not restrict the cache size.
   explicit MRUCacheBase(size_type max_size) : max_size_(max_size) {}
   MRUCacheBase(MRUCacheBase&&) = default;
+
+  MRUCacheBase(const MRUCacheBase&) = delete;
+  MRUCacheBase& operator=(const MRUCacheBase&) = delete;
 
   virtual ~MRUCacheBase() = default;
 
@@ -212,8 +214,6 @@ class MRUCacheBase {
   KeyIndex index_;
 
   size_type max_size_;
-
-  DISALLOW_COPY_AND_ASSIGN(MRUCacheBase);
 };
 
 // MRUCache --------------------------------------------------------------------
@@ -231,11 +231,10 @@ class MRUCache : public MRUCacheBase<KeyType, PayloadType, CompareType> {
   // See MRUCacheBase, noting the possibility of using NO_AUTO_EVICT.
   MRUCache(typename ParentType::size_type max_size)
       : ParentType(max_size) {}
+  MRUCache(const MRUCache&) = delete;
+  MRUCache& operator=(const MRUCache&) = delete;
   MRUCache(MRUCache&&) = default;
-  virtual ~MRUCache() = default;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MRUCache);
+  ~MRUCache() override = default;
 };
 
 // HashingMRUCache ------------------------------------------------------------
@@ -259,10 +258,9 @@ class HashingMRUCache
   // See MRUCacheBase, noting the possibility of using NO_AUTO_EVICT.
   explicit HashingMRUCache(typename ParentType::size_type max_size)
       : ParentType(max_size) {}
-  virtual ~HashingMRUCache() = default;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(HashingMRUCache);
+  HashingMRUCache(const HashingMRUCache&) = delete;
+  HashingMRUCache& operator=(const HashingMRUCache&) = delete;
+  ~HashingMRUCache() override = default;
 };
 
 }  // namespace base

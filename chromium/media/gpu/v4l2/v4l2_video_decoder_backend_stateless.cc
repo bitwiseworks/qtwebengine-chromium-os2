@@ -8,6 +8,8 @@
 #include <linux/media.h>
 #include <sys/ioctl.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/posix/eintr_wrapper.h"
@@ -23,7 +25,7 @@
 #include "media/gpu/v4l2/v4l2_h264_accelerator_legacy.h"
 #include "media/gpu/v4l2/v4l2_vp8_accelerator.h"
 #include "media/gpu/v4l2/v4l2_vp8_accelerator_legacy.h"
-#include "media/gpu/v4l2/v4l2_vp9_accelerator.h"
+#include "media/gpu/v4l2/v4l2_vp9_accelerator_legacy.h"
 
 namespace media {
 
@@ -529,13 +531,12 @@ bool V4L2StatelessVideoDecoderBackend::ApplyResolution(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(input_queue_->QueuedBuffersCount(), 0u);
 
-  struct v4l2_format format = {};
-
-  format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-  if (device_->Ioctl(VIDIOC_G_FMT, &format) != 0) {
+  auto ret = input_queue_->GetFormat().first;
+  if (!ret) {
     VPLOGF(1) << "Failed getting OUTPUT format";
     return false;
   }
+  struct v4l2_format format = std::move(*ret);
 
   format.fmt.pix_mp.width = pic_size.width();
   format.fmt.pix_mp.height = pic_size.height();
@@ -560,7 +561,7 @@ void V4L2StatelessVideoDecoderBackend::OnChangeResolutionDone(bool success) {
                                 weak_this_));
 }
 
-void V4L2StatelessVideoDecoderBackend::OnStreamStopped() {
+void V4L2StatelessVideoDecoderBackend::OnStreamStopped(bool stop_input_queue) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOGF(3);
 
@@ -604,6 +605,10 @@ void V4L2StatelessVideoDecoderBackend::ClearPendingRequests(
   }
 }
 
+bool V4L2StatelessVideoDecoderBackend::StopInputQueueOnResChange() const {
+  return true;
+}
+
 bool V4L2StatelessVideoDecoderBackend::IsSupportedProfile(
     VideoCodecProfile profile) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -633,25 +638,25 @@ bool V4L2StatelessVideoDecoderBackend::CreateAvd() {
 
   if (profile_ >= H264PROFILE_MIN && profile_ <= H264PROFILE_MAX) {
     if (input_queue_->SupportsRequests()) {
-      avd_.reset(new H264Decoder(
-          std::make_unique<V4L2H264Accelerator>(this, device_.get()),
-          profile_));
+      avd_ = std::make_unique<H264Decoder>(
+          std::make_unique<V4L2H264Accelerator>(this, device_.get()), profile_);
     } else {
-      avd_.reset(new H264Decoder(
+      avd_ = std::make_unique<H264Decoder>(
           std::make_unique<V4L2LegacyH264Accelerator>(this, device_.get()),
-          profile_));
+          profile_);
     }
   } else if (profile_ >= VP8PROFILE_MIN && profile_ <= VP8PROFILE_MAX) {
     if (input_queue_->SupportsRequests()) {
-      avd_.reset(new VP8Decoder(
-          std::make_unique<V4L2VP8Accelerator>(this, device_.get())));
+      avd_ = std::make_unique<VP8Decoder>(
+          std::make_unique<V4L2VP8Accelerator>(this, device_.get()));
     } else {
-      avd_.reset(new VP8Decoder(
-          std::make_unique<V4L2LegacyVP8Accelerator>(this, device_.get())));
+      avd_ = std::make_unique<VP8Decoder>(
+          std::make_unique<V4L2LegacyVP8Accelerator>(this, device_.get()));
     }
   } else if (profile_ >= VP9PROFILE_MIN && profile_ <= VP9PROFILE_MAX) {
-    avd_.reset(new VP9Decoder(
-        std::make_unique<V4L2VP9Accelerator>(this, device_.get()), profile_));
+    avd_ = std::make_unique<VP9Decoder>(
+        std::make_unique<V4L2LegacyVP9Accelerator>(this, device_.get()),
+        profile_);
   } else {
     VLOGF(1) << "Unsupported profile " << GetProfileName(profile_);
     return false;

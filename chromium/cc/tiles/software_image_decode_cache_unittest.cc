@@ -1750,7 +1750,7 @@ TEST(SoftwareImageDecodeCacheTest, BitmapImageColorConverted) {
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
   // Expect that we allocated a new image.
-  EXPECT_NE(decoded_draw_image.image().get(), paint_image.GetSkImage().get());
+  EXPECT_NE(decoded_draw_image.image().get(), paint_image.GetSwSkImage().get());
   // Expect that the image color space match the target color space.
   EXPECT_TRUE(decoded_draw_image.image()->colorSpace());
   EXPECT_TRUE(SkColorSpace::Equals(decoded_draw_image.image()->colorSpace(),
@@ -1936,6 +1936,63 @@ TEST(SoftwareImageDecodeCacheTest, DecodeToScaleNoneQuality) {
   ASSERT_EQ(generator->decode_infos().size(), 1u);
   EXPECT_EQ(generator->decode_infos().at(0).width(), 100);
   EXPECT_EQ(generator->decode_infos().at(0).height(), 100);
+  cache.DrawWithImageFinished(draw_image, decoded_image);
+}
+
+TEST(SoftwareImageDecodeCacheTest, HdrDecodeToHdr) {
+  TestSoftwareImageDecodeCache cache;
+
+  auto color_space = gfx::ColorSpace::CreateHDR10();
+  auto size = SkISize::Make(100, 100);
+  auto info =
+      SkImageInfo::Make(size.width(), size.height(), kRGBA_F16_SkColorType,
+                        kPremul_SkAlphaType, color_space.ToSkColorSpace());
+  SkBitmap bitmap;
+  bitmap.allocPixels(info);
+  PaintImage image = PaintImageBuilder::WithDefault()
+                         .set_id(PaintImage::kInvalidId)
+                         .set_is_high_bit_depth(true)
+                         .set_image(SkImage::MakeFromBitmap(bitmap),
+                                    PaintImage::GetNextContentId())
+                         .TakePaintImage();
+
+  DrawImage draw_image(image, SkIRect::MakeWH(image.width(), image.height()),
+                       kMedium_SkFilterQuality,
+                       CreateMatrix(SkSize::Make(0.5, 0.5), true),
+                       PaintImage::kDefaultFrameIndex, color_space);
+
+  DecodedDrawImage decoded_image = cache.GetDecodedImageForDraw(draw_image);
+  EXPECT_EQ(decoded_image.image()->colorType(), kRGBA_F16_SkColorType);
+  cache.DrawWithImageFinished(draw_image, decoded_image);
+}
+
+TEST(SoftwareImageDecodeCacheTest, HdrDecodeToSdr) {
+  TestSoftwareImageDecodeCache cache;
+
+  auto image_color_space = gfx::ColorSpace::CreateHDR10();
+  auto size = SkISize::Make(100, 100);
+  auto info = SkImageInfo::Make(size.width(), size.height(),
+                                kRGBA_F16_SkColorType, kPremul_SkAlphaType,
+                                image_color_space.ToSkColorSpace());
+  SkBitmap bitmap;
+  bitmap.allocPixels(info);
+  PaintImage image = PaintImageBuilder::WithDefault()
+                         .set_id(PaintImage::kInvalidId)
+                         .set_is_high_bit_depth(true)
+                         .set_image(SkImage::MakeFromBitmap(bitmap),
+                                    PaintImage::GetNextContentId())
+                         .TakePaintImage();
+
+  // Note: We use P3 here since software cache shouldn't be used when conversion
+  // to SRGB is needed.
+  auto raster_color_space = gfx::ColorSpace::CreateDisplayP3D65();
+  DrawImage draw_image(image, SkIRect::MakeWH(image.width(), image.height()),
+                       kMedium_SkFilterQuality,
+                       CreateMatrix(SkSize::Make(0.5, 0.5), true),
+                       PaintImage::kDefaultFrameIndex, raster_color_space);
+
+  DecodedDrawImage decoded_image = cache.GetDecodedImageForDraw(draw_image);
+  EXPECT_NE(decoded_image.image()->colorType(), kRGBA_F16_SkColorType);
   cache.DrawWithImageFinished(draw_image, decoded_image);
 }
 

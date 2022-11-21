@@ -341,7 +341,9 @@ static int fts3SqlStmt(
 ** created by merging the oldest :2 segments from absolute level :1. See 
 ** function sqlite3Fts3Incrmerge() for details.  */
 /* 29 */ "SELECT 2 * total(1 + leaves_end_block - start_block) "
-         "  FROM %Q.'%q_segdir' WHERE level = ? AND idx < ?",
+         "  FROM (SELECT * FROM %Q.'%q_segdir' "
+         "        WHERE level = ? ORDER BY idx ASC LIMIT ?"
+         "  )",
 
 /* SQL_DELETE_SEGDIR_ENTRY
 **   Delete the %_segdir entry on absolute level :1 with index :2.  */
@@ -1415,6 +1417,7 @@ static int fts3SegReaderNext(
   */
   if( pReader->nDoclist > pReader->nNode-(pReader->aDoclist-pReader->aNode)
    || (pReader->nPopulate==0 && pReader->aDoclist[pReader->nDoclist-1])
+   || pReader->nDoclist==0
   ){
     return FTS_CORRUPT_VTAB;
   }
@@ -2000,8 +2003,8 @@ static int fts3PrefixCompress(
   int nNext                       /* Size of buffer zNext in bytes */
 ){
   int n;
-  UNUSED_PARAMETER(nNext);
-  for(n=0; n<nPrev && zPrev[n]==zNext[n]; n++);
+  for(n=0; n<nPrev && n<nNext && zPrev[n]==zNext[n]; n++);
+  assert_fts3_nc( n<nNext );
   return n;
 }
 
@@ -2852,6 +2855,19 @@ int sqlite3Fts3MsrIncrRestart(Fts3MultiSegReader *pCsr){
   return SQLITE_OK;
 }
 
+static int fts3GrowSegReaderBuffer(Fts3MultiSegReader *pCsr, int nReq){
+  if( nReq>pCsr->nBuffer ){
+    char *aNew;
+    pCsr->nBuffer = nReq*2;
+    aNew = sqlite3_realloc(pCsr->aBuffer, pCsr->nBuffer);
+    if( !aNew ){
+      return SQLITE_NOMEM;
+    }
+    pCsr->aBuffer = aNew;
+  }
+  return SQLITE_OK;
+}
+
 
 int sqlite3Fts3SegReaderStep(
   Fts3Table *p,                   /* Virtual table handle */
@@ -2986,15 +3002,9 @@ int sqlite3Fts3SegReaderStep(
           }
 
           nByte = sqlite3Fts3VarintLen(iDelta) + (isRequirePos?nList+1:0);
-          if( nDoclist+nByte>pCsr->nBuffer ){
-            char *aNew;
-            pCsr->nBuffer = (nDoclist+nByte)*2;
-            aNew = sqlite3_realloc(pCsr->aBuffer, pCsr->nBuffer);
-            if( !aNew ){
-              return SQLITE_NOMEM;
-            }
-            pCsr->aBuffer = aNew;
-          }
+
+          rc = fts3GrowSegReaderBuffer(pCsr, nByte+nDoclist);
+          if( rc ) return rc;
 
           if( isFirst ){
             char *a = &pCsr->aBuffer[nDoclist];
@@ -3019,6 +3029,9 @@ int sqlite3Fts3SegReaderStep(
         fts3SegReaderSort(apSegment, nMerge, j, xCmp);
       }
       if( nDoclist>0 ){
+        rc = fts3GrowSegReaderBuffer(pCsr, nDoclist+FTS3_NODE_PADDING);
+        if( rc ) return rc;
+        memset(&pCsr->aBuffer[nDoclist], 0, FTS3_NODE_PADDING);
         pCsr->aDoclist = pCsr->aBuffer;
         pCsr->nDoclist = nDoclist;
         rc = SQLITE_ROW;
@@ -3068,11 +3081,11 @@ static void fts3ReadEndBlockField(
   if( zText ){
     int i;
     int iMul = 1;
-    i64 iVal = 0;
+    u64 iVal = 0;
     for(i=0; zText[i]>='0' && zText[i]<='9'; i++){
       iVal = iVal*10 + (zText[i] - '0');
     }
-    *piEndBlock = iVal;
+    *piEndBlock = (i64)iVal;
     while( zText[i]==' ' ) i++;
     iVal = 0;
     if( zText[i]=='-' ){
@@ -3082,7 +3095,7 @@ static void fts3ReadEndBlockField(
     for(/* no-op */; zText[i]>='0' && zText[i]<='9'; i++){
       iVal = iVal*10 + (zText[i] - '0');
     }
-    *pnByte = (iVal * (i64)iMul);
+    *pnByte = ((i64)iVal * (i64)iMul);
   }
 }
 
@@ -4287,7 +4300,7 @@ static int fts3IncrmergeLoad(
       int i;
       int nHeight = (int)aRoot[0];
       NodeWriter *pNode;
-      if( nHeight<1 || nHeight>FTS_MAX_APPENDABLE_HEIGHT ){
+      if( nHeight<1 || nHeight>=FTS_MAX_APPENDABLE_HEIGHT ){
         sqlite3_reset(pSelect);
         return FTS_CORRUPT_VTAB;
       }
@@ -4322,17 +4335,20 @@ static int fts3IncrmergeLoad(
           while( reader.aNode && rc==SQLITE_OK ) rc = nodeReaderNext(&reader);
           blobGrowBuffer(&pNode->key, reader.term.n, &rc);
           if( rc==SQLITE_OK ){
-            memcpy(pNode->key.a, reader.term.a, reader.term.n);
+            assert_fts3_nc( reader.term.n>0 || reader.aNode==0 );
+            if( reader.term.n>0 ){
+              memcpy(pNode->key.a, reader.term.a, reader.term.n);
+            }
             pNode->key.n = reader.term.n;
             if( i>0 ){
               char *aBlock = 0;
               int nBlock = 0;
               pNode = &pWriter->aNodeWriter[i-1];
               pNode->iBlock = reader.iChild;
-              rc = sqlite3Fts3ReadBlock(p, reader.iChild, &aBlock, &nBlock, 0);
+              rc = sqlite3Fts3ReadBlock(p, reader.iChild, &aBlock, &nBlock,0);
               blobGrowBuffer(&pNode->block, 
                   MAX(nBlock, p->nNodeSize)+FTS3_NODE_PADDING, &rc
-              );
+                  );
               if( rc==SQLITE_OK ){
                 memcpy(pNode->block.a, aBlock, nBlock);
                 pNode->block.n = nBlock;

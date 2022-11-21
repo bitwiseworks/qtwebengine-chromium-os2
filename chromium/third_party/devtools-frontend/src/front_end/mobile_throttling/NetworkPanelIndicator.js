@@ -9,10 +9,10 @@ import * as UI from '../ui/ui.js';
 export class NetworkPanelIndicator {
   constructor() {
     // TODO: we should not access network from other modules.
-    if (!self.UI.inspectorView.hasPanel('network')) {
+    if (!UI.InspectorView.InspectorView.instance().hasPanel('network')) {
       return;
     }
-    const manager = self.SDK.multitargetNetworkManager;
+    const manager = SDK.NetworkManager.MultitargetNetworkManager.instance();
     manager.addEventListener(SDK.NetworkManager.MultitargetNetworkManager.Events.ConditionsChanged, updateVisibility);
     manager.addEventListener(
         SDK.NetworkManager.MultitargetNetworkManager.Events.BlockedPatternsChanged, updateVisibility);
@@ -24,14 +24,14 @@ export class NetworkPanelIndicator {
       if (manager.isThrottling()) {
         icon = UI.Icon.Icon.create('smallicon-warning');
         icon.title = Common.UIString.UIString('Network throttling is enabled');
-      } else if (self.SDK.multitargetNetworkManager.isIntercepting()) {
+      } else if (SDK.NetworkManager.MultitargetNetworkManager.instance().isIntercepting()) {
         icon = UI.Icon.Icon.create('smallicon-warning');
         icon.title = Common.UIString.UIString('Requests may be rewritten by local overrides');
       } else if (manager.isBlocking()) {
         icon = UI.Icon.Icon.create('smallicon-warning');
         icon.title = Common.UIString.UIString('Requests may be blocked');
       }
-      self.UI.inspectorView.setPanelIcon('network', icon);
+      UI.InspectorView.InspectorView.instance().setPanelIcon('network', icon);
     }
   }
 }

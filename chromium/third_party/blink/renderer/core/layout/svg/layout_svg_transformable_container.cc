@@ -24,13 +24,16 @@
 #include "third_party/blink/renderer/core/layout/svg/transform_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_g_element.h"
 #include "third_party/blink/renderer/core/svg/svg_graphics_element.h"
+#include "third_party/blink/renderer/core/svg/svg_length_context.h"
 #include "third_party/blink/renderer/core/svg/svg_use_element.h"
 
 namespace blink {
 
 LayoutSVGTransformableContainer::LayoutSVGTransformableContainer(
     SVGGraphicsElement* node)
-    : LayoutSVGContainer(node), needs_transform_update_(true) {}
+    : LayoutSVGContainer(node),
+      needs_transform_update_(true),
+      transform_uses_reference_box_(false) {}
 
 static bool HasValidPredecessor(const Node* node) {
   DCHECK(node);
@@ -45,6 +48,7 @@ static bool HasValidPredecessor(const Node* node) {
 bool LayoutSVGTransformableContainer::IsChildAllowed(
     LayoutObject* child,
     const ComputedStyle& style) const {
+  NOT_DESTROYED();
   DCHECK(GetElement());
   Node* child_node = child->GetNode();
   if (IsA<SVGSwitchElement>(*GetElement())) {
@@ -69,6 +73,7 @@ bool LayoutSVGTransformableContainer::IsChildAllowed(
 }
 
 void LayoutSVGTransformableContainer::SetNeedsTransformUpdate() {
+  NOT_DESTROYED();
   // The transform paint property relies on the SVG transform being up-to-date
   // (see: PaintPropertyTreeBuilder::updateTransformForNonRootSVG).
   SetNeedsPaintPropertyUpdate();
@@ -76,6 +81,7 @@ void LayoutSVGTransformableContainer::SetNeedsTransformUpdate() {
 }
 
 bool LayoutSVGTransformableContainer::IsUseElement() const {
+  NOT_DESTROYED();
   const SVGElement& element = *GetElement();
   if (IsA<SVGUseElement>(element))
     return true;
@@ -85,7 +91,9 @@ bool LayoutSVGTransformableContainer::IsUseElement() const {
   return false;
 }
 
-SVGTransformChange LayoutSVGTransformableContainer::CalculateLocalTransform() {
+SVGTransformChange LayoutSVGTransformableContainer::CalculateLocalTransform(
+    bool bounds_changed) {
+  NOT_DESTROYED();
   SVGElement* element = GetElement();
   DCHECK(element);
 
@@ -105,6 +113,11 @@ SVGTransformChange LayoutSVGTransformableContainer::CalculateLocalTransform() {
     additional_translation_ = translation;
   }
 
+  if (!needs_transform_update_ && transform_uses_reference_box_) {
+    if (CheckForImplicitTransformChange(bounds_changed))
+      SetNeedsTransformUpdate();
+  }
+
   if (!needs_transform_update_)
     return SVGTransformChange::kNone;
 
@@ -115,6 +128,15 @@ SVGTransformChange LayoutSVGTransformableContainer::CalculateLocalTransform() {
                              additional_translation_.Height());
   needs_transform_update_ = false;
   return change_detector.ComputeChange(local_transform_);
+}
+
+void LayoutSVGTransformableContainer::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style) {
+  NOT_DESTROYED();
+  transform_uses_reference_box_ =
+      TransformHelper::DependsOnReferenceBox(StyleRef());
+  LayoutSVGContainer::StyleDidChange(diff, old_style);
 }
 
 }  // namespace blink

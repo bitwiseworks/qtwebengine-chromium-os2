@@ -7,6 +7,7 @@
 
 #include "src/gpu/vk/GrVkResourceProvider.h"
 
+#include "include/gpu/GrDirectContext.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrSamplerState.h"
@@ -85,6 +86,10 @@ void GrVkResourceProvider::init() {
     fDescriptorSetManagers.emplace_back(dsm);
     SkASSERT(1 == fDescriptorSetManagers.count());
     fUniformDSHandle = GrVkDescriptorSetManager::Handle(0);
+    dsm = GrVkDescriptorSetManager::CreateInputManager(fGpu);
+    fDescriptorSetManagers.emplace_back(dsm);
+    SkASSERT(2 == fDescriptorSetManagers.count());
+    fInputDSHandle = GrVkDescriptorSetManager::Handle(1);
 }
 
 GrVkPipeline* GrVkResourceProvider::createPipeline(const GrProgramInfo& programInfo,
@@ -102,9 +107,26 @@ GrVkPipeline* GrVkResourceProvider::createPipeline(const GrProgramInfo& programI
 // RenderPasses as needed that are compatible with the framebuffer.
 const GrVkRenderPass*
 GrVkResourceProvider::findCompatibleRenderPass(const GrVkRenderTarget& target,
+                                               CompatibleRPHandle* compatibleHandle,
+                                               bool withStencil,
+                                               SelfDependencyFlags selfDepFlags) {
+    // Get attachment information from render target. This includes which attachments the render
+    // target has (color, stencil) and the attachments format and sample count.
+    GrVkRenderPass::AttachmentFlags attachmentFlags;
+    GrVkRenderPass::AttachmentsDescriptor attachmentsDesc;
+    target.getAttachmentsDescriptor(&attachmentsDesc, &attachmentFlags, withStencil);
+
+    return this->findCompatibleRenderPass(&attachmentsDesc, attachmentFlags, selfDepFlags,
+                                          compatibleHandle);
+}
+
+const GrVkRenderPass*
+GrVkResourceProvider::findCompatibleRenderPass(GrVkRenderPass::AttachmentsDescriptor* desc,
+                                               GrVkRenderPass::AttachmentFlags attachmentFlags,
+                                               SelfDependencyFlags selfDepFlags,
                                                CompatibleRPHandle* compatibleHandle) {
     for (int i = 0; i < fRenderPassArray.count(); ++i) {
-        if (fRenderPassArray[i].isCompatible(target)) {
+        if (fRenderPassArray[i].isCompatible(*desc, attachmentFlags, selfDepFlags)) {
             const GrVkRenderPass* renderPass = fRenderPassArray[i].getCompatibleRenderPass();
             renderPass->ref();
             if (compatibleHandle) {
@@ -114,7 +136,8 @@ GrVkResourceProvider::findCompatibleRenderPass(const GrVkRenderTarget& target,
         }
     }
 
-    GrVkRenderPass* renderPass = GrVkRenderPass::CreateSimple(fGpu, target);
+    GrVkRenderPass* renderPass = GrVkRenderPass::CreateSimple(fGpu, desc, attachmentFlags,
+                                                              selfDepFlags);
     if (!renderPass) {
         return nullptr;
     }
@@ -123,16 +146,6 @@ GrVkResourceProvider::findCompatibleRenderPass(const GrVkRenderTarget& target,
     if (compatibleHandle) {
         *compatibleHandle = CompatibleRPHandle(fRenderPassArray.count() - 1);
     }
-    return renderPass;
-}
-
-const GrVkRenderPass*
-GrVkResourceProvider::findCompatibleRenderPass(const CompatibleRPHandle& compatibleHandle) {
-    SkASSERT(compatibleHandle.isValid() && compatibleHandle.toIndex() < fRenderPassArray.count());
-    int index = compatibleHandle.toIndex();
-    const GrVkRenderPass* renderPass = fRenderPassArray[index].getCompatibleRenderPass();
-    SkASSERT(renderPass);
-    renderPass->ref();
     return renderPass;
 }
 
@@ -158,14 +171,16 @@ const GrVkRenderPass* GrVkResourceProvider::findCompatibleExternalRenderPass(
 }
 
 const GrVkRenderPass* GrVkResourceProvider::findRenderPass(
-                                                     GrVkRenderTarget* target,
-                                                     const GrVkRenderPass::LoadStoreOps& colorOps,
-                                                     const GrVkRenderPass::LoadStoreOps& stencilOps,
-                                                     CompatibleRPHandle* compatibleHandle) {
+        GrVkRenderTarget* target,
+        const GrVkRenderPass::LoadStoreOps& colorOps,
+        const GrVkRenderPass::LoadStoreOps& stencilOps,
+        CompatibleRPHandle* compatibleHandle,
+        bool withStencil,
+        SelfDependencyFlags selfDepFlags) {
     GrVkResourceProvider::CompatibleRPHandle tempRPHandle;
     GrVkResourceProvider::CompatibleRPHandle* pRPHandle = compatibleHandle ? compatibleHandle
                                                                            : &tempRPHandle;
-    *pRPHandle = target->compatibleRenderPassHandle();
+    *pRPHandle = target->compatibleRenderPassHandle(withStencil, selfDepFlags);
     if (!pRPHandle->isValid()) {
         return nullptr;
     }
@@ -233,6 +248,23 @@ GrVkPipelineState* GrVkResourceProvider::findOrCreateCompatiblePipelineState(
                                                           compatibleRenderPass);
 }
 
+GrVkPipelineState* GrVkResourceProvider::findOrCreateCompatiblePipelineState(
+        const GrProgramDesc& desc,
+        const GrProgramInfo& programInfo,
+        VkRenderPass compatibleRenderPass,
+        GrGpu::Stats::ProgramCacheResult* stat) {
+
+    auto tmp =  fPipelineStateCache->findOrCreatePipelineState(desc, programInfo,
+                                                               compatibleRenderPass, stat);
+    if (!tmp) {
+        fGpu->stats()->incNumPreCompilationFailures();
+    } else {
+        fGpu->stats()->incNumPreProgramCacheResult(*stat);
+    }
+
+    return tmp;
+}
+
 void GrVkResourceProvider::getSamplerDescriptorSetHandle(VkDescriptorType type,
                                                          const GrVkUniformHandler& uniformHandler,
                                                          GrVkDescriptorSetManager::Handle* handle) {
@@ -252,28 +284,14 @@ void GrVkResourceProvider::getSamplerDescriptorSetHandle(VkDescriptorType type,
     *handle = GrVkDescriptorSetManager::Handle(fDescriptorSetManagers.count() - 1);
 }
 
-void GrVkResourceProvider::getSamplerDescriptorSetHandle(VkDescriptorType type,
-                                                         const SkTArray<uint32_t>& visibilities,
-                                                         GrVkDescriptorSetManager::Handle* handle) {
-    SkASSERT(handle);
-    SkASSERT(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER == type ||
-             VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER == type);
-    for (int i = 0; i < fDescriptorSetManagers.count(); ++i) {
-        if (fDescriptorSetManagers[i]->isCompatible(type, visibilities)) {
-            *handle = GrVkDescriptorSetManager::Handle(i);
-            return;
-        }
-    }
-
-    GrVkDescriptorSetManager* dsm = GrVkDescriptorSetManager::CreateSamplerManager(fGpu, type,
-                                                                                   visibilities);
-    fDescriptorSetManagers.emplace_back(dsm);
-    *handle = GrVkDescriptorSetManager::Handle(fDescriptorSetManagers.count() - 1);
-}
-
 VkDescriptorSetLayout GrVkResourceProvider::getUniformDSLayout() const {
     SkASSERT(fUniformDSHandle.isValid());
     return fDescriptorSetManagers[fUniformDSHandle.toIndex()]->layout();
+}
+
+VkDescriptorSetLayout GrVkResourceProvider::getInputDSLayout() const {
+    SkASSERT(fInputDSHandle.isValid());
+    return fDescriptorSetManagers[fInputDSHandle.toIndex()]->layout();
 }
 
 VkDescriptorSetLayout GrVkResourceProvider::getSamplerDSLayout(
@@ -286,6 +304,11 @@ const GrVkDescriptorSet* GrVkResourceProvider::getUniformDescriptorSet() {
     SkASSERT(fUniformDSHandle.isValid());
     return fDescriptorSetManagers[fUniformDSHandle.toIndex()]->getDescriptorSet(fGpu,
                                                                                 fUniformDSHandle);
+}
+
+const GrVkDescriptorSet* GrVkResourceProvider::getInputDescriptorSet() {
+    SkASSERT(fInputDSHandle.isValid());
+    return fDescriptorSetManagers[fInputDSHandle.toIndex()]->getDescriptorSet(fGpu, fInputDSHandle);
 }
 
 const GrVkDescriptorSet* GrVkResourceProvider::getSamplerDescriptorSet(
@@ -343,14 +366,11 @@ void GrVkResourceProvider::checkCommandBuffers() {
 }
 
 void GrVkResourceProvider::addFinishedProcToActiveCommandBuffers(
-        GrGpuFinishedProc finishedProc, GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> procRef(new GrRefCntedCallback(finishedProc, finishedContext));
+        sk_sp<GrRefCntedCallback> finishedCallback) {
     for (int i = 0; i < fActiveCommandPools.count(); ++i) {
         GrVkCommandPool* pool = fActiveCommandPools[i];
-        if (!pool->isOpen()) {
-            GrVkPrimaryCommandBuffer* buffer = pool->getPrimaryCommandBuffer();
-            buffer->addFinishedProc(procRef);
-        }
+        GrVkPrimaryCommandBuffer* buffer = pool->getPrimaryCommandBuffer();
+        buffer->addFinishedProc(finishedCallback);
     }
 }
 
@@ -486,11 +506,13 @@ GrVkResourceProvider::CompatibleRenderPassSet::CompatibleRenderPassSet(GrVkRende
 }
 
 bool GrVkResourceProvider::CompatibleRenderPassSet::isCompatible(
-        const GrVkRenderTarget& target) const {
+        const GrVkRenderPass::AttachmentsDescriptor& attachmentsDescriptor,
+        GrVkRenderPass::AttachmentFlags attachmentFlags,
+        SelfDependencyFlags selfDepFlags) const {
     // The first GrVkRenderpass should always exists since we create the basic load store
     // render pass on create
     SkASSERT(fRenderPasses[0]);
-    return fRenderPasses[0]->isCompatible(target);
+    return fRenderPasses[0]->isCompatible(attachmentsDescriptor, attachmentFlags,selfDepFlags);
 }
 
 GrVkRenderPass* GrVkResourceProvider::CompatibleRenderPassSet::getRenderPass(

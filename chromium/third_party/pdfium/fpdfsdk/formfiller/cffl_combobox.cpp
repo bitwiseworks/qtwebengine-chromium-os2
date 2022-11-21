@@ -14,12 +14,10 @@
 #include "fpdfsdk/cpdfsdk_widget.h"
 #include "fpdfsdk/formfiller/cffl_interactiveformfiller.h"
 #include "fpdfsdk/pwl/cpwl_combo_box.h"
-#include "third_party/base/ptr_util.h"
 
 CFFL_ComboBox::CFFL_ComboBox(CPDFSDK_FormFillEnvironment* pApp,
                              CPDFSDK_Widget* pWidget)
-    : CFFL_TextObject(pApp, pWidget) {
-}
+    : CFFL_TextObject(pApp, pWidget) {}
 
 CFFL_ComboBox::~CFFL_ComboBox() {
   for (const auto& it : m_Maps)
@@ -44,7 +42,7 @@ CPWL_Wnd::CreateParams CFFL_ComboBox::GetCreateParam() {
 std::unique_ptr<CPWL_Wnd> CFFL_ComboBox::NewPWLWindow(
     const CPWL_Wnd::CreateParams& cp,
     std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData) {
-  auto pWnd = pdfium::MakeUnique<CPWL_ComboBox>(cp, std::move(pAttachedData));
+  auto pWnd = std::make_unique<CPWL_ComboBox>(cp, std::move(pAttachedData));
   pWnd->AttachFFLData(this);
   pWnd->Realize();
 
@@ -127,11 +125,7 @@ void CFFL_ComboBox::GetActionData(CPDFSDK_PageView* pPageView,
       if (CPWL_ComboBox* pComboBox = GetComboBox(pPageView, false)) {
         if (CPWL_Edit* pEdit = pComboBox->GetEdit()) {
           fa.bFieldFull = pEdit->IsTextFull();
-          int nSelStart = 0;
-          int nSelEnd = 0;
-          pEdit->GetSelection(nSelStart, nSelEnd);
-          fa.nSelEnd = nSelEnd;
-          fa.nSelStart = nSelStart;
+          std::tie(fa.nSelStart, fa.nSelEnd) = pEdit->GetSelection();
           fa.sValue = pEdit->GetText();
           fa.sChangeEx = GetSelectExportText();
 
@@ -186,7 +180,7 @@ void CFFL_ComboBox::SaveState(CPDFSDK_PageView* pPageView) {
   if (!pEdit)
     return;
 
-  pEdit->GetSelection(m_State.nStart, m_State.nEnd);
+  std::tie(m_State.nStart, m_State.nEnd) = pEdit->GetSelection();
   m_State.sValue = pEdit->GetText();
 }
 

@@ -267,7 +267,8 @@ class PersistentBase {
       // node (if present) from |other|.
       persistent_node_.Uninitialize();
     }
-    raw_ = other.raw_;
+    // Explicit cast enabling downcasting.
+    raw_ = static_cast<T*>(other.raw_);
     other.raw_ = nullptr;
     // Efficiently move by just rewiring the node pointer.
     persistent_node_ = std::move(other.persistent_node_);
@@ -390,7 +391,7 @@ class PersistentBase {
 #endif
   }
 
-  static void HandleWeakPersistent(const WeakCallbackInfo&,
+  static void HandleWeakPersistent(const LivenessBroker& broker,
                                    const void* persistent_pointer) {
     using Base =
         PersistentBase<typename std::remove_const<T>::type,
@@ -398,7 +399,7 @@ class PersistentBase {
     Base* persistent =
         reinterpret_cast<Base*>(const_cast<void*>(persistent_pointer));
     T* object = persistent->Get();
-    if (object && !ThreadHeap::IsHeapObjectAlive(object))
+    if (object && !broker.IsHeapObjectAlive(object))
       ClearWeakPersistent(persistent);
   }
 
@@ -444,6 +445,11 @@ class PersistentBase {
 #if DCHECK_IS_ON()
   const ThreadState* creation_thread_state_;
 #endif
+
+  template <typename F,
+            WeaknessPersistentConfiguration,
+            CrossThreadnessPersistentConfiguration>
+  friend class PersistentBase;
 };
 
 // Persistent is a way to create a strong pointer from an off-heap object
@@ -750,6 +756,27 @@ class CrossThreadWeakPersistent
     Parent::operator=(other);
     return *this;
   }
+
+  // Create a CrossThreadPersistent that keeps the underlying object alive if
+  // there is still on set. Can be used to work with an object on a different
+  // thread than it was allocated. Note that CTP does not block threads from
+  // terminating, in which case the reference would still be invalid.
+  const CrossThreadPersistent<T> Lock() const {
+    return CrossThreadPersistent<T>(*this);
+  }
+
+  // Disallow directly using CrossThreadWeakPersistent. Users must go through
+  // CrossThreadPersistent to access the pointee. Note that this does not
+  // guarantee that the object is still alive at that point. Users must check
+  // the state of CTP manually before invoking any calls.
+  T* operator->() const = delete;
+  T& operator*() const = delete;
+  operator T*() const = delete;
+  T* Get() const = delete;
+
+ private:
+  template <typename U>
+  friend class CrossThreadPersistent;
 };
 
 template <typename T>
@@ -757,7 +784,9 @@ template <typename U>
 CrossThreadPersistent<T>& CrossThreadPersistent<T>::operator=(
     const CrossThreadWeakPersistent<U>& other) {
   MutexLocker locker(ProcessHeap::CrossThreadPersistentMutex());
-  this->AssignUnsafe(other.Get());
+  using ParentU = PersistentBase<U, kWeakPersistentConfiguration,
+                                 kCrossThreadPersistentConfiguration>;
+  this->AssignUnsafe(static_cast<const ParentU&>(other).Get());
   return *this;
 }
 

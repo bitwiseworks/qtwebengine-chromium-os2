@@ -41,7 +41,6 @@
 #include "src/execution/isolate.h"
 #include "src/heap/heap-inl.h"  // For MemoryAllocator. TODO(jkummerow): Drop.
 #include "src/snapshot/embedded/embedded-data.h"
-#include "src/snapshot/serializer-common.h"
 #include "src/snapshot/snapshot.h"
 #include "src/utils/ostreams.h"
 #include "src/utils/vector.h"
@@ -82,7 +81,7 @@ namespace {
 class DefaultAssemblerBuffer : public AssemblerBuffer {
  public:
   explicit DefaultAssemblerBuffer(int size)
-      : buffer_(OwnedVector<uint8_t>::New(size)) {
+      : buffer_(OwnedVector<uint8_t>::NewForOverwrite(size)) {
 #ifdef DEBUG
     ZapCode(reinterpret_cast<Address>(buffer_.start()), size);
 #endif

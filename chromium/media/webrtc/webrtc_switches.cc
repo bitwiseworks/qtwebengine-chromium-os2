@@ -20,17 +20,17 @@ const char kAgcStartupMinVolume[] = "agc-startup-min-volume";
 
 namespace features {
 
-// Enables running WebRTC Audio Processing in the audio service, rather than
-// in the renderer process. Should be combined with running the audio service
-// out of the browser process, except for when testing locally.
-const base::Feature kWebRtcApmInAudioService{"WebRtcApmInAudioService",
-                                             base::FEATURE_DISABLED_BY_DEFAULT};
-
 // Enables multi channel capture audio to be processed without
 // downmixing in the WebRTC audio processing module when running in the renderer
 // process.
 const base::Feature kWebRtcEnableCaptureMultiChannelApm{
     "WebRtcEnableCaptureMultiChannelApm", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Kill-switch allowing deactivation of the support for 48 kHz internal
+// processing in the WebRTC audio processing module when running on an ARM
+// platform.
+const base::Feature kWebRtcAllow48kHzProcessingOnArm{
+    "WebRtcAllow48kHzProcessingOnArm", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Enables the WebRTC Agc2 digital adaptation with WebRTC Agc1 analog
 // adaptation. Feature for http://crbug.com/873650. Is sent to WebRTC.
@@ -38,25 +38,3 @@ const base::Feature kWebRtcHybridAgc{"WebRtcHybridAgc",
                                      base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features
-
-namespace switches {
-
-const char kForceDisableWebRtcApmInAudioService[] =
-    "disable-webrtc-apm-in-audio-service";
-
-}  // namespace switches
-
-namespace media {
-
-bool IsWebRtcApmInAudioServiceEnabled() {
-#if defined(OS_WIN) || defined(OS_MACOSX) || \
-    (defined(OS_LINUX) && !defined(OS_CHROMEOS))
-  return base::FeatureList::IsEnabled(features::kWebRtcApmInAudioService) &&
-         !base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kForceDisableWebRtcApmInAudioService);
-#else
-  return false;
-#endif
-}
-
-}  // namespace media

@@ -15,6 +15,7 @@
 #include "libANGLE/renderer/gl/ContextGL.h"
 #include "libANGLE/renderer/gl/RendererGL.h"
 #include "libANGLE/renderer/gl/egl/ContextEGL.h"
+#include "libANGLE/renderer/gl/egl/DmaBufImageSiblingEGL.h"
 #include "libANGLE/renderer/gl/egl/FunctionsEGLDL.h"
 #include "libANGLE/renderer/gl/egl/ImageEGL.h"
 #include "libANGLE/renderer/gl/egl/PbufferSurfaceEGL.h"
@@ -25,6 +26,12 @@
 
 namespace
 {
+
+rx::RobustnessVideoMemoryPurgeStatus GetRobustnessVideoMemoryPurge(const egl::AttributeMap &attribs)
+{
+    return static_cast<rx::RobustnessVideoMemoryPurgeStatus>(
+        attribs.get(EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV, GL_FALSE));
+}
 
 EGLint ESBitFromPlatformAttrib(const rx::FunctionsEGL *egl, const EGLAttrib platformAttrib)
 {
@@ -102,7 +109,12 @@ namespace rx
 {
 
 DisplayEGL::DisplayEGL(const egl::DisplayState &state)
-    : DisplayGL(state), mRenderer(nullptr), mEGL(nullptr), mConfig(EGL_NO_CONFIG_KHR)
+    : DisplayGL(state),
+      mRenderer(nullptr),
+      mEGL(nullptr),
+      mConfig(EGL_NO_CONFIG_KHR),
+      mHasEXTCreateContextRobustness(false),
+      mHasNVRobustnessVideoMemoryPurge(false)
 {}
 
 DisplayEGL::~DisplayEGL() {}
@@ -151,7 +163,7 @@ egl::Error DisplayEGL::initializeContext(EGLContext shareContext,
         if (initializeRequested)
         {
             contextAttribLists.push_back({EGL_CONTEXT_MAJOR_VERSION, requestedMajor,
-                                          EGL_CONTEXT_MINOR_VERSION, requestedMinor, EGL_NONE});
+                                          EGL_CONTEXT_MINOR_VERSION, requestedMinor});
         }
         else
         {
@@ -168,7 +180,7 @@ egl::Error DisplayEGL::initializeContext(EGLContext shareContext,
             {
                 contextAttribLists.push_back(
                     {EGL_CONTEXT_MAJOR_VERSION, static_cast<EGLint>(version.major),
-                     EGL_CONTEXT_MINOR_VERSION, static_cast<EGLint>(version.minor), EGL_NONE});
+                     EGL_CONTEXT_MINOR_VERSION, static_cast<EGLint>(version.minor)});
             }
         }
     }
@@ -178,12 +190,23 @@ egl::Error DisplayEGL::initializeContext(EGLContext shareContext,
         {
             return egl::EglBadAttribute() << "Unsupported requested context version";
         }
-        contextAttribLists.push_back({EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE});
+        contextAttribLists.push_back({EGL_CONTEXT_CLIENT_VERSION, 2});
     }
 
     EGLContext context = EGL_NO_CONTEXT;
-    for (const auto &attribList : contextAttribLists)
+    for (auto &attribList : contextAttribLists)
     {
+        if (mHasEXTCreateContextRobustness)
+        {
+            attribList.push_back(EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY);
+            attribList.push_back(EGL_LOSE_CONTEXT_ON_RESET);
+            if (mHasNVRobustnessVideoMemoryPurge)
+            {
+                attribList.push_back(EGL_GENERATE_RESET_ON_VIDEO_MEMORY_PURGE_NV);
+                attribList.push_back(GL_TRUE);
+            }
+        }
+        attribList.push_back(EGL_NONE);
         context = mEGL->createContext(mConfig, shareContext, attribList.data());
         if (context != EGL_NO_CONTEXT)
         {
@@ -225,6 +248,9 @@ egl::Error DisplayEGL::initialize(egl::Display *display)
             return egl::EglNotInitialized() << "need " << ext;
         }
     }
+
+    mHasEXTCreateContextRobustness   = mEGL->hasExtension("EGL_EXT_create_context_robustness");
+    mHasNVRobustnessVideoMemoryPurge = mEGL->hasExtension("EGL_NV_robustness_video_memory_purge");
 
     const EGLAttrib platformAttrib = mDisplayAttributes.get(EGL_PLATFORM_ANGLE_TYPE_ANGLE, 0);
     EGLint esBit                   = ESBitFromPlatformAttrib(mEGL, platformAttrib);
@@ -276,6 +302,8 @@ void DisplayEGL::terminate()
     }
 
     mRenderer.reset();
+
+    mCurrentNativeContexts.clear();
 
     egl::Error result = mEGL->terminate();
     if (result.isError())
@@ -353,7 +381,9 @@ ContextImpl *DisplayEGL::createContext(const gl::State &state,
         return nullptr;
     }
 
-    return new ContextEGL(state, errorSet, renderer);
+    RobustnessVideoMemoryPurgeStatus robustnessVideoMemoryPurgeStatus =
+        GetRobustnessVideoMemoryPurge(attribs);
+    return new ContextEGL(state, errorSet, renderer, robustnessVideoMemoryPurgeStatus);
 }
 
 template <typename T>
@@ -437,6 +467,9 @@ egl::ConfigSet DisplayEGL::generateConfigs()
                                    &config.colorComponentType, "EGL_EXT_pixel_format_float",
                                    EGL_COLOR_COMPONENT_TYPE_FIXED_EXT);
 
+        // Pixmaps are not supported on EGL, make sure the config doesn't expose them.
+        config.surfaceType &= ~EGL_PIXMAP_BIT;
+
         if (config.colorBufferType == EGL_RGB_BUFFER)
         {
             ASSERT(config.colorComponentType == EGL_COLOR_COMPONENT_TYPE_FIXED_EXT);
@@ -464,6 +497,11 @@ egl::ConfigSet DisplayEGL::generateConfigs()
                      config.alphaSize == 4)
             {
                 config.renderTargetFormat = GL_RGBA4;
+            }
+            else if (config.redSize == 10 && config.greenSize == 10 && config.blueSize == 10 &&
+                     config.alphaSize == 2)
+            {
+                config.renderTargetFormat = GL_RGB10_A2;
             }
             else
             {
@@ -550,6 +588,8 @@ egl::Error DisplayEGL::makeCurrent(egl::Surface *drawSurface,
                                    egl::Surface *readSurface,
                                    gl::Context *context)
 {
+    CurrentNativeContext &currentContext = mCurrentNativeContexts[std::this_thread::get_id()];
+
     EGLSurface newSurface = EGL_NO_SURFACE;
     if (drawSurface)
     {
@@ -564,9 +604,14 @@ egl::Error DisplayEGL::makeCurrent(egl::Surface *drawSurface,
         newContext             = contextEGL->getContext();
     }
 
-    if (mEGL->makeCurrent(newSurface, newContext) == EGL_FALSE)
+    if (newSurface != currentContext.surface || newContext != currentContext.context)
     {
-        return egl::Error(mEGL->getError(), "eglMakeCurrent failed");
+        if (mEGL->makeCurrent(newSurface, newContext) == EGL_FALSE)
+        {
+            return egl::Error(mEGL->getError(), "eglMakeCurrent failed");
+        }
+        currentContext.surface = newSurface;
+        currentContext.context = newContext;
     }
 
     return DisplayGL::makeCurrent(drawSurface, readSurface, context);
@@ -579,6 +624,17 @@ gl::Version DisplayEGL::getMaxSupportedESVersion() const
 
 void DisplayEGL::destroyNativeContext(EGLContext context)
 {
+    // If this context is current, remove it from the tracking of current contexts to make sure we
+    // don't try to make it current again.
+    for (auto &currentContext : mCurrentNativeContexts)
+    {
+        if (currentContext.second.context == context)
+        {
+            currentContext.second.surface = EGL_NO_SURFACE;
+            currentContext.second.context = EGL_NO_CONTEXT;
+        }
+    }
+
     mEGL->destroyContext(context);
 }
 
@@ -592,8 +648,9 @@ void DisplayEGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->postSubBuffer    = false;  // Since SurfaceEGL::postSubBuffer is not implemented
     outExtensions->presentationTime = mEGL->hasExtension("EGL_ANDROID_presentation_time");
 
-    // Contexts are virtualized so textures can be shared globally
-    outExtensions->displayTextureShareGroup = true;
+    // Contexts are virtualized so textures and semaphores can be shared globally
+    outExtensions->displayTextureShareGroup   = true;
+    outExtensions->displaySemaphoreShareGroup = true;
 
     // We will fallback to regular swap if swapBuffersWithDamage isn't
     // supported, so indicate support here to keep validation happy.
@@ -621,6 +678,7 @@ void DisplayEGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
             mEGL->hasExtension("EGL_EXT_gl_colorspace_scrgb_linear");
         outExtensions->glColorspaceDisplayP3Passthrough =
             mEGL->hasExtension("EGL_EXT_gl_colorspace_display_p3_passthrough");
+        outExtensions->imageGlColorspace = mEGL->hasExtension("EGL_EXT_image_gl_colorspace");
     }
 
     outExtensions->imageNativeBuffer = mEGL->hasExtension("EGL_ANDROID_image_native_buffer");
@@ -635,6 +693,9 @@ void DisplayEGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->getNativeClientBufferANDROID =
         mEGL->hasExtension("EGL_ANDROID_get_native_client_buffer");
 
+    outExtensions->createNativeClientBufferANDROID =
+        mEGL->hasExtension("EGL_ANDROID_create_native_client_buffer");
+
     outExtensions->nativeFenceSyncANDROID = mEGL->hasExtension("EGL_ANDROID_native_fence_sync");
 
     outExtensions->noConfigContext = mEGL->hasExtension("EGL_KHR_no_config_context");
@@ -642,6 +703,13 @@ void DisplayEGL::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->surfacelessContext = mEGL->hasExtension("EGL_KHR_surfaceless_context");
 
     outExtensions->framebufferTargetANDROID = mEGL->hasExtension("EGL_ANDROID_framebuffer_target");
+
+    outExtensions->imageDmaBufImportEXT = mEGL->hasExtension("EGL_EXT_image_dma_buf_import");
+
+    outExtensions->imageDmaBufImportModifiersEXT =
+        mEGL->hasExtension("EGL_EXT_image_dma_buf_import_modifiers");
+
+    outExtensions->robustnessVideoMemoryPurgeNV = mHasNVRobustnessVideoMemoryPurge;
 
     DisplayGL::generateExtensions(outExtensions);
 }
@@ -679,6 +747,10 @@ egl::Error DisplayEGL::createRenderer(EGLContext shareContext,
                << "eglMakeCurrent failed with " << egl::Error(mEGL->getError());
     }
 
+    CurrentNativeContext &currentContext = mCurrentNativeContexts[std::this_thread::get_id()];
+    currentContext.surface               = EGL_NO_SURFACE;
+    currentContext.context               = context;
+
     std::unique_ptr<FunctionsGL> functionsGL(mEGL->makeFunctionsGL());
     functionsGL->initialize(mDisplayAttributes);
 
@@ -709,6 +781,38 @@ void DisplayEGL::initializeFrontendFeatures(angle::FrontendFeatures *features) c
 void DisplayEGL::populateFeatureList(angle::FeatureList *features)
 {
     mRenderer->getFeatures().populateFeatureList(features);
+}
+
+egl::Error DisplayEGL::validateImageClientBuffer(const gl::Context *context,
+                                                 EGLenum target,
+                                                 EGLClientBuffer clientBuffer,
+                                                 const egl::AttributeMap &attribs) const
+{
+    switch (target)
+    {
+        case EGL_LINUX_DMA_BUF_EXT:
+            return egl::NoError();
+
+        default:
+            return DisplayGL::validateImageClientBuffer(context, target, clientBuffer, attribs);
+    }
+}
+
+ExternalImageSiblingImpl *DisplayEGL::createExternalImageSibling(const gl::Context *context,
+                                                                 EGLenum target,
+                                                                 EGLClientBuffer buffer,
+                                                                 const egl::AttributeMap &attribs)
+{
+    switch (target)
+    {
+        case EGL_LINUX_DMA_BUF_EXT:
+            ASSERT(context == nullptr);
+            ASSERT(buffer == nullptr);
+            return new DmaBufImageSiblingEGL(attribs);
+
+        default:
+            return DisplayGL::createExternalImageSibling(context, target, buffer, attribs);
+    }
 }
 
 }  // namespace rx

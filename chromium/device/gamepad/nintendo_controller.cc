@@ -95,6 +95,15 @@ const uint8_t kGyroPerformance208Hz = 0x01;
 const uint8_t kAccelerometerFilterBandwidth100Hz = 0x01;
 const uint8_t kPlayerLightPattern1 = 0x01;
 
+// Bogus calibration value that should be ignored.
+const uint16_t kCalBogusValue = 0xfff;
+
+// Default calibration values to use if the controller returns bogus values.
+const uint16_t kCalDefaultDeadzone = 160;
+const uint16_t kCalDefaultMin = 550;
+const uint16_t kCalDefaultCenter = 2050;
+const uint16_t kCalDefaultMax = 3550;
+
 // Parameters for the "strong" and "weak" components of the dual-rumble effect.
 const double kVibrationFrequencyStrongRumble = 141.0;
 const double kVibrationFrequencyWeakRumble = 182.0;
@@ -304,6 +313,11 @@ void UnpackSwitchAnalogStickParameters(
   DCHECK(data);
   // Only fetch the dead zone and range ratio. The other parameters are unknown.
   UnpackShorts(data[3], data[4], data[5], &cal.dead_zone, &cal.range_ratio);
+  if (cal.dead_zone == kCalBogusValue) {
+    // If the controller reports an invalid dead zone, default to something
+    // reasonable.
+    cal.dead_zone = kCalDefaultDeadzone;
+  }
 }
 
 // Unpack the IMU calibration data into |cal|
@@ -349,14 +363,30 @@ void UnpackSwitchAnalogStickCalibration(
   UnpackShorts(data[9], data[10], data[11], &cal.rx_center, &cal.ry_center);
   UnpackShorts(data[12], data[13], data[14], &cal.rx_min, &cal.ry_min);
   UnpackShorts(data[15], data[16], data[17], &cal.rx_max, &cal.ry_max);
-  cal.lx_min = cal.lx_center - cal.lx_min;
-  cal.lx_max = cal.lx_center + cal.lx_max;
-  cal.ly_min = cal.ly_center - cal.ly_min;
-  cal.ly_max = cal.ly_center + cal.ly_max;
-  cal.rx_min = cal.rx_center - cal.rx_min;
-  cal.rx_max = cal.rx_center + cal.rx_max;
-  cal.ry_min = cal.ry_center - cal.ry_min;
-  cal.ry_max = cal.ry_center + cal.ry_max;
+  if (cal.lx_min == kCalBogusValue && cal.ly_max == kCalBogusValue) {
+    // If the controller reports bogus values, default to something reasonable.
+    cal.lx_min = kCalDefaultMin;
+    cal.lx_center = kCalDefaultCenter;
+    cal.lx_max = kCalDefaultMax;
+    cal.ly_min = kCalDefaultMin;
+    cal.ly_center = kCalDefaultCenter;
+    cal.ly_max = kCalDefaultMax;
+    cal.rx_min = kCalDefaultMin;
+    cal.rx_center = kCalDefaultCenter;
+    cal.rx_max = kCalDefaultMax;
+    cal.ry_min = kCalDefaultMin;
+    cal.ry_center = kCalDefaultCenter;
+    cal.ry_max = kCalDefaultMax;
+  } else {
+    cal.lx_min = cal.lx_center - cal.lx_min;
+    cal.lx_max = cal.lx_center + cal.lx_max;
+    cal.ly_min = cal.ly_center - cal.ly_min;
+    cal.ly_max = cal.ly_center + cal.ly_max;
+    cal.rx_min = cal.rx_center - cal.rx_min;
+    cal.rx_max = cal.rx_center + cal.rx_max;
+    cal.ry_min = cal.ry_center - cal.ry_min;
+    cal.ry_max = cal.ry_center + cal.ry_max;
+  }
 }
 
 // Unpack one frame of IMU data into |imu_data|.
@@ -771,7 +801,8 @@ GamepadBusType BusTypeFromDeviceInfo(const mojom::HidDeviceInfo* device_info) {
   // regardless of the actual connection.
   if (device_info->bus_type == mojom::HidBusType::kHIDBusTypeBluetooth)
     return GAMEPAD_BUS_BLUETOOTH;
-  auto gamepad_id = GamepadIdList::Get().GetGamepadId(device_info->vendor_id,
+  auto gamepad_id = GamepadIdList::Get().GetGamepadId(device_info->product_name,
+                                                      device_info->vendor_id,
                                                       device_info->product_id);
   switch (gamepad_id) {
     case GamepadId::kNintendoProduct2009:
@@ -794,6 +825,9 @@ GamepadBusType BusTypeFromDeviceInfo(const mojom::HidDeviceInfo* device_info) {
     case GamepadId::kNintendoProduct2007:
       // Joy Cons can only be connected over Bluetooth. When connected through
       // a Charging Grip, the grip's ID is reported instead.
+      return GAMEPAD_BUS_BLUETOOTH;
+    case GamepadId::kPowerALicPro:
+      // The PowerA controller can only be connected over Bluetooth.
       return GAMEPAD_BUS_BLUETOOTH;
     default:
       break;
@@ -821,7 +855,8 @@ NintendoController::NintendoController(int source_id,
   if (device_info_) {
     bus_type_ = BusTypeFromDeviceInfo(device_info_.get());
     output_report_size_bytes_ = device_info_->max_output_report_size;
-    gamepad_id_ = GamepadIdList::Get().GetGamepadId(device_info_->vendor_id,
+    gamepad_id_ = GamepadIdList::Get().GetGamepadId(device_info_->product_name,
+                                                    device_info_->vendor_id,
                                                     device_info_->product_id);
   } else {
     gamepad_id_ = GamepadId::kUnknownGamepad;
@@ -870,14 +905,13 @@ std::unique_ptr<NintendoController> NintendoController::CreateComposite(
 }
 
 // static
-bool NintendoController::IsNintendoController(uint16_t vendor_id,
-                                              uint16_t product_id) {
-  auto gamepad_id = GamepadIdList::Get().GetGamepadId(vendor_id, product_id);
+bool NintendoController::IsNintendoController(GamepadId gamepad_id) {
   switch (gamepad_id) {
     case GamepadId::kNintendoProduct2006:
     case GamepadId::kNintendoProduct2007:
     case GamepadId::kNintendoProduct2009:
     case GamepadId::kNintendoProduct200e:
+    case GamepadId::kPowerALicPro:
       return true;
     default:
       break;
@@ -903,9 +937,10 @@ void NintendoController::Open(base::OnceClosure device_ready_closure) {
   if (is_composite_) {
     StartInitSequence();
   } else {
-    uint16_t vendor_id = device_info_->vendor_id;
-    uint16_t product_id = device_info_->product_id;
-    if (IsNintendoController(vendor_id, product_id)) {
+    GamepadId gamepad_id = GamepadIdList::Get().GetGamepadId(
+        device_info_->product_name, device_info_->vendor_id,
+        device_info_->product_id);
+    if (IsNintendoController(gamepad_id)) {
       Connect(base::BindOnce(&NintendoController::OnConnect,
                              weak_factory_.GetWeakPtr()));
     }
@@ -917,7 +952,8 @@ GamepadHand NintendoController::GetGamepadHand() const {
     return GamepadHand::kNone;
   switch (gamepad_id_) {
     case GamepadId::kNintendoProduct2009:
-      // Switch Pro is held in both hands.
+    case GamepadId::kPowerALicPro:
+      // Switch Pro and PowerA are held in both hands.
       return GamepadHand::kNone;
     case GamepadId::kNintendoProduct2006:
       // Joy-Con L is held in the left hand.
@@ -960,6 +996,7 @@ bool NintendoController::IsUsable() const {
     case GamepadId::kNintendoProduct2009:
     case GamepadId::kNintendoProduct2006:
     case GamepadId::kNintendoProduct2007:
+    case GamepadId::kPowerALicPro:
       return true;
     case GamepadId::kNintendoProduct200e:
       // Only usable as a composite device.
@@ -984,11 +1021,14 @@ GamepadStandardMappingFunction NintendoController::GetMappingFunction() const {
   if (is_composite_) {
     // In composite mode, we use the same mapping as the Charging Grip.
     return GetGamepadStandardMappingFunction(
-        kVendorNintendo, kProductSwitchChargingGrip,
+        kProductNameSwitchCompositeDevice, kVendorNintendo,
+        kProductSwitchChargingGrip,
         /*hid_specification_version=*/0, /*version_number=*/0, bus_type_);
   } else {
     return GetGamepadStandardMappingFunction(
-        device_info_->vendor_id, device_info_->product_id,
+        device_info_->product_name, device_info_->vendor_id,
+        device_info_->product_id,
+
         /*hid_specification_version=*/0, /*version_number=*/0, bus_type_);
   }
 }
@@ -997,8 +1037,12 @@ void NintendoController::InitializeGamepadState(bool has_standard_mapping,
                                                 Gamepad& pad) const {
   pad.buttons_length = SWITCH_BUTTON_INDEX_COUNT;
   pad.axes_length = device::AXIS_INDEX_COUNT;
-  pad.vibration_actuator.type = GamepadHapticActuatorType::kDualRumble;
-  pad.vibration_actuator.not_null = true;
+  if (gamepad_id_ == GamepadId::kPowerALicPro) {
+    pad.vibration_actuator.not_null = false;
+  } else {
+    pad.vibration_actuator.type = GamepadHapticActuatorType::kDualRumble;
+    pad.vibration_actuator.not_null = true;
+  }
   pad.timestamp = GamepadDataFetcher::CurrentTimeInMicroseconds();
   if (is_composite_) {
     // Composite devices use the same product ID as the Switch Charging Grip.
@@ -1403,7 +1447,13 @@ void NintendoController::ContinueInitSequence(
     case kPendingEnableVibration:
       if (spi_subcommand == kSubCommandEnableVibration) {
         CancelTimeout();
-        MakeInitSequenceRequests(kPendingSetHomeLight);
+        // PowerA controller doesn't have a home light and trying to set it will
+        // fail, so skip this step.
+        if (gamepad_id_ == GamepadId::kPowerALicPro) {
+          MakeInitSequenceRequests(kPendingSetInputReportMode);
+        } else {
+          MakeInitSequenceRequests(kPendingSetHomeLight);
+        }
       }
       break;
     case kPendingSetHomeLight:

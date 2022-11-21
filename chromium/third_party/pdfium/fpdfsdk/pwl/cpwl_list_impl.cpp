@@ -13,10 +13,9 @@
 #include "core/fxcrt/fx_extension.h"
 #include "fpdfsdk/pwl/cpwl_edit_impl.h"
 #include "fpdfsdk/pwl/cpwl_list_box.h"
-#include "third_party/base/ptr_util.h"
 #include "third_party/base/stl_util.h"
 
-CPWL_ListCtrl::Item::Item() : m_pEdit(pdfium::MakeUnique<CPWL_EditImpl>()) {
+CPWL_ListCtrl::Item::Item() : m_pEdit(std::make_unique<CPWL_EditImpl>()) {
   m_pEdit->SetAlignmentV(1, true);
   m_pEdit->Initialize();
 }
@@ -53,7 +52,7 @@ WideString CPWL_ListCtrl::Item::GetText() const {
 
 CPLST_Select::CPLST_Select() {}
 
-CPLST_Select::~CPLST_Select() {}
+CPLST_Select::~CPLST_Select() = default;
 
 void CPLST_Select::Add(int32_t nItemIndex) {
   m_Items[nItemIndex] = SELECTING;
@@ -96,16 +95,7 @@ void CPLST_Select::Done() {
   }
 }
 
-CPWL_ListCtrl::CPWL_ListCtrl()
-    : m_pNotify(nullptr),
-      m_bNotifyFlag(false),
-      m_nSelItem(-1),
-      m_nFootIndex(-1),
-      m_bCtrlSel(false),
-      m_nCaretIndex(-1),
-      m_fFontSize(0.0f),
-      m_pFontMap(nullptr),
-      m_bMultiple(false) {}
+CPWL_ListCtrl::CPWL_ListCtrl() = default;
 
 CPWL_ListCtrl::~CPWL_ListCtrl() {
   Clear();
@@ -561,7 +551,7 @@ WideString CPWL_ListCtrl::GetText() const {
 }
 
 void CPWL_ListCtrl::AddItem(const WideString& str) {
-  auto pListItem = pdfium::MakeUnique<Item>();
+  auto pListItem = std::make_unique<Item>();
   pListItem->SetFontMap(m_pFontMap.Get());
   pListItem->SetFontSize(m_fFontSize);
   pListItem->SetText(str);

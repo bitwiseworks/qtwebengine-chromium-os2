@@ -75,12 +75,12 @@ void StartNextPendingRequestTask::DidGetPendingRequests(
 
   service_worker_context()->StoreRegistrationUserData(
       registration_id_.service_worker_registration_id(),
-      registration_id_.origin().GetURL(),
+      registration_id_.origin(),
       {{ActiveRequestKey(active_request_.unique_id(),
                          active_request_.request_index()),
         active_request_.SerializeAsString()}},
-      base::BindRepeating(&StartNextPendingRequestTask::DidStoreActiveRequest,
-                          weak_factory_.GetWeakPtr()));
+      base::BindOnce(&StartNextPendingRequestTask::DidStoreActiveRequest,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void StartNextPendingRequestTask::DidStoreActiveRequest(

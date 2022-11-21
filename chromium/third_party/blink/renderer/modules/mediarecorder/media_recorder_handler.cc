@@ -16,9 +16,9 @@
 #include "media/base/video_codecs.h"
 #include "media/base/video_frame.h"
 #include "media/muxers/webm_muxer.h"
-#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/modules/mediarecorder/buildflags.h"
 #include "third_party/blink/renderer/modules/mediarecorder/media_recorder.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/media_capabilities/web_media_capabilities_info.h"
 #include "third_party/blink/renderer/platform/media_capabilities/web_media_configuration.h"
@@ -679,7 +679,7 @@ void MediaRecorderHandler::SetAudioFormatForTesting(
     recorder->OnSetFormat(params);
 }
 
-void MediaRecorderHandler::Trace(Visitor* visitor) {
+void MediaRecorderHandler::Trace(Visitor* visitor) const {
   visitor->Trace(media_stream_);
   visitor->Trace(video_tracks_);
   visitor->Trace(audio_tracks_);

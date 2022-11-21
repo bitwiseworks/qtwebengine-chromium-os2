@@ -34,10 +34,6 @@ OriginPolicyInterstitialPage::~OriginPolicyInterstitialPage() = default;
 
 void OriginPolicyInterstitialPage::OnInterstitialClosing() {}
 
-bool OriginPolicyInterstitialPage::ShouldCreateNewNavigation() const {
-  return false;
-}
-
 void OriginPolicyInterstitialPage::PopulateInterstitialStrings(
     base::DictionaryValue* load_time_data) {
   load_time_data->SetString("type", "ORIGIN_POLICY");
@@ -71,6 +67,9 @@ void OriginPolicyInterstitialPage::PopulateInterstitialStrings(
       {"finalParagraph", IDS_ORIGIN_POLICY_FINAL_PARAGRAPH},
       {"heading", IDS_ORIGIN_POLICY_HEADING},
       {"openDetails", IDS_ORIGIN_POLICY_DETAILS},
+      {"optInLink", IDS_SAFE_BROWSING_SCOUT_REPORTING_AGREE},
+      {"enhancedProtectionMessage",
+       IDS_SAFE_BROWSING_ENHANCED_PROTECTION_MESSAGE},
       {"primaryButtonText", IDS_ORIGIN_POLICY_BUTTON},
       {"primaryParagraph", IDS_ORIGIN_POLICY_INFO},
       {"recurrentErrorParagraph", IDS_ORIGIN_POLICY_INFO2},
@@ -105,9 +104,9 @@ void OriginPolicyInterstitialPage::CommandReceived(const std::string& command) {
   // TODO(carlosil): After non-committed insterstitials have been removed this
   //                 should be cleaned up to use enum values (or somesuch).
   if (command == "0") {
-    OnDontProceed();
+    DontProceed();
   } else if (command == "1") {
-    OnProceed();
+    Proceed();
   } else if (command == "2") {
     // "Advanced" button, which shows extra text. This is handled within
     // the page.
@@ -116,13 +115,13 @@ void OriginPolicyInterstitialPage::CommandReceived(const std::string& command) {
   }
 }
 
-void OriginPolicyInterstitialPage::OnProceed() {
+void OriginPolicyInterstitialPage::Proceed() {
   content::OriginPolicyAddExceptionFor(web_contents()->GetBrowserContext(),
                                        request_url());
   web_contents()->GetController().Reload(content::ReloadType::NORMAL, true);
 }
 
-void OriginPolicyInterstitialPage::OnDontProceed() {
+void OriginPolicyInterstitialPage::DontProceed() {
   // "Go Back" / "Don't Proceed" button should be disabled if we can't go back.
   DCHECK(web_contents()->GetController().CanGoBack());
   web_contents()->GetController().GoBack();

@@ -1,15 +1,14 @@
 {
-    "dependencies": [
-        "common",
-        "host",
-        "platform"
-    ],
-    "scripts": [],
-    "modules": [
-        "workspace.js",
-        "workspace-legacy.js",
-        "FileManager.js",
-        "UISourceCode.js",
-        "WorkspaceImpl.js"
-    ]
+  "dependencies": [
+    "common",
+    "host",
+    "platform"
+  ],
+  "modules": [
+    "workspace.js",
+    "workspace-legacy.js",
+    "FileManager.js",
+    "UISourceCode.js",
+    "WorkspaceImpl.js"
+  ]
 }

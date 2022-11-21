@@ -25,6 +25,7 @@
 #include "cc/trees/transform_node.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
 #include "third_party/blink/renderer/platform/graphics/paint/effect_paint_property_node.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
@@ -142,14 +143,17 @@ class PaintArtifactCompositorTest : public testing::Test,
   }
 
   using ViewportProperties = PaintArtifactCompositor::ViewportProperties;
-  using Settings = PaintArtifactCompositor::Settings;
 
   void Update(
       scoped_refptr<const PaintArtifact> artifact,
       const ViewportProperties& viewport_properties = ViewportProperties(),
-      const Settings& settings = Settings()) {
+      const WTF::Vector<const TransformPaintPropertyNode*>&
+          scroll_translation_nodes = {}) {
+    HashSet<const GraphicsLayer*> repainted_layers;
     paint_artifact_compositor_->SetNeedsUpdate();
-    paint_artifact_compositor_->Update(artifact, viewport_properties, settings);
+    paint_artifact_compositor_->Update(artifact, viewport_properties,
+                                       scroll_translation_nodes,
+                                       repainted_layers);
     layer_tree_->layer_tree_host()->LayoutAndUpdateLayers();
   }
 
@@ -162,21 +166,28 @@ class PaintArtifactCompositorTest : public testing::Test,
   // CompositeAfterPaint creates scroll hit test data (which create scroll hit
   // test layers in PaintArtifactCompositor) whereas before CompositeAfterPaint,
   // scrollable foreign layers are created in ScrollingCoordinator and passed
-  // to PaintArtifactCompositor. This function is used to create a chunk
-  // representing the scrollable layer in either of these modes.
-  void CreateScrollableChunk(TestPaintArtifact& artifact,
-                             const TransformPaintPropertyNode& scroll_offset,
-                             const ClipPaintPropertyNode& clip,
-                             const EffectPaintPropertyNode& effect) {
+  // to PaintArtifactCompositor.
+  void CreateScrollableChunk(
+      TestPaintArtifact& artifact,
+      const TransformPaintPropertyNode& scroll_translation,
+      const ClipPaintPropertyNodeOrAlias& clip,
+      const EffectPaintPropertyNodeOrAlias& effect) {
+    if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+      artifact.Chunk(*scroll_translation.Parent(), clip, effect)
+          .ScrollHitTest(&scroll_translation);
+      return;
+    }
+
     // Create a foreign layer for scrolling, roughly matching the layer
     // created by ScrollingCoordinator.
-    const auto* scroll_node = scroll_offset.ScrollNode();
-    scoped_refptr<cc::Layer> layer = cc::Layer::Create();
+    const auto* scroll_node = scroll_translation.ScrollNode();
     auto rect = scroll_node->ContainerRect();
+    scoped_refptr<cc::Layer> layer = cc::Layer::Create();
     layer->SetBounds(gfx::Size(rect.Size()));
     layer->SetElementId(scroll_node->GetCompositorElementId());
-    artifact.Chunk(scroll_offset, clip, effect)
-        .ForeignLayer(layer, FloatPoint(rect.Location()));
+    layer->SetHitTestable(true);
+    artifact.Chunk(scroll_translation, clip, effect)
+        .ForeignLayer(layer, rect.Location());
   }
 
   // Returns the |num|th scrollable layer. In CompositeAfterPaint, this will be
@@ -349,7 +360,7 @@ TEST_P(PaintArtifactCompositorTest, OneTransformWithAlias) {
   auto real_transform = CreateTransform(t0(), TransformationMatrix().Rotate(90),
                                         FloatPoint3D(100, 100, 0),
                                         CompositingReason::k3DTransform);
-  auto transform = TransformPaintPropertyNode::CreateAlias(*real_transform);
+  auto transform = TransformPaintPropertyNodeAlias::Create(*real_transform);
 
   TestPaintArtifact artifact;
   artifact.Chunk(*transform, c0(), e0())
@@ -524,17 +535,17 @@ TEST_P(PaintArtifactCompositorTest, FlattensInheritedTransformWithAlias) {
     // flattening determines whether content within the node's local transform
     // is flattened, while cc's notion applies in the parent's coordinate space.
     auto real_transform1 = CreateTransform(t0(), TransformationMatrix());
-    auto transform1 = TransformPaintPropertyNode::CreateAlias(*real_transform1);
+    auto transform1 = TransformPaintPropertyNodeAlias::Create(*real_transform1);
     auto real_transform2 =
         CreateTransform(*transform1, TransformationMatrix().Rotate3d(0, 45, 0));
-    auto transform2 = TransformPaintPropertyNode::CreateAlias(*real_transform2);
+    auto transform2 = TransformPaintPropertyNodeAlias::Create(*real_transform2);
     TransformPaintPropertyNode::State transform3_state{
         TransformationMatrix().Rotate3d(0, 45, 0)};
     transform3_state.flags.flattens_inherited_transform =
         transform_is_flattened;
     auto real_transform3 = TransformPaintPropertyNode::Create(
         *transform2, std::move(transform3_state));
-    auto transform3 = TransformPaintPropertyNode::CreateAlias(*real_transform3);
+    auto transform3 = TransformPaintPropertyNodeAlias::Create(*real_transform3);
 
     TestPaintArtifact artifact;
     artifact.Chunk(*transform3, c0(), e0())
@@ -573,15 +584,19 @@ TEST_P(PaintArtifactCompositorTest, SortingContextID) {
   // Has no 3D rendering context.
   auto transform1 = CreateTransform(t0(), TransformationMatrix());
   // Establishes a 3D rendering context.
-  TransformPaintPropertyNode::State transform2_3_state;
-  transform2_3_state.rendering_context_id = 1;
-  transform2_3_state.direct_compositing_reasons =
+  TransformPaintPropertyNode::State transform2_state;
+  transform2_state.rendering_context_id = 1;
+  transform2_state.direct_compositing_reasons =
       CompositingReason::kWillChangeTransform;
   auto transform2 = TransformPaintPropertyNode::Create(
-      *transform1, std::move(transform2_3_state));
+      *transform1, std::move(transform2_state));
   // Extends the 3D rendering context of transform2.
+  TransformPaintPropertyNode::State transform3_state;
+  transform3_state.rendering_context_id = 1;
+  transform3_state.direct_compositing_reasons =
+      CompositingReason::kWillChangeTransform;
   auto transform3 = TransformPaintPropertyNode::Create(
-      *transform2, std::move(transform2_3_state));
+      *transform2, std::move(transform3_state));
   // Establishes a 3D rendering context distinct from transform2.
   TransformPaintPropertyNode::State transform4_state;
   transform4_state.rendering_context_id = 2;
@@ -671,7 +686,7 @@ TEST_P(PaintArtifactCompositorTest, OneClip) {
 
 TEST_P(PaintArtifactCompositorTest, OneClipWithAlias) {
   auto real_clip = CreateClip(c0(), t0(), FloatRoundedRect(100, 100, 300, 200));
-  auto clip = ClipPaintPropertyNode::CreateAlias(*real_clip);
+  auto clip = ClipPaintPropertyNodeAlias::Create(*real_clip);
 
   TestPaintArtifact artifact;
   artifact.Chunk(t0(), *clip, e0())
@@ -765,13 +780,13 @@ TEST_P(PaintArtifactCompositorTest, NestedClipsWithAlias) {
                       CompositingReason::kWillChangeTransform);
   auto real_clip1 =
       CreateClip(c0(), *transform1, FloatRoundedRect(100, 100, 700, 700));
-  auto clip1 = ClipPaintPropertyNode::CreateAlias(*real_clip1);
+  auto clip1 = ClipPaintPropertyNodeAlias::Create(*real_clip1);
   auto transform2 =
       CreateTransform(*transform1, TransformationMatrix(), FloatPoint3D(),
                       CompositingReason::kWillChangeTransform);
   auto real_clip2 =
       CreateClip(*clip1, *transform2, FloatRoundedRect(200, 200, 700, 700));
-  auto clip2 = ClipPaintPropertyNode::CreateAlias(*real_clip2);
+  auto clip2 = ClipPaintPropertyNodeAlias::Create(*real_clip2);
 
   TestPaintArtifact artifact;
   artifact.Chunk(*transform1, *clip1, e0())
@@ -861,13 +876,13 @@ TEST_P(PaintArtifactCompositorTest, DeeplyNestedClips) {
 TEST_P(PaintArtifactCompositorTest, SiblingClipsWithAlias) {
   auto real_common_clip =
       CreateClip(c0(), t0(), FloatRoundedRect(0, 0, 800, 600));
-  auto common_clip = ClipPaintPropertyNode::CreateAlias(*real_common_clip);
+  auto common_clip = ClipPaintPropertyNodeAlias::Create(*real_common_clip);
   auto real_clip1 =
       CreateClip(*common_clip, t0(), FloatRoundedRect(0, 0, 300, 200));
-  auto clip1 = ClipPaintPropertyNode::CreateAlias(*real_clip1);
+  auto clip1 = ClipPaintPropertyNodeAlias::Create(*real_clip1);
   auto real_clip2 =
       CreateClip(*common_clip, t0(), FloatRoundedRect(400, 0, 400, 600));
-  auto clip2 = ClipPaintPropertyNode::CreateAlias(*real_clip2);
+  auto clip2 = ClipPaintPropertyNodeAlias::Create(*real_clip2);
 
   TestPaintArtifact artifact;
   artifact.Chunk(t0(), *clip1, e0())
@@ -916,13 +931,13 @@ TEST_P(PaintArtifactCompositorTest, SiblingTransformsWithAlias) {
   auto real_common_transform =
       CreateTransform(t0(), TransformationMatrix().Translate(5, 6));
   auto common_transform =
-      TransformPaintPropertyNode::CreateAlias(*real_common_transform);
+      TransformPaintPropertyNodeAlias::Create(*real_common_transform);
   auto real_transform1 =
       CreateTransform(*common_transform, TransformationMatrix().Scale(2));
-  auto transform1 = TransformPaintPropertyNode::CreateAlias(*real_transform1);
+  auto transform1 = TransformPaintPropertyNodeAlias::Create(*real_transform1);
   auto real_transform2 =
       CreateTransform(*common_transform, TransformationMatrix().Scale(0.5));
-  auto transform2 = TransformPaintPropertyNode::CreateAlias(*real_transform2);
+  auto transform2 = TransformPaintPropertyNodeAlias::Create(*real_transform2);
 
   TestPaintArtifact artifact;
   artifact.Chunk(*transform1, c0(), e0())
@@ -967,7 +982,7 @@ TEST_P(PaintArtifactCompositorTest, ForeignLayerPassesThrough) {
 
   TestPaintArtifact test_artifact;
   test_artifact.Chunk().RectDrawing(IntRect(0, 0, 100, 100), Color::kWhite);
-  test_artifact.Chunk().ForeignLayer(layer, FloatPoint(50, 60));
+  test_artifact.Chunk().ForeignLayer(layer, IntPoint(50, 60));
   test_artifact.Chunk().RectDrawing(IntRect(0, 0, 100, 100), Color::kGray);
 
   auto artifact = test_artifact.Build();
@@ -989,12 +1004,12 @@ TEST_P(PaintArtifactCompositorTest, EffectTreeConversionWithAlias) {
 
   auto real_effect1 =
       CreateOpacityEffect(e0(), t0(), &c0(), 0.5, CompositingReason::kAll);
-  auto effect1 = EffectPaintPropertyNode::CreateAlias(*real_effect1);
+  auto effect1 = EffectPaintPropertyNodeAlias::Create(*real_effect1);
   auto real_effect2 =
       CreateOpacityEffect(*effect1, 0.3, CompositingReason::kAll);
-  auto effect2 = EffectPaintPropertyNode::CreateAlias(*real_effect2);
+  auto effect2 = EffectPaintPropertyNodeAlias::Create(*real_effect2);
   auto real_effect3 = CreateOpacityEffect(e0(), 0.2, CompositingReason::kAll);
-  auto effect3 = EffectPaintPropertyNode::CreateAlias(*real_effect3);
+  auto effect3 = EffectPaintPropertyNodeAlias::Create(*real_effect3);
 
   TestPaintArtifact artifact;
   artifact.Chunk(t0(), c0(), *effect2)
@@ -1081,11 +1096,12 @@ static void CheckCcScrollNode(const ScrollPaintPropertyNode& blink_scroll,
             cc_scroll.main_thread_scrolling_reasons);
 }
 
-TEST_P(PaintArtifactCompositorTest, OneScrollNode) {
+TEST_P(PaintArtifactCompositorTest, OneScrollNodeComposited) {
   CompositorElementId scroll_element_id = ScrollElementId(2);
   auto scroll = CreateScroll(ScrollPaintPropertyNode::Root(), ScrollState1(),
                              kNotScrollingOnMain, scroll_element_id);
-  auto scroll_translation = CreateScrollTranslation(t0(), 7, 9, *scroll);
+  auto scroll_translation =
+      CreateCompositedScrollTranslation(t0(), 7, 9, *scroll);
 
   TestPaintArtifact artifact;
   CreateScrollableChunk(artifact, *scroll_translation, c0(), e0());
@@ -1143,6 +1159,30 @@ TEST_P(PaintArtifactCompositorTest, OneScrollNode) {
       scroll_node.element_id, true);
 }
 
+TEST_P(PaintArtifactCompositorTest, OneScrollNodeNonComposited) {
+  // In pre-CompositeAfterPaint, PaintArtifactCompositor doesn't see
+  // non-composited scroll node.
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled())
+    return;
+
+  CompositorElementId scroll_element_id = ScrollElementId(2);
+  auto scroll = CreateScroll(ScrollPaintPropertyNode::Root(), ScrollState1(),
+                             kNotScrollingOnMain, scroll_element_id);
+  auto scroll_translation = CreateScrollTranslation(t0(), 7, 9, *scroll);
+
+  TestPaintArtifact artifact;
+  CreateScrollableChunk(artifact, *scroll_translation, c0(), e0());
+  artifact.Chunk(*scroll_translation, c0(), e0())
+      .RectDrawing(IntRect(-110, 12, 170, 19), Color::kWhite);
+
+  Update(artifact.Build());
+  // Node #0 reserved for null; #1 for root render surface. Blink nodes are all
+  // decomposited.
+  EXPECT_EQ(2u, GetPropertyTrees().scroll_tree.size());
+  EXPECT_EQ(2u, GetPropertyTrees().transform_tree.size());
+  EXPECT_EQ(1u, LayerCount());
+}
+
 TEST_P(PaintArtifactCompositorTest, TransformUnderScrollNode) {
   auto scroll = CreateScroll(ScrollPaintPropertyNode::Root(), ScrollState1());
   auto scroll_translation = CreateScrollTranslation(t0(), 7, 9, *scroll);
@@ -1197,14 +1237,14 @@ TEST_P(PaintArtifactCompositorTest, NestedScrollNodes) {
       ScrollPaintPropertyNode::Root(), ScrollState1(),
       cc::MainThreadScrollingReason::kHasBackgroundAttachmentFixedObjects,
       scroll_element_id_a);
-  auto scroll_translation_a = CreateScrollTranslation(
-      t0(), 11, 13, *scroll_a, CompositingReason::kLayerForScrollingContents);
+  auto scroll_translation_a =
+      CreateCompositedScrollTranslation(t0(), 11, 13, *scroll_a);
 
   CompositorElementId scroll_element_id_b = ScrollElementId(3);
   auto scroll_b = CreateScroll(*scroll_a, ScrollState2(), kNotScrollingOnMain,
                                scroll_element_id_b);
-  auto scroll_translation_b =
-      CreateScrollTranslation(*scroll_translation_a, 37, 41, *scroll_b);
+  auto scroll_translation_b = CreateCompositedScrollTranslation(
+      *scroll_translation_a, 37, 41, *scroll_b);
   TestPaintArtifact artifact;
   artifact.Chunk(*scroll_translation_a, c0(), *effect)
       .RectDrawing(IntRect(7, 11, 13, 17), Color::kWhite);
@@ -1274,6 +1314,7 @@ TEST_P(PaintArtifactCompositorTest, ScrollHitTestLayerOrder) {
       scroll_tree.Node(ScrollableLayerAt(0)->scroll_tree_index());
   ASSERT_EQ(scroll_element_id, scroll_node->element_id);
   EXPECT_EQ(scroll_element_id, ScrollableLayerAt(0)->element_id());
+  EXPECT_TRUE(ScrollableLayerAt(0)->HitTestable());
 
   // The second content layer should appear after the first.
   EXPECT_LT(LayerIndex(ScrollableLayerAt(0)),
@@ -1331,6 +1372,9 @@ TEST_P(PaintArtifactCompositorTest, NestedScrollableLayerOrder) {
   // The non-scrollable content layer should be after the second scroll layer.
   EXPECT_LT(LayerIndex(ScrollableLayerAt(1)),
             LayerIndex(NonScrollableLayerAt(0)));
+
+  EXPECT_TRUE(ScrollableLayerAt(0)->HitTestable());
+  EXPECT_TRUE(ScrollableLayerAt(1)->HitTestable());
 }
 
 // If a scroll node is encountered before its parent, ensure the parent scroll
@@ -1567,7 +1611,7 @@ TEST_P(PaintArtifactCompositorTest, MergeOpacity) {
 TEST_P(PaintArtifactCompositorTest, MergeOpacityWithAlias) {
   float opacity = 2.0 / 255.0;
   auto real_effect = CreateOpacityEffect(e0(), opacity);
-  auto effect = EffectPaintPropertyNode::CreateAlias(*real_effect);
+  auto effect = EffectPaintPropertyNodeAlias::Create(*real_effect);
 
   TestPaintArtifact test_artifact;
   test_artifact.Chunk().RectDrawing(IntRect(0, 0, 100, 100), Color::kWhite);
@@ -1602,13 +1646,13 @@ TEST_P(PaintArtifactCompositorTest, MergeNestedWithAlias) {
   auto real_transform =
       CreateTransform(t0(), TransformationMatrix().Translate(50, 50),
                       FloatPoint3D(100, 100, 0));
-  auto transform = TransformPaintPropertyNode::CreateAlias(*real_transform);
+  auto transform = TransformPaintPropertyNodeAlias::Create(*real_transform);
   auto real_clip =
       CreateClip(c0(), *transform, FloatRoundedRect(10, 20, 50, 60));
-  auto clip = ClipPaintPropertyNode::CreateAlias(*real_clip);
+  auto clip = ClipPaintPropertyNodeAlias::Create(*real_clip);
   float opacity = 2.0 / 255.0;
   auto real_effect = CreateOpacityEffect(e0(), *transform, clip.get(), opacity);
-  auto effect = EffectPaintPropertyNode::CreateAlias(*real_effect);
+  auto effect = EffectPaintPropertyNodeAlias::Create(*real_effect);
 
   TestPaintArtifact test_artifact;
   test_artifact.Chunk().RectDrawing(IntRect(0, 0, 100, 100), Color::kWhite);
@@ -1635,6 +1679,20 @@ TEST_P(PaintArtifactCompositorTest, MergeNestedWithAlias) {
     EXPECT_THAT(layer->GetPicture(),
                 Pointee(DrawsRectangles(rects_with_color)));
   }
+}
+
+TEST_P(PaintArtifactCompositorTest, CanNotMergeAcrossPaintArtifacts) {
+  TestPaintArtifact test_artifact_a;
+  test_artifact_a.Chunk().RectDrawing(IntRect(0, 0, 100, 100), Color::kWhite);
+  auto artifact_a = test_artifact_a.Build();
+  PendingLayer layer_a(artifact_a, artifact_a->PaintChunks()[0], 0);
+
+  TestPaintArtifact test_artifact_b;
+  test_artifact_b.Chunk().RectDrawing(IntRect(0, 0, 100, 100), Color::kGray);
+  auto artifact_b = test_artifact_b.Build();
+  PendingLayer layer_b(artifact_b, artifact_b->PaintChunks()[0], 0);
+
+  EXPECT_FALSE(layer_a.CanMerge(layer_b, layer_b.property_tree_state));
 }
 
 TEST_P(PaintArtifactCompositorTest, ClipPushedUp) {
@@ -1881,13 +1939,13 @@ TEST_P(PaintArtifactCompositorTest, OverlapTransform) {
 TEST_P(PaintArtifactCompositorTest, MightOverlap) {
   PaintChunk paint_chunk = DefaultChunk();
   paint_chunk.bounds = IntRect(0, 0, 100, 100);
-  PendingLayer pending_layer(paint_chunk, 0, false);
+  PendingLayer pending_layer(nullptr, paint_chunk, 0);
 
   PaintChunk paint_chunk2 = DefaultChunk();
   paint_chunk2.bounds = IntRect(0, 0, 100, 100);
 
   {
-    PendingLayer pending_layer2(paint_chunk2, 1, false);
+    PendingLayer pending_layer2(nullptr, paint_chunk2, 1);
     EXPECT_TRUE(MightOverlap(pending_layer, pending_layer2));
   }
 
@@ -1895,7 +1953,7 @@ TEST_P(PaintArtifactCompositorTest, MightOverlap) {
       t0(), TransformationMatrix().Translate(99, 0), FloatPoint3D(100, 100, 0));
   {
     SetTransform(paint_chunk2, *transform);
-    PendingLayer pending_layer2(paint_chunk2, 1, false);
+    PendingLayer pending_layer2(nullptr, paint_chunk2, 1);
     EXPECT_TRUE(MightOverlap(pending_layer, pending_layer2));
   }
 
@@ -1904,7 +1962,7 @@ TEST_P(PaintArtifactCompositorTest, MightOverlap) {
                       FloatPoint3D(100, 100, 0));
   {
     SetTransform(paint_chunk2, *transform2);
-    PendingLayer pending_layer2(paint_chunk2, 1, false);
+    PendingLayer pending_layer2(nullptr, paint_chunk2, 1);
     EXPECT_FALSE(MightOverlap(pending_layer, pending_layer2));
   }
 
@@ -1913,7 +1971,7 @@ TEST_P(PaintArtifactCompositorTest, MightOverlap) {
                                FloatPoint3D(100, 100, 0));
   {
     SetTransform(paint_chunk2, *transform3);
-    PendingLayer pending_layer2(paint_chunk2, 1, false);
+    PendingLayer pending_layer2(nullptr, paint_chunk2, 1);
     EXPECT_TRUE(MightOverlap(pending_layer, pending_layer2));
   }
 }
@@ -1968,7 +2026,7 @@ TEST_P(PaintArtifactCompositorTest, PendingLayer) {
   chunk1.known_to_be_opaque = true;
   chunk1.bounds = IntRect(0, 0, 30, 40);
 
-  PendingLayer pending_layer(chunk1, 0, false);
+  PendingLayer pending_layer(nullptr, chunk1, 0);
 
   EXPECT_EQ(FloatRect(0, 0, 30, 40), pending_layer.bounds);
   EXPECT_EQ((Vector<wtf_size_t>{0}), pending_layer.paint_chunk_indices);
@@ -1978,7 +2036,7 @@ TEST_P(PaintArtifactCompositorTest, PendingLayer) {
   chunk2.properties = chunk1.properties;
   chunk2.known_to_be_opaque = true;
   chunk2.bounds = IntRect(10, 20, 30, 40);
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
 
   // Bounds not equal to one PaintChunk.
   EXPECT_EQ(FloatRect(0, 0, 40, 60), pending_layer.bounds);
@@ -1989,7 +2047,7 @@ TEST_P(PaintArtifactCompositorTest, PendingLayer) {
   chunk3.properties = chunk1.properties;
   chunk3.known_to_be_opaque = true;
   chunk3.bounds = IntRect(-5, -25, 20, 20);
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk3, 2, false)));
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk3, 2)));
 
   EXPECT_EQ(FloatRect(-5, -25, 45, 85), pending_layer.bounds);
   EXPECT_EQ((Vector<wtf_size_t>{0, 1, 2}), pending_layer.paint_chunk_indices);
@@ -2008,8 +2066,8 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerMergeWithGuestTransform) {
   SetTransform(chunk2, *transform);
   chunk2.bounds = IntRect(0, 0, 50, 60);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(0, 0, 70, 85), pending_layer.bounds);
   EXPECT_EQ(PropertyTreeState::Root(), pending_layer.property_tree_state);
 }
@@ -2026,8 +2084,8 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerMergeWithHomeTransform) {
   chunk2.properties = PropertyTreeState::Root();
   chunk2.bounds = IntRect(0, 0, 50, 60);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(0, 0, 50, 65), pending_layer.bounds);
   EXPECT_EQ(PropertyTreeState::Root(), pending_layer.property_tree_state);
 }
@@ -2046,8 +2104,8 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerMergeWithBothTransforms) {
   SetTransform(chunk2, *t2);
   chunk2.bounds = IntRect(0, 0, 50, 60);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(-20, -25, 70, 90), pending_layer.bounds);
   EXPECT_EQ(PropertyTreeState::Root(), pending_layer.property_tree_state);
 }
@@ -2063,8 +2121,8 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerDontMergeSparse) {
   chunk2.known_to_be_opaque = true;
   chunk2.bounds = IntRect(200, 200, 30, 40);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_FALSE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_FALSE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(0, 0, 30, 40), pending_layer.bounds);
   EXPECT_EQ(chunk1.properties, pending_layer.property_tree_state);
   EXPECT_EQ(Vector<wtf_size_t>{0}, pending_layer.paint_chunk_indices);
@@ -2084,8 +2142,8 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerDontMergeSparseWithTransforms) {
   SetTransform(chunk2, *t2);
   chunk2.bounds = IntRect(0, 0, 50, 60);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_FALSE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_FALSE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(0, 0, 30, 40), pending_layer.bounds);
   EXPECT_EQ(chunk1.properties, pending_layer.property_tree_state);
   EXPECT_EQ(Vector<wtf_size_t>{0}, pending_layer.paint_chunk_indices);
@@ -2106,8 +2164,8 @@ TEST_P(PaintArtifactCompositorTest,
   chunk2.properties = PropertyTreeState(*t2, c0(), *e1);
   chunk2.bounds = IntRect(0, 0, 50, 60);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_FALSE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_FALSE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(0, 0, 30, 40), pending_layer.bounds);
   EXPECT_EQ(chunk1.properties, pending_layer.property_tree_state);
   EXPECT_EQ(Vector<wtf_size_t>{0}, pending_layer.paint_chunk_indices);
@@ -2127,8 +2185,8 @@ TEST_P(PaintArtifactCompositorTest,
   chunk2.properties = PropertyTreeState(*t2, c0(), *e1);
   chunk2.bounds = IntRect(0, 0, 50, 60);
 
-  PendingLayer pending_layer(chunk1, 0, false);
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  PendingLayer pending_layer(nullptr, chunk1, 0);
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
   EXPECT_EQ(FloatRect(20, 25, 1030, 1035), pending_layer.bounds);
   EXPECT_EQ(PropertyTreeState(t0(), c0(), *e1),
             pending_layer.property_tree_state);
@@ -2140,7 +2198,7 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerKnownOpaque) {
   chunk1.properties = PropertyTreeState::Root();
   chunk1.bounds = IntRect(0, 0, 30, 40);
   chunk1.known_to_be_opaque = false;
-  PendingLayer pending_layer(chunk1, 0, false);
+  PendingLayer pending_layer(nullptr, chunk1, 0);
 
   EXPECT_TRUE(pending_layer.rect_known_to_be_opaque.IsEmpty());
 
@@ -2148,7 +2206,7 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerKnownOpaque) {
   chunk2.properties = chunk1.properties;
   chunk2.bounds = IntRect(0, 0, 25, 35);
   chunk2.known_to_be_opaque = true;
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk2, 1, false)));
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk2, 1)));
 
   // Chunk 2 doesn't cover the entire layer, so not opaque.
   EXPECT_EQ(FloatRect(chunk2.bounds), pending_layer.rect_known_to_be_opaque);
@@ -2158,7 +2216,7 @@ TEST_P(PaintArtifactCompositorTest, PendingLayerKnownOpaque) {
   chunk3.properties = chunk1.properties;
   chunk3.bounds = IntRect(0, 0, 50, 60);
   chunk3.known_to_be_opaque = true;
-  ASSERT_TRUE(pending_layer.Merge(PendingLayer(chunk3, 2, false)));
+  ASSERT_TRUE(pending_layer.Merge(PendingLayer(nullptr, chunk3, 2)));
 
   // Chunk 3 covers the entire layer, so now it's opaque.
   EXPECT_EQ(FloatRect(chunk3.bounds), pending_layer.bounds);
@@ -2208,7 +2266,7 @@ TEST_P(PaintArtifactCompositorTest, EffectWithElementId) {
 
 TEST_P(PaintArtifactCompositorTest, EffectWithElementIdWithAlias) {
   auto real_effect = CreateSampleEffectNodeWithElementId();
-  auto effect = EffectPaintPropertyNode::CreateAlias(*real_effect);
+  auto effect = EffectPaintPropertyNodeAlias::Create(*real_effect);
   TestPaintArtifact artifact;
   artifact.Chunk(t0(), c0(), *effect)
       .RectDrawing(IntRect(100, 100, 200, 100), Color::kBlack);
@@ -2563,6 +2621,46 @@ TEST_P(PaintArtifactCompositorTest, DecompositeExoticBlendModeWithoutBackdrop) {
   ASSERT_EQ(1u, LayerCount());
   const auto* effect =
       GetPropertyTrees().effect_tree.Node(LayerAt(0)->effect_tree_index());
+  EXPECT_EQ(1.0f, effect->opacity);
+  EXPECT_EQ(SkBlendMode::kSrcOver, effect->blend_mode);
+  // Don't need a render surface because all blend effects are decomposited.
+  EXPECT_FALSE(effect->HasRenderSurface());
+}
+
+TEST_P(PaintArtifactCompositorTest,
+       DecompositeExoticBlendModeWithNonDrawingLayer) {
+  auto parent_effect = CreateOpacityEffect(
+      e0(), 1.0, CompositingReason::kIsolateCompositedDescendants);
+  EffectPaintPropertyNode::State blend_state1;
+  blend_state1.local_transform_space = &t0();
+  blend_state1.blend_mode = SkBlendMode::kScreen;
+  auto blend_effect1 =
+      EffectPaintPropertyNode::Create(*parent_effect, std::move(blend_state1));
+  EffectPaintPropertyNode::State blend_state2;
+  blend_state2.local_transform_space = &t0();
+  blend_state2.blend_mode = SkBlendMode::kScreen;
+  auto blend_effect2 =
+      EffectPaintPropertyNode::Create(*parent_effect, std::move(blend_state2));
+  auto transform = CreateAnimatingTransform(t0());
+
+  Update(TestPaintArtifact()
+             .Chunk(*transform, c0(), *parent_effect)
+             .Bounds(IntRect(0, 0, 33, 44))
+             .Chunk(t0(), c0(), *blend_effect1)
+             .RectDrawing(IntRect(100, 100, 200, 200), Color::kGray)
+             .Chunk(t0(), c0(), *blend_effect2)
+             .RectDrawing(IntRect(200, 200, 200, 200), Color::kBlack)
+             .Build());
+
+  ASSERT_EQ(2u, LayerCount());
+  // This is the empty layer forced by |transform|.
+  EXPECT_EQ(gfx::Size(33, 44), LayerAt(0)->bounds());
+  EXPECT_FALSE(LayerAt(0)->DrawsContent());
+  // This is the layer containing the paint chunks with |blend_effect1| and
+  // |blend_effect2| decomposited.
+  EXPECT_EQ(gfx::Size(300, 300), LayerAt(1)->bounds());
+  const auto* effect =
+      GetPropertyTrees().effect_tree.Node(LayerAt(1)->effect_tree_index());
   EXPECT_EQ(1.0f, effect->opacity);
   EXPECT_EQ(SkBlendMode::kSrcOver, effect->blend_mode);
   // Don't need a render surface because all blend effects are decomposited.
@@ -3062,8 +3160,11 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipRotatedNotSupported) {
   EXPECT_TRUE(mask_isolation_0.HasRenderSurface());
 
   EXPECT_EQ(SynthesizedClipLayerAt(0), clip_mask0);
+  EXPECT_TRUE(clip_mask0->DrawsContent());
+  EXPECT_TRUE(clip_mask0->HitTestable());
   EXPECT_EQ(gfx::Size(300, 200), clip_mask0->bounds());
-  EXPECT_EQ(c1_id, clip_mask0->clip_tree_index());
+  // c1 should be applied in the clip mask layer.
+  EXPECT_EQ(c0_id, clip_mask0->clip_tree_index());
   int mask_effect_0_id = clip_mask0->effect_tree_index();
   const cc::EffectNode& mask_effect_0 =
       *GetPropertyTrees().effect_tree.Node(mask_effect_0_id);
@@ -3156,6 +3257,8 @@ TEST_P(PaintArtifactCompositorTest,
   EXPECT_TRUE(mask_isolation_0.HasRenderSurface());
 
   EXPECT_EQ(SynthesizedClipLayerAt(0), clip_mask0);
+  EXPECT_TRUE(clip_mask0->DrawsContent());
+  EXPECT_TRUE(clip_mask0->HitTestable());
   EXPECT_EQ(gfx::Size(300, 200), clip_mask0->bounds());
   EXPECT_EQ(c1_id, clip_mask0->clip_tree_index());
   int mask_effect_0_id = clip_mask0->effect_tree_index();
@@ -3184,7 +3287,7 @@ TEST_P(
       .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
   Update(artifact.Build());
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   ASSERT_EQ(2u, LayerCount());
 #else
   ASSERT_EQ(1u, LayerCount());
@@ -3619,7 +3722,7 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipRespectOutputClip) {
 
   CompositorFilterOperations non_trivial_filter;
   non_trivial_filter.AppendBlurFilter(5);
-  auto e1 = CreateFilterEffect(e0(), non_trivial_filter, FloatPoint(),
+  auto e1 = CreateFilterEffect(e0(), non_trivial_filter,
                                CompositingReason::kActiveFilterAnimation);
 
   TestPaintArtifact artifact;
@@ -3782,17 +3885,25 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipDelegateBackdropFilter) {
   FloatRoundedRect rrect(FloatRect(50, 50, 300, 200), corner, corner, corner,
                          corner);
   auto c1 = CreateClip(c0(), t0(), rrect);
+  auto c2 = CreateClip(*c1, t0(), FloatRoundedRect(60, 60, 200, 100));
 
   auto t1 = Create2DTranslation(t0(), 10, 20);
   CompositorFilterOperations blur_filter;
   blur_filter.AppendBlurFilter(5);
-  auto e1 = CreateBackdropFilterEffect(e0(), *t1, c1.get(), blur_filter,
-                                       FloatPoint());
+  EffectPaintPropertyNode::State state;
+  state.local_transform_space = t1.get();
+  state.output_clip = c2.get();
+  state.backdrop_filter.AppendBlurFilter(5);
+  state.direct_compositing_reasons = CompositingReason::kBackdropFilter;
+  state.compositor_element_id = CompositorElementIdFromUniqueObjectId(
+      NewUniqueObjectId(), CompositorElementIdNamespace::kPrimary);
+  state.opacity = 0.5;
+  auto e1 = EffectPaintPropertyNode::Create(e0(), std::move(state));
 
   TestPaintArtifact artifact;
   artifact.Chunk(*t1, *c1, e0())
       .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
-  artifact.Chunk(*t1, *c1, *e1)
+  artifact.Chunk(*t1, *c2, *e1)
       .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
   artifact.Chunk(*t1, *c1, e0())
       .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
@@ -3810,9 +3921,10 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipDelegateBackdropFilter) {
   const cc::Layer* clip_mask1 = LayerAt(2);
   const cc::Layer* content2 = LayerAt(3);
 
-  // Three synthesized layers, two of which are null because because they use
-  // fast rounded corners. One real synthesized layer is needed because the
-  // rounded clip and the backdrop filter are in different transform spaces.
+  // Three synthesized layers, two of which are null because they use fast
+  // rounded corners. One real synthesized layer is needed because the rounded
+  // clip and the backdrop filter are in different transform spaces.
+  ASSERT_EQ(3u, SynthesizedClipLayerCount());
   EXPECT_FALSE(SynthesizedClipLayerAt(0));
   EXPECT_EQ(clip_mask1, SynthesizedClipLayerAt(1));
   EXPECT_FALSE(SynthesizedClipLayerAt(2));
@@ -3829,18 +3941,25 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipDelegateBackdropFilter) {
       *GetPropertyTrees().effect_tree.Node(mask_isolation_0_id);
   ASSERT_EQ(e0_id, mask_isolation_0.parent_id);
   EXPECT_EQ(t0_id, mask_isolation_0.transform_id);
+  EXPECT_EQ(c1_id, mask_isolation_0.clip_id);
   EXPECT_TRUE(mask_isolation_0.backdrop_filters.IsEmpty());
   EXPECT_TRUE(mask_isolation_0.is_fast_rounded_corner);
+  EXPECT_EQ(1.0f, mask_isolation_0.opacity);
   EXPECT_EQ(gfx::RRectF(50, 50, 300, 200, 5),
             mask_isolation_0.rounded_corner_bounds);
 
   EXPECT_EQ(t1_id, content1->transform_tree_index());
-  EXPECT_EQ(c1_id, content1->clip_tree_index());
+  int c2_id = content1->clip_tree_index();
+  const cc::ClipNode& cc_c2 = *GetPropertyTrees().clip_tree.Node(c2_id);
+  EXPECT_EQ(gfx::RectF(60, 60, 200, 100), cc_c2.clip);
+  EXPECT_EQ(c1_id, cc_c2.parent_id);
+  EXPECT_EQ(t0_id, cc_c2.transform_id);
   int e1_id = content1->effect_tree_index();
   const cc::EffectNode& cc_e1 = *GetPropertyTrees().effect_tree.Node(e1_id);
   EXPECT_TRUE(cc_e1.backdrop_filters.IsEmpty());
+  EXPECT_EQ(1.0f, cc_e1.opacity);
   EXPECT_EQ(t1_id, cc_e1.transform_id);
-  EXPECT_EQ(c1_id, cc_e1.clip_id);
+  EXPECT_EQ(c2_id, cc_e1.clip_id);
   EXPECT_FALSE(cc_e1.backdrop_mask_element_id);
 
   int mask_isolation_1_id = cc_e1.parent_id;
@@ -3849,13 +3968,15 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipDelegateBackdropFilter) {
   EXPECT_NE(mask_isolation_0_id, mask_isolation_1_id);
   ASSERT_EQ(e0_id, mask_isolation_1.parent_id);
   EXPECT_EQ(t1_id, mask_isolation_1.transform_id);
-  EXPECT_EQ(c1_id, mask_isolation_1.clip_id);
+  EXPECT_EQ(c2_id, mask_isolation_1.clip_id);
   EXPECT_FALSE(mask_isolation_1.backdrop_filters.IsEmpty());
   EXPECT_FALSE(mask_isolation_1.is_fast_rounded_corner);
+  // Opacity should also be moved to mask_isolation_1.
+  EXPECT_EQ(0.5f, mask_isolation_1.opacity);
   EXPECT_EQ(gfx::RRectF(), mask_isolation_1.rounded_corner_bounds);
 
   EXPECT_EQ(t0_id, clip_mask1->transform_tree_index());
-  EXPECT_EQ(c1_id, clip_mask1->clip_tree_index());
+  EXPECT_EQ(c2_id, clip_mask1->clip_tree_index());
   const cc::EffectNode& mask =
       *GetPropertyTrees().effect_tree.Node(clip_mask1->effect_tree_index());
   ASSERT_EQ(mask_isolation_1_id, mask.parent_id);
@@ -3875,10 +3996,83 @@ TEST_P(PaintArtifactCompositorTest, SynthesizedClipDelegateBackdropFilter) {
   EXPECT_NE(mask_isolation_1_id, mask_isolation_2_id);
   ASSERT_EQ(e0_id, mask_isolation_2.parent_id);
   EXPECT_EQ(t0_id, mask_isolation_2.transform_id);
+  EXPECT_EQ(c1_id, mask_isolation_2.clip_id);
   EXPECT_TRUE(mask_isolation_2.backdrop_filters.IsEmpty());
   EXPECT_TRUE(mask_isolation_2.is_fast_rounded_corner);
+  EXPECT_EQ(1.0f, mask_isolation_2.opacity);
   EXPECT_EQ(gfx::RRectF(50, 50, 300, 200, 5),
             mask_isolation_2.rounded_corner_bounds);
+}
+
+TEST_P(PaintArtifactCompositorTest, SynthesizedClipMultipleNonBackdropEffects) {
+  // This tests the case that multiple non-backdrop effects can share the
+  // synthesized mask.
+  FloatSize corner(5, 5);
+  FloatRoundedRect rrect(FloatRect(50, 50, 300, 200), corner, corner, corner,
+                         corner);
+  auto c1 = CreateClip(c0(), t0(), rrect);
+  auto c2 = CreateClip(*c1, t0(), FloatRoundedRect(60, 60, 200, 100));
+
+  auto e1 =
+      CreateOpacityEffect(e0(), t0(), c2.get(), 0.5, CompositingReason::kAll);
+  auto e2 =
+      CreateOpacityEffect(e0(), t0(), c1.get(), 0.75, CompositingReason::kAll);
+
+  TestPaintArtifact artifact;
+  artifact.Chunk(t0(), *c2, *e1)
+      .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
+  artifact.Chunk(t0(), *c1, *e2)
+      .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
+  artifact.Chunk(t0(), c0(), e0())
+      .RectDrawing(IntRect(0, 0, 100, 100), Color::kBlack);
+  Update(artifact.Build());
+
+  // Expectation in effect stack diagram:
+  //  content0  content1  content2
+  // [   e1   ][   e2   ]
+  // [  mask_isolation  ]
+  // [             e0             ]
+  // Three content layers.
+  ASSERT_EQ(3u, LayerCount());
+  const cc::Layer* content0 = LayerAt(0);
+  const cc::Layer* content1 = LayerAt(1);
+  const cc::Layer* content2 = LayerAt(2);
+
+  // One synthesized layer, which is null because it uses fast rounded corners.
+  ASSERT_EQ(1u, SynthesizedClipLayerCount());
+  EXPECT_FALSE(SynthesizedClipLayerAt(0));
+
+  int c2_id = content0->clip_tree_index();
+  const cc::ClipNode& cc_c2 = *GetPropertyTrees().clip_tree.Node(c2_id);
+  int e1_id = content0->effect_tree_index();
+  const cc::EffectNode& cc_e1 = *GetPropertyTrees().effect_tree.Node(e1_id);
+  int c1_id = content1->clip_tree_index();
+  const cc::ClipNode& cc_c1 = *GetPropertyTrees().clip_tree.Node(c1_id);
+  int e2_id = content1->effect_tree_index();
+  const cc::EffectNode& cc_e2 = *GetPropertyTrees().effect_tree.Node(e2_id);
+  int mask_isolation_id = cc_e1.parent_id;
+  const cc::EffectNode& mask_isolation =
+      *GetPropertyTrees().effect_tree.Node(mask_isolation_id);
+
+  EXPECT_EQ(c2_id, cc_e1.clip_id);
+  EXPECT_EQ(0.5f, cc_e1.opacity);
+  EXPECT_EQ(gfx::RectF(60, 60, 200, 100), cc_c2.clip);
+  ASSERT_EQ(c1_id, cc_c2.parent_id);
+
+  EXPECT_EQ(c1_id, cc_e2.clip_id);
+  EXPECT_EQ(mask_isolation_id, cc_e2.parent_id);
+  EXPECT_EQ(0.75f, cc_e2.opacity);
+  EXPECT_EQ(gfx::RectF(50, 50, 300, 200), cc_c1.clip);
+  ASSERT_EQ(c0_id, cc_c1.parent_id);
+
+  ASSERT_EQ(e0_id, mask_isolation.parent_id);
+  EXPECT_EQ(c1_id, mask_isolation.clip_id);
+  EXPECT_TRUE(mask_isolation.is_fast_rounded_corner);
+  EXPECT_EQ(gfx::RRectF(50, 50, 300, 200, 5),
+            mask_isolation.rounded_corner_bounds);
+
+  EXPECT_EQ(c0_id, content2->clip_tree_index());
+  EXPECT_EQ(e0_id, content2->effect_tree_index());
 }
 
 TEST_P(PaintArtifactCompositorTest, WillBeRemovedFromFrame) {
@@ -4111,8 +4305,9 @@ TEST_P(PaintArtifactCompositorTest, CreatesViewportNodes) {
   matrix.Scale(2);
   TransformPaintPropertyNode::State transform_state{matrix};
   transform_state.flags.in_subtree_of_page_scale = false;
-  transform_state.compositor_element_id =
+  const CompositorElementId compositor_element_id =
       CompositorElementIdFromUniqueObjectId(1);
+  transform_state.compositor_element_id = compositor_element_id;
 
   auto scale_transform_node = TransformPaintPropertyNode::Create(
       TransformPaintPropertyNode::Root(), std::move(transform_state));
@@ -4123,8 +4318,8 @@ TEST_P(PaintArtifactCompositorTest, CreatesViewportNodes) {
   Update(artifact.Build(), viewport_properties);
 
   cc::TransformTree& transform_tree = GetPropertyTrees().transform_tree;
-  cc::TransformNode* cc_transform_node = transform_tree.FindNodeFromElementId(
-      transform_state.compositor_element_id);
+  cc::TransformNode* cc_transform_node =
+      transform_tree.FindNodeFromElementId(compositor_element_id);
   EXPECT_TRUE(cc_transform_node);
   EXPECT_EQ(TransformationMatrix::ToTransform(matrix),
             cc_transform_node->local);
@@ -4141,14 +4336,18 @@ TEST_P(PaintArtifactCompositorTest, InSubtreeOfPageScale) {
 
   TransformPaintPropertyNode::State page_scale_transform_state;
   page_scale_transform_state.flags.in_subtree_of_page_scale = false;
-  page_scale_transform_state.compositor_element_id =
+  const CompositorElementId page_scale_compositor_element_id =
       CompositorElementIdFromUniqueObjectId(1);
+  page_scale_transform_state.compositor_element_id =
+      page_scale_compositor_element_id;
   auto page_scale_transform = TransformPaintPropertyNode::Create(
       *ancestor_transform, std::move(page_scale_transform_state));
 
   TransformPaintPropertyNode::State descendant_transform_state;
-  descendant_transform_state.compositor_element_id =
+  const CompositorElementId descendant_compositor_element_id =
       CompositorElementIdFromUniqueObjectId(2);
+  descendant_transform_state.compositor_element_id =
+      descendant_compositor_element_id;
   descendant_transform_state.flags.in_subtree_of_page_scale = true;
   descendant_transform_state.direct_compositing_reasons =
       CompositingReason::kWillChangeTransform;
@@ -4163,8 +4362,8 @@ TEST_P(PaintArtifactCompositorTest, InSubtreeOfPageScale) {
   Update(artifact.Build(), viewport_properties);
 
   cc::TransformTree& transform_tree = GetPropertyTrees().transform_tree;
-  const auto* cc_page_scale_transform = transform_tree.FindNodeFromElementId(
-      page_scale_transform_state.compositor_element_id);
+  const auto* cc_page_scale_transform =
+      transform_tree.FindNodeFromElementId(page_scale_compositor_element_id);
   // The page scale node is not in a subtree of the page scale layer.
   EXPECT_FALSE(cc_page_scale_transform->in_subtree_of_page_scale_layer);
 
@@ -4177,8 +4376,8 @@ TEST_P(PaintArtifactCompositorTest, InSubtreeOfPageScale) {
   }
 
   // Descendants of the page scale node should be in the page scale subtree.
-  const auto* cc_descendant_transform = transform_tree.FindNodeFromElementId(
-      descendant_transform_state.compositor_element_id);
+  const auto* cc_descendant_transform =
+      transform_tree.FindNodeFromElementId(descendant_compositor_element_id);
   EXPECT_TRUE(cc_descendant_transform->in_subtree_of_page_scale_layer);
 }
 
@@ -4305,9 +4504,9 @@ TEST_P(PaintArtifactCompositorTest, OpacityRenderSurfacesWithFilterChildren) {
   auto opacity = CreateOpacityEffect(e0(), 0.1f);
   CompositorFilterOperations filter;
   filter.AppendBlurFilter(5);
-  auto filter1 = CreateFilterEffect(*opacity, filter, FloatPoint(),
+  auto filter1 = CreateFilterEffect(*opacity, filter,
                                     CompositingReason::kActiveFilterAnimation);
-  auto filter2 = CreateFilterEffect(*opacity, filter, FloatPoint(),
+  auto filter2 = CreateFilterEffect(*opacity, filter,
                                     CompositingReason::kActiveFilterAnimation);
 
   IntRect r(150, 150, 100, 100);
@@ -4399,7 +4598,7 @@ TEST_P(PaintArtifactCompositorTest, OpacityRenderSurfacesWithBackdropChildren) {
   auto a = CreateOpacityEffect(*e, 0.5f);
   CompositorFilterOperations blur_filter;
   blur_filter.AppendBlurFilter(5);
-  auto bd = CreateBackdropFilterEffect(*a, blur_filter, FloatPoint());
+  auto bd = CreateBackdropFilterEffect(*a, blur_filter);
 
   TestPaintArtifact artifact;
   IntRect r(150, 150, 100, 100);
@@ -4530,7 +4729,7 @@ TEST_P(PaintArtifactCompositorTest,
 TEST_P(PaintArtifactCompositorTest, FilterCreatesRenderSurface) {
   CompositorFilterOperations filter;
   filter.AppendBlurFilter(5);
-  auto e1 = CreateFilterEffect(e0(), filter, FloatPoint(),
+  auto e1 = CreateFilterEffect(e0(), filter,
                                CompositingReason::kActiveFilterAnimation);
   Update(TestPaintArtifact()
              .Chunk(t0(), c0(), *e1)
@@ -4553,7 +4752,7 @@ TEST_P(PaintArtifactCompositorTest, FilterAnimationCreatesRenderSurface) {
 TEST_P(PaintArtifactCompositorTest, BackdropFilterCreatesRenderSurface) {
   CompositorFilterOperations filter;
   filter.AppendBlurFilter(5);
-  auto e1 = CreateBackdropFilterEffect(e0(), filter, FloatPoint());
+  auto e1 = CreateBackdropFilterEffect(e0(), filter);
   Update(TestPaintArtifact()
              .Chunk(t0(), c0(), *e1)
              .RectDrawing(IntRect(150, 150, 100, 100), Color::kWhite)
@@ -4617,7 +4816,8 @@ TEST_P(PaintArtifactCompositorTest, Non2dAxisAlignedRoundedRectClip) {
   const auto* cc_effect = GetPropertyTrees().effect_tree.Node(effect_id);
   EXPECT_OPACITY(effect_id, 1.f, kHasRenderSurface);
   EXPECT_OPACITY(cc_effect->parent_id, 0.5f, kNoRenderSurface);
-  EXPECT_EQ(cc_effect->clip_id, cc_clip->id);
+  // cc_clip should be applied in the clip mask layer.
+  EXPECT_EQ(cc_effect->clip_id, cc_clip->parent_id);
 }
 
 TEST_P(PaintArtifactCompositorTest,
@@ -4667,13 +4867,17 @@ TEST_P(PaintArtifactCompositorTest, TransformChange) {
   t2_state.direct_compositing_reasons = CompositingReason::k3DTransform;
   auto t2 = TransformPaintPropertyNode::Create(*t1, std::move(t2_state));
 
+  FakeDisplayItemClient client;
+  client.Validate();
   Update(TestPaintArtifact()
              .Chunk(1)
              .Properties(*t2, c0(), e0())
-             .RectDrawing(IntRect(100, 100, 200, 100), Color::kBlack)
+             .RectDrawing(client, IntRect(100, 100, 200, 100), Color::kBlack)
              .Build());
   ASSERT_EQ(1u, LayerCount());
-  cc::Layer* layer = LayerAt(0);
+  auto* layer = static_cast<cc::PictureLayer*>(LayerAt(0));
+  auto display_item_list = layer->client()->PaintContentsToDisplayList(
+      cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL);
 
   // Change t1 but not t2.
   layer->ClearSubtreePropertyChangedForTesting();
@@ -4685,11 +4889,16 @@ TEST_P(PaintArtifactCompositorTest, TransformChange) {
   Update(TestPaintArtifact()
              .Chunk(1)
              .Properties(*t2, c0(), e0())
-             .RectDrawing(IntRect(100, 100, 200, 100), Color::kBlack)
+             .RectDrawing(client, IntRect(100, 100, 200, 100), Color::kBlack)
              .Build());
 
   ASSERT_EQ(1u, LayerCount());
   ASSERT_EQ(layer, LayerAt(0));
+  EXPECT_EQ(display_item_list.get(),
+            layer->client()
+                ->PaintContentsToDisplayList(
+                    cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL)
+                .get());
   // TODO(wangxianzhu): Probably avoid setting this flag on transform change.
   EXPECT_TRUE(layer->subtree_property_changed());
   // This is set by cc when propagating ancestor change flag to descendants.
@@ -4710,11 +4919,16 @@ TEST_P(PaintArtifactCompositorTest, TransformChange) {
   Update(TestPaintArtifact()
              .Chunk(1)
              .Properties(*t2, c0(), e0())
-             .RectDrawing(IntRect(100, 100, 200, 100), Color::kBlack)
+             .RectDrawing(client, IntRect(100, 100, 200, 100), Color::kBlack)
              .Build());
 
   ASSERT_EQ(1u, LayerCount());
   ASSERT_EQ(layer, LayerAt(0));
+  EXPECT_EQ(display_item_list.get(),
+            layer->client()
+                ->PaintContentsToDisplayList(
+                    cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL)
+                .get());
   // TODO(wangxianzhu): Probably avoid setting this flag on transform change.
   EXPECT_TRUE(layer->subtree_property_changed());
   EXPECT_TRUE(GetTransformNode(layer).transform_changed);
@@ -4732,16 +4946,39 @@ TEST_P(PaintArtifactCompositorTest, TransformChange) {
   Update(TestPaintArtifact()
              .Chunk(1)
              .Properties(*t2, c0(), e0())
-             .RectDrawing(IntRect(100, 100, 200, 100), Color::kBlack)
+             .RectDrawing(client, IntRect(100, 100, 200, 100), Color::kBlack)
              .Build());
 
   ASSERT_EQ(1u, LayerCount());
   ASSERT_EQ(layer, LayerAt(0));
+  EXPECT_EQ(display_item_list.get(),
+            layer->client()
+                ->PaintContentsToDisplayList(
+                    cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL)
+                .get());
   // The new transform is decomposited, so there is no transform_changed, but
   // we set subtree_property_changed because offset_from_transform_parent
   // (calculated from the decomposited transforms) changed.
   EXPECT_TRUE(layer->subtree_property_changed());
   EXPECT_FALSE(GetTransformNode(layer).transform_changed);
+
+  // Change no transform nodes, but invalidate client.
+  layer->ClearSubtreePropertyChangedForTesting();
+  t2->ClearChangedToRoot();
+  client.Invalidate(PaintInvalidationReason::kBackground);
+  Update(TestPaintArtifact()
+             .Chunk(1)
+             .Properties(*t2, c0(), e0())
+             .RectDrawing(client, IntRect(100, 100, 200, 100), Color::kWhite)
+             .Build());
+
+  ASSERT_EQ(1u, LayerCount());
+  ASSERT_EQ(layer, LayerAt(0));
+  EXPECT_NE(display_item_list.get(),
+            layer->client()
+                ->PaintContentsToDisplayList(
+                    cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL)
+                .get());
 }
 
 TEST_P(PaintArtifactCompositorTest, EffectChange) {
@@ -4850,6 +5087,31 @@ TEST_P(PaintArtifactCompositorTest, DirectlySetScrollOffset) {
   // DirectlySetScrollOffset doesn't update transform node.
   EXPECT_EQ(gfx::ScrollOffset(-7, -9), transform_node->scroll_offset);
   EXPECT_FALSE(transform_tree.needs_update());
+}
+
+TEST_P(PaintArtifactCompositorTest, AddNonCompositedScrollNodes) {
+  RuntimeEnabledFeaturesTestHelpers::ScopedScrollUnification
+      scroll_unification_enabled_(true);
+
+  const uint32_t main_thread_scrolling_reason =
+      cc::MainThreadScrollingReason::kNotOpaqueForTextAndLCDText;
+  ASSERT_TRUE(cc::MainThreadScrollingReason::HasNonCompositedScrollReasons(
+      main_thread_scrolling_reason));
+  CompositorElementId scroll_element_id = ScrollElementId(123);
+  auto scroll = CreateScroll(ScrollPaintPropertyNode::Root(), ScrollState1(),
+                             main_thread_scrolling_reason, scroll_element_id);
+  auto scroll_translation = CreateScrollTranslation(t0(), 7, 9, *scroll);
+
+  WTF::Vector<const TransformPaintPropertyNode*> scroll_translation_nodes;
+  scroll_translation_nodes.push_back(scroll_translation.get());
+
+  TestPaintArtifact artifact;
+  Update(artifact.Build(), ViewportProperties(), scroll_translation_nodes);
+
+  auto& scroll_tree = GetPropertyTrees().scroll_tree;
+  auto* scroll_node = scroll_tree.FindNodeFromElementId(scroll_element_id);
+  EXPECT_TRUE(scroll_node);
+  EXPECT_FALSE(scroll_node->is_composited);
 }
 
 }  // namespace blink

@@ -35,35 +35,6 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
-namespace {
-
-// Please refer to the comment in class header if the usage changes.
-constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
-    net::DefineNetworkTrafficAnnotation("websocket_stream", R"(
-        semantics {
-          sender: "WebSocket Handshake"
-          description:
-            "Renderer process initiated WebSocket handshake. The WebSocket "
-            "handshake is used to establish a connection between a web page "
-            "and a consenting server for bi-directional communication."
-          trigger:
-            "A handshake is performed every time a new connection is "
-            "established via the Javascript or PPAPI WebSocket API. Any web "
-            "page or extension can create a WebSocket connection."
-          data: "The path and sub-protocols requested when the WebSocket was "
-                "created, plus the origin of the creating page."
-          destination: OTHER
-        }
-        policy {
-          cookies_allowed: YES
-          cookies_store: "user or per-app cookie store"
-          setting: "These requests cannot be disabled."
-          policy_exception_justification:
-            "Not implemented. WebSocket is a core web platform API."
-        })");
-
-}  // namespace
-
 namespace net {
 namespace {
 
@@ -115,17 +86,21 @@ class WebSocketStreamRequestImpl : public WebSocketStreamRequestAPI {
       const URLRequestContext* context,
       const url::Origin& origin,
       const SiteForCookies& site_for_cookies,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const IsolationInfo& isolation_info,
       const HttpRequestHeaders& additional_headers,
+      NetworkTrafficAnnotationTag traffic_annotation,
       std::unique_ptr<WebSocketStream::ConnectDelegate> connect_delegate,
       std::unique_ptr<WebSocketStreamRequestAPI> api_delegate)
       : delegate_(this),
         url_request_(context->CreateRequest(url,
                                             DEFAULT_PRIORITY,
                                             &delegate_,
-                                            kTrafficAnnotation)),
+                                            traffic_annotation)),
         connect_delegate_(std::move(connect_delegate)),
         api_delegate_(std::move(api_delegate)) {
+    DCHECK_EQ(IsolationInfo::RedirectMode::kUpdateNothing,
+              isolation_info.redirect_mode());
+
     HttpRequestHeaders headers = additional_headers;
     headers.SetHeader(websockets::kUpgrade, websockets::kWebSocketLowercase);
     headers.SetHeader(HttpRequestHeaders::kConnection, websockets::kUpgrade);
@@ -142,8 +117,7 @@ class WebSocketStreamRequestImpl : public WebSocketStreamRequestAPI {
     url_request_->SetExtraRequestHeaders(headers);
     url_request_->set_initiator(origin);
     url_request_->set_site_for_cookies(site_for_cookies);
-    url_request_->set_isolation_info(IsolationInfo::CreatePartial(
-        IsolationInfo::RedirectMode::kUpdateNothing, network_isolation_key));
+    url_request_->set_isolation_info(isolation_info);
 
     auto create_helper = std::make_unique<WebSocketHandshakeStreamCreateHelper>(
         connect_delegate_.get(), requested_subprotocols, this);
@@ -470,14 +444,15 @@ std::unique_ptr<WebSocketStreamRequest> WebSocketStream::CreateAndConnectStream(
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
     const SiteForCookies& site_for_cookies,
-    const net::NetworkIsolationKey& network_isolation_key,
+    const IsolationInfo& isolation_info,
     const HttpRequestHeaders& additional_headers,
     URLRequestContext* url_request_context,
     const NetLogWithSource& net_log,
+    NetworkTrafficAnnotationTag traffic_annotation,
     std::unique_ptr<ConnectDelegate> connect_delegate) {
   auto request = std::make_unique<WebSocketStreamRequestImpl>(
       socket_url, requested_subprotocols, url_request_context, origin,
-      site_for_cookies, network_isolation_key, additional_headers,
+      site_for_cookies, isolation_info, additional_headers, traffic_annotation,
       std::move(connect_delegate), nullptr);
   request->Start(std::make_unique<base::OneShotTimer>());
   return std::move(request);
@@ -489,16 +464,17 @@ WebSocketStream::CreateAndConnectStreamForTesting(
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
     const SiteForCookies& site_for_cookies,
-    const net::NetworkIsolationKey& network_isolation_key,
+    const IsolationInfo& isolation_info,
     const HttpRequestHeaders& additional_headers,
     URLRequestContext* url_request_context,
     const NetLogWithSource& net_log,
+    NetworkTrafficAnnotationTag traffic_annotation,
     std::unique_ptr<WebSocketStream::ConnectDelegate> connect_delegate,
     std::unique_ptr<base::OneShotTimer> timer,
     std::unique_ptr<WebSocketStreamRequestAPI> api_delegate) {
   auto request = std::make_unique<WebSocketStreamRequestImpl>(
       socket_url, requested_subprotocols, url_request_context, origin,
-      site_for_cookies, network_isolation_key, additional_headers,
+      site_for_cookies, isolation_info, additional_headers, traffic_annotation,
       std::move(connect_delegate), std::move(api_delegate));
   request->Start(std::move(timer));
   return std::move(request);

@@ -13,8 +13,9 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/ui/exclusive_access/fullscreen_controller_test.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/guest_view/browser/test_guest_view_manager.h"
@@ -22,6 +23,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/extension_registry.h"
@@ -116,7 +118,7 @@ class MimeHandlerViewTest : public ExtensionApiTest {
 };
 
 // Test is flaky on Linux.  https://crbug.com/877627
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #define MAYBE_Fullscreen DISABLED_Fullscreen
 #else
 #define MAYBE_Fullscreen Fullscreen
@@ -128,7 +130,7 @@ IN_PROC_BROWSER_TEST_F(MimeHandlerViewTest, MAYBE_Fullscreen) {
 namespace {
 
 void WaitForFullscreenAnimation() {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   const int delay_in_ms = 1500;
 #else
   const int delay_in_ms = 100;
@@ -143,7 +145,13 @@ void WaitForFullscreenAnimation() {
 
 }  // namespace
 
-IN_PROC_BROWSER_TEST_F(MimeHandlerViewTest, EscapeExitsFullscreen) {
+// TODO(1119576): Flaky under Lacros.
+#if BUILDFLAG(IS_LACROS)
+#define MAYBE_EscapeExitsFullscreen DISABLED_EscapeExitsFullscreen
+#else
+#define MAYBE_EscapeExitsFullscreen EscapeExitsFullscreen
+#endif
+IN_PROC_BROWSER_TEST_F(MimeHandlerViewTest, MAYBE_EscapeExitsFullscreen) {
   // Use the testing subclass of MimeHandlerViewGuest.
   GetGuestViewManager()->RegisterTestGuestViewType<MimeHandlerViewGuest>(
       base::BindRepeating(&TestMimeHandlerViewGuest::Create));

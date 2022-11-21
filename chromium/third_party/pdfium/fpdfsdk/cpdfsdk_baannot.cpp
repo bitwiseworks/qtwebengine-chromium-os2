@@ -6,11 +6,9 @@
 
 #include "fpdfsdk/cpdfsdk_baannot.h"
 
-#include <algorithm>
-#include <utility>
-
 #include "constants/annotation_common.h"
 #include "constants/annotation_flags.h"
+#include "constants/form_fields.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_name.h"
@@ -25,7 +23,7 @@ CPDFSDK_BAAnnot::CPDFSDK_BAAnnot(CPDF_Annot* pAnnot,
                                  CPDFSDK_PageView* pPageView)
     : CPDFSDK_Annot(pPageView), m_pAnnot(pAnnot) {}
 
-CPDFSDK_BAAnnot::~CPDFSDK_BAAnnot() {}
+CPDFSDK_BAAnnot::~CPDFSDK_BAAnnot() = default;
 
 CPDFSDK_BAAnnot* CPDFSDK_BAAnnot::AsBAAnnot() {
   return this;
@@ -142,19 +140,19 @@ void CPDFSDK_BAAnnot::SetBorderStyle(BorderStyle nStyle) {
 
   const char* name = nullptr;
   switch (nStyle) {
-    case BorderStyle::SOLID:
+    case BorderStyle::kSolid:
       name = "S";
       break;
-    case BorderStyle::DASH:
+    case BorderStyle::kDash:
       name = "D";
       break;
-    case BorderStyle::BEVELED:
+    case BorderStyle::kBeveled:
       name = "B";
       break;
-    case BorderStyle::INSET:
+    case BorderStyle::kInset:
       name = "I";
       break;
-    case BorderStyle::UNDERLINE:
+    case BorderStyle::kUnderline:
       name = "U";
       break;
     default:
@@ -168,15 +166,15 @@ BorderStyle CPDFSDK_BAAnnot::GetBorderStyle() const {
   if (pBSDict) {
     ByteString sBorderStyle = pBSDict->GetStringFor("S", "S");
     if (sBorderStyle == "S")
-      return BorderStyle::SOLID;
+      return BorderStyle::kSolid;
     if (sBorderStyle == "D")
-      return BorderStyle::DASH;
+      return BorderStyle::kDash;
     if (sBorderStyle == "B")
-      return BorderStyle::BEVELED;
+      return BorderStyle::kBeveled;
     if (sBorderStyle == "I")
-      return BorderStyle::INSET;
+      return BorderStyle::kInset;
     if (sBorderStyle == "U")
-      return BorderStyle::UNDERLINE;
+      return BorderStyle::kUnderline;
   }
 
   const CPDF_Array* pBorder =
@@ -185,11 +183,11 @@ BorderStyle CPDFSDK_BAAnnot::GetBorderStyle() const {
     if (pBorder->size() >= 4) {
       const CPDF_Array* pDP = pBorder->GetArrayAt(3);
       if (pDP && pDP->size() > 0)
-        return BorderStyle::DASH;
+        return BorderStyle::kDash;
     }
   }
 
-  return BorderStyle::SOLID;
+  return BorderStyle::kSolid;
 }
 
 bool CPDFSDK_BAAnnot::IsVisible() const {
@@ -204,7 +202,7 @@ CPDF_Action CPDFSDK_BAAnnot::GetAction() const {
 }
 
 CPDF_AAction CPDFSDK_BAAnnot::GetAAction() const {
-  return CPDF_AAction(GetAnnotDict()->GetDictFor("AA"));
+  return CPDF_AAction(GetAnnotDict()->GetDictFor(pdfium::form_fields::kAA));
 }
 
 CPDF_Action CPDFSDK_BAAnnot::GetAAction(CPDF_AAction::AActionType eAAT) {
@@ -212,7 +210,7 @@ CPDF_Action CPDFSDK_BAAnnot::GetAAction(CPDF_AAction::AActionType eAAT) {
   if (AAction.ActionExist(eAAT))
     return AAction.GetAction(eAAT);
 
-  if (eAAT == CPDF_AAction::kButtonUp)
+  if (eAAT == CPDF_AAction::kButtonUp || eAAT == CPDF_AAction::kKeyStroke)
     return GetAction();
 
   return CPDF_Action(nullptr);
@@ -228,4 +226,14 @@ int CPDFSDK_BAAnnot::GetLayoutOrder() const {
     return 1;
 
   return CPDFSDK_Annot::GetLayoutOrder();
+}
+
+CPDF_Dest CPDFSDK_BAAnnot::GetDestination() const {
+  if (m_pAnnot->GetSubtype() != CPDF_Annot::Subtype::LINK)
+    return CPDF_Dest(nullptr);
+
+  // Link annotations can have "Dest" entry defined as an explicit array.
+  // https://www.adobe.com/content/dam/acom/en/devnet/pdf/pdfs/PDF32000_2008.pdf#page=373
+  return CPDF_Dest::Create(m_pPageView->GetPDFDocument(),
+                           GetAnnotDict()->GetDirectObjectFor("Dest"));
 }

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as UI from '../ui/ui.js';
 
@@ -16,7 +19,6 @@ export class RadioSetting {
     this._options = options;
 
     this.element = createElement('div');
-    this.element.title = description;
     UI.ARIAUtils.setDescription(this.element, description);
     UI.ARIAUtils.markAsRadioGroup(this.element);
 
@@ -25,13 +27,14 @@ export class RadioSetting {
       const fragment = UI.Fragment.Fragment.build`
         <label $="label" class="lighthouse-radio">
           <input $="input" type="radio" value=${option.value} name=${setting.name}>
-          <span class="lighthouse-radio-text">${option.label}</span>
+          <span $="span" class="lighthouse-radio-text">${option.label}</span>
         </label>
       `;
 
       this.element.appendChild(fragment.element());
-      if (option.title) {
-        UI.Tooltip.Tooltip.install(fragment.$('label'), option.title);
+      if (description) {
+        UI.Tooltip.Tooltip.install(fragment.$('input'), description);
+        UI.Tooltip.Tooltip.install(fragment.$('span'), description);
       }
       const radioElement = fragment.$('input');
       radioElement.addEventListener('change', this._valueChanged.bind(this));

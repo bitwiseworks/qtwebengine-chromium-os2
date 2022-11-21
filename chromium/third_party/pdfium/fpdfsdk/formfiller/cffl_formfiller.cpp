@@ -97,7 +97,7 @@ bool CFFL_FormFiller::OnLButtonDown(CPDFSDK_PageView* pPageView,
   InvalidateRect(rect);
   if (!rect.Contains(static_cast<int>(point.x), static_cast<int>(point.y)))
     return false;
-  return pWnd->OnLButtonDown(FFLtoPWL(point), nFlags);
+  return pWnd->OnLButtonDown(nFlags, FFLtoPWL(point));
 }
 
 bool CFFL_FormFiller::OnLButtonUp(CPDFSDK_PageView* pPageView,
@@ -109,7 +109,7 @@ bool CFFL_FormFiller::OnLButtonUp(CPDFSDK_PageView* pPageView,
     return false;
 
   InvalidateRect(GetViewBBox(pPageView));
-  pWnd->OnLButtonUp(FFLtoPWL(point), nFlags);
+  pWnd->OnLButtonUp(nFlags, FFLtoPWL(point));
   return true;
 }
 
@@ -120,7 +120,7 @@ bool CFFL_FormFiller::OnLButtonDblClk(CPDFSDK_PageView* pPageView,
   if (!pWnd)
     return false;
 
-  pWnd->OnLButtonDblClk(FFLtoPWL(point), nFlags);
+  pWnd->OnLButtonDblClk(nFlags, FFLtoPWL(point));
   return true;
 }
 
@@ -131,33 +131,33 @@ bool CFFL_FormFiller::OnMouseMove(CPDFSDK_PageView* pPageView,
   if (!pWnd)
     return false;
 
-  pWnd->OnMouseMove(FFLtoPWL(point), nFlags);
+  pWnd->OnMouseMove(nFlags, FFLtoPWL(point));
   return true;
 }
 
 bool CFFL_FormFiller::OnMouseWheel(CPDFSDK_PageView* pPageView,
                                    uint32_t nFlags,
-                                   short zDelta,
-                                   const CFX_PointF& point) {
+                                   const CFX_PointF& point,
+                                   const CFX_Vector& delta) {
   if (!IsValid())
     return false;
 
   CPWL_Wnd* pWnd = GetPWLWindow(pPageView, true);
-  return pWnd && pWnd->OnMouseWheel(zDelta, FFLtoPWL(point), nFlags);
+  return pWnd && pWnd->OnMouseWheel(nFlags, FFLtoPWL(point), delta);
 }
 
 bool CFFL_FormFiller::OnRButtonDown(CPDFSDK_PageView* pPageView,
                                     uint32_t nFlags,
                                     const CFX_PointF& point) {
   CPWL_Wnd* pWnd = GetPWLWindow(pPageView, true);
-  return pWnd && pWnd->OnRButtonDown(FFLtoPWL(point), nFlags);
+  return pWnd && pWnd->OnRButtonDown(nFlags, FFLtoPWL(point));
 }
 
 bool CFFL_FormFiller::OnRButtonUp(CPDFSDK_PageView* pPageView,
                                   uint32_t nFlags,
                                   const CFX_PointF& point) {
   CPWL_Wnd* pWnd = GetPWLWindow(pPageView, false);
-  return pWnd && pWnd->OnRButtonUp(FFLtoPWL(point), nFlags);
+  return pWnd && pWnd->OnRButtonUp(nFlags, FFLtoPWL(point));
 }
 
 bool CFFL_FormFiller::OnKeyDown(uint32_t nKeyCode, uint32_t nFlags) {
@@ -211,6 +211,14 @@ void CFFL_FormFiller::ReplaceSelection(const WideString& text) {
     return;
 
   pWnd->ReplaceSelection(text);
+}
+
+bool CFFL_FormFiller::SelectAllText() {
+  if (!IsValid())
+    return false;
+
+  CPWL_Wnd* pWnd = GetPWLWindow(GetCurPageView(), false);
+  return pWnd && pWnd->SelectAllText();
 }
 
 bool CFFL_FormFiller::CanUndo() {
@@ -313,11 +321,11 @@ CPWL_Wnd::CreateParams CFFL_FormFiller::GetCreateParam() {
 
   cp.nBorderStyle = m_pWidget->GetBorderStyle();
   switch (cp.nBorderStyle) {
-    case BorderStyle::DASH:
+    case BorderStyle::kDash:
       cp.sDash = CPWL_Dash(3, 3, 0);
       break;
-    case BorderStyle::BEVELED:
-    case BorderStyle::INSET:
+    case BorderStyle::kBeveled:
+    case BorderStyle::kInset:
       cp.dwBorderWidth *= 2;
       break;
     default:
@@ -342,7 +350,7 @@ CPWL_Wnd* CFFL_FormFiller::GetPWLWindow(CPDFSDK_PageView* pPageView,
       return nullptr;
 
     CPWL_Wnd::CreateParams cp = GetCreateParam();
-    auto pPrivateData = pdfium::MakeUnique<CFFL_PrivateData>();
+    auto pPrivateData = std::make_unique<CFFL_PrivateData>();
     pPrivateData->pWidget.Reset(m_pWidget.Get());
     pPrivateData->pPageView = pPageView;
     pPrivateData->nWidgetAppearanceAge = m_pWidget->GetAppearanceAge();

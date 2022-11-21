@@ -192,7 +192,7 @@ void JSV8BreakIterator::AdoptText(
     Handle<String> text) {
   icu::BreakIterator* break_iterator =
       break_iterator_holder->break_iterator().raw();
-  CHECK_NOT_NULL(break_iterator);
+  DCHECK_NOT_NULL(break_iterator);
   Handle<Managed<icu::UnicodeString>> unicode_string =
       Intl::SetTextToBreakIterator(isolate, text, break_iterator);
   break_iterator_holder->set_unicode_string(*unicode_string);
@@ -239,9 +239,7 @@ String JSV8BreakIterator::BreakType(Isolate* isolate,
 }
 
 const std::set<std::string>& JSV8BreakIterator::GetAvailableLocales() {
-  static base::LazyInstance<Intl::AvailableLocales<icu::BreakIterator>>::type
-      available_locales = LAZY_INSTANCE_INITIALIZER;
-  return available_locales.Pointer()->Get();
+  return Intl::GetAvailableLocales();
 }
 
 }  // namespace internal

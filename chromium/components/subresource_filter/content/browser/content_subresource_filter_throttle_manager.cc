@@ -7,22 +7,26 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/feature_list.h"
-#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
+#include "base/trace_event/trace_conversion_helper.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "components/subresource_filter/content/browser/activation_state_computing_navigation_throttle.h"
 #include "components/subresource_filter/content/browser/async_document_subresource_filter.h"
-#include "components/subresource_filter/content/browser/navigation_console_logger.h"
 #include "components/subresource_filter/content/browser/page_load_statistics.h"
 #include "components/subresource_filter/content/browser/subresource_filter_client.h"
+#include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_activation_throttle.h"
 #include "components/subresource_filter/content/common/subresource_filter_messages.h"
 #include "components/subresource_filter/content/common/subresource_filter_utils.h"
 #include "components/subresource_filter/content/mojom/subresource_filter_agent.mojom.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 #include "components/subresource_filter/core/common/common_features.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -120,11 +124,14 @@ void ContentSubresourceFilterThrottleManager::ReadyToCommitNavigation(
   if (level == mojom::ActivationLevel::kDisabled)
     return;
 
-  TRACE_EVENT1(
+  TRACE_EVENT2(
       TRACE_DISABLED_BY_DEFAULT("loading"),
       "ContentSubresourceFilterThrottleManager::ReadyToCommitNavigation",
       "activation_state",
-      static_cast<int>(filter->activation_state().activation_level));
+      static_cast<int>(filter->activation_state().activation_level),
+      "render_frame_host",
+      base::trace_event::ToTracedValue(
+          navigation_handle->GetRenderFrameHost()));
 
   throttle->WillSendActivationToRenderer();
 
@@ -210,8 +217,8 @@ void ContentSubresourceFilterThrottleManager::DidFinishNavigation(
       if (filter->activation_state().enable_logging) {
         DCHECK(filter->activation_state().activation_level !=
                mojom::ActivationLevel::kDisabled);
-        NavigationConsoleLogger::LogMessageOnCommit(
-            navigation_handle, blink::mojom::ConsoleMessageLevel::kWarning,
+        frame_host->AddMessageToConsole(
+            blink::mojom::ConsoleMessageLevel::kWarning,
             kActivationConsoleMessage);
       }
     }
@@ -259,15 +266,26 @@ void ContentSubresourceFilterThrottleManager::OnPageActivationComputed(
     const mojom::ActivationState& activation_state) {
   DCHECK(navigation_handle->IsInMainFrame());
   DCHECK(!navigation_handle->HasCommitted());
-  // Do not notify the throttle if activation is disabled.
-  if (activation_state.activation_level == mojom::ActivationLevel::kDisabled)
-    return;
 
   auto it = ongoing_activation_throttles_.find(navigation_handle);
-  if (it != ongoing_activation_throttles_.end()) {
-    it->second->NotifyPageActivationWithRuleset(EnsureRulesetHandle(),
-                                                activation_state);
+  if (it == ongoing_activation_throttles_.end())
+    return;
+
+  // The subresource filter normally operates in DryRun mode, disabled
+  // activation should only be supplied in cases where DryRun mode is not
+  // otherwise preferable. If the activation level is disabled, we do not want
+  // to run any portion of the subresource filter on this navigation/frame. By
+  // deleting the activation throttle, we prevent an associated
+  // DocumentSubresourceFilter from being created at commit time. This
+  // intentionally disables AdTagging and all dependent features for this
+  // navigation/frame.
+  if (activation_state.activation_level == mojom::ActivationLevel::kDisabled) {
+    ongoing_activation_throttles_.erase(it);
+    return;
   }
+
+  it->second->NotifyPageActivationWithRuleset(EnsureRulesetHandle(),
+                                              activation_state);
 }
 
 void ContentSubresourceFilterThrottleManager::OnSubframeNavigationEvaluated(
@@ -293,6 +311,15 @@ void ContentSubresourceFilterThrottleManager::MaybeAppendNavigationThrottles(
     content::NavigationHandle* navigation_handle,
     std::vector<std::unique_ptr<content::NavigationThrottle>>* throttles) {
   DCHECK(!navigation_handle->IsSameDocument());
+
+  if (navigation_handle->IsInMainFrame() &&
+      client_->GetSafeBrowsingDatabaseManager()) {
+    throttles->push_back(
+        std::make_unique<SubresourceFilterSafeBrowsingActivationThrottle>(
+            navigation_handle, client_, content::GetIOThreadTaskRunner({}),
+            client_->GetSafeBrowsingDatabaseManager()));
+  }
+
   if (!dealer_handle_)
     return;
   if (auto filtering_throttle =

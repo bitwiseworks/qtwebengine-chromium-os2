@@ -17,6 +17,225 @@ const commandMenuShortcut = Host.Platform.isMac() ? 'Command+Shift+P' : 'Control
 /** @type {!Array<!ReleaseNote>} */
 export const releaseNoteText = [
   {
+    version: 29,
+    header: 'Highlights from the Chrome 87 update',
+    highlights: [
+      {
+        title: 'New CSS Grid debugging tools',
+        subtitle: 'Debug and inspect CSS Grid with the new CSS Grid debugging tools.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#css-grid',
+      },
+      {
+        title: 'New WebAuthn tab',
+        subtitle: 'Emulate authenticators and debug the Web Authentication API with the new WebAuthn tab.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#webauthn',
+      },
+      {
+        title: 'Move tools between top and bottom panel',
+        subtitle: 'Move tools in DevTools between the top and bottom panel.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#moveable-tools',
+      },
+      {
+        title: 'Elements panel updates',
+        subtitle: 'View the Computed sidebar pane in the Styles pane, and more.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#elements-panel',
+      },
+      {
+        title: 'Lighthouse 6.3',
+        subtitle: 'New audits to validate preload fonts, suggests alternatives to large JavaScript library, and more.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#lighthouse',
+      },
+      {
+        title: '`performance.mark()` events in the Timings section',
+        subtitle: 'Performance recording now marks `performance.mark()` events.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#perf-mark',
+      },
+      {
+        title: 'New filters in the Network panel',
+        subtitle: 'New `resource-type` and `url` keywords in the **Network panel** to filter network requests.',
+        link: 'https://developers.google.com/web/updates/2020/10/devtools#network-filters',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2020/10/devtools',
+  },
+  {
+    version: 28,
+    header: 'Highlights from the Chrome 86 update',
+    highlights: [
+      {
+        title: 'New Media panel',
+        subtitle: 'View and download media information on a browser tab.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#media-panel',
+      },
+      {
+        title: 'Issues tab updates',
+        subtitle:
+            'The Issues warning bar is replaced with a regular message. Issues tab has a new checkbox to filter third-party cookie issues.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#issues-tab',
+      },
+      {
+        title: 'Emulate missing local fonts',
+        subtitle: 'Emulate missing `local()` sources in @font-face rules.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#emulate-local-fonts',
+      },
+      {
+        title: 'Emulate inactive users',
+        subtitle: 'Emulate idle state changes for both the user state and the screen state.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#emulate-inactive-users',
+      },
+      {
+        title: 'Emulate prefers-reduced-data',
+        subtitle: 'Emulate the user preference on using less data for the page to be rendered.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#emulate-prefers-reduced-data',
+      },
+      {
+        title: 'Support for new JavaScript features',
+        subtitle: 'Syntax support for logical assignment operators and numeric separators.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#javascript',
+      },
+      {
+        title: 'Lighthouse 6.2',
+        subtitle:
+            'Enhance the unused-javascript audit if a page has publicly-accessible JavaScript source maps, and more.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#lighthouse',
+      },
+      {
+        title: 'Deprecation of Service Workers “other origins” listing',
+        subtitle: 'View “other origins” listing in chrome://serviceworker-internals/?devtools instead.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#deprecate-sw-other-origins',
+      },
+      {
+        title: 'New frame detailed view',
+        subtitle: 'A new detailed view for each frame and window with security information.',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#frame-detailed-view',
+      },
+      {
+        title: 'Network and Elements panel updates',
+        subtitle:
+            'Capture node screenshots shortcut, accessible color suggestion, human-readable `X-Client-Data`, and more',
+        link: 'https://developers.google.com/web/updates/2020/08/devtools#elements-network',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2020/08/devtools',
+  },
+  {
+    version: 27,
+    header: 'Highlights from the Chrome 85 update',
+    highlights: [
+      {
+        title: 'Style editing for CSS-in-JS',
+        subtitle: 'Styles created with CSS Object Model APIs and Constructible Stylesheets are now editable.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#css-in-js',
+      },
+      {
+        title: 'Lighthouse 6',
+        subtitle:
+            'New metrics that align with Google’s Core Web Vitals, a new weighting of the Performance score, and more.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#lighthouse',
+      },
+      {
+        title: 'First Meaningful Paint (FMP) deprecation',
+        subtitle: 'FMP has been removed from the Performance panel and deprecated in Lighthouse 6.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#fmp-deprecation',
+      },
+      {
+        title: 'Support for new JavaScript features',
+        subtitle:
+            'Syntax and autocompletion support for optional chaining, private fields, and the nullish coalescing operator.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#javascript',
+      },
+      {
+        title: 'New app shortcut warnings in the Manifest pane',
+        subtitle: 'Warnings for when an app icon image is too small or not the correct shape.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#app-shortcut-warnings',
+      },
+      {
+        title: 'Service worker respondWith events in the Timing tab',
+        subtitle: 'More visibility into how long a service worker takes to respond to a fetch event.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#timing-tab',
+      },
+      {
+        title: 'Consistent display of the Computed pane',
+        subtitle: 'The pane now always displays as a separate pane, rather than collapsing into the Styles pane.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#computed-pane',
+      },
+      {
+        title: 'Bytecode offsets for WebAssembly files',
+        subtitle: 'Bytecode offsets are now displayed next to Wasm disassembly rather than line numbers.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#wasm',
+      },
+      {
+        title: 'Line-wise copy and cut in the Sources Panel',
+        subtitle: 'Cut or copy an entire line of code.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#sources-panel',
+      },
+      {
+        title: 'Console Settings updates',
+        subtitle:
+            'The “Group similar” option now applies to duplicate messages and the “Selected context only” option is now persisted.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#console-settings',
+      },
+      {
+        title: 'Performance panel updates',
+        subtitle:
+            'Display JavaScript compilation cache information and align navigation timing in the Performance panel.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#perf-panel',
+      },
+      {
+        title: 'New icons for breakpoints, conditional breakpoints, and logpoints',
+        subtitle:
+            'Breakpoints get a refreshed flag design with brighter and friendlier colors. Icons are added to differentiate conditional breakpoints and logpoints.',
+        link: 'https://developers.google.com/web/updates/2020/06/devtools#breakpoints',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2020/06/devtools',
+  },
+  {
+    version: 26,
+    header: 'Highlights from the Chrome 84 update',
+    highlights: [
+      {
+        title: 'The new Issues tab',
+        subtitle:
+            'The Issues tab presents warnings from the browser in a structured, aggregated, and actionable way, links to affected resources within DevTools, and provides guidance on how to fix the issues.',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#issues',
+      },
+      {
+        title: 'New accessibility information in the Inspect Mode tooltip',
+        subtitle:
+            'The tooltip now indicates whether an element has an accessible name and role and is keyboard-focusable.',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#a11y',
+      },
+      {
+        title: 'Performance panel updates',
+        subtitle: 'New features related to Total Blocking Time (TBT) and Cumulative Layout Shift (CLS).',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#performance',
+      },
+      {
+        title: 'More accurate Promise terminology',
+        subtitle: 'When logging Promises in the Console, the status now matches the Promise spec.',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#performance',
+      },
+      {
+        title: 'Styles pane updates',
+        subtitle:
+            'Support for the revert keyword, image previews, and more usage of space-separated functional color notation by default.',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#styles',
+      },
+      {
+        title: 'Deprecation of the Properties pane',
+        subtitle: 'Use console.dir($0) instead.',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#properties',
+      },
+      {
+        title: 'App shortcuts support in the Manifest pane',
+        subtitle: 'Verify your app shortcuts are set up correctly for your PWA.',
+        link: 'https://developers.google.com/web/updates/2020/05/devtools#app-shortcuts',
+      },
+    ],
+    link: 'https://developers.google.com/web/updates/2020/05/devtools',
+  },
+  {
     version: 25,
     header: 'Highlights from the Chrome 83 update',
     highlights: [
@@ -28,14 +247,13 @@ export const releaseNoteText = [
       {
         title: 'Emulate locales from the Sensors tab or Console',
         subtitle:
-            'Emulating locales enables you to change the Accept-Language HTTP header that\'s sent with network requests.',
+            'Emulating locales enables you to change JavaScript APIs such as `Intl.*`, DOM APIs such as `navigator.locale`, and the `Accept-Language` HTTP header that’s sent with network requests.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#locales',
       },
       {
-        title: 'Cross-Origin Opener Policy (COOP) and Cross-Origin Embedder Policy (COEP) debugging',
-        subtitle:
-            'Use the Status column and Response Headers section in the Network panel to debug COOP and COEP issues.',
-        link: 'https://developers.google.com/web/updates/2020/03/devtools#COOP-COEP',
+        title: 'Cross-Origin Embedder Policy (COEP) debugging',
+        subtitle: 'Use the Status column and Response Headers section in the Network panel to debug COEP issues.',
+        link: 'https://developers.google.com/web/updates/2020/03/devtools#COEP',
       },
       {
         title: 'New icons for breakpoints, conditional breakpoints, and logpoints',
@@ -46,17 +264,17 @@ export const releaseNoteText = [
       {
         title: 'View network requests that set a specific cookie path',
         subtitle:
-            'Use the new "cookie-path" filter keyword to focus on the network requests that set a specific cookie path.',
+            'Use the new `cookie-path` filter keyword to focus on the network requests that set a specific cookie path.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#cookie-path',
       },
       {
         title: 'Dock to left from the Command Menu',
-        subtitle: 'Run the "Dock to left" command to quickly move DevTools to the left of your viewport.',
+        subtitle: 'Run the “Dock to left” command to quickly move DevTools to the left of your viewport.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#dock-to-left',
       },
       {
         title: 'The Settings option in the Main Menu has moved',
-        subtitle: 'The option for opening Settings can now be found under "More Tools".',
+        subtitle: 'The option for opening Settings can now be found under “More Tools”.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#settings',
       },
       {
@@ -66,7 +284,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Delete all Local Overrides in a folder',
-        subtitle: 'Right-click a folder from the Overrides tab and select "Delete all overrides".',
+        subtitle: 'Right-click a folder from the Overrides tab and select “Delete all overrides”.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#overrides',
       },
       {
@@ -76,7 +294,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Maskable icon support in the Manifest pane',
-        subtitle: 'Enable the "Show only the minimum safe area for maskable icons" checkbox.',
+        subtitle: 'Enable the “Show only the minimum safe area for maskable icons” checkbox.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#maskable-icons',
       },
     ],
@@ -99,7 +317,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Dock to left from the Command Menu',
-        subtitle: 'Run the "Dock to left" command to quickly move DevTools to the left of your viewport.',
+        subtitle: 'Run the “Dock to left” command to quickly move DevTools to the left of your viewport.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#dock-to-left',
       },
       {
@@ -109,7 +327,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Delete all Local Overrides in a folder',
-        subtitle: 'Right-click a folder from the Overrides tab and select "Delete all overrides".',
+        subtitle: 'Right-click a folder from the Overrides tab and select “Delete all overrides”.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#overrides',
       },
       {
@@ -119,7 +337,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Maskable icon support in the Manifest pane',
-        subtitle: 'Enable the "Show only the minimum safe area for maskable icons" checkbox.',
+        subtitle: 'Enable the “Show only the minimum safe area for maskable icons” checkbox.',
         link: 'https://developers.google.com/web/updates/2020/03/devtools#maskable-icons',
       },
     ],
@@ -145,8 +363,8 @@ export const releaseNoteText = [
         link: 'https://developers.google.com/web/updates/2020/01/devtools#manifesticons',
       },
       {
-        title: 'Hover over CSS "content" properties to see unescaped values',
-        subtitle: 'Hover over a "content" value to see the rendered version of the value in a tooltip.',
+        title: 'Hover over CSS `content` properties to see unescaped values',
+        subtitle: 'Hover over a `content` value to see the rendered version of the value in a tooltip.',
         link: 'https://developers.google.com/web/updates/2020/01/devtools#content',
       },
       {
@@ -156,7 +374,7 @@ export const releaseNoteText = [
       },
       {
         title: 'A setting for disabling scrolling past the end of a file',
-        subtitle: 'Go to Settings and disable the "Allow scrolling past end of file" checkbox.',
+        subtitle: 'Go to Settings and disable the “Allow scrolling past end of file” checkbox.',
         link: 'https://developers.google.com/web/updates/2020/01/devtools#scrolling',
       },
     ],
@@ -169,7 +387,7 @@ export const releaseNoteText = [
       {
         title: 'Support for let and class redeclarations',
         subtitle:
-            'When experimenting with new code in the Console, repeating let or class declarations no longer causes errors.',
+            'When experimenting with new code in the Console, repeating `let` or `class` declarations no longer causes errors.',
         link: 'https://developers.google.com/web/updates/2019/12/devtools#redeclarations',
       },
       {
@@ -331,13 +549,13 @@ export const releaseNoteText = [
     highlights: [
       {
         title: 'Autocomplete with CSS keyword values',
-        subtitle: 'Typing a keyword value like "bold" in the Styles pane now autocompletes to "font-weight: bold".',
+        subtitle: 'Typing a keyword value like `bold` in the Styles pane now autocompletes to `font-weight: bold`.',
         link: 'https://developers.google.com/web/updates/2019/05/devtools#values',
       },
       {
         title: 'A new UI for network settings',
         subtitle:
-            'The "Use large request rows", "Group by frame", "Show overview", and "Capture screenshots" options have moved to the new Network Settings pane.',
+            'The “Use large request rows”, “Group by frame”, “Show overview”, and “Capture screenshots” options have moved to the new Network Settings pane.',
         link: 'https://developers.google.com/web/updates/2019/05/devtools#settings',
       },
       {
@@ -355,13 +573,13 @@ export const releaseNoteText = [
       {
         title: 'Meaningful preset values when autocompleting CSS functions',
         subtitle:
-            'Properties like "filter" that take functions for values now autocomplete to previewable values in the Styles pane.',
+            'Properties like `filter` that take functions for values now autocomplete to previewable values in the Styles pane.',
         link: 'https://developers.google.com/web/updates/2019/04/devtools#presets',
       },
       {
         title: 'Clear site data from the Command Menu',
         subtitle:
-            `Press ${commandMenuShortcut} and run the "Clear Site Data" command to clear cookies, storage, and more.`,
+            `Press ${commandMenuShortcut} and run the “Clear Site Data” command to clear cookies, storage, and more.`,
         link: 'https://developers.google.com/web/updates/2019/04/devtools#clear',
       },
       {
@@ -397,7 +615,7 @@ export const releaseNoteText = [
       {
         title: 'Lighthouse v4 in the Audits panel',
         subtitle:
-            'Featuring a new "tap targets" audit for checking that mobile links and buttons are properly sized, and a new UI for PWA reports.',
+            'Featuring a new “tap targets” audit for checking that mobile links and buttons are properly sized, and a new UI for PWA reports.',
         link: 'https://developers.google.com/web/updates/2019/03/devtools#lighthouse',
       },
       {
@@ -409,13 +627,13 @@ export const releaseNoteText = [
       {
         title: 'Capture area screenshot in the Command Menu',
         subtitle: 'Press ' + commandMenuShortcut +
-            ', run the "Capture area screenshot" command, and then drag your mouse to take a screenshot of part of the viewport.',
+            ', run the “Capture area screenshot” command, and then drag your mouse to take a screenshot of part of the viewport.',
         link: 'https://developers.google.com/web/updates/2019/03/devtools#screenshot',
       },
       {
         title: 'Service worker filters in the Network panel',
         subtitle:
-            'Type "is:service-worker-initiated" or "is:service-worker-intercepted" to only show service worker activity.',
+            'Type `is:service-worker-initiated` or `is:service-worker-intercepted` to only show service worker activity.',
         link: 'https://developers.google.com/web/updates/2019/03/devtools#swfilters',
       },
     ],
@@ -427,7 +645,7 @@ export const releaseNoteText = [
     highlights: [
       {
         title: 'Logpoints',
-        subtitle: 'Log messages to the Console without cluttering up your code with console.log() calls.',
+        subtitle: 'Log messages to the Console without cluttering up your code with `console.log()` calls.',
         link: 'https://developers.google.com/web/updates/2019/01/devtools#logpoints',
       },
       {
@@ -478,7 +696,7 @@ export const releaseNoteText = [
       {
         title: 'Copy JS path',
         subtitle:
-            'Right-click a DOM node and select "Copy" > "Copy JS path" to quickly get a JavaScript expression that points to that node.',
+            'Right-click a DOM node and select “Copy” > “Copy JS path” to quickly get a JavaScript expression that points to that node.',
         link: 'https://developers.google.com/web/updates/2018/11/devtools#copy',
       },
       {
@@ -501,7 +719,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Store DOM nodes as global variables',
-        subtitle: 'Right-click a node in the Elements panel or Console and select "Store as global variable".',
+        subtitle: 'Right-click a node in the Elements panel or Console and select “Store as global variable”.',
         link: 'https://developers.google.com/web/updates/2018/10/devtools#store',
       },
       {
@@ -512,7 +730,7 @@ export const releaseNoteText = [
       },
       {
         title: 'Access the Command Menu from the Main Menu',
-        subtitle: 'Open the Main Menu and select "Run command".',
+        subtitle: 'Open the Main Menu and select “Run command”.',
         link: 'https://developers.google.com/web/updates/2018/10/devtools#command-menu',
       },
     ],
@@ -724,7 +942,7 @@ export const releaseNoteText = [
       {
         title: 'Four new audits',
         subtitle:
-            'Including "Appropriate aspect ratios for images", "Avoid JS libraries with known vulnerabilities", and more.',
+            'Including “Appropriate aspect ratios for images”, “Avoid JS libraries with known vulnerabilities”, and more.',
         link: 'https://developers.google.com/web/updates/2017/10/devtools-release-notes#audits',
       },
       {
@@ -761,7 +979,7 @@ export const releaseNoteText = [
       },
       {
         title: 'A new Console API for querying objects',
-        subtitle: 'Call queryObjects(Constructor) to get an array of objects instantiated with that constructor.',
+        subtitle: 'Call `queryObjects(Constructor)` to get an array of objects instantiated with that constructor.',
         link: 'https://developers.google.com/web/updates/2017/08/devtools-release-notes#query-objects',
       },
       {

@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/logging.h"
 #include "base/values.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "components/login/localized_values_builder.h"
@@ -42,8 +41,6 @@ void BaseWebUIHandler::ShowScreen(OobeScreenId screen) {
 
 void BaseWebUIHandler::ShowScreenWithData(OobeScreenId screen,
                                           const base::DictionaryValue* data) {
-  if (!web_ui())
-    return;
   base::DictionaryValue screen_params;
   screen_params.SetString("id", screen.name);
   if (data) {

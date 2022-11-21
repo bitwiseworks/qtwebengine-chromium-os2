@@ -8,11 +8,23 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/feature_list.h"
+#include "build/build_config.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync/driver/sync_auth_util.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+
+namespace {
+
+#if defined(OS_ANDROID)
+constexpr base::Feature kWalletRequiresFirstSyncSetupComplete{
+    "WalletRequiresFirstSyncSetupComplete", base::FEATURE_ENABLED_BY_DEFAULT};
+#endif
+
+}  // namespace
 
 namespace browser_sync {
 
@@ -26,7 +38,8 @@ AutofillWalletModelTypeController::AutofillWalletModelTypeController(
       pref_service_(pref_service),
       sync_service_(sync_service) {
   DCHECK(type == syncer::AUTOFILL_WALLET_DATA ||
-         type == syncer::AUTOFILL_WALLET_METADATA);
+         type == syncer::AUTOFILL_WALLET_METADATA ||
+         type == syncer::AUTOFILL_WALLET_OFFER);
   SubscribeToPrefChanges();
   // TODO(crbug.com/906995): remove this observing mechanism once all sync
   // datatypes are stopped by ProfileSyncService, when sync is paused.
@@ -47,7 +60,8 @@ AutofillWalletModelTypeController::AutofillWalletModelTypeController(
       pref_service_(pref_service),
       sync_service_(sync_service) {
   DCHECK(type == syncer::AUTOFILL_WALLET_DATA ||
-         type == syncer::AUTOFILL_WALLET_METADATA);
+         type == syncer::AUTOFILL_WALLET_METADATA ||
+         type == syncer::AUTOFILL_WALLET_OFFER);
   SubscribeToPrefChanges();
   // TODO(crbug.com/906995): remove this observing mechanism once all sync
   // datatypes are stopped by ProfileSyncService, when sync is paused.
@@ -64,8 +78,8 @@ void AutofillWalletModelTypeController::Stop(
   DCHECK(CalledOnValidThread());
   switch (shutdown_reason) {
     case syncer::STOP_SYNC:
-      // Special case: For AUTOFILL_WALLET_DATA and AUTOFILL_WALLET_METADATA, we
-      // want to clear all data even when Sync is stopped temporarily.
+      // Special case: For Wallet-related data types, we want to clear all data
+      // even when Sync is stopped temporarily.
       shutdown_reason = syncer::DISABLE_SYNC;
       break;
     case syncer::DISABLE_SYNC:
@@ -87,6 +101,15 @@ AutofillWalletModelTypeController::GetPreconditionState() const {
           autofill::prefs::kAutofillWalletImportEnabled) &&
       pref_service_->GetBoolean(autofill::prefs::kAutofillCreditCardEnabled) &&
       !sync_service_->GetAuthError().IsPersistentError();
+#if defined(OS_ANDROID)
+  if (base::FeatureList::IsEnabled(kWalletRequiresFirstSyncSetupComplete)) {
+    // On Android, it's also required that the initial Sync setup is complete
+    // (i.e. the user has previously opted in to Sync-the-feature, even if it's
+    // not enabled right now).
+    preconditions_met &=
+        sync_service_->GetUserSettings()->IsFirstSetupComplete();
+  }
+#endif
   return preconditions_met ? PreconditionState::kPreconditionsMet
                            : PreconditionState::kMustStopAndClearData;
 }

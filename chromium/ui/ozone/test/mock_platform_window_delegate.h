@@ -5,6 +5,7 @@
 #ifndef UI_OZONE_TEST_MOCK_PLATFORM_WINDOW_DELEGATE_H_
 #define UI_OZONE_TEST_MOCK_PLATFORM_WINDOW_DELEGATE_H_
 
+#include "base/macros.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/platform_window/platform_window_delegate.h"
@@ -25,6 +26,7 @@ class MockPlatformWindowDelegate : public PlatformWindowDelegate {
   MOCK_METHOD0(OnLostCapture, void());
   MOCK_METHOD1(OnAcceleratedWidgetAvailable,
                void(gfx::AcceleratedWidget widget));
+  MOCK_METHOD0(OnWillDestroyAcceleratedWidget, void());
   MOCK_METHOD0(OnAcceleratedWidgetDestroyed, void());
   MOCK_METHOD1(OnActivationChanged, void(bool active));
   MOCK_METHOD0(GetMinimumSizeForWindow, base::Optional<gfx::Size>());

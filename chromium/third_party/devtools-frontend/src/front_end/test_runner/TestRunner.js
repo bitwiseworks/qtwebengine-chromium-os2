@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';  // eslint-disable-line no-unused-vars
 import * as ProtocolClientModule from '../protocol_client/protocol_client.js';
 import * as Workspace from '../workspace/workspace.js';
@@ -231,7 +234,9 @@ let _resolveOnFinishInits;
  * @return {!Promise<undefined>}
  */
 export async function loadModule(module) {
-  const promise = new Promise(resolve => _resolveOnFinishInits = resolve);
+  const promise = new Promise(resolve => {
+    _resolveOnFinishInits = resolve;
+  });
   await self.runtime.loadModulePromise(module);
   if (!_pendingInits) {
     return;

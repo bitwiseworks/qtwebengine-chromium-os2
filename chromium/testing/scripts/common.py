@@ -209,8 +209,13 @@ class BaseIsolatedScriptArgsAdapter(object):
     self._options = None
     self._rest_args = None
     self._parser.add_argument(
+        '--isolated-outdir', type=str,
+        required=False, # TODO(crbug.com/816629): Make this be required.
+        help='value of $ISOLATED_OUTDIR from swarming task')
+    self._parser.add_argument(
         '--isolated-script-test-output', type=str,
-        required=True)
+        required=True,
+        help='path to write test results JSON object to')
     self._parser.add_argument(
         '--isolated-script-test-filter', type=str,
         required=False)
@@ -319,9 +324,17 @@ class BaseIsolatedScriptArgsAdapter(object):
   def clean_up_after_test_run(self):
     pass
 
+  def do_pre_test_run_tasks(self):
+    pass
+
+  def do_post_test_run_tasks(self):
+    pass
+
   def run_test(self):
     self.parse_args()
     cmd = self.generate_isolated_script_cmd()
+
+    self.do_pre_test_run_tasks()
 
     env = os.environ.copy()
 
@@ -339,6 +352,7 @@ class BaseIsolatedScriptArgsAdapter(object):
       else:
         exit_code = test_env.run_command(cmd, env=env)
       print 'Command returned exit code %d' % exit_code
+      self.do_post_test_run_tasks()
       return exit_code
     except Exception:
       traceback.print_exc()

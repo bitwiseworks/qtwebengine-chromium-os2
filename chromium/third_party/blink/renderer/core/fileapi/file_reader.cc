@@ -34,11 +34,11 @@
 #include "base/timer/elapsed_timer.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_array_buffer.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/events/progress_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
 #include "third_party/blink/renderer/core/fileapi/file_error.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
@@ -72,8 +72,6 @@ static const base::TimeDelta kProgressNotificationInterval =
 class FileReader::ThrottlingController final
     : public GarbageCollected<FileReader::ThrottlingController>,
       public Supplement<ExecutionContext> {
-  USING_GARBAGE_COLLECTED_MIXIN(FileReader::ThrottlingController);
-
  public:
   static const char kSupplementName[];
 
@@ -125,7 +123,7 @@ class FileReader::ThrottlingController final
       : Supplement<ExecutionContext>(context),
         max_running_readers_(kMaxOutstandingRequestsPerThread) {}
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(pending_readers_);
     visitor->Trace(running_readers_);
     Supplement<ExecutionContext>::Trace(visitor);
@@ -293,8 +291,8 @@ void FileReader::ReadInternal(Blob* blob,
 
   // A document loader will not load new resources once the Document has
   // detached from its frame.
-  Document* document = Document::DynamicFrom(context);
-  if (document && !document->GetFrame()) {
+  LocalDOMWindow* window = DynamicTo<LocalDOMWindow>(context);
+  if (window && !window->GetFrame()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kAbortError,
         "Reading from a Document-detached FileReader is not supported.");
@@ -337,7 +335,10 @@ void FileReader::abort() {
   loading_state_ = kLoadingStateAborted;
 
   DCHECK_NE(kDone, state_);
-  state_ = kDone;
+  // Synchronously cancel the loader before dispatching events. This way we make
+  // sure the FileReader internal state stays consistent even if another load
+  // is started from one of the event handlers, or right after abort returns.
+  Terminate();
 
   base::AutoReset<bool> firing_events(&still_firing_events_, true);
 
@@ -349,25 +350,23 @@ void FileReader::abort() {
       ThrottlingController::RemoveReader(GetExecutionContext(), this);
 
   FireEvent(event_type_names::kAbort);
+  // TODO(https://crbug.com/1204139): Only fire loadend event if no new load was
+  // started from the abort event handler.
   FireEvent(event_type_names::kLoadend);
 
   // All possible events have fired and we're done, no more pending activity.
   ThrottlingController::FinishReader(GetExecutionContext(), this, final_step);
-
-  // Also synchronously cancel the loader, as script might initiate a new load
-  // right after this method returns, in which case an async termination would
-  // terminate the wrong loader.
-  Terminate();
 }
 
-void FileReader::result(ScriptState* state,
-                        StringOrArrayBuffer& result_attribute) const {
+void FileReader::result(StringOrArrayBuffer& result_attribute) const {
   if (error_ || !loader_)
     return;
 
-  if (!loader_->HasFinishedLoading()) {
-    UseCounter::Count(ExecutionContext::From(state),
-                      WebFeature::kFileReaderResultBeforeCompletion);
+  // Only set the result after |loader_| has finished loading which means that
+  // FileReader::DidFinishLoading() has also been called. This ensures that the
+  // result is not available until just before the kLoad event is fired.
+  if (!loader_->HasFinishedLoading() || state_ != ReadyState::kDone) {
+    return;
   }
 
   if (read_type_ == FileReaderLoader::kReadAsArrayBuffer)
@@ -429,6 +428,8 @@ void FileReader::DidFinishLoading() {
       ThrottlingController::RemoveReader(GetExecutionContext(), this);
 
   FireEvent(event_type_names::kLoad);
+  // TODO(https://crbug.com/1204139): Only fire loadend event if no new load was
+  // started from the abort event handler.
   FireEvent(event_type_names::kLoadend);
 
   // All possible events have fired and we're done, no more pending activity.
@@ -476,7 +477,7 @@ void FileReader::FireEvent(const AtomicString& type) {
   }
 }
 
-void FileReader::Trace(Visitor* visitor) {
+void FileReader::Trace(Visitor* visitor) const {
   visitor->Trace(error_);
   EventTargetWithInlineData::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);

@@ -8,7 +8,8 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
@@ -197,8 +198,8 @@ HostCache::Entry HostResolverMdnsTask::ParseResult(
   switch (query_type) {
     case DnsQueryType::UNSPECIFIED:
       // Should create two separate transactions with specified type.
-    case DnsQueryType::ESNI:
-      // ESNI queries are not expected to be useful in mDNS, so they're not
+    case DnsQueryType::INTEGRITY:
+      // INTEGRITY queries are not expected to be useful in mDNS, so they're not
       // supported.
       NOTREACHED();
       return HostCache::Entry(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);

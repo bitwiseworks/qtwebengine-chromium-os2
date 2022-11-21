@@ -258,6 +258,13 @@ class SqliteTable : public sqlite3_vtab {
     };
     module->xFilter = [](sqlite3_vtab_cursor* vc, int i, const char* s, int a,
                          sqlite3_value** v) {
+      // If the idxNum is equal to kSqliteConstraintBestIndexNum, that means
+      // in BestIndexInternal, we tried to discourage the query planner from
+      // chosing this plan. As the subclass has informed us that it cannot
+      // handle this plan, just return the error now.
+      if (i == kInvalidConstraintsInBestIndexNum)
+        return SQLITE_CONSTRAINT;
+
       auto* c = static_cast<Cursor*>(vc);
       bool is_cached = c->table_->ReadConstraints(i, s, a);
 
@@ -318,9 +325,9 @@ class SqliteTable : public sqlite3_vtab {
   virtual int BestIndex(const QueryConstraints& qc, BestIndexInfo* info) = 0;
 
   // Optional metods to implement.
-  using FindFunctionFn = void (**)(sqlite3_context*, int, sqlite3_value**);
+  using FindFunctionFn = void (*)(sqlite3_context*, int, sqlite3_value**);
   virtual int ModifyConstraints(QueryConstraints* qc);
-  virtual int FindFunction(const char* name, FindFunctionFn fn, void** args);
+  virtual int FindFunction(const char* name, FindFunctionFn* fn, void** args);
 
   // At registration time, the function should also pass true for |read_write|.
   virtual int Update(int, sqlite3_value**, sqlite3_int64*);
@@ -334,6 +341,9 @@ class SqliteTable : public sqlite3_vtab {
   const std::string& name() const { return name_; }
 
  private:
+  static constexpr int kInvalidConstraintsInBestIndexNum =
+      std::numeric_limits<int>::max();
+
   template <typename TableType, typename Context>
   static Factory<Context> GetFactory() {
     return [](sqlite3* db, Context ctx) {

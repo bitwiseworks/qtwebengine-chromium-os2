@@ -39,6 +39,7 @@
 #endif
 
 #include <string.h>
+
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -50,9 +51,11 @@
 #include <vector>
 
 #include "absl/base/call_once.h"
+#include "absl/base/config.h"
 #include "absl/base/internal/raw_logging.h"
 #include "absl/base/internal/spinlock.h"
 #include "absl/base/internal/unscaledcycleclock.h"
+#include "absl/base/thread_annotations.h"
 
 namespace absl {
 ABSL_NAMESPACE_BEGIN
@@ -343,15 +346,16 @@ pid_t GetTID() {
 #else
 
 // Fallback implementation of GetTID using pthread_getspecific.
-static once_flag tid_once;
-static pthread_key_t tid_key;
-static absl::base_internal::SpinLock tid_lock(
-    absl::base_internal::kLinkerInitialized);
+ABSL_CONST_INIT static once_flag tid_once;
+ABSL_CONST_INIT static pthread_key_t tid_key;
+ABSL_CONST_INIT static absl::base_internal::SpinLock tid_lock(
+    absl::kConstInit, base_internal::SCHEDULE_KERNEL_ONLY);
 
 // We set a bit per thread in this array to indicate that an ID is in
 // use. ID 0 is unused because it is the default value returned by
 // pthread_getspecific().
-static std::vector<uint32_t>* tid_array ABSL_GUARDED_BY(tid_lock) = nullptr;
+ABSL_CONST_INIT static std::vector<uint32_t> *tid_array
+    ABSL_GUARDED_BY(tid_lock) = nullptr;
 static constexpr int kBitsPerWord = 32;  // tid_array is uint32_t.
 
 // Returns the TID to tid_array.
@@ -417,6 +421,18 @@ pid_t GetTID() {
 }
 
 #endif
+
+// GetCachedTID() caches the thread ID in thread-local storage (which is a
+// userspace construct) to avoid unnecessary system calls. Without this caching,
+// it can take roughly 98ns, while it takes roughly 1ns with this caching.
+pid_t GetCachedTID() {
+#if ABSL_HAVE_THREAD_LOCAL
+  static thread_local pid_t thread_id = GetTID();
+  return thread_id;
+#else
+  return GetTID();
+#endif  // ABSL_HAVE_THREAD_LOCAL
+}
 
 }  // namespace base_internal
 ABSL_NAMESPACE_END

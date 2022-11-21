@@ -7,6 +7,7 @@
 
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "base/containers/circular_deque.h"
 #include "base/gtest_prod_util.h"
@@ -17,6 +18,10 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
+namespace content {
+class RenderFrameHost;
+}
+
 namespace test {
 class PermissionRequestManagerTestApi;
 }
@@ -25,6 +30,23 @@ namespace permissions {
 class PermissionRequest;
 enum class PermissionAction;
 enum class PermissionPromptDisposition;
+
+// The message to be printed in the Developer Tools console when the quiet
+// notification permission prompt UI is shown on sites with abusive permission
+// request flows.
+extern const char kAbusiveNotificationRequestsEnforcementMessage[];
+
+// The message to be printed in the Developer Tools console when the site is on
+// the warning list for abusive permission request flows.
+extern const char kAbusiveNotificationRequestsWarningMessage[];
+
+// The message to be printed in the Developer Tools console when the site is on
+// the blocking list for showing abusive notification content.
+extern const char kAbusiveNotificationContentEnforcementMessage[];
+
+// The message to be printed in the Developer Tools console when the site is on
+// the warning list for showing abusive notification content.
+extern const char kAbusiveNotificationContentWarningMessage[];
 
 // Provides access to permissions bubbles. Allows clients to add a request
 // callback interface to the existing permission bubble configuration.
@@ -53,8 +75,9 @@ class PermissionRequestManager
 
   enum AutoResponseType { NONE, ACCEPT_ALL, DENY_ALL, DISMISS };
 
-  using UiToUse = NotificationPermissionUiSelector::UiToUse;
+  using UiDecision = NotificationPermissionUiSelector::Decision;
   using QuietUiReason = NotificationPermissionUiSelector::QuietUiReason;
+  using WarningReason = NotificationPermissionUiSelector::WarningReason;
 
   ~PermissionRequestManager() override;
 
@@ -65,7 +88,8 @@ class PermissionRequestManager
   // bubble closes. A request with message text identical to an outstanding
   // request will be merged with the outstanding request, and will have the same
   // callbacks called as the outstanding request.
-  void AddRequest(PermissionRequest* request);
+  void AddRequest(content::RenderFrameHost* source_frame,
+                  PermissionRequest* request);
 
   // Will reposition the bubble (may change parent if necessary).
   void UpdateAnchorPosition();
@@ -79,6 +103,7 @@ class PermissionRequestManager
   // directly by the user in notifications settings, or via automatic logic that
   // might trigger the current request to use the quiet UI.
   bool ShouldCurrentRequestUseQuietUI() const;
+
   // If |ShouldCurrentRequestUseQuietUI| return true, this will provide a reason
   // as to why the quiet UI needs to be used.
   QuietUiReason ReasonForUsingQuietUi() const;
@@ -105,9 +130,11 @@ class PermissionRequestManager
 
   // PermissionPrompt::Delegate:
   const std::vector<PermissionRequest*>& Requests() override;
+  GURL GetEmbeddingOrigin() const override;
   void Accept() override;
   void Deny() override;
   void Closing() override;
+  bool WasCurrentRequestAlreadyDisplayed() override;
 
   void set_web_contents_supports_permission_requests(
       bool web_contents_supports_permission_requests) {
@@ -179,13 +206,15 @@ class PermissionRequestManager
   void NotifyBubbleAdded();
   void NotifyBubbleRemoved();
 
-  void OnSelectedUiToUseForNotifications(
-      UiToUse ui_to_use,
-      base::Optional<QuietUiReason> quiet_ui_reason);
+  void OnSelectedUiToUseForNotifications(const UiDecision& decision);
 
   PermissionPromptDisposition DetermineCurrentRequestUIDispositionForUMA();
 
+  void LogWarningToConsole(const char* message);
+
   void DoAutoResponseForTesting();
+
+  int CountQueuedPermissionRequests(PermissionRequest* request);
 
   // Factory to be used to create views when needed.
   PermissionPrompt::Factory view_factory_;
@@ -202,7 +231,16 @@ class PermissionRequestManager
   // When this is non-empty, the |view_| is generally non-null as long as the
   // tab is visible.
   std::vector<PermissionRequest*> requests_;
-  base::circular_deque<PermissionRequest*> queued_requests_;
+
+  struct RequestAndSource {
+    int render_process_id;
+    int render_frame_id;
+    PermissionRequest* request;
+
+    bool IsSourceFrameInactiveAndDisallowReactivation() const;
+  };
+
+  base::circular_deque<RequestAndSource> queued_requests_;
   // Maps from the first request of a kind to subsequent requests that were
   // duped against it.
   std::unordered_multimap<PermissionRequest*, PermissionRequest*>
@@ -222,17 +260,12 @@ class PermissionRequestManager
 
   // Whether the view for the current |requests_| has been shown to the user at
   // least once.
-  bool current_request_view_shown_to_user_ = false;
+  bool current_request_already_displayed_ = false;
 
   // Whether to use the normal or quiet UI to display the current permission
-  // |requests_|, or nullopt if  we are still waiting on the result from the
-  // |notification_permission_ui_selector_|.
-  base::Optional<UiToUse> current_request_ui_to_use_;
-
-  // The reason for using the quiet UI to display the current permission
-  // |requests_|, or nullopt if we are still waiting for the response from the
-  // |notification_permission_ui_selector_| or we are using the normal UI.
-  base::Optional<QuietUiReason> current_request_quiet_ui_reason_;
+  // |requests_|, and whether to show warnings. This will be nullopt if we are
+  // still waiting on the result from |notification_permission_ui_selector_|.
+  base::Optional<UiDecision> current_request_ui_to_use_;
 
   // Whether the bubble is being destroyed by this class, rather than in
   // response to a UI event. In this case, callbacks from the bubble itself

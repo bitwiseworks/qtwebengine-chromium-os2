@@ -16,7 +16,7 @@
 #include "src/codegen/register-configuration.h"
 #include "src/debug/debug.h"
 #include "src/execution/frames-inl.h"
-#include "src/heap/heap-inl.h"  // For MemoryChunk.
+#include "src/heap/memory-chunk.h"
 #include "src/init/bootstrapper.h"
 #include "src/logging/counters.h"
 #include "src/objects/heap-number.h"
@@ -144,10 +144,11 @@ void TurboAssembler::PushCommonFrame(Register marker_reg) {
 void TurboAssembler::PushStandardFrame(Register function_reg) {
   int offset = -StandardFrameConstants::kContextOffset;
   if (function_reg.is_valid()) {
-    Push(ra, fp, cp, function_reg);
-    offset += kPointerSize;
+    Push(ra, fp, cp, function_reg, kJavaScriptCallArgCountRegister);
+    offset += 2 * kPointerSize;
   } else {
-    Push(ra, fp, cp);
+    Push(ra, fp, cp, kJavaScriptCallArgCountRegister);
+    offset += kPointerSize;
   }
   Daddu(fp, sp, Operand(offset));
 }
@@ -255,10 +256,8 @@ void TurboAssembler::CallEphemeronKeyBarrier(Register object, Register address,
 void TurboAssembler::CallRecordWriteStub(
     Register object, Register address,
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode) {
-  CallRecordWriteStub(
-      object, address, remembered_set_action, fp_mode,
-      isolate()->builtins()->builtin_handle(Builtins::kRecordWrite),
-      kNullAddress);
+  CallRecordWriteStub(object, address, remembered_set_action, fp_mode,
+                      Builtins::kRecordWrite, kNullAddress);
 }
 
 void TurboAssembler::CallRecordWriteStub(
@@ -266,14 +265,15 @@ void TurboAssembler::CallRecordWriteStub(
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode,
     Address wasm_target) {
   CallRecordWriteStub(object, address, remembered_set_action, fp_mode,
-                      Handle<Code>::null(), wasm_target);
+                      Builtins::kNoBuiltinId, wasm_target);
 }
 
 void TurboAssembler::CallRecordWriteStub(
     Register object, Register address,
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode,
-    Handle<Code> code_target, Address wasm_target) {
-  DCHECK_NE(code_target.is_null(), wasm_target == kNullAddress);
+    int builtin_index, Address wasm_target) {
+  DCHECK_NE(builtin_index == Builtins::kNoBuiltinId,
+            wasm_target == kNullAddress);
   // TODO(albertnetymk): For now we ignore remembered_set_action and fp_mode,
   // i.e. always emit remember set and save FP registers in RecordWriteStub. If
   // large performance regression is observed, we should use these values to
@@ -300,9 +300,20 @@ void TurboAssembler::CallRecordWriteStub(
 
   Move(remembered_set_parameter, Smi::FromEnum(remembered_set_action));
   Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
-  if (code_target.is_null()) {
+  if (builtin_index == Builtins::kNoBuiltinId) {
     Call(wasm_target, RelocInfo::WASM_STUB_CALL);
+  } else if (options().inline_offheap_trampolines) {
+    // Inline the trampoline.
+    DCHECK(Builtins::IsBuiltinId(builtin_index));
+    RecordCommentForOffHeapTrampoline(builtin_index);
+    CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
+    EmbeddedData d = EmbeddedData::FromBlob();
+    Address entry = d.InstructionStartOfBuiltin(builtin_index);
+    li(t9, Operand(entry, RelocInfo::OFF_HEAP_TARGET));
+    Call(t9);
   } else {
+    Handle<Code> code_target =
+        isolate()->builtins()->builtin_handle(Builtins::kRecordWrite);
     Call(code_target, RelocInfo::CODE_TARGET);
   }
 
@@ -2612,6 +2623,38 @@ void TurboAssembler::Round_s_s(FPURegister dst, FPURegister src) {
              });
 }
 
+void TurboAssembler::MSARoundW(MSARegister dst, MSARegister src,
+                               FPURoundingMode mode) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  Register scratch = t8;
+  Register scratch2 = at;
+  cfcmsa(scratch, MSACSR);
+  if (mode == kRoundToNearest) {
+    scratch2 = zero_reg;
+  } else {
+    li(scratch2, Operand(mode));
+  }
+  ctcmsa(MSACSR, scratch2);
+  frint_w(dst, src);
+  ctcmsa(MSACSR, scratch);
+}
+
+void TurboAssembler::MSARoundD(MSARegister dst, MSARegister src,
+                               FPURoundingMode mode) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  Register scratch = t8;
+  Register scratch2 = at;
+  cfcmsa(scratch, MSACSR);
+  if (mode == kRoundToNearest) {
+    scratch2 = zero_reg;
+  } else {
+    li(scratch2, Operand(mode));
+  }
+  ctcmsa(MSACSR, scratch2);
+  frint_d(dst, src);
+  ctcmsa(MSACSR, scratch);
+}
+
 void MacroAssembler::Madd_s(FPURegister fd, FPURegister fr, FPURegister fs,
                             FPURegister ft, FPURegister scratch) {
   DCHECK(fr != scratch && fs != scratch && ft != scratch);
@@ -2729,7 +2772,7 @@ void TurboAssembler::BranchMSA(Label* target, MSABranchDF df,
 void TurboAssembler::BranchShortMSA(MSABranchDF df, Label* target,
                                     MSABranchCondition cond, MSARegister wt,
                                     BranchDelaySlot bd) {
-  if (kArchVariant == kMips64r6) {
+  if (IsEnabled(MIPS_SIMD)) {
     BlockTrampolinePoolScope block_trampoline_pool(this);
     if (target) {
       switch (cond) {
@@ -2775,6 +2818,8 @@ void TurboAssembler::BranchShortMSA(MSABranchDF df, Label* target,
           UNREACHABLE();
       }
     }
+  } else {
+    UNREACHABLE();
   }
   if (bd == PROTECT) {
     nop();
@@ -4233,6 +4278,7 @@ void TurboAssembler::Call(Register target, Condition cond, Register rs,
     // Emit a nop in the branch delay slot if required.
     if (bd == PROTECT) nop();
   }
+  set_last_call_pc_(pc_);
 }
 
 void MacroAssembler::JumpIfIsInRange(Register value, unsigned lower_limit,
@@ -4374,13 +4420,13 @@ void TurboAssembler::BranchLong(Label* L, BranchDelaySlot bdslot) {
   } else {
     // Generate position independent long branch.
     BlockTrampolinePoolScope block_trampoline_pool(this);
-    int64_t imm64;
-    imm64 = branch_long_offset(L);
+    int64_t imm64 = branch_long_offset(L);
     DCHECK(is_int32(imm64));
+    int32_t imm32 = static_cast<int32_t>(imm64);
     or_(t8, ra, zero_reg);
     nal();                                        // Read PC into ra register.
-    lui(t9, (imm64 & kHiMaskOf32) >> kLuiShift);  // Branch delay slot.
-    ori(t9, t9, (imm64 & kImm16Mask));
+    lui(t9, (imm32 & kHiMaskOf32) >> kLuiShift);  // Branch delay slot.
+    ori(t9, t9, (imm32 & kImm16Mask));
     daddu(t9, ra, t9);
     if (bdslot == USE_DELAY_SLOT) {
       or_(ra, t8, zero_reg);
@@ -4398,12 +4444,12 @@ void TurboAssembler::BranchAndLinkLong(Label* L, BranchDelaySlot bdslot) {
   } else {
     // Generate position independent long branch and link.
     BlockTrampolinePoolScope block_trampoline_pool(this);
-    int64_t imm64;
-    imm64 = branch_long_offset(L);
+    int64_t imm64 = branch_long_offset(L);
     DCHECK(is_int32(imm64));
-    lui(t8, (imm64 & kHiMaskOf32) >> kLuiShift);
+    int32_t imm32 = static_cast<int32_t>(imm64);
+    lui(t8, (imm32 & kHiMaskOf32) >> kLuiShift);
     nal();                              // Read PC into ra register.
-    ori(t8, t8, (imm64 & kImm16Mask));  // Branch delay slot.
+    ori(t8, t8, (imm32 & kImm16Mask));  // Branch delay slot.
     daddu(t8, ra, t8);
     jalr(t8);
     // Emit a nop in the branch delay slot if required.
@@ -4483,6 +4529,33 @@ void TurboAssembler::Push(Handle<HeapObject> handle) {
   Register scratch = temps.Acquire();
   li(scratch, Operand(handle));
   push(scratch);
+}
+
+void TurboAssembler::PushArray(Register array, Register size, Register scratch,
+                               Register scratch2, PushArrayOrder order) {
+  DCHECK(!AreAliased(array, size, scratch, scratch2));
+  Label loop, entry;
+  if (order == PushArrayOrder::kReverse) {
+    mov(scratch, zero_reg);
+    jmp(&entry);
+    bind(&loop);
+    Dlsa(scratch2, array, scratch, kPointerSizeLog2);
+    Ld(scratch2, MemOperand(scratch2));
+    push(scratch2);
+    Daddu(scratch, scratch, Operand(1));
+    bind(&entry);
+    Branch(&loop, less, scratch, Operand(size));
+  } else {
+    mov(scratch, size);
+    jmp(&entry);
+    bind(&loop);
+    Dlsa(scratch2, array, scratch, kPointerSizeLog2);
+    Ld(scratch2, MemOperand(scratch2));
+    push(scratch2);
+    bind(&entry);
+    Daddu(scratch, scratch, Operand(-1));
+    Branch(&loop, greater_equal, scratch, Operand(zero_reg));
+  }
 }
 
 void MacroAssembler::MaybeDropFrames() {
@@ -4693,8 +4766,8 @@ void MacroAssembler::CheckDebugHook(Register fun, Register new_target,
 
   {
     // Load receiver to pass it later to DebugOnFunctionCall hook.
-    Dlsa(t0, sp, actual_parameter_count, kPointerSizeLog2);
-    Ld(t0, MemOperand(t0));
+    LoadReceiver(t0, actual_parameter_count);
+
     FrameScope frame(this,
                      has_frame() ? StackFrame::NONE : StackFrame::INTERNAL);
     SmiTag(expected_parameter_count);
@@ -5751,7 +5824,7 @@ void TurboAssembler::CallCFunctionHelper(Register function,
 void TurboAssembler::CheckPageFlag(Register object, Register scratch, int mask,
                                    Condition cc, Label* condition_met) {
   And(scratch, object, Operand(~kPageAlignmentMask));
-  Ld(scratch, MemOperand(scratch, MemoryChunk::kFlagsOffset));
+  Ld(scratch, MemOperand(scratch, BasicMemoryChunk::kFlagsOffset));
   And(scratch, scratch, Operand(mask));
   Branch(condition_met, cc, scratch, Operand(zero_reg));
 }

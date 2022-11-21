@@ -20,9 +20,9 @@
 #include "components/spellcheck/browser/spellcheck_host_metrics.h"
 #endif  // defined(OS_WIN)
 
-#if BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+#if defined(OS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 #include "components/spellcheck/common/spellcheck_common.h"
-#endif  // BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+#endif  // defined(OS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 
 class PlatformSpellChecker;
 
@@ -33,15 +33,30 @@ namespace spellcheck_platform {
 typedef base::OnceCallback<void(const std::vector<SpellCheckResult>&)>
     TextCheckCompleteCallback;
 
-#if BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+#if defined(OS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 typedef base::OnceCallback<void(const spellcheck::PerLanguageSuggestions&)>
     GetSuggestionsCallback;
-#endif  // BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+#endif  // defined(OS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+
+typedef base::OnceCallback<void(const std::vector<std::string>& /* results */)>
+    RetrieveSpellcheckLanguagesCompleteCallback;
 
 // Get the languages supported by the platform spellchecker and store them in
 // |spellcheck_languages|. Note that they must be converted to
 // Chromium style codes (en-US not en_US). See spellchecker.cc for a full list.
 void GetAvailableLanguages(std::vector<std::string>* spellcheck_languages);
+
+// Retrieve BCP47 language tags for registered platform spellcheckers
+// on the system. Callback will pass an empty vector of language tags if the OS
+// does not support spellcheck or this functionality is not yet implemented.
+void RetrieveSpellcheckLanguages(
+    PlatformSpellChecker* spell_checker_instance,
+    RetrieveSpellcheckLanguagesCompleteCallback callback);
+
+// Test-only method for adding fake list of platform spellcheck languages.
+void AddSpellcheckLanguagesForTesting(
+    PlatformSpellChecker* spell_checker_instance,
+    const std::vector<std::string>& languages);
 
 // Returns the language used for spellchecking on the platform.
 std::string GetSpellCheckerLanguage();
@@ -120,12 +135,12 @@ void RequestTextCheck(PlatformSpellChecker* spell_checker_instance,
                       const base::string16& text,
                       TextCheckCompleteCallback callback);
 
-#if BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+#if defined(OS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 // Finds the replacement suggestions for each language for the given word.
 void GetPerLanguageSuggestions(PlatformSpellChecker* spell_checker_instance,
                                const base::string16& word,
                                GetSuggestionsCallback callback);
-#endif  // BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+#endif  // defined(OS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 
 #if defined(OS_WIN)
 // Records statistics about spell check support for the user's Chrome locales.

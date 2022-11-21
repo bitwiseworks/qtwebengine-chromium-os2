@@ -7,9 +7,13 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_property_definition.h"
 #include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
+#include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_rule_list.h"
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
+#include "third_party/blink/renderer/core/css/css_syntax_definition.h"
+#include "third_party/blink/renderer/core/css/css_syntax_string_parser.h"
 #include "third_party/blink/renderer/core/css/css_variable_data.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_local_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
@@ -32,7 +36,7 @@ namespace css_test_helpers {
 TestStyleSheet::~TestStyleSheet() = default;
 
 TestStyleSheet::TestStyleSheet() {
-  document_ = MakeGarbageCollected<Document>();
+  document_ = Document::CreateForTest();
   TextPosition position;
   style_sheet_ = CSSStyleSheet::CreateInline(*document_, NullURL(), position,
                                              UTF8Encoding());
@@ -47,7 +51,7 @@ CSSRuleList* TestStyleSheet::CssRules() {
 
 RuleSet& TestStyleSheet::GetRuleSet() {
   RuleSet& rule_set = style_sheet_->Contents()->EnsureRuleSet(
-      MediaQueryEvaluator(), kRuleHasNoSpecialState);
+      MediaQueryEvaluator(document_->GetFrame()), kRuleHasNoSpecialState);
   rule_set.CompactRulesIfNeeded();
   return rule_set;
 }
@@ -62,17 +66,37 @@ void TestStyleSheet::AddCSSRules(const String& css_text, bool is_empty_sheet) {
     ASSERT_EQ(style_sheet_->length(), sheet_length);
 }
 
+PropertyRegistration* CreatePropertyRegistration(const String& name) {
+  auto syntax_definition = CSSSyntaxStringParser("*").Parse();
+  DCHECK(syntax_definition);
+  return MakeGarbageCollected<PropertyRegistration>(
+      AtomicString(name), *syntax_definition, false /* inherits */,
+      nullptr /* initial */, nullptr /* initial_variable_data */);
+}
+
+PropertyRegistration* CreateLengthRegistration(const String& name, int px) {
+  auto syntax_definition = CSSSyntaxStringParser("<length>").Parse();
+  DCHECK(syntax_definition);
+  const CSSValue* initial =
+      CSSNumericLiteralValue::Create(px, CSSPrimitiveValue::UnitType::kPixels);
+  return MakeGarbageCollected<PropertyRegistration>(
+      AtomicString(name), *syntax_definition, false /* inherits */, initial,
+      CreateVariableData(initial->CssText()));
+}
+
 void RegisterProperty(Document& document,
                       const String& name,
                       const String& syntax,
-                      const String& initial_value,
+                      const base::Optional<String>& initial_value,
                       bool is_inherited) {
+  DCHECK(!initial_value || !initial_value.value().IsNull());
   DummyExceptionStateForTesting exception_state;
   PropertyDefinition* property_definition = PropertyDefinition::Create();
   property_definition->setName(name);
   property_definition->setSyntax(syntax);
-  property_definition->setInitialValue(initial_value);
   property_definition->setInherits(is_inherited);
+  if (initial_value)
+    property_definition->setInitialValue(initial_value.value());
   PropertyRegistration::registerProperty(document.GetExecutionContext(),
                                          property_definition, exception_state);
   ASSERT_FALSE(exception_state.HadException());
@@ -113,6 +137,26 @@ const CSSPropertyValueSet* ParseDeclarationBlock(const String& block_text,
   set->ParseDeclarationList(block_text, SecureContextMode::kSecureContext,
                             nullptr);
   return set;
+}
+
+StyleRuleBase* ParseRule(Document& document, String text) {
+  TextPosition position;
+  auto* sheet = CSSStyleSheet::CreateInline(document, NullURL(), position,
+                                            UTF8Encoding());
+  const auto* context = MakeGarbageCollected<CSSParserContext>(document);
+  return CSSParser::ParseRule(context, sheet->Contents(), text);
+}
+
+const CSSValue* ParseValue(Document& document, String syntax, String value) {
+  auto syntax_definition = CSSSyntaxStringParser(syntax).Parse();
+  if (!syntax_definition.has_value())
+    return nullptr;
+  const auto* context = MakeGarbageCollected<CSSParserContext>(document);
+  CSSTokenizer tokenizer(value);
+  auto tokens = tokenizer.TokenizeToEOF();
+  CSSParserTokenRange range(tokens);
+  return syntax_definition->Parse(range, *context,
+                                  /* is_animation_tainted */ false);
 }
 
 }  // namespace css_test_helpers

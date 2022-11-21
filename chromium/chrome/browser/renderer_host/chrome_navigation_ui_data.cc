@@ -4,9 +4,9 @@
 
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 
-#include "chrome/browser/prerender/prerender_contents.h"
-#include "chrome/browser/prerender/prerender_histograms.h"
-#include "chrome/browser/previews/previews_lite_page_redirect_decider.h"
+#include "chrome/browser/prerender/chrome_prerender_contents_delegate.h"
+#include "components/prerender/browser/prerender_contents.h"
+#include "components/prerender/browser/prerender_histograms.h"
 #include "content/public/browser/navigation_handle.h"
 #include "extensions/buildflags/buildflags.h"
 #include "ui/base/window_open_disposition.h"
@@ -36,16 +36,13 @@ ChromeNavigationUIData::ChromeNavigationUIData(
 #endif
 
   auto* prerender_contents =
-      prerender::PrerenderContents::FromWebContents(web_contents);
+      prerender::ChromePrerenderContentsDelegate::FromWebContents(web_contents);
   if (prerender_contents) {
     prerender_mode_ = prerender_contents->prerender_mode();
     prerender_histogram_prefix_ =
         prerender::PrerenderHistograms::GetHistogramPrefix(
             prerender_contents->origin());
   }
-  data_reduction_proxy_page_id_ =
-      PreviewsLitePageRedirectDecider::GeneratePageIdForWebContents(
-          web_contents);
 }
 
 ChromeNavigationUIData::~ChromeNavigationUIData() {}
@@ -54,12 +51,9 @@ ChromeNavigationUIData::~ChromeNavigationUIData() {}
 std::unique_ptr<ChromeNavigationUIData>
 ChromeNavigationUIData::CreateForMainFrameNavigation(
     content::WebContents* web_contents,
-    WindowOpenDisposition disposition,
-    int64_t data_reduction_proxy_page_id) {
+    WindowOpenDisposition disposition) {
   auto navigation_ui_data = std::make_unique<ChromeNavigationUIData>();
   navigation_ui_data->disposition_ = disposition;
-  navigation_ui_data->data_reduction_proxy_page_id_ =
-      data_reduction_proxy_page_id;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   int tab_id = extension_misc::kUnknownTabId;
@@ -82,7 +76,6 @@ std::unique_ptr<content::NavigationUIData> ChromeNavigationUIData::Clone() {
   auto copy = std::make_unique<ChromeNavigationUIData>();
 
   copy->disposition_ = disposition_;
-  copy->data_reduction_proxy_page_id_ = data_reduction_proxy_page_id_;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   if (extension_data_)

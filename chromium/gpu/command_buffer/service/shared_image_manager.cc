@@ -103,17 +103,19 @@ SharedImageManager::Register(std::unique_ptr<SharedImageBacking> backing,
   DCHECK(backing->mailbox().IsSharedImage());
 
   AutoLock autolock(this);
-  const auto lower_bound = images_.lower_bound(backing->mailbox());
-  if (lower_bound != images_.end() &&
-      (*lower_bound)->mailbox() == backing->mailbox()) {
+  if (images_.find(backing->mailbox()) != images_.end()) {
     LOG(ERROR) << "SharedImageManager::Register: Trying to register an "
                   "already registered mailbox.";
     return nullptr;
   }
 
+  // TODO(jonross): Determine how the direct destruction of a
+  // SharedImageRepresentationFactoryRef leads to ref-counting issues as
+  // well as thread-checking failures in tests.
   auto factory_ref = std::make_unique<SharedImageRepresentationFactoryRef>(
       this, backing.get(), tracker);
-  images_.emplace_hint(lower_bound, std::move(backing));
+  images_.emplace(std::move(backing));
+
   return factory_ref;
 }
 
@@ -271,27 +273,62 @@ SharedImageManager::ProduceOverlay(const gpu::Mailbox& mailbox,
   return representation;
 }
 
+std::unique_ptr<SharedImageRepresentationVaapi>
+SharedImageManager::ProduceVASurface(const Mailbox& mailbox,
+                                     MemoryTypeTracker* tracker,
+                                     VaapiDependenciesFactory* dep_factory) {
+  CALLED_ON_VALID_THREAD();
+
+  AutoLock autolock(this);
+  auto found = images_.find(mailbox);
+  if (found == images_.end()) {
+    LOG(ERROR) << "SharedImageManager::ProduceVASurface: Trying to produce a "
+                  "VA-API representation from a non-existent mailbox.";
+    return nullptr;
+  }
+
+  auto representation = (*found)->ProduceVASurface(this, tracker, dep_factory);
+
+  if (!representation) {
+    LOG(ERROR) << "SharedImageManager::ProduceVASurface: Trying to produce a "
+                  "VA-API representation from an incompatible mailbox.";
+    return nullptr;
+  }
+  return representation;
+}
+
 void SharedImageManager::OnRepresentationDestroyed(
     const Mailbox& mailbox,
     SharedImageRepresentation* representation) {
   CALLED_ON_VALID_THREAD();
 
   AutoLock autolock(this);
-  auto found = images_.find(mailbox);
-  if (found == images_.end()) {
-    LOG(ERROR) << "SharedImageManager::OnRepresentationDestroyed: Trying to "
-                  "destroy a non existent mailbox.";
-    return;
+
+  {
+    auto found = images_.find(mailbox);
+    if (found == images_.end()) {
+      LOG(ERROR) << "SharedImageManager::OnRepresentationDestroyed: Trying to "
+                    "destroy a non existent mailbox.";
+      return;
+    }
+
+    // TODO(piman): When the original (factory) representation is destroyed, we
+    // should treat the backing as pending destruction and prevent additional
+    // representations from being created. This will help avoid races due to a
+    // consumer getting lucky with timing due to a representation inadvertently
+    // extending a backing's lifetime.
+    (*found)->ReleaseRef(representation);
   }
 
-  // TODO(piman): When the original (factory) representation is destroyed, we
-  // should treat the backing as pending destruction and prevent additional
-  // representations from being created. This will help avoid races due to a
-  // consumer getting lucky with timing due to a representation inadvertently
-  // extending a backing's lifetime.
-  (*found)->ReleaseRef(representation);
-  if (!(*found)->HasAnyRefs())
-    images_.erase(found);
+  {
+    // TODO(jonross): Once the pending destruction TODO above is addressed then
+    // this block can be removed, and the deletion can occur directly. Currently
+    // SharedImageManager::OnRepresentationDestroyed can be nested, so we need
+    // to get the iterator again.
+    auto found = images_.find(mailbox);
+    if (found != images_.end() && (!(*found)->HasAnyRefs()))
+      images_.erase(found);
+  }
 }
 
 void SharedImageManager::OnMemoryDump(const Mailbox& mailbox,

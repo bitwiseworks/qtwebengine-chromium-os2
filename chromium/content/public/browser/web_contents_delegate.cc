@@ -111,7 +111,7 @@ bool WebContentsDelegate::PreHandleGestureEvent(
 bool WebContentsDelegate::CanDragEnter(
     WebContents* source,
     const DropData& data,
-    blink::WebDragOperationsMask operations_allowed) {
+    blink::DragOperationsMask operations_allowed) {
   return true;
 }
 
@@ -186,16 +186,22 @@ ColorChooser* WebContentsDelegate::OpenColorChooser(
   return nullptr;
 }
 
+std::unique_ptr<EyeDropper> WebContentsDelegate::OpenEyeDropper(
+    RenderFrameHost* frame,
+    EyeDropperListener* listener) {
+  return nullptr;
+}
+
 void WebContentsDelegate::RunFileChooser(
     RenderFrameHost* render_frame_host,
-    std::unique_ptr<FileSelectListener> listener,
+    scoped_refptr<FileSelectListener> listener,
     const blink::mojom::FileChooserParams& params) {
   listener->FileSelectionCanceled();
 }
 
 void WebContentsDelegate::EnumerateDirectory(
     WebContents* web_contents,
-    std::unique_ptr<FileSelectListener> listener,
+    scoped_refptr<FileSelectListener> listener,
     const base::FilePath& path) {
   listener->FileSelectionCanceled();
 }
@@ -310,7 +316,11 @@ bool WebContentsDelegate::ShouldAnimateBrowserControlsHeightChanges() {
 }
 
 bool WebContentsDelegate::DoBrowserControlsShrinkRendererSize(
-    const WebContents* web_contents) {
+    WebContents* web_contents) {
+  return false;
+}
+
+bool WebContentsDelegate::OnlyExpandTopControlsAtPageTop() {
   return false;
 }
 
@@ -331,6 +341,13 @@ std::unique_ptr<WebContents> WebContentsDelegate::ActivatePortalWebContents(
   return portal_contents;
 }
 
+void WebContentsDelegate::UpdateInspectedWebContentsIfNecessary(
+    WebContents* old_contents,
+    WebContents* new_contents,
+    base::OnceCallback<void()> callback) {
+  std::move(callback).Run();
+}
+
 bool WebContentsDelegate::ShouldShowStaleContentOnEviction(
     WebContents* source) {
   return false;
@@ -345,6 +362,11 @@ bool WebContentsDelegate::IsFrameLowPriority(
 WebContents* WebContentsDelegate::GetResponsibleWebContents(
     WebContents* web_contents) {
   return web_contents;
+}
+
+device::mojom::GeolocationContext*
+WebContentsDelegate::GetInstalledWebappGeolocationContext() {
+  return nullptr;
 }
 
 base::WeakPtr<WebContentsDelegate> WebContentsDelegate::GetDelegateWeakPtr() {

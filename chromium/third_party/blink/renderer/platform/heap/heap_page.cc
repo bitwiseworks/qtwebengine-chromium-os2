@@ -88,6 +88,7 @@
 namespace blink {
 
 void HeapObjectHeader::Finalize(Address object, size_t object_size) {
+  DCHECK(!IsInConstruction<HeapObjectHeader::AccessMode::kAtomic>());
   HeapAllocHooks::FreeHookIfEnabled(object);
   const GCInfo& gc_info = GCInfo::From(GcInfoIndex());
   if (gc_info.finalize)
@@ -434,7 +435,7 @@ void NormalPageArena::AddToFreeList(Address address, size_t size) {
   free_list_.Add(address, size);
   static_cast<NormalPage*>(PageFromObject(address))
       ->object_start_bit_map()
-      ->SetBit(address);
+      ->SetBit<HeapObjectHeader::AccessMode::kAtomic>(address);
 }
 
 void NormalPageArena::MakeConsistentForGC() {
@@ -702,6 +703,7 @@ void NormalPageArena::AllocatePage() {
   ASAN_POISON_MEMORY_REGION(page->Payload(), page->PayloadSize());
 #endif
   AddToFreeList(page->Payload(), page->PayloadSize());
+  SynchronizedStore(page);
 }
 
 void NormalPageArena::FreePage(NormalPage* page) {
@@ -714,6 +716,9 @@ void NormalPageArena::FreePage(NormalPage* page) {
   GetThreadState()->Heap().GetFreePagePool()->Add(ArenaIndex(), memory);
 }
 
+PlatformAwareObjectStartBitmap::PlatformAwareObjectStartBitmap(Address offset)
+    : ObjectStartBitmap(offset) {}
+
 ObjectStartBitmap::ObjectStartBitmap(Address offset) : offset_(offset) {
   Clear();
 }
@@ -723,6 +728,7 @@ void ObjectStartBitmap::Clear() {
 }
 
 void NormalPageArena::PromptlyFreeObject(HeapObjectHeader* header) {
+  DCHECK(!GetThreadState()->IsMarkingInProgress());
   DCHECK(!GetThreadState()->SweepForbidden());
   Address address = reinterpret_cast<Address>(header);
   Address payload = header->Payload();
@@ -896,7 +902,8 @@ void NormalPageArena::SetAllocationPoint(Address point, size_t size) {
     // because the area can grow or shrink. Will be added back before a GC when
     // clearing the allocation point.
     NormalPage* page = reinterpret_cast<NormalPage*>(PageFromObject(point));
-    page->object_start_bit_map()->ClearBit(point);
+    page->object_start_bit_map()
+        ->ClearBit<HeapObjectHeader::AccessMode::kAtomic>(point);
     // Mark page as containing young objects.
     page->SetAsYoung(true);
   }
@@ -1025,6 +1032,7 @@ Address LargeObjectArena::DoAllocateLargeObjectPage(size_t allocation_size,
       large_object->PayloadSize());
   // Add page to the list of young pages.
   large_object->SetAsYoung(true);
+  SynchronizedStore(large_object);
   return result;
 }
 
@@ -1463,9 +1471,10 @@ void NormalPage::MergeFreeLists() {
 }
 
 bool NormalPage::Sweep(FinalizeType finalize_type) {
-  ObjectStartBitmap* bitmap;
+  PlatformAwareObjectStartBitmap* bitmap;
 #if BUILDFLAG(BLINK_HEAP_YOUNG_GENERATION)
-  cached_object_start_bit_map_ = std::make_unique<ObjectStartBitmap>(Payload());
+  cached_object_start_bit_map_ =
+      std::make_unique<PlatformAwareObjectStartBitmap>(Payload());
   bitmap = cached_object_start_bit_map_.get();
 #else
   object_start_bit_map()->Clear();
@@ -1759,29 +1768,6 @@ void LargeObjectPage::VerifyMarking() {
   verifier.VerifyObject(ObjectHeader());
 }
 
-Address ObjectStartBitmap::FindHeader(
-    ConstAddress address_maybe_pointing_to_the_middle_of_object) const {
-  size_t object_offset =
-      address_maybe_pointing_to_the_middle_of_object - offset_;
-  size_t object_start_number = object_offset / kAllocationGranularity;
-  size_t cell_index = object_start_number / kCellSize;
-#if DCHECK_IS_ON()
-  const size_t bitmap_size = kReservedForBitmap;
-  DCHECK_LT(cell_index, bitmap_size);
-#endif
-  size_t bit = object_start_number & kCellMask;
-  uint8_t byte = object_start_bit_map_[cell_index] & ((1 << (bit + 1)) - 1);
-  while (!byte) {
-    DCHECK_LT(0u, cell_index);
-    byte = object_start_bit_map_[--cell_index];
-  }
-  int leading_zeroes = base::bits::CountLeadingZeroBits(byte);
-  object_start_number =
-      (cell_index * kCellSize) + (kCellSize - 1) - leading_zeroes;
-  object_offset = object_start_number * kAllocationGranularity;
-  return object_offset + offset_;
-}
-
 HeapObjectHeader* NormalPage::ConservativelyFindHeaderFromAddress(
     ConstAddress address) const {
   if (!ContainedInObjectPayload(address))
@@ -1829,7 +1815,7 @@ void NormalPage::CollectStatistics(
 bool NormalPage::Contains(ConstAddress addr) const {
   Address blink_page_start = RoundToBlinkPageStart(GetAddress());
   // Page is at aligned address plus guard page size.
-  DCHECK_EQ(blink_page_start, GetAddress() - kBlinkGuardPageSize);
+  DCHECK_EQ(blink_page_start, GetAddress() - BlinkGuardPageSize());
   return blink_page_start <= addr && addr < blink_page_start + kBlinkPageSize;
 }
 #endif

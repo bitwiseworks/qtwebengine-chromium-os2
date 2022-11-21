@@ -18,6 +18,7 @@
 #include "components/gcm_driver/fake_gcm_profile_service.h"
 #include "components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h"
 #include "components/version_info/version_info.h"
+#include "content/public/test/browser_test.h"
 #include "extensions/test/result_catcher.h"
 
 using extensions::ResultCatcher;
@@ -63,8 +64,7 @@ IN_PROC_BROWSER_TEST_F(InstanceIDApiTest, Incognito) {
   ResultCatcher catcher;
   catcher.RestrictToBrowserContext(profile());
   ResultCatcher incognito_catcher;
-  incognito_catcher.RestrictToBrowserContext(
-      profile()->GetOffTheRecordProfile());
+  incognito_catcher.RestrictToBrowserContext(profile()->GetPrimaryOTRProfile());
 
   ASSERT_TRUE(RunExtensionTestIncognito("instance_id/incognito"));
 

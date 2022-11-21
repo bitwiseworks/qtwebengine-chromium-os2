@@ -5,8 +5,8 @@
 #ifndef CONTENT_COMMON_INPUT_EVENT_WITH_LATENCY_INFO_H_
 #define CONTENT_COMMON_INPUT_EVENT_WITH_LATENCY_INFO_H_
 
+#include "base/check_op.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
@@ -41,7 +41,7 @@ class EventWithLatencyInfo {
     if (other.event.GetType() != event.GetType())
       return false;
 
-    return ui::CanCoalesce(other.event, event);
+    return event.CanCoalesce(other.event);
   }
 
   void CoalesceWith(const EventWithLatencyInfo& other) {
@@ -52,7 +52,7 @@ class EventWithLatencyInfo {
     // New events get coalesced into older events, and the newer timestamp
     // should always be preserved.
     const base::TimeTicks time_stamp = other.event.TimeStamp();
-    ui::Coalesce(other.event, &event);
+    event.Coalesce(other.event);
     event.SetTimeStamp(time_stamp);
 
     // When coalescing two input events, we keep the oldest LatencyInfo

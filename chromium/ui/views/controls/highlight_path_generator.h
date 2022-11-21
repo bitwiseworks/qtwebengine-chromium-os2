@@ -11,8 +11,11 @@
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/views_export.h"
+
+namespace gfx {
+class RRectF;
+}
 
 namespace views {
 
@@ -23,19 +26,6 @@ class View;
 // effects.
 class VIEWS_EXPORT HighlightPathGenerator {
  public:
-  struct VIEWS_EXPORT RoundRect {
-    // TODO(http://crbug.com/1056490): Remove these constructors and have
-    // callsites create a gfx::RoundedCornersF explicitly, or replace this
-    // struct with a gfx::RRectF.
-    RoundRect();
-    RoundRect(const gfx::RectF& bounds, float corner_radius);
-
-    gfx::RectF bounds;
-    gfx::RoundedCornersF corner_radius;
-  };
-
-  // TODO(http://crbug.com/1056490): Remove this constructor in favor of the one
-  // that takes |insets|.
   HighlightPathGenerator();
   explicit HighlightPathGenerator(const gfx::Insets& insets);
   virtual ~HighlightPathGenerator();
@@ -45,21 +35,40 @@ class VIEWS_EXPORT HighlightPathGenerator {
 
   static void Install(View* host,
                       std::unique_ptr<HighlightPathGenerator> generator);
-  static base::Optional<RoundRect> GetRoundRectForView(const View* view);
+  static base::Optional<gfx::RRectF> GetRoundRectForView(const View* view);
 
   // TODO(http://crbug.com/1056490): Deprecate |GetHighlightPath()| in favor of
   // |GetRoundRect()|.
   virtual SkPath GetHighlightPath(const View* view);
 
-  // Optionally returns a RoundRect struct which contains data for drawing a
+  // Optionally returns a gfx::RRectF which contains data for drawing a
   // highlight. Note that |rect| is in the coordinate system of the view.
   // TODO(http://crbug.com/1056490): Once |GetHighlightPath()| is deprecated,
   // make this a pure virtual function and make the return not optional.
-  virtual base::Optional<RoundRect> GetRoundRect(const gfx::RectF& rect);
-  base::Optional<RoundRect> GetRoundRect(const View* view);
+  virtual base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect);
+  base::Optional<gfx::RRectF> GetRoundRect(const View* view);
+
+  void set_use_contents_bounds(bool use_contents_bounds) {
+    use_contents_bounds_ = use_contents_bounds;
+  }
+
+  void set_use_mirrored_rect(bool use_mirrored_rect) {
+    use_mirrored_rect_ = use_mirrored_rect;
+  }
 
  private:
   const gfx::Insets insets_;
+
+  // When set uses the view's content bounds instead of its local bounds.
+  // TODO(http://crbug.com/1056490): Investigate removing this and seeing if all
+  // ink drops / focus rings should use the content bounds.
+  bool use_contents_bounds_ = false;
+
+  // When set uses the mirror rect in RTL. This should not be needed for focus
+  // rings paths as they handle RTL themselves.
+  // TODO(http://crbug.com/1056490): Investigate moving FocusRing RTL to this
+  // class and removing this bool.
+  bool use_mirrored_rect_ = false;
 };
 
 // Sets a highlight path that is empty. This is used for ink drops that want to
@@ -74,7 +83,7 @@ class VIEWS_EXPORT EmptyHighlightPathGenerator : public HighlightPathGenerator {
       delete;
 
   // HighlightPathGenerator:
-  base::Optional<RoundRect> GetRoundRect(const gfx::RectF& rect) override;
+  base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect) override;
 };
 
 void VIEWS_EXPORT InstallEmptyHighlightPathGenerator(View* view);
@@ -89,7 +98,7 @@ class VIEWS_EXPORT RectHighlightPathGenerator : public HighlightPathGenerator {
       delete;
 
   // HighlightPathGenerator:
-  base::Optional<RoundRect> GetRoundRect(const gfx::RectF& rect) override;
+  base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect) override;
 };
 
 void VIEWS_EXPORT InstallRectHighlightPathGenerator(View* view);
@@ -105,7 +114,7 @@ class VIEWS_EXPORT CircleHighlightPathGenerator
       delete;
 
   // HighlightPathGenerator:
-  base::Optional<RoundRect> GetRoundRect(const gfx::RectF& rect) override;
+  base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect) override;
 };
 
 void VIEWS_EXPORT InstallCircleHighlightPathGenerator(View* view);
@@ -122,15 +131,11 @@ class VIEWS_EXPORT PillHighlightPathGenerator : public HighlightPathGenerator {
       delete;
 
   // HighlightPathGenerator:
-  SkPath GetHighlightPath(const View* view) override;
+  base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect) override;
 };
 
 void VIEWS_EXPORT InstallPillHighlightPathGenerator(View* view);
 
-// TODO(http://crbug.com/1056490): Investigate if we can make |radius| optional
-// for FixedSizeCircleHighlightPathGenerator and
-// RoundRectHighlightPathGenerator, and combine them with
-// CircleHighlightPathGenerator and PillHighlightPathGenerator respectively.
 // Sets a centered fixed-size circular highlight path.
 class VIEWS_EXPORT FixedSizeCircleHighlightPathGenerator
     : public HighlightPathGenerator {
@@ -143,7 +148,7 @@ class VIEWS_EXPORT FixedSizeCircleHighlightPathGenerator
       const FixedSizeCircleHighlightPathGenerator&) = delete;
 
   // HighlightPathGenerator:
-  base::Optional<RoundRect> GetRoundRect(const gfx::RectF& rect) override;
+  base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect) override;
 
  private:
   const int radius_;
@@ -164,7 +169,7 @@ class VIEWS_EXPORT RoundRectHighlightPathGenerator
       const RoundRectHighlightPathGenerator&) = delete;
 
   // HighlightPathGenerator:
-  base::Optional<RoundRect> GetRoundRect(const gfx::RectF& rect) override;
+  base::Optional<gfx::RRectF> GetRoundRect(const gfx::RectF& rect) override;
 
  private:
   const int corner_radius_;

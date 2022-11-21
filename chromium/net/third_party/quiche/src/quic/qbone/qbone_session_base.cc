@@ -18,6 +18,12 @@
 #include "net/third_party/quiche/src/quic/qbone/qbone_constants.h"
 #include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
+ABSL_FLAG(
+    bool,
+    qbone_close_ephemeral_frames,
+    true,
+    "If true, we'll call CloseStream even when we receive ephemeral frames.");
+
 namespace quic {
 
 #define ENDPOINT \
@@ -40,7 +46,7 @@ QboneSessionBase::QboneSessionBase(
       1;
   this->config()->SetMaxBidirectionalStreamsToSend(max_streams);
   if (VersionHasIetfQuicFrames(transport_version())) {
-    ConfigureMaxDynamicStreamsToSend(max_streams);
+    this->config()->SetMaxUnidirectionalStreamsToSend(max_streams);
   }
 }
 
@@ -69,21 +75,17 @@ QuicStream* QboneSessionBase::CreateOutgoingStream() {
       CreateDataStream(GetNextOutgoingUnidirectionalStreamId()));
 }
 
-void QboneSessionBase::CloseStream(QuicStreamId stream_id) {
-  if (IsClosedStream(stream_id)) {
-    // When CloseStream has been called recursively (via
-    // QuicStream::OnClose), the stream is already closed so return.
-    return;
-  }
-  QuicSession::CloseStream(stream_id);
-}
-
 void QboneSessionBase::OnStreamFrame(const QuicStreamFrame& frame) {
   if (frame.offset == 0 && frame.fin && frame.data_length > 0) {
     ++num_ephemeral_packets_;
     ProcessPacketFromPeer(
         quiche::QuicheStringPiece(frame.data_buffer, frame.data_length));
     flow_controller()->AddBytesConsumed(frame.data_length);
+    // TODO(b/147817422): Add a counter for how many streams were actually
+    // closed here.
+    if (GetQuicFlag(FLAGS_qbone_close_ephemeral_frames)) {
+      ResetStream(frame.stream_id, QUIC_STREAM_CANCELLED);
+    }
     return;
   }
   QuicSession::OnStreamFrame(frame);

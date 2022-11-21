@@ -23,13 +23,13 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
   std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
       const content::MainFunctionParams&) override;
   void OverrideWebkitPrefs(content::RenderViewHost* render_view_host,
-                           content::WebPreferences* prefs) override;
+                           blink::web_pref::WebPreferences* prefs) override;
   content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
   scoped_refptr<content::QuotaPermissionContext> CreateQuotaPermissionContext()
       override;
   content::GeneratedCodeCacheSettings GetGeneratedCodeCacheSettings(
       content::BrowserContext* context) override;
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
+#if defined(OS_POSIX) && !defined(OS_MAC)
   void GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
@@ -55,10 +55,13 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
       std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
   bool ShouldEnableStrictSiteIsolation() override;
 
-  mojo::Remote<::network::mojom::NetworkContext> CreateNetworkContext(
+  void ConfigureNetworkContextParams(
       content::BrowserContext* context,
       bool in_memory,
-      const base::FilePath& relative_partition_path) override;
+      const base::FilePath& relative_partition_path,
+      ::network::mojom::NetworkContextParams* network_context_params,
+      ::network::mojom::CertVerifierCreationParams*
+          cert_verifier_creation_params) override;
 
   std::string GetProduct() override;
   std::string GetUserAgent() override;

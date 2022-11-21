@@ -154,7 +154,6 @@ sk_sp<SkTypeface> FindUniqueFontNameFromSideloadedFonts(
   return return_typeface;
 }
 
-static const char kColorEmojiLocale[] = "und-Zsye";
 static const char kChineseSimplified[] = "zh-Hant";
 
 // For Windows out-of-process fallback calls, there is a limiation: only one
@@ -198,6 +197,13 @@ void FontCache::AddSideloadedFontForTesting(sk_sp<SkTypeface> typeface) {
   typeface->getFamilyName(&name);
   String name_wtf(name.c_str());
   sideloaded_fonts_->Set(name_wtf, std::move(typeface));
+}
+
+//static
+void FontCache::SetSystemFontFamily(const AtomicString&) {
+  // TODO(https://crbug.com/808221) Use this instead of
+  // SetMenuFontMetrics for the system font family.
+  NOTREACHED();
 }
 
 // static

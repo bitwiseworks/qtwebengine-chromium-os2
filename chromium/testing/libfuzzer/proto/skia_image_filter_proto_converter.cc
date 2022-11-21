@@ -41,7 +41,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "third_party/protobuf/src/google/protobuf/descriptor.h"
 #include "third_party/protobuf/src/google/protobuf/message.h"
 #include "third_party/protobuf/src/google/protobuf/repeated_field.h"
@@ -948,8 +949,7 @@ void Converter::Visit(const Paint& paint) {
 
   if (stroke_style_used_) {
     style = Paint::kFill_Style;
-  } else if (style == Paint::kStrokeAndFill_Style ||
-             style == Paint::kStroke_Style) {
+  } else if (style == Paint::kStroke_Style) {
     stroke_style_used_ = true;
     // Avoid timeouts.
     stroke_cap = Paint::kButt_Cap;

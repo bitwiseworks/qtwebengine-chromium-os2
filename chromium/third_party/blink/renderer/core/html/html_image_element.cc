@@ -46,6 +46,7 @@
 #include "third_party/blink/renderer/core/html/html_image_fallback_helper.h"
 #include "third_party/blink/renderer/core/html/html_picture_element.h"
 #include "third_party/blink/renderer/core/html/html_source_element.h"
+#include "third_party/blink/renderer/core/html/loading_attribute.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/parser/html_srcset_parser.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -80,7 +81,7 @@ class HTMLImageElement::ViewportChangeListener final
       element_->NotifyViewportChanged();
   }
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(element_);
     MediaQueryListListener::Trace(visitor);
   }
@@ -103,8 +104,8 @@ HTMLImageElement::HTMLImageElement(Document& document, bool created_by_parser)
       element_created_by_parser_(created_by_parser),
       is_fallback_image_(false),
       is_default_overridden_intrinsic_size_(
-          !document.IsImageDocument() &&
-          !document.IsFeatureEnabled(
+          !document.IsImageDocument() && GetExecutionContext() &&
+          !GetExecutionContext()->IsFeatureEnabled(
               mojom::blink::DocumentPolicyFeature::kUnsizedMedia)),
       is_legacy_format_or_unoptimized_image_(false),
       referrer_policy_(network::mojom::ReferrerPolicy::kDefault) {
@@ -113,7 +114,7 @@ HTMLImageElement::HTMLImageElement(Document& document, bool created_by_parser)
 
 HTMLImageElement::~HTMLImageElement() = default;
 
-void HTMLImageElement::Trace(Visitor* visitor) {
+void HTMLImageElement::Trace(Visitor* visitor) const {
   visitor->Trace(image_loader_);
   visitor->Trace(listener_);
   visitor->Trace(form_);
@@ -268,23 +269,35 @@ void HTMLImageElement::ParseAttribute(
   } else if (name == html_names::kUsemapAttr) {
     SetIsLink(!params.new_value.IsNull());
   } else if (name == html_names::kReferrerpolicyAttr) {
+    network::mojom::ReferrerPolicy old_referrer_policy = referrer_policy_;
     referrer_policy_ = network::mojom::ReferrerPolicy::kDefault;
     if (!params.new_value.IsNull()) {
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kHTMLImageElementReferrerPolicyAttribute);
+
       SecurityPolicy::ReferrerPolicyFromString(
           params.new_value, kSupportReferrerPolicyLegacyKeywords,
           &referrer_policy_);
-      UseCounter::Count(GetDocument(),
-                        WebFeature::kHTMLImageElementReferrerPolicyAttribute);
+    }
+
+    if (referrer_policy_ != old_referrer_policy) {
+      GetImageLoader().UpdateFromElement(
+          ImageLoader::kUpdateIgnorePreviousError, referrer_policy_);
     }
   } else if (name == html_names::kDecodingAttr) {
     UseCounter::Count(GetDocument(), WebFeature::kImageDecodingAttribute);
     decoding_mode_ = ParseImageDecodingMode(params.new_value);
-  } else if (name == html_names::kLoadingAttr &&
-             EqualIgnoringASCIICase(params.new_value, "eager") &&
-             !GetDocument().IsLazyLoadPolicyEnforced()) {
-    GetImageLoader().LoadDeferredImage(referrer_policy_);
+  } else if (name == html_names::kLoadingAttr) {
+    LoadingAttributeValue loading = GetLoadingAttributeValue(params.new_value);
+    if (loading == LoadingAttributeValue::kEager ||
+        (loading == LoadingAttributeValue::kAuto && GetDocument().GetFrame() &&
+         GetDocument().GetFrame()->GetLazyLoadImageSetting() !=
+             LocalFrame::LazyLoadImageSetting::kEnabledAutomatic)) {
+      GetImageLoader().LoadDeferredImage(referrer_policy_);
+    }
   } else if (name == html_names::kImportanceAttr &&
-             RuntimeEnabledFeatures::PriorityHintsEnabled(&GetDocument())) {
+             RuntimeEnabledFeatures::PriorityHintsEnabled(
+                 GetExecutionContext())) {
     // We only need to keep track of usage here, as the communication of the
     // |importance| attribute to the loading pipeline takes place in
     // ImageLoader.
@@ -348,7 +361,7 @@ ImageCandidate HTMLImageElement::FindBestFitImageFromPictureParent() {
       continue;
 
     if (!source->FastGetAttribute(html_names::kSrcAttr).IsNull()) {
-      Deprecation::CountDeprecation(GetDocument(),
+      Deprecation::CountDeprecation(GetExecutionContext(),
                                     WebFeature::kPictureSourceSrc);
     }
     String srcset = source->FastGetAttribute(html_names::kSrcsetAttr);
@@ -513,20 +526,20 @@ LayoutSize HTMLImageElement::DensityCorrectedIntrinsicDimensions() const {
     return LayoutSize(LayoutReplaced::kDefaultWidth,
                       LayoutReplaced::kDefaultHeight);
   }
-  ImageResourceContent* image_resource = GetImageLoader().GetContent();
-  if (!image_resource || !image_resource->HasImage())
+  ImageResourceContent* image_content = GetImageLoader().GetContent();
+  if (!image_content || !image_content->HasImage())
     return LayoutSize();
 
   float pixel_density = image_device_pixel_ratio_;
-  if (image_resource->HasDevicePixelRatioHeaderValue() &&
-      image_resource->DevicePixelRatioHeaderValue() > 0)
-    pixel_density = 1 / image_resource->DevicePixelRatioHeaderValue();
+  if (image_content->HasDevicePixelRatioHeaderValue() &&
+      image_content->DevicePixelRatioHeaderValue() > 0)
+    pixel_density = 1 / image_content->DevicePixelRatioHeaderValue();
 
   RespectImageOrientationEnum respect_image_orientation =
       LayoutObject::ShouldRespectImageOrientation(GetLayoutObject());
 
   LayoutSize natural_size(
-      image_resource->IntrinsicSize(respect_image_orientation));
+      image_content->IntrinsicSize(respect_image_orientation));
   natural_size.Scale(pixel_density);
   return natural_size;
 }

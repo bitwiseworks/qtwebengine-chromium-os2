@@ -6,8 +6,10 @@
 
 #include <windows.h>
 
+#include "base/check_op.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"

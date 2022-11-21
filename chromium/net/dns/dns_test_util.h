@@ -23,8 +23,8 @@
 #include "net/dns/dns_response.h"
 #include "net/dns/dns_transaction.h"
 #include "net/dns/dns_util.h"
-#include "net/dns/esni_content.h"
 #include "net/dns/public/dns_protocol.h"
+#include "net/dns/public/secure_dns_mode.h"
 #include "net/socket/socket_test_util.h"
 
 namespace net {
@@ -165,7 +165,7 @@ static const int kT3TTL = 0x00000015;
 static const unsigned kT3RecordCount = base::size(kT3IpAddresses) + 3;
 
 //-----------------------------------------------------------------------------
-// Query/response set for www.gstatic.com, ID is fixed to 4.
+// Query/response set for www.gstatic.com, ID is fixed to 0.
 static const char kT4HostName[] = "www.gstatic.com";
 static const uint16_t kT4Qtype = dns_protocol::kTypeA;
 static const char kT4DnsName[] = {0x03, 'w', 'w', 'w', 0x07, 'g',
@@ -174,7 +174,7 @@ static const char kT4DnsName[] = {0x03, 'w', 'w', 'w', 0x07, 'g',
 static const size_t kT4QuerySize = 33;
 static const uint8_t kT4ResponseDatagram[] = {
     // response contains the following IP addresses: 172.217.6.195.
-    0x00, 0x04, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
     0x00, 0x00, 0x03, 0x77, 0x77, 0x77, 0x07, 0x67, 0x73, 0x74,
     0x61, 0x74, 0x69, 0x63, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00,
     0x01, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00,
@@ -183,22 +183,6 @@ static const uint8_t kT4ResponseDatagram[] = {
 static const char* const kT4IpAddresses[] = {"172.217.6.195"};
 static const int kT4TTL = 0x0000012b;
 static const unsigned kT4RecordCount = base::size(kT0IpAddresses);
-
-//--------------------------------------------------------------------
-// A well-formed ESNI (TLS 1.3 Encrypted Server Name Indication,
-// draft 4) keys object ("ESNIKeys" member of the ESNIRecord struct from
-// the spec).
-//
-// (This is cribbed from boringssl SSLTest.ESNIKeysDeserialize (CL 37704/13).)
-extern const char kWellFormedEsniKeys[];
-extern const size_t kWellFormedEsniKeysSize;
-
-// Returns a well-formed ESNI keys object identical to kWellFormedEsniKeys,
-// except that the first 0x22 bytes of |custom_data| are written over
-// fields of the keys object in a manner that leaves length prefixes
-// correct and enum members valid, and so that distinct values of
-// |custom_data| result in distinct returned keys.
-std::string GenerateWellFormedEsniKeys(base::StringPiece custom_data = "");
 
 class AddressSorter;
 class DnsClient;
@@ -241,10 +225,9 @@ std::unique_ptr<DnsResponse> BuildTestDnsServiceResponse(
     std::vector<TestServiceRecord> service_records,
     std::string answer_name = "");
 
-std::unique_ptr<DnsResponse> BuildTestDnsEsniResponse(
+std::unique_ptr<DnsResponse> BuildTestDnsIntegrityResponse(
     std::string hostname,
-    std::vector<EsniContent> esni_records,
-    std::string answer_name = "");
+    const std::vector<uint8_t>& serialized_rdata);
 
 struct MockDnsClientRule {
   enum ResultType {
@@ -304,7 +287,7 @@ class MockDnsTransactionFactory : public DnsTransactionFactory {
       DnsTransactionFactory::CallbackType callback,
       const NetLogWithSource&,
       bool secure,
-      DnsConfig::SecureDnsMode secure_dns_mode,
+      SecureDnsMode secure_dns_mode,
       ResolveContext* resolve_context) override;
 
   std::unique_ptr<DnsProbeRunner> CreateDohProbeRunner(
@@ -312,7 +295,7 @@ class MockDnsTransactionFactory : public DnsTransactionFactory {
 
   void AddEDNSOption(const OptRecordRdata::Opt& opt) override;
 
-  DnsConfig::SecureDnsMode GetSecureDnsModeForTest() override;
+  SecureDnsMode GetSecureDnsModeForTest() override;
 
   void CompleteDelayedTransactions();
   // If there are any pending transactions of the given type,

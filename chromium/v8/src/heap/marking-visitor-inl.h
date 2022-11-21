@@ -22,7 +22,7 @@ void MarkingVisitorBase<ConcreteVisitor, MarkingState>::MarkObject(
     HeapObject host, HeapObject object) {
   concrete_visitor()->SynchronizePageAccess(object);
   if (concrete_visitor()->marking_state()->WhiteToGrey(object)) {
-    marking_worklists_->Push(object);
+    local_marking_worklists_->Push(object);
     if (V8_UNLIKELY(concrete_visitor()->retaining_path_mode() ==
                     TraceRetainingPathMode::kEnabled)) {
       heap_->AddRetainer(host, object);
@@ -183,7 +183,7 @@ int MarkingVisitorBase<ConcreteVisitor, MarkingState>::
     if (end < size) {
       // The object can be pushed back onto the marking worklist only after
       // progress bar was updated.
-      marking_worklists_->Push(object);
+      local_marking_worklists_->Push(object);
     }
   }
   return end - start;
@@ -220,7 +220,7 @@ int MarkingVisitorBase<ConcreteVisitor,
   if (size && is_embedder_tracing_enabled_) {
     // Success: The object needs to be processed for embedder references on
     // the main thread.
-    marking_worklists_->PushEmbedder(object);
+    local_marking_worklists_->PushEmbedder(object);
   }
   return size;
 }
@@ -323,26 +323,23 @@ int MarkingVisitorBase<ConcreteVisitor, MarkingState>::VisitWeakCell(
   int size = WeakCell::BodyDescriptor::SizeOf(map, weak_cell);
   this->VisitMapPointer(weak_cell);
   WeakCell::BodyDescriptor::IterateBody(map, weak_cell, size, this);
-  if (weak_cell.target().IsHeapObject()) {
-    HeapObject target = HeapObject::cast(weak_cell.target());
-    HeapObject unregister_token =
-        HeapObject::cast(weak_cell.unregister_token());
-    concrete_visitor()->SynchronizePageAccess(target);
-    concrete_visitor()->SynchronizePageAccess(unregister_token);
-    if (concrete_visitor()->marking_state()->IsBlackOrGrey(target) &&
-        concrete_visitor()->marking_state()->IsBlackOrGrey(unregister_token)) {
-      // Record the slots inside the WeakCell, since the IterateBody above
-      // didn't visit it.
-      ObjectSlot slot = weak_cell.RawField(WeakCell::kTargetOffset);
-      concrete_visitor()->RecordSlot(weak_cell, slot, target);
-      slot = weak_cell.RawField(WeakCell::kUnregisterTokenOffset);
-      concrete_visitor()->RecordSlot(weak_cell, slot, unregister_token);
-    } else {
-      // WeakCell points to a potentially dead object or a dead unregister
-      // token. We have to process them when we know the liveness of the whole
-      // transitive closure.
-      weak_objects_->weak_cells.Push(task_id_, weak_cell);
-    }
+  HeapObject target = weak_cell.relaxed_target();
+  HeapObject unregister_token = HeapObject::cast(weak_cell.unregister_token());
+  concrete_visitor()->SynchronizePageAccess(target);
+  concrete_visitor()->SynchronizePageAccess(unregister_token);
+  if (concrete_visitor()->marking_state()->IsBlackOrGrey(target) &&
+      concrete_visitor()->marking_state()->IsBlackOrGrey(unregister_token)) {
+    // Record the slots inside the WeakCell, since the IterateBody above
+    // didn't visit it.
+    ObjectSlot slot = weak_cell.RawField(WeakCell::kTargetOffset);
+    concrete_visitor()->RecordSlot(weak_cell, slot, target);
+    slot = weak_cell.RawField(WeakCell::kUnregisterTokenOffset);
+    concrete_visitor()->RecordSlot(weak_cell, slot, unregister_token);
+  } else {
+    // WeakCell points to a potentially dead object or a dead unregister
+    // token. We have to process them when we know the liveness of the whole
+    // transitive closure.
+    weak_objects_->weak_cells.Push(task_id_, weak_cell);
   }
   return size;
 }
@@ -354,7 +351,7 @@ int MarkingVisitorBase<ConcreteVisitor, MarkingState>::VisitWeakCell(
 template <typename ConcreteVisitor, typename MarkingState>
 size_t
 MarkingVisitorBase<ConcreteVisitor, MarkingState>::MarkDescriptorArrayBlack(
-    HeapObject host, DescriptorArray descriptors) {
+    DescriptorArray descriptors) {
   concrete_visitor()->marking_state()->WhiteToGrey(descriptors);
   if (concrete_visitor()->marking_state()->GreyToBlack(descriptors)) {
     VisitPointer(descriptors, descriptors.map_slot());
@@ -405,7 +402,7 @@ int MarkingVisitorBase<ConcreteVisitor, MarkingState>::VisitMap(Map meta_map,
     // slot holding the descriptor array will be implicitly recorded when the
     // pointer fields of this map are visited.
     DescriptorArray descriptors = map.synchronized_instance_descriptors();
-    size += MarkDescriptorArrayBlack(map, descriptors);
+    size += MarkDescriptorArrayBlack(descriptors);
     int number_of_own_descriptors = map.NumberOfOwnDescriptors();
     if (number_of_own_descriptors) {
       // It is possible that the concurrent marker observes the

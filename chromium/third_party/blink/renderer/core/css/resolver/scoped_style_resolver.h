@@ -29,7 +29,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_SCOPED_STYLE_RESOLVER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_SCOPED_STYLE_RESOLVER_H_
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
 #include "third_party/blink/renderer/core/css/element_rule_collector.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
@@ -51,6 +50,8 @@ class CORE_EXPORT ScopedStyleResolver final
     : public GarbageCollected<ScopedStyleResolver> {
  public:
   explicit ScopedStyleResolver(TreeScope& scope) : scope_(scope) {}
+  ScopedStyleResolver(const ScopedStyleResolver&) = delete;
+  ScopedStyleResolver& operator=(const ScopedStyleResolver&) = delete;
 
   const TreeScope& GetTreeScope() const { return *scope_; }
   ScopedStyleResolver* Parent() const;
@@ -88,7 +89,7 @@ class CORE_EXPORT ScopedStyleResolver final
   static Element& InvalidationRootForTreeScope(const TreeScope&);
   void V0ShadowAddedOnV1Document();
 
-  void Trace(Visitor*);
+  void Trace(Visitor*) const;
 
  private:
   void AddTreeBoundaryCrossingRules(const RuleSet&,
@@ -118,7 +119,7 @@ class CORE_EXPORT ScopedStyleResolver final
     unsigned parent_index_;
     Member<RuleSet> rule_set_;
 
-    void Trace(Visitor*);
+    void Trace(Visitor*) const;
   };
   using CSSStyleSheetRuleSubSet = HeapVector<Member<RuleSubSet>>;
 
@@ -128,7 +129,6 @@ class CORE_EXPORT ScopedStyleResolver final
   bool has_deep_or_shadow_selector_ = false;
   bool has_unresolved_keyframes_rule_ = false;
   bool needs_append_all_sheets_ = false;
-  DISALLOW_COPY_AND_ASSIGN(ScopedStyleResolver);
 };
 
 }  // namespace blink

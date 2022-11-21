@@ -53,7 +53,7 @@ class PLATFORM_EXPORT HeapAllocator {
   STATIC_ONLY(HeapAllocator);
 
  public:
-  using WeakCallbackInfo = blink::WeakCallbackInfo;
+  using LivenessBroker = blink::LivenessBroker;
   using Visitor = blink::Visitor;
   static constexpr bool kIsGarbageCollected = true;
 
@@ -108,14 +108,6 @@ class PLATFORM_EXPORT HeapAllocator {
     MarkingVisitor::WriteBarrier(slot);
   }
 
-  template <typename HashTable, typename T>
-  static void BackingWriteBarrierForHashTable(T** slot) {
-    if (MarkingVisitor::WriteBarrier(slot)) {
-      AddMovingCallback<HashTable>(
-          static_cast<typename HashTable::ValueType*>(*slot));
-    }
-  }
-
   template <typename Return, typename Metadata>
   static Return Malloc(size_t size, const char* type_name) {
     return reinterpret_cast<Return>(
@@ -147,22 +139,10 @@ class PLATFORM_EXPORT HeapAllocator {
            ThreadState::Current()->IsIncrementalMarking();
   }
 
-  template <typename T>
-  static bool IsHeapObjectAlive(T* object) {
-    return ThreadHeap::IsHeapObjectAlive(object);
-  }
-
   template <typename T, typename Traits>
   static void Trace(Visitor* visitor, const T& t) {
     TraceCollectionIfEnabled<WTF::WeakHandlingTrait<T>::value, T,
                              Traits>::Trace(visitor, &t);
-  }
-
-  template <typename T, typename VisitorDispatcher>
-  static void RegisterBackingStoreCallback(VisitorDispatcher visitor,
-                                           T* backing,
-                                           MovingObjectCallback callback) {
-    visitor->RegisterBackingStoreCallback(backing, callback);
   }
 
   static void EnterGCForbiddenScope() {
@@ -239,19 +219,17 @@ class PLATFORM_EXPORT HeapAllocator {
   static void TraceVectorBacking(Visitor* visitor,
                                  const T* backing,
                                  const T* const* backing_slot) {
-    visitor->TraceBackingStoreStrongly(
-        reinterpret_cast<const HeapVectorBacking<T>*>(backing),
-        reinterpret_cast<const HeapVectorBacking<T>* const*>(backing_slot));
+    visitor->TraceMovablePointer(backing_slot);
+    visitor->Trace(reinterpret_cast<const HeapVectorBacking<T>*>(backing));
   }
 
   template <typename T, typename HashTable>
   static void TraceHashTableBackingStrongly(Visitor* visitor,
                                             const T* backing,
                                             const T* const* backing_slot) {
-    visitor->TraceBackingStoreStrongly(
-        reinterpret_cast<const HeapHashTableBacking<HashTable>*>(backing),
-        reinterpret_cast<const HeapHashTableBacking<HashTable>* const*>(
-            backing_slot));
+    visitor->TraceMovablePointer(backing_slot);
+    visitor->Trace(
+        reinterpret_cast<const HeapHashTableBacking<HashTable>*>(backing));
   }
 
   template <typename T, typename HashTable>
@@ -260,21 +238,16 @@ class PLATFORM_EXPORT HeapAllocator {
                                           const T* const* backing_slot,
                                           WeakCallback callback,
                                           const void* parameter) {
-    visitor->TraceBackingStoreWeakly<HashTable>(
+    visitor->TraceMovablePointer(backing_slot);
+    visitor->TraceWeakContainer(
         reinterpret_cast<const HeapHashTableBacking<HashTable>*>(backing),
         reinterpret_cast<const HeapHashTableBacking<HashTable>* const*>(
             backing_slot),
+        TraceTrait<HeapHashTableBacking<HashTable>>::GetTraceDescriptor(
+            backing),
+        TraceTrait<HeapHashTableBacking<HashTable>>::GetWeakTraceDescriptor(
+            backing),
         callback, parameter);
-  }
-
-  template <typename T, typename HashTable>
-  static void TraceHashTableBackingOnly(Visitor* visitor,
-                                        const T* backing,
-                                        const T* const* backing_slot) {
-    visitor->TraceBackingStoreOnly(
-        reinterpret_cast<const HeapHashTableBacking<HashTable>*>(backing),
-        reinterpret_cast<const HeapHashTableBacking<HashTable>* const*>(
-            backing_slot));
   }
 
  private:
@@ -283,22 +256,6 @@ class PLATFORM_EXPORT HeapAllocator {
         ->MarkFullyConstructed<HeapObjectHeader::AccessMode::kAtomic>();
     return address;
   }
-
-  template <
-      typename HashTable,
-      std::enable_if_t<HashTable::ValueTraits::kHasMovingCallback>* = nullptr>
-  static void AddMovingCallback(typename HashTable::ValueType* memory) {
-    ThreadState* thread_state = ThreadState::Current();
-    auto* visitor = thread_state->CurrentVisitor();
-    DCHECK(visitor);
-    HashTable::ValueTraits::template RegisterMovingCallback<HashTable>(visitor,
-                                                                       memory);
-  }
-
-  template <
-      typename HashTable,
-      std::enable_if_t<!HashTable::ValueTraits::kHasMovingCallback>* = nullptr>
-  static void AddMovingCallback(typename HashTable::ValueType*) {}
 
   static void BackingFree(void*);
   static bool BackingExpand(void*, size_t);
@@ -423,6 +380,17 @@ class HeapHashMap : public HashMap<KeyArg,
         WTF::IsTraceable<KeyArg>::value || WTF::IsTraceable<MappedArg>::value,
         "For hash maps without traceable elements, use HashMap<> "
         "instead of HeapHashMap<>.");
+    static_assert(internal::IsMemberOrWeakMemberType<KeyArg> ||
+                      !WTF::IsTraceable<KeyArg>::value,
+                  "HeapHashMap supports only Member, WeakMember and "
+                  "non-traceable types as keys.");
+    static_assert(internal::IsMemberOrWeakMemberType<MappedArg> ||
+                      !WTF::IsTraceable<MappedArg>::value ||
+                      WTF::IsSubclassOfTemplate<MappedArg,
+                                                TraceWrapperV8Reference>::value,
+                  "HeapHashMap supports only Member, WeakMember, "
+                  "TraceWrapperV8Reference and "
+                  "non-traceable types as values.");
   }
 
  public:
@@ -475,20 +443,19 @@ template <typename T, typename U, typename V>
 struct GCInfoTrait<HeapHashSet<T, U, V>>
     : public GCInfoTrait<HashSet<T, U, V, HeapAllocator>> {};
 
-template <typename ValueArg,
-          typename HashArg = typename DefaultHash<ValueArg>::Hash,
-          typename TraitsArg = HashTraits<ValueArg>>
+template <typename ValueArg, typename TraitsArg = HashTraits<ValueArg>>
 class HeapLinkedHashSet
-    : public LinkedHashSet<ValueArg, HashArg, TraitsArg, HeapAllocator> {
+    : public LinkedHashSet<ValueArg, TraitsArg, HeapAllocator> {
   IS_GARBAGE_COLLECTED_CONTAINER_TYPE();
   DISALLOW_NEW();
-  // HeapLinkedHashSet is using custom callbacks for compaction that rely on the
-  // fact that the container itself does not move.
-  DISALLOW_IN_CONTAINER();
 
   static void CheckType() {
     static_assert(internal::IsMemberOrWeakMemberType<ValueArg>,
                   "HeapLinkedHashSet supports only Member and WeakMember.");
+    // If not trivially destructible, we have to add a destructor which will
+    // hinder performance.
+    static_assert(std::is_trivially_destructible<HeapLinkedHashSet>::value,
+                  "HeapLinkedHashSet must be trivially destructible.");
     static_assert(
         IsAllowedInContainer<ValueArg>::value,
         "Not allowed to directly nest type. Use Member<> indirection instead.");
@@ -500,51 +467,15 @@ class HeapLinkedHashSet
  public:
   template <typename>
   static void* AllocateObject(size_t size) {
-    return ThreadHeap::Allocate<
-        HeapLinkedHashSet<ValueArg, HashArg, TraitsArg>>(size);
+    return ThreadHeap::Allocate<HeapLinkedHashSet<ValueArg, TraitsArg>>(size);
   }
 
   HeapLinkedHashSet() { CheckType(); }
 };
 
-template <typename T, typename U, typename V>
-struct GCInfoTrait<HeapLinkedHashSet<T, U, V>>
-    : public GCInfoTrait<LinkedHashSet<T, U, V, HeapAllocator>> {};
-
-// This class is still experimental. Do not use this class.
-template <typename ValueArg>
-class HeapNewLinkedHashSet : public NewLinkedHashSet<ValueArg, HeapAllocator> {
-  IS_GARBAGE_COLLECTED_CONTAINER_TYPE();
-  DISALLOW_NEW();
-
-  static void CheckType() {
-    // TODO(keinakashima): support WeakMember<T>
-    static_assert(internal::IsMember<ValueArg>,
-                  "HeapNewLinkedHashSet supports only Member.");
-    // If not trivially destructible, we have to add a destructor which will
-    // hinder performance.
-    static_assert(std::is_trivially_destructible<HeapNewLinkedHashSet>::value,
-                  "HeapNewLinkedHashSet must be trivially destructible.");
-    static_assert(
-        IsAllowedInContainer<ValueArg>::value,
-        "Not allowed to directly nest type. Use Member<> indirection instead.");
-    static_assert(WTF::IsTraceable<ValueArg>::value,
-                  "For sets without traceable elements, use NewLinkedHashSet<> "
-                  "instead of HeapNewLinkedHashSet<>.");
-  }
-
- public:
-  template <typename>
-  static void* AllocateObject(size_t size) {
-    return ThreadHeap::Allocate<HeapNewLinkedHashSet<ValueArg>>(size);
-  }
-
-  HeapNewLinkedHashSet() { CheckType(); }
-};
-
-template <typename T>
-struct GCInfoTrait<HeapNewLinkedHashSet<T>>
-    : public GCInfoTrait<NewLinkedHashSet<T, HeapAllocator>> {};
+template <typename T, typename U>
+struct GCInfoTrait<HeapLinkedHashSet<T, U>>
+    : public GCInfoTrait<LinkedHashSet<T, U, HeapAllocator>> {};
 
 template <typename ValueArg,
           wtf_size_t inlineCapacity =
@@ -642,6 +573,8 @@ class HeapVector : public Vector<T, inlineCapacity, HeapAllocator> {
                   "instead of HeapVector<>.");
     static_assert(!WTF::IsWeak<T>::value,
                   "Weak types are not allowed in HeapVector.");
+    static_assert(WTF::IsTraceableInCollectionTrait<VectorTraits<T>>::value,
+                  "Type must be traceable in collection");
   }
 
  public:
@@ -742,8 +675,13 @@ struct VectorTraits<blink::Member<T>> : VectorTraitsBase<blink::Member<T>> {
   static const bool kCanClearUnusedSlotsWithMemset = true;
   static const bool kCanCopyWithMemcpy = true;
   static const bool kCanMoveWithMemcpy = true;
+
+  static constexpr bool kCanTraceConcurrently = true;
 };
 
+// These traits are used in VectorBackedLinkedList to support WeakMember in
+// HeapLinkedHashSet though HeapVector<WeakMember> usage is still banned.
+// (See the discussion in https://crrev.com/c/2246014)
 template <typename T>
 struct VectorTraits<blink::WeakMember<T>>
     : VectorTraitsBase<blink::WeakMember<T>> {
@@ -751,7 +689,10 @@ struct VectorTraits<blink::WeakMember<T>>
   static const bool kNeedsDestruction = false;
   static const bool kCanInitializeWithMemset = true;
   static const bool kCanClearUnusedSlotsWithMemset = true;
+  static const bool kCanCopyWithMemcpy = true;
   static const bool kCanMoveWithMemcpy = true;
+
+  static constexpr bool kCanTraceConcurrently = true;
 };
 
 template <typename T>
@@ -826,6 +767,8 @@ struct HashTraits<blink::Member<T>> : SimpleClassHashTraits<blink::Member<T>> {
   static void ConstructDeletedValue(blink::Member<T>& slot, bool) {
     slot = WTF::kHashTableDeletedValue;
   }
+
+  static constexpr bool kCanTraceConcurrently = true;
 };
 
 template <typename T>
@@ -860,6 +803,8 @@ struct HashTraits<blink::WeakMember<T>>
   static void ConstructDeletedValue(blink::WeakMember<T>& slot, bool) {
     slot = WTF::kHashTableDeletedValue;
   }
+
+  static constexpr bool kCanTraceConcurrently = true;
 };
 
 template <typename T>

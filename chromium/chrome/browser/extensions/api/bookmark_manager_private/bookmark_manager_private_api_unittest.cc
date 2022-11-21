@@ -22,8 +22,11 @@ class BookmarkManagerPrivateApiUnitTest : public ExtensionServiceTestBase {
 
   void SetUp() override {
     ExtensionServiceTestBase::SetUp();
-    InitializeEmptyExtensionService();
-    profile_->CreateBookmarkModel(false);
+
+    ExtensionServiceInitParams params = CreateDefaultInitParams();
+    params.enable_bookmark_model = true;
+    InitializeExtensionService(params);
+
     model_ = BookmarkModelFactory::GetForBrowserContext(profile());
     bookmarks::test::WaitForBookmarkModelToLoad(model_);
 
@@ -58,7 +61,8 @@ TEST_F(BookmarkManagerPrivateApiUnitTest, RunOnDeletedNode) {
   auto copy_function =
       base::MakeRefCounted<BookmarkManagerPrivateCopyFunction>();
   EXPECT_EQ(
-      "Could not find bookmark nodes with given ids.",
+      base::StringPrintf("Could not find bookmark nodes with given ids: [%s]",
+                         node_id().c_str()),
       api_test_utils::RunFunctionAndReturnError(
           copy_function.get(),
           base::StringPrintf("[[\"%s\"]]", node_id().c_str()), profile()));

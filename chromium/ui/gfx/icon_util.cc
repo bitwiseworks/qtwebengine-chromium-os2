@@ -4,9 +4,10 @@
 
 #include "ui/gfx/icon_util.h"
 
+#include "base/check_op.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
-#include "base/logging.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/resource_util.h"
@@ -19,6 +20,7 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_family.h"
+#include "ui/gfx/skbitmap_operations.h"
 
 namespace {
 
@@ -327,9 +329,8 @@ base::win::ScopedHICON IconUtil::CreateCursorFromSkBitmap(
   }
 
   BITMAPINFO icon_bitmap_info = {};
-  skia::CreateBitmapHeader(
-      bitmap.width(), bitmap.height(),
-      reinterpret_cast<BITMAPINFOHEADER*>(&icon_bitmap_info));
+  skia::CreateBitmapHeaderForN32SkBitmap(
+      bitmap, reinterpret_cast<BITMAPINFOHEADER*>(&icon_bitmap_info));
 
   base::win::ScopedGetDC dc(NULL);
   base::win::ScopedCreateDC working_dc(CreateCompatibleDC(dc));
@@ -523,18 +524,15 @@ bool IconUtil::CreateIconFileFromImageFamily(
   DCHECK_EQ(offset, buffer_size);
 
   if (write_type == NORMAL_WRITE) {
-    auto saved_size =
-        base::WriteFile(icon_path, reinterpret_cast<const char*>(&buffer[0]),
-                        static_cast<int>(buffer.size()));
-    if (saved_size == static_cast<int>(buffer.size()))
+    if (base::WriteFile(icon_path, buffer))
       return true;
-    bool delete_success = base::DeleteFile(icon_path, false);
+    bool delete_success = base::DeleteFile(icon_path);
     DCHECK(delete_success);
     return false;
-  } else {
-    std::string data(buffer.begin(), buffer.end());
-    return base::ImportantFileWriter::WriteFileAtomically(icon_path, data);
   }
+
+  std::string data(buffer.begin(), buffer.end());
+  return base::ImportantFileWriter::WriteFileAtomically(icon_path, data);
 }
 
 bool IconUtil::PixelsHaveAlpha(const uint32_t* pixels, size_t num_pixels) {
@@ -630,7 +628,11 @@ void IconUtil::SetSingleIconImageInformation(const SkBitmap& bitmap,
   // opaque.
   unsigned char* image_addr = reinterpret_cast<unsigned char*>(icon_image);
   unsigned char* xor_mask_addr = image_addr + sizeof(BITMAPINFOHEADER);
-  CopySkBitmapBitsIntoIconBuffer(bitmap, xor_mask_addr, xor_mask_size);
+
+  // Make sure pixels are not premultiplied by alpha.
+  SkBitmap unpremul_bitmap = SkBitmapOperations::UnPreMultiply(bitmap);
+  CopySkBitmapBitsIntoIconBuffer(unpremul_bitmap, xor_mask_addr, xor_mask_size);
+
   *image_byte_count = bytes_in_resource;
 }
 

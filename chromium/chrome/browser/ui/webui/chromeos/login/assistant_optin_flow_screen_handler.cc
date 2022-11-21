@@ -15,11 +15,12 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/ash/assistant/assistant_service_connection.h"
 #include "chrome/browser/ui/webui/chromeos/assistant_optin/assistant_optin_utils.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/services/assistant/public/cpp/assistant_prefs.h"
-#include "chromeos/services/assistant/public/features.h"
+#include "chromeos/services/assistant/public/cpp/assistant_service.h"
+#include "chromeos/services/assistant/public/cpp/features.h"
 #include "chromeos/services/assistant/public/proto/settings_ui.pb.h"
 #include "components/login/localized_values_builder.h"
 #include "components/prefs/pref_service.h"
@@ -54,7 +55,7 @@ AssistantOptInFlowScreenHandler::AssistantOptInFlowScreenHandler(
 }
 
 AssistantOptInFlowScreenHandler::~AssistantOptInFlowScreenHandler() {
-  if (client_receiver_.is_bound())
+  if (voice_match_enrollment_started_)
     StopSpeakerIdEnrollment();
   if (ash::AssistantState::Get())
     ash::AssistantState::Get()->RemoveObserver(this);
@@ -136,7 +137,7 @@ void AssistantOptInFlowScreenHandler::RegisterMessages() {
               &AssistantOptInFlowScreenHandler::HandleVoiceMatchScreenShown);
   AddCallback("login.AssistantOptInFlowScreen.GetMoreScreen.screenShown",
               &AssistantOptInFlowScreenHandler::HandleGetMoreScreenShown);
-  AddCallback("login.AssistantOptInFlowScreen.LoadingScreen.timeout",
+  AddCallback("login.AssistantOptInFlowScreen.timeout",
               &AssistantOptInFlowScreenHandler::HandleLoadingTimeout);
   AddCallback("login.AssistantOptInFlowScreen.flowFinished",
               &AssistantOptInFlowScreenHandler::HandleFlowFinished);
@@ -147,6 +148,7 @@ void AssistantOptInFlowScreenHandler::RegisterMessages() {
 void AssistantOptInFlowScreenHandler::GetAdditionalParameters(
     base::DictionaryValue* dict) {
   dict->SetBoolean("hotwordDspAvailable", chromeos::IsHotwordDspAvailable());
+  dict->SetBoolean("deviceHasNoBattery", !DeviceHasBattery());
   dict->SetBoolean("voiceMatchDisabled",
                    chromeos::assistant::features::IsVoiceMatchDisabled());
   BaseScreenHandler::GetAdditionalParameters(dict);
@@ -221,11 +223,11 @@ void AssistantOptInFlowScreenHandler::SetupAssistantConnection() {
   // Make sure enable Assistant service since we need it during the flow.
   prefs->SetBoolean(chromeos::assistant::prefs::kAssistantEnabled, true);
 
-  if (ash::AssistantState::Get()->assistant_state() ==
-      ash::mojom::AssistantState::NOT_READY) {
+  if (ash::AssistantState::Get()->assistant_status() ==
+      chromeos::assistant::AssistantStatus::NOT_READY) {
     ash::AssistantState::Get()->AddObserver(this);
   } else {
-    BindAssistantSettingsManager();
+    SendGetSettingsRequest();
   }
 }
 
@@ -239,7 +241,7 @@ void AssistantOptInFlowScreenHandler::OnActivityControlOptInResult(
   RecordActivityControlConsent(profile, ui_audit_key_, opted_in);
   if (opted_in) {
     RecordAssistantOptInStatus(ACTIVITY_CONTROL_ACCEPTED);
-    settings_manager_->UpdateSettings(
+    assistant::AssistantSettings::Get()->UpdateSettings(
         GetSettingsUiUpdate(consent_token_).SerializeAsString(),
         base::BindOnce(
             &AssistantOptInFlowScreenHandler::OnUpdateSettingsResponse,
@@ -259,11 +261,14 @@ void AssistantOptInFlowScreenHandler::OnEmailOptInResult(bool opted_in) {
     return;
   }
 
+  // TODO(b/159363597): Handle network disconnect when sending email opt-in
+  // result.
   RecordAssistantOptInStatus(opted_in ? EMAIL_OPTED_IN : EMAIL_OPTED_OUT);
-  settings_manager_->UpdateSettings(
+  assistant::AssistantSettings::Get()->UpdateSettings(
       GetEmailOptInUpdate(opted_in).SerializeAsString(),
       base::BindOnce(&AssistantOptInFlowScreenHandler::OnUpdateSettingsResponse,
                      weak_factory_.GetWeakPtr()));
+  HandleFlowFinished();
 }
 
 void AssistantOptInFlowScreenHandler::OnDialogClosed() {
@@ -282,31 +287,24 @@ void AssistantOptInFlowScreenHandler::OnAssistantSettingsEnabled(bool enabled) {
 }
 
 void AssistantOptInFlowScreenHandler::OnAssistantStatusChanged(
-    ash::mojom::AssistantState state) {
-  if (state != ash::mojom::AssistantState::NOT_READY) {
-    BindAssistantSettingsManager();
+    chromeos::assistant::AssistantStatus status) {
+  if (status != chromeos::assistant::AssistantStatus::NOT_READY) {
+    SendGetSettingsRequest();
     ash::AssistantState::Get()->RemoveObserver(this);
   }
 }
 
-void AssistantOptInFlowScreenHandler::BindAssistantSettingsManager() {
-  if (settings_manager_.is_bound())
+void AssistantOptInFlowScreenHandler::SendGetSettingsRequest() {
+  if (!initialized_)
     return;
 
-  // Set up settings mojom.
-  AssistantServiceConnection::GetForProfile(
-      ProfileManager::GetActiveUserProfile())
-      ->service()
-      ->BindSettingsManager(settings_manager_.BindNewPipeAndPassReceiver());
-
-  if (initialized_) {
-    SendGetSettingsRequest();
+  if (ash::AssistantState::Get()->assistant_status() ==
+      chromeos::assistant::AssistantStatus::NOT_READY) {
+    return;
   }
-}
 
-void AssistantOptInFlowScreenHandler::SendGetSettingsRequest() {
   assistant::SettingsUiSelector selector = GetSettingsUiSelector();
-  settings_manager_->GetSettings(
+  assistant::AssistantSettings::Get()->GetSettings(
       selector.SerializeAsString(),
       base::BindOnce(&AssistantOptInFlowScreenHandler::OnGetSettingsResponse,
                      weak_factory_.GetWeakPtr()));
@@ -314,9 +312,9 @@ void AssistantOptInFlowScreenHandler::SendGetSettingsRequest() {
 }
 
 void AssistantOptInFlowScreenHandler::StopSpeakerIdEnrollment() {
-  settings_manager_->StopSpeakerIdEnrollment(base::DoNothing());
-  // Reset the receiver so it can be used again if enrollment is retried.
-  client_receiver_.reset();
+  DCHECK(voice_match_enrollment_started_);
+  voice_match_enrollment_started_ = false;
+  assistant::AssistantSettings::Get()->StopSpeakerIdEnrollment();
 }
 
 void AssistantOptInFlowScreenHandler::ReloadContent(const base::Value& dict) {
@@ -484,7 +482,6 @@ void AssistantOptInFlowScreenHandler::OnUpdateSettingsResponse(
       // TODO(updowndta): Handle email optin update failure.
       LOG(ERROR) << "Email OptIn udpate error.";
     }
-    HandleFlowFinished();
     return;
   }
 
@@ -498,11 +495,7 @@ void AssistantOptInFlowScreenHandler::HandleValuePropScreenUserAction(
   } else if (action == kNextPressed) {
     OnActivityControlOptInResult(true);
   } else if (action == kReloadRequested) {
-    if (settings_manager_.is_bound()) {
-      SendGetSettingsRequest();
-    } else {
-      LOG(ERROR) << "Settings mojom failed to setup. Check Assistant service.";
-    }
+    SendGetSettingsRequest();
   }
 }
 
@@ -528,16 +521,19 @@ void AssistantOptInFlowScreenHandler::HandleVoiceMatchScreenUserAction(
       // No need to disable hotword for retrain flow since user has a model.
       prefs->SetBoolean(assistant::prefs::kAssistantHotwordEnabled, false);
     }
-    StopSpeakerIdEnrollment();
+    if (voice_match_enrollment_started_)
+      StopSpeakerIdEnrollment();
     ShowNextScreen();
   } else if (action == kRecordPressed) {
     if (!prefs->GetBoolean(assistant::prefs::kAssistantHotwordEnabled)) {
       prefs->SetBoolean(assistant::prefs::kAssistantHotwordEnabled, true);
     }
 
-    settings_manager_->StartSpeakerIdEnrollment(
+    DCHECK(!voice_match_enrollment_started_);
+    voice_match_enrollment_started_ = true;
+    assistant::AssistantSettings::Get()->StartSpeakerIdEnrollment(
         flow_type_ == ash::FlowType::kSpeakerIdRetrain,
-        client_receiver_.BindNewPipeAndPassRemote());
+        weak_factory_.GetWeakPtr());
   }
 }
 
@@ -605,10 +601,21 @@ void AssistantOptInFlowScreenHandler::HandleFlowInitialized(
   DCHECK(IsKnownEnumValue(static_cast<ash::FlowType>(flow_type)));
   flow_type_ = static_cast<ash::FlowType>(flow_type);
 
-  if (settings_manager_.is_bound() &&
-      flow_type_ == ash::FlowType::kConsentFlow) {
+  if (flow_type_ == ash::FlowType::kConsentFlow)
     SendGetSettingsRequest();
-  }
+}
+
+bool AssistantOptInFlowScreenHandler::DeviceHasBattery() {
+  // Assume that the device has a battery if we can't determine otherwise.
+  if (!chromeos::PowerManagerClient::Get())
+    return true;
+
+  auto status = PowerManagerClient::Get()->GetLastStatus();
+  if (!status.has_value() || !status->has_battery_state())
+    return true;
+
+  return status->battery_state() !=
+         power_manager::PowerSupplyProperties_BatteryState_NOT_PRESENT;
 }
 
 }  // namespace chromeos

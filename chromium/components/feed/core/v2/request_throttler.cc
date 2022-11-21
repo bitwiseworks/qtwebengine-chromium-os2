@@ -7,18 +7,18 @@
 #include <vector>
 
 #include "base/time/clock.h"
+#include "components/feed/core/v2/config.h"
 #include "components/feed/core/v2/prefs.h"
 #include "components/prefs/pref_service.h"
 
 namespace feed {
 namespace {
 int GetMaxRequestsPerDay(NetworkRequestType request_type) {
-  // TODO(harringtond): Decide what launchable values are.
   switch (request_type) {
     case NetworkRequestType::kFeedQuery:
-      return 20;
+      return GetFeedConfig().max_feed_query_requests_per_day;
     case NetworkRequestType::kUploadActions:
-      return 20;
+      return GetFeedConfig().max_action_upload_requests_per_day;
   }
 }
 
@@ -47,7 +47,7 @@ bool RequestThrottler::RequestQuota(NetworkRequestType request_type) {
   // Fetch request counts from prefs. There's an entry for each request type.
   // We may need to resize the list.
   std::vector<int> request_counts =
-      feed::prefs::GetThrottlerRequestCounts(pref_service_);
+      feed::prefs::GetThrottlerRequestCounts(*pref_service_);
   const size_t request_count_index = static_cast<size_t>(request_type);
   if (request_counts.size() <= request_count_index)
     request_counts.resize(request_count_index + 1);
@@ -56,7 +56,7 @@ bool RequestThrottler::RequestQuota(NetworkRequestType request_type) {
   if (requests_already_made >= max_requests_per_day)
     return false;
   requests_already_made++;
-  feed::prefs::SetThrottlerRequestCounts(request_counts, pref_service_);
+  feed::prefs::SetThrottlerRequestCounts(request_counts, *pref_service_);
   return true;
 }
 
@@ -65,12 +65,12 @@ void RequestThrottler::ResetCountersIfDayChanged() {
   // making un-throttled requests to server.
   const base::Time now = clock_->Now();
   const bool day_changed =
-      DaysSinceOrigin(feed::prefs::GetLastRequestTime(pref_service_)) !=
+      DaysSinceOrigin(feed::prefs::GetLastRequestTime(*pref_service_)) !=
       DaysSinceOrigin(now);
-  feed::prefs::SetLastRequestTime(now, pref_service_);
+  feed::prefs::SetLastRequestTime(now, *pref_service_);
 
   if (day_changed)
-    feed::prefs::SetThrottlerRequestCounts({}, pref_service_);
+    feed::prefs::SetThrottlerRequestCounts({}, *pref_service_);
 }
 
 }  // namespace feed

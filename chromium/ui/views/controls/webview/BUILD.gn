@@ -4,12 +4,6 @@
 
 import("//build/config/jumbo.gni")
 
-# Reset sources_assignment_filter for the BUILD.gn file to prevent
-# regression during the migration of Chromium away from the feature.
-# See docs/no_sources_assignment_filter.md for more information.
-# TODO(crbug.com/1018739): remove this when migration is done.
-set_sources_assignment_filter([])
-
 jumbo_component("webview") {
   sources = [
     "unhandled_keyboard_event_handler.cc",
@@ -34,7 +28,7 @@ jumbo_component("webview") {
   defines = [ "WEBVIEW_IMPLEMENTATION" ]
 
   if (is_mac) {
-    libs = [ "CoreFoundation.framework" ]
+    frameworks = [ "CoreFoundation.framework" ]
   }
 
   deps = [
@@ -59,7 +53,7 @@ jumbo_component("webview") {
     "//ui/views",
   ]
 
-  if (is_linux || is_android) {
+  if (is_linux || is_chromeos || is_android || is_fuchsia) {
     sources += [ "unhandled_keyboard_event_handler_default.cc" ]
   }
 }

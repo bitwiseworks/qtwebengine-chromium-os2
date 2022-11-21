@@ -13,7 +13,6 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
@@ -24,6 +23,12 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace storage {
+
+namespace {
+void NeverCalled(int unused) {
+  ADD_FAILURE();
+}
+}  // namespace
 
 class LocalFileStreamWriterTest : public testing::Test {
  public:
@@ -55,7 +60,7 @@ class LocalFileStreamWriterTest : public testing::Test {
   base::FilePath CreateFileWithContent(const std::string& name,
                                        const std::string& data) {
     base::FilePath path = Path(name);
-    base::WriteFile(path, data.c_str(), data.size());
+    base::WriteFile(path, data);
     return path;
   }
 
@@ -75,10 +80,6 @@ class LocalFileStreamWriterTest : public testing::Test {
   base::Thread file_thread_;
   base::ScopedTempDir temp_dir_;
 };
-
-void NeverCalled(int unused) {
-  ADD_FAILURE();
-}
 
 TEST_F(LocalFileStreamWriterTest, Write) {
   base::FilePath path = CreateFileWithContent("file_a", std::string());
@@ -101,6 +102,16 @@ TEST_F(LocalFileStreamWriterTest, WriteMiddle) {
   EXPECT_EQ("foxxxr", GetFileContent(path));
 }
 
+TEST_F(LocalFileStreamWriterTest, WriteNearEnd) {
+  base::FilePath path = CreateFileWithContent("file_a", "foobar");
+  std::unique_ptr<LocalFileStreamWriter> writer(CreateWriter(path, 5));
+  EXPECT_EQ(net::OK, WriteStringToWriter(writer.get(), "xxx"));
+  writer.reset();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(base::PathExists(path));
+  EXPECT_EQ("foobaxxx", GetFileContent(path));
+}
+
 TEST_F(LocalFileStreamWriterTest, WriteEnd) {
   base::FilePath path = CreateFileWithContent("file_a", "foobar");
   std::unique_ptr<LocalFileStreamWriter> writer(CreateWriter(path, 6));
@@ -109,6 +120,17 @@ TEST_F(LocalFileStreamWriterTest, WriteEnd) {
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(base::PathExists(path));
   EXPECT_EQ("foobarxxx", GetFileContent(path));
+}
+
+TEST_F(LocalFileStreamWriterTest, WriteAfterEnd) {
+  base::FilePath path = CreateFileWithContent("file_a", "foobar");
+  std::unique_ptr<LocalFileStreamWriter> writer(CreateWriter(path, 7));
+  EXPECT_EQ(net::ERR_REQUEST_RANGE_NOT_SATISFIABLE,
+            WriteStringToWriter(writer.get(), "xxx"));
+  writer.reset();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(base::PathExists(path));
+  EXPECT_EQ("foobar", GetFileContent(path));
 }
 
 TEST_F(LocalFileStreamWriterTest, WriteFailForNonexistingFile) {

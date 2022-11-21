@@ -15,8 +15,9 @@
 #ifndef DAWNNATIVE_FENCESIGNALTRACKER_H_
 #define DAWNNATIVE_FENCESIGNALTRACKER_H_
 
+#include "common/RefCounted.h"
 #include "common/SerialQueue.h"
-#include "dawn_native/RefCounted.h"
+#include "dawn_native/IntegerTypes.h"
 
 namespace dawn_native {
 
@@ -26,20 +27,20 @@ namespace dawn_native {
     class FenceSignalTracker {
         struct FenceInFlight {
             Ref<Fence> fence;
-            uint64_t value;
+            FenceAPISerial value;
         };
 
       public:
         FenceSignalTracker(DeviceBase* device);
         ~FenceSignalTracker();
 
-        void UpdateFenceOnComplete(Fence* fence, uint64_t value);
+        void UpdateFenceOnComplete(Fence* fence, FenceAPISerial value);
 
-        void Tick(Serial finishedSerial);
+        void Tick(ExecutionSerial finishedSerial);
 
       private:
         DeviceBase* mDevice;
-        SerialQueue<FenceInFlight> mFencesInFlight;
+        SerialQueue<ExecutionSerial, FenceInFlight> mFencesInFlight;
     };
 
 }  // namespace dawn_native

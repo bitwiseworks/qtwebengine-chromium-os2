@@ -25,11 +25,16 @@ namespace cr_fuchsia {
 // Must be constructed, used, and destroyed on the same sequence.
 class LegacyMetricsClient {
  public:
+  // Maximum number of Events to send to Record() at a time, so as to not exceed
+  // the 64KB FIDL maximum message size.
+  static constexpr size_t kMaxBatchSize = 50;
+
   using ReportAdditionalMetricsCallback = base::RepeatingCallback<void(
-      std::vector<fuchsia::legacymetrics::Event>*)>;
+      base::OnceCallback<void(std::vector<fuchsia::legacymetrics::Event>)>)>;
+  using NotifyFlushCallback =
+      base::OnceCallback<void(base::OnceClosure completion_cb)>;
 
   LegacyMetricsClient();
-
   ~LegacyMetricsClient();
 
   explicit LegacyMetricsClient(const LegacyMetricsClient&) = delete;
@@ -39,24 +44,44 @@ class LegacyMetricsClient {
   // |report_interval|.
   void Start(base::TimeDelta report_interval);
 
-  // Sets a |callback| to be invoked just prior to reporting, allowing users to
-  // report additional custom metrics.
-  // Must be called before Start().
+  // Sets an asynchronous |callback| to be invoked just prior to reporting,
+  // allowing users to asynchronously gather and provide additional custom
+  // metrics. |callback| will receive the list of metrics when they are ready.
+  // Reporting is paused until |callback| is fulfilled.
+  // If used, then this method must be called before calling Start().
   void SetReportAdditionalMetricsCallback(
       ReportAdditionalMetricsCallback callback);
 
+  // Sets a |callback| which is invoked to warn that the connection to the
+  // remote MetricsRecorder will be terminated. The completion closure passed to
+  // |callback| should be invoked to signal flush completion.
+  void SetNotifyFlushCallback(NotifyFlushCallback callback);
+
  private:
   void ScheduleNextReport();
-  void Report();
+  void StartReport();
+  void Report(std::vector<fuchsia::legacymetrics::Event> additional_metrics);
   void OnMetricsRecorderDisconnected(zx_status_t status);
+  void OnCloseSoon();
+
+  // Incrementally sends the contents of |to_send_| to |metrics_recorder_|.
+  void DrainBuffer();
 
   base::TimeDelta report_interval_;
   ReportAdditionalMetricsCallback report_additional_callback_;
+  NotifyFlushCallback notify_flush_callback_;
+  bool is_flushing_ = false;
+  bool record_ack_pending_ = false;
+  std::vector<fuchsia::legacymetrics::Event> to_send_;
   std::unique_ptr<LegacyMetricsUserActionRecorder> user_events_recorder_;
 
   fuchsia::legacymetrics::MetricsRecorderPtr metrics_recorder_;
   base::RetainingOneShotTimer timer_;
   SEQUENCE_CHECKER(sequence_checker_);
+
+  // Prevents use-after-free if |report_additional_callback_| is invoked after
+  // |this| is destroyed.
+  base::WeakPtrFactory<LegacyMetricsClient> weak_factory_{this};
 };
 
 }  // namespace cr_fuchsia

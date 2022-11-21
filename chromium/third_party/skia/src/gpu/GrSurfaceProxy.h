@@ -12,7 +12,6 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/private/SkNoncopyable.h"
 #include "src/gpu/GrGpuResource.h"
-#include "src/gpu/GrNonAtomicRef.h"
 #include "src/gpu/GrSurface.h"
 #include "src/gpu/GrTexture.h"
 
@@ -62,6 +61,21 @@ public:
         kSynced
     };
 
+    /**
+     * Specifies the expected properties of the GrSurface returned by a lazy instantiation
+     * callback. The dimensions will be negative in the case of a fully lazy proxy.
+     */
+    struct LazySurfaceDesc {
+        SkISize fDimensions;
+        SkBackingFit fFit;
+        GrRenderable fRenderable;
+        GrMipmapped fMipmapped;
+        int fSampleCnt;
+        const GrBackendFormat& fFormat;
+        GrProtected fProtected;
+        SkBudgeted fBudgeted;
+    };
+
     struct LazyCallbackResult {
         LazyCallbackResult() = default;
         LazyCallbackResult(const LazyCallbackResult&) = default;
@@ -85,7 +99,8 @@ public:
         bool fReleaseCallback = true;
     };
 
-    using LazyInstantiateCallback = std::function<LazyCallbackResult(GrResourceProvider*)>;
+    using LazyInstantiateCallback =
+            std::function<LazyCallbackResult(GrResourceProvider*, const LazySurfaceDesc&)>;
 
     enum class UseAllocator {
         /**
@@ -252,11 +267,6 @@ public:
         return fSurfaceFlags & GrInternalSurfaceFlags::kRequiresManualMSAAResolve;
     }
 
-    void setLastRenderTask(GrRenderTask*);
-    GrRenderTask* getLastRenderTask() { return fLastRenderTask; }
-
-    GrOpsTask* getLastOpsTask();
-
     /**
      * Retrieves the amount of GPU memory that will be or currently is used by this resource
      * in bytes. It is approximate since we aren't aware of additional padding or copies made
@@ -285,23 +295,25 @@ public:
     // The copy is is not a render target and not multisampled.
     //
     // The intended use of this copy call is simply to copy exact pixel values from one proxy to a
-    // new one. Thus there isn't a need for a swizzle when doing the copy. Also, there shouldn't be
-    // an assumed "view" of the copy. However, even though not really needed for the swizzle, we
-    // still pass in a srcColorType since it is required for making a GrSurface/RenderTargetContext.
-    // Additionally, almost all callers of this will immediately put the resulting proxy into a view
-    // which is compatible with the srcColorType and origin passed in here. Thus for now we just
-    // return the GrSurfaceProxyView that is already stored on the internal GrSurfaceContext. If we
-    // later decide to not pass in a srcColorType (and assume some default color type based on the
-    // backend format) then we should go back to returning a proxy here and have the callers decide
-    // what view they want of the proxy.
-    static GrSurfaceProxyView Copy(GrRecordingContext*, GrSurfaceProxy* src,
-                                   GrSurfaceOrigin, GrColorType srcColorType, GrMipMapped,
-                                   SkIRect srcRect, SkBackingFit, SkBudgeted,
-                                   RectsMustMatch = RectsMustMatch::kNo);
+    // new one. Thus, there isn't a need for a swizzle when doing the copy. The format of the copy
+    // will be the same as the src. Therefore, the copy can be used in a view with the same swizzle
+    // as the original for use with a given color type.
+    static sk_sp<GrSurfaceProxy> Copy(GrRecordingContext*,
+                                      GrSurfaceProxy* src,
+                                      GrSurfaceOrigin,
+                                      GrMipmapped,
+                                      SkIRect srcRect,
+                                      SkBackingFit,
+                                      SkBudgeted,
+                                      RectsMustMatch = RectsMustMatch::kNo);
 
     // Same as above Copy but copies the entire 'src'
-    static GrSurfaceProxyView Copy(GrRecordingContext*, GrSurfaceProxy* src, GrSurfaceOrigin,
-                                   GrColorType srcColorType, GrMipMapped, SkBackingFit, SkBudgeted);
+    static sk_sp<GrSurfaceProxy> Copy(GrRecordingContext*,
+                                      GrSurfaceProxy* src,
+                                      GrSurfaceOrigin,
+                                      GrMipmapped,
+                                      SkBackingFit,
+                                      SkBudgeted);
 
 #if GR_TEST_UTILS
     int32_t testingOnly_getBackingRefCnt() const;
@@ -312,7 +324,7 @@ public:
 
     // Provides access to functions that aren't part of the public API.
     inline GrSurfaceProxyPriv priv();
-    inline const GrSurfaceProxyPriv priv() const;
+    inline const GrSurfaceProxyPriv priv() const;  // NOLINT(readability-const-return-type)
 
     GrProtected isProtected() const { return fIsProtected; }
 
@@ -355,7 +367,7 @@ protected:
     void assign(sk_sp<GrSurface> surface);
 
     sk_sp<GrSurface> createSurfaceImpl(GrResourceProvider*, int sampleCnt, GrRenderable,
-                                       GrMipMapped) const;
+                                       GrMipmapped) const;
 
     // Once the dimensions of a fully-lazy proxy are decided, and before it gets instantiated, the
     // client can use this optional method to specify the proxy's dimensions. (A proxy's dimensions
@@ -368,7 +380,7 @@ protected:
     }
 
     bool instantiateImpl(GrResourceProvider* resourceProvider, int sampleCnt, GrRenderable,
-                         GrMipMapped, const GrUniqueKey*);
+                         GrMipmapped, const GrUniqueKey*);
 
     // For deferred proxies this will be null until the proxy is instantiated.
     // For wrapped proxies it will point to the wrapped resource.
@@ -408,6 +420,8 @@ private:
 
     virtual size_t onUninstantiatedGpuMemorySize(const GrCaps&) const = 0;
 
+    virtual LazySurfaceDesc callbackDesc() const = 0;
+
     bool                   fIgnoredByResourceAllocator = false;
     GrProtected            fIsProtected;
 
@@ -416,15 +430,6 @@ private:
     // If the proxy computes its own answer that answer is checked (in debug mode) in
     // the instantiation method.
     mutable size_t         fGpuMemorySize;
-
-    // The last GrRenderTask that wrote to or is currently going to write to this surface
-    // The GrRenderTask can be closed (e.g., no surface context is currently bound
-    // to this proxy).
-    // This back-pointer is required so that we can add a dependancy between
-    // the GrRenderTask used to create the current contents of this surface
-    // and the GrRenderTask of a destination surface to which this one is being drawn or copied.
-    // This pointer is unreffed. GrRenderTasks own a ref on their surface proxies.
-    GrRenderTask*          fLastRenderTask = nullptr;
 };
 
 GR_MAKE_BITFIELD_CLASS_OPS(GrSurfaceProxy::ResolveFlags)

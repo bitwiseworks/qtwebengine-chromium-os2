@@ -45,7 +45,10 @@ CSSValuePool::CSSValuePool()
     : inherited_value_(MakeGarbageCollected<CSSInheritedValue>()),
       initial_value_(MakeGarbageCollected<CSSInitialValue>()),
       unset_value_(MakeGarbageCollected<CSSUnsetValue>(PassKey())),
+      revert_value_(MakeGarbageCollected<CSSRevertValue>(PassKey())),
       invalid_variable_value_(MakeGarbageCollected<CSSInvalidVariableValue>()),
+      initial_color_value_(
+          MakeGarbageCollected<CSSInitialColorValue>(PassKey())),
       color_transparent_(
           MakeGarbageCollected<cssvalue::CSSColorValue>(Color::kTransparent)),
       color_white_(
@@ -58,11 +61,13 @@ CSSValuePool::CSSValuePool()
   number_value_cache_.resize(kMaximumCacheableIntegerValue + 1);
 }
 
-void CSSValuePool::Trace(Visitor* visitor) {
+void CSSValuePool::Trace(Visitor* visitor) const {
   visitor->Trace(inherited_value_);
   visitor->Trace(initial_value_);
   visitor->Trace(unset_value_);
+  visitor->Trace(revert_value_);
   visitor->Trace(invalid_variable_value_);
+  visitor->Trace(initial_color_value_);
   visitor->Trace(color_transparent_);
   visitor->Trace(color_white_);
   visitor->Trace(color_black_);

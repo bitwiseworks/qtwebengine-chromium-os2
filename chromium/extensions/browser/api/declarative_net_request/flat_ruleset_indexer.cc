@@ -6,8 +6,10 @@
 
 #include <string>
 
-#include "base/logging.h"
+#include "base/check_op.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "extensions/browser/api/declarative_net_request/indexed_rule.h"
 #include "extensions/browser/api/declarative_net_request/utils.h"
 #include "net/base/escape.h"
@@ -160,10 +162,17 @@ FlatVectorOffset<flat::ModifyHeaderInfo> BuildModifyHeaderInfoOffset(
 
   for (const dnr_api::ModifyHeaderInfo& header_info : modify_header_list) {
     flat::HeaderOperation operation = flat::HeaderOperation_remove;
+    FlatStringOffset header_value;
 
     switch (header_info.operation) {
       case dnr_api::HeaderOperation::HEADER_OPERATION_NONE:
-        NOTREACHED();
+      case dnr_api::HEADER_OPERATION_APPEND:
+        operation = flat::HeaderOperation_append;
+        header_value = builder->CreateSharedString(*header_info.value);
+        break;
+      case dnr_api::HEADER_OPERATION_SET:
+        operation = flat::HeaderOperation_set;
+        header_value = builder->CreateSharedString(*header_info.value);
         break;
       case dnr_api::HEADER_OPERATION_REMOVE:
         operation = flat::HeaderOperation_remove;
@@ -171,9 +180,9 @@ FlatVectorOffset<flat::ModifyHeaderInfo> BuildModifyHeaderInfoOffset(
     }
 
     FlatStringOffset header_name =
-        builder->CreateSharedString(header_info.header);
-    flat_modify_header_list.push_back(
-        flat::CreateModifyHeaderInfo(*builder, operation, header_name));
+        builder->CreateSharedString(base::ToLowerASCII(header_info.header));
+    flat_modify_header_list.push_back(flat::CreateModifyHeaderInfo(
+        *builder, operation, header_name, header_value));
   }
 
   return builder->CreateVector(flat_modify_header_list);
@@ -220,7 +229,7 @@ void FlatRulesetIndexer::AddUrlRule(const IndexedRule& indexed_rule) {
             : FlatStringOffset();
     regex_rules_.push_back(flat::CreateRegexRule(
         builder_, offset, ConvertToFlatActionType(indexed_rule.action_type),
-        GetRemoveHeadersMask(indexed_rule), regex_substitution_offset));
+        regex_substitution_offset));
   }
 
   FlatStringOffset redirect_url_offset;
@@ -278,28 +287,6 @@ base::span<const uint8_t> FlatRulesetIndexer::GetData() {
   return base::make_span(builder_.GetBufferPointer(), builder_.GetSize());
 }
 
-uint8_t FlatRulesetIndexer::GetRemoveHeadersMask(
-    const IndexedRule& indexed_rule) const {
-  uint8_t mask = 0;
-  for (const dnr_api::RemoveHeaderType type : indexed_rule.remove_headers_set) {
-    switch (type) {
-      case dnr_api::REMOVE_HEADER_TYPE_NONE:
-        NOTREACHED();
-        break;
-      case dnr_api::REMOVE_HEADER_TYPE_COOKIE:
-        mask |= flat::RemoveHeaderType_cookie;
-        break;
-      case dnr_api::REMOVE_HEADER_TYPE_REFERER:
-        mask |= flat::RemoveHeaderType_referer;
-        break;
-      case dnr_api::REMOVE_HEADER_TYPE_SETCOOKIE:
-        mask |= flat::RemoveHeaderType_set_cookie;
-        break;
-    }
-  }
-  return mask;
-}
-
 std::vector<FlatRulesetIndexer::UrlPatternIndexBuilder*>
 FlatRulesetIndexer::GetBuilders(const IndexedRule& indexed_rule) {
   switch (indexed_rule.action_type) {
@@ -312,8 +299,6 @@ FlatRulesetIndexer::GetBuilders(const IndexedRule& indexed_rule) {
                       .get()};
     case dnr_api::RULE_ACTION_TYPE_ALLOWALLREQUESTS:
       return {index_builders_[flat::IndexType_allow_all_requests].get()};
-    case dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS:
-      return GetRemoveHeaderBuilders(indexed_rule.remove_headers_set);
     case dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS:
       return {index_builders_[flat::IndexType_modify_headers].get()};
     case dnr_api::RULE_ACTION_TYPE_NONE:
@@ -321,35 +306,6 @@ FlatRulesetIndexer::GetBuilders(const IndexedRule& indexed_rule) {
   }
   NOTREACHED();
   return {};
-}
-
-std::vector<FlatRulesetIndexer::UrlPatternIndexBuilder*>
-FlatRulesetIndexer::GetRemoveHeaderBuilders(
-    const std::set<dnr_api::RemoveHeaderType>& types) {
-  // A single "removeHeaders" JSON/indexed rule does still correspond to a
-  // single flatbuffer rule but can be stored in multiple indices.
-  DCHECK(!types.empty());
-  std::vector<UrlPatternIndexBuilder*> result;
-  for (dnr_api::RemoveHeaderType type : types) {
-    switch (type) {
-      case dnr_api::REMOVE_HEADER_TYPE_NONE:
-        NOTREACHED();
-        break;
-      case dnr_api::REMOVE_HEADER_TYPE_COOKIE:
-        result.push_back(
-            index_builders_[flat::IndexType_remove_cookie_header].get());
-        break;
-      case dnr_api::REMOVE_HEADER_TYPE_REFERER:
-        result.push_back(
-            index_builders_[flat::IndexType_remove_referer_header].get());
-        break;
-      case dnr_api::REMOVE_HEADER_TYPE_SETCOOKIE:
-        result.push_back(
-            index_builders_[flat::IndexType_remove_set_cookie_header].get());
-        break;
-    }
-  }
-  return result;
 }
 
 }  // namespace declarative_net_request

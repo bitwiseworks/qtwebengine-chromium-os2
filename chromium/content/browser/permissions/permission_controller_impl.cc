@@ -7,7 +7,7 @@
 
 #include "content/browser/permissions/permission_controller_impl.h"
 #include "base/bind.h"
-#include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_controller_delegate.h"
@@ -64,6 +64,9 @@ PermissionToSchedulingFeature(PermissionType permission_name) {
     case PermissionType::SENSORS:
     case PermissionType::AR:
     case PermissionType::VR:
+    case PermissionType::CAMERA_PAN_TILT_ZOOM:
+    case PermissionType::WINDOW_PLACEMENT:
+    case PermissionType::FONT_ACCESS:
       return base::nullopt;
   }
 }
@@ -130,7 +133,8 @@ struct PermissionControllerImpl::Subscription {
   int render_frame_id = -1;
   int render_process_id = -1;
   base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback;
-  int delegate_subscription_id;
+  // This is default-initialized to an invalid ID.
+  PermissionControllerDelegate::SubscriptionId delegate_subscription_id;
 };
 
 PermissionControllerImpl::~PermissionControllerImpl() {
@@ -386,7 +390,8 @@ void PermissionControllerImpl::OnDelegatePermissionStatusChange(
     subscription->callback.Run(status);
 }
 
-int PermissionControllerImpl::SubscribePermissionStatusChange(
+PermissionControllerImpl::SubscriptionId
+PermissionControllerImpl::SubscribePermissionStatusChange(
     PermissionType permission,
     RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
@@ -420,22 +425,22 @@ int PermissionControllerImpl::SubscribePermissionStatusChange(
             base::BindRepeating(
                 &PermissionControllerImpl::OnDelegatePermissionStatusChange,
                 base::Unretained(this), subscription.get()));
-  } else {
-    subscription->delegate_subscription_id = kNoPendingOperation;
   }
-  return subscriptions_.Add(std::move(subscription));
+
+  auto id = subscription_id_generator_.GenerateNextId();
+  subscriptions_.AddWithID(std::move(subscription), id);
+  return id;
 }
 
 void PermissionControllerImpl::UnsubscribePermissionStatusChange(
-    int subscription_id) {
+    SubscriptionId subscription_id) {
   Subscription* subscription = subscriptions_.Lookup(subscription_id);
   if (!subscription)
     return;
   PermissionControllerDelegate* delegate =
       browser_context_->GetPermissionControllerDelegate();
-  if (delegate &&
-      subscription->delegate_subscription_id != kNoPendingOperation) {
-    delegate->UnsubscribePermissionStatusChange(
+  if (delegate) {
+     delegate->UnsubscribePermissionStatusChange(
         subscription->delegate_subscription_id);
   }
   subscriptions_.Remove(subscription_id);

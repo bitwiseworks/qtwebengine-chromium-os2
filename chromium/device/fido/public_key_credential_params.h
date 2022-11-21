@@ -25,12 +25,14 @@ class COMPONENT_EXPORT(DEVICE_FIDO) PublicKeyCredentialParams {
  public:
   struct COMPONENT_EXPORT(DEVICE_FIDO) CredentialInfo {
     bool operator==(const CredentialInfo& other) const;
+
     CredentialType type = CredentialType::kPublicKey;
-    int algorithm = base::strict_cast<int>(CoseAlgorithmIdentifier::kCoseEs256);
+    int32_t algorithm =
+        base::strict_cast<int32_t>(CoseAlgorithmIdentifier::kEs256);
   };
 
   static base::Optional<PublicKeyCredentialParams> CreateFromCBORValue(
-      const cbor::Value& cbor_value);
+      const ::cbor::Value& cbor_value);
 
   explicit PublicKeyCredentialParams(
       std::vector<CredentialInfo> credential_params);
@@ -48,7 +50,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) PublicKeyCredentialParams {
   std::vector<CredentialInfo> public_key_credential_params_;
 };
 
-cbor::Value AsCBOR(const PublicKeyCredentialParams&);
+::cbor::Value AsCBOR(const PublicKeyCredentialParams&);
 
 }  // namespace device
 

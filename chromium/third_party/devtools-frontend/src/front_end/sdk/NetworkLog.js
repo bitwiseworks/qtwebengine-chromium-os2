@@ -29,6 +29,7 @@
  */
 
 import * as Common from '../common/common.js';
+import * as Platform from '../platform/platform.js';
 
 import {ConsoleMessage, ConsoleModel, MessageLevel, MessageSource} from './ConsoleModel.js';
 import {Events as NetworkManagerEvents, Message, NetworkManager} from './NetworkManager.js';  // eslint-disable-line no-unused-vars
@@ -36,6 +37,9 @@ import {Events as NetworkRequestEvents, InitiatorType, NetworkRequest} from './N
 import {Events as ResourceTreeModelEvents, ResourceTreeFrame, ResourceTreeModel} from './ResourceTreeModel.js';  // eslint-disable-line no-unused-vars
 import {RuntimeModel} from './RuntimeModel.js';
 import {SDKModelObserver, TargetManager} from './SDKModel.js';  // eslint-disable-line no-unused-vars
+
+/** @type {!NetworkLog} */
+let _instance;
 
 /**
  * @implements {SDKModelObserver<!NetworkManager>}
@@ -45,12 +49,33 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
     super();
     /** @type {!Array<!NetworkRequest>} */
     this._requests = [];
+    /** @type {!Array<!Protocol.Network.Request>} */
+    this._sentNetworkRequests = [];
+    /** @type {!Array<!Protocol.Network.Response>} */
+    this._receivedNetworkResponses = [];
     /** @type {!Set<!NetworkRequest>} */
     this._requestsSet = new Set();
+    /** @type {!Map<string, !Array<!NetworkRequest>>} */
+    this._requestsMap = new Map();
     /** @type {!Map<!NetworkManager, !PageLoad>} */
     this._pageLoadForManager = new Map();
+    /** @type {boolean} */
     this._isRecording = true;
+    /** @type {!WeakMap<!NetworkManager, !Array<!Common.EventTarget.EventDescriptor>>} */
+    this._modelListeners = new WeakMap();
+    /** @type {!WeakMap<!NetworkRequest, !InitiatorData>} */
+    this._initiatorData = new WeakMap();
     TargetManager.instance().observeModels(NetworkManager, this);
+  }
+
+  /**
+   * @return {!NetworkLog}
+   */
+  static instance() {
+    if (!_instance) {
+      _instance = new NetworkLog();
+    }
+    return _instance;
   }
 
   /**
@@ -69,6 +94,8 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
         networkManager.addEventListener(NetworkManagerEvents.RequestFinished, this._onRequestUpdated, this));
     eventListeners.push(networkManager.addEventListener(
         NetworkManagerEvents.MessageGenerated, this._networkMessageGenerated.bind(this, networkManager)));
+    eventListeners.push(
+        networkManager.addEventListener(NetworkManagerEvents.ResponseReceived, this._onResponseReceived, this));
 
     const resourceTreeModel = networkManager.target().model(ResourceTreeModel);
     if (resourceTreeModel) {
@@ -81,7 +108,7 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
           ResourceTreeModelEvents.DOMContentLoaded, this._onDOMContentLoaded.bind(this, resourceTreeModel)));
     }
 
-    networkManager[_events] = eventListeners;
+    this._modelListeners.set(networkManager, eventListeners);
   }
 
   /**
@@ -96,7 +123,7 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @param {!NetworkManager} networkManager
    */
   _removeNetworkManagerListeners(networkManager) {
-    Common.EventTarget.EventTarget.removeEventListeners(networkManager[_events]);
+    Common.EventTarget.EventTarget.removeEventListeners(this._modelListeners.get(networkManager) || []);
   }
 
   /**
@@ -121,6 +148,22 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    */
   requestForURL(url) {
     return this._requests.find(request => request.url() === url) || null;
+  }
+
+  /**
+   * @param {string} url
+   * @return {?Protocol.Network.Request}
+   */
+  originalRequestForURL(url) {
+    return this._sentNetworkRequests.find(request => request.url === url) || null;
+  }
+
+  /**
+   * @param {string} url
+   * @return {?Protocol.Network.Response}
+   */
+  originalResponseForURL(url) {
+    return this._receivedNetworkResponses.find(response => response.url === url) || null;
   }
 
   /**
@@ -162,16 +205,20 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
 
   /**
    * @param {!NetworkRequest} request
+   * @return {!InitiatorData}
    */
   _initializeInitiatorSymbolIfNeeded(request) {
-    if (!request[_initiatorDataSymbol]) {
-      /** @type {!{info: ?_InitiatorInfo, chain: !Set<!NetworkRequest>, request: (?NetworkRequest|undefined)}} */
-      request[_initiatorDataSymbol] = {
-        info: null,
-        chain: null,
-        request: undefined,
-      };
+    let initiatorInfo = this._initiatorData.get(request);
+    if (initiatorInfo) {
+      return initiatorInfo;
     }
+    initiatorInfo = {
+      info: null,
+      chain: null,
+      request: undefined,
+    };
+    this._initiatorData.set(request, initiatorInfo);
+    return initiatorInfo;
   }
 
   /**
@@ -179,9 +226,9 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @return {!_InitiatorInfo}
    */
   initiatorInfoForRequest(request) {
-    this._initializeInitiatorSymbolIfNeeded(request);
-    if (request[_initiatorDataSymbol].info) {
-      return request[_initiatorDataSymbol].info;
+    const initiatorInfo = this._initializeInitiatorSymbolIfNeeded(request);
+    if (initiatorInfo.info) {
+      return initiatorInfo.info;
     }
 
     let type = InitiatorType.Other;
@@ -202,9 +249,10 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
         url = initiator.url ? initiator.url : url;
         lineNumber = initiator.lineNumber ? initiator.lineNumber : lineNumber;
       } else if (initiator.type === Protocol.Network.InitiatorType.Script) {
-        for (let stack = initiator.stack; stack; stack = stack.parent) {
+        for (let stack = initiator.stack; stack;) {
           const topFrame = stack.callFrames.length ? stack.callFrames[0] : null;
           if (!topFrame) {
+            stack = stack.parent;
             continue;
           }
           type = InitiatorType.Script;
@@ -226,11 +274,11 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
         type = InitiatorType.Preload;
       } else if (initiator.type === Protocol.Network.InitiatorType.SignedExchange) {
         type = InitiatorType.SignedExchange;
-        url = initiator.url;
+        url = initiator.url || '';
       }
     }
 
-    request[_initiatorDataSymbol].info = {
+    initiatorInfo.info = {
       type: type,
       url: url,
       lineNumber: lineNumber,
@@ -238,7 +286,7 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
       scriptId: scriptId,
       stack: initiatorStack
     };
-    return request[_initiatorDataSymbol].info;
+    return initiatorInfo.info;
   }
 
   /**
@@ -246,14 +294,17 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @return {!InitiatorGraph}
    */
   initiatorGraphForRequest(request) {
-    /** @type {!Map<!NetworkRequest>} */
+    /** @type {!Map<!NetworkRequest, !NetworkRequest>} */
     const initiated = new Map();
     const networkManager = NetworkManager.forRequest(request);
     for (const otherRequest of this._requests) {
       const otherRequestManager = NetworkManager.forRequest(otherRequest);
       if (networkManager === otherRequestManager && this._initiatorChain(otherRequest).has(request)) {
         // save parent request of otherRequst in order to build the initiator chain table later
-        initiated.set(otherRequest, this._initiatorRequest(otherRequest));
+        const initiatorRequest = this._initiatorRequest(otherRequest);
+        if (initiatorRequest) {
+          initiated.set(otherRequest, initiatorRequest);
+        }
       }
     }
     return {initiators: this._initiatorChain(request), initiated: initiated};
@@ -264,20 +315,20 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @return {!Set<!NetworkRequest>}
    */
   _initiatorChain(request) {
-    this._initializeInitiatorSymbolIfNeeded(request);
-    let initiatorChainCache =
-        /** @type {?Set<!NetworkRequest>} */ (request[_initiatorDataSymbol].chain);
+    const initiatorDataForRequest = this._initializeInitiatorSymbolIfNeeded(request);
+    let initiatorChainCache = initiatorDataForRequest.chain;
     if (initiatorChainCache) {
       return initiatorChainCache;
     }
 
     initiatorChainCache = new Set();
 
+    /** @type {?NetworkRequest} */
     let checkRequest = request;
-    do {
-      this._initializeInitiatorSymbolIfNeeded(checkRequest);
-      if (checkRequest[_initiatorDataSymbol].chain) {
-        initiatorChainCache.addAll(checkRequest[_initiatorDataSymbol].chain);
+    while (checkRequest) {
+      const initiatorData = this._initializeInitiatorSymbolIfNeeded(checkRequest);
+      if (initiatorData.chain) {
+        Platform.SetUtilities.addAll(initiatorChainCache, initiatorData.chain);
         break;
       }
       if (initiatorChainCache.has(checkRequest)) {
@@ -285,8 +336,8 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
       }
       initiatorChainCache.add(checkRequest);
       checkRequest = this._initiatorRequest(checkRequest);
-    } while (checkRequest);
-    request[_initiatorDataSymbol].chain = initiatorChainCache;
+    }
+    initiatorDataForRequest.chain = initiatorChainCache;
     return initiatorChainCache;
   }
 
@@ -295,14 +346,14 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @return {?NetworkRequest}
    */
   _initiatorRequest(request) {
-    this._initializeInitiatorSymbolIfNeeded(request);
-    if (request[_initiatorDataSymbol].request !== undefined) {
-      return request[_initiatorDataSymbol].request;
+    const initiatorData = this._initializeInitiatorSymbolIfNeeded(request);
+    if (initiatorData.request !== undefined) {
+      return initiatorData.request;
     }
     const url = this.initiatorInfoForRequest(request).url;
     const networkManager = NetworkManager.forRequest(request);
-    request[_initiatorDataSymbol].request = networkManager ? this._requestByManagerAndURL(networkManager, url) : null;
-    return request[_initiatorDataSymbol].request;
+    initiatorData.request = networkManager ? this._requestByManagerAndURL(networkManager, url) : null;
+    return initiatorData.request;
   }
 
   _willReloadPage() {
@@ -321,11 +372,21 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
       return;
     }
 
+    // If a page resulted in an error, the browser will navigate to an internal error page
+    // hosted at 'chrome-error://...'. In this case, skip the frame navigated event to preserve
+    // the network log.
+    if (mainFrame.url !== mainFrame.unreachableUrl() && mainFrame.url.startsWith('chrome-error://')) {
+      return;
+    }
+
     const oldRequests = this._requests;
     const oldManagerRequests = this._requests.filter(request => NetworkManager.forRequest(request) === manager);
     const oldRequestsSet = this._requestsSet;
     this._requests = [];
+    this._sentNetworkRequests = [];
+    this._receivedNetworkResponses = [];
     this._requestsSet = new Set();
+    this._requestsMap.clear();
     this.dispatchEventToListeners(Events.Reset);
 
     // Preserve requests from the new session.
@@ -363,18 +424,17 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
     requestsToAdd.push(...serviceWorkerRequestsToAdd);
 
     for (const request of requestsToAdd) {
+      // TODO: Use optional chaining here once closure is gone.
+      if (currentPageLoad) {
+        currentPageLoad.bindRequest(request);
+      }
       oldRequestsSet.delete(request);
-      this._requests.push(request);
-      this._requestsSet.add(request);
-      currentPageLoad.bindRequest(request);
-      this.dispatchEventToListeners(Events.RequestAdded, request);
+      this._addRequest(request);
     }
 
     if (Common.Settings.Settings.instance().moduleSetting('network_log.preserve-log').get()) {
       for (const request of oldRequestsSet) {
-        this._requests.push(request);
-        this._requestsSet.add(request);
-        this.dispatchEventToListeners(Events.RequestAdded, request);
+        this._addRequest(request);
       }
     }
 
@@ -384,16 +444,32 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   /**
+   * @param {!NetworkRequest} request
+   */
+  _addRequest(request) {
+    this._requests.push(request);
+    this._requestsSet.add(request);
+    const requestList = this._requestsMap.get(request.requestId());
+    if (!requestList) {
+      this._requestsMap.set(request.requestId(), [request]);
+    } else {
+      requestList.push(request);
+    }
+    this.dispatchEventToListeners(Events.RequestAdded, request);
+  }
+
+  /**
    * @param {!Array<!NetworkRequest>} requests
    */
   importRequests(requests) {
     this.reset();
     this._requests = [];
+    this._sentNetworkRequests = [];
+    this._receivedNetworkResponses = [];
     this._requestsSet.clear();
+    this._requestsMap.clear();
     for (const request of requests) {
-      this._requests.push(request);
-      this._requestsSet.add(request);
-      this.dispatchEventToListeners(Events.RequestAdded, request);
+      this._addRequest(request);
     }
   }
 
@@ -401,15 +477,25 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @param {!Common.EventTarget.EventTargetEvent} event
    */
   _onRequestStarted(event) {
-    const request = /** @type {!NetworkRequest} */ (event.data);
-    this._requests.push(request);
+    const request = /** @type {!NetworkRequest} */ (event.data.request);
+    if (event.data.originalRequest) {
+      this._sentNetworkRequests.push(event.data.originalRequest);
+    }
     this._requestsSet.add(request);
     const manager = NetworkManager.forRequest(request);
     const pageLoad = manager ? this._pageLoadForManager.get(manager) : null;
     if (pageLoad) {
       pageLoad.bindRequest(request);
     }
-    this.dispatchEventToListeners(Events.RequestAdded, request);
+    this._addRequest(request);
+  }
+
+  /**
+   * @param {!Common.EventTarget.EventTargetEvent} event
+   */
+  _onResponseReceived(event) {
+    const response = /** @type {!Protocol.Network.Response} */ (event.data.response);
+    this._receivedNetworkResponses.push(response);
   }
 
   /**
@@ -428,7 +514,7 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    */
   _onRequestRedirect(event) {
     const request = /** @type {!NetworkRequest} */ (event.data);
-    delete request[_initiatorDataSymbol];
+    this._initiatorData.delete(request);
   }
 
   /**
@@ -456,7 +542,10 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
 
   reset() {
     this._requests = [];
+    this._sentNetworkRequests = [];
+    this._receivedNetworkResponses = [];
     this._requestsSet.clear();
+    this._requestsMap.clear();
     const managers = new Set(TargetManager.instance().models(NetworkManager));
     for (const manager of this._pageLoadForManager.keys()) {
       if (!managers.has(manager)) {
@@ -494,7 +583,7 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
     if (!request) {
       return;
     }
-    consoleMessage[_requestSymbol] = request;
+    consoleMessageToRequest.set(consoleMessage, request);
     const initiator = request.initiator();
     if (initiator) {
       consoleMessage.stackTrace = initiator.stack || undefined;
@@ -510,9 +599,20 @@ export class NetworkLog extends Common.ObjectWrapper.ObjectWrapper {
    * @return {?NetworkRequest}
    */
   static requestForConsoleMessage(consoleMessage) {
-    return consoleMessage[_requestSymbol] || null;
+    return consoleMessageToRequest.get(consoleMessage) || null;
+  }
+
+  /**
+   * @param {string} requestId
+   * @return {!Array<!NetworkRequest>}
+   */
+  requestsForId(requestId) {
+    return this._requestsMap.get(requestId) || [];
   }
 }
+
+/** @type {!WeakMap<!ConsoleMessage, !NetworkRequest>} */
+const consoleMessageToRequest = new WeakMap();
 
 export class PageLoad {
   /**
@@ -556,22 +656,21 @@ export class PageLoad {
    * @return {?PageLoad}
    */
   static forRequest(request) {
-    return request[PageLoad._pageLoadForRequestSymbol] || null;
+    return pageLoadForRequest.get(request) || null;
   }
 
   /**
    * @param {!NetworkRequest} request
    */
   bindRequest(request) {
-    request[PageLoad._pageLoadForRequestSymbol] = this;
+    pageLoadForRequest.set(request, this);
   }
 }
 
 PageLoad._lastIdentifier = 0;
-PageLoad._pageLoadForRequestSymbol = Symbol('PageLoadForRequest');
+/** @type {!WeakMap<!NetworkRequest, !PageLoad>} */
+const pageLoadForRequest = new WeakMap();
 PageLoad._dataSaverMessageWasShown = false;
-
-const _requestSymbol = Symbol('_request');
 
 export const Events = {
   Reset: Symbol('Reset'),
@@ -579,11 +678,16 @@ export const Events = {
   RequestUpdated: Symbol('RequestUpdated')
 };
 
-const _initiatorDataSymbol = Symbol('InitiatorData');
-const _events = Symbol('SDK.NetworkLog.events');
+/**
+ * @typedef {!{info: ?_InitiatorInfo, chain: ?Set<!NetworkRequest>, request: (?NetworkRequest|undefined)}}
+ */
+// @ts-ignore typedef
+let InitiatorData;  // eslint-disable-line no-unused-vars
 
 /** @typedef {!{initiators: !Set<!NetworkRequest>, initiated: !Map<!NetworkRequest, !NetworkRequest>}} */
+// @ts-ignore typedef
 export let InitiatorGraph;
 
 /** @typedef {!{type: !InitiatorType, url: string, lineNumber: number, columnNumber: number, scriptId: ?string, stack: ?Protocol.Runtime.StackTrace}} */
+// @ts-ignore typedef
 export let _InitiatorInfo;

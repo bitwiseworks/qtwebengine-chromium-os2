@@ -7,15 +7,17 @@
 #ifndef XFA_FXFA_CXFA_FFCOMBOBOX_H_
 #define XFA_FXFA_CXFA_FFCOMBOBOX_H_
 
-#include "core/fxcrt/unowned_ptr.h"
+#include "v8/include/cppgc/member.h"
 #include "xfa/fxfa/cxfa_ffdropdown.h"
 
 class CXFA_EventParam;
 
 class CXFA_FFComboBox final : public CXFA_FFDropDown {
  public:
-  explicit CXFA_FFComboBox(CXFA_Node* pNode);
+  CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CXFA_FFComboBox() override;
+
+  void Trace(cppgc::Visitor* visitor) const override;
 
   // CXFA_FFDropDown:
   CXFA_FFComboBox* AsComboBox() override;
@@ -62,6 +64,8 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
   void SetItemState(int32_t nIndex, bool bSelected);
 
  private:
+  explicit CXFA_FFComboBox(CXFA_Node* pNode);
+
   // CXFA_FFField:
   bool PtInActiveRect(const CFX_PointF& point) override;
   bool CommitData() override;
@@ -73,7 +77,7 @@ class CXFA_FFComboBox final : public CXFA_FFDropDown {
   WideString GetCurrentText() const;
 
   WideString m_wsNewValue;
-  UnownedPtr<IFWL_WidgetDelegate> m_pOldDelegate;
+  cppgc::Member<IFWL_WidgetDelegate> m_pOldDelegate;
 };
 
 #endif  // XFA_FXFA_CXFA_FFCOMBOBOX_H_

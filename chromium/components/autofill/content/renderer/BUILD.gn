@@ -8,8 +8,8 @@ jumbo_static_library("renderer") {
   sources = [
     "autofill_agent.cc",
     "autofill_agent.h",
-    "field_data_manager.cc",
-    "field_data_manager.h",
+    "autofill_assistant_agent.cc",
+    "autofill_assistant_agent.h",
     "form_autofill_util.cc",
     "form_autofill_util.h",
     "form_cache.cc",
@@ -78,6 +78,7 @@ jumbo_static_library("test_support") {
     "//components/autofill/content/renderer",
     "//services/service_manager/public/cpp",
     "//skia",
+    "//testing/gmock",
     "//testing/gtest",
     "//third_party/blink/public:blink",
   ]
@@ -86,7 +87,6 @@ jumbo_static_library("test_support") {
 source_set("unit_tests") {
   testonly = true
   sources = [
-    "form_cache_unittest.cc",
     "prefilled_values_detector_unittest.cc",
     "renderer_save_password_progress_logger_unittest.cc",
   ]

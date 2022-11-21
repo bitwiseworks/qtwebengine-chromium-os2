@@ -30,7 +30,7 @@ ServiceWorkerScriptCachedMetadataHandler::
 ServiceWorkerScriptCachedMetadataHandler::
     ~ServiceWorkerScriptCachedMetadataHandler() = default;
 
-void ServiceWorkerScriptCachedMetadataHandler::Trace(Visitor* visitor) {
+void ServiceWorkerScriptCachedMetadataHandler::Trace(Visitor* visitor) const {
   visitor->Trace(global_scope_);
   CachedMetadataHandler::Trace(visitor);
 }
@@ -48,6 +48,8 @@ void ServiceWorkerScriptCachedMetadataHandler::SetCachedMetadata(
 
 void ServiceWorkerScriptCachedMetadataHandler::ClearCachedMetadata(
     ClearCacheType type) {
+  if (type == kDiscardLocally)
+    return;
   cached_metadata_ = nullptr;
   if (type != kClearPersistentStorage)
     return;

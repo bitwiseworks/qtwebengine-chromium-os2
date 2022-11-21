@@ -27,6 +27,7 @@ class StyleDifference {
     kCSSClipChanged = 1 << 5,
     // The object needs to issue paint invalidations if it is affected by text
     // decorations or properties dependent on color (e.g., border or outline).
+    // TextDecoration changes must also invalidate ink overflow.
     kTextDecorationOrColorChanged = 1 << 6,
     kBlendModeChanged = 1 << 7,
     kMaskChanged = 1 << 8,
@@ -38,7 +39,6 @@ class StyleDifference {
   StyleDifference()
       : needs_paint_invalidation_(false),
         layout_type_(kNoLayout),
-        needs_collect_inlines_(false),
         needs_reshape_(false),
         recompute_visual_overflow_(false),
         visual_rect_update_(false),
@@ -49,7 +49,6 @@ class StyleDifference {
   void Merge(StyleDifference other) {
     needs_paint_invalidation_ |= other.needs_paint_invalidation_;
     layout_type_ = std::max(layout_type_, other.layout_type_);
-    needs_collect_inlines_ |= other.needs_collect_inlines_;
     needs_reshape_ |= other.needs_reshape_;
     recompute_visual_overflow_ |= other.recompute_visual_overflow_;
     visual_rect_update_ |= other.visual_rect_update_;
@@ -60,8 +59,7 @@ class StyleDifference {
   }
 
   bool HasDifference() const {
-    return needs_paint_invalidation_ || layout_type_ ||
-           needs_collect_inlines_ || needs_reshape_ ||
+    return needs_paint_invalidation_ || layout_type_ || needs_reshape_ ||
            property_specific_differences_ || recompute_visual_overflow_ ||
            visual_rect_update_ || scroll_anchor_disabling_property_changed_ ||
            compositing_reasons_changed_;
@@ -90,9 +88,6 @@ class StyleDifference {
 
   bool NeedsFullLayout() const { return layout_type_ == kFullLayout; }
   void SetNeedsFullLayout() { layout_type_ = kFullLayout; }
-
-  bool NeedsCollectInlines() const { return needs_collect_inlines_; }
-  void SetNeedsCollectInlines() { needs_collect_inlines_ = true; }
 
   bool NeedsReshape() const { return needs_reshape_; }
   void SetNeedsReshape() { needs_reshape_ = true; }
@@ -190,7 +185,6 @@ class StyleDifference {
 
   enum LayoutType { kNoLayout = 0, kPositionedMovement, kFullLayout };
   unsigned layout_type_ : 2;
-  unsigned needs_collect_inlines_ : 1;
   unsigned needs_reshape_ : 1;
   unsigned recompute_visual_overflow_ : 1;
   unsigned visual_rect_update_ : 1;

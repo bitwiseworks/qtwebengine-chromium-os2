@@ -16,6 +16,7 @@
 
 #include "api/scoped_refptr.h"
 #include "api/video/encoded_frame.h"
+#include "api/video/video_frame_metadata.h"
 #include "rtc_base/ref_count.h"
 
 namespace webrtc {
@@ -34,6 +35,16 @@ class TransformableFrameInterface {
 
   virtual uint32_t GetTimestamp() const = 0;
   virtual uint32_t GetSsrc() const = 0;
+
+  enum class Direction {
+    kUnknown,
+    kReceiver,
+    kSender,
+  };
+  // TODO(crbug.com/1250638): Remove this distinction between receiver and
+  // sender frames to allow received frames to be directly re-transmitted on
+  // other PeerConnectionss.
+  virtual Direction GetDirection() const { return Direction::kUnknown; }
 };
 
 class TransformableVideoFrameInterface : public TransformableFrameInterface {
@@ -48,6 +59,8 @@ class TransformableVideoFrameInterface : public TransformableFrameInterface {
   // TODO(bugs.webrtc.org/11380) remove from interface once
   // webrtc::RtpDescriptorAuthentication is exposed in api/.
   virtual std::vector<uint8_t> GetAdditionalData() const = 0;
+
+  virtual const VideoFrameMetadata& GetMetadata() const = 0;
 };
 
 // Extends the TransformableFrameInterface to expose audio-specific information.
@@ -64,14 +77,8 @@ class TransformableAudioFrameInterface : public TransformableFrameInterface {
 // Objects implement this interface to be notified with the transformed frame.
 class TransformedFrameCallback : public rtc::RefCountInterface {
  public:
-  // TODO(bugs.webrtc.org/11380) remove after updating downstream dependencies
-  // to use new OnTransformedFrame signature.
   virtual void OnTransformedFrame(
-      std::unique_ptr<video_coding::EncodedFrame> transformed_frame) {}
-  // TODO(bugs.webrtc.org/11380) make pure virtual after updating usage
-  // downstream.
-  virtual void OnTransformedFrame(
-      std::unique_ptr<TransformableFrameInterface> transformed_frame) {}
+      std::unique_ptr<TransformableFrameInterface> frame) = 0;
 
  protected:
   ~TransformedFrameCallback() override = default;
@@ -82,23 +89,8 @@ class TransformedFrameCallback : public rtc::RefCountInterface {
 class FrameTransformerInterface : public rtc::RefCountInterface {
  public:
   // Transforms |frame| using the implementing class' processing logic.
-  // |additional_data| holds data that is needed in the frame transformation
-  // logic, but is not included in |frame|; for example, when the transform
-  // function is used for encrypting/decrypting the frame, the additional data
-  // holds the serialized generic frame descriptor extension calculated in
-  // webrtc::RtpDescriptorAuthentication, needed in the encryption/decryption
-  // algorithms.
-  // TODO(bugs.webrtc.org/11380) remove after updating downstream dependencies
-  // to use new OnTransformedFrame() signature.
-  virtual void TransformFrame(std::unique_ptr<video_coding::EncodedFrame> frame,
-                              std::vector<uint8_t> additional_data,
-                              uint32_t ssrc) {}
-
-  // Transforms |frame| using the implementing class' processing logic.
-  // TODO(bugs.webrtc.org/11380) make pure virtual after updating usage
-  // downstream.
   virtual void Transform(
-      std::unique_ptr<TransformableFrameInterface> transformable_frame) {}
+      std::unique_ptr<TransformableFrameInterface> transformable_frame) = 0;
 
   virtual void RegisterTransformedFrameCallback(
       rtc::scoped_refptr<TransformedFrameCallback>) {}

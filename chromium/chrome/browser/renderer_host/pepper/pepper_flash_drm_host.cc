@@ -9,10 +9,10 @@
 #endif
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/task/post_task.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_ppapi_host.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -31,7 +31,7 @@
 #include "ui/aura/window_tree_host.h"
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
 #include "chrome/browser/renderer_host/pepper/monitor_finder_mac.h"
 #endif
 
@@ -61,8 +61,8 @@ class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
     // do this because we don't know how often our client is going
     // to call and we can't cache the |monitor_| value.
     if (InterlockedCompareExchange(&request_sent_, 1, 0) == 0) {
-      base::PostTask(
-          FROM_HERE, {content::BrowserThread::UI},
+      content::GetUIThreadTaskRunner({})->PostTask(
+          FROM_HERE,
           base::BindOnce(&MonitorFinder::FetchMonitorFromWidget, this));
     }
     return reinterpret_cast<int64_t>(monitor_);
@@ -99,7 +99,7 @@ class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
   volatile HMONITOR monitor_;
   volatile long request_sent_;
 };
-#elif !defined(OS_MACOSX)
+#elif !defined(OS_MAC)
 // TODO(cpu): Support Linux someday.
 class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
  public:
@@ -175,7 +175,7 @@ int32_t PepperFlashDRMHost::OnHostMsgMonitorIsExternal(
     return PP_ERROR_FAILED;
 
   PP_Bool is_external = PP_FALSE;
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   if (!MonitorFinder::IsMonitorBuiltIn(monitor_id))
     is_external = PP_TRUE;
 #endif

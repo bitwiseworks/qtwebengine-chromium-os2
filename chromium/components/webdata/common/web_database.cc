@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/logging.h"
 #include "base/stl_util.h"
 #include "sql/transaction.h"
 
@@ -13,7 +14,7 @@
 // corresponding changes must happen in the unit tests, and new migration test
 // added.  See |WebDatabaseMigrationTest::kCurrentTestedVersionNumber|.
 // static
-const int WebDatabase::kCurrentVersionNumber = 84;
+const int WebDatabase::kCurrentVersionNumber = 90;
 
 const int WebDatabase::kDeprecatedVersionNumber = 51;
 
@@ -22,7 +23,7 @@ const base::FilePath::CharType WebDatabase::kInMemoryPath[] =
 
 namespace {
 
-const int kCompatibleVersionNumber = 79;
+const int kCompatibleVersionNumber = 83;
 
 // Change the version number and possibly the compatibility version of
 // |meta_table_|.

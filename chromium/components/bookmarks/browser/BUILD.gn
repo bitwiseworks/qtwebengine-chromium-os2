@@ -5,7 +5,16 @@
 import("//build/config/ui.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 
+# This file depends on the legacy global sources assignment filter. It should
+# be converted to check target platform before assigning source files to the
+# sources variable. Remove this import and set_sources_assignment_filter call
+# when the file has been converted. See https://crbug.com/1018739 for details.
+import("//build/config/deprecated_default_sources_assignment_filter.gni")
+set_sources_assignment_filter(deprecated_default_sources_assignment_filter)
+
 static_library("browser") {
+  friend = [ "//components/bookmarks/test" ]
+
   public = [
     "base_bookmark_model_observer.h",
     "bookmark_client.h",
@@ -22,7 +31,6 @@ static_library("browser") {
     "history_bookmark_model.h",
     "model_loader.h",
     "scoped_group_bookmark_actions.h",
-    "startup_task_runner_service.h",
     "titled_url_index.h",
     "titled_url_match.h",
     "titled_url_node.h",
@@ -35,6 +43,8 @@ static_library("browser") {
     "bookmark_client.cc",
     "bookmark_codec.cc",
     "bookmark_expanded_state_tracker.cc",
+    "bookmark_load_details.cc",
+    "bookmark_load_details.h",
     "bookmark_model.cc",
     "bookmark_node.cc",
     "bookmark_node_data.cc",
@@ -43,7 +53,6 @@ static_library("browser") {
     "bookmark_utils.cc",
     "model_loader.cc",
     "scoped_group_bookmark_actions.cc",
-    "startup_task_runner_service.cc",
     "titled_url_index.cc",
     "titled_url_match.cc",
     "typed_count_sorter.cc",
@@ -88,7 +97,7 @@ static_library("browser") {
       "bookmark_pasteboard_helper_mac.h",
       "bookmark_pasteboard_helper_mac.mm",
     ]
-    libs = [
+    frameworks = [
       "AppKit.framework",
       "Foundation.framework",
     ]
@@ -102,7 +111,10 @@ static_library("test_support") {
     "bookmark_test_util.h",
   ]
 
-  deps = [ ":browser" ]
+  deps = [
+    ":browser",
+    "//base",
+  ]
 }
 
 bundle_data("unit_tests_bundle_data") {
@@ -123,6 +135,7 @@ source_set("unit_tests") {
     "bookmark_expanded_state_tracker_unittest.cc",
     "bookmark_index_unittest.cc",
     "bookmark_model_unittest.cc",
+    "bookmark_storage_unittest.cc",
     "bookmark_utils_unittest.cc",
     "titled_url_match_unittest.cc",
   ]
@@ -143,8 +156,10 @@ source_set("unit_tests") {
     "//components/pref_registry",
     "//components/prefs",
     "//components/prefs:test_support",
+    "//components/query_parser",
     "//testing/gtest",
     "//ui/base",
+    "//ui/base:data_exchange",
     "//ui/base/clipboard",
     "//url",
   ]

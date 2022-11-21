@@ -88,12 +88,21 @@ function getTreeViewRoot() {
 function frameToTreeItem(frame) {
   // Compose the string which will appear in the entry for this frame.
   let itemLabel = `Frame[${frame.processId}:${frame.routingId}]:`;
+  if (frame.isBfcached) {
+    itemLabel += ` bfcached`;
+  }
   itemLabel += ` SI:${frame.siteInstance.id}`;
   if (frame.siteInstance.locked) {
     itemLabel += ', locked';
   }
   if (frame.siteInstance.siteUrl) {
     itemLabel += `, site:${frame.siteInstance.siteUrl.url}`;
+  }
+  if (frame.siteInstance.processLockUrl) {
+    itemLabel += `, lock:${frame.siteInstance.processLockUrl.url}`;
+  }
+  if (frame.siteInstance.isOriginKeyed) {
+    itemLabel += ', origin-keyed';
   }
   if (frame.lastCommittedUrl) {
     itemLabel += ` | url: ${frame.lastCommittedUrl.url}`;
@@ -139,11 +148,22 @@ function webContentsToTreeItem(webContents) {
   const result = frameToTreeItem(webContents.rootFrame);
   const rootItem = result[0];
   const count = result[1];
+  item.add(rootItem);
 
-  itemLabel += `${count} frame` + (count > 1 ? 's.' : '.');
+  // Add data for all root nodes retrieved from back-forward cache.
+  let cachedCount = 0;
+  for (const cachedRoot of webContents.bfcachedRootFrames) {
+    const cachedResult = frameToTreeItem(cachedRoot);
+    item.add(cachedResult[0]);
+    cachedCount++;
+  }
+
+  const totalCount = count + cachedCount;
+  itemLabel += `${totalCount} frame` + (totalCount > 1 ? 's, ' : ', ');
+  itemLabel += `(${count} active, ${cachedCount} bfcached root` +
+      (cachedCount > 1 ? 's' : ``) + `).`;
   item.label = itemLabel;
 
-  item.add(rootItem);
   return item;
 }
 

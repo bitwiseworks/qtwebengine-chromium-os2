@@ -2,8 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/linux/gtk/gtk.gni")
 
 declare_args() {
-  use_pangocairo = use_gtk
+  use_pangocairo =
+      use_gtk && !chromeos_is_browser_only
 }

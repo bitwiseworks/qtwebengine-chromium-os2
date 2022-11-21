@@ -15,8 +15,8 @@
 #include "base/bits.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
-#include "base/fuchsia/default_context.h"
 #include "base/fuchsia/fuchsia_logging.h"
+#include "base/fuchsia/process_context.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -71,7 +71,8 @@ class OutputMailbox {
                      gpu::SHARED_IMAGE_USAGE_DISPLAY |
                      gpu::SHARED_IMAGE_USAGE_SCANOUT;
     mailbox_ = shared_image_interface_->CreateSharedImage(
-        gmb.get(), nullptr, gfx::ColorSpace(), usage);
+        gmb.get(), nullptr, gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin,
+        kPremul_SkAlphaType, usage);
   }
   ~OutputMailbox() {
     shared_image_interface_->DestroySharedImage(sync_token_, mailbox_);
@@ -102,8 +103,8 @@ class OutputMailbox {
         coded_size, visible_rect, natural_size, timestamp);
 
     // Request a fence we'll wait on before reusing the buffer.
-    frame->metadata()->SetBoolean(VideoFrameMetadata::READ_LOCK_FENCES_ENABLED,
-                                  true);
+    frame->metadata()->read_lock_fences_enabled = true;
+
     return frame;
   }
 
@@ -173,9 +174,12 @@ class FuchsiaVideoDecoder : public VideoDecoder,
                       bool enable_sw_decoding);
   ~FuchsiaVideoDecoder() override;
 
-  // VideoDecoder implementation.
-  std::string GetDisplayName() const override;
+  // Decoder implementation.
   bool IsPlatformDecoder() const override;
+  bool SupportsDecryption() const override;
+  std::string GetDisplayName() const override;
+
+  // VideoDecoder implementation.
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
@@ -247,6 +251,7 @@ class FuchsiaVideoDecoder : public VideoDecoder,
   gpu::SharedImageInterface* const shared_image_interface_;
   gpu::ContextSupport* const gpu_context_support_;
   const bool enable_sw_decoding_;
+  const bool use_overlays_for_video_;
 
   OutputCB output_cb_;
   WaitingCB waiting_cb_;
@@ -260,7 +265,7 @@ class FuchsiaVideoDecoder : public VideoDecoder,
 
   VideoCodec current_codec_ = kUnknownVideoCodec;
 
-  // TODO(sergeyu): Use StreamProcessorHelper.
+  // TODO(crbug.com/1131175): Use StreamProcessorHelper.
   fuchsia::media::StreamProcessorPtr decoder_;
 
   base::Optional<fuchsia::media::StreamBufferConstraints>
@@ -312,6 +317,8 @@ FuchsiaVideoDecoder::FuchsiaVideoDecoder(
     : shared_image_interface_(shared_image_interface),
       gpu_context_support_(gpu_context_support),
       enable_sw_decoding_(enable_sw_decoding),
+      use_overlays_for_video_(base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kUseOverlaysForVideo)),
       client_native_pixmap_factory_(ui::CreateClientNativePixmapFactoryOzone()),
       weak_factory_(this) {
   DCHECK(shared_image_interface_);
@@ -327,12 +334,16 @@ FuchsiaVideoDecoder::~FuchsiaVideoDecoder() {
   ReleaseOutputBuffers();
 }
 
-std::string FuchsiaVideoDecoder::GetDisplayName() const {
-  return "FuchsiaVideoDecoder";
-}
-
 bool FuchsiaVideoDecoder::IsPlatformDecoder() const {
   return true;
+}
+
+bool FuchsiaVideoDecoder::SupportsDecryption() const {
+  return true;
+}
+
+std::string FuchsiaVideoDecoder::GetDisplayName() const {
+  return "FuchsiaVideoDecoder";
 }
 
 void FuchsiaVideoDecoder::Initialize(const VideoDecoderConfig& config,
@@ -420,14 +431,14 @@ void FuchsiaVideoDecoder::Initialize(const VideoDecoderConfig& config,
   decoder_params.set_promise_separate_access_units_on_input(true);
   decoder_params.set_require_hw(!enable_sw_decoding_);
 
-  auto decoder_factory = base::fuchsia::ComponentContextForCurrentProcess()
+  auto decoder_factory = base::ComponentContextForProcess()
                              ->svc()
                              ->Connect<fuchsia::mediacodec::CodecFactory>();
   decoder_factory->CreateDecoder(std::move(decoder_params),
                                  decoder_.NewRequest());
 
   decoder_.set_error_handler([this](zx_status_t status) {
-    ZX_LOG(ERROR, status) << "fuchsia.mediacodec.Codec disconnected.";
+    ZX_LOG(ERROR, status) << "fuchsia.media.StreamProcessor disconnected.";
     OnError();
   });
 
@@ -638,8 +649,8 @@ void FuchsiaVideoDecoder::SendInputPacket(
   fuchsia::media::Packet media_packet;
   media_packet.mutable_header()->set_buffer_lifetime_ordinal(
       input_buffer_lifetime_ordinal_);
-  media_packet.mutable_header()->set_packet_index(packet.index());
-  media_packet.set_buffer_index(packet.index());
+  media_packet.mutable_header()->set_packet_index(packet.buffer_index());
+  media_packet.set_buffer_index(packet.buffer_index());
   media_packet.set_timestamp_ish(packet.timestamp().InNanoseconds());
   media_packet.set_stream_lifetime_ordinal(stream_lifetime_ordinal_);
   media_packet.set_start_offset(packet.offset());
@@ -649,10 +660,10 @@ void FuchsiaVideoDecoder::SendInputPacket(
 
   active_stream_ = true;
 
-  DCHECK(in_flight_input_packets_.find(packet.index()) ==
+  DCHECK(in_flight_input_packets_.find(packet.buffer_index()) ==
          in_flight_input_packets_.end());
   in_flight_input_packets_.insert_or_assign(
-      packet.index(), InputDecoderPacket{std::move(packet)});
+      packet.buffer_index(), InputDecoderPacket{std::move(packet)});
 }
 
 void FuchsiaVideoDecoder::ProcessEndOfStream() {
@@ -897,10 +908,17 @@ void FuchsiaVideoDecoder::OnOutputPacket(fuchsia::media::Packet output_packet,
     pixel_aspect_ratio = container_pixel_aspect_ratio_;
   }
 
-  base::TimeDelta timestamp;
-  if (output_packet.has_timestamp_ish()) {
-    timestamp = base::TimeDelta::FromNanoseconds(output_packet.timestamp_ish());
+  // SendInputPacket() sets timestamp for all packets sent to the decoder, so we
+  // expect to receive timestamp for all decoded frames. Missing timestamp
+  // indicates a bug in the decoder implementation.
+  if (!output_packet.has_timestamp_ish()) {
+    LOG(ERROR) << "Received frame without timestamp.";
+    OnError();
+    return;
   }
+
+  base::TimeDelta timestamp =
+      base::TimeDelta::FromNanoseconds(output_packet.timestamp_ish());
 
   num_used_output_buffers_++;
 
@@ -925,10 +943,13 @@ void FuchsiaVideoDecoder::OnOutputPacket(fuchsia::media::Packet output_packet,
 
   // Mark the frame as power-efficient when software decoders are disabled. The
   // codec may still decode on hardware even when |enable_sw_decoding_| is set
-  // (i.e. POWER_EFFICIENT flag would not be set correctly in that case). It
+  // (i.e. power_efficient flag would not be set correctly in that case). It
   // doesn't matter because software decoders can be enabled only for tests.
-  frame->metadata()->SetBoolean(VideoFrameMetadata::POWER_EFFICIENT,
-                                !enable_sw_decoding_);
+  frame->metadata()->power_efficient = !enable_sw_decoding_;
+
+  // Allow this video frame to be promoted as an overlay, because it was
+  // registered with an ImagePipe.
+  frame->metadata()->allow_overlay = use_overlays_for_video_;
 
   output_cb_.Run(std::move(frame));
 }
@@ -1009,7 +1030,9 @@ void FuchsiaVideoDecoder::InitializeOutputBufferCollection(
   output_buffer_collection_id_ = gfx::SysmemBufferCollectionId::Create();
   shared_image_interface_->RegisterSysmemBufferCollection(
       output_buffer_collection_id_,
-      collection_token_for_gpu.Unbind().TakeChannel());
+      collection_token_for_gpu.Unbind().TakeChannel(),
+      gfx::BufferFormat::YUV_420_BIPLANAR, gfx::BufferUsage::GPU_READ,
+      true /*register_with_image_pipe*/);
 
   // Pass new output buffer settings to the codec.
   fuchsia::media::StreamBufferPartialSettings settings;

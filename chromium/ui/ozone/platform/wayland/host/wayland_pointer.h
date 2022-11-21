@@ -5,41 +5,32 @@
 #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_POINTER_H_
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_WAYLAND_POINTER_H_
 
-#include <memory>
-
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
-#include "ui/events/ozone/evdev/event_dispatch_callback.h"
-#include "ui/gfx/geometry/point_f.h"
+#include "ui/events/types/event_type.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
-#include "ui/ozone/platform/wayland/host/wayland_cursor.h"
+
+namespace gfx {
+class PointF;
+class Vector2d;
+}  // namespace gfx
 
 namespace ui {
 
+class WaylandConnection;
 class WaylandWindow;
 
-// Wraps the wl_pointer object and transmits events to the dispatcher callback.
-//
-// Exposes an aggregated WaylandCursor that manages the visual shape of the
-// pointer.
+// Wraps the wl_pointer object and injects event data through
+// |WaylandPointer::Delegate| interface.
 class WaylandPointer {
  public:
-  WaylandPointer(wl_pointer* pointer, const EventDispatchCallback& callback);
+  class Delegate;
+
+  WaylandPointer(wl_pointer* pointer,
+                 WaylandConnection* connection,
+                 Delegate* delegate);
   virtual ~WaylandPointer();
 
-  void set_connection(WaylandConnection* connection) {
-    connection_ = connection;
-    cursor_->Init(obj_.get(), connection_);
-  }
-
-  int GetFlagsWithKeyboardModifiers();
-  void ResetFlags();
-
-  WaylandCursor* cursor() { return cursor_.get(); }
-
-  void reset_window_with_pointer_focus() {
-    window_with_pointer_focus_ = nullptr;
-  }
+  wl_pointer* wl_object() const { return obj_.get(); }
 
  private:
   // wl_pointer_listener
@@ -69,30 +60,38 @@ class WaylandPointer {
                    uint32_t time,
                    uint32_t axis,
                    wl_fixed_t value);
+  static void Frame(void* data, wl_pointer* obj);
+  static void AxisSource(void* data, wl_pointer* obj, uint32_t axis_source);
+  static void AxisStop(void* data,
+                       wl_pointer* obj,
+                       uint32_t time,
+                       uint32_t axis);
+  static void AxisDiscrete(void* data,
+                           wl_pointer* obj,
+                           uint32_t axis,
+                           int32_t discrete);
 
-  void MaybeSetOrResetImplicitGrab();
-  void FocusWindow(wl_surface* surface);
-  void UnfocusWindow(wl_surface* surface);
-
-  WaylandConnection* connection_ = nullptr;
-  std::unique_ptr<WaylandCursor> cursor_;
   wl::Object<wl_pointer> obj_;
-  EventDispatchCallback callback_;
-  gfx::PointF location_;
-  // Flags is a bitmask of EventFlags corresponding to the pointer/keyboard
-  // state.
-  int flags_ = 0;
-
-  // Keeps track of current modifiers. These are needed in order to properly
-  // update |flags_| with newest modifiers.
-  int keyboard_modifiers_ = 0;
-
-  // The window the mouse is over.
-  WaylandWindow* window_with_pointer_focus_ = nullptr;
-
-  base::WeakPtrFactory<WaylandPointer> weak_ptr_factory_;
+  WaylandConnection* const connection_;
+  Delegate* const delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(WaylandPointer);
+};
+
+class WaylandPointer::Delegate {
+ public:
+  virtual void OnPointerCreated(WaylandPointer* pointer) = 0;
+  virtual void OnPointerDestroyed(WaylandPointer* pointer) = 0;
+  virtual void OnPointerFocusChanged(WaylandWindow* window,
+                                     const gfx::PointF& location) = 0;
+  virtual void OnPointerButtonEvent(EventType evtype,
+                                    int changed_button,
+                                    WaylandWindow* window = nullptr) = 0;
+  virtual void OnPointerMotionEvent(const gfx::PointF& location) = 0;
+  virtual void OnPointerAxisEvent(const gfx::Vector2d& offset) = 0;
+  virtual void OnPointerFrameEvent() = 0;
+  virtual void OnPointerAxisSourceEvent(uint32_t axis_source) = 0;
+  virtual void OnPointerAxisStopEvent(uint32_t axis) = 0;
 };
 
 }  // namespace ui

@@ -8,8 +8,13 @@
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
-#include "base/trace_event/trace_event.h"
+#include "base/trace_event/base_tracing.h"
+#include "base/tracing_buildflags.h"
 #include "build/build_config.h"
+
+#if BUILDFLAG(ENABLE_BASE_TRACING)
+#include "third_party/perfetto/protos/perfetto/trace/track_event/source_location.pbzero.h"
+#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
 namespace base {
 
@@ -27,23 +32,31 @@ LazyInstance<ThreadLocalBoolean>::Leaky tls_construction_in_progress =
 
 ScopedBlockingCall::ScopedBlockingCall(const Location& from_here,
                                        BlockingType blocking_type)
-    : UncheckedScopedBlockingCall(from_here, blocking_type) {
+    : UncheckedScopedBlockingCall(
+          from_here,
+          blocking_type,
+          UncheckedScopedBlockingCall::BlockingCallType::kRegular) {
 #if DCHECK_IS_ON()
   DCHECK(!tls_construction_in_progress.Get().Get());
   tls_construction_in_progress.Get().Set(true);
 #endif
 
   internal::AssertBlockingAllowed();
-  TRACE_EVENT_BEGIN2("base", "ScopedBlockingCall", "file_name",
-                     from_here.file_name(), "function_name",
-                     from_here.function_name());
+  TRACE_EVENT_BEGIN(
+      "base", "ScopedBlockingCall", [&](perfetto::EventContext ctx) {
+        perfetto::protos::pbzero::SourceLocation* source_location_data =
+            ctx.event()->set_source_location();
+        source_location_data->set_file_name(from_here.file_name());
+        source_location_data->set_function_name(from_here.function_name());
+      });
+
 #if DCHECK_IS_ON()
   tls_construction_in_progress.Get().Set(false);
 #endif
 }
 
 ScopedBlockingCall::~ScopedBlockingCall() {
-  TRACE_EVENT_END0("base", "ScopedBlockingCall");
+  TRACE_EVENT_END("base");
 }
 
 namespace internal {
@@ -51,16 +64,24 @@ namespace internal {
 ScopedBlockingCallWithBaseSyncPrimitives::
     ScopedBlockingCallWithBaseSyncPrimitives(const Location& from_here,
                                              BlockingType blocking_type)
-    : UncheckedScopedBlockingCall(from_here, blocking_type) {
+    : UncheckedScopedBlockingCall(
+          from_here,
+          blocking_type,
+          UncheckedScopedBlockingCall::BlockingCallType::kBaseSyncPrimitives) {
 #if DCHECK_IS_ON()
   DCHECK(!tls_construction_in_progress.Get().Get());
   tls_construction_in_progress.Get().Set(true);
 #endif
 
-  //internal::AssertBaseSyncPrimitivesAllowed();
-  TRACE_EVENT_BEGIN2("base", "ScopedBlockingCallWithBaseSyncPrimitives",
-                     "file_name", from_here.file_name(), "function_name",
-                     from_here.function_name());
+//   internal::AssertBaseSyncPrimitivesAllowed();
+  TRACE_EVENT_BEGIN(
+      "base", "ScopedBlockingCallWithBaseSyncPrimitives",
+      [&](perfetto::EventContext ctx) {
+        perfetto::protos::pbzero::SourceLocation* source_location_data =
+            ctx.event()->set_source_location();
+        source_location_data->set_file_name(from_here.file_name());
+        source_location_data->set_function_name(from_here.function_name());
+      });
 
 #if DCHECK_IS_ON()
   tls_construction_in_progress.Get().Set(false);
@@ -69,7 +90,7 @@ ScopedBlockingCallWithBaseSyncPrimitives::
 
 ScopedBlockingCallWithBaseSyncPrimitives::
     ~ScopedBlockingCallWithBaseSyncPrimitives() {
-  TRACE_EVENT_END0("base", "ScopedBlockingCallWithBaseSyncPrimitives");
+  TRACE_EVENT_END("base");
 }
 
 }  // namespace internal

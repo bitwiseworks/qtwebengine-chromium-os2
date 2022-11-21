@@ -16,7 +16,6 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
-#include "content/public/common/screen_info.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
@@ -28,7 +27,7 @@
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPixmap.h"
 #include "ui/base/cursor/cursor.h"
-#include "ui/base/mojom/cursor_type.mojom-shared.h"
+#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
 DevToolsEyeDropper::DevToolsEyeDropper(content::WebContents* web_contents,
@@ -121,8 +120,8 @@ bool DevToolsEyeDropper::HandleMouseEvent(const blink::WebMouseEvent& event) {
     return true;
 
   if (event.button == blink::WebMouseEvent::Button::kLeft &&
-      (event.GetType() == blink::WebInputEvent::kMouseDown ||
-       event.GetType() == blink::WebInputEvent::kMouseMove)) {
+      (event.GetType() == blink::WebInputEvent::Type::kMouseDown ||
+       event.GetType() == blink::WebInputEvent::Type::kMouseMove)) {
     if (last_cursor_x_ < 0 || last_cursor_x_ >= frame_.width() ||
         last_cursor_y_ < 0 || last_cursor_y_ >= frame_.height()) {
       return true;
@@ -164,7 +163,7 @@ void DevToolsEyeDropper::UpdateCursor() {
 // magnified projection only with centered hotspot.
 // Mac Retina requires cursor to be > 120px in order to render smoothly.
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   const float kCursorSize = 63;
   const float kDiameter = 63;
   const float kHotspotOffset = 32;
@@ -178,9 +177,7 @@ void DevToolsEyeDropper::UpdateCursor() {
   const float kPixelSize = 10;
 #endif
 
-  content::ScreenInfo screen_info;
-  host_->GetScreenInfo(&screen_info);
-  double device_scale_factor = screen_info.device_scale_factor;
+  float device_scale_factor = host_->GetDeviceScaleFactor();
 
   SkBitmap result;
   result.allocN32Pixels(kCursorSize * device_scale_factor,

@@ -54,9 +54,10 @@
     "pointer",
     "prefers-color-scheme",
     "prefers-reduced-motion",
+    "prefers-reduced-data",
     "resolution",
     "-webkit-transform-3d",
     "scan",
-    "shape",
+    "screen-spanning",
   ],
 }

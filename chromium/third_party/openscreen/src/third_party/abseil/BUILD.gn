@@ -6,12 +6,7 @@ import("//build_overrides/build.gni")
 
 if (build_with_chromium) {
   source_set("abseil") {
-    public_deps = [
-      "//third_party/abseil-cpp/absl/hash",
-      "//third_party/abseil-cpp/absl/strings",
-      "//third_party/abseil-cpp/absl/types:optional",
-      "//third_party/abseil-cpp/absl/types:variant",
-    ]
+    public_deps = [ "//third_party/abseil-cpp:absl" ]
   }
 } else {
   config("abseil_config") {
@@ -22,9 +17,16 @@ if (build_with_chromium) {
     cflags = [
       "-Wno-sign-compare",
       "-Wno-extra-semi",
+      "-Wno-range-loop-analysis",
     ]
+
+    if (is_mac) {
+      cflags += [ "-Wno-range-loop-analysis" ]
+    }
   }
 
+  # NOTE: StrFormat is specifically excluded from the Abseil source set due
+  # to binary size concerns.
   source_set("abseil") {
     sources = [
       "src/absl/base/attributes.h",
@@ -44,12 +46,16 @@ if (build_with_chromium) {
       "src/absl/base/port.h",
       "src/absl/container/internal/common.h",
       "src/absl/hash/hash.h",
+      "src/absl/hash/hash_testing.h",
       "src/absl/hash/internal/city.cc",
       "src/absl/hash/internal/city.h",
       "src/absl/hash/internal/hash.cc",
       "src/absl/hash/internal/hash.h",
+      "src/absl/hash/internal/spy_hash_state.h",
       "src/absl/memory/memory.h",
       "src/absl/meta/type_traits.h",
+      "src/absl/numeric/int128.cc",
+      "src/absl/numeric/int128.h",
       "src/absl/strings/ascii.cc",
       "src/absl/strings/ascii.h",
       "src/absl/strings/charconv.cc",
@@ -60,6 +66,8 @@ if (build_with_chromium) {
       "src/absl/strings/internal/charconv_bigint.h",
       "src/absl/strings/internal/charconv_parse.cc",
       "src/absl/strings/internal/charconv_parse.h",
+      "src/absl/strings/internal/escaping.cc",
+      "src/absl/strings/internal/escaping.h",
       "src/absl/strings/internal/memutil.cc",
       "src/absl/strings/internal/memutil.h",
       "src/absl/strings/internal/str_join_internal.h",
@@ -88,9 +96,6 @@ if (build_with_chromium) {
       "src/absl/types/span.h",
       "src/absl/types/variant.h",
     ]
-
-    configs -= [ "//build/config:symbol_visibility_hidden" ]
-    configs += [ "//build/config:symbol_visibility_default" ]
 
     configs += [ ":private_abseil_config" ]
     public_configs = [ ":abseil_config" ]

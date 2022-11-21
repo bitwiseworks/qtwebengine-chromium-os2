@@ -3,43 +3,48 @@
 // found in the LICENSE file.
 
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
+#include "base/optional.h"
 
 namespace ui {
 
 KeyEventParams::KeyEventParams(int device_id,
                                int flags,
                                unsigned int code,
+                               unsigned int scan_code,
                                bool down,
                                bool suppress_auto_repeat,
                                base::TimeTicks timestamp)
     : device_id(device_id),
       flags(flags),
       code(code),
+      scan_code(scan_code),
       down(down),
       suppress_auto_repeat(suppress_auto_repeat),
       timestamp(timestamp) {}
 
 KeyEventParams::KeyEventParams(const KeyEventParams& other) = default;
 
-KeyEventParams::~KeyEventParams() {
-}
+KeyEventParams::~KeyEventParams() {}
 
 MouseMoveEventParams::MouseMoveEventParams(int device_id,
                                            int flags,
                                            const gfx::PointF& location,
+                                           gfx::Vector2dF* ordinal_delta,
                                            const PointerDetails& details,
                                            base::TimeTicks timestamp)
     : device_id(device_id),
       flags(flags),
       location(location),
+      ordinal_delta(ordinal_delta
+                        ? base::Optional<gfx::Vector2dF>(*ordinal_delta)
+                        : base::nullopt),
       pointer_details(details),
       timestamp(timestamp) {}
 
 MouseMoveEventParams::MouseMoveEventParams(const MouseMoveEventParams& other) =
     default;
 
-MouseMoveEventParams::~MouseMoveEventParams() {
-}
+MouseMoveEventParams::~MouseMoveEventParams() {}
 
 MouseButtonEventParams::MouseButtonEventParams(int device_id,
                                                int flags,
@@ -63,6 +68,17 @@ MouseButtonEventParams::MouseButtonEventParams(
 
 MouseButtonEventParams::~MouseButtonEventParams() {
 }
+
+MouseWheelEventParams::MouseWheelEventParams(int device_id,
+                                             const gfx::PointF& location,
+                                             const gfx::Vector2d& delta,
+                                             const gfx::Vector2d& tick_120ths,
+                                             base::TimeTicks timestamp)
+    : device_id(device_id),
+      location(location),
+      delta(delta),
+      tick_120ths(tick_120ths),
+      timestamp(timestamp) {}
 
 MouseWheelEventParams::MouseWheelEventParams(int device_id,
                                              const gfx::PointF& location,

@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "core/fxcrt/fx_extension.h"
-#include "third_party/base/ptr_util.h"
 #include "xfa/fwl/cfwl_app.h"
 #include "xfa/fwl/cfwl_barcode.h"
 #include "xfa/fwl/cfwl_notedriver.h"
@@ -138,18 +137,20 @@ CXFA_FFBarcode::CXFA_FFBarcode(CXFA_Node* pNode, CXFA_Barcode* barcode)
 
 CXFA_FFBarcode::~CXFA_FFBarcode() = default;
 
+void CXFA_FFBarcode::Trace(cppgc::Visitor* visitor) const {
+  CXFA_FFTextEdit::Trace(visitor);
+  visitor->Trace(barcode_);
+}
+
 bool CXFA_FFBarcode::LoadWidget() {
   ASSERT(!IsLoaded());
 
-  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
-  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
-
-  auto pNew = pdfium::MakeUnique<CFWL_Barcode>(GetFWLApp());
-  CFWL_Barcode* pFWLBarcode = pNew.get();
-  SetNormalWidget(std::move(pNew));
+  CFWL_Barcode* pFWLBarcode = cppgc::MakeGarbageCollected<CFWL_Barcode>(
+      GetFWLApp()->GetHeap()->GetAllocationHandle(), GetFWLApp());
+  SetNormalWidget(pFWLBarcode);
   pFWLBarcode->SetAdapterIface(this);
 
-  CFWL_NoteDriver* pNoteDriver = pFWLBarcode->GetOwnerApp()->GetNoteDriver();
+  CFWL_NoteDriver* pNoteDriver = pFWLBarcode->GetFWLApp()->GetNoteDriver();
   pNoteDriver->RegisterEventTarget(pFWLBarcode, pFWLBarcode);
   m_pOldDelegate = pFWLBarcode->GetDelegate();
   pFWLBarcode->SetDelegate(this);
@@ -173,7 +174,7 @@ void CXFA_FFBarcode::RenderWidget(CXFA_Graphics* pGS,
   mtRotate.Concat(matrix);
 
   CXFA_FFWidget::RenderWidget(pGS, mtRotate, highlight);
-  DrawBorder(pGS, m_pNode->GetUIBorder(), m_rtUI, mtRotate);
+  DrawBorder(pGS, m_pNode->GetUIBorder(), m_UIRect, mtRotate);
   RenderCaption(pGS, &mtRotate);
   CFX_RectF rtWidget = GetNormalWidget()->GetWidgetRect();
 

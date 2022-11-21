@@ -39,7 +39,7 @@ class Lock::ThenFunction final : public ScriptFunction {
   ThenFunction(ScriptState* script_state, Lock* lock, ResolveType type)
       : ScriptFunction(script_state), lock_(lock), resolve_type_(type) {}
 
-  void Trace(Visitor* visitor) override {
+  void Trace(Visitor* visitor) const override {
     visitor->Trace(lock_);
     ScriptFunction::Trace(visitor);
   }
@@ -70,18 +70,18 @@ Lock::Lock(ScriptState* script_state,
     : ExecutionContextLifecycleObserver(ExecutionContext::From(script_state)),
       name_(name),
       mode_(mode),
-      handle_(std::move(handle)),
-      lock_lifetime_(std::move(lock_lifetime)),
+      handle_(ExecutionContext::From(script_state)),
+      lock_lifetime_(ExecutionContext::From(script_state)),
       manager_(manager) {
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      ExecutionContext::From(script_state)->GetTaskRunner(TaskType::kWebLocks);
+  handle_.Bind(std::move(handle), task_runner);
+  lock_lifetime_.Bind(std::move(lock_lifetime), task_runner);
   handle_.set_disconnect_handler(
       WTF::Bind(&Lock::OnConnectionError, WrapWeakPersistent(this)));
 }
 
 Lock::~Lock() = default;
-
-void Lock::Dispose() {
-  handle_.reset();
-}
 
 String Lock::mode() const {
   return ModeToString(mode_);
@@ -124,15 +124,17 @@ void Lock::ContextDestroyed() {
   ReleaseIfHeld();
 }
 
-void Lock::Trace(Visitor* visitor) {
+void Lock::Trace(Visitor* visitor) const {
   ExecutionContextLifecycleObserver::Trace(visitor);
   ScriptWrappable::Trace(visitor);
   visitor->Trace(resolver_);
+  visitor->Trace(handle_);
+  visitor->Trace(lock_lifetime_);
   visitor->Trace(manager_);
 }
 
 void Lock::ReleaseIfHeld() {
-  if (handle_) {
+  if (handle_.is_bound()) {
     // Drop the mojo pipe; this releases the lock on the back end.
     handle_.reset();
 

@@ -24,9 +24,6 @@ extern const char kGoogleHomepageURL[];
 // returned by GURL::query() or GURL::ref().
 bool HasGoogleSearchQueryParam(base::StringPiece str);
 
-GURL LinkDoctorBaseURL();
-void SetMockLinkDoctorBaseURLForTesting();
-
 // Returns the Google locale corresponding to |application_locale|.  This is
 // the same string as AppendGoogleLocaleParam adds to the URL, only without the
 // leading "hl".
@@ -117,12 +114,6 @@ bool IsGoogleAssociatedDomainUrl(const GURL& url);
 // such as service workers discovering that signin cookies are missing and
 // unregistering themselves.
 const std::vector<std::string>& GetGoogleRegistrableDomains();
-
-// When called, this will ignore the PortPermission passed in the above methods
-// and ignore the port numbers. This makes it easier to run tests for features
-// that use these methods (directly or indirectly) with the EmbeddedTestServer,
-// which is more representative of production.
-void IgnorePortNumbersForGoogleURLChecksForTesting();
 
 }  // namespace google_util
 

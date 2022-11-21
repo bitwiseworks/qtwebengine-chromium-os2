@@ -7,8 +7,6 @@
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
-#include "content/common/input/input_event_dispatch_type.h"
-#include "content/common/input/web_mouse_wheel_event_traits.h"
 #include "content/public/common/content_features.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/blink/web_input_event_traits.h"
@@ -44,7 +42,8 @@ void MouseWheelEventQueue::QueueEvent(
       // The deltas for the coalesced event change; the corresponding action
       // might be different now.
       last_event->event.event_action =
-          WebMouseWheelEventTraits::GetEventAction(last_event->event);
+          WebMouseWheelEvent::GetPlatformSpecificDefaultEventAction(
+              last_event->event);
       TRACE_EVENT_INSTANT2("input", "MouseWheelEventQueue::CoalescedWheelEvent",
                            TRACE_EVENT_SCOPE_THREAD, "total_dx",
                            last_event->event.delta_x, "total_dy",
@@ -55,7 +54,7 @@ void MouseWheelEventQueue::QueueEvent(
 
   MouseWheelEventWithLatencyInfo event_with_action(event.event, event.latency);
   event_with_action.event.event_action =
-      WebMouseWheelEventTraits::GetEventAction(event.event);
+      WebMouseWheelEvent::GetPlatformSpecificDefaultEventAction(event.event);
   // Update the expected event action before queuing the event. From this point
   // on, the action should not change.
   wheel_queue_.push_back(
@@ -65,8 +64,8 @@ void MouseWheelEventQueue::QueueEvent(
 }
 
 bool MouseWheelEventQueue::CanGenerateGestureScroll(
-    InputEventAckState ack_result) const {
-  if (ack_result == INPUT_EVENT_ACK_STATE_CONSUMED) {
+    blink::mojom::InputEventResultState ack_result) const {
+  if (ack_result == blink::mojom::InputEventResultState::kConsumed) {
     TRACE_EVENT_INSTANT0("input", "Wheel Event Consumed",
                          TRACE_EVENT_SCOPE_THREAD);
     return false;
@@ -101,8 +100,8 @@ bool MouseWheelEventQueue::CanGenerateGestureScroll(
 
 void MouseWheelEventQueue::ProcessMouseWheelAck(
     const MouseWheelEventWithLatencyInfo& ack_event,
-    InputEventAckSource ack_source,
-    InputEventAckState ack_result) {
+    blink::mojom::InputEventResultSource ack_source,
+    blink::mojom::InputEventResultState ack_result) {
   TRACE_EVENT0("input", "MouseWheelEventQueue::ProcessMouseWheelAck");
   if (!event_sent_for_gesture_ack_)
     return;
@@ -114,7 +113,7 @@ void MouseWheelEventQueue::ProcessMouseWheelAck(
   // If event wasn't consumed then generate a gesture scroll for it.
   if (CanGenerateGestureScroll(ack_result)) {
     WebGestureEvent scroll_update(
-        WebInputEvent::kGestureScrollUpdate, WebInputEvent::kNoModifiers,
+        WebInputEvent::Type::kGestureScrollUpdate, WebInputEvent::kNoModifiers,
         event_sent_for_gesture_ack_->event.TimeStamp(),
         blink::WebGestureDevice::kTouchpad);
 
@@ -123,7 +122,7 @@ void MouseWheelEventQueue::ProcessMouseWheelAck(
     scroll_update.SetPositionInScreen(
         event_sent_for_gesture_ack_->event.PositionInScreen());
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
     // Swap X & Y if Shift is down and when there is no horizontal movement.
     if (event_sent_for_gesture_ack_->event.event_action ==
             blink::WebMouseWheelEvent::EventAction::kScrollHorizontal &&
@@ -133,7 +132,7 @@ void MouseWheelEventQueue::ProcessMouseWheelAck(
       scroll_update.data.scroll_update.delta_y =
           event_sent_for_gesture_ack_->event.delta_x;
     } else
-#endif  // OS_MACOSX
+#endif  // OS_MAC
     {
       scroll_update.data.scroll_update.delta_x =
           event_sent_for_gesture_ack_->event.delta_x;
@@ -248,14 +247,14 @@ void MouseWheelEventQueue::ProcessMouseWheelAck(
 void MouseWheelEventQueue::OnGestureScrollEvent(
     const GestureEventWithLatencyInfo& gesture_event) {
   if (gesture_event.event.GetType() ==
-      blink::WebInputEvent::kGestureScrollBegin) {
+      blink::WebInputEvent::Type::kGestureScrollBegin) {
     scrolling_device_ = gesture_event.event.SourceDevice();
   } else if (scrolling_device_ == gesture_event.event.SourceDevice() &&
              gesture_event.event.GetType() ==
-                 blink::WebInputEvent::kGestureScrollEnd) {
+                 blink::WebInputEvent::Type::kGestureScrollEnd) {
     scrolling_device_ = blink::WebGestureDevice::kUninitialized;
   } else if (gesture_event.event.GetType() ==
-             blink::WebInputEvent::kGestureFlingStart) {
+             blink::WebInputEvent::Type::kGestureFlingStart) {
     // With browser side fling we shouldn't reset scrolling_device_ on GFS since
     // the fling_controller processes the GFS to generate and send GSU events.
   }
@@ -279,7 +278,7 @@ void MouseWheelEventQueue::TryForwardNextEventToRenderer() {
     send_wheel_events_async_ = false;
   } else if (send_wheel_events_async_) {
     event_sent_for_gesture_ack_->event.dispatch_type =
-        WebInputEvent::kEventNonBlocking;
+        WebInputEvent::DispatchType::kEventNonBlocking;
   }
 
   client_->SendMouseWheelEventImmediately(
@@ -294,7 +293,7 @@ void MouseWheelEventQueue::SendScrollEnd(WebGestureEvent update_event,
 
   WebGestureEvent scroll_end(update_event);
   scroll_end.SetTimeStamp(ui::EventTimeForNow());
-  scroll_end.SetType(WebInputEvent::kGestureScrollEnd);
+  scroll_end.SetType(WebInputEvent::Type::kGestureScrollEnd);
   scroll_end.data.scroll_end.synthetic = synthetic;
   scroll_end.data.scroll_end.inertial_phase =
       update_event.data.scroll_update.inertial_phase;

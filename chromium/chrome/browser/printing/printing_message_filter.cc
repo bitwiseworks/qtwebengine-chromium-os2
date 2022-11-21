@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/memory/singleton.h"
-#include "base/task/post_task.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -21,12 +20,14 @@
 #include "chrome/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
 #include "components/printing/browser/print_manager_utils.h"
+#include "components/printing/common/print.mojom.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/child_process_host.h"
 #include "printing/buildflags/buildflags.h"
+#include "printing/mojom/print.mojom.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
@@ -102,8 +103,7 @@ PrintingMessageFilter::PrintingMessageFilter(int render_process_id,
           ->Subscribe(base::Bind(&PrintingMessageFilter::ShutdownOnUIThread,
                                  base::Unretained(this)));
   is_printing_enabled_.Init(prefs::kPrintingEnabled, profile->GetPrefs());
-  is_printing_enabled_.MoveToSequence(
-      base::CreateSingleThreadTaskRunner({BrowserThread::IO}));
+  is_printing_enabled_.MoveToSequence(content::GetIOThreadTaskRunner({}));
 }
 
 PrintingMessageFilter::~PrintingMessageFilter() {
@@ -123,8 +123,6 @@ void PrintingMessageFilter::OnDestruct() const {
 bool PrintingMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(PrintingMessageFilter, message)
-    IPC_MESSAGE_HANDLER_DELAY_REPLY(PrintHostMsg_GetDefaultPrintSettings,
-                                    OnGetDefaultPrintSettings)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(PrintHostMsg_ScriptedPrint, OnScriptedPrint)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(PrintHostMsg_UpdatePrintSettings,
                                     OnUpdatePrintSettings)
@@ -136,54 +134,8 @@ bool PrintingMessageFilter::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void PrintingMessageFilter::OnGetDefaultPrintSettings(IPC::Message* reply_msg) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (!is_printing_enabled_.GetValue()) {
-    // Reply with NULL query.
-    OnGetDefaultPrintSettingsReply(nullptr, reply_msg);
-    return;
-  }
-  std::unique_ptr<PrinterQuery> printer_query = queue_->PopPrinterQuery(0);
-  if (!printer_query) {
-    printer_query =
-        queue_->CreatePrinterQuery(render_process_id_, reply_msg->routing_id());
-  }
-
-  // Loads default settings. This is asynchronous, only the IPC message sender
-  // will hang until the settings are retrieved.
-  auto* printer_query_ptr = printer_query.get();
-  printer_query_ptr->GetSettings(
-      PrinterQuery::GetSettingsAskParam::DEFAULTS, 0, false, DEFAULT_MARGINS,
-      false, false,
-      base::BindOnce(&PrintingMessageFilter::OnGetDefaultPrintSettingsReply,
-                     this, std::move(printer_query), reply_msg));
-}
-
-void PrintingMessageFilter::OnGetDefaultPrintSettingsReply(
-    std::unique_ptr<PrinterQuery> printer_query,
-    IPC::Message* reply_msg) {
-  PrintMsg_Print_Params params;
-  if (!printer_query || printer_query->last_status() != PrintingContext::OK) {
-    params.Reset();
-  } else {
-    RenderParamsFromPrintSettings(printer_query->settings(), &params);
-    params.document_cookie = printer_query->cookie();
-  }
-  PrintHostMsg_GetDefaultPrintSettings::WriteReplyParams(reply_msg, params);
-  Send(reply_msg);
-  // If printing was enabled.
-  if (printer_query) {
-    // If user hasn't cancelled.
-    if (printer_query->cookie() && printer_query->settings().dpi()) {
-      queue_->QueuePrinterQuery(std::move(printer_query));
-    } else {
-      printer_query->StopWorker();
-    }
-  }
-}
-
 void PrintingMessageFilter::OnScriptedPrint(
-    const PrintHostMsg_ScriptedPrint_Params& params,
+    const mojom::ScriptedPrintParams& params,
     IPC::Message* reply_msg) {
 #if defined(OS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
   ModuleDatabase::GetInstance()->DisableThirdPartyBlocking();
@@ -207,18 +159,18 @@ void PrintingMessageFilter::OnScriptedPrint(
 void PrintingMessageFilter::OnScriptedPrintReply(
     std::unique_ptr<PrinterQuery> printer_query,
     IPC::Message* reply_msg) {
-  PrintMsg_PrintPages_Params params;
-  if (printer_query->last_status() != PrintingContext::OK ||
-      !printer_query->settings().dpi()) {
-    params.Reset();
-  } else {
-    RenderParamsFromPrintSettings(printer_query->settings(), &params.params);
-    params.params.document_cookie = printer_query->cookie();
+  mojom::PrintPagesParams params;
+  params.params = mojom::PrintParams::New();
+  if (printer_query->last_status() == PrintingContext::OK &&
+      printer_query->settings().dpi()) {
+    RenderParamsFromPrintSettings(printer_query->settings(),
+                                  params.params.get());
+    params.params->document_cookie = printer_query->cookie();
     params.pages = PageRange::GetPages(printer_query->settings().ranges());
   }
   PrintHostMsg_ScriptedPrint::WriteReplyParams(reply_msg, params);
   Send(reply_msg);
-  if (!params.params.dpi.IsEmpty() && params.params.document_cookie) {
+  if (!params.params->dpi.IsEmpty() && params.params->document_cookie) {
     queue_->QueuePrinterQuery(std::move(printer_query));
   } else {
     printer_query->StopWorker();
@@ -229,10 +181,18 @@ void PrintingMessageFilter::OnUpdatePrintSettings(int document_cookie,
                                                   base::Value job_settings,
                                                   IPC::Message* reply_msg) {
   if (!is_printing_enabled_.GetValue()) {
-    // Reply with NULL query.
+    // Reply with null query.
     OnUpdatePrintSettingsReply(nullptr, reply_msg);
     return;
   }
+
+  if (!job_settings.is_dict() ||
+      !job_settings.FindIntKey(kSettingPrinterType)) {
+    // Reply with null query.
+    OnUpdatePrintSettingsReply(nullptr, reply_msg);
+    return;
+  }
+
   std::unique_ptr<PrinterQuery> printer_query =
       queue_->PopPrinterQuery(document_cookie);
   if (!printer_query) {
@@ -257,12 +217,12 @@ void PrintingMessageFilter::NotifySystemDialogCancelled(int routing_id) {
 void PrintingMessageFilter::OnUpdatePrintSettingsReply(
     std::unique_ptr<PrinterQuery> printer_query,
     IPC::Message* reply_msg) {
-  PrintMsg_PrintPages_Params params;
-  if (!printer_query || printer_query->last_status() != PrintingContext::OK) {
-    params.Reset();
-  } else {
-    RenderParamsFromPrintSettings(printer_query->settings(), &params.params);
-    params.params.document_cookie = printer_query->cookie();
+  mojom::PrintPagesParams params;
+  params.params = mojom::PrintParams::New();
+  if (printer_query && printer_query->last_status() == PrintingContext::OK) {
+    RenderParamsFromPrintSettings(printer_query->settings(),
+                                  params.params.get());
+    params.params->document_cookie = printer_query->cookie();
     params.pages = PageRange::GetPages(printer_query->settings().ranges());
   }
   bool canceled = printer_query &&
@@ -270,8 +230,8 @@ void PrintingMessageFilter::OnUpdatePrintSettingsReply(
 #if defined(OS_WIN) && BUILDFLAG(ENABLE_PRINT_PREVIEW)
   if (canceled) {
     int routing_id = reply_msg->routing_id();
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&PrintingMessageFilter::NotifySystemDialogCancelled,
                        this, routing_id));
   }
@@ -294,7 +254,7 @@ void PrintingMessageFilter::OnUpdatePrintSettingsReply(
 }
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-void PrintingMessageFilter::OnCheckForCancel(const PrintHostMsg_PreviewIds& ids,
+void PrintingMessageFilter::OnCheckForCancel(const mojom::PreviewIds& ids,
                                              bool* cancel) {
   *cancel = PrintPreviewUI::ShouldCancelRequest(ids);
 }

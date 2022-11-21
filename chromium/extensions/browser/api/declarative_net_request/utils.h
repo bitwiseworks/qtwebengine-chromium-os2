@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/callback_forward.h"
 #include "base/containers/span.h"
 #include "base/macros.h"
@@ -17,6 +18,7 @@
 #include "extensions/browser/api/declarative_net_request/flat/extension_ruleset_generated.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 #include "extensions/common/api/declarative_net_request.h"
+#include "extensions/common/api/declarative_net_request/constants.h"
 #include "third_party/re2/src/re2/re2.h"
 
 namespace base {
@@ -27,6 +29,7 @@ namespace extensions {
 struct WebRequestInfo;
 
 namespace declarative_net_request {
+class CompositeMatcher;
 
 // Returns true if |data| represents a valid data buffer containing indexed
 // ruleset data with |expected_checksum|.
@@ -36,15 +39,26 @@ bool IsValidRulesetData(base::span<const uint8_t> data, int expected_checksum);
 // testing.
 std::string GetVersionHeaderForTesting();
 
-// Returns the indexed ruleset format version.
+// Gets the ruleset format version for testing.
 int GetIndexedRulesetFormatVersionForTesting();
 
-// Override the ruleset format version for testing.
-void SetIndexedRulesetFormatVersionForTesting(int version);
+// Test helper to increment the indexed ruleset format version while the
+// returned value is in scope. Resets it to the original value when it goes out
+// of scope.
+using ScopedIncrementRulesetVersion = base::AutoReset<int>;
+ScopedIncrementRulesetVersion CreateScopedIncrementRulesetVersionForTesting();
 
 // Strips the version header from |ruleset_data|. Returns false on version
 // mismatch.
 bool StripVersionHeaderAndParseVersion(std::string* ruleset_data);
+
+// Returns the checksum of the given serialized |data|. |data| must not include
+// the version header.
+int GetChecksum(base::span<const uint8_t> data);
+
+// Override the result of any calls to GetChecksum() above, so that it returns
+// |checksum|. Note: If |checksum| is -1, no such override is performed.
+void OverrideGetChecksumForTest(int checksum);
 
 // Helper function to persist the indexed ruleset |data| at the given |path|.
 // The ruleset is composed of a version header corresponding to the current
@@ -73,6 +87,42 @@ re2::RE2::Options CreateRE2Options(bool is_case_sensitive,
 // Convert dnr_api::RuleActionType into flat::ActionType.
 flat::ActionType ConvertToFlatActionType(
     api::declarative_net_request::RuleActionType action_type);
+
+// Returns the extension-specified ID for the given |ruleset_id| if it
+// corresponds to a static ruleset ID. For the dynamic ruleset ID, it returns
+// the |DYNAMIC_RULESET_ID| API constant.
+std::string GetPublicRulesetID(const Extension& extension,
+                               RulesetID ruleset_id);
+
+// Returns the public ruleset IDs corresponding to the given |extension| and
+// |matcher|.
+std::vector<std::string> GetPublicRulesetIDs(const Extension& extension,
+                                             const CompositeMatcher& matcher);
+
+// Returns the maximum number of rules a valid static ruleset can have.
+int GetStaticRuleLimit();
+
+// Returns the per-extension dynamic rule limit.
+int GetDynamicRuleLimit();
+
+// Returns the per-extension regex rules limit. This is enforced separately for
+// static and dynamic rulesets.
+int GetRegexRuleLimit();
+
+// Test helpers to override the various rule limits until the returned value is
+// in scope.
+using ScopedRuleLimitOverride = base::AutoReset<int>;
+ScopedRuleLimitOverride CreateScopedStaticRuleLimitOverrideForTesting(
+    int limit);
+ScopedRuleLimitOverride CreateScopedGlobalStaticRuleLimitOverrideForTesting(
+    int limit);
+ScopedRuleLimitOverride CreateScopedRegexRuleLimitOverrideForTesting(int limit);
+
+// Helper to convert a flatbufffers::String to a string-like object with type T.
+template <typename T>
+T CreateString(const flatbuffers::String& str) {
+  return T(str.c_str(), str.size());
+}
 
 }  // namespace declarative_net_request
 }  // namespace extensions

@@ -48,13 +48,18 @@ RTCPeerConnectionIceErrorEvent::RTCPeerConnectionIceErrorEvent(
 RTCPeerConnectionIceErrorEvent::RTCPeerConnectionIceErrorEvent(
     const AtomicString& type,
     const RTCPeerConnectionIceErrorEventInit* initializer)
-    : Event(type, initializer),
-      address_(initializer->address()),
-      port_(initializer->port()),
-      host_candidate_(initializer->hostCandidate()),
-      url_(initializer->url()),
-      error_code_(initializer->errorCode()),
-      error_text_(initializer->statusText()) {}
+    : Event(type, initializer), error_code_(initializer->errorCode()) {
+  if (initializer->hasAddress())
+    address_ = initializer->address();
+  if (initializer->hasPort())
+    port_ = initializer->port();
+  if (initializer->hasHostCandidate())
+    host_candidate_ = initializer->hostCandidate();
+  if (initializer->hasUrl())
+    url_ = initializer->url();
+  if (initializer->hasStatusText())
+    error_text_ = initializer->statusText();
+}
 
 RTCPeerConnectionIceErrorEvent::~RTCPeerConnectionIceErrorEvent() = default;
 
@@ -64,11 +69,6 @@ String RTCPeerConnectionIceErrorEvent::address() const {
 
 base::Optional<uint16_t> RTCPeerConnectionIceErrorEvent::port() const {
   return port_;
-}
-
-uint16_t RTCPeerConnectionIceErrorEvent::port(bool& is_null) const {
-  is_null = !port_.has_value();
-  return is_null ? uint16_t() : port_.value();
 }
 
 String RTCPeerConnectionIceErrorEvent::hostCandidate() const {
@@ -91,7 +91,7 @@ const AtomicString& RTCPeerConnectionIceErrorEvent::InterfaceName() const {
   return event_interface_names::kRTCPeerConnectionIceErrorEvent;
 }
 
-void RTCPeerConnectionIceErrorEvent::Trace(Visitor* visitor) {
+void RTCPeerConnectionIceErrorEvent::Trace(Visitor* visitor) const {
   Event::Trace(visitor);
 }
 

@@ -19,6 +19,7 @@ class CORE_EXPORT CSSAnimation : public Animation {
   CSSAnimation(ExecutionContext*,
                AnimationTimeline*,
                AnimationEffect*,
+               int animation_index,
                const String& animation_name);
 
   bool IsCSSAnimation() const final { return true; }
@@ -27,6 +28,10 @@ class CORE_EXPORT CSSAnimation : public Animation {
   Element* OwningElement() const override { return owning_element_; }
 
   const String& animationName() const { return animation_name_; }
+  int AnimationIndex() const { return animation_index_; }
+  void SetAnimationIndex(wtf_size_t absolute_position) {
+    animation_index_ = absolute_position;
+  }
 
   // Animation overrides.
   // Various operations may affect the computed values of properties on
@@ -52,7 +57,7 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // https://drafts.csswg.org/css-animations-2/#interaction-between-animation-play-state-and-web-animations-API
   bool getIgnoreCSSPlayState() { return ignore_css_play_state_; }
   void resetIgnoreCSSPlayState() { ignore_css_play_state_ = false; }
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(blink::Visitor* visitor) const override {
     Animation::Trace(visitor);
     visitor->Trace(owning_element_);
   }
@@ -82,6 +87,10 @@ class CORE_EXPORT CSSAnimation : public Animation {
     bool was_paused_;
   };
 
+  // animation_index_ represents the absolute position of an animation within
+  // the same owning element. This index helps resolve the animation ordering
+  // when comparing two animations with the same owning element.
+  int animation_index_;
   AtomicString animation_name_;
 
   // When set, the web-animation API is overruling the animation-play-state

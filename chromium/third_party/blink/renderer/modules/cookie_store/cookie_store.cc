@@ -10,13 +10,13 @@
 #include "services/network/public/mojom/restricted_cookie_manager.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_init.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_list_item.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_delete_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_get_options.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_set_extra_options.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_cookie_store_set_options.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/cookie_store/cookie_change_event.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
@@ -43,14 +43,8 @@ network::mojom::blink::CookieManagerGetOptionsPtr ToBackendOptions(
     ExceptionState& exception_state) {
   auto backend_options = network::mojom::blink::CookieManagerGetOptions::New();
 
-  if (options->matchType() == "starts-with") {
-    backend_options->match_type =
-        network::mojom::blink::CookieMatchType::STARTS_WITH;
-  } else {
-    DCHECK_EQ(options->matchType(), WTF::String("equals"));
-    backend_options->match_type =
-        network::mojom::blink::CookieMatchType::EQUALS;
-  }
+  // TODO(crbug.com/1124499): Cleanup matchType after evaluation.
+  backend_options->match_type = network::mojom::blink::CookieMatchType::EQUALS;
 
   if (options->hasName()) {
     backend_options->name = options->name();
@@ -68,7 +62,7 @@ network::mojom::blink::CookieManagerGetOptionsPtr ToBackendOptions(
 // Returns no value if and only if an exception is thrown.
 base::Optional<CanonicalCookie> ToCanonicalCookie(
     const KURL& cookie_url,
-    const CookieStoreSetExtraOptions* options,
+    const CookieInit* options,
     ExceptionState& exception_state) {
   const String& name = options->name();
   const String& value = options->value();
@@ -77,14 +71,24 @@ base::Optional<CanonicalCookie> ToCanonicalCookie(
         "Cookie value cannot contain '=' if the name is empty");
     return base::nullopt;
   }
+  if (name.IsEmpty() && value.IsEmpty()) {
+    exception_state.ThrowTypeError(
+        "Cookie name and value both cannot be empty");
+    return base::nullopt;
+  }
 
-  base::Time expires = options->hasExpires()
-                           ? base::Time::FromJavaTime(options->expires())
+  base::Time expires = options->hasExpiresNonNull()
+                           ? base::Time::FromJavaTime(options->expiresNonNull())
                            : base::Time();
 
   String cookie_url_host = cookie_url.Host();
   String domain;
-  if (options->hasDomain()) {
+  if (!options->domain().IsNull()) {
+    if (name.StartsWith("__Host-")) {
+      exception_state.ThrowTypeError(
+          "Cookies with \"__Host-\" prefix cannot have a domain");
+      return base::nullopt;
+    }
     // The leading dot (".") from the domain attribute is stripped in the
     // Set-Cookie header, for compatibility. This API doesn't have compatibility
     // constraints, so reject the edge case outright.
@@ -107,6 +111,11 @@ base::Optional<CanonicalCookie> ToCanonicalCookie(
 
   String path = options->path();
   if (!path.IsEmpty()) {
+    if (name.StartsWith("__Host-") && path != "/") {
+      exception_state.ThrowTypeError(
+          "Cookies with \"__Host-\" prefix cannot have a non-\"/\" path");
+      return base::nullopt;
+    }
     if (!path.StartsWith("/")) {
       exception_state.ThrowTypeError("Cookie path must start with \"/\"");
       return base::nullopt;
@@ -116,32 +125,17 @@ base::Optional<CanonicalCookie> ToCanonicalCookie(
     }
   }
 
-  // Although the Cookie Store API spec always defaults the "secure" cookie
-  // attribute to true, we only default to true on cryptographically secure
-  // origins, where only secure cookies may be written, and to false otherwise,
-  // where only insecure cookies may be written. As a result,
-  // cookieStore.set("name", "value") sets a cookie and
-  // cookieStore.delete("name") deletes a cookie on both http://localhost and
-  // secure origins, without having to specify "secure: false" on
-  // http://localhost.
-  const bool secure = options->hasSecure()
-                          ? options->secure()
-                          : SecurityOrigin::IsSecure(cookie_url);
-  // If attempting to set/delete a secure cookie on an insecure origin, throw an
-  // exception, rather than failing silently as document.cookie does.
-  network::mojom::CookieSourceScheme source_scheme_enum =
-      SecurityOrigin::IsSecure(cookie_url)
-          ? network::mojom::CookieSourceScheme::kSecure
-          : network::mojom::CookieSourceScheme::kNonSecure;
-  if (secure &&
-      source_scheme_enum != network::mojom::CookieSourceScheme::kSecure) {
+  // The Cookie Store API will only write secure cookies but will read insecure
+  // cookies. As a result,
+  // cookieStore.get("name", "value") can get an insecure cookie, but when
+  // modifying a retrieved insecure cookie via the Cookie Store API, it will
+  // automatically turn it into a secure cookie without any warning.
+  //
+  // The Cookie Store API can only set secure cookies, so it is unusable on
+  // insecure origins.
+  if (!SecurityOrigin::IsSecure(cookie_url)) {
     exception_state.ThrowTypeError(
         "Cannot modify a secure cookie on insecure origin");
-    return base::nullopt;
-  }
-  if (!secure && (name.StartsWith("__Secure-") || name.StartsWith("__Host-"))) {
-    exception_state.ThrowTypeError(
-        "__Secure- and __Host- cookies must be secure");
     return base::nullopt;
   }
 
@@ -157,15 +151,16 @@ base::Optional<CanonicalCookie> ToCanonicalCookie(
 
   return CanonicalCookie::Create(
       name, value, domain, path, base::Time() /*creation*/, expires,
-      base::Time() /*last_access*/, secure, false /*http_only*/, same_site,
-      CanonicalCookie::kDefaultPriority, source_scheme_enum);
+      base::Time() /*last_access*/, true /*secure*/, false /*http_only*/,
+      same_site, CanonicalCookie::kDefaultPriority,
+      network::mojom::CookieSourceScheme::kSecure);
 }
 
 const KURL DefaultCookieURL(ExecutionContext* execution_context) {
   DCHECK(execution_context);
 
-  if (auto* document = Document::DynamicFrom(execution_context))
-    return document->CookieURL();
+  if (auto* window = DynamicTo<LocalDOMWindow>(execution_context))
+    return window->document()->CookieURL();
 
   return KURL(To<ServiceWorkerGlobalScope>(execution_context)
                   ->serviceWorker()
@@ -184,8 +179,8 @@ KURL CookieUrlForRead(const CookieStoreGetOptions* options,
 
   KURL cookie_url = KURL(default_cookie_url, options->url());
 
-  if (context->IsDocument()) {
-    DCHECK_EQ(default_cookie_url, Document::From(context)->CookieURL());
+  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
+    DCHECK_EQ(default_cookie_url, window->document()->CookieURL());
 
     if (cookie_url.GetString() != default_cookie_url.GetString()) {
       exception_state.ThrowTypeError("URL must match the document URL");
@@ -209,8 +204,8 @@ KURL CookieUrlForRead(const CookieStoreGetOptions* options,
 net::SiteForCookies DefaultSiteForCookies(ExecutionContext* execution_context) {
   DCHECK(execution_context);
 
-  if (auto* document = Document::DynamicFrom(execution_context))
-    return document->SiteForCookies();
+  if (auto* window = DynamicTo<LocalDOMWindow>(execution_context))
+    return window->document()->SiteForCookies();
 
   auto* scope = To<ServiceWorkerGlobalScope>(execution_context);
   return net::SiteForCookies::FromUrl(scope->Url());
@@ -220,10 +215,10 @@ scoped_refptr<SecurityOrigin> DefaultTopFrameOrigin(
     ExecutionContext* execution_context) {
   DCHECK(execution_context);
 
-  if (auto* document = Document::DynamicFrom(execution_context)) {
+  if (auto* window = DynamicTo<LocalDOMWindow>(execution_context)) {
     // Can we avoid the copy? TopFrameOrigin is returned as const& but we need
     // a scoped_refptr.
-    return document->TopFrameOrigin()->IsolatedCopy();
+    return window->document()->TopFrameOrigin()->IsolatedCopy();
   }
 
   auto* scope = To<ServiceWorkerGlobalScope>(execution_context);
@@ -278,6 +273,11 @@ ScriptPromise CookieStore::get(ScriptState* script_state,
   UseCounter::Count(CurrentExecutionContext(script_state->GetIsolate()),
                     WebFeature::kCookieStoreAPI);
 
+  if (!options->hasName() && !options->hasUrl()) {
+    exception_state.ThrowTypeError("CookieStoreGetOptions must not be empty");
+    return ScriptPromise();
+  }
+
   return DoRead(script_state, options, &CookieStore::GetAllForUrlToGetResult,
                 exception_state);
 }
@@ -285,24 +285,15 @@ ScriptPromise CookieStore::get(ScriptState* script_state,
 ScriptPromise CookieStore::set(ScriptState* script_state,
                                const String& name,
                                const String& value,
-                               const CookieStoreSetOptions* options,
                                ExceptionState& exception_state) {
-  CookieStoreSetExtraOptions* set_options =
-      CookieStoreSetExtraOptions::Create();
+  CookieInit* set_options = CookieInit::Create();
   set_options->setName(name);
   set_options->setValue(value);
-  if (options->hasExpires())
-    set_options->setExpires(options->expires());
-  set_options->setDomain(options->domain());
-  set_options->setPath(options->path());
-  if (options->hasSecure())
-    set_options->setSecure(options->secure());
-  set_options->setSameSite(options->sameSite());
   return set(script_state, set_options, exception_state);
 }
 
 ScriptPromise CookieStore::set(ScriptState* script_state,
-                               const CookieStoreSetExtraOptions* options,
+                               const CookieInit* options,
                                ExceptionState& exception_state) {
   UseCounter::Count(CurrentExecutionContext(script_state->GetIsolate()),
                     WebFeature::kCookieStoreAPI);
@@ -316,10 +307,9 @@ ScriptPromise CookieStore::Delete(ScriptState* script_state,
   UseCounter::Count(CurrentExecutionContext(script_state->GetIsolate()),
                     WebFeature::kCookieStoreAPI);
 
-  CookieStoreSetExtraOptions* set_options =
-      CookieStoreSetExtraOptions::Create();
+  CookieInit* set_options = CookieInit::Create();
   set_options->setName(name);
-  set_options->setValue(g_empty_string);
+  set_options->setValue("deleted");
   set_options->setExpires(0);
   return DoWrite(script_state, set_options, exception_state);
 }
@@ -327,10 +317,9 @@ ScriptPromise CookieStore::Delete(ScriptState* script_state,
 ScriptPromise CookieStore::Delete(ScriptState* script_state,
                                   const CookieStoreDeleteOptions* options,
                                   ExceptionState& exception_state) {
-  CookieStoreSetExtraOptions* set_options =
-      CookieStoreSetExtraOptions::Create();
+  CookieInit* set_options = CookieInit::Create();
   set_options->setName(options->name());
-  set_options->setValue(g_empty_string);
+  set_options->setValue("deleted");
   set_options->setExpires(0);
   set_options->setDomain(options->domain());
   set_options->setPath(options->path());
@@ -338,7 +327,7 @@ ScriptPromise CookieStore::Delete(ScriptState* script_state,
   return DoWrite(script_state, set_options, exception_state);
 }
 
-void CookieStore::Trace(Visitor* visitor) {
+void CookieStore::Trace(Visitor* visitor) const {
   visitor->Trace(change_listener_receiver_);
   EventTargetWithInlineData::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
@@ -365,8 +354,7 @@ void CookieStore::RemoveAllEventListeners() {
 void CookieStore::OnCookieChange(
     network::mojom::blink::CookieChangeInfoPtr change) {
   HeapVector<Member<CookieListItem>> changed, deleted;
-  CookieChangeEvent::ToEventInfo(change->cookie, change->cause, changed,
-                                 deleted);
+  CookieChangeEvent::ToEventInfo(change, changed, deleted);
   if (changed.IsEmpty() && deleted.IsEmpty()) {
     // The backend only reported OVERWRITE events, which are dropped.
     return;
@@ -397,6 +385,13 @@ ScriptPromise CookieStore::DoRead(
     const CookieStoreGetOptions* options,
     DoReadBackendResultConverter backend_result_converter,
     ExceptionState& exception_state) {
+  ExecutionContext* context = ExecutionContext::From(script_state);
+  if (!context->GetSecurityOrigin()->CanAccessCookies()) {
+    exception_state.ThrowSecurityError(
+        "Access to the CookieStore API is denied in this context.");
+    return ScriptPromise();
+  }
+
   network::mojom::blink::CookieManagerGetOptionsPtr backend_options =
       ToBackendOptions(options, exception_state);
   KURL cookie_url = CookieUrlForRead(options, default_cookie_url_, script_state,
@@ -423,7 +418,8 @@ ScriptPromise CookieStore::DoRead(
 // static
 void CookieStore::GetAllForUrlToGetAllResult(
     ScriptPromiseResolver* resolver,
-    const Vector<CanonicalCookie>& backend_cookies) {
+    const Vector<network::mojom::blink::CookieWithAccessResultPtr>
+        backend_cookies) {
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())
     return;
@@ -433,7 +429,9 @@ void CookieStore::GetAllForUrlToGetAllResult(
   cookies.ReserveInitialCapacity(backend_cookies.size());
   for (const auto& backend_cookie : backend_cookies) {
     cookies.push_back(CookieChangeEvent::ToCookieListItem(
-        backend_cookie, false /* is_deleted */));
+        backend_cookie->cookie,
+        backend_cookie->access_result->effective_same_site,
+        false /* is_deleted */));
   }
 
   resolver->Resolve(std::move(cookies));
@@ -442,7 +440,8 @@ void CookieStore::GetAllForUrlToGetAllResult(
 // static
 void CookieStore::GetAllForUrlToGetResult(
     ScriptPromiseResolver* resolver,
-    const Vector<CanonicalCookie>& backend_cookies) {
+    const Vector<network::mojom::blink::CookieWithAccessResultPtr>
+        backend_cookies) {
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())
     return;
@@ -455,13 +454,22 @@ void CookieStore::GetAllForUrlToGetResult(
 
   const auto& backend_cookie = backend_cookies.front();
   CookieListItem* cookie = CookieChangeEvent::ToCookieListItem(
-      backend_cookie, false /* is_deleted */);
+      backend_cookie->cookie,
+      backend_cookie->access_result->effective_same_site,
+      false /* is_deleted */);
   resolver->Resolve(cookie);
 }
 
 ScriptPromise CookieStore::DoWrite(ScriptState* script_state,
-                                   const CookieStoreSetExtraOptions* options,
+                                   const CookieInit* options,
                                    ExceptionState& exception_state) {
+  ExecutionContext* context = ExecutionContext::From(script_state);
+  if (!context->GetSecurityOrigin()->CanAccessCookies()) {
+    exception_state.ThrowSecurityError(
+        "Access to the CookieStore API is denied in this context.");
+    return ScriptPromise();
+  }
+
   base::Optional<CanonicalCookie> canonical_cookie =
       ToCanonicalCookie(default_cookie_url_, options, exception_state);
   if (!canonical_cookie) {
@@ -507,7 +515,7 @@ void CookieStore::StartObserving() {
 
   // See https://bit.ly/2S0zRAS for task types.
   auto task_runner =
-      GetExecutionContext()->GetTaskRunner(TaskType::kMiscPlatformAPI);
+      GetExecutionContext()->GetTaskRunner(TaskType::kDOMManipulation);
   backend_->AddChangeListener(
       default_cookie_url_, default_site_for_cookies_, default_top_frame_origin_,
       change_listener_receiver_.BindNewPipeAndPassRemote(task_runner), {});

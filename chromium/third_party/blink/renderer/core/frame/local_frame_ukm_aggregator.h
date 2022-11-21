@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_LOCAL_FRAME_UKM_AGGREGATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_LOCAL_FRAME_UKM_AGGREGATOR_H_
 
-#include "cc/metrics/frame_sequence_tracker.h"
+#include "cc/metrics/frame_sequence_tracker_collection.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -128,8 +128,9 @@ class CORE_EXPORT LocalFrameUkmAggregator
   // below. For every metric name added here, add an entry in the
   // metric_strings_ array below.
   enum MetricId {
-    kCompositing,
+    kCompositingAssignments,
     kCompositingCommit,
+    kCompositingInputs,
     kImplCompositorCommit,
     kIntersectionObservation,
     kPaint,
@@ -142,14 +143,13 @@ class CORE_EXPORT LocalFrameUkmAggregator
     kHandleInputEvents,
     kAnimate,
     kUpdateLayers,
-    kProxyCommit,
     kWaitForCommit,
     kCount,
     kMainFrame
   };
 
   typedef struct MetricInitializationData {
-    String name;
+    const char* const name;
     bool has_uma;
   } MetricInitializationData;
 
@@ -157,42 +157,38 @@ class CORE_EXPORT LocalFrameUkmAggregator
   friend class LocalFrameUkmAggregatorTest;
 
   // Primary metric name
-  static const String& primary_metric_name() {
-    DEFINE_STATIC_LOCAL(String, primary_name, ("MainFrame"));
-    return primary_name;
-  }
+  static const char* primary_metric_name() { return "MainFrame"; }
 
-  // Add an entry in this arrray every time a new metric is added.
-  static const Vector<MetricInitializationData>& metrics_data() {
-    // Leaky construction to avoid exit-time destruction.
-    static const Vector<MetricInitializationData>* data =
-        new Vector<MetricInitializationData>{{"Compositing", true},
-                                             {"CompositingCommit", true},
-                                             {"ImplCompositorCommit", true},
-                                             {"IntersectionObservation", true},
-                                             {"Paint", true},
-                                             {"PrePaint", true},
-                                             {"Style", true},
-                                             {"Layout", true},
-                                             {"ForcedStyleAndLayout", true},
-                                             {"HitTestDocumentUpdate", true},
-                                             {"ScrollingCoordinator", true},
-                                             {"HandleInputEvents", true},
-                                             {"Animate", true},
-                                             {"UpdateLayers", false},
-                                             {"ProxyCommit", true},
-                                             {"WaitForCommit", true}};
-    return *data;
+  // Add an entry in this array every time a new metric is added.
+  static base::span<const MetricInitializationData> metrics_data() {
+    static const MetricInitializationData data[] = {
+        {"CompositingAssignments", true},
+        {"CompositingCommit", true},
+        {"CompositingInputs", true},
+        {"ImplCompositorCommit", true},
+        {"IntersectionObservation", true},
+        {"Paint", true},
+        {"PrePaint", true},
+        {"Style", true},
+        {"Layout", true},
+        {"ForcedStyleAndLayout", true},
+        {"HitTestDocumentUpdate", true},
+        {"ScrollingCoordinator", true},
+        {"HandleInputEvents", true},
+        {"Animate", true},
+        {"UpdateLayers", false},
+        {"WaitForCommit", true}};
+    static_assert(base::size(data) == kCount, "Metrics data mismatch");
+    return base::span<const MetricInitializationData>(data);
   }
 
   // Modify this array if the UMA ratio metrics should be bucketed in a
   // different way.
-  static const Vector<base::TimeDelta>& bucket_thresholds() {
-    // Leaky construction to avoid exit-time destruction.
-    static const Vector<base::TimeDelta>* thresholds =
-        new Vector<base::TimeDelta>{base::TimeDelta::FromMilliseconds(1),
-                                    base::TimeDelta::FromMilliseconds(5)};
-    return *thresholds;
+  static base::span<const base::TimeDelta> bucket_thresholds() {
+    static const base::TimeDelta thresholds[] = {
+        base::TimeDelta::FromMilliseconds(1),
+        base::TimeDelta::FromMilliseconds(5)};
+    return base::span<const base::TimeDelta>(thresholds);
   }
 
  public:
@@ -338,7 +334,7 @@ class CORE_EXPORT LocalFrameUkmAggregator
   const base::TickClock* clock_;
 
   // Event and metric data
-  const String event_name_;
+  const char* const event_name_;
   AbsoluteMetricRecord primary_metric_;
   Vector<AbsoluteMetricRecord> absolute_metric_records_;
   Vector<MainFramePercentageRecord> main_frame_percentage_records_;

@@ -36,8 +36,8 @@
 
 namespace {
 
-base::string16 UiaIdentifierToCondensedString16(int32_t id) {
-  base::string16 identifier = content::UiaIdentifierToString(id);
+std::string UiaIdentifierToCondensedString(int32_t id) {
+  std::string identifier = content::UiaIdentifierToStringUTF8(id);
   if (id >= UIA_RuntimeIdPropertyId && id <= UIA_HeadingLevelPropertyId) {
     // remove leading 'UIA_' and trailing 'PropertyId'
     return identifier.substr(4, identifier.size() - 14);
@@ -47,10 +47,6 @@ base::string16 UiaIdentifierToCondensedString16(int32_t id) {
     return identifier.substr(4, identifier.size() - 17);
   }
   return identifier;
-}
-
-std::string UiaIdentifierToCondensedString(int32_t id) {
-  return base::UTF16ToUTF8(UiaIdentifierToCondensedString16(id));
 }
 
 }  // namespace
@@ -395,24 +391,36 @@ AccessibilityTreeFormatterUia::BuildAccessibilityTree(
                                 &condition);
   CHECK(condition);
   Microsoft::WRL::ComPtr<IUIAutomationElement> start_element;
-  root->FindFirst(TreeScope_Subtree, condition.Get(), &start_element);
-  CHECK(start_element.Get());
 
-  // Build an accessibility tree starting from that element.
+  root->FindFirst(TreeScope_Subtree, condition.Get(), &start_element);
   std::unique_ptr<base::DictionaryValue> tree =
       std::make_unique<base::DictionaryValue>();
-  RecursiveBuildAccessibilityTree(start_element.Get(), root_bounds.left,
-                                  root_bounds.top, tree.get());
-  return tree;
-}
 
-std::unique_ptr<base::DictionaryValue>
-AccessibilityTreeFormatterUia::BuildAccessibilityTreeForProcess(
-    base::ProcessId pid) {
-  std::unique_ptr<base::DictionaryValue> tree;
-  // Get HWND for process id.
-  HWND hwnd = GetHwndForProcess(pid);
-  return BuildAccessibilityTreeForWindow(hwnd);
+  if (start_element.Get()) {
+    // Build an accessibility tree starting from that element.
+    RecursiveBuildAccessibilityTree(start_element.Get(), root_bounds.left,
+                                    root_bounds.top, tree.get());
+  } else {
+    // If the search failed, start dumping with the first thing that isn't a
+    // Pane.
+    // TODO(http://crbug.com/1071188): Figure out why the original FindFirst
+    // fails and remove this fallback codepath.
+    Microsoft::WRL::ComPtr<IUIAutomationElement> non_pane_descendant;
+    Microsoft::WRL::ComPtr<IUIAutomationCondition> is_pane_condition;
+    base::win::ScopedVariant pane_control_type_variant(UIA_PaneControlTypeId);
+    uia_->CreatePropertyCondition(UIA_ControlTypePropertyId,
+                                  pane_control_type_variant,
+                                  &is_pane_condition);
+    Microsoft::WRL::ComPtr<IUIAutomationCondition> not_is_pane_condition;
+    uia_->CreateNotCondition(is_pane_condition.Get(), &not_is_pane_condition);
+    root->FindFirst(TreeScope_Subtree, not_is_pane_condition.Get(),
+                    &non_pane_descendant);
+
+    DCHECK(non_pane_descendant.Get());
+    RecursiveBuildAccessibilityTree(non_pane_descendant.Get(), root_bounds.left,
+                                    root_bounds.top, tree.get());
+  }
+  return tree;
 }
 
 std::unique_ptr<base::DictionaryValue>
@@ -435,10 +443,10 @@ AccessibilityTreeFormatterUia::BuildAccessibilityTreeForWindow(
 }
 
 std::unique_ptr<base::DictionaryValue>
-AccessibilityTreeFormatterUia::BuildAccessibilityTreeForPattern(
-    const base::StringPiece& pattern) {
+AccessibilityTreeFormatterUia::BuildAccessibilityTreeForSelector(
+    const TreeSelector& selector) {
   LOG(ERROR) << "Windows does not yet support building accessibility trees for "
-                "patterns";
+                "tree selectors";
   return nullptr;
 }
 
@@ -859,7 +867,7 @@ void AccessibilityTreeFormatterUia::WriteI4Property(
   switch (propertyId) {
     case UIA_ControlTypePropertyId:
       dict->SetString(UiaIdentifierToCondensedString(propertyId),
-                      UiaIdentifierToCondensedString16(lval));
+                      UiaIdentifierToCondensedString(lval));
       break;
     case UIA_OrientationPropertyId:
       dict->SetString(UiaIdentifierToCondensedString(propertyId),
@@ -929,7 +937,7 @@ void AccessibilityTreeFormatterUia::WriteElementArray(
     base::DictionaryValue* dict) {
   int count;
   array->get_Length(&count);
-  base::string16 element_list = L"";
+  base::string16 element_list;
   for (int i = 0; i < count; i++) {
     Microsoft::WRL::ComPtr<IUIAutomationElement> element;
     if (SUCCEEDED(array->GetElement(i, &element))) {
@@ -1003,14 +1011,14 @@ void AccessibilityTreeFormatterUia::BuildCacheRequests() {
   }
 }
 
-base::string16 AccessibilityTreeFormatterUia::ProcessTreeForOutput(
+std::string AccessibilityTreeFormatterUia::ProcessTreeForOutput(
     const base::DictionaryValue& dict,
     base::DictionaryValue* filtered_result) {
   std::unique_ptr<base::DictionaryValue> tree;
-  base::string16 line;
+  std::string line;
 
   // Always show control type, and show it first.
-  base::string16 control_type_value;
+  std::string control_type_value;
   dict.GetString(UiaIdentifierToCondensedString(UIA_ControlTypePropertyId),
                  &control_type_value);
   WriteAttribute(true, control_type_value, &line);
@@ -1067,7 +1075,7 @@ base::string16 AccessibilityTreeFormatterUia::ProcessTreeForOutput(
 void AccessibilityTreeFormatterUia::ProcessPropertyForOutput(
     const std::string& property_name,
     const base::DictionaryValue& dict,
-    base::string16& line,
+    std::string& line,
     base::DictionaryValue* filtered_result) {
   //
   const base::Value* value;
@@ -1078,16 +1086,15 @@ void AccessibilityTreeFormatterUia::ProcessPropertyForOutput(
 void AccessibilityTreeFormatterUia::ProcessValueForOutput(
     const std::string& name,
     const base::Value* value,
-    base::string16& line,
+    std::string& line,
     base::DictionaryValue* filtered_result) {
   switch (value->type()) {
     case base::Value::Type::STRING: {
-      base::string16 string_value;
+      std::string string_value;
       value->GetAsString(&string_value);
       bool did_pass_filters = WriteAttribute(
           false,
-          base::StringPrintf(L"%ls='%ls'", base::UTF8ToUTF16(name).c_str(),
-                             string_value.c_str()),
+          base::StringPrintf("%s='%s'", name.c_str(), string_value.c_str()),
           &line);
       if (filtered_result && did_pass_filters)
         filtered_result->SetString(name, string_value);
@@ -1096,11 +1103,11 @@ void AccessibilityTreeFormatterUia::ProcessValueForOutput(
     case base::Value::Type::BOOLEAN: {
       bool bool_value = 0;
       value->GetAsBoolean(&bool_value);
-      bool did_pass_filters = WriteAttribute(
-          false,
-          base::StringPrintf(L"%ls=%ls", base::UTF8ToUTF16(name).c_str(),
-                             (bool_value ? L"true" : L"false")),
-          &line);
+      bool did_pass_filters =
+          WriteAttribute(false,
+                         base::StringPrintf("%s=%s", name.c_str(),
+                                            (bool_value ? "true" : "false")),
+                         &line);
       if (filtered_result && did_pass_filters)
         filtered_result->SetBoolean(name, bool_value);
       break;
@@ -1109,10 +1116,7 @@ void AccessibilityTreeFormatterUia::ProcessValueForOutput(
       int int_value = 0;
       value->GetAsInteger(&int_value);
       bool did_pass_filters = WriteAttribute(
-          false,
-          base::StringPrintf(L"%ls=%d", base::UTF8ToUTF16(name).c_str(),
-                             int_value),
-          &line);
+          false, base::StringPrintf("%s=%d", name.c_str(), int_value), &line);
       if (filtered_result && did_pass_filters)
         filtered_result->SetInteger(name, int_value);
       break;
@@ -1121,9 +1125,7 @@ void AccessibilityTreeFormatterUia::ProcessValueForOutput(
       double double_value = 0.0;
       value->GetAsDouble(&double_value);
       bool did_pass_filters = WriteAttribute(
-          false,
-          base::StringPrintf(L"%ls=%.2f", base::UTF8ToUTF16(name).c_str(),
-                             double_value),
+          false, base::StringPrintf("%s=%.2f", name.c_str(), double_value),
           &line);
       if (filtered_result && did_pass_filters)
         filtered_result->SetDouble(name, double_value);
@@ -1177,6 +1179,10 @@ const std::string AccessibilityTreeFormatterUia::GetDenyString() {
 
 const std::string AccessibilityTreeFormatterUia::GetDenyNodeString() {
   return "@UIA-WIN-DENY-NODE:";
+}
+
+const std::string AccessibilityTreeFormatterUia::GetRunUntilEventString() {
+  return "@UIA-WIN-RUN-UNTIL-EVENT:";
 }
 
 }  // namespace content

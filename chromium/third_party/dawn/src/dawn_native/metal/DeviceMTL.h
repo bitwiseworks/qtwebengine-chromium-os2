@@ -17,7 +17,7 @@
 
 #include "dawn_native/dawn_platform.h"
 
-#include "common/Serial.h"
+#include "dawn_native/Commands.h"
 #include "dawn_native/Device.h"
 #include "dawn_native/metal/CommandRecordingContext.h"
 #include "dawn_native/metal/Forward.h"
@@ -32,28 +32,25 @@
 
 namespace dawn_native { namespace metal {
 
-    class MapRequestTracker;
-
     class Device : public DeviceBase {
       public:
-        Device(AdapterBase* adapter, id<MTLDevice> mtlDevice, const DeviceDescriptor* descriptor);
-        ~Device();
+        static ResultOrError<Device*> Create(AdapterBase* adapter,
+                                             id<MTLDevice> mtlDevice,
+                                             const DeviceDescriptor* descriptor);
+        ~Device() override;
+
+        MaybeError Initialize();
 
         CommandBufferBase* CreateCommandBuffer(CommandEncoder* encoder,
                                                const CommandBufferDescriptor* descriptor) override;
 
-        Serial GetCompletedCommandSerial() const final override;
-        Serial GetLastSubmittedCommandSerial() const final override;
         MaybeError TickImpl() override;
 
         id<MTLDevice> GetMTLDevice();
         id<MTLCommandQueue> GetMTLQueue();
 
         CommandRecordingContext* GetPendingCommandContext();
-        Serial GetPendingCommandSerial() const override;
         void SubmitPendingCommandBuffer();
-
-        MapRequestTracker* GetMapTracker() const;
 
         TextureBase* CreateTextureWrappingIOSurface(const ExternalImageDescriptor* descriptor,
                                                     IOSurfaceRef ioSurface,
@@ -66,18 +63,29 @@ namespace dawn_native { namespace metal {
                                            BufferBase* destination,
                                            uint64_t destinationOffset,
                                            uint64_t size) override;
+        MaybeError CopyFromStagingToTexture(const StagingBufferBase* source,
+                                            const TextureDataLayout& dataLayout,
+                                            TextureCopy* dst,
+                                            const Extent3D& copySizePixels) override;
+
+        uint32_t GetOptimalBytesPerRowAlignment() const override;
+        uint64_t GetOptimalBufferToTextureCopyOffsetAlignment() const override;
 
       private:
+        Device(AdapterBase* adapter, id<MTLDevice> mtlDevice, const DeviceDescriptor* descriptor);
+
         ResultOrError<BindGroupBase*> CreateBindGroupImpl(
             const BindGroupDescriptor* descriptor) override;
         ResultOrError<BindGroupLayoutBase*> CreateBindGroupLayoutImpl(
             const BindGroupLayoutDescriptor* descriptor) override;
-        ResultOrError<BufferBase*> CreateBufferImpl(const BufferDescriptor* descriptor) override;
+        ResultOrError<Ref<BufferBase>> CreateBufferImpl(
+            const BufferDescriptor* descriptor) override;
         ResultOrError<ComputePipelineBase*> CreateComputePipelineImpl(
             const ComputePipelineDescriptor* descriptor) override;
         ResultOrError<PipelineLayoutBase*> CreatePipelineLayoutImpl(
             const PipelineLayoutDescriptor* descriptor) override;
-        ResultOrError<QueueBase*> CreateQueueImpl() override;
+        ResultOrError<QuerySetBase*> CreateQuerySetImpl(
+            const QuerySetDescriptor* descriptor) override;
         ResultOrError<RenderPipelineBase*> CreateRenderPipelineImpl(
             const RenderPipelineDescriptor* descriptor) override;
         ResultOrError<SamplerBase*> CreateSamplerImpl(const SamplerDescriptor* descriptor) override;
@@ -89,20 +97,20 @@ namespace dawn_native { namespace metal {
             Surface* surface,
             NewSwapChainBase* previousSwapChain,
             const SwapChainDescriptor* descriptor) override;
-        ResultOrError<TextureBase*> CreateTextureImpl(const TextureDescriptor* descriptor) override;
+        ResultOrError<Ref<TextureBase>> CreateTextureImpl(
+            const TextureDescriptor* descriptor) override;
         ResultOrError<TextureViewBase*> CreateTextureViewImpl(
             TextureBase* texture,
             const TextureViewDescriptor* descriptor) override;
 
         void InitTogglesFromDriver();
-        void Destroy() override;
+        void ShutDownImpl() override;
         MaybeError WaitForIdleForDestruction() override;
+        ExecutionSerial CheckAndUpdateCompletedSerials() override;
 
         id<MTLDevice> mMtlDevice = nil;
         id<MTLCommandQueue> mCommandQueue = nil;
-        std::unique_ptr<MapRequestTracker> mMapTracker;
 
-        Serial mLastSubmittedSerial = 0;
         CommandRecordingContext mCommandContext;
 
         // The completed serial is updated in a Metal completion handler that can be fired on a

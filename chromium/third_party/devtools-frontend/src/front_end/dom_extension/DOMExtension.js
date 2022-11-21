@@ -29,6 +29,10 @@
  * Contains diff method based on Javascript Diff Algorithm By John Resig
  * http://ejohn.org/files/jsdiff.js (released under the MIT license).
  */
+
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 /**
  * @param {number} offset
  * @param {string} stopCharacters
@@ -379,17 +383,6 @@ Document.prototype.createElementWithClass = function(elementName, className, cus
 };
 
 /**
- * @param {string} elementName
- * @param {string=} className
- * @param {string=} customElementType
- * @return {!Element}
- * @suppressGlobalPropertiesCheck
- */
-self.createElementWithClass = function(elementName, className, customElementType) {
-  return document.createElementWithClass(elementName, className, customElementType);
-};
-
-/**
  * @param {string} childType
  * @param {string=} className
  * @return {!Element}
@@ -493,7 +486,7 @@ Element.prototype.createSVGChild = function(childType, className) {
 /**
  * @unrestricted
  */
-var AnchorBox = class {  // eslint-disable-line
+self.AnchorBox = class {
   /**
    * @param {number=} x
    * @param {number=} y
@@ -541,9 +534,6 @@ var AnchorBox = class {  // eslint-disable-line
         this.height === anchorBox.height;
   }
 };
-
-/** @constructor */
-self.AnchorBox = AnchorBox;
 
 /**
  * @param {?Window=} targetWindow
@@ -915,3 +905,55 @@ DOMTokenList.prototype['toggle'] = function(token, force) {
   return originalToggle.call(this, token, !!force);
 };
 })();
+
+export const originalAppendChild = Element.prototype.appendChild;
+export const originalInsertBefore = Element.prototype.insertBefore;
+export const originalRemoveChild = Element.prototype.removeChild;
+export const originalRemoveChildren = Element.prototype.removeChildren;
+
+/**
+ * @override
+ * @param {?Node} child
+ * @return {!Node}
+ * @suppress {duplicate}
+ */
+Element.prototype.appendChild = function(child) {
+  if (child.__widget && child.parentElement !== this) {
+    throw new Error('Attempt to add widget via regular DOM operation.');
+  }
+  return originalAppendChild.call(this, child);
+};
+
+/**
+ * @override
+ * @param {?Node} child
+ * @param {?Node} anchor
+ * @return {!Node}
+ * @suppress {duplicate}
+ */
+Element.prototype.insertBefore = function(child, anchor) {
+  if (child.__widget && child.parentElement !== this) {
+    throw new Error('Attempt to add widget via regular DOM operation.');
+  }
+  return originalInsertBefore.call(this, child, anchor);
+};
+
+/**
+ * @override
+ * @param {?Node} child
+ * @return {!Node}
+ * @suppress {duplicate}
+ */
+Element.prototype.removeChild = function(child) {
+  if (child.__widgetCounter || child.__widget) {
+    throw new Error('Attempt to remove element containing widget via regular DOM operation');
+  }
+  return originalRemoveChild.call(this, child);
+};
+
+Element.prototype.removeChildren = function() {
+  if (this.__widgetCounter) {
+    throw new Error('Attempt to remove element containing widget via regular DOM operation');
+  }
+  originalRemoveChildren.call(this);
+};

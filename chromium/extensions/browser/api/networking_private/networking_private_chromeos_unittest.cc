@@ -283,39 +283,35 @@ class NetworkingPrivateApiTest : public ApiUnitTest {
   std::unique_ptr<base::DictionaryValue> GetNetworkProperties(
       const std::string& service_path) {
     base::RunLoop run_loop;
-    std::unique_ptr<base::DictionaryValue> properties;
+    base::Optional<base::Value> properties;
     chromeos::NetworkHandler::Get()
         ->network_configuration_handler()
         ->GetShillProperties(
             service_path,
-            base::Bind(&NetworkingPrivateApiTest::OnNetworkProperties,
-                       base::Unretained(this), service_path,
-                       base::Unretained(&properties), run_loop.QuitClosure()),
-            base::Bind(&NetworkingPrivateApiTest::OnShillError,
-                       base::Unretained(this), run_loop.QuitClosure()));
+            base::BindOnce(&NetworkingPrivateApiTest::OnNetworkProperties,
+                           base::Unretained(this), service_path,
+                           base::Unretained(&properties),
+                           run_loop.QuitClosure()));
     run_loop.Run();
-    return properties;
+    if (!properties)
+      return std::unique_ptr<base::DictionaryValue>();
+    return base::DictionaryValue::From(
+        base::Value::ToUniquePtrValue(std::move(*properties)));
   }
 
   void OnNetworkProperties(const std::string& expected_path,
-                           std::unique_ptr<base::DictionaryValue>* result,
-                           const base::Closure& callback,
+                           base::Optional<base::Value>* result,
+                           base::OnceClosure callback,
                            const std::string& service_path,
-                           const base::DictionaryValue& properties) {
+                           base::Optional<base::Value> properties) {
+    if (!properties) {
+      ADD_FAILURE() << "Error calling shill client.";
+      std::move(callback).Run();
+      return;
+    }
     EXPECT_EQ(expected_path, service_path);
-    *result = properties.CreateDeepCopy();
-    callback.Run();
-  }
-
-  void OnShillError(const base::Closure& callback,
-                    const std::string& error_name,
-                    std::unique_ptr<base::DictionaryValue> error_data) {
-    ADD_FAILURE() << "Error calling shill client " << error_name << " ";
-    if (error_data)
-      ADD_FAILURE() << *error_data;
-    else
-      ADD_FAILURE() << base::DictionaryValue();
-    callback.Run();
+    *result = std::move(properties);
+    std::move(callback).Run();
   }
 
   std::unique_ptr<base::DictionaryValue> GetNetworkUiData(
@@ -1098,6 +1094,7 @@ TEST_F(NetworkingPrivateApiTest, GetCellularProperties) {
                    .Build())
           .Set("ConnectionState", "Connected")
           .Set("GUID", "cellular_guid")
+          .Set("Metered", true)
           .Set("Name", "cellular")
           .Set("Source", "User")
           .Set("Type", "Cellular")
@@ -1157,6 +1154,7 @@ TEST_F(NetworkingPrivateApiTest, GetCellularPropertiesFromWebUi) {
                    .Build())
           .Set("ConnectionState", "Connected")
           .Set("GUID", "cellular_guid")
+          .Set("Metered", true)
           .Set("Name", "cellular")
           .Set("Source", "User")
           .Set("Type", "Cellular")

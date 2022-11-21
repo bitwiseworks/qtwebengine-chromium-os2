@@ -26,7 +26,7 @@
 #include "libANGLE/renderer/gl/formatutilsgl.h"
 #include "libANGLE/renderer/gl/renderergl_utils.h"
 #include "platform/FeaturesGL.h"
-#include "platform/Platform.h"
+#include "platform/PlatformMethods.h"
 
 using namespace gl;
 using angle::CheckedNumeric;
@@ -97,7 +97,8 @@ void BindFramebufferAttachment(const FunctionsGL *functions,
                 TextureType textureType = texture->getType();
                 ASSERT(textureType == TextureType::_2DArray || textureType == TextureType::_3D ||
                        textureType == TextureType::CubeMap ||
-                       textureType == TextureType::_2DMultisampleArray);
+                       textureType == TextureType::_2DMultisampleArray ||
+                       textureType == TextureType::CubeMapArray);
                 functions->framebufferTexture(GL_FRAMEBUFFER, attachmentPoint,
                                               textureGL->getTextureID(), attachment->mipLevel());
             }
@@ -109,7 +110,8 @@ void BindFramebufferAttachment(const FunctionsGL *functions,
             }
             else if (texture->getType() == TextureType::_2DArray ||
                      texture->getType() == TextureType::_3D ||
-                     texture->getType() == TextureType::_2DMultisampleArray)
+                     texture->getType() == TextureType::_2DMultisampleArray ||
+                     texture->getType() == TextureType::CubeMapArray)
             {
                 if (attachment->isMultiview())
                 {
@@ -607,30 +609,19 @@ angle::Result FramebufferGL::clearBufferfi(const gl::Context *context,
     return angle::Result::Continue;
 }
 
-GLenum FramebufferGL::getImplementationColorReadFormat(const gl::Context *context) const
-{
-    const auto *readAttachment = mState.getReadAttachment();
-    const Format &format       = readAttachment->getFormat();
-    return format.info->getReadPixelsFormat(context->getExtensions());
-}
-
-GLenum FramebufferGL::getImplementationColorReadType(const gl::Context *context) const
-{
-    const auto *readAttachment = mState.getReadAttachment();
-    const Format &format       = readAttachment->getFormat();
-    return format.info->getReadPixelsType(context->getClientVersion());
-}
-
 angle::Result FramebufferGL::readPixels(const gl::Context *context,
                                         const gl::Rectangle &area,
                                         GLenum format,
                                         GLenum type,
+                                        const gl::PixelPackState &pack,
+                                        gl::Buffer *packBuffer,
                                         void *pixels)
 {
     ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
+    gl::PixelPackState packState      = pack;
 
     // Clip read area to framebuffer.
     const auto *readAttachment = mState.getReadPixelsAttachment(format);
@@ -642,10 +633,6 @@ angle::Result FramebufferGL::readPixels(const gl::Context *context,
         // nothing to read
         return angle::Result::Continue;
     }
-
-    PixelPackState packState = context->getState().getPackState();
-    const gl::Buffer *packBuffer =
-        context->getState().getTargetBuffer(gl::BufferBinding::PixelPack);
 
     GLenum attachmentReadFormat =
         readAttachment->getFormat().info->getReadPixelsFormat(context->getExtensions());
@@ -694,7 +681,10 @@ angle::Result FramebufferGL::readPixels(const gl::Context *context,
     bool cannotSetDesiredRowLength =
         packState.rowLength && !GetImplAs<ContextGL>(context)->getNativeExtensions().packSubimage;
 
-    if (cannotSetDesiredRowLength || useOverlappingRowsWorkaround)
+    bool usePackSkipWorkaround = features.emulatePackSkipRowsAndPackSkipPixels.enabled &&
+                                 (packState.skipRows != 0 || packState.skipPixels != 0);
+
+    if (cannotSetDesiredRowLength || useOverlappingRowsWorkaround || usePackSkipWorkaround)
     {
         return readPixelsRowByRow(context, clippedArea, format, readFormat, readType, packState,
                                   outPtr);
@@ -781,6 +771,13 @@ angle::Result FramebufferGL::blit(const gl::Context *context,
             needManualColorBlit || (destSRGB && functions->isAtMostGL(gl::Version(4, 1)));
     }
 
+    // If the destination has an emulated alpha channel, we need to blit with a shader with alpha
+    // writes disabled.
+    if (mHasEmulatedAlphaAttachment)
+    {
+        needManualColorBlit = true;
+    }
+
     // Enable FRAMEBUFFER_SRGB if needed
     stateManager->setFramebufferSRGBEnabledForFramebuffer(context, true, this);
 
@@ -789,7 +786,8 @@ angle::Result FramebufferGL::blit(const gl::Context *context,
     {
         BlitGL *blitter = GetBlitGL(context);
         ANGLE_TRY(blitter->blitColorBufferWithShader(context, sourceFramebuffer, destFramebuffer,
-                                                     sourceArea, destArea, filter));
+                                                     sourceArea, destArea, filter,
+                                                     !mHasEmulatedAlphaAttachment));
         blitMask &= ~GL_COLOR_BUFFER_BIT;
     }
 
@@ -1119,7 +1117,10 @@ angle::Result FramebufferGL::clipSrcRegion(const gl::Context *context,
         // If pixels lying outside the read framebuffer, adjust src region
         // and dst region to appropriate in-bounds regions respectively.
         gl::Rectangle realSourceRegion;
-        ClipRectangle(bounds.sourceRegion, bounds.sourceBounds, &realSourceRegion);
+        if (!ClipRectangle(bounds.sourceRegion, bounds.sourceBounds, &realSourceRegion))
+        {
+            return angle::Result::Stop;
+        }
         GLuint xOffset = realSourceRegion.x - bounds.sourceRegion.x;
         GLuint yOffset = realSourceRegion.y - bounds.sourceRegion.y;
 
@@ -1199,7 +1200,9 @@ bool FramebufferGL::checkStatus(const gl::Context *context) const
 }
 
 angle::Result FramebufferGL::syncState(const gl::Context *context,
-                                       const gl::Framebuffer::DirtyBits &dirtyBits)
+                                       GLenum binding,
+                                       const gl::Framebuffer::DirtyBits &dirtyBits,
+                                       gl::Command command)
 {
     // Don't need to sync state for the default FBO.
     if (mIsDefault)

@@ -16,6 +16,7 @@
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_string_value_serializer.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram.h"
@@ -243,6 +244,11 @@ void JsonPrefStore::RemoveValueSilently(const std::string& key,
 
   prefs_->RemovePath(key, nullptr);
   ScheduleWrite(flags);
+}
+
+void JsonPrefStore::RemoveValuesByPrefixSilently(const std::string& prefix) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  RemoveValueSilently(prefix, /*flags*/ 0);
 }
 
 bool JsonPrefStore::ReadOnly() const {

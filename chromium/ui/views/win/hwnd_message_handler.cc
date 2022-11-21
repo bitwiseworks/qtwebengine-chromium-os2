@@ -18,9 +18,9 @@
 #include "base/debug/alias.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/single_thread_task_runner.h"
+#include "base/task/current_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -403,7 +403,6 @@ HWNDMessageHandler::HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate,
       use_system_default_icon_(false),
       restored_enabled_(false),
       current_cursor_(nullptr),
-      previous_cursor_(nullptr),
       dpi_(0),
       called_enable_non_client_dpi_scaling_(false),
       active_mouse_tracking_flags_(0),
@@ -422,6 +421,7 @@ HWNDMessageHandler::HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate,
       dwm_transition_desired_(false),
       dwm_composition_enabled_(ui::win::IsDwmCompositionEnabled()),
       sent_window_size_changing_(false),
+      did_return_uia_object_(false),
       left_button_down_on_caption_(false),
       background_fullscreen_hack_(false),
       pointer_events_for_touch_(::features::IsUsingWMPointerForTouch()) {}
@@ -791,7 +791,7 @@ bool HWNDMessageHandler::RunMoveLoop(const gfx::Vector2d& drag_offset,
   MoveLoopMouseWatcher watcher(this, hide_on_escape);
   // In Aura, we handle touch events asynchronously. So we need to allow nested
   // tasks while in windows move loop.
-  base::MessageLoopCurrent::ScopedNestableTaskAllower allow_nested;
+  base::CurrentThread::ScopedNestableTaskAllower allow_nested;
 
   SendMessage(hwnd(), WM_SYSCOMMAND, SC_MOVE | 0x0002, GetMessagePos());
   // Windows doesn't appear to offer a way to determine whether the user
@@ -864,13 +864,9 @@ bool HWNDMessageHandler::SetTitle(const base::string16& title) {
 }
 
 void HWNDMessageHandler::SetCursor(HCURSOR cursor) {
-  if (cursor) {
-    previous_cursor_ = ::SetCursor(cursor);
-    current_cursor_ = cursor;
-  } else if (previous_cursor_) {
-    ::SetCursor(previous_cursor_);
-    previous_cursor_ = nullptr;
-  }
+  TRACE_EVENT1("ui,input", "HWNDMessageHandler::SetCursor", "cursor", cursor);
+  ::SetCursor(cursor);
+  current_cursor_ = cursor;
 }
 
 void HWNDMessageHandler::FrameTypeChanged() {
@@ -899,7 +895,10 @@ void HWNDMessageHandler::SetWindowIcons(const gfx::ImageSkia& window_icon,
 
 void HWNDMessageHandler::SetFullscreen(bool fullscreen) {
   background_fullscreen_hack_ = false;
+  auto ref = msg_handler_weak_factory_.GetWeakPtr();
   fullscreen_handler()->SetFullscreen(fullscreen);
+  if (!ref)
+    return;
 
   // Add the fullscreen window to the fullscreen window map which is used to
   // handle window activations.
@@ -992,6 +991,8 @@ HICON HWNDMessageHandler::GetSmallWindowIcon() const {
 LRESULT HWNDMessageHandler::OnWndProc(UINT message,
                                       WPARAM w_param,
                                       LPARAM l_param) {
+  TRACE_EVENT1("ui", "HWNDMessageHandler::OnWndProc", "message_id", message);
+
   HWND window = hwnd();
   LRESULT result = 0;
   if (delegate_ && delegate_->PreHandleMSG(message, w_param, l_param, &result))
@@ -1394,8 +1395,10 @@ void HWNDMessageHandler::ClientAreaSizeChanged() {
   // Ignore size changes due to fullscreen windows losing activation.
   if (background_fullscreen_hack_ && !sent_window_size_changing_)
     return;
-  gfx::Size s = GetClientAreaBounds().size();
-  delegate_->HandleClientSizeChanged(s);
+  auto ref = msg_handler_weak_factory_.GetWeakPtr();
+  delegate_->HandleClientSizeChanged(GetClientAreaBounds().size());
+  if (!ref)
+    return;
 
   current_window_size_message_++;
   sent_window_size_changing_ = false;
@@ -1652,24 +1655,34 @@ void HWNDMessageHandler::OnDestroy() {
   if (i != map.end())
     map.erase(i);
 
-  if (::switches::IsExperimentalAccessibilityPlatformUIAEnabled()) {
-    // Signal to UIA that all objects associated with this HWND can be
-    // discarded.
+  // If we have ever returned a UIA object via WM_GETOBJECT, signal that all
+  // objects associated with this HWND can be discarded. See:
+  // https://docs.microsoft.com/en-us/windows/win32/api/uiautomationcoreapi/nf-uiautomationcoreapi-uiareturnrawelementprovider#remarks
+  if (did_return_uia_object_)
     UiaReturnRawElementProvider(hwnd(), 0, 0, nullptr);
-  }
 }
 
 void HWNDMessageHandler::OnDisplayChange(UINT bits_per_pixel,
                                          const gfx::Size& screen_size) {
+  TRACE_EVENT0("ui", "HWNDMessageHandler::OnDisplayChange");
+
+  base::WeakPtr<HWNDMessageHandler> ref(msg_handler_weak_factory_.GetWeakPtr());
   delegate_->HandleDisplayChange();
+
+  // HandleDisplayChange() may result in |this| being deleted.
+  if (!ref)
+    return;
+
   // Force a WM_NCCALCSIZE to occur to ensure that we handle auto hide
   // taskbars correctly.
   SendFrameChanged();
 }
 
 LRESULT HWNDMessageHandler::OnDwmCompositionChanged(UINT msg,
-                                                    WPARAM w_param,
-                                                    LPARAM l_param) {
+                                                    WPARAM /* w_param */,
+                                                    LPARAM /* l_param */) {
+  TRACE_EVENT0("ui", "HWNDMessageHandler::OnDwmCompositionChanged");
+
   if (!delegate_->HasNonClientView()) {
     SetMsgHandled(FALSE);
     return 0;
@@ -1693,6 +1706,9 @@ LRESULT HWNDMessageHandler::OnDpiChanged(UINT msg,
                                          LPARAM l_param) {
   if (LOWORD(w_param) != HIWORD(w_param))
     NOTIMPLEMENTED() << "Received non-square scaling factors";
+
+  TRACE_EVENT1("ui", "HWNDMessageHandler::OnDwmCompositionChanged", "dpi",
+               LOWORD(w_param));
 
   int dpi;
   float scaling_factor;
@@ -1816,6 +1832,10 @@ LRESULT HWNDMessageHandler::OnGetObject(UINT message,
       Microsoft::WRL::ComPtr<IRawElementProviderSimple> root;
       ax_fragment_root_->GetNativeViewAccessible()->QueryInterface(
           IID_PPV_ARGS(&root));
+
+      // Return the UIA object via UiaReturnRawElementProvider(). See:
+      // https://docs.microsoft.com/en-us/windows/win32/winauto/wm-getobject
+      did_return_uia_object_ = true;
       reference_result =
           UiaReturnRawElementProvider(hwnd(), w_param, l_param, root.Get());
     } else if (is_msaa_request) {
@@ -1984,12 +2004,27 @@ LRESULT HWNDMessageHandler::OnPointerEvent(UINT message,
     return -1;
   }
 
+  // |HandlePointerEventTypePenClient| assumes all pen events happen on the
+  // client area, so WM_NCPOINTER messages sent to it would eventually be
+  // dropped and the native frame wouldn't be able to respond to pens.
+  // |HandlePointerEventTypeTouchOrNonClient| handles non-client area messages
+  // properly. Since we don't need to distinguish between pens and fingers in
+  // non-client area, route the messages to that method.
+  if (pointer_type == PT_PEN &&
+      (message == WM_NCPOINTERDOWN ||
+       message == WM_NCPOINTERUP ||
+       message == WM_NCPOINTERUPDATE)) {
+    pointer_type = PT_TOUCH;
+  }
+
   switch (pointer_type) {
     case PT_PEN:
-      return HandlePointerEventTypePen(message, w_param, l_param);
+      return HandlePointerEventTypePenClient(message, w_param, l_param);
     case PT_TOUCH:
-      if (pointer_events_for_touch_)
-        return HandlePointerEventTypeTouch(message, w_param, l_param);
+      if (pointer_events_for_touch_) {
+        return HandlePointerEventTypeTouchOrNonClient(
+            message, w_param, l_param);
+      }
       FALLTHROUGH;
     default:
       break;
@@ -2386,17 +2421,46 @@ void HWNDMessageHandler::OnPaint(HDC dc) {
   }
 
   if (!IsRectEmpty(&ps.rcPaint)) {
+    HBRUSH brush = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+
     if (HasChildRenderingWindow()) {
       // If there's a child window that's being rendered to then clear the
       // area outside it (as WS_CLIPCHILDREN is set) with transparent black.
       // Otherwise, other portions of the backing store for the window can
       // flicker opaque black. http://crbug.com/586454
 
-      FillRect(ps.hdc, &ps.rcPaint,
-               reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+      FillRect(ps.hdc, &ps.rcPaint, brush);
+    } else if (exposed_pixels_ != gfx::Size()) {
+      // Fill in newly exposed window client area with black to ensure Windows
+      // doesn't put something else there (eg. copying existing pixels). This
+      // isn't needed if we've just cleared the whole client area outside the
+      // child window above.
+      RECT cr;
+      if (GetClientRect(hwnd(), &cr)) {
+        // GetClientRect() always returns a rect with top/left at 0.
+        const gfx::Size client_area = gfx::Rect(cr).size();
+
+        // It's possible that |exposed_pixels_| height and/or width is larger
+        // than the client area if the window frame size changed. This isn't an
+        // issue since FillRect() is clipped by |ps.rcPaint|.
+        if (exposed_pixels_.height() > 0) {
+          RECT rect = {0, client_area.height() - exposed_pixels_.height(),
+                       client_area.width(), client_area.height()};
+          FillRect(ps.hdc, &rect, brush);
+        }
+        if (exposed_pixels_.width() > 0) {
+          RECT rect = {client_area.width() - exposed_pixels_.width(), 0,
+                       client_area.width(),
+                       client_area.height() - exposed_pixels_.height()};
+          FillRect(ps.hdc, &rect, brush);
+        }
+      }
     }
+
     delegate_->HandlePaintAccelerated(gfx::Rect(ps.rcPaint));
   }
+
+  exposed_pixels_ = gfx::Size();
 
   EndPaint(hwnd(), &ps);
 }
@@ -2479,8 +2543,7 @@ LRESULT HWNDMessageHandler::OnSetText(const wchar_t* text) {
 }
 
 void HWNDMessageHandler::OnSettingChange(UINT flags, const wchar_t* section) {
-  if (!GetParent(hwnd()) && (flags == SPI_SETWORKAREA) &&
-      !delegate_->WillProcessWorkAreaChange()) {
+  if (!GetParent(hwnd()) && (flags == SPI_SETWORKAREA)) {
     // Fire a dummy SetWindowPos() call, so we'll trip the code in
     // OnWindowPosChanging() below that notices work area changes.
     ::SetWindowPos(hwnd(), nullptr, 0, 0, 0, 0,
@@ -2702,6 +2765,8 @@ LRESULT HWNDMessageHandler::OnTouchEvent(UINT message,
 }
 
 void HWNDMessageHandler::OnWindowPosChanging(WINDOWPOS* window_pos) {
+  TRACE_EVENT0("ui", "HWNDMessageHandler::OnWindowPosChanging");
+
   if (ignore_window_pos_changes_) {
     // If somebody's trying to toggle our visibility, change the nonclient area,
     // change our Z-order, or activate us, we should probably let it go through.
@@ -2742,7 +2807,10 @@ void HWNDMessageHandler::OnWindowPosChanging(WINDOWPOS* window_pos) {
         // window is maximized. We should take this into account.
         gfx::Insets client_area_insets;
         if (GetClientAreaInsets(&client_area_insets, monitor))
-          expected_maximized_bounds.Inset(client_area_insets.Scale(-1));
+          // Ceil the insets after scaling to make them exclude fractional parts
+          // after scaling, since the result is negative.
+          expected_maximized_bounds.Inset(
+              gfx::ScaleToCeiledInsets(client_area_insets, -1));
       }
       // Sometimes Windows incorrectly changes bounds of maximized windows after
       // attaching or detaching additional displays. In this case user can see
@@ -2815,6 +2883,10 @@ void HWNDMessageHandler::OnWindowPosChanging(WINDOWPOS* window_pos) {
   gfx::Size new_size = gfx::Size(window_pos->cx, window_pos->cy);
   if ((old_size != new_size && !(window_pos->flags & SWP_NOSIZE)) ||
       window_pos->flags & SWP_FRAMECHANGED) {
+    // If the window is getting larger then fill the exposed area on the next
+    // WM_PAINT.
+    exposed_pixels_ = new_size - old_size;
+
     delegate_->HandleWindowSizeChanging();
     sent_window_size_changing_ = true;
 
@@ -2827,6 +2899,9 @@ void HWNDMessageHandler::OnWindowPosChanging(WINDOWPOS* window_pos) {
     // resizing. See https://crbug.com/739724
     if (is_translucent_)
       window_pos->flags |= SWP_NOCOPYBITS;
+  } else {
+    // The window size isn't changing so there are no exposed pixels.
+    exposed_pixels_ = gfx::Size();
   }
 
   if (ScopedFullscreenVisibility::IsHiddenForFullscreen(hwnd())) {
@@ -2846,8 +2921,13 @@ void HWNDMessageHandler::OnWindowPosChanging(WINDOWPOS* window_pos) {
 }
 
 void HWNDMessageHandler::OnWindowPosChanged(WINDOWPOS* window_pos) {
+  TRACE_EVENT0("ui", "HWNDMessageHandler::OnWindowPosChanged");
+
+  base::WeakPtr<HWNDMessageHandler> ref(msg_handler_weak_factory_.GetWeakPtr());
   if (DidClientAreaSizeChange(window_pos))
     ClientAreaSizeChanged();
+  if (!ref)
+    return;
   if (window_pos->flags & SWP_FRAMECHANGED)
     SetDwmFrameExtension(DwmFrameState::kOn);
   if (window_pos->flags & SWP_SHOWWINDOW) {
@@ -2867,9 +2947,12 @@ LRESULT HWNDMessageHandler::OnWindowSizingFinished(UINT message,
   // received after this message was posted.
   if (current_window_size_message_ != w_param)
     return 0;
-
   delegate_->HandleWindowSizeUnchanged();
   sent_window_size_changing_ = false;
+
+  // The window size didn't actually change, so nothing was exposed that needs
+  // to be filled black.
+  exposed_pixels_ = gfx::Size();
 
   return 0;
 }
@@ -3055,9 +3138,8 @@ LRESULT HWNDMessageHandler::HandleMouseEventInternal(UINT message,
   return 0;
 }
 
-LRESULT HWNDMessageHandler::HandlePointerEventTypeTouch(UINT message,
-                                                        WPARAM w_param,
-                                                        LPARAM l_param) {
+LRESULT HWNDMessageHandler::HandlePointerEventTypeTouchOrNonClient(
+    UINT message, WPARAM w_param, LPARAM l_param) {
   UINT32 pointer_id = GET_POINTERID_WPARAM(w_param);
   using GetPointerTouchInfoFn = BOOL(WINAPI*)(UINT32, POINTER_TOUCH_INFO*);
   POINTER_TOUCH_INFO pointer_touch_info;
@@ -3126,9 +3208,8 @@ LRESULT HWNDMessageHandler::HandlePointerEventTypeTouch(UINT message,
 
   ui::TouchEvent event(
       event_type, touch_point, event_time,
-      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH,
-                         mapped_pointer_id, radius_x, radius_y, pressure,
-                         rotation_angle),
+      ui::PointerDetails(ui::EventPointerType::kTouch, mapped_pointer_id,
+                         radius_x, radius_y, pressure, rotation_angle),
       ui::GetModifiersFromKeyState());
 
   event.latency()->AddLatencyNumberWithTimestamp(
@@ -3166,9 +3247,9 @@ LRESULT HWNDMessageHandler::HandlePointerEventTypeTouch(UINT message,
   return 0;
 }
 
-LRESULT HWNDMessageHandler::HandlePointerEventTypePen(UINT message,
-                                                      WPARAM w_param,
-                                                      LPARAM l_param) {
+LRESULT HWNDMessageHandler::HandlePointerEventTypePenClient(UINT message,
+                                                            WPARAM w_param,
+                                                            LPARAM l_param) {
   UINT32 pointer_id = GET_POINTERID_WPARAM(w_param);
   using GetPointerPenInfoFn = BOOL(WINAPI*)(UINT32, POINTER_PEN_INFO*);
   POINTER_PEN_INFO pointer_pen_info;
@@ -3268,6 +3349,8 @@ void HWNDMessageHandler::PerformDwmTransition() {
 }
 
 void HWNDMessageHandler::UpdateDwmFrame() {
+  TRACE_EVENT0("ui", "HWNDMessageHandler::UpdateDwmFrame");
+
   gfx::Insets insets;
   if (ui::win::IsAeroGlassEnabled() &&
       delegate_->GetDwmFrameInsetsInPixels(&insets)) {
@@ -3282,9 +3365,8 @@ void HWNDMessageHandler::GenerateTouchEvent(ui::EventType event_type,
                                             size_t id,
                                             base::TimeTicks time_stamp,
                                             TouchEvents* touch_events) {
-  ui::TouchEvent event(
-      event_type, point, time_stamp,
-      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, id));
+  ui::TouchEvent event(event_type, point, time_stamp,
+                       ui::PointerDetails(ui::EventPointerType::kTouch, id));
 
   event.set_flags(ui::GetModifiersFromKeyState());
 

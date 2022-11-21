@@ -10,7 +10,7 @@
 
 #include "base/base_export.h"
 #include "base/callback.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
@@ -119,6 +119,13 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   // advances faster than the real-time delay on ServiceThread).
   void ProcessRipeDelayedTasksForTesting();
 
+  // Requests that all threads started by future ThreadPoolImpls in this process
+  // have a synchronous start (if |enabled|; cancels this behavior otherwise).
+  // Must be called while no ThreadPoolImpls are alive in this process. This is
+  // exposed here on this internal API rather than as a ThreadPoolInstance
+  // configuration param because only one internal test truly needs this.
+  static void SetSynchronousThreadStartForTesting(bool enabled);
+
  private:
   // Invoked after |num_fences_| or |num_best_effort_fences_| is updated. Sets
   // the CanRunPolicy in TaskTracker and wakes up workers as appropriate.
@@ -128,8 +135,6 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   // and returns |traits|, with priority set to TaskPriority::USER_BLOCKING if
   // |all_tasks_user_blocking_| is set.
   TaskTraits VerifyAndAjustIncomingTraits(TaskTraits traits) const;
-
-  void ReportHeartbeatMetrics() const;
 
   const ThreadGroup* GetThreadGroupForTraits(const TaskTraits& traits) const;
 

@@ -11,7 +11,6 @@
 #include "base/scoped_observer.h"
 #include "base/strings/strcat.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -46,7 +45,7 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
                                            public ProcessManagerObserver {
  public:
   explicit FrameTracker(ExtensionMessagePort* port)
-      : pm_observer_(this), port_(port), interstitial_frame_(nullptr) {}
+      : pm_observer_(this), port_(port) {}
   ~FrameTracker() override {}
 
   void TrackExtensionProcessFrames() {
@@ -54,17 +53,6 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
   }
 
   void TrackTabFrames(content::WebContents* tab) {
-    Observe(tab);
-  }
-
-  void TrackInterstitialFrame(content::WebContents* tab,
-                              content::RenderFrameHost* interstitial_frame) {
-    // |tab| should never be nullptr, because an interstitial's lifetime is
-    // tied to a tab. This is a CHECK, not a DCHECK because we really need an
-    // observer subject to detect frame removal (via DidDetachInterstitialPage).
-    CHECK(tab);
-    DCHECK(interstitial_frame);
-    interstitial_frame_ = interstitial_frame;
     Observe(tab);
   }
 
@@ -83,11 +71,6 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
     }
   }
 
-  void DidDetachInterstitialPage() override {
-    if (interstitial_frame_)
-      port_->UnregisterFrame(interstitial_frame_);
-  }
-
   // extensions::ProcessManagerObserver overrides:
   void OnExtensionFrameUnregistered(
       const std::string& extension_id,
@@ -102,11 +85,6 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
 
   ScopedObserver<ProcessManager, ProcessManagerObserver> pm_observer_;
   ExtensionMessagePort* port_;  // Owns this FrameTracker.
-
-  // Set to the main frame of an interstitial if we are tracking an interstitial
-  // page, because RenderFrameDeleted is never triggered for frames in an
-  // interstitial (and we only support tracking the interstitial's main frame).
-  content::RenderFrameHost* interstitial_frame_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameTracker);
 };
@@ -160,28 +138,7 @@ ExtensionMessagePort::ExtensionMessagePort(
       background_host_ptr_(nullptr),
       frame_tracker_(new FrameTracker(this)) {
   content::WebContents* tab = content::WebContents::FromRenderFrameHost(rfh);
-  if (!tab) {
-    content::InterstitialPage* interstitial =
-        content::InterstitialPage::FromRenderFrameHost(rfh);
-    // A RenderFrameHost must be hosted in a WebContents or InterstitialPage.
-    CHECK(interstitial);
-
-    // Only the main frame of an interstitial is supported, because frames in
-    // the interstitial do not trigger RenderFrameCreated / RenderFrameDeleted
-    // on WebContentObservers. Consequently, (1) we cannot detect removal of
-    // RenderFrameHosts, and (2) even if the RenderFrameDeleted is propagated,
-    // then WebContentsObserverSanityChecker triggers a CHECK when it detects
-    // frame notifications without a corresponding RenderFrameCreated.
-    if (!rfh->GetParent()) {
-      // It is safe to pass the interstitial's WebContents here because we only
-      // use it to observe DidDetachInterstitialPage.
-      frame_tracker_->TrackInterstitialFrame(interstitial->GetWebContents(),
-                                             rfh);
-      RegisterFrame(rfh);
-    }
-    return;
-  }
-
+  CHECK(tab);
   frame_tracker_->TrackTabFrames(tab);
   if (include_child_frames) {
     tab->ForEachFrame(base::BindRepeating(&ExtensionMessagePort::RegisterFrame,
@@ -411,7 +368,8 @@ void ExtensionMessagePort::RegisterWorker(const WorkerId& worker_id) {
 }
 
 void ExtensionMessagePort::UnregisterWorker(const WorkerId& worker_id) {
-  DCHECK_EQ(extension_id_, worker_id.extension_id);
+  if (extension_id_ != worker_id.extension_id)
+    return;
   if (service_workers_.erase(worker_id) == 0)
     return;
 

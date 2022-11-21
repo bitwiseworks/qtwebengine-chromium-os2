@@ -18,6 +18,7 @@
 
 #include "base/callback.h"
 #include "base/component_export.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -29,11 +30,13 @@
 #include "base/timer/timer.h"
 #include "storage/browser/quota/quota_callbacks.h"
 #include "storage/browser/quota/quota_client.h"
+#include "storage/browser/quota/quota_client_type.h"
 #include "storage/browser/quota/quota_database.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "storage/browser/quota/quota_task.h"
 #include "storage/browser/quota/special_storage_policy.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom-forward.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom-shared.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -118,7 +121,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
                               int64_t quota,
                               blink::mojom::UsageBreakdownPtr usage_breakdown)>;
 
-  static const int64_t kNoLimit;
+  static constexpr int64_t kGBytes = 1024 * 1024 * 1024;
+  static constexpr int64_t kNoLimit = INT64_MAX;
+  static constexpr int64_t kMBytes = 1024 * 1024;
+  static constexpr int kMinutesInMilliSeconds = 60 * 1000;
 
   QuotaManager(bool is_incognito,
                const base::FilePath& profile_path,
@@ -147,36 +153,40 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
       blink::mojom::StorageType type,
       UsageAndQuotaWithBreakdownCallback callback);
 
-  // Called by StorageClients.
-  // This method is declared as virtual to allow test code to override it.
+  // Called by storage backends.
   //
   // For UnlimitedStorage origins, this version skips usage and quota handling
-  // to avoid extra query cost.
-  // Do not call this method for apps/user-facing code.
+  // to avoid extra query cost. Do not call this method for apps/user-facing
+  // code.
+  //
+  // This method is declared as virtual to allow test code to override it.
   virtual void GetUsageAndQuota(const url::Origin& origin,
                                 blink::mojom::StorageType type,
                                 UsageAndQuotaCallback callback);
 
-  // Called by clients via proxy.
-  // Client storage should call this method when storage is accessed.
-  // Used to maintain LRU ordering.
+  // Called by storage backends via proxy.
+  //
+  // Quota-managed storage backends should call this method when storage is
+  // accessed. Used to maintain LRU ordering.
   void NotifyStorageAccessed(const url::Origin& origin,
                              blink::mojom::StorageType type);
 
-  // Called by clients via proxy.
-  // Client storage must call this method whenever they have made any
-  // modifications that change the amount of data stored in their storage.
-  void NotifyStorageModified(QuotaClient::ID client_id,
+  // Called by storage backends via proxy.
+  //
+  // Quota-managed storage backends must call this method when they have made
+  // any modifications that change the amount of data stored in their storage.
+  void NotifyStorageModified(QuotaClientType client_id,
                              const url::Origin& origin,
                              blink::mojom::StorageType type,
                              int64_t delta);
 
-  // Called by clients via proxy.
-  // This method is declared as virtual to allow test code to override it.
+  // Called by storage backends via proxy.
   //
   // Client storage must call this method whenever they run into disk
   // write errors. Used as a hint to determine if the storage partition is out
   // of space, and trigger actions if deemed appropriate.
+  //
+  // This method is declared as virtual to allow test code to override it.
   virtual void NotifyWriteFailed(const url::Origin& origin);
 
   // Used to avoid evicting origins with open pages.
@@ -189,7 +199,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
     return base::Contains(origins_in_use_, origin);
   }
 
-  void SetUsageCacheEnabled(QuotaClient::ID client_id,
+  void SetUsageCacheEnabled(QuotaClientType client_id,
                             const url::Origin& origin,
                             blink::mojom::StorageType type,
                             bool enabled);
@@ -197,23 +207,22 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
   // DeleteOriginData and DeleteHostData (surprisingly enough) delete data of a
   // particular blink::mojom::StorageType associated with either a specific
   // origin or set of origins. Each method additionally requires a
-  // |quota_client_mask| which specifies the types of QuotaClients to delete
-  // from the origin. This is specified by the caller as a bitmask built from
-  // QuotaClient::IDs. Setting the mask to QuotaClient::kAllClientsMask will
-  // remove all clients from the origin, regardless of type.
+  // |quota_client_types| which specifies the types of QuotaClients to delete
+  // from the origin. Pass in QuotaClientType::AllClients() to remove all
+  // clients from the origin, regardless of type.
   virtual void DeleteOriginData(const url::Origin& origin,
                                 blink::mojom::StorageType type,
-                                int quota_client_mask,
+                                QuotaClientTypes quota_client_types,
                                 StatusCallback callback);
   void DeleteHostData(const std::string& host,
                       blink::mojom::StorageType type,
-                      int quota_client_mask,
+                      QuotaClientTypes quota_client_types,
                       StatusCallback callback);
 
   // Instructs each QuotaClient to remove possible traces of deleted
   // data on the disk.
   void PerformStorageCleanup(blink::mojom::StorageType type,
-                             int quota_client_mask,
+                             QuotaClientTypes quota_client_types,
                              base::OnceClosure callback);
 
   // Called by UI and internal modules.
@@ -223,28 +232,19 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
                               QuotaCallback callback);
   void GetGlobalUsage(blink::mojom::StorageType type,
                       GlobalUsageCallback callback);
-  void GetHostUsage(const std::string& host,
-                    blink::mojom::StorageType type,
-                    UsageCallback callback);
-  void GetHostUsage(const std::string& host,
-                    blink::mojom::StorageType type,
-                    QuotaClient::ID client_id,
-                    UsageCallback callback);
   void GetHostUsageWithBreakdown(const std::string& host,
                                  blink::mojom::StorageType type,
                                  UsageWithBreakdownCallback callback);
-
-  bool IsTrackingHostUsage(blink::mojom::StorageType type,
-                           QuotaClient::ID client_id) const;
 
   std::map<std::string, std::string> GetStatistics();
 
   bool IsStorageUnlimited(const url::Origin& origin,
                           blink::mojom::StorageType type) const;
 
-  virtual void GetOriginsModifiedSince(blink::mojom::StorageType type,
-                                       base::Time modified_since,
-                                       GetOriginsCallback callback);
+  virtual void GetOriginsModifiedBetween(blink::mojom::StorageType type,
+                                         base::Time begin,
+                                         base::Time end,
+                                         GetOriginsCallback callback);
 
   bool ResetUsageTracker(blink::mojom::StorageType type);
 
@@ -253,13 +253,24 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
   void SetStoragePressureCallback(
       base::RepeatingCallback<void(url::Origin)> storage_pressure_callback);
 
-  static const int64_t kPerHostPersistentQuotaLimit;
-  static const char kDatabaseName[];
-  static const int kThresholdOfErrorsToBeBlacklisted;
-  static const int kEvictionIntervalInMilliSeconds;
-  static const char kDaysBetweenRepeatedOriginEvictionsHistogram[];
-  static const char kEvictedOriginAccessedCountHistogram[];
-  static const char kEvictedOriginDaysSinceAccessHistogram[];
+  // Cap size for per-host persistent quota determined by the histogram.
+  // This is a bit lax value because the histogram says nothing about per-host
+  // persistent storage usage and we determined by global persistent storage
+  // usage that is less than 10GB for almost all users.
+  static constexpr int64_t kPerHostPersistentQuotaLimit = 10 * 1024 * kMBytes;
+
+  static constexpr int kEvictionIntervalInMilliSeconds =
+      30 * kMinutesInMilliSeconds;
+  static constexpr int kThresholdOfErrorsToBeDenylisted = 3;
+  static constexpr int kThresholdRandomizationPercent = 5;
+
+  static constexpr char kDatabaseName[] = "QuotaManager";
+  static constexpr char kDaysBetweenRepeatedOriginEvictionsHistogram[] =
+      "Quota.DaysBetweenRepeatedOriginEvictions";
+  static constexpr char kEvictedOriginAccessedCountHistogram[] =
+      "Quota.EvictedOriginAccessCount";
+  static constexpr char kEvictedOriginDaysSinceAccessHistogram[] =
+      "Quota.EvictedOriginDaysSinceAccess";
 
   // Kept non-const so that test code can change the value.
   // TODO(kinuko): Make this a real const value and add a proper way to set
@@ -276,7 +287,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
   friend class base::RefCountedDeleteOnSequence<QuotaManager>;
   friend class quota_internals::QuotaInternalsProxy;
   friend class MockQuotaManager;
-  friend class MockStorageClient;
+  friend class MockQuotaClient;
   friend class QuotaManagerProxy;
   friend class QuotaManagerTest;
   friend class QuotaTemporaryStorageEvictor;
@@ -320,10 +331,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
     StatusCallback evict_origin_data_callback;
   };
 
-  // This initialization method is lazily called on the IO thread
-  // when the first quota manager API is called.
-  // Initialize must be called after all quota clients are added to the
-  // manager by RegisterStorage.
+  // Lazily called on the IO thread when the first quota manager API is called.
+  //
+  // Initialize() must be called after all quota clients are added to the
+  // manager by RegisterClient.
   void LazyInitialize();
   void FinishLazyInitialize(bool is_database_bootstraped);
   void BootstrapDatabaseForEviction(GetOriginCallback did_get_origin_callback,
@@ -334,7 +345,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
 
   // Called by clients via proxy.
   // Registers a quota client to the manager.
-  void RegisterClient(scoped_refptr<QuotaClient> client);
+  void RegisterClient(
+      scoped_refptr<QuotaClient> client,
+      QuotaClientType client_type,
+      const std::vector<blink::mojom::StorageType>& storage_types);
 
   UsageTracker* GetUsageTracker(blink::mojom::StorageType type) const;
 
@@ -346,7 +360,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
   void NotifyStorageAccessedInternal(const url::Origin& origin,
                                      blink::mojom::StorageType type,
                                      base::Time accessed_time);
-  void NotifyStorageModifiedInternal(QuotaClient::ID client_id,
+  void NotifyStorageModifiedInternal(QuotaClientType client_id,
                                      const url::Origin& origin,
                                      blink::mojom::StorageType type,
                                      int64_t delta,
@@ -357,7 +371,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
 
   void DeleteOriginDataInternal(const url::Origin& origin,
                                 blink::mojom::StorageType type,
-                                int quota_client_mask,
+                                QuotaClientTypes quota_client_types,
                                 bool is_eviction,
                                 StatusCallback callback);
 
@@ -422,6 +436,14 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
   // callback.
   void SimulateStoragePressure(const url::Origin origin);
 
+  // Evaluates disk statistics to identify storage pressure
+  // (low disk space availability) and starts the storage
+  // pressure event dispatch if appropriate.
+  // TODO(crbug.com/1088004): Implement UsageAndQuotaInfoGatherer::Completed()
+  // to use DetermineStoragePressure().
+  // TODO(crbug.com/1102433): Define and explain StoragePressure in the README.
+  void DetermineStoragePressure(int64_t free_space, int64_t total_space);
+
   void PostTaskAndReplyWithResultForDBThread(
       const base::Location& from_here,
       base::OnceCallback<bool(QuotaDatabase*)> task,
@@ -460,7 +482,18 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaManager
   GetOriginCallback lru_origin_callback_;
   std::set<url::Origin> access_notified_origins_;
 
-  std::vector<scoped_refptr<QuotaClient>> clients_;
+  // Owns the QuotaClient instances registered via RegisterClient().
+  //
+  // Iterating over this list is almost always incorrect. Most algorithms should
+  // iterate over an entry in |client_types_|.
+  std::vector<scoped_refptr<QuotaClient>> clients_for_ownership_;
+  // Maps QuotaClient instances to client types.
+  //
+  // The QuotaClient instances pointed to by the map keys are guaranteed to be
+  // alive, because they are owned by |clients_for_ownership_|.
+  base::flat_map<blink::mojom::StorageType,
+                 base::flat_map<QuotaClient*, QuotaClientType>>
+      client_types_;
 
   std::unique_ptr<UsageTracker> temporary_usage_tracker_;
   std::unique_ptr<UsageTracker> persistent_usage_tracker_;

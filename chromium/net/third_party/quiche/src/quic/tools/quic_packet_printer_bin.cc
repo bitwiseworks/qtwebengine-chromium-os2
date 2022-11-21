@@ -207,6 +207,10 @@ class QuicPacketPrinter : public QuicFramerVisitorInterface {
     std::cerr << "OnHandshakeDoneFrame: " << frame;
     return true;
   }
+  bool OnAckFrequencyFrame(const QuicAckFrequencyFrame& frame) override {
+    std::cerr << "OnAckFrequencyFrame: " << frame;
+    return true;
+  }
   void OnPacketComplete() override { std::cerr << "OnPacketComplete\n"; }
   bool IsValidStatelessResetToken(QuicUint128 /*token*/) const override {
     std::cerr << "IsValidStatelessResetToken\n";
@@ -251,7 +255,7 @@ int main(int argc, char* argv[]) {
   quic::QuicFramer framer(versions, start, perspective,
                           quic::kQuicDefaultConnectionIdLength);
   if (!GetQuicFlag(FLAGS_quic_version).empty()) {
-    for (quic::ParsedQuicVersion version : versions) {
+    for (const quic::ParsedQuicVersion& version : versions) {
       if (quic::QuicVersionToString(version.transport_version) ==
           GetQuicFlag(FLAGS_quic_version)) {
         framer.set_version(version);

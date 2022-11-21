@@ -12,6 +12,9 @@
 
 namespace media {
 
+// Maximum length of urls that we can show.
+constexpr size_t kMaxUrlLength = 1000;
+
 // Events are changes in the state of a player, or a user interaction, or any
 // other internal representation of a player at a given point in time.
 // This list contains both events that are instant, such as play/pause, as
@@ -67,6 +70,9 @@ enum class MediaLogEvent {
 // instead of using macro stringification.
 MEDIA_EXPORT std::string MediaLogEventToString(MediaLogEvent level);
 
+// Sometimes URLs can have encoded data that can be exteremly large.
+MEDIA_EXPORT std::string TruncateUrlString(const std::string& url);
+
 // These events can be triggered with no extra associated data.
 MEDIA_LOG_EVENT_TYPELESS(kPlay);
 MEDIA_LOG_EVENT_TYPELESS(kPause);
@@ -77,12 +83,15 @@ MEDIA_LOG_EVENT_TYPELESS(kWebMediaPlayerCreated);
 
 // These events can be triggered with the extra data / names as defined here.
 // Note that some events can be defined multiple times.
-MEDIA_LOG_EVENT_NAMED_DATA(kLoad, std::string, "url");
 MEDIA_LOG_EVENT_NAMED_DATA(kSeek, double, "seek_target");
 MEDIA_LOG_EVENT_NAMED_DATA(kVideoSizeChanged, gfx::Size, "dimensions");
 MEDIA_LOG_EVENT_NAMED_DATA(kDurationChanged, base::TimeDelta, "duration");
-MEDIA_LOG_EVENT_NAMED_DATA(kWebMediaPlayerCreated, std::string, "origin_url");
 MEDIA_LOG_EVENT_NAMED_DATA(kPipelineStateChange, std::string, "pipeline_state");
+MEDIA_LOG_EVENT_NAMED_DATA_OP(kLoad, std::string, "url", TruncateUrlString);
+MEDIA_LOG_EVENT_NAMED_DATA_OP(kWebMediaPlayerCreated,
+                              std::string,
+                              "origin_url",
+                              TruncateUrlString);
 
 // Each type of buffering state gets a different name.
 MEDIA_LOG_EVENT_NAMED_DATA(

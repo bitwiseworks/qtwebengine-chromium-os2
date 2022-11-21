@@ -7,6 +7,7 @@
 
 #include "base/observer_list.h"
 #include "content/public/browser/dedicated_worker_service.h"
+#include "url/gurl.h"
 
 namespace content {
 
@@ -23,34 +24,42 @@ class CONTENT_EXPORT DedicatedWorkerServiceImpl
   void RemoveObserver(Observer* observer) override;
   void EnumerateDedicatedWorkers(Observer* observer) override;
 
-  DedicatedWorkerId GenerateNextDedicatedWorkerId();
-
-  // Notifies all observers about a starting worker.
-  void NotifyWorkerStarted(DedicatedWorkerId dedicated_worker_id,
+  // Notifies all observers about a new worker.
+  void NotifyWorkerCreated(const blink::DedicatedWorkerToken& worker_token,
                            int worker_process_id,
                            GlobalFrameRoutingId ancestor_render_frame_host_id);
 
-  // Notifies all observers about a terminating worker.
-  void NotifyWorkerTerminating(
-      DedicatedWorkerId dedicated_worker_id,
+  // Notifies all observers about a worker being destroyed.
+  void NotifyBeforeWorkerDestroyed(
+      const blink::DedicatedWorkerToken& worker_token,
       GlobalFrameRoutingId ancestor_render_frame_host_id);
 
   // Notifies all observers that a worker's final response URL was determined.
   void NotifyWorkerFinalResponseURLDetermined(
-      DedicatedWorkerId dedicated_worker_id,
+      const blink::DedicatedWorkerToken& worker_token,
       const GURL& url);
 
- private:
-  // Generates IDs for new dedicated workers.
-  DedicatedWorkerId::Generator dedicated_worker_id_generator_;
+  // Returns true if a worker with the given token has already been registered
+  // with the service. This allows for malformed messages with duplicated
+  // tokens to be detected, and the offending renderer to be shutdown.
+  bool HasToken(const blink::DedicatedWorkerToken& worker_token) const;
 
+ private:
   base::ObserverList<Observer> observers_;
 
   struct DedicatedWorkerInfo {
+    DedicatedWorkerInfo(int worker_process_id,
+                        GlobalFrameRoutingId ancestor_render_frame_host_id);
+    ~DedicatedWorkerInfo();
+
+    DedicatedWorkerInfo(const DedicatedWorkerInfo& info);
+    DedicatedWorkerInfo& operator=(const DedicatedWorkerInfo& info);
+
     int worker_process_id;
     GlobalFrameRoutingId ancestor_render_frame_host_id;
+    base::Optional<GURL> final_response_url;
   };
-  base::flat_map<DedicatedWorkerId, DedicatedWorkerInfo>
+  base::flat_map<blink::DedicatedWorkerToken, DedicatedWorkerInfo>
       dedicated_worker_infos_;
 };
 

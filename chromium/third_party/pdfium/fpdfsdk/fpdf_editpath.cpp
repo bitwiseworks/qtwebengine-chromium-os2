@@ -4,14 +4,13 @@
 
 #include "public/fpdf_edit.h"
 
+#include <memory>
 #include <utility>
-#include <vector>
 
 #include "core/fpdfapi/page/cpdf_path.h"
 #include "core/fpdfapi/page/cpdf_pathobject.h"
 #include "core/fxcrt/fx_system.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
-#include "third_party/base/ptr_util.h"
 #include "third_party/base/span.h"
 #include "third_party/base/stl_util.h"
 
@@ -49,8 +48,8 @@ CPDF_PathObject* CPDFPathObjectFromFPDFPageObject(FPDF_PAGEOBJECT page_object) {
 
 FPDF_EXPORT FPDF_PAGEOBJECT FPDF_CALLCONV FPDFPageObj_CreateNewPath(float x,
                                                                     float y) {
-  auto pPathObj = pdfium::MakeUnique<CPDF_PathObject>();
-  pPathObj->path().AppendPoint(CFX_PointF(x, y), FXPT_TYPE::MoveTo, false);
+  auto pPathObj = std::make_unique<CPDF_PathObject>();
+  pPathObj->path().AppendPoint(CFX_PointF(x, y), FXPT_TYPE::MoveTo);
   pPathObj->DefaultStates();
 
   // Caller takes ownership.
@@ -61,7 +60,7 @@ FPDF_EXPORT FPDF_PAGEOBJECT FPDF_CALLCONV FPDFPageObj_CreateNewRect(float x,
                                                                     float y,
                                                                     float w,
                                                                     float h) {
-  auto pPathObj = pdfium::MakeUnique<CPDF_PathObject>();
+  auto pPathObj = std::make_unique<CPDF_PathObject>();
   pPathObj->path().AppendRect(x, y, x + w, y + h);
   pPathObj->DefaultStates();
 
@@ -96,7 +95,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFPath_MoveTo(FPDF_PAGEOBJECT path,
   if (!pPathObj)
     return false;
 
-  pPathObj->path().AppendPoint(CFX_PointF(x, y), FXPT_TYPE::MoveTo, false);
+  pPathObj->path().AppendPoint(CFX_PointF(x, y), FXPT_TYPE::MoveTo);
   pPathObj->SetDirty(true);
   return true;
 }
@@ -108,7 +107,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFPath_LineTo(FPDF_PAGEOBJECT path,
   if (!pPathObj)
     return false;
 
-  pPathObj->path().AppendPoint(CFX_PointF(x, y), FXPT_TYPE::LineTo, false);
+  pPathObj->path().AppendPoint(CFX_PointF(x, y), FXPT_TYPE::LineTo);
   pPathObj->SetDirty(true);
   return true;
 }
@@ -125,9 +124,9 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFPath_BezierTo(FPDF_PAGEOBJECT path,
     return false;
 
   CPDF_Path& cpath = pPathObj->path();
-  cpath.AppendPoint(CFX_PointF(x1, y1), FXPT_TYPE::BezierTo, false);
-  cpath.AppendPoint(CFX_PointF(x2, y2), FXPT_TYPE::BezierTo, false);
-  cpath.AppendPoint(CFX_PointF(x3, y3), FXPT_TYPE::BezierTo, false);
+  cpath.AppendPoint(CFX_PointF(x1, y1), FXPT_TYPE::BezierTo);
+  cpath.AppendPoint(CFX_PointF(x2, y2), FXPT_TYPE::BezierTo);
+  cpath.AppendPoint(CFX_PointF(x3, y3), FXPT_TYPE::BezierTo);
   pPathObj->SetDirty(true);
   return true;
 }

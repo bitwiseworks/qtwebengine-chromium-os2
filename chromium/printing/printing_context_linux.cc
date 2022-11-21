@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/logging.h"
-#include "base/memory/ptr_util.h"
+#include "base/check.h"
+#include "base/notreached.h"
 #include "base/values.h"
 #include "printing/metafile.h"
 #include "printing/print_dialog_gtk_interface.h"
@@ -31,7 +31,7 @@ gfx::Size (*get_pdf_paper_size_)(PrintingContextLinux* context) = nullptr;
 
 // static
 std::unique_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
-  return base::WrapUnique(new PrintingContextLinux(delegate));
+  return std::make_unique<PrintingContextLinux>(delegate);
 }
 
 PrintingContextLinux::PrintingContextLinux(Delegate* delegate)

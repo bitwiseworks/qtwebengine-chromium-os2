@@ -20,6 +20,7 @@ namespace media {
 // Amount of time to wait between UpdateCurrentFrame() callbacks before starting
 // background rendering to keep the Render() callbacks moving.
 const int kBackgroundRenderingTimeoutMs = 250;
+const int kForceBeginFramesTimeoutMs = 1000;
 
 // static
 constexpr const char VideoFrameCompositor::kTracingCategory[];
@@ -32,8 +33,13 @@ VideoFrameCompositor::VideoFrameCompositor(
       background_rendering_timer_(
           FROM_HERE,
           base::TimeDelta::FromMilliseconds(kBackgroundRenderingTimeoutMs),
-          base::Bind(&VideoFrameCompositor::BackgroundRender,
-                     base::Unretained(this))),
+          base::BindRepeating(&VideoFrameCompositor::BackgroundRender,
+                              base::Unretained(this))),
+      force_begin_frames_timer_(
+          FROM_HERE,
+          base::TimeDelta::FromMilliseconds(kForceBeginFramesTimeoutMs),
+          base::BindRepeating(&VideoFrameCompositor::StopForceBeginFrames,
+                              base::Unretained(this))),
       submitter_(std::move(submitter)) {
   if (submitter_) {
     task_runner_->PostTask(
@@ -58,7 +64,7 @@ void VideoFrameCompositor::SetIsSurfaceVisible(bool is_visible) {
 
 void VideoFrameCompositor::InitializeSubmitter() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  submitter_->Initialize(this);
+  submitter_->Initialize(this, /* is_media_stream = */ false);
 }
 
 VideoFrameCompositor::~VideoFrameCompositor() {
@@ -71,7 +77,6 @@ VideoFrameCompositor::~VideoFrameCompositor() {
 
 void VideoFrameCompositor::EnableSubmission(
     const viz::SurfaceId& id,
-    base::TimeTicks local_surface_id_allocation_time,
     VideoRotation rotation,
     bool force_submit) {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -82,7 +87,7 @@ void VideoFrameCompositor::EnableSubmission(
 
   submitter_->SetRotation(rotation);
   submitter_->SetForceSubmit(force_submit);
-  submitter_->EnableSubmission(id, local_surface_id_allocation_time);
+  submitter_->EnableSubmission(id);
   client_ = submitter_.get();
   if (rendering_)
     client_->StartRendering();
@@ -232,7 +237,7 @@ void VideoFrameCompositor::PaintSingleFrame(scoped_refptr<VideoFrame> frame,
   }
 }
 
-void VideoFrameCompositor::UpdateCurrentFrameIfStale() {
+void VideoFrameCompositor::UpdateCurrentFrameIfStale(UpdateType type) {
   TRACE_EVENT0("media", "VideoFrameCompositor::UpdateCurrentFrameIfStale");
   DCHECK(task_runner_->BelongsToCurrentThread());
 
@@ -242,8 +247,10 @@ void VideoFrameCompositor::UpdateCurrentFrameIfStale() {
 
   // If we have a client, and it is currently rendering, then it's not stale
   // since the client is driving the frame updates at the proper rate.
-  if (IsClientSinkAvailable() && client_->IsDrivingFrameUpdates())
+  if (type != UpdateType::kBypassClient && IsClientSinkAvailable() &&
+      client_->IsDrivingFrameUpdates()) {
     return;
+  }
 
   // We're rendering, but the client isn't driving the updates.  See if the
   // frame is stale, and update it.
@@ -276,6 +283,24 @@ void VideoFrameCompositor::SetOnFramePresentedCallback(
     OnNewFramePresentedCB present_cb) {
   base::AutoLock lock(current_frame_lock_);
   new_presented_frame_cb_ = std::move(present_cb);
+
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&VideoFrameCompositor::StartForceBeginFrames,
+                                weak_ptr_factory_.GetWeakPtr()));
+}
+
+void VideoFrameCompositor::StartForceBeginFrames() {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  if (!submitter_)
+    return;
+
+  submitter_->SetForceBeginFrames(true);
+  force_begin_frames_timer_.Reset();
+}
+
+void VideoFrameCompositor::StopForceBeginFrames() {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  submitter_->SetForceBeginFrames(false);
 }
 
 std::unique_ptr<blink::WebMediaPlayer::VideoFramePresentationMetadata>

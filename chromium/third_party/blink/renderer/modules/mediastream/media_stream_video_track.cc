@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
 
 #include <string>
 #include <utility>
@@ -16,6 +16,7 @@
 #include "media/capture/video_capture_types.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util_video_device.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
@@ -326,12 +327,8 @@ MediaStreamVideoTrack::FrameDeliverer::GetBlackFrame(
     return nullptr;
 
   wrapped_black_frame->set_timestamp(reference_frame.timestamp());
-  base::TimeTicks reference_time;
-  if (reference_frame.metadata()->GetTimeTicks(
-          media::VideoFrameMetadata::REFERENCE_TIME, &reference_time)) {
-    wrapped_black_frame->metadata()->SetTimeTicks(
-        media::VideoFrameMetadata::REFERENCE_TIME, reference_time);
-  }
+  wrapped_black_frame->metadata()->reference_time =
+      reference_frame.metadata()->reference_time;
 
   return wrapped_black_frame;
 }
@@ -341,24 +338,10 @@ WebMediaStreamTrack MediaStreamVideoTrack::CreateVideoTrack(
     MediaStreamVideoSource* source,
     MediaStreamVideoSource::ConstraintsOnceCallback callback,
     bool enabled) {
-  WebMediaStreamTrack track;
-  track.Initialize(source->Owner());
-  track.SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
+  auto* component = MakeGarbageCollected<MediaStreamComponent>(source->Owner());
+  component->SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
       source, std::move(callback), enabled));
-  return track;
-}
-
-// static
-WebMediaStreamTrack MediaStreamVideoTrack::CreateVideoTrack(
-    const WebString& id,
-    MediaStreamVideoSource* source,
-    MediaStreamVideoSource::ConstraintsOnceCallback callback,
-    bool enabled) {
-  WebMediaStreamTrack track;
-  track.Initialize(id, source->Owner());
-  track.SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
-      source, std::move(callback), enabled));
-  return track;
+  return WebMediaStreamTrack(component);
 }
 
 // static
@@ -368,31 +351,38 @@ WebMediaStreamTrack MediaStreamVideoTrack::CreateVideoTrack(
     const base::Optional<bool>& noise_reduction,
     bool is_screencast,
     const base::Optional<double>& min_frame_rate,
+    const base::Optional<double>& pan,
+    const base::Optional<double>& tilt,
+    const base::Optional<double>& zoom,
+    bool pan_tilt_zoom_allowed,
     MediaStreamVideoSource::ConstraintsOnceCallback callback,
     bool enabled) {
   WebMediaStreamTrack track;
-  track.Initialize(source->Owner());
-  track.SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
+  auto* component = MakeGarbageCollected<MediaStreamComponent>(source->Owner());
+  component->SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
       source, adapter_settings, noise_reduction, is_screencast, min_frame_rate,
-      std::move(callback), enabled));
-  return track;
+      pan, tilt, zoom, pan_tilt_zoom_allowed, std::move(callback), enabled));
+  return WebMediaStreamTrack(component);
 }
 
 // static
 MediaStreamVideoTrack* MediaStreamVideoTrack::GetVideoTrack(
     const WebMediaStreamTrack& track) {
-  if (track.IsNull() ||
-      track.Source().GetType() != WebMediaStreamSource::kTypeVideo) {
+  if (track.IsNull())
     return nullptr;
-  }
-  return static_cast<MediaStreamVideoTrack*>(track.GetPlatformTrack());
+
+  MediaStreamComponent& component = *track;
+  if (component.Source()->GetType() != MediaStreamSource::kTypeVideo)
+    return nullptr;
+
+  return static_cast<MediaStreamVideoTrack*>(component.GetPlatformTrack());
 }
 
 MediaStreamVideoTrack::MediaStreamVideoTrack(
     MediaStreamVideoSource* source,
     MediaStreamVideoSource::ConstraintsOnceCallback callback,
     bool enabled)
-    : WebPlatformMediaStreamTrack(true),
+    : MediaStreamTrackPlatform(true),
       adapter_settings_(std::make_unique<VideoTrackAdapterSettings>(
           VideoTrackAdapterSettings())),
       is_screencast_(false),
@@ -423,14 +413,22 @@ MediaStreamVideoTrack::MediaStreamVideoTrack(
     const base::Optional<bool>& noise_reduction,
     bool is_screen_cast,
     const base::Optional<double>& min_frame_rate,
+    const base::Optional<double>& pan,
+    const base::Optional<double>& tilt,
+    const base::Optional<double>& zoom,
+    bool pan_tilt_zoom_allowed,
     MediaStreamVideoSource::ConstraintsOnceCallback callback,
     bool enabled)
-    : WebPlatformMediaStreamTrack(true),
+    : MediaStreamTrackPlatform(true),
       adapter_settings_(
           std::make_unique<VideoTrackAdapterSettings>(adapter_settings)),
       noise_reduction_(noise_reduction),
       is_screencast_(is_screen_cast),
       min_frame_rate_(min_frame_rate),
+      pan_(pan),
+      tilt_(tilt),
+      zoom_(zoom),
+      pan_tilt_zoom_allowed_(pan_tilt_zoom_allowed),
       source_(source->GetWeakPtr()) {
   frame_deliverer_ =
       base::MakeRefCounted<MediaStreamVideoTrack::FrameDeliverer>(
@@ -454,21 +452,21 @@ MediaStreamVideoTrack::MediaStreamVideoTrack(
 
 MediaStreamVideoTrack::~MediaStreamVideoTrack() {
   DCHECK_CALLED_ON_VALID_THREAD(main_render_thread_checker_);
-  DCHECK(sinks_.empty());
-  DCHECK(encoded_sinks_.empty());
+  DCHECK(sinks_.IsEmpty());
+  DCHECK(encoded_sinks_.IsEmpty());
   Stop();
   DVLOG(3) << "~MediaStreamVideoTrack()";
 }
 
-static void AddSinkInternal(std::vector<WebMediaStreamSink*>* sinks,
+static void AddSinkInternal(Vector<WebMediaStreamSink*>* sinks,
                             WebMediaStreamSink* sink) {
   DCHECK(!base::Contains(*sinks, sink));
   sinks->push_back(sink);
 }
 
-static void RemoveSinkInternal(std::vector<WebMediaStreamSink*>* sinks,
+static void RemoveSinkInternal(Vector<WebMediaStreamSink*>* sinks,
                                WebMediaStreamSink* sink) {
-  auto it = std::find(sinks->begin(), sinks->end(), sink);
+  auto** it = std::find(sinks->begin(), sinks->end(), sink);
   DCHECK(it != sinks->end());
   sinks->erase(it);
 }
@@ -524,7 +522,7 @@ void MediaStreamVideoTrack::UpdateSourceHasConsumers() {
   DCHECK_CALLED_ON_VALID_THREAD(main_render_thread_checker_);
   if (!source_)
     return;
-  bool has_consumers = !sinks_.empty() || !encoded_sinks_.empty();
+  bool has_consumers = !sinks_.IsEmpty() || !encoded_sinks_.IsEmpty();
   source_->UpdateHasConsumers(this, has_consumers);
 }
 
@@ -535,7 +533,7 @@ void MediaStreamVideoTrack::SetEnabled(bool enabled) {
   // stream undecodable.
   bool maybe_await_key_frame = false;
   if (enabled && source_ && source_->SupportsEncodedOutput() &&
-      !encoded_sinks_.empty()) {
+      !encoded_sinks_.IsEmpty()) {
     source_->RequestRefreshFrame();
     maybe_await_key_frame = true;
   }
@@ -572,7 +570,7 @@ void MediaStreamVideoTrack::StopAndNotify(base::OnceClosure callback) {
 }
 
 void MediaStreamVideoTrack::GetSettings(
-    WebMediaStreamTrack::Settings& settings) {
+    MediaStreamTrackPlatform::Settings& settings) {
   DCHECK_CALLED_ON_VALID_THREAD(main_render_thread_checker_);
   if (!source_)
     return;
@@ -601,7 +599,7 @@ void MediaStreamVideoTrack::GetSettings(
       settings.frame_rate = *computed_frame_rate_;
   }
 
-  settings.facing_mode = ToWebFacingMode(source_->device().video_facing);
+  settings.facing_mode = ToPlatformFacingMode(source_->device().video_facing);
   settings.resize_mode = WebString::FromASCII(std::string(
       adapter_settings().target_size() ? WebMediaStreamTrack::kResizeModeRescale
                                        : WebMediaStreamTrack::kResizeModeNone));
@@ -616,9 +614,16 @@ void MediaStreamVideoTrack::GetSettings(
 void MediaStreamVideoTrack::OnReadyStateChanged(
     WebMediaStreamSource::ReadyState state) {
   DCHECK_CALLED_ON_VALID_THREAD(main_render_thread_checker_);
-  for (auto* sink : sinks_)
+
+  // Copy the vectors first, since sinks might DisconnectFromTrack() and
+  // invalidate iterators.
+
+  Vector<WebMediaStreamSink*> sinks_copy(sinks_);
+  for (auto* sink : sinks_copy)
     sink->OnReadyStateChanged(state);
-  for (auto* encoded_sink : encoded_sinks_)
+
+  Vector<WebMediaStreamSink*> encoded_sinks_copy(encoded_sinks_);
+  for (auto* encoded_sink : encoded_sinks_copy)
     encoded_sink->OnReadyStateChanged(state);
 }
 

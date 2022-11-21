@@ -8,8 +8,9 @@
 #include <limits>
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/stl_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/size.h"
@@ -126,6 +127,10 @@ void Clipboard::DispatchPortableRepresentation(PortableFormat format,
       }
       break;
 
+    case PortableFormat::kSvg:
+      WriteSvg(&(params[0].front()), params[0].size());
+      break;
+
     case PortableFormat::kRtf:
       WriteRTF(&(params[0].front()), params[0].size());
       break;
@@ -201,5 +206,11 @@ base::Lock& Clipboard::ClipboardMapLock() {
   static base::NoDestructor<base::Lock> clipboard_map_lock;
   return *clipboard_map_lock;
 }
+
+bool Clipboard::IsMarkedByOriginatorAsConfidential() const {
+  return false;
+}
+
+void Clipboard::MarkAsConfidential() {}
 
 }  // namespace ui

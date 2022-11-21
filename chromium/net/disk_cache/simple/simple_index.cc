@@ -11,8 +11,8 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/check_op.h"
 #include "base/files/file_util.h"
-#include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/strings/string_number_conversions.h"
@@ -417,6 +417,8 @@ void SimpleIndex::StartEvictionIfNeeded() {
       MEMORY_KB, "Eviction.MaxCacheSizeOnStart2", cache_type_,
       static_cast<base::HistogramBase::Sample>(max_size_ / kBytesInKb));
 
+  bool use_size_heuristic = (cache_type_ != net::GENERATED_BYTE_CODE_CACHE);
+
   // Flatten for sorting.
   std::vector<std::pair<uint64_t, const EntrySet::value_type*>> entries;
   entries.reserve(entries_set_.size());
@@ -428,7 +430,8 @@ void SimpleIndex::StartEvictionIfNeeded() {
     //
     // Will not overflow since we're multiplying two 32-bit values and storing
     // them in a 64-bit variable.
-    sort_value *= i->second.GetEntrySize() + kEstimatedEntryOverhead;
+    if (use_size_heuristic)
+      sort_value *= i->second.GetEntrySize() + kEstimatedEntryOverhead;
     // Subtract so we don't need a custom comparator.
     entries.emplace_back(std::numeric_limits<uint64_t>::max() - sort_value,
                          &*i);
@@ -591,9 +594,6 @@ void SimpleIndex::MergeInitializingSet(
   if (load_result->flush_required)
     WriteToDisk(INDEX_WRITE_REASON_STARTUP_MERGE);
 
-  SIMPLE_CACHE_UMA(CUSTOM_COUNTS,
-                   "IndexInitializationWaiters", cache_type_,
-                   to_run_when_initialized_.size(), 0, 100, 20);
   SIMPLE_CACHE_UMA(CUSTOM_COUNTS, "IndexNumEntriesOnInit", cache_type_,
                    entries_set_.size(), 0, 100000, 50);
   SIMPLE_CACHE_UMA(
@@ -644,19 +644,6 @@ void SimpleIndex::WriteToDisk(IndexWriteToDiskReason reason) {
   SIMPLE_CACHE_UMA(CUSTOM_COUNTS,
                    "IndexNumEntriesOnWrite", cache_type_,
                    entries_set_.size(), 0, 100000, 50);
-  const base::TimeTicks start = base::TimeTicks::Now();
-  if (!last_write_to_disk_.is_null()) {
-    if (app_on_background_) {
-      SIMPLE_CACHE_UMA(MEDIUM_TIMES,
-                       "IndexWriteInterval.Background", cache_type_,
-                       start - last_write_to_disk_);
-    } else {
-      SIMPLE_CACHE_UMA(MEDIUM_TIMES,
-                       "IndexWriteInterval.Foreground", cache_type_,
-                       start - last_write_to_disk_);
-    }
-  }
-  last_write_to_disk_ = start;
 
   base::OnceClosure after_write;
   if (cleanup_tracker_) {
@@ -668,7 +655,7 @@ void SimpleIndex::WriteToDisk(IndexWriteToDiskReason reason) {
   }
 
   index_file_->WriteToDisk(cache_type_, reason, entries_set_, cache_size_,
-                           start, app_on_background_, std::move(after_write));
+                           std::move(after_write));
 }
 
 }  // namespace disk_cache

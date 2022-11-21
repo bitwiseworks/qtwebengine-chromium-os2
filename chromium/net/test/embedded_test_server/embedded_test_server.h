@@ -23,6 +23,7 @@
 #include "net/base/address_list.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
+#include "net/cert/ocsp_revocation_status.h"
 #include "net/cert/x509_certificate.h"
 #include "net/socket/ssl_server_socket.h"
 #include "net/socket/stream_socket.h"
@@ -38,10 +39,32 @@ class TCPServerSocket;
 namespace test_server {
 
 class EmbeddedTestServerConnectionListener;
-class EmbeddedTestServerHandle;
 class HttpConnection;
 class HttpResponse;
 struct HttpRequest;
+
+class EmbeddedTestServer;
+
+// Returned by the Start[AcceptingConnections]WithHandle() APIs, to simplify
+// correct shutdown ordering of the EmbeddedTestServer. Shutdown() is invoked
+// on the associated test server when the handle goes out of scope. The handle
+// must therefore be destroyed before the test server.
+class EmbeddedTestServerHandle {
+ public:
+  EmbeddedTestServerHandle() = default;
+  EmbeddedTestServerHandle(EmbeddedTestServerHandle&& other);
+  EmbeddedTestServerHandle& operator=(EmbeddedTestServerHandle&& other);
+  ~EmbeddedTestServerHandle();
+
+  bool is_valid() const { return test_server_; }
+  explicit operator bool() const { return test_server_; }
+
+ private:
+  friend class EmbeddedTestServer;
+
+  explicit EmbeddedTestServerHandle(EmbeddedTestServer* test_server);
+  EmbeddedTestServer* test_server_ = nullptr;
+};
 
 // Class providing an HTTP server for testing purpose. This is a basic server
 // providing only an essential subset of HTTP/1.1 protocol. Especially,
@@ -60,7 +83,7 @@ struct HttpRequest;
 // std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
 //   GURL absolute_url = test_server_->GetURL(request.relative_url);
 //   if (absolute_url.path() != "/test")
-//     return std::unique_ptr<HttpResponse>();
+//     return nullptr;
 //
 //   auto http_response = std::make_unique<BasicHttpResponse>();
 //   http_response->set_code(net::HTTP_OK);
@@ -130,12 +153,149 @@ class EmbeddedTestServer {
     // and rerunning net/data/ssl/scripts/generate-test-certs.sh.
     CERT_TEST_NAMES,
 
-    // TODO(crbug.com/846909): handle CERT_AUTO and CERT_AUTO_WITH_INTERMEDIATE
+    // An RSA certificate with the keyUsage extension specifying that the key
+    // is only for encipherment.
+    CERT_KEY_USAGE_RSA_ENCIPHERMENT,
 
-    // Generate an intermediate cert, and generate a test certificate issued by
-    // that intermediate with an AIA record for retrieving the intermediate.
-    // The intermediate is not included in the TLS handshake.
-    CERT_AUTO_AIA_INTERMEDIATE,
+    // An RSA certificate with the keyUsage extension specifying that the key
+    // is only for digital signatures.
+    CERT_KEY_USAGE_RSA_DIGITAL_SIGNATURE,
+
+    // A certificate will be generated at runtime. A ServerCertificateConfig
+    // passed to SetSSLConfig may be used to configure the details of the
+    // generated certificate.
+    CERT_AUTO,
+  };
+
+  enum class IntermediateType {
+    // Generated cert is issued directly by the CA.
+    kNone,
+    // Generated cert is issued by a generated intermediate cert, which is
+    // included in the TLS handshake.
+    kInHandshake,
+    // Generated cert is issued by a generated intermediate, which is NOT
+    // included in the TLS handshake, but is available through the leaf's
+    // AIA caIssuers URL.
+    kByAIA,
+  };
+
+  struct OCSPConfig {
+    // Enumerates the types of OCSP response that the testserver can produce.
+    enum class ResponseType {
+      // OCSP will not be enabled for the corresponding config.
+      kOff,
+      // These correspond to the OCSPResponseStatus enumeration in RFC
+      // 6960.
+      kSuccessful,
+      kMalformedRequest,
+      kInternalError,
+      kTryLater,
+      kSigRequired,
+      kUnauthorized,
+      // The response will not be valid OCSPResponse DER.
+      kInvalidResponse,
+      // OCSPResponse will be valid DER but the contained ResponseData will not.
+      kInvalidResponseData,
+    };
+
+    // OCSPProduced describes the time of the producedAt field in the
+    // OCSP response relative to the certificate the response is for.
+    enum class Produced {
+      // producedAt is between certificate's notBefore and notAfter dates.
+      kValid,
+      // producedAt is before certificate's notBefore date.
+      kBeforeCert,
+      // producedAt is after certificate's notAfter date.
+      kAfterCert,
+    };
+
+    struct SingleResponse {
+      // Date describes the thisUpdate..nextUpdate ranges for OCSP
+      // singleResponses, relative to the current time.
+      enum class Date {
+        // The singleResponse is valid for 7 days, and includes the current
+        // time.
+        kValid,
+        // The singleResponse is valid for 7 days, but nextUpdate is before the
+        // current time.
+        kOld,
+        // The singleResponse is valid for 7 days, but thisUpdate is after the
+        // current time.
+        kEarly,
+        // The singleResponse is valid for 366 days, and includes the current
+        // time.
+        kLong,
+        // The singleResponse is valid for 368 days, and includes the current
+        // time.
+        kLonger,
+      };
+
+      // Configures whether a generated OCSP singleResponse's serial field
+      // matches the serial number of the target certificate.
+      enum class Serial {
+        kMatch,
+        kMismatch,
+      };
+
+      OCSPRevocationStatus cert_status = OCSPRevocationStatus::GOOD;
+      Date ocsp_date = Date::kValid;
+      Serial serial = Serial::kMatch;
+    };
+
+    OCSPConfig();
+    // Configure OCSP response with |response_type|.
+    explicit OCSPConfig(ResponseType response_type);
+    // Configure a successful OCSP response with |single_responses|. |produced|
+    // specifies the response's producedAt value, relative to the validity
+    // period of the certificate the OCSPConfig is for.
+    explicit OCSPConfig(std::vector<SingleResponse> single_responses,
+                        Produced produced = Produced::kValid);
+    OCSPConfig(const OCSPConfig&);
+    OCSPConfig(OCSPConfig&&);
+    ~OCSPConfig();
+    OCSPConfig& operator=(const OCSPConfig&);
+    OCSPConfig& operator=(OCSPConfig&&);
+
+    ResponseType response_type = ResponseType::kOff;
+    Produced produced = Produced::kValid;
+    std::vector<SingleResponse> single_responses;
+  };
+
+  // Configuration for generated server certificate.
+  struct ServerCertificateConfig {
+    ServerCertificateConfig();
+    ServerCertificateConfig(const ServerCertificateConfig&);
+    ServerCertificateConfig(ServerCertificateConfig&&);
+    ~ServerCertificateConfig();
+    ServerCertificateConfig& operator=(const ServerCertificateConfig&);
+    ServerCertificateConfig& operator=(ServerCertificateConfig&&);
+
+    // Configure whether the generated certificate chain should include an
+    // intermediate, and if so, how it is delivered to the client.
+    IntermediateType intermediate = IntermediateType::kNone;
+
+    // Configure OCSP handling.
+    // Note: In the current implementation the AIA request handler does not
+    // actually parse the OCSP request (a different OCSP URL is used for each
+    // cert). So this is useful for testing the client's handling of the OCSP
+    // response, but not for testing that the client is sending a proper OCSP
+    // request.
+    //
+    // AIA OCSP for the leaf cert. If |kOff|, no AIA OCSP URL will be included
+    // in the leaf cert.
+    OCSPConfig ocsp_config;
+    // Stapled OCSP for the leaf cert. If |kOff|, OCSP Stapling will not be
+    // used.
+    OCSPConfig stapled_ocsp_config;
+    // AIA OCSP for the intermediate cert. If |kOff|, no AIA OCSP URL will be
+    // included in the intermediate cert. It is invalid to supply a
+    // configuration other than |kOff| if |intermediate| is |kNone|.
+    OCSPConfig intermediate_ocsp_config;
+
+    // Certificate policy OIDs, in text notation (e.g. "1.2.3.4"). If
+    // non-empty, the policies will be added to the leaf cert and the
+    // intermediate cert (if an intermediate is configured).
+    std::vector<std::string> policy_oids;
   };
 
   typedef base::RepeatingCallback<std::unique_ptr<HttpResponse>(
@@ -144,7 +304,8 @@ class EmbeddedTestServer {
   typedef base::RepeatingCallback<void(const HttpRequest& request)>
       MonitorRequestCallback;
 
-  // Creates a http test server. Start() must be called to start the server.
+  // Creates a http test server. StartAndReturnHandle() must be called to start
+  // the server.
   // |type| indicates the protocol type of the server (HTTP/HTTPS).
   //
   //  When a TYPE_HTTPS server is created, EmbeddedTestServer will call
@@ -169,13 +330,14 @@ class EmbeddedTestServer {
 
   // Initializes and waits until the server is ready to accept requests.
   // This is the equivalent of calling InitializeAndListen() followed by
-  // StartAcceptingConnections().
+  // StartAcceptingConnectionsAndReturnHandle().
   // Returns a "handle" which will ShutdownAndWaitUntilComplete() when
   // destroyed, or null if the listening socket could not be created.
   EmbeddedTestServerHandle StartAndReturnHandle(int port = 0)
       WARN_UNUSED_RESULT;
 
-  // Deprecated equivalent of StartAndReturnHandle().
+  // Equivalent of StartAndReturnHandle(), but requires manual Shutdown() by
+  // the caller.
   bool Start(int port = 0) WARN_UNUSED_RESULT;
 
   // Starts listening for incoming connections but will not yet accept them.
@@ -183,9 +345,16 @@ class EmbeddedTestServer {
   bool InitializeAndListen(int port = 0) WARN_UNUSED_RESULT;
 
   // Starts the Accept IO Thread and begins accepting connections.
+  EmbeddedTestServerHandle StartAcceptingConnectionsAndReturnHandle()
+      WARN_UNUSED_RESULT;
+
+  // Equivalent of StartAcceptingConnectionsAndReturnHandle(), but requires
+  // manual Shutdown() by the caller.
   void StartAcceptingConnections();
 
   // Shuts down the http server and waits until the shutdown is complete.
+  // Prefer to use the Start*AndReturnHandle() APIs to manage shutdown, if
+  // possible.
   bool ShutdownAndWaitUntilComplete() WARN_UNUSED_RESULT;
 
   // Checks if the server has started listening for incoming connections.
@@ -222,8 +391,14 @@ class EmbeddedTestServer {
   // Returns the port number used by the server.
   uint16_t port() const { return port_; }
 
+  // SetSSLConfig sets the SSL configuration for the server. It is invalid to
+  // call after the server is started. If called multiple times, the last call
+  // will have effect.
   void SetSSLConfig(ServerCertificate cert, const SSLServerConfig& ssl_config);
   void SetSSLConfig(ServerCertificate cert);
+  void SetSSLConfig(const ServerCertificateConfig& cert_config,
+                    const SSLServerConfig& ssl_config);
+  void SetSSLConfig(const ServerCertificateConfig& cert_config);
 
   // TODO(mattm): make this WARN_UNUSED_RESULT
   bool ResetSSLConfig(ServerCertificate cert,
@@ -250,23 +425,26 @@ class EmbeddedTestServer {
   // |directory| directory, relative to DIR_SOURCE_ROOT.
   void AddDefaultHandlers(const base::FilePath& directory);
 
-  // The most general purpose method. Any request processing can be added using
-  // this method. Takes ownership of the object. The |callback| is called
-  // on the server's IO thread so all handlers must be registered before the
-  // server is started.
+  // Adds all default handlers except, without serving additional files from any
+  // directory.
+  void AddDefaultHandlers();
+
+  // Adds a request handler that can perform any general-purpose processing.
+  // |callback| will be invoked on the server's IO thread. Note that:
+  // 1. All handlers must be registered before the server is Start()ed.
+  // 2. The server should be Shutdown() before any variables referred to by
+  //    |callback| (e.g. via base::Unretained(&local)) are deleted. Using the
+  //    Start*WithHandle() API variants is recommended for this reason.
   void RegisterRequestHandler(const HandleRequestCallback& callback);
 
-  // Adds request monitors. The |callback| is called before any handlers are
-  // called, but can not respond it. This is useful to monitor requests that
-  // will be handled by other request handlers. The |callback| is called
-  // on the server's IO thread so all monitors must be registered before the
-  // server is started.
+  // Adds a request monitor that will be called before any handlers. Monitors
+  // can be used to observe requests, but not to respond to them.
+  // See RegisterRequestHandler() for notes on usage.
   void RegisterRequestMonitor(const MonitorRequestCallback& callback);
 
-  // Adds default handlers, including those added by AddDefaultHandlers, to be
-  // tried after all other user-specified handlers have been tried. The
-  // |callback| is called on the server's IO thread so all handlers must be
-  // registered before the server is started.
+  // Adds a default request handler, to be called if no user-specified handler
+  // handles the request.
+  // See RegisterRequestHandler() for notes on usage.
   void RegisterDefaultHandler(const HandleRequestCallback& callback);
 
   bool FlushAllSocketsAndConnectionsOnUIThread();
@@ -279,6 +457,12 @@ class EmbeddedTestServer {
 
   // Shuts down the server.
   void ShutdownOnIOThread();
+
+  // Sets the SSL configuration for the server. It is invalid for |cert_config|
+  // to be non-null if |cert| is not CERT_AUTO.
+  void SetSSLConfigInternal(ServerCertificate cert,
+                            const ServerCertificateConfig* cert_config,
+                            const SSLServerConfig& ssl_config);
 
   // Resets the SSLServerConfig on the IO thread.
   bool ResetSSLConfigOnIOThread(ServerCertificate cert,
@@ -306,6 +490,11 @@ class EmbeddedTestServer {
   // Parses the data read from the |connection| and returns true if the entire
   // request has been received.
   bool HandleReadResult(HttpConnection* connection, int rv);
+
+  // Called when |connection| is finished writing the response and the socket
+  // can be closed, allowing for |connnection_listener_| to take it if the
+  // socket is still open.
+  void OnResponseCompleted(HttpConnection* connection);
 
   // Closes and removes the connection upon error or completion.
   void DidClose(HttpConnection* connection);
@@ -364,6 +553,7 @@ class EmbeddedTestServer {
 
   net::SSLServerConfig ssl_config_;
   ServerCertificate cert_;
+  ServerCertificateConfig cert_config_;
   scoped_refptr<X509Certificate> x509_cert_;
   bssl::UniquePtr<EVP_PKEY> private_key_;
   std::unique_ptr<SSLServerContext> context_;
@@ -375,23 +565,6 @@ class EmbeddedTestServer {
   base::WeakPtrFactory<EmbeddedTestServer> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EmbeddedTestServer);
-};
-
-class EmbeddedTestServerHandle {
- public:
-  EmbeddedTestServerHandle() = default;
-  EmbeddedTestServerHandle(EmbeddedTestServerHandle&& other);
-  EmbeddedTestServerHandle& operator=(EmbeddedTestServerHandle&& other);
-
-  ~EmbeddedTestServerHandle();
-
-  explicit operator bool() const { return test_server_; }
-
- private:
-  friend class EmbeddedTestServer;
-
-  explicit EmbeddedTestServerHandle(EmbeddedTestServer* test_server);
-  EmbeddedTestServer* test_server_ = nullptr;
 };
 
 }  // namespace test_server

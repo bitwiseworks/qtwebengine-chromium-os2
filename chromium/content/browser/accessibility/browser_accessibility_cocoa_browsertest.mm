@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_cocoa.h"
@@ -11,6 +11,7 @@
 #include "content/browser/accessibility/browser_accessibility_manager_mac.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/test/accessibility_notification_waiter.h"
+#include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -60,6 +61,43 @@ class BrowserAccessibilityCocoaBrowserTest : public ContentBrowserTest {
 };
 
 }  // namespace
+
+IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
+                       AXTextMarkerForTextEdit) {
+  EXPECT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
+
+  AccessibilityNotificationWaiter waiter(shell()->web_contents(),
+                                         ui::kAXModeComplete,
+                                         ax::mojom::Event::kLoadComplete);
+  GURL url(R"HTML(data:text/html,
+             <input />)HTML");
+
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+  waiter.WaitForNotification();
+
+  BrowserAccessibility* text_field = FindNode(ax::mojom::Role::kTextField);
+  ASSERT_NE(nullptr, text_field);
+  EXPECT_TRUE(content::ExecuteScript(
+      shell()->web_contents(), "document.querySelector('input').focus()"));
+
+  content::SimulateKeyPress(shell()->web_contents(),
+                            ui::DomKey::FromCharacter('B'), ui::DomCode::US_B,
+                            ui::VKEY_B, false, false, false, false);
+
+  base::scoped_nsobject<BrowserAccessibilityCocoa> cocoa_text_field(
+      [ToBrowserAccessibilityCocoa(text_field) retain]);
+  AccessibilityNotificationWaiter value_waiter(shell()->web_contents(),
+                                               ui::kAXModeComplete,
+                                               ax::mojom::Event::kValueChanged);
+  value_waiter.WaitForNotification();
+  AXTextEdit text_edit = [cocoa_text_field computeTextEdit];
+  EXPECT_NE(text_edit.edit_text_marker, nil);
+
+  EXPECT_EQ(
+      content::AXTextMarkerToPosition(text_edit.edit_text_marker)->ToString(),
+      "TextPosition anchor_id=4 text_offset=1 affinity=downstream "
+      "annotated_text=B<>");
+}
 
 IN_PROC_BROWSER_TEST_F(BrowserAccessibilityCocoaBrowserTest,
                        AXCellForColumnAndRow) {

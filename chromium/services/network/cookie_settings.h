@@ -8,7 +8,7 @@
 #include "base/component_export.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/cookie_settings_base.h"
-#include "services/network/session_cleanup_cookie_store.h"
+#include "services/network/public/cpp/session_cookie_delete_predicate.h"
 
 class GURL;
 
@@ -27,6 +27,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CookieSettings
 
   void set_block_third_party_cookies(bool block_third_party_cookies) {
     block_third_party_cookies_ = block_third_party_cookies;
+  }
+
+  bool are_third_party_cookies_blocked() const {
+    return block_third_party_cookies_;
   }
 
   void set_secure_origin_cookies_allowed_schemes(
@@ -63,8 +67,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CookieSettings
   // Returns a predicate that takes the domain of a cookie and a bool whether
   // the cookie is secure and returns true if the cookie should be deleted on
   // exit.
-  SessionCleanupCookieStore::DeleteCookiePredicate
-  CreateDeleteCookieOnExitPredicate() const;
+  DeleteCookiePredicate CreateDeleteCookieOnExitPredicate() const;
 
   // content_settings::CookieSettingsBase:
   void GetSettingForLegacyCookieAccess(const std::string& cookie_domain,

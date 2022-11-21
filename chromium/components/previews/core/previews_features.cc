@@ -14,12 +14,12 @@ namespace features {
 // are enabled are controlled by other features.
 const base::Feature kPreviews {
   "Previews",
-#if defined(OS_ANDROID) || defined(OS_LINUX)
+#if defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_CHROMEOS)
       // Previews allowed for Android (but also allow on Linux for dev/debug).
       base::FEATURE_ENABLED_BY_DEFAULT
-#else   // !defined(OS_ANDROID) || defined(OS_LINUX)
+#else   // !defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_CHROMEOS)
       base::FEATURE_DISABLED_BY_DEFAULT
-#endif  // defined(OS_ANDROID) || defined(OS_LINUX)
+#endif  // defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_CHROMEOS)
 };
 
 // Enables the Offline previews on android slow connections.
@@ -29,11 +29,7 @@ const base::Feature kOfflinePreviews{"OfflinePreviews",
 // Support for enabling NoScript previews which includes a base feature
 // and a UserConsistent-specific experiment feature.
 const base::FeatureState kNoScriptDefaultFeatureState =
-#if defined(OS_ANDROID)
-    base::FEATURE_ENABLED_BY_DEFAULT;
-#else   // !defined(OS_ANDROID)
     base::FEATURE_DISABLED_BY_DEFAULT;
-#endif  // defined(OS_ANDROID)
 const base::Feature kNoScriptPreviews{"NoScriptPreviews",
                                       kNoScriptDefaultFeatureState};
 const base::Feature kNoScriptPreviewsUserConsistentStudy{
@@ -47,27 +43,12 @@ const base::Feature kStalePreviewsTimestamp{"StalePreviewsTimestamp",
 // loading resources which includes a base feature and a UserConsistent-specific
 // experiment feature.
 const base::FeatureState kResourceLoadingHintsDefaultFeatureState =
-#if defined(OS_ANDROID)
-    base::FEATURE_ENABLED_BY_DEFAULT;
-#else   // !defined(OS_ANDROID)
     base::FEATURE_DISABLED_BY_DEFAULT;
-#endif  // defined(OS_ANDROID)
 const base::Feature kResourceLoadingHints{
     "ResourceLoadingHints", kResourceLoadingHintsDefaultFeatureState};
 const base::Feature kResourceLoadingHintsUserConsistentStudy{
     "ResourceLoadingHintsUserConsistentStudy",
     kResourceLoadingHintsDefaultFeatureState};
-
-// Support for enabling client redirects to a server-rendered lite page preview
-// which includes a base feature and a UserConsistent-specific experiment
-// feature.
-const base::FeatureState kLitePageServerPreviewsDefaultFeatureState =
-    base::FEATURE_DISABLED_BY_DEFAULT;
-const base::Feature kLitePageServerPreviews{
-    "LitePageServerPreviews", kLitePageServerPreviewsDefaultFeatureState};
-const base::Feature kLitePageServerPreviewsUserConsistentStudy{
-    "LitePageServerPreviewsUserConsistentStudy",
-    kLitePageServerPreviewsDefaultFeatureState};
 
 // Provides slow page triggering parameters.
 const base::Feature kSlowPageTriggering{"PreviewsSlowPageTriggering",

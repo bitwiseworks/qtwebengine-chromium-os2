@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/events_base_export.h"
 #include "ui/events/types/event_type.h"
@@ -227,8 +227,7 @@ struct EVENTS_BASE_EXPORT GestureEventDetails {
   bool is_source_touch_event_set_non_blocking_ = false;
 
   // The pointer type for the first touch point in the gesture.
-  EventPointerType primary_pointer_type_ =
-      EventPointerType::POINTER_TYPE_UNKNOWN;
+  EventPointerType primary_pointer_type_ = EventPointerType::kUnknown;
 
   int touch_points_;  // Number of active touch points in the gesture.
 

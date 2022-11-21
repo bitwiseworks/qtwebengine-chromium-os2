@@ -219,7 +219,9 @@ MetricsService::MetricsService(MetricsStateManager* state_manager,
       test_mode_active_(false),
       state_(INITIALIZED),
       idle_since_last_transmission_(false),
-      session_id_(-1) {
+      session_id_(-1),
+      synthetic_trial_registry_(
+          client->IsExternalExperimentAllowlistEnabled()) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(state_manager_);
   DCHECK(client_);
@@ -229,9 +231,6 @@ MetricsService::MetricsService(MetricsStateManager* state_manager,
       std::make_unique<StabilityMetricsProvider>(local_state_));
 
   RegisterMetricsProvider(state_manager_->GetProvider());
-
-  RegisterMetricsProvider(std::make_unique<variations::FieldTrialsProvider>(
-      &synthetic_trial_registry_, base::StringPiece()));
 }
 
 MetricsService::~MetricsService() {
@@ -239,6 +238,12 @@ MetricsService::~MetricsService() {
 }
 
 void MetricsService::InitializeMetricsRecordingState() {
+  // The FieldTrialsProvider should be registered last. This ensures that
+  // studies whose features are checked when providers add their information to
+  // the log appear in the active field trials.
+  RegisterMetricsProvider(std::make_unique<variations::FieldTrialsProvider>(
+      &synthetic_trial_registry_, base::StringPiece()));
+
   reporting_service_.Initialize();
   InitializeMetricsState();
 
@@ -449,10 +454,6 @@ void MetricsService::ClearSavedStabilityMetrics() {
   delegating_provider_.ClearSavedStabilityMetrics();
 }
 
-void MetricsService::PushExternalLog(const std::string& log) {
-  log_store()->StoreLog(log, MetricsLog::ONGOING_LOG);
-}
-
 bool MetricsService::StageCurrentLogForTest() {
   CloseCurrentLog();
 
@@ -539,6 +540,7 @@ void MetricsService::InitializeMetricsState() {
   local_state_->SetInteger(prefs::kMetricsSessionID, session_id_);
 
   // Notify stability metrics providers about the launch.
+  UMA_HISTOGRAM_BOOLEAN("UMA.MetricsService.Initialize", true);
   provider.LogLaunch();
   provider.CheckLastSessionEndCompleted();
 
@@ -662,7 +664,7 @@ void MetricsService::PushPendingLogsToPersistentStorage() {
     return;  // We didn't and still don't have time to get plugin list etc.
 
   CloseCurrentLog();
-  log_store()->PersistUnsentLogs();
+  log_store()->TrimAndPersistUnsentLogs();
 }
 
 //------------------------------------------------------------------------------
@@ -769,7 +771,7 @@ bool MetricsService::PrepareInitialStabilityLog(
 
   // Store unsent logs, including the stability log that was just saved, so
   // that they're not lost in case of a crash before upload time.
-  log_store()->PersistUnsentLogs();
+  log_store()->TrimAndPersistUnsentLogs();
 
   return true;
 }
@@ -799,7 +801,7 @@ void MetricsService::PrepareInitialMetricsLog() {
 
   // Store unsent logs, including the initial log that was just saved, so
   // that they're not lost in case of a crash before upload time.
-  log_store()->PersistUnsentLogs();
+  log_store()->TrimAndPersistUnsentLogs();
 
   state_ = SENDING_LOGS;
 }

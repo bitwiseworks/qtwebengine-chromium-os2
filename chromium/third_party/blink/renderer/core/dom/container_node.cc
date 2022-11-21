@@ -658,7 +658,11 @@ void ContainerNode::WillRemoveChildren() {
       ChildFrameDisconnector::kDescendantsOnly);
 }
 
-void ContainerNode::Trace(Visitor* visitor) {
+LayoutBox* ContainerNode::GetLayoutBoxForScrolling() const {
+  return GetLayoutBox();
+}
+
+void ContainerNode::Trace(Visitor* visitor) const {
   visitor->Trace(first_child_);
   visitor->Trace(last_child_);
   Node::Trace(visitor);
@@ -990,8 +994,7 @@ void ContainerNode::RemovedFrom(ContainerNode& insertion_point) {
 DISABLE_CFI_PERF
 void ContainerNode::AttachLayoutTree(AttachContext& context) {
   auto* element = DynamicTo<Element>(this);
-  if (element && element->StyleRecalcBlockedByDisplayLock(
-                     DisplayLockLifecycleTarget::kChildren)) {
+  if (element && element->ChildStyleRecalcBlockedByDisplayLock()) {
     // Since we block style recalc on descendants of this node due to display
     // locking, none of its descendants should have the NeedsReattachLayoutTree
     // bit set.
@@ -1047,9 +1050,11 @@ bool ContainerNode::ChildrenChangedAllChildrenRemovedNeedsList() const {
   return false;
 }
 
-void ContainerNode::CloneChildNodesFrom(const ContainerNode& node) {
+void ContainerNode::CloneChildNodesFrom(const ContainerNode& node,
+                                        CloneChildrenFlag flag) {
+  DCHECK_NE(flag, CloneChildrenFlag::kSkip);
   for (const Node& child : NodeTraversal::ChildrenOf(node))
-    AppendChild(child.Clone(GetDocument(), CloneChildrenFlag::kClone));
+    AppendChild(child.Clone(GetDocument(), flag));
 }
 
 PhysicalRect ContainerNode::BoundingBox() const {
@@ -1079,7 +1084,7 @@ void ContainerNode::FocusStateChanged() {
   if (this_element && this_element->ChildrenOrSiblingsAffectedByFocus())
     this_element->PseudoStateChanged(CSSSelector::kPseudoFocus);
 
-  GetLayoutObject()->InvalidateIfControlStateChanged(kFocusControlState);
+  InvalidateIfHasEffectiveAppearance();
   FocusVisibleStateChanged();
   FocusWithinStateChanged();
 }
@@ -1551,6 +1556,12 @@ RadioNodeList* ContainerNode::GetRadioNodeList(const AtomicString& name,
 }
 
 Element* ContainerNode::getElementById(const AtomicString& id) const {
+  // According to https://dom.spec.whatwg.org/#concept-id, empty IDs are
+  // treated as equivalent to the lack of an id attribute.
+  if (id.IsEmpty()) {
+    return nullptr;
+  }
+
   if (IsInTreeScope()) {
     // Fast path if we are in a tree scope: call getElementById() on tree scope
     // and check if the matching element is in our subtree.

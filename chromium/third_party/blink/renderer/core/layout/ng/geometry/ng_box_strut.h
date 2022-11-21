@@ -47,6 +47,13 @@ struct CORE_EXPORT NGBoxStrut {
 
   bool IsEmpty() const { return *this == NGBoxStrut(); }
 
+  void ClampNegativeToZero() {
+    inline_start = inline_start.ClampNegativeToZero();
+    inline_end = inline_end.ClampNegativeToZero();
+    block_start = block_start.ClampNegativeToZero();
+    block_end = block_end.ClampNegativeToZero();
+  }
+
   inline NGPhysicalBoxStrut ConvertToPhysical(WritingMode, TextDirection) const;
 
   // The following two operators exist primarily to have an easy way to access
@@ -201,6 +208,20 @@ struct CORE_EXPORT NGPhysicalBoxStrut {
 
   LayoutRectOutsets ToLayoutRectOutsets() const {
     return LayoutRectOutsets(top, right, bottom, left);
+  }
+
+  NGPhysicalBoxStrut& operator+=(const NGPhysicalBoxStrut& other) {
+    top += other.top;
+    right += other.right;
+    bottom += other.bottom;
+    left += other.left;
+    return *this;
+  }
+
+  NGPhysicalBoxStrut operator+(const NGPhysicalBoxStrut& other) const {
+    NGPhysicalBoxStrut result(*this);
+    result += other;
+    return result;
   }
 
   bool operator==(const NGPhysicalBoxStrut& other) const {

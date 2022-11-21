@@ -9,8 +9,8 @@
 
 #include "include/pathops/SkPathOps.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrProxyProvider.h"
+#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/ccpr/GrCCClipProcessor.h"
 #include "src/gpu/ccpr/GrCCDrawPathsOp.h"
 #include "src/gpu/ccpr/GrCCPathCache.h"
@@ -21,8 +21,8 @@ bool GrCoverageCountingPathRenderer::IsSupported(const GrCaps& caps, CoverageTyp
     const GrShaderCaps& shaderCaps = *caps.shaderCaps();
     GrBackendFormat defaultA8Format = caps.getDefaultBackendFormat(GrColorType::kAlpha_8,
                                                                    GrRenderable::kYes);
-    if (caps.driverBlacklistCCPR() || !shaderCaps.integerSupport() ||
-        !caps.instanceAttribSupport() || !shaderCaps.floatIs32Bits() ||
+    if (caps.driverDisableCCPR() || !shaderCaps.integerSupport() ||
+        !caps.drawInstancedSupport() || !shaderCaps.floatIs32Bits() ||
         !defaultA8Format.isValid() || // This checks both texturable and renderable
         !caps.halfFloatVertexAttributeSupport()) {
         return false;
@@ -38,7 +38,7 @@ bool GrCoverageCountingPathRenderer::IsSupported(const GrCaps& caps, CoverageTyp
         return true;
     }
 
-    if (!caps.driverBlacklistMSAACCPR() &&
+    if (!caps.driverDisableMSAACCPR() &&
         caps.internalMultisampleCount(defaultA8Format) > 1 &&
         caps.sampleLocationsSupport() &&
         shaderCaps.sampleMaskSupport()) {
@@ -80,7 +80,7 @@ GrCCPerOpsTaskPaths* GrCoverageCountingPathRenderer::lookupPendingPaths(uint32_t
 
 GrPathRenderer::CanDrawPath GrCoverageCountingPathRenderer::onCanDrawPath(
         const CanDrawPathArgs& args) const {
-    const GrShape& shape = *args.fShape;
+    const GrStyledShape& shape = *args.fShape;
     // We use "kCoverage", or analytic AA, no mater what the coverage type of our atlas: Even if the
     // atlas is multisampled, that resolves into analytic coverage before we draw the path to the
     // main canvas.
@@ -136,7 +136,7 @@ GrPathRenderer::CanDrawPath GrCoverageCountingPathRenderer::onCanDrawPath(
                 // defined relative to device space.
                 return CanDrawPath::kNo;
             }
-            // fallthru
+            [[fallthrough]];
         case SkStrokeRec::kHairline_Style: {
             if (CoverageType::kFP16_CoverageCount != fCoverageType) {
                 // Stroking is not yet supported in MSAA atlas mode.
@@ -167,12 +167,8 @@ GrPathRenderer::CanDrawPath GrCoverageCountingPathRenderer::onCanDrawPath(
 bool GrCoverageCountingPathRenderer::onDrawPath(const DrawPathArgs& args) {
     SkASSERT(!fFlushing);
 
-    SkIRect clipIBounds;
-    GrRenderTargetContext* rtc = args.fRenderTargetContext;
-    args.fClip->getConservativeBounds(rtc->width(), rtc->height(), &clipIBounds, nullptr);
-
-    auto op = GrCCDrawPathsOp::Make(args.fContext, clipIBounds, *args.fViewMatrix, *args.fShape,
-                                    std::move(args.fPaint));
+    auto op = GrCCDrawPathsOp::Make(args.fContext, *args.fClipConservativeBounds, *args.fViewMatrix,
+                                    *args.fShape, std::move(args.fPaint));
     this->recordOp(std::move(op), args);
     return true;
 }
@@ -184,14 +180,14 @@ void GrCoverageCountingPathRenderer::recordOp(std::unique_ptr<GrCCDrawPathsOp> o
             op->cast<GrCCDrawPathsOp>()->addToOwningPerOpsTaskPaths(
                     sk_ref_sp(this->lookupPendingPaths(opsTaskID)));
         };
-        args.fRenderTargetContext->addDrawOp(*args.fClip, std::move(op),
+        args.fRenderTargetContext->addDrawOp(args.fClip, std::move(op),
                                              addToOwningPerOpsTaskPaths);
     }
 }
 
 std::unique_ptr<GrFragmentProcessor> GrCoverageCountingPathRenderer::makeClipProcessor(
-        uint32_t opsTaskID, const SkPath& deviceSpacePath, const SkIRect& accessRect,
-        const GrCaps& caps) {
+        std::unique_ptr<GrFragmentProcessor> inputFP, uint32_t opsTaskID,
+        const SkPath& deviceSpacePath, const SkIRect& accessRect, const GrCaps& caps) {
     SkASSERT(!fFlushing);
 
     uint32_t key = deviceSpacePath.getGenerationID();
@@ -222,7 +218,8 @@ std::unique_ptr<GrFragmentProcessor> GrCoverageCountingPathRenderer::makeClipPro
             CoverageType::kFP16_CoverageCount == fCoverageType);
     auto mustCheckBounds = GrCCClipProcessor::MustCheckBounds(
             !clipPath.pathDevIBounds().contains(accessRect));
-    return std::make_unique<GrCCClipProcessor>(caps, &clipPath, isCoverageCount, mustCheckBounds);
+    return std::make_unique<GrCCClipProcessor>(
+                std::move(inputFP), caps, &clipPath, isCoverageCount, mustCheckBounds);
 }
 
 void GrCoverageCountingPathRenderer::preFlush(

@@ -23,12 +23,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
+import * as Persistence from '../persistence/persistence.js';
 import * as SDK from '../sdk/sdk.js';
 import * as UI from '../ui/ui.js';
 import * as Workspace from '../workspace/workspace.js';
+
+/** @type {!CallStackSidebarPane} */
+let callstackSidebarPaneInstance;
 
 /**
  * @implements {UI.ContextFlavorListener.ContextFlavorListener}
@@ -36,6 +43,9 @@ import * as Workspace from '../workspace/workspace.js';
  * @unrestricted
  */
 export class CallStackSidebarPane extends UI.View.SimpleView {
+  /**
+   * @private
+   */
   constructor() {
     super(Common.UIString.UIString('Call Stack'), true);
     this.registerRequiredCSS('sources/callStackSidebarPane.css');
@@ -77,6 +87,18 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
   }
 
   /**
+   * @param {{forceNew: ?boolean}} opts
+   */
+  static instance(opts = {forceNew: null}) {
+    const {forceNew} = opts;
+    if (!callstackSidebarPaneInstance || forceNew) {
+      callstackSidebarPaneInstance = new CallStackSidebarPane();
+    }
+
+    return callstackSidebarPaneInstance;
+  }
+
+  /**
    * @override
    * @param {?Object} object
    */
@@ -96,14 +118,14 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
   async _doUpdate() {
     this._locationPool.disposeAll();
 
-    const details = self.UI.context.flavor(SDK.DebuggerModel.DebuggerPausedDetails);
+    const details = UI.Context.Context.instance().flavor(SDK.DebuggerModel.DebuggerPausedDetails);
     if (!details) {
       this.setDefaultFocusedElement(this._notPausedMessageElement);
       this._notPausedMessageElement.classList.remove('hidden');
       this._blackboxedMessageElement.classList.add('hidden');
       this._showMoreMessageElement.classList.add('hidden');
       this._items.replaceAll([]);
-      self.UI.context.setFlavor(SDK.DebuggerModel.CallFrame, null);
+      UI.Context.Context.instance().setFlavor(SDK.DebuggerModel.CallFrame, null);
       return;
     }
 
@@ -217,7 +239,8 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
    * @return {!Element}
    */
   createElementForItem(item) {
-    const element = createElementWithClass('div', 'call-frame-item');
+    const element = document.createElement('div');
+    element.classList.add('call-frame-item');
     const title = element.createChild('div', 'call-frame-item-title');
     title.createChild('div', 'call-frame-title-text').textContent = item.title;
     if (item.isAsyncHeader) {
@@ -234,7 +257,8 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
         UI.ARIAUtils.setDisabled(element, true);
       }
     }
-    const isSelected = item[debuggerCallFrameSymbol] === self.UI.context.flavor(SDK.DebuggerModel.CallFrame);
+    const isSelected =
+        item[debuggerCallFrameSymbol] === UI.Context.Context.instance().flavor(SDK.DebuggerModel.CallFrame);
     element.classList.toggle('selected', isSelected);
     UI.ARIAUtils.setSelected(element, isSelected);
     element.classList.toggle('hidden', !this._showBlackboxed && item.isBlackboxed);
@@ -296,7 +320,8 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
    * @return {!Element}
    */
   _createBlackboxedMessageElement() {
-    const element = createElementWithClass('div', 'blackboxed-message');
+    const element = document.createElement('div');
+    element.classList.add('blackboxed-message');
     element.createChild('span');
     const showAllLink = element.createChild('span', 'link');
     showAllLink.textContent = Common.UIString.UIString('Show blackboxed frames');
@@ -318,7 +343,8 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
    * @return {!Element}
    */
   _createShowMoreMessageElement() {
-    const element = createElementWithClass('div', 'show-more-message');
+    const element = document.createElement('div');
+    element.classList.add('show-more-message');
     element.createChild('span');
     const showAllLink = element.createChild('span', 'link');
     showAllLink.textContent = Common.UIString.UIString('Show more');
@@ -374,7 +400,7 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
     const oldItem = this.activeCallFrameItem();
     if (debuggerCallFrame && oldItem !== item) {
       debuggerCallFrame.debuggerModel.setSelectedCallFrame(debuggerCallFrame);
-      self.UI.context.setFlavor(SDK.DebuggerModel.CallFrame, debuggerCallFrame);
+      UI.Context.Context.instance().setFlavor(SDK.DebuggerModel.CallFrame, debuggerCallFrame);
       if (oldItem) {
         this._refreshItem(oldItem);
       }
@@ -388,7 +414,7 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
    * @return {?Item}
    */
   activeCallFrameItem() {
-    const callFrame = self.UI.context.flavor(SDK.DebuggerModel.CallFrame);
+    const callFrame = UI.Context.Context.instance().flavor(SDK.DebuggerModel.CallFrame);
     if (callFrame) {
       return this._items.find(callFrameItem => callFrameItem[debuggerCallFrameSymbol] === callFrame) || null;
     }
@@ -400,7 +426,7 @@ export class CallStackSidebarPane extends UI.View.SimpleView {
    * @param {!Workspace.UISourceCode.UISourceCode} uiSourceCode
    */
   appendBlackboxURLContextMenuItems(contextMenu, uiSourceCode) {
-    const binding = self.Persistence.persistence.binding(uiSourceCode);
+    const binding = Persistence.Persistence.PersistenceImpl.instance().binding(uiSourceCode);
     if (binding) {
       uiSourceCode = binding.network;
     }
@@ -485,13 +511,12 @@ export class ActionDelegate {
    * @return {boolean}
    */
   handleAction(context, actionId) {
-    const callStackSidebarPane = self.runtime.sharedInstance(CallStackSidebarPane);
     switch (actionId) {
       case 'debugger.next-call-frame':
-        callStackSidebarPane._selectNextCallFrameOnStack();
+        CallStackSidebarPane.instance()._selectNextCallFrameOnStack();
         return true;
       case 'debugger.previous-call-frame':
-        callStackSidebarPane._selectPreviousCallFrameOnStack();
+        CallStackSidebarPane.instance()._selectPreviousCallFrameOnStack();
         return true;
     }
     return false;

@@ -36,7 +36,7 @@ import {resolveScopeInObject, resolveThisObject} from './SourceMapNamesResolver.
  * @implements {UI.ContextFlavorListener.ContextFlavorListener}
  * @unrestricted
  */
-export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
+export class ScopeChainSidebarPane extends UI.Widget.VBox {
   constructor() {
     super(true);
     this.registerRequiredCSS('sources/scopeChainSidebarPane.css');
@@ -46,7 +46,7 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
     this._expandController =
         new ObjectUI.ObjectPropertiesSection.ObjectPropertiesSectionsTreeExpandController(this._treeOutline);
     this._linkifier = new Components.Linkifier.Linkifier();
-    this._infoElement = createElement('div');
+    this._infoElement = document.createElement('div');
     this._infoElement.className = 'gray-info-message';
     this._infoElement.textContent = ls`Not paused`;
     this._infoElement.tabIndex = -1;
@@ -69,18 +69,22 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
       return;
     }
 
-    if (self.UI.context.flavor(SDK.DebuggerModel.DebuggerPausedDetails)) {
+    if (UI.Context.Context.instance().flavor(SDK.DebuggerModel.DebuggerPausedDetails)) {
       this._treeOutline.forceSelect();
     }
   }
 
+  /**
+   * @param {!SDK.DebuggerModel.CallFrame} callFrame
+   * @return {!Array<!SDK.DebuggerModel.Scope>}
+   */
   _getScopeChain(callFrame) {
-    return [];
+    return /** @type {?Array<!SDK.DebuggerModel.Scope>} */ (callFrame.sourceScopeChain) || callFrame.scopeChain();
   }
 
   _update() {
-    const callFrame = self.UI.context.flavor(SDK.DebuggerModel.CallFrame);
-    const details = self.UI.context.flavor(SDK.DebuggerModel.DebuggerPausedDetails);
+    const callFrame = UI.Context.Context.instance().flavor(SDK.DebuggerModel.CallFrame);
+    const details = UI.Context.Context.instance().flavor(SDK.DebuggerModel.DebuggerPausedDetails);
     this._linkifier.reset();
     resolveThisObject(callFrame).then(this._innerUpdate.bind(this, details, callFrame));
   }
@@ -102,26 +106,24 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
     this.contentElement.appendChild(this._treeOutline.element);
     let foundLocalScope = false;
     const scopeChain = this._getScopeChain(callFrame);
-    if (scopeChain) {
-      for (let i = 0; i < scopeChain.length; ++i) {
-        const scope = scopeChain[i];
-        const extraProperties = this._extraPropertiesForScope(scope, details, callFrame, thisObject, i === 0);
+    for (let i = 0; i < scopeChain.length; ++i) {
+      const scope = scopeChain[i];
+      const extraProperties = this._extraPropertiesForScope(scope, details, callFrame, thisObject, i === 0);
 
-        if (scope.type() === Protocol.Debugger.ScopeType.Local) {
-          foundLocalScope = true;
-        }
+      if (scope.type() === Protocol.Debugger.ScopeType.Local) {
+        foundLocalScope = true;
+      }
 
-        const section = this._createScopeSectionTreeElement(scope, extraProperties);
-        if (scope.type() === Protocol.Debugger.ScopeType.Global) {
-          section.collapse();
-        } else if (!foundLocalScope || scope.type() === Protocol.Debugger.ScopeType.Local) {
-          section.expand();
-        }
+      const section = this._createScopeSectionTreeElement(scope, extraProperties);
+      if (scope.type() === Protocol.Debugger.ScopeType.Global) {
+        section.collapse();
+      } else if (!foundLocalScope || scope.type() === Protocol.Debugger.ScopeType.Local) {
+        section.expand();
+      }
 
-        this._treeOutline.appendChild(section);
-        if (i === 0) {
-          section.select(/* omitFocus */ true);
-        }
+      this._treeOutline.appendChild(section);
+      if (i === 0) {
+        section.select(/* omitFocus */ true);
       }
     }
     this._sidebarPaneUpdatedForTest();
@@ -147,12 +149,15 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
         title = ls`Closure`;
       }
     }
+    /** @type {?string} */
     let subtitle = scope.description();
     if (!title || title === subtitle) {
-      subtitle = undefined;
+      subtitle = null;
     }
 
-    const titleElement = createElementWithClass('div', 'scope-chain-sidebar-pane-section-header tree-element-title');
+    const titleElement = document.createElement('div');
+    titleElement.classList.add('scope-chain-sidebar-pane-section-header');
+    titleElement.classList.add('tree-element-title');
     titleElement.createChild('div', 'scope-chain-sidebar-pane-section-subtitle').textContent = subtitle;
     titleElement.createChild('div', 'scope-chain-sidebar-pane-section-title').textContent = title;
 
@@ -161,6 +166,7 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
         /* ignoreHasOwnProperty */ true, extraProperties);
     section.title = titleElement;
     section.listItemElement.classList.add('scope-chain-sidebar-pane-section');
+    section.listItemElement.setAttribute('aria-label', title);
     this._expandController.watchSection(title + (subtitle ? ':' + subtitle : ''), section);
 
     return section;
@@ -168,14 +174,14 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
 
   /**
    * @param {!SDK.DebuggerModel.Scope} scope
-   * @param {?SDK.DebuggerModel.DebuggerPausedDetails} details
-   * @param {?SDK.DebuggerModel.CallFrame} callFrame
+   * @param {!SDK.DebuggerModel.DebuggerPausedDetails} details
+   * @param {!SDK.DebuggerModel.CallFrame} callFrame
    * @param {?SDK.RemoteObject.RemoteObject} thisObject
    * @param {boolean} isFirstScope
    * @return {!Array.<!SDK.RemoteObject.RemoteObjectProperty>}
    */
   _extraPropertiesForScope(scope, details, callFrame, thisObject, isFirstScope) {
-    if (scope.type() !== Protocol.Debugger.ScopeType.Local) {
+    if (scope.type() !== Protocol.Debugger.ScopeType.Local || callFrame.script.isWasm()) {
       return [];
     }
 
@@ -205,33 +211,5 @@ export class ScopeChainSidebarPaneBase extends UI.Widget.VBox {
   _sidebarPaneUpdatedForTest() {
   }
 }
-
-/**
- * @unrestricted
- */
-export class SourceScopeChainSidebarPane extends ScopeChainSidebarPaneBase {
-  constructor() {
-    super();
-  }
-  /**
-   * @override
-   */
-  _getScopeChain(callFrame) {
-    return callFrame.sourceScopeChain;
-  }
-}
-
-/**
- * @unrestricted
- */
-export class ScopeChainSidebarPane extends ScopeChainSidebarPaneBase {
-  /**
-   * @override
-   */
-  _getScopeChain(callFrame) {
-    return callFrame.scopeChain();
-  }
-}
-
 
 export const pathSymbol = Symbol('path');

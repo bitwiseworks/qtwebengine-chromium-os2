@@ -7,11 +7,10 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/check_op.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
-#include "base/task/post_task.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/audio_service.h"
@@ -80,8 +79,7 @@ void ForwardingAudioStreamFactory::Core::CreateInputStream(
     const media::AudioParameters& params,
     uint32_t shared_memory_count,
     bool enable_agc,
-    audio::mojom::AudioProcessingConfigPtr processing_config,
-    mojo::PendingRemote<mojom::RendererAudioInputStreamFactoryClient>
+    mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
         renderer_factory_client) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -90,7 +88,6 @@ void ForwardingAudioStreamFactory::Core::CreateInputStream(
       .insert(broker_factory_->CreateAudioInputStreamBroker(
           render_process_id, render_frame_id, device_id, params,
           shared_memory_count, user_input_monitor_, enable_agc,
-          std::move(processing_config),
           base::BindOnce(&ForwardingAudioStreamFactory::Core::RemoveInput,
                          base::Unretained(this)),
           std::move(renderer_factory_client)))
@@ -115,7 +112,6 @@ void ForwardingAudioStreamFactory::Core::CreateOutputStream(
     int render_frame_id,
     const std::string& device_id,
     const media::AudioParameters& params,
-    const base::Optional<base::UnguessableToken>& processing_id,
     mojo::PendingRemote<media::mojom::AudioOutputStreamProviderClient> client) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -123,7 +119,7 @@ void ForwardingAudioStreamFactory::Core::CreateOutputStream(
   outputs_
       .insert(broker_factory_->CreateAudioOutputStreamBroker(
           render_process_id, render_frame_id, ++stream_id_counter_, device_id,
-          params, group_id_, processing_id,
+          params, group_id_,
           base::BindOnce(&ForwardingAudioStreamFactory::Core::RemoveOutput,
                          base::Unretained(this)),
           std::move(client)))
@@ -138,7 +134,7 @@ void ForwardingAudioStreamFactory::Core::CreateLoopbackStream(
     const media::AudioParameters& params,
     uint32_t shared_memory_count,
     bool mute_source,
-    mojo::PendingRemote<mojom::RendererAudioInputStreamFactoryClient>
+    mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
         renderer_factory_client) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(loopback_source);
@@ -180,8 +176,8 @@ void ForwardingAudioStreamFactory::Core::AddLoopbackSink(
     AudioStreamBroker::LoopbackSink* sink) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   loopback_sinks_.insert(sink);
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&ForwardingAudioStreamFactory::LoopbackStreamStarted,
                      owner_));
 }
@@ -190,8 +186,8 @@ void ForwardingAudioStreamFactory::Core::RemoveLoopbackSink(
     AudioStreamBroker::LoopbackSink* sink) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   loopback_sinks_.erase(sink);
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&ForwardingAudioStreamFactory::LoopbackStreamStopped,
                      owner_));
 }
@@ -239,8 +235,8 @@ ForwardingAudioStreamFactory::~ForwardingAudioStreamFactory() {
   // as it doesn't post in case it is already executed on the right thread. That
   // causes issues in unit tests where the UI thread and the IO thread are the
   // same.
-  base::PostTask(
-      FROM_HERE, {BrowserThread::IO},
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce([](std::unique_ptr<Core>) {}, std::move(core_)));
 }
 
@@ -261,8 +257,8 @@ void ForwardingAudioStreamFactory::SetMuted(bool muted) {
 
     // Unretained is safe since the destruction of |core_| will be posted to the
     // IO thread later.
-    base::PostTask(
-        FROM_HERE, {BrowserThread::IO},
+    GetIOThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&Core::SetMuted, base::Unretained(core_.get()), muted));
   }
 }
@@ -279,8 +275,8 @@ void ForwardingAudioStreamFactory::FrameDeleted(
 
   // Unretained is safe since the destruction of |core_| will be posted to the
   // IO thread later.
-  base::PostTask(FROM_HERE, {BrowserThread::IO},
-                 base::BindOnce(&Core::CleanupStreamsBelongingTo,
+  GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&Core::CleanupStreamsBelongingTo,
                                 base::Unretained(core_.get()),
                                 render_frame_host->GetProcess()->GetID(),
                                 render_frame_host->GetRoutingID()));
@@ -340,8 +336,8 @@ audio::mojom::StreamFactory* ForwardingAudioStreamFactory::Core::GetFactory() {
     TRACE_EVENT_INSTANT1(
         "audio", "ForwardingAudioStreamFactory: Binding new factory",
         TRACE_EVENT_SCOPE_THREAD, "group", group_id_.GetLowForSerialization());
-    base::PostTask(
-        FROM_HERE, {BrowserThread::UI},
+    GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
         base::BindOnce(&BindStreamFactoryFromUIThread,
                        remote_factory_.BindNewPipeAndPassReceiver()));
     // Unretained is safe because |this| owns |remote_factory_|.

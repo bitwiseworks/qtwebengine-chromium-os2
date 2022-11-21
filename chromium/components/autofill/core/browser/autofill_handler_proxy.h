@@ -28,8 +28,6 @@ class AutofillHandlerProxy : public AutofillHandler {
   void OnDidPreviewAutofillFormData() override;
   void OnDidEndTextFieldEditing() override;
   void OnHidePopup() override;
-  void OnSetDataList(const std::vector<base::string16>& values,
-                     const std::vector<base::string16>& labels) override;
   void SelectFieldOptionsDidChange(const FormData& form) override;
 
   void Reset() override;
@@ -69,7 +67,7 @@ class AutofillHandlerProxy : public AutofillHandler {
   bool ShouldParseForms(const std::vector<FormData>& forms,
                         const base::TimeTicks timestamp) override;
 
-  void OnFormsParsed(const std::vector<FormStructure*>& form_structures,
+  void OnFormsParsed(const std::vector<const FormData*>& form_structures,
                      const base::TimeTicks timestamp) override;
 
  private:

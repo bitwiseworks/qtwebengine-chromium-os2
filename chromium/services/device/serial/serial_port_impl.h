@@ -39,23 +39,26 @@ class SerialPortImpl : public mojom::SerialPort {
       mojo::PendingRemote<mojom::SerialPortConnectionWatcher> watcher,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
 
+  static void CreateForTesting(
+      scoped_refptr<SerialIoHandler> io_handler,
+      mojo::PendingReceiver<mojom::SerialPort> receiver,
+      mojo::PendingRemote<mojom::SerialPortConnectionWatcher> watcher);
+
  private:
   SerialPortImpl(
-      const base::FilePath& path,
+      scoped_refptr<SerialIoHandler> io_handler,
       mojo::PendingReceiver<mojom::SerialPort> receiver,
-      mojo::PendingRemote<mojom::SerialPortConnectionWatcher> watcher,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
+      mojo::PendingRemote<mojom::SerialPortConnectionWatcher> watcher);
   ~SerialPortImpl() override;
 
   // mojom::SerialPort methods:
   void Open(mojom::SerialConnectionOptionsPtr options,
-            mojo::ScopedDataPipeConsumerHandle in_stream,
-            mojo::ScopedDataPipeProducerHandle out_stream,
             mojo::PendingRemote<mojom::SerialPortClient> client,
             OpenCallback callback) override;
-  void ClearSendError(mojo::ScopedDataPipeConsumerHandle consumer) override;
-  void ClearReadError(mojo::ScopedDataPipeProducerHandle producer) override;
-  void Flush(FlushCallback callback) override;
+  void StartWriting(mojo::ScopedDataPipeConsumerHandle consumer) override;
+  void StartReading(mojo::ScopedDataPipeProducerHandle producer) override;
+  void Flush(mojom::SerialPortFlushMode mode, FlushCallback callback) override;
+  void Drain(DrainCallback callback) override;
   void GetControlSignals(GetControlSignalsCallback callback) override;
   void SetControlSignals(mojom::SerialHostControlSignalsPtr signals,
                          SetControlSignalsCallback callback) override;
@@ -64,7 +67,6 @@ class SerialPortImpl : public mojom::SerialPort {
   void GetPortInfo(GetPortInfoCallback callback) override;
   void Close(CloseCallback callback) override;
 
-  void OnOpenCompleted(OpenCallback callback, bool success);
   void WriteToPort(MojoResult result, const mojo::HandleSignalsState& state);
   void OnWriteToPortCompleted(uint32_t bytes_expected,
                               uint32_t bytes_sent,
@@ -87,6 +89,12 @@ class SerialPortImpl : public mojom::SerialPort {
   mojo::SimpleWatcher in_stream_watcher_;
   mojo::ScopedDataPipeProducerHandle out_stream_;
   mojo::SimpleWatcher out_stream_watcher_;
+
+  // Holds the callback for a flush or drain until pending operations have been
+  // completed.
+  FlushCallback read_flush_callback_;
+  FlushCallback write_flush_callback_;
+  DrainCallback drain_callback_;
 
   base::WeakPtrFactory<SerialPortImpl> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(SerialPortImpl);

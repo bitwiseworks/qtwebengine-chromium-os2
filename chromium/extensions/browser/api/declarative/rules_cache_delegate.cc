@@ -16,7 +16,6 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/info_map.h"
 #include "extensions/browser/state_store.h"
 #include "extensions/common/permissions/permissions_data.h"
 
@@ -199,11 +198,9 @@ void RulesCacheDelegate::ReadFromStorage(const std::string& extension_id) {
     return;
   waiting_for_extensions_.insert(extension_id);
   store->GetExtensionValue(
-      extension_id,
-      storage_key_,
-      base::Bind(&RulesCacheDelegate::ReadFromStorageCallback,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 extension_id));
+      extension_id, storage_key_,
+      base::BindOnce(&RulesCacheDelegate::ReadFromStorageCallback,
+                     weak_ptr_factory_.GetWeakPtr(), extension_id));
 }
 
 void RulesCacheDelegate::ReadFromStorageCallback(

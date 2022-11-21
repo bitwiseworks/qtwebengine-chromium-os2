@@ -42,15 +42,16 @@ void GlslangWrapperVk::ResetGlslangProgramInterfaceInfo(
     GlslangProgramInterfaceInfo *glslangProgramInterfaceInfo)
 {
     glslangProgramInterfaceInfo->uniformsAndXfbDescriptorSetIndex =
-        kUniformsAndXfbDescriptorSetIndex;
+        ToUnderlying(DescriptorSetIndex::UniformsAndXfb);
     glslangProgramInterfaceInfo->currentUniformBindingIndex = 0;
-    glslangProgramInterfaceInfo->textureDescriptorSetIndex  = kTextureDescriptorSetIndex;
+    glslangProgramInterfaceInfo->textureDescriptorSetIndex =
+        ToUnderlying(DescriptorSetIndex::Texture);
     glslangProgramInterfaceInfo->currentTextureBindingIndex = 0;
     glslangProgramInterfaceInfo->shaderResourceDescriptorSetIndex =
-        kShaderResourceDescriptorSetIndex;
+        ToUnderlying(DescriptorSetIndex::ShaderResource);
     glslangProgramInterfaceInfo->currentShaderResourceBindingIndex = 0;
     glslangProgramInterfaceInfo->driverUniformsDescriptorSetIndex =
-        kDriverUniformsDescriptorSetIndex;
+        ToUnderlying(DescriptorSetIndex::DriverUniforms);
 
     glslangProgramInterfaceInfo->locationsUsedForXfbExtension = 0;
 }
@@ -69,28 +70,42 @@ void GlslangWrapperVk::GetShaderSource(const angle::FeaturesVk &features,
 }
 
 // static
-angle::Result GlslangWrapperVk::GetShaderCode(
-    vk::Context *context,
-    const gl::Caps &glCaps,
-    const gl::ShaderMap<std::string> &shaderSources,
-    const ShaderMapInterfaceVariableInfoMap &variableInfoMap,
-    gl::ShaderMap<std::vector<uint32_t>> *shaderCodeOut)
+angle::Result GlslangWrapperVk::GetShaderCode(vk::Context *context,
+                                              const gl::ShaderBitSet &linkedShaderStages,
+                                              const gl::Caps &glCaps,
+                                              const gl::ShaderMap<std::string> &shaderSources,
+                                              gl::ShaderMap<std::vector<uint32_t>> *shaderCodeOut)
 {
     return GlslangGetShaderSpirvCode(
-        [context](GlslangError error) { return ErrorHandler(context, error); }, glCaps,
-        shaderSources, variableInfoMap, shaderCodeOut);
+        [context](GlslangError error) { return ErrorHandler(context, error); }, linkedShaderStages,
+        glCaps, shaderSources, shaderCodeOut);
 }
 
 // static
 angle::Result GlslangWrapperVk::TransformSpirV(
     vk::Context *context,
     const gl::ShaderType shaderType,
+    bool removeEarlyFragmentTestsOptimization,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
-    std::vector<uint32_t> &initialSpirvBlob,
-    std::vector<uint32_t> *shaderCodeOut)
+    const SpirvBlob &initialSpirvBlob,
+    SpirvBlob *shaderCodeOut)
 {
-    return TransformSpirvCode(
+    const bool removeDebugInfo = !context->getRenderer()->getEnableValidationLayers();
+
+    return GlslangTransformSpirvCode(
         [context](GlslangError error) { return ErrorHandler(context, error); }, shaderType,
-        variableInfoMap, initialSpirvBlob, shaderCodeOut);
+        removeEarlyFragmentTestsOptimization, removeDebugInfo, variableInfoMap, initialSpirvBlob,
+        shaderCodeOut);
+}
+
+// static
+angle::Result GlslangWrapperVk::CompileShaderOneOff(vk::Context *context,
+                                                    gl::ShaderType shaderType,
+                                                    const std::string &shaderSource,
+                                                    SpirvBlob *spirvBlobOut)
+{
+    return GlslangCompileShaderOneOff(
+        [context](GlslangError error) { return ErrorHandler(context, error); }, shaderType,
+        shaderSource, spirvBlobOut);
 }
 }  // namespace rx

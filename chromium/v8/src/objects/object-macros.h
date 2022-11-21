@@ -96,6 +96,12 @@
   inline void set_##name(type value, \
                          WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
 
+// TODO(solanes, neis): Unify naming for synchronized accessor uses.
+#define DECL_SYNCHRONIZED_ACCESSORS(name, type) \
+  DECL_GETTER(synchronized_##name, type)        \
+  inline void set_synchronized_##name(          \
+      type value, WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
+
 #define DECL_CAST(Type)                                 \
   V8_INLINE static Type cast(Object object);            \
   V8_INLINE static Type unchecked_cast(Object object) { \
@@ -196,6 +202,27 @@
 #define WEAK_ACCESSORS(holder, name, offset) \
   WEAK_ACCESSORS_CHECKED(holder, name, offset, true)
 
+#define SYNCHRONIZED_WEAK_ACCESSORS_CHECKED2(holder, name, offset,         \
+                                             get_condition, set_condition) \
+  DEF_GETTER(holder, name, MaybeObject) {                                  \
+    MaybeObject value =                                                    \
+        TaggedField<MaybeObject, offset>::Acquire_Load(isolate, *this);    \
+    DCHECK(get_condition);                                                 \
+    return value;                                                          \
+  }                                                                        \
+  void holder::set_##name(MaybeObject value, WriteBarrierMode mode) {      \
+    DCHECK(set_condition);                                                 \
+    TaggedField<MaybeObject, offset>::Release_Store(*this, value);         \
+    CONDITIONAL_WEAK_WRITE_BARRIER(*this, offset, value, mode);            \
+  }
+
+#define SYNCHRONIZED_WEAK_ACCESSORS_CHECKED(holder, name, offset, condition) \
+  SYNCHRONIZED_WEAK_ACCESSORS_CHECKED2(holder, name, offset, condition,      \
+                                       condition)
+
+#define SYNCHRONIZED_WEAK_ACCESSORS(holder, name, offset) \
+  SYNCHRONIZED_WEAK_ACCESSORS_CHECKED(holder, name, offset, true)
+
 // Getter that returns a Smi as an int and writes an int as a Smi.
 #define SMI_ACCESSORS_CHECKED(holder, name, offset, condition)   \
   int holder::name() const {                                     \
@@ -290,55 +317,64 @@
 #ifdef V8_DISABLE_WRITE_BARRIERS
 #define WRITE_BARRIER(object, offset, value)
 #else
-#define WRITE_BARRIER(object, offset, value)                       \
-  do {                                                             \
-    DCHECK_NOT_NULL(GetHeapFromWritableObject(object));            \
-    MarkingBarrier(object, (object).RawField(offset), value);      \
-    GenerationalBarrier(object, (object).RawField(offset), value); \
+#define WRITE_BARRIER(object, offset, value)                         \
+  do {                                                               \
+    DCHECK_NOT_NULL(GetHeapFromWritableObject(object));              \
+    WriteBarrier::Marking(object, (object).RawField(offset), value); \
+    GenerationalBarrier(object, (object).RawField(offset), value);   \
   } while (false)
 #endif
 
 #ifdef V8_DISABLE_WRITE_BARRIERS
 #define WEAK_WRITE_BARRIER(object, offset, value)
 #else
-#define WEAK_WRITE_BARRIER(object, offset, value)                           \
-  do {                                                                      \
-    DCHECK_NOT_NULL(GetHeapFromWritableObject(object));                     \
-    MarkingBarrier(object, (object).RawMaybeWeakField(offset), value);      \
-    GenerationalBarrier(object, (object).RawMaybeWeakField(offset), value); \
+#define WEAK_WRITE_BARRIER(object, offset, value)                             \
+  do {                                                                        \
+    DCHECK_NOT_NULL(GetHeapFromWritableObject(object));                       \
+    WriteBarrier::Marking(object, (object).RawMaybeWeakField(offset), value); \
+    GenerationalBarrier(object, (object).RawMaybeWeakField(offset), value);   \
   } while (false)
 #endif
 
 #ifdef V8_DISABLE_WRITE_BARRIERS
 #define EPHEMERON_KEY_WRITE_BARRIER(object, offset, value)
+#elif V8_ENABLE_UNCONDITIONAL_WRITE_BARRIERS
+#define EPHEMERON_KEY_WRITE_BARRIER(object, offset, value) \
+  WRITE_BARRIER(object, offset, value)
 #else
 #define EPHEMERON_KEY_WRITE_BARRIER(object, offset, value)                    \
   do {                                                                        \
     DCHECK_NOT_NULL(GetHeapFromWritableObject(object));                       \
     EphemeronHashTable table = EphemeronHashTable::cast(object);              \
-    MarkingBarrier(object, (object).RawField(offset), value);                 \
+    WriteBarrier::Marking(object, (object).RawField(offset), value);          \
     GenerationalEphemeronKeyBarrier(table, (object).RawField(offset), value); \
   } while (false)
 #endif
 
 #ifdef V8_DISABLE_WRITE_BARRIERS
 #define CONDITIONAL_WRITE_BARRIER(object, offset, value, mode)
+#elif V8_ENABLE_UNCONDITIONAL_WRITE_BARRIERS
+#define CONDITIONAL_WRITE_BARRIER(object, offset, value, mode) \
+  WRITE_BARRIER(object, offset, value)
 #else
-#define CONDITIONAL_WRITE_BARRIER(object, offset, value, mode)       \
-  do {                                                               \
-    DCHECK_NOT_NULL(GetHeapFromWritableObject(object));              \
-    DCHECK_NE(mode, UPDATE_EPHEMERON_KEY_WRITE_BARRIER);             \
-    if (mode != SKIP_WRITE_BARRIER) {                                \
-      if (mode == UPDATE_WRITE_BARRIER) {                            \
-        MarkingBarrier(object, (object).RawField(offset), value);    \
-      }                                                              \
-      GenerationalBarrier(object, (object).RawField(offset), value); \
-    }                                                                \
+#define CONDITIONAL_WRITE_BARRIER(object, offset, value, mode)           \
+  do {                                                                   \
+    DCHECK_NOT_NULL(GetHeapFromWritableObject(object));                  \
+    DCHECK_NE(mode, UPDATE_EPHEMERON_KEY_WRITE_BARRIER);                 \
+    if (mode != SKIP_WRITE_BARRIER) {                                    \
+      if (mode == UPDATE_WRITE_BARRIER) {                                \
+        WriteBarrier::Marking(object, (object).RawField(offset), value); \
+      }                                                                  \
+      GenerationalBarrier(object, (object).RawField(offset), value);     \
+    }                                                                    \
   } while (false)
 #endif
 
 #ifdef V8_DISABLE_WRITE_BARRIERS
 #define CONDITIONAL_WEAK_WRITE_BARRIER(object, offset, value, mode)
+#elif V8_ENABLE_UNCONDITIONAL_WRITE_BARRIERS
+#define CONDITIONAL_WEAK_WRITE_BARRIER(object, offset, value, mode) \
+  WRITE_BARRIER(object, offset, value)
 #else
 #define CONDITIONAL_WEAK_WRITE_BARRIER(object, offset, value, mode)           \
   do {                                                                        \
@@ -346,7 +382,8 @@
     DCHECK_NE(mode, UPDATE_EPHEMERON_KEY_WRITE_BARRIER);                      \
     if (mode != SKIP_WRITE_BARRIER) {                                         \
       if (mode == UPDATE_WRITE_BARRIER) {                                     \
-        MarkingBarrier(object, (object).RawMaybeWeakField(offset), value);    \
+        WriteBarrier::Marking(object, (object).RawMaybeWeakField(offset),     \
+                              value);                                         \
       }                                                                       \
       GenerationalBarrier(object, (object).RawMaybeWeakField(offset), value); \
     }                                                                         \
@@ -363,7 +400,7 @@
     EphemeronHashTable table = EphemeronHashTable::cast(object);             \
     if (mode != SKIP_WRITE_BARRIER) {                                        \
       if (mode == UPDATE_WRITE_BARRIER) {                                    \
-        MarkingBarrier(object, (object).RawField(offset), value);            \
+        WriteBarrier::Marking(object, (object).RawField(offset), value);     \
       }                                                                      \
       GenerationalEphemeronKeyBarrier(table, (object).RawField(offset),      \
                                       value);                                \

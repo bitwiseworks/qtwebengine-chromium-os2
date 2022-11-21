@@ -26,13 +26,16 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/resource_error.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/mojom/trust_tokens.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/resource_request_blocked_reason.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
+#include "third_party/blink/renderer/platform/loader/fetch/trust_token_params_conversion.h"
 
 namespace blink {
 
@@ -62,6 +65,14 @@ ResourceError ResourceError::CancelledDueToAccessCheckError(
     const String& localized_description) {
   ResourceError error = CancelledDueToAccessCheckError(url, blocked_reason);
   error.localized_description_ = localized_description;
+  return error;
+}
+
+ResourceError ResourceError::BlockedByResponse(
+    const KURL& url,
+    network::mojom::BlockedByResponseReason blocked_by_response_reason) {
+  ResourceError error(net::ERR_BLOCKED_BY_RESPONSE, url, base::nullopt);
+  error.blocked_by_response_reason_ = blocked_by_response_reason;
   return error;
 }
 
@@ -101,20 +112,10 @@ ResourceError::ResourceError(const WebURLError& error)
       is_access_check_(error.is_web_security_violation()),
       has_copy_in_cache_(error.has_copy_in_cache()),
       cors_error_status_(error.cors_error_status()),
-      blocked_by_response_reason_(error.blocked_by_response_reason()) {
+      blocked_by_response_reason_(error.blocked_by_response_reason()),
+      trust_token_operation_error_(error.trust_token_operation_error()) {
   DCHECK_NE(error_code_, 0);
   InitializeDescription();
-}
-
-ResourceError ResourceError::Copy() const {
-  ResourceError error_copy(error_code_, failing_url_.Copy(),
-                           cors_error_status_);
-  error_copy.extended_error_code_ = extended_error_code_;
-  error_copy.resolve_error_info_ = resolve_error_info_;
-  error_copy.has_copy_in_cache_ = has_copy_in_cache_;
-  error_copy.localized_description_ = localized_description_.IsolatedCopy();
-  error_copy.is_access_check_ = is_access_check_;
-  return error_copy;
 }
 
 ResourceError::operator WebURLError() const {
@@ -125,6 +126,11 @@ ResourceError::operator WebURLError() const {
   if (cors_error_status_) {
     DCHECK_EQ(net::ERR_FAILED, error_code_);
     return WebURLError(*cors_error_status_, has_copy_in_cache, failing_url_);
+  }
+
+  if (trust_token_operation_error_ !=
+      network::mojom::blink::TrustTokenOperationStatus::kOk) {
+    return WebURLError(error_code_, trust_token_operation_error_, failing_url_);
   }
 
   return WebURLError(
@@ -159,6 +165,9 @@ bool ResourceError::Compare(const ResourceError& a, const ResourceError& b) {
   if (a.resolve_error_info_ != b.resolve_error_info_)
     return false;
 
+  if (a.trust_token_operation_error_ != b.trust_token_operation_error_)
+    return false;
+
   return true;
 }
 
@@ -168,6 +177,13 @@ bool ResourceError::IsTimeout() const {
 
 bool ResourceError::IsCancellation() const {
   return error_code_ == net::ERR_ABORTED;
+}
+
+bool ResourceError::IsUnactionableTrustTokensStatus() const {
+  return error_code_ == net::ERR_TRUST_TOKEN_OPERATION_CACHE_HIT ||
+         (error_code_ == net::ERR_TRUST_TOKEN_OPERATION_FAILED &&
+          trust_token_operation_error_ ==
+              network::mojom::TrustTokenOperationStatus::kUnavailable);
 }
 
 bool ResourceError::IsCacheMiss() const {
@@ -185,34 +201,32 @@ bool ResourceError::ShouldCollapseInitiator() const {
 }
 
 namespace {
-
 blink::ResourceRequestBlockedReason
 BlockedByResponseReasonToResourceRequestBlockedReason(
-    network::BlockedByResponseReason reason) {
+    network::mojom::BlockedByResponseReason reason) {
   switch (reason) {
-    case network::BlockedByResponseReason::kCoepFrameResourceNeedsCoepHeader:
+    case network::mojom::BlockedByResponseReason::
+        kCoepFrameResourceNeedsCoepHeader:
       return blink::ResourceRequestBlockedReason::
           kCoepFrameResourceNeedsCoepHeader;
-    case network::BlockedByResponseReason::
+    case network::mojom::BlockedByResponseReason::
         kCoopSandboxedIFrameCannotNavigateToCoopPage:
       return blink::ResourceRequestBlockedReason::
           kCoopSandboxedIFrameCannotNavigateToCoopPage;
-    case network::BlockedByResponseReason::kCorpNotSameOrigin:
+    case network::mojom::BlockedByResponseReason::kCorpNotSameOrigin:
       return blink::ResourceRequestBlockedReason::kCorpNotSameOrigin;
-    case network::BlockedByResponseReason::
+    case network::mojom::BlockedByResponseReason::
         kCorpNotSameOriginAfterDefaultedToSameOriginByCoep:
       return blink::ResourceRequestBlockedReason::
           kCorpNotSameOriginAfterDefaultedToSameOriginByCoep;
-      break;
-    case network::BlockedByResponseReason::kCorpNotSameSite:
+    case network::mojom::BlockedByResponseReason::kCorpNotSameSite:
       return blink::ResourceRequestBlockedReason::kCorpNotSameSite;
-      break;
   }
   NOTREACHED();
   return blink::ResourceRequestBlockedReason::kOther;
 }
-
 }  // namespace
+
 base::Optional<ResourceRequestBlockedReason>
 ResourceError::GetResourceRequestBlockedReason() const {
   if (error_code_ != net::ERR_BLOCKED_BY_CLIENT &&
@@ -224,6 +238,15 @@ ResourceError::GetResourceRequestBlockedReason() const {
         *blocked_by_response_reason_);
   }
   return static_cast<ResourceRequestBlockedReason>(extended_error_code_);
+}
+
+base::Optional<network::mojom::BlockedByResponseReason>
+ResourceError::GetBlockedByResponseReason() const {
+  if (error_code_ != net::ERR_BLOCKED_BY_CLIENT &&
+      error_code_ != net::ERR_BLOCKED_BY_RESPONSE) {
+    return base::nullopt;
+  }
+  return blocked_by_response_reason_;
 }
 
 namespace {
@@ -299,7 +322,10 @@ std::ostream& operator<<(std::ostream& os, const ResourceError& error) {
             << ", IsAccessCheck = " << error.IsAccessCheck()
             << ", IsTimeout = " << error.IsTimeout()
             << ", HasCopyInCache = " << error.HasCopyInCache()
-            << ", IsCacheMiss = " << error.IsCacheMiss();
+            << ", IsCacheMiss = " << error.IsCacheMiss()
+            << ", TrustTokenOperationError = "
+            << String::FromUTF8(base::NumberToString(
+                   static_cast<int32_t>(error.TrustTokenOperationError())));
 }
 
 }  // namespace blink

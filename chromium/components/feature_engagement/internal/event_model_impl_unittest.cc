@@ -32,8 +32,8 @@ class TestInMemoryEventStore : public InMemoryEventStore {
         store_operation_count_(0),
         load_should_succeed_(load_should_succeed) {}
 
-  void Load(const OnLoadedCallback& callback) override {
-    HandleLoadResult(callback, load_should_succeed_);
+  void Load(OnLoadedCallback callback) override {
+    HandleLoadResult(std::move(callback), load_should_succeed_);
   }
 
   void WriteEvent(const Event& event) override {
@@ -183,8 +183,8 @@ class LoadFailingEventModelImplTest : public EventModelImplTest {
 
 TEST_F(EventModelImplTest, InitializeShouldBeReadyImmediatelyAfterCallback) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
 
   // Only run pending tasks on the queue.  Do not run any subsequently queued
@@ -197,8 +197,8 @@ TEST_F(EventModelImplTest, InitializeShouldBeReadyImmediatelyAfterCallback) {
 
 TEST_F(EventModelImplTest, InitializeShouldLoadEntries) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -238,8 +238,8 @@ TEST_F(EventModelImplTest, InitializeShouldOnlyLoadEntriesThatShouldBeKept) {
   storage_validator_->SetMaxKeepAge("qux", 10u);
 
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       5u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -274,8 +274,8 @@ TEST_F(EventModelImplTest, InitializeShouldOnlyLoadEntriesThatShouldBeKept) {
 
 TEST_F(EventModelImplTest, RetrievingNewEventsShouldYieldNullptr) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -287,8 +287,8 @@ TEST_F(EventModelImplTest, RetrievingNewEventsShouldYieldNullptr) {
 
 TEST_F(EventModelImplTest, IncrementingNonExistingEvent) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -315,8 +315,8 @@ TEST_F(EventModelImplTest, IncrementingNonExistingEvent) {
 
 TEST_F(EventModelImplTest, IncrementingNonExistingEventMultipleDays) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -336,8 +336,8 @@ TEST_F(EventModelImplTest, IncrementingNonExistingEventMultipleDays) {
 
 TEST_F(EventModelImplTest, IncrementingNonExistingEventWithoutStoring) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -353,8 +353,8 @@ TEST_F(EventModelImplTest, IncrementingNonExistingEventWithoutStoring) {
 
 TEST_F(EventModelImplTest, IncrementingExistingEventWithoutStoring) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -376,8 +376,8 @@ TEST_F(EventModelImplTest, IncrementingExistingEventWithoutStoring) {
 
 TEST_F(EventModelImplTest, IncrementingSingleDayExistingEvent) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -398,8 +398,8 @@ TEST_F(EventModelImplTest, IncrementingSingleDayExistingEvent) {
 
 TEST_F(EventModelImplTest, IncrementingSingleDayExistingEventTwice) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -416,8 +416,8 @@ TEST_F(EventModelImplTest, IncrementingSingleDayExistingEventTwice) {
 
 TEST_F(EventModelImplTest, IncrementingExistingMultiDayEvent) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -434,8 +434,8 @@ TEST_F(EventModelImplTest, IncrementingExistingMultiDayEvent) {
 
 TEST_F(EventModelImplTest, IncrementingExistingMultiDayEventNewDay) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_TRUE(model_->IsReady());
@@ -452,10 +452,42 @@ TEST_F(EventModelImplTest, IncrementingExistingMultiDayEventNewDay) {
   test::VerifyEventsEqual(bar_event2, store_->GetLastWrittenEvent());
 }
 
+TEST_F(EventModelImplTest, GetEventCount) {
+  model_->Initialize(
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
+      1000u);
+  task_runner_->RunUntilIdle();
+  EXPECT_TRUE(model_->IsReady());
+
+  // Verify counts with different window size.
+  uint32_t current_day = 6;
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 0u), 0u);
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 1u), 0u);
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 2u), 5u);
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 3u), 5u);
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 5u), 8u);
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 6u), 11u);
+
+  // Verify window_size > current_day.
+  EXPECT_EQ(model_->GetEventCount("bar", current_day, 100u), 11u);
+
+  // Verify counts with different reference date.
+  uint32_t window_size = 5u;
+  EXPECT_EQ(model_->GetEventCount("bar", 5u, window_size), 11u);
+  EXPECT_EQ(model_->GetEventCount("bar", 6u, window_size), 8u);
+  EXPECT_EQ(model_->GetEventCount("bar", 7u, window_size), 5u);
+  EXPECT_EQ(model_->GetEventCount("bar", 9u, window_size), 5u);
+  EXPECT_EQ(model_->GetEventCount("bar", 10u, window_size), 0u);
+
+  // Verify counts for non existing event is always 0.
+  EXPECT_EQ(model_->GetEventCount("nonexisting", 100u, 100u), 0u);
+}
+
 TEST_F(LoadFailingEventModelImplTest, FailedInitializeInformsCaller) {
   model_->Initialize(
-      base::Bind(&EventModelImplTest::OnModelInitializationFinished,
-                 base::Unretained(this)),
+      base::BindOnce(&EventModelImplTest::OnModelInitializationFinished,
+                     base::Unretained(this)),
       1000u);
   task_runner_->RunUntilIdle();
   EXPECT_FALSE(model_->IsReady());

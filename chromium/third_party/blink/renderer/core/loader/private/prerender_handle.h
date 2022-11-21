@@ -34,36 +34,46 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/util/type_safety/pass_key.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/prerender/prerender.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
 
+class ExecutionContext;
 class Document;
 class PrerenderClient;
 
+// This is the Blink-side liaison of mojom::PrerenderProcessor to request the
+// browser process to start prerendering, and implements
+// mojom::PrerenderProcessorClient to observe events about prerendering. This is
+// instantiated per prerender request, for example, when a new <link
+// rel=prerender> element is added, when the element's href is changed etc.
+//
+// TODO(https://crbug.com/1126305): Rename this to PrerenderProcessorHandle.
 class PrerenderHandle final : public GarbageCollected<PrerenderHandle>,
                               public ExecutionContextLifecycleObserver,
-                              public mojom::blink::PrerenderHandleClient {
-  USING_GARBAGE_COLLECTED_MIXIN(PrerenderHandle);
+                              public mojom::blink::PrerenderProcessorClient {
   USING_PRE_FINALIZER(PrerenderHandle, Dispose);
 
  public:
-  static PrerenderHandle* Create(Document&,
-                                 PrerenderClient*,
-                                 const KURL&,
-                                 unsigned prerender_rel_types);
+  static PrerenderHandle* Create(
+      Document&,
+      PrerenderClient*,
+      const KURL&,
+      mojom::blink::PrerenderRelType prerender_rel_type);
 
   using PassKey = util::PassKey<PrerenderHandle>;
-  PrerenderHandle(PassKey,
-                  Document&,
-                  PrerenderClient*,
-                  const KURL&,
-                  mojo::Remote<mojom::blink::PrerenderHandle>,
-                  mojo::PendingReceiver<mojom::blink::PrerenderHandleClient>);
+  PrerenderHandle(
+      PassKey,
+      ExecutionContext*,
+      PrerenderClient*,
+      const KURL&,
+      HeapMojoRemote<mojom::blink::PrerenderProcessor>,
+      mojo::PendingReceiver<mojom::blink::PrerenderProcessorClient>);
   ~PrerenderHandle() override;
   void Dispose();
 
@@ -73,21 +83,22 @@ class PrerenderHandle final : public GarbageCollected<PrerenderHandle>,
   // ExecutionContextLifecycleObserver:
   void ContextDestroyed() override;
 
-  // mojom::blink::PrerenderHandleClient:
+  // mojom::blink::PrerenderProcessorClient:
   void OnPrerenderStart() override;
   void OnPrerenderStopLoading() override;
   void OnPrerenderDomContentLoaded() override;
   void OnPrerenderStop() override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   void Detach();
 
   KURL url_;
   WeakMember<PrerenderClient> client_;
-  mojo::Remote<mojom::blink::PrerenderHandle> remote_handle_;
-  mojo::Receiver<mojom::blink::PrerenderHandleClient> receiver_;
+  HeapMojoRemote<mojom::blink::PrerenderProcessor> remote_processor_;
+  HeapMojoReceiver<mojom::blink::PrerenderProcessorClient, PrerenderHandle>
+      receiver_;
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderHandle);
 };

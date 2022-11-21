@@ -90,6 +90,14 @@ int AdjustJoint(int outline_width,
   }
 }
 
+void ApplyOutlineOffset(IntRect& rect, int offset) {
+  // A negative outline-offset should not cause the rendered outline shape to
+  // become smaller than twice the computed value of the outline-width, in each
+  // direction separately. See: https://drafts.csswg.org/css-ui/#outline-offset
+  rect.InflateX(std::max(offset, -rect.Width() / 2));
+  rect.InflateY(std::max(offset, -rect.Height() / 2));
+}
+
 void PaintComplexOutline(GraphicsContext& graphics_context,
                          const Vector<IntRect> rects,
                          const ComputedStyle& style,
@@ -98,11 +106,12 @@ void PaintComplexOutline(GraphicsContext& graphics_context,
 
   // Construct a clockwise path along the outer edge of the outline.
   SkRegion region;
-  uint16_t width = style.OutlineWidth();
-  int outset = style.OutlineOffset() + style.OutlineWidth();
+  uint16_t width = style.OutlineWidthInt();
+  int offset = style.OutlineOffsetInt();
   for (auto& r : rects) {
     IntRect rect = r;
-    rect.Inflate(outset);
+    ApplyOutlineOffset(rect, offset);
+    rect.Inflate(width);
     region.op(rect, SkRegion::kUnion_Op);
   }
   SkPath path;
@@ -111,13 +120,26 @@ void PaintComplexOutline(GraphicsContext& graphics_context,
 
   Vector<OutlineEdgeInfo, 4> edges;
 
-  SkPath::Iter iter(path, false);
-  SkPoint points[4];
+  SkPath::RawIter iter(path);
+  SkPoint points[4], first_point, last_point;
   wtf_size_t count = 0;
   for (SkPath::Verb verb = iter.next(points); verb != SkPath::kDone_Verb;
        verb = iter.next(points)) {
+    // Keep track of the first and last point of each contour (started with
+    // kMove_Verb) so we can add the closing-line on kClose_Verb.
+    if (verb == SkPath::kMove_Verb) {
+      first_point = points[0];
+      last_point = first_point;  // this gets reset after each line, but we
+                                 // initialize it here
+    } else if (verb == SkPath::kClose_Verb) {
+      // create an artificial line to close the contour
+      verb = SkPath::kLine_Verb;
+      points[0] = last_point;
+      points[1] = first_point;
+    }
     if (verb != SkPath::kLine_Verb)
       continue;
+    last_point = points[1];
 
     edges.Grow(++count);
     OutlineEdgeInfo& edge = edges.back();
@@ -191,11 +213,13 @@ void PaintSingleRectangleOutline(const PaintInfo& paint_info,
                                  const Color& color) {
   DCHECK(!style.OutlineStyleIsAuto());
 
-  PhysicalRect inner(rect);
-  inner.Inflate(LayoutUnit(style.OutlineOffset()));
+  IntRect offset_rect = rect;
+  ApplyOutlineOffset(offset_rect, style.OutlineOffsetInt());
+
+  PhysicalRect inner(offset_rect);
   PhysicalRect outer(inner);
-  outer.Inflate(LayoutUnit(style.OutlineWidth()));
-  const BorderEdge common_edge_info(style.OutlineWidth(), color,
+  outer.Inflate(LayoutUnit(style.OutlineWidthInt()));
+  const BorderEdge common_edge_info(style.OutlineWidthInt(), color,
                                     style.OutlineStyle());
   BoxBorderPainter(style, outer, inner, common_edge_info)
       .PaintBorder(paint_info, outer);
@@ -205,7 +229,7 @@ void FillQuad(GraphicsContext& context,
               const FloatPoint quad[],
               const Color& color,
               bool antialias) {
-  SkPath path;
+  SkPathBuilder path;
   path.moveTo(FloatPointToSkPoint(quad[0]));
   path.lineTo(FloatPointToSkPoint(quad[1]));
   path.lineTo(FloatPointToSkPoint(quad[2]));
@@ -214,7 +238,7 @@ void FillQuad(GraphicsContext& context,
   flags.setAntiAlias(antialias);
   flags.setColor(color.Rgb());
 
-  context.DrawPath(path, flags);
+  context.DrawPath(path.detach(), flags);
 }
 
 void DrawDashedOrDottedBoxSide(GraphicsContext& graphics_context,
@@ -550,14 +574,12 @@ void ObjectPainterBase::PaintOutlineRects(
     float border_radius = GetFocusRingBorderRadius(style);
     paint_info.context.DrawFocusRing(
         pixel_snapped_outline_rects, style.GetOutlineStrokeWidthForFocusRing(),
-        style.OutlineOffset(), style.GetDefaultOffsetForFocusRing(),
-        border_radius, min_border_width, color,
-        LayoutTheme::GetTheme().IsFocusRingOutset());
+        style.OutlineOffsetInt(), border_radius, min_border_width, color,
+        style.UsedColorScheme());
     return;
   }
 
-  IntRect united_outline_rect =
-      UnionRectEvenIfEmpty(pixel_snapped_outline_rects);
+  IntRect united_outline_rect = UnionRect(pixel_snapped_outline_rects);
   if (united_outline_rect == pixel_snapped_outline_rects[0]) {
     PaintSingleRectangleOutline(paint_info, united_outline_rect, style, color);
     return;

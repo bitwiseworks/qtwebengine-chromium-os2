@@ -9,9 +9,9 @@
 #include "base/no_destructor.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
-#include "components/autofill/content/renderer/form_autofill_util.h"
 #include "components/autofill/content/renderer/html_based_username_detector.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/autofill/core/common/renderer_id.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/url_util.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -50,11 +50,10 @@ base::LazyInstance<re2::RE2, PasswordSiteUrlLazyInstanceTraits>
 // elements of the form, |form_data| should be the already extracted FormData
 // representation of that form. |username_detector_cache| is optional, and can
 // be used to spare recomputation if called multiple times for the same form.
-std::vector<uint32_t> GetUsernamePredictions(
+std::vector<FieldRendererId> GetUsernamePredictions(
     const std::vector<WebFormControlElement>& control_elements,
     const FormData& form_data,
     UsernameDetectorCache* username_detector_cache) {
-  std::vector<uint32_t> username_predictions;
   // Dummy cache stores the predictions in case no real cache was passed to
   // here.
   UsernameDetectorCache dummy_cache;
@@ -91,10 +90,7 @@ bool IsGaiaReauthenticationForm(const blink::WebFormElement& form) {
   bool has_rart_field = false;
   bool has_continue_field = false;
 
-  blink::WebVector<WebFormControlElement> web_control_elements;
-  form.GetFormControlElements(web_control_elements);
-
-  for (const WebFormControlElement& element : web_control_elements) {
+  for (const WebFormControlElement& element : form.GetFormControlElements()) {
     // We're only interested in the presence
     // of <input type="hidden" /> elements.
     static base::NoDestructor<WebString> kHidden("hidden");
@@ -131,19 +127,22 @@ bool IsGaiaWithSkipSavePasswordForm(const blink::WebFormElement& form) {
 std::unique_ptr<FormData> CreateFormDataFromWebForm(
     const WebFormElement& web_form,
     const FieldDataManager* field_data_manager,
-    UsernameDetectorCache* username_detector_cache) {
+    UsernameDetectorCache* username_detector_cache,
+    form_util::ButtonTitlesCache* button_titles_cache) {
   if (web_form.IsNull())
     return nullptr;
 
   auto form_data = std::make_unique<FormData>();
   form_data->url =
       form_util::GetCanonicalOriginForDocument(web_form.GetDocument());
+  form_data->full_url =
+      form_util::GetDocumentUrlWithoutAuth(web_form.GetDocument());
   form_data->is_gaia_with_skip_save_password_form =
       IsGaiaWithSkipSavePasswordForm(web_form) ||
       IsGaiaReauthenticationForm(web_form);
 
-  blink::WebVector<WebFormControlElement> control_elements;
-  web_form.GetFormControlElements(control_elements);
+  blink::WebVector<WebFormControlElement> control_elements =
+      web_form.GetFormControlElements();
   if (control_elements.empty())
     return nullptr;
 
@@ -154,6 +153,8 @@ std::unique_ptr<FormData> CreateFormDataFromWebForm(
   }
   form_data->username_predictions = GetUsernamePredictions(
       control_elements.ReleaseVector(), *form_data, username_detector_cache);
+  form_data->button_titles = form_util::GetButtonTitles(
+      web_form, web_form.GetDocument(), button_titles_cache);
 
   return form_data;
 }
@@ -161,7 +162,8 @@ std::unique_ptr<FormData> CreateFormDataFromWebForm(
 std::unique_ptr<FormData> CreateFormDataFromUnownedInputElements(
     const WebLocalFrame& frame,
     const FieldDataManager* field_data_manager,
-    UsernameDetectorCache* username_detector_cache) {
+    UsernameDetectorCache* username_detector_cache,
+    form_util::ButtonTitlesCache* button_titles_cache) {
   std::vector<WebElement> fieldsets;
   std::vector<WebFormControlElement> control_elements =
       form_util::GetUnownedFormFieldElements(frame.GetDocument().All(),
@@ -179,8 +181,13 @@ std::unique_ptr<FormData> CreateFormDataFromUnownedInputElements(
 
   form_data->url =
       form_util::GetCanonicalOriginForDocument(frame.GetDocument());
+  form_data->full_url =
+      form_util::GetDocumentUrlWithoutAuth(frame.GetDocument());
   form_data->username_predictions = GetUsernamePredictions(
       control_elements, *form_data, username_detector_cache);
+  form_data->button_titles = form_util::GetButtonTitles(
+      WebFormElement(), frame.GetDocument(), button_titles_cache);
+
   return form_data;
 }
 

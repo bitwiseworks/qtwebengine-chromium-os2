@@ -16,6 +16,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
+#include "components/embedder_support/switches.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
@@ -33,7 +34,7 @@
 #include "net/base/url_util.h"
 #include "net/ssl/client_cert_identity.h"
 #include "printing/buildflags/buildflags.h"
-#include "services/service_manager/sandbox/switches.h"
+#include "sandbox/policy/switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/switches.h"
 
@@ -129,10 +130,10 @@ HeadlessContentBrowserClient::CreateBrowserMainParts(
 
 void HeadlessContentBrowserClient::OverrideWebkitPrefs(
     content::RenderViewHost* render_view_host,
-    content::WebPreferences* prefs) {
+    blink::web_pref::WebPreferences* prefs) {
   auto* browser_context = HeadlessBrowserContextImpl::From(
       render_view_host->GetProcess()->GetBrowserContext());
-  base::RepeatingCallback<void(WebPreferences*)> callback =
+  base::RepeatingCallback<void(blink::web_pref::WebPreferences*)> callback =
       browser_context->options()->override_web_preferences_callback();
   if (callback)
     callback.Run(prefs);
@@ -157,7 +158,7 @@ HeadlessContentBrowserClient::GetGeneratedCodeCacheSettings(
   return content::GeneratedCodeCacheSettings(true, 0, context->GetPath());
 }
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
+#if defined(OS_POSIX) && !defined(OS_MAC)
 void HeadlessContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
     const base::CommandLine& command_line,
     int child_process_id,
@@ -165,10 +166,10 @@ void HeadlessContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
 #if defined(HEADLESS_USE_BREAKPAD)
   int crash_signal_fd = GetCrashSignalFD(command_line, *browser_->options());
   if (crash_signal_fd >= 0)
-    mappings->Share(service_manager::kCrashDumpSignal, crash_signal_fd);
+    mappings->Share(kCrashDumpSignal, crash_signal_fd);
 #endif  // defined(HEADLESS_USE_BREAKPAD)
 }
-#endif  // defined(OS_POSIX) && !defined(OS_MACOSX)
+#endif  // defined(OS_POSIX) && !defined(OS_MAC)
 
 void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
     base::CommandLine* command_line,
@@ -213,6 +214,15 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
                                         languages[0].as_string());
       }
     }
+
+    // Please keep this in alphabetical order.
+    static const char* const kSwitchNames[] = {
+        embedder_support::kOriginTrialDisabledFeatures,
+        embedder_support::kOriginTrialDisabledTokens,
+        embedder_support::kOriginTrialPublicKey,
+    };
+    command_line->CopySwitchesFrom(old_command_line, kSwitchNames,
+                                   base::size(kSwitchNames));
   }
 
   if (append_command_line_flags_callback_) {
@@ -231,10 +241,10 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
                                             process_type, child_process_id);
   }
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS)
   // Processes may only query perf_event_open with the BPF sandbox disabled.
   if (old_command_line.HasSwitch(::switches::kEnableThreadInstructionCount) &&
-      old_command_line.HasSwitch(service_manager::switches::kNoSandbox)) {
+      old_command_line.HasSwitch(sandbox::policy::switches::kNoSandbox)) {
     command_line->AppendSwitch(::switches::kEnableThreadInstructionCount);
   }
 #endif
@@ -290,13 +300,16 @@ bool HeadlessContentBrowserClient::ShouldEnableStrictSiteIsolation() {
   return browser_->options()->site_per_process;
 }
 
-mojo::Remote<::network::mojom::NetworkContext>
-HeadlessContentBrowserClient::CreateNetworkContext(
+void HeadlessContentBrowserClient::ConfigureNetworkContextParams(
     content::BrowserContext* context,
     bool in_memory,
-    const base::FilePath& relative_partition_path) {
-  return HeadlessBrowserContextImpl::From(context)->CreateNetworkContext(
-      in_memory, relative_partition_path);
+    const base::FilePath& relative_partition_path,
+    ::network::mojom::NetworkContextParams* network_context_params,
+    ::network::mojom::CertVerifierCreationParams*
+        cert_verifier_creation_params) {
+  HeadlessBrowserContextImpl::From(context)->ConfigureNetworkContextParams(
+      in_memory, relative_partition_path, network_context_params,
+      cert_verifier_creation_params);
 }
 
 std::string HeadlessContentBrowserClient::GetProduct() {

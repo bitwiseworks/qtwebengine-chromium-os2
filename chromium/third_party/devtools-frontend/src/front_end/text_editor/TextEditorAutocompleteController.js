@@ -1,6 +1,8 @@
 // Copyright (c) 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as TextUtils from '../text_utils/text_utils.js';
@@ -40,12 +42,14 @@ export class TextEditorAutocompleteController {
     this._suggestBox = null;
     /** @type {?UI.SuggestBox.Suggestion} */
     this._currentSuggestion = null;
-    this._hintElement = createElementWithClass('span', 'auto-complete-text');
+    this._hintElement = document.createElement('span');
+    this._hintElement.classList.add('auto-complete-text');
 
     this._tooltipGlassPane = new UI.GlassPane.GlassPane();
     this._tooltipGlassPane.setSizeBehavior(UI.GlassPane.SizeBehavior.MeasureContent);
     this._tooltipGlassPane.setOutsideClickCallback(this._tooltipGlassPane.hide.bind(this._tooltipGlassPane));
-    this._tooltipElement = createElementWithClass('div', 'autocomplete-tooltip');
+    this._tooltipElement = document.createElement('div');
+    this._tooltipElement.classList.add('autocomplete-tooltip');
     const shadowRoot = UI.Utils.createShadowRootWithCoreStyles(
         this._tooltipGlassPane.contentElement, 'text_editor/autocompleteTooltip.css');
     shadowRoot.appendChild(this._tooltipElement);

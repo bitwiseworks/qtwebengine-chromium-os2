@@ -14,7 +14,7 @@
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
-#include "ui/platform_window/platform_window_handler/wm_move_resize_handler.h"
+#include "ui/platform_window/wm/wm_move_resize_handler.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_linux.h"
 #include "ui/views/widget/native_widget_aura.h"
@@ -112,6 +112,10 @@ void WindowEventFilterLinux::OnClickedCaption(ui::MouseEvent* event,
       if (!view || !view->context_menu_controller())
         break;
       gfx::Point location(event->location());
+      // Controller requires locations to be in DIP, while |this| receives the
+      // location in px.
+      desktop_window_tree_host_->GetRootTransform().TransformPointReverse(
+          &location);
       views::View::ConvertPointToScreen(view, &location);
       view->ShowContextMenu(location, ui::MENU_SOURCE_MOUSE);
       event->SetHandled();

@@ -70,7 +70,7 @@ void ConstantSourceHandler::Process(uint32_t frames_to_process) {
     return;
   }
 
-  bool is_sample_accurate = offset_->HasSampleAccurateValuesTimeline();
+  bool is_sample_accurate = offset_->HasSampleAccurateValues();
 
   if (is_sample_accurate && offset_->IsAudioRate()) {
     DCHECK_LE(frames_to_process, sample_accurate_values_.size());
@@ -107,6 +107,13 @@ bool ConstantSourceHandler::PropagatesSilence() const {
 
 void ConstantSourceHandler::HandleStoppableSourceNode() {
   double now = Context()->currentTime();
+
+  MutexTryLocker try_locker(process_lock_);
+  if (!try_locker.Locked()) {
+    // Can't get the lock, so just return.  It's ok to handle these at a later
+    // time; this was just a hint anyway so stopping them a bit later is ok.
+    return;
+  }
 
   // If we know the end time, and the source was started and the current time is
   // definitely past the end time, we can stop this node.  (This handles the
@@ -156,7 +163,7 @@ ConstantSourceNode* ConstantSourceNode::Create(
   return node;
 }
 
-void ConstantSourceNode::Trace(Visitor* visitor) {
+void ConstantSourceNode::Trace(Visitor* visitor) const {
   visitor->Trace(offset_);
   AudioScheduledSourceNode::Trace(visitor);
 }

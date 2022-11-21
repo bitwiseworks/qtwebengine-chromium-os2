@@ -26,18 +26,16 @@
 #include "ui/gl/gl_image.h"
 
 namespace media {
-class CdmProxyContext;
+
+constexpr int kRefFrameMaxCount = 16;
+
 class D3D11H264Accelerator;
 class MediaLog;
 
-
 class D3D11H264Accelerator : public H264Decoder::H264Accelerator {
  public:
-  // |cdm_proxy_context| may be null for clear content.
   D3D11H264Accelerator(D3D11VideoDecoderClient* client,
                        MediaLog* media_log,
-                       CdmProxyContext* cdm_proxy_context,
-                       ComD3D11VideoDecoder video_decoder,
                        ComD3D11VideoDevice video_device,
                        std::unique_ptr<VideoContextWrapper> video_context);
   ~D3D11H264Accelerator() override;
@@ -78,8 +76,9 @@ class D3D11H264Accelerator : public H264Decoder::H264Accelerator {
   void PicParamsFromSliceHeader(DXVA_PicParams_H264* pic_param,
                                 const H264SliceHeader* pps);
 
-  void PicParamsFromPic(DXVA_PicParams_H264* pic_param,
-                        scoped_refptr<H264Picture> pic);
+  void PicParamsFromPic(DXVA_PicParams_H264* pic_param, D3D11H264Picture* pic);
+
+  void SetVideoDecoder(ComD3D11VideoDecoder video_decoder);
 
  private:
   bool SubmitSliceData();
@@ -90,7 +89,6 @@ class D3D11H264Accelerator : public H264Decoder::H264Accelerator {
 
   D3D11VideoDecoderClient* client_;
   MediaLog* media_log_ = nullptr;
-  CdmProxyContext* const cdm_proxy_context_;
 
   ComD3D11VideoDecoder video_decoder_;
   ComD3D11VideoDevice video_device_;
@@ -98,10 +96,10 @@ class D3D11H264Accelerator : public H264Decoder::H264Accelerator {
 
   // This information set at the beginning of a frame and saved for processing
   // all the slices.
-  DXVA_PicEntry_H264 ref_frame_list_[16];
+  DXVA_PicEntry_H264 ref_frame_list_[kRefFrameMaxCount];
   H264SPS sps_;
-  INT field_order_cnt_list_[16][2];
-  USHORT frame_num_list_[16];
+  INT field_order_cnt_list_[kRefFrameMaxCount][2];
+  USHORT frame_num_list_[kRefFrameMaxCount];
   UINT used_for_reference_flags_;
   USHORT non_existing_frame_flags_;
 

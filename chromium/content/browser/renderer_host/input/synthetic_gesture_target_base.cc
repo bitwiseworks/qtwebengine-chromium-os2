@@ -5,6 +5,7 @@
 #include "content/browser/renderer_host/input/synthetic_gesture_target_base.h"
 
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/renderer_host/ui_events_helper.h"
 #include "content/common/input_messages.h"
@@ -52,7 +53,7 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
 
     // Check that all touch pointers are within the content bounds.
     for (unsigned i = 0; i < web_touch.touches_length; i++) {
-      if (web_touch.touches[i].state == WebTouchPoint::kStatePressed &&
+      if (web_touch.touches[i].state == WebTouchPoint::State::kStatePressed &&
           !PointIsWithinContents(web_touch.touches[i].PositionInWidget())) {
         LOG(WARNING)
             << "Touch coordinates are not within content bounds on TouchStart.";
@@ -60,7 +61,7 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
       }
     }
     DispatchWebTouchEventToPlatform(web_touch, latency_info);
-  } else if (event.GetType() == WebInputEvent::kMouseWheel) {
+  } else if (event.GetType() == WebInputEvent::Type::kMouseWheel) {
     const WebMouseWheelEvent& web_wheel =
         static_cast<const WebMouseWheelEvent&>(event);
     if (!PointIsWithinContents(web_wheel.PositionInWidget())) {
@@ -78,13 +79,21 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
       // from the ui::MouseWheelEvent. ui::MouseWheelEvent does
       // not have a float value for delta, so that codepath ends up truncating.
       // So instead, dispatch the WebMouseWheelEvent directly through the
-      // RenderWidgetHostImpl.
-      host_->ForwardWheelEventWithLatencyInfo(web_wheel, latency_info);
+      // RenderWidgetHostInputEventRouter attached to the RenderWidgetHostImpl.
+
+      DCHECK(host_->delegate());
+      DCHECK(host_->delegate()->IsWidgetForMainFrame(host_));
+      DCHECK(host_->delegate()->GetInputEventRouter());
+
+      std::unique_ptr<WebInputEvent> wheel_evt_ptr = web_wheel.Clone();
+      host_->delegate()->GetInputEventRouter()->RouteMouseWheelEvent(
+          host_->GetView(),
+          static_cast<WebMouseWheelEvent*>(wheel_evt_ptr.get()), latency_info);
     }
   } else if (WebInputEvent::IsMouseEventType(event.GetType())) {
     const WebMouseEvent& web_mouse =
         static_cast<const WebMouseEvent&>(event);
-    if (event.GetType() == WebInputEvent::kMouseDown &&
+    if (event.GetType() == WebInputEvent::Type::kMouseDown &&
         !PointIsWithinContents(web_mouse.PositionInWidget())) {
       LOG(WARNING)
           << "Mouse pointer is not within content bounds on MouseDown.";
@@ -96,7 +105,7 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
         static_cast<const WebGestureEvent&>(event);
     // Touchscreen pinches should be injected as touch events.
     DCHECK_EQ(blink::WebGestureDevice::kTouchpad, web_pinch.SourceDevice());
-    if (event.GetType() == WebInputEvent::kGesturePinchBegin &&
+    if (event.GetType() == WebInputEvent::Type::kGesturePinchBegin &&
         !PointIsWithinContents(web_pinch.PositionInWidget())) {
       LOG(WARNING)
           << "Pinch coordinates are not within content bounds on PinchBegin.";
@@ -108,7 +117,7 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
         static_cast<const WebGestureEvent&>(event);
     // Touchscreen swipe should be injected as touch events.
     DCHECK_EQ(blink::WebGestureDevice::kTouchpad, web_fling.SourceDevice());
-    if (event.GetType() == WebInputEvent::kGestureFlingStart &&
+    if (event.GetType() == WebInputEvent::Type::kGestureFlingStart &&
         !PointIsWithinContents(web_fling.PositionInWidget())) {
       LOG(WARNING)
           << "Fling coordinates are not within content bounds on FlingStart.";

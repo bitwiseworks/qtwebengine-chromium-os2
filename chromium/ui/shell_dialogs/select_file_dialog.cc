@@ -8,8 +8,8 @@
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/check.h"
 #include "base/location.h"
-#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -26,8 +26,7 @@ ui::SelectFileDialogFactory* dialog_factory_ = NULL;
 
 namespace ui {
 
-SelectFileDialog::FileTypeInfo::FileTypeInfo()
-    : include_all_files(false), allowed_paths(NATIVE_PATH) {}
+SelectFileDialog::FileTypeInfo::FileTypeInfo() = default;
 
 SelectFileDialog::FileTypeInfo::FileTypeInfo(const FileTypeInfo& other) =
     default;

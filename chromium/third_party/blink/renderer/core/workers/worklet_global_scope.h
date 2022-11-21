@@ -7,6 +7,7 @@
 
 #include <memory>
 #include "base/single_thread_task_runner.h"
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -36,7 +37,6 @@ class CORE_EXPORT WorkletGlobalScope
     : public WorkerOrWorkletGlobalScope,
       public ActiveScriptWrappable<WorkletGlobalScope> {
   DEFINE_WRAPPERTYPEINFO();
-  USING_GARBAGE_COLLECTED_MIXIN(WorkletGlobalScope);
 
  public:
   ~WorkletGlobalScope() override;
@@ -59,28 +59,20 @@ class CORE_EXPORT WorkletGlobalScope
   String UserAgent() const final { return user_agent_; }
   bool IsContextThread() const final;
   void AddConsoleMessageImpl(ConsoleMessage*, bool discard_duplicates) final;
+  void AddInspectorIssue(mojom::blink::InspectorIssueInfoPtr) final;
   void ExceptionThrown(ErrorEvent*) final;
   CoreProbeSink* GetProbeSink() final;
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(TaskType) final;
   FrameOrWorkerScheduler* GetScheduler() final;
+  bool CrossOriginIsolatedCapability() const final { return false; }
+  ukm::UkmRecorder* UkmRecorder() final;
 
   // WorkerOrWorkletGlobalScope
   void Dispose() override;
   WorkerThread* GetThread() const final;
+  const base::UnguessableToken& GetDevToolsToken() const override;
 
   virtual LocalFrame* GetFrame() const;
-
-  const base::UnguessableToken& GetAgentClusterID() const final {
-    // Currently, worklet agents have no clearly defined owner. See
-    // https://html.spec.whatwg.org/C/#integration-with-the-javascript-agent-cluster-formalism
-    //
-    // However, it is intended that a SharedArrayBuffer can be shared with a
-    // worklet, e.g. the AudioWorklet. If this WorkletGlobalScope's creation
-    // params included an agent cluster ID, we'll assume that this worklet is
-    // in the same agent cluster. See
-    // https://bugs.chromium.org/p/chromium/issues/detail?id=892067.
-    return agent_cluster_id_;
-  }
 
   // Implementation of the "fetch and invoke a worklet script" algorithm:
   // https://drafts.css-houdini.org/worklets/#fetch-and-invoke-a-worklet-script
@@ -112,16 +104,19 @@ class CORE_EXPORT WorkletGlobalScope
   // document.
   bool DocumentSecureContext() const { return document_secure_context_; }
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   HttpsState GetHttpsState() const override { return https_state_; }
 
   // Constructs an instance as a main thread worklet. Must be called on the main
   // thread.
+  // When |create_microtask_queue| is true, creates a microtask queue separated
+  // from the Isolate's default microtask queue.
   WorkletGlobalScope(std::unique_ptr<GlobalScopeCreationParams>,
                      WorkerReportingProxy&,
                      LocalFrame*,
-                     Agent* = nullptr);
+                     bool create_microtask_queue);
+
   // Constructs an instance as a threaded worklet. Must be called on a worker
   // thread.
   WorkletGlobalScope(std::unique_ptr<GlobalScopeCreationParams>,
@@ -129,6 +124,17 @@ class CORE_EXPORT WorkletGlobalScope
                      WorkerThread*);
 
   BrowserInterfaceBrokerProxy& GetBrowserInterfaceBroker() override;
+
+  // Returns the WorkletToken that uniquely identifies this worklet.
+  virtual WorkletToken GetWorkletToken() const = 0;
+
+  // Returns the ExecutionContextToken that uniquely identifies the parent
+  // context that created this worklet. Note that this will always be a
+  // LocalFrameToken.
+  base::Optional<ExecutionContextToken> GetParentExecutionContextToken()
+      const final {
+    return frame_token_;
+  }
 
  private:
   enum class ThreadType {
@@ -148,7 +154,7 @@ class CORE_EXPORT WorkletGlobalScope
                      ThreadType,
                      LocalFrame*,
                      WorkerThread*,
-                     Agent*);
+                     bool create_microtask_queue);
 
   EventTarget* ErrorEventTarget() final { return nullptr; }
 
@@ -169,13 +175,16 @@ class CORE_EXPORT WorkletGlobalScope
 
   const HttpsState https_state_;
 
-  const base::UnguessableToken agent_cluster_id_;
-
   const ThreadType thread_type_;
   // |frame_| is available only when |thread_type_| is kMainThread.
   Member<LocalFrame> frame_;
   // |worker_thread_| is available only when |thread_type_| is kOffMainThread.
   WorkerThread* worker_thread_;
+
+  // The token identifying the LocalFrame that caused this scope to be created.
+  const LocalFrameToken frame_token_;
+
+  std::unique_ptr<ukm::UkmRecorder> ukm_recorder_;
 };
 
 template <>

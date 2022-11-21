@@ -16,8 +16,10 @@
 #include "base/path_service.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/flags_ui/feature_entry.h"
+#include "components/flags_ui/flags_state.h"
 
 namespace {
 
@@ -104,7 +106,7 @@ bool IsValidLookingOwner(base::StringPiece owner) {
     return owner.find(".", at_pos) != std::string::npos;
   }
 
-  if (owner.starts_with("//")) {
+  if (base::StartsWith(owner, "//")) {
     // Looks like a path to a file. It would be nice to check that the file
     // actually exists here, but that's not possible because when this test
     // runs it runs in an isolated environment. To check for the presence of the
@@ -112,7 +114,7 @@ bool IsValidLookingOwner(base::StringPiece owner) {
     // file. Instead, just assume any file path ending in 'OWNERS' is valid.
     // This doesn't check that the entire filename part of the path is 'OWNERS'
     // because sometimes it is instead 'IPC_OWNERS' or similar.
-    return owner.ends_with("OWNERS");
+    return base::EndsWith(owner, "OWNERS");
   }
 
   // Otherwise, look for something that seems like the username part of an
@@ -164,6 +166,23 @@ std::string NormalizeName(const std::string& name) {
   return normalized_name;
 }
 
+bool IsUnexpireFlagFor(const flags_ui::FeatureEntry& entry, int milestone) {
+  std::string expected_flag =
+      base::StringPrintf("temporary-unexpire-flags-m%d", milestone);
+  if (entry.internal_name != expected_flag)
+    return false;
+  if (!(entry.supported_platforms & flags_ui::kFlagInfrastructure))
+    return false;
+  if (entry.type != flags_ui::FeatureEntry::FEATURE_VALUE)
+    return false;
+  std::string expected_feature =
+      base::StringPrintf("UnexpireFlagsM%d", milestone);
+  const auto* feature = entry.feature.feature;
+  if (!feature || feature->name != expected_feature)
+    return false;
+  return true;
+}
+
 }  // namespace
 
 namespace flags_ui {
@@ -172,12 +191,22 @@ namespace testing {
 
 void EnsureEveryFlagHasMetadata(const flags_ui::FeatureEntry* entries,
                                 size_t count) {
+  EnsureEveryFlagHasMetadata(base::make_span(entries, count));
+}
+
+void EnsureEveryFlagHasMetadata(
+    const base::span<const flags_ui::FeatureEntry>& entries) {
   FlagMetadataMap metadata = LoadFlagMetadata();
   std::vector<std::string> missing_flags;
 
-  for (size_t i = 0; i < count; ++i) {
-    if (metadata.count(entries[i].internal_name) == 0)
-      missing_flags.push_back(entries[i].internal_name);
+  for (const auto& entry : entries) {
+    // Flags that are part of the flags system itself (like unexpiry meta-flags)
+    // don't have metadata, so skip them here.
+    if (entry.supported_platforms & flags_ui::kFlagInfrastructure)
+      continue;
+
+    if (metadata.count(entry.internal_name) == 0)
+      missing_flags.push_back(entry.internal_name);
   }
 
   std::sort(missing_flags.begin(), missing_flags.end());
@@ -260,6 +289,24 @@ void EnsureFlagsAreListedInAlphabeticalOrder() {
 
   EnsureNamesAreAlphabetical(normalized_names, names,
                              FlagFile::kFlagNeverExpire);
+}
+
+// TODO(ellyjones): Does this / should this run on iOS as well?
+void EnsureRecentUnexpireFlagsArePresent(
+    const base::span<const flags_ui::FeatureEntry>& entries,
+    int current_milestone) {
+  auto contains_unexpire_for = [&](int mstone) {
+    for (const auto& entry : entries) {
+      if (IsUnexpireFlagFor(entry, mstone))
+        return true;
+    }
+    return false;
+  };
+
+  EXPECT_FALSE(contains_unexpire_for(current_milestone));
+  EXPECT_TRUE(contains_unexpire_for(current_milestone - 1));
+  EXPECT_TRUE(contains_unexpire_for(current_milestone - 2));
+  EXPECT_FALSE(contains_unexpire_for(current_milestone - 3));
 }
 
 }  // namespace testing

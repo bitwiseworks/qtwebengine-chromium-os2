@@ -12,14 +12,13 @@
 
 #include "core/fxcrt/fx_extension.h"
 #include "fxjs/xfa/cfxjse_engine.h"
+#include "fxjs/xfa/cfxjse_nodehelper.h"
 #include "fxjs/xfa/cfxjse_value.h"
 #include "fxjs/xfa/cjx_object.h"
-#include "third_party/base/ptr_util.h"
 #include "third_party/base/stl_util.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/cxfa_localemgr.h"
 #include "xfa/fxfa/parser/cxfa_node.h"
-#include "xfa/fxfa/parser/cxfa_nodehelper.h"
 #include "xfa/fxfa/parser/cxfa_object.h"
 #include "xfa/fxfa/parser/cxfa_occur.h"
 #include "xfa/fxfa/parser/xfa_resolvenode_rs.h"
@@ -42,8 +41,7 @@ void DoPredicateFilter(WideString wsCondition,
 
   wsExpression = wsCondition.Substr(2, wsCondition.GetLength() - 3);
   for (size_t i = iFoundCount; i > 0; --i) {
-    auto pRetValue =
-        pdfium::MakeUnique<CFXJSE_Value>(pRnd->m_pSC->GetIsolate());
+    auto pRetValue = std::make_unique<CFXJSE_Value>(pRnd->m_pSC->GetIsolate());
     bool bRet =
         pRnd->m_pSC->RunScript(eLangType, wsExpression.AsStringView(),
                                pRetValue.get(), pRnd->m_Objects[i - 1].Get());
@@ -55,7 +53,7 @@ void DoPredicateFilter(WideString wsCondition,
 }  // namespace
 
 CFXJSE_ResolveProcessor::CFXJSE_ResolveProcessor()
-    : m_pNodeHelper(pdfium::MakeUnique<CXFA_NodeHelper>()) {}
+    : m_pNodeHelper(std::make_unique<CFXJSE_NodeHelper>()) {}
 
 CFXJSE_ResolveProcessor::~CFXJSE_ResolveProcessor() = default;
 
@@ -101,7 +99,7 @@ bool CFXJSE_ResolveProcessor::Resolve(CFXJSE_ResolveNodeData& rnd) {
     if (pObjNode) {
       rnd.m_Objects.emplace_back(pObjNode);
     } else if (rnd.m_uHashName == XFA_HASHCODE_Xfa) {
-      rnd.m_Objects.push_back(rnd.m_CurObject);
+      rnd.m_Objects.emplace_back(rnd.m_CurObject.Get());
     } else if ((rnd.m_dwStyles & XFA_RESOLVENODE_Attributes) &&
                ResolveForAttributeRs(rnd.m_CurObject.Get(), rnd,
                                      rnd.m_wsName.AsStringView())) {
@@ -155,7 +153,7 @@ bool CFXJSE_ResolveProcessor::ResolveDollar(CFXJSE_ResolveNodeData& rnd) {
   WideString wsCondition = rnd.m_wsCondition;
   int32_t iNameLen = wsName.GetLength();
   if (iNameLen == 1) {
-    rnd.m_Objects.push_back(rnd.m_CurObject);
+    rnd.m_Objects.emplace_back(rnd.m_CurObject.Get());
     return true;
   }
   if (rnd.m_nLevel > 0)
@@ -220,8 +218,7 @@ bool CFXJSE_ResolveProcessor::ResolveNumberSign(CFXJSE_ResolveNodeData& rnd) {
   if (rndFind.m_Objects.empty())
     return false;
 
-  if (wsCondition.IsEmpty() &&
-      pdfium::ContainsValue(rndFind.m_Objects, curNode)) {
+  if (wsCondition.IsEmpty() && pdfium::Contains(rndFind.m_Objects, curNode)) {
     rnd.m_Objects.emplace_back(curNode);
   } else {
     rnd.m_Objects.insert(rnd.m_Objects.end(), rndFind.m_Objects.begin(),
@@ -240,7 +237,7 @@ bool CFXJSE_ResolveProcessor::ResolveForAttributeRs(CXFA_Object* curNode,
 
   rnd.m_ScriptAttribute = info.value();
   rnd.m_Objects.emplace_back(curNode);
-  rnd.m_dwFlag = XFA_ResolveNode_RSType_Attribute;
+  rnd.m_dwFlag = XFA_ResolveNodeRS::Type::kAttribute;
   return true;
 }
 
@@ -652,7 +649,7 @@ void CFXJSE_ResolveProcessor::ConditionArray(size_t iCurIndex,
 void CFXJSE_ResolveProcessor::FilterCondition(WideString wsCondition,
                                               CFXJSE_ResolveNodeData* pRnd) {
   size_t iCurIndex = 0;
-  const std::vector<CXFA_Node*>* pArray = pRnd->m_pSC->GetUpObjectArray();
+  const auto* pArray = pRnd->m_pSC->GetUpObjectArray();
   if (!pArray->empty()) {
     CXFA_Node* pNode = pArray->back();
     bool bIsProperty = pNode->IsProperty();

@@ -14,7 +14,12 @@
 
 import("../build/crashpad_buildconfig.gni")
 
-static_library("client") {
+if (crashpad_is_in_chromium) {
+  # Prevent Chromium source assignment filters from being inherited.
+  set_sources_assignment_filter([])
+}
+
+crashpad_static_library("client") {
   sources = [
     "annotation.cc",
     "annotation.h",
@@ -44,11 +49,13 @@ static_library("client") {
   }
 
   if (crashpad_is_ios) {
-    sources += [ "crashpad_client_ios.cc" ]
+    sources += [
+      "crash_report_database_mac.mm",
+      "crashpad_client_ios.cc",
+    ]
   }
 
   if (crashpad_is_linux || crashpad_is_android) {
-    set_sources_assignment_filter([])
     sources += [
       "crashpad_client_linux.cc",
       "simulate_crash_linux.h",
@@ -95,7 +102,10 @@ static_library("client") {
 
   # TODO(justincohen): Temporary dependency to bring up the iOS client.
   if (crashpad_is_ios) {
-    deps += [ "../snapshot" ]
+    deps += [
+      "../minidump",
+      "../snapshot",
+    ]
   }
 
   if (crashpad_is_linux || crashpad_is_android) {
@@ -105,7 +115,7 @@ static_library("client") {
   if (crashpad_is_fuchsia) {
     deps += [ "../third_party/fuchsia" ]
     if (crashpad_is_in_fuchsia) {
-      deps += [ "//zircon/public/lib/fdio" ]
+      deps += [ "//sdk/lib/fdio" ]
     }
   }
 }
@@ -132,7 +142,7 @@ source_set("client_test") {
   }
 
   if (crashpad_is_ios) {
-    sources += [ "crashpad_client_ios_test.cc" ]
+    sources += [ "crashpad_client_ios_test.mm" ]
     sources -= [
       "annotation_list_test.cc",
       "annotation_test.cc",
@@ -151,17 +161,25 @@ source_set("client_test") {
     "../compat",
     "../snapshot",
     "../test",
-    "../third_party/gtest:gmock",
-    "../third_party/gtest:gtest",
+    "../third_party/googletest:googlemock",
+    "../third_party/googletest:googletest",
     "../third_party/mini_chromium:base",
     "../util",
   ]
 
-  if (!crashpad_is_ios) {
+  if (!crashpad_is_ios && !crashpad_is_fuchsia) {
     data_deps = [ "../handler:crashpad_handler" ]
   }
 
   if (crashpad_is_win) {
     data_deps += [ "../handler:crashpad_handler_console" ]
+  }
+}
+
+if (crashpad_is_linux || crashpad_is_android) {
+  source_set("pthread_create") {
+    sources = [ "pthread_create_linux.cc" ]
+
+    deps = [ ":client" ]
   }
 }

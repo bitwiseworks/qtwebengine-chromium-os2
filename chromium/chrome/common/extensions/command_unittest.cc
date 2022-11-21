@@ -9,7 +9,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/optional.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -28,7 +27,6 @@ struct ConstCommandsTestData {
   const char* command_name;
   const char* key;
   const char* description;
-  base::Optional<Command::Type> type;
 };
 
 // Checks the |suggested_key| value parses into a command when specified as a
@@ -91,8 +89,6 @@ void CheckParse(const ConstCommandsTestData& data,
                    base::UTF16ToASCII(command.description()).c_str());
       EXPECT_STREQ(data.command_name, command.command_name().c_str());
       EXPECT_EQ(data.accelerator, command.accelerator());
-      ASSERT_TRUE(data.type) << "Parsed commands must specify an expected type";
-      EXPECT_EQ(*data.type, command.type());
     }
   }
 }
@@ -101,7 +97,7 @@ TEST(CommandTest, ExtensionCommandParsing) {
   const ui::Accelerator none = ui::Accelerator();
   const ui::Accelerator shift_f = ui::Accelerator(ui::VKEY_F,
                                                   ui::EF_SHIFT_DOWN);
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
   int ctrl = ui::EF_COMMAND_DOWN;
 #else
   int ctrl = ui::EF_CONTROL_DOWN;
@@ -153,67 +149,43 @@ TEST(CommandTest, ExtensionCommandParsing) {
       {false, shift_f, "command", "Shift+F", "description"},
       {false, shift_f, "command", "F+Shift", "description"},
       // Basic tests.
-      {true, none, "command", "", "description", Command::Type::kNamed},
-      {true, ctrl_f, "command", "Ctrl+F", "description", Command::Type::kNamed},
-      {true, alt_f, "command", "Alt+F", "description", Command::Type::kNamed},
-      {true, ctrl_shift_f, "command", "Ctrl+Shift+F", "description",
-       Command::Type::kNamed},
-      {true, alt_shift_f, "command", "Alt+Shift+F", "description",
-       Command::Type::kNamed},
-      {true, ctrl_1, "command", "Ctrl+1", "description", Command::Type::kNamed},
+      {true, none, "command", "", "description"},
+      {true, ctrl_f, "command", "Ctrl+F", "description"},
+      {true, alt_f, "command", "Alt+F", "description"},
+      {true, ctrl_shift_f, "command", "Ctrl+Shift+F", "description"},
+      {true, alt_shift_f, "command", "Alt+Shift+F", "description"},
+      {true, ctrl_1, "command", "Ctrl+1", "description"},
       // Shortcut token order tests.
-      {true, ctrl_f, "command", "F+Ctrl", "description", Command::Type::kNamed},
-      {true, alt_f, "command", "F+Alt", "description", Command::Type::kNamed},
-      {true, ctrl_shift_f, "command", "F+Ctrl+Shift", "description",
-       Command::Type::kNamed},
-      {true, ctrl_shift_f, "command", "F+Shift+Ctrl", "description",
-       Command::Type::kNamed},
-      {true, alt_shift_f, "command", "F+Alt+Shift", "description",
-       Command::Type::kNamed},
-      {true, alt_shift_f, "command", "F+Shift+Alt", "description",
-       Command::Type::kNamed},
+      {true, ctrl_f, "command", "F+Ctrl", "description"},
+      {true, alt_f, "command", "F+Alt", "description"},
+      {true, ctrl_shift_f, "command", "F+Ctrl+Shift", "description"},
+      {true, ctrl_shift_f, "command", "F+Shift+Ctrl", "description"},
+      {true, alt_shift_f, "command", "F+Alt+Shift", "description"},
+      {true, alt_shift_f, "command", "F+Shift+Alt", "description"},
       // Case insensitivity is not OK.
       {false, ctrl_f, "command", "Ctrl+f", "description"},
       {false, ctrl_f, "command", "cTrL+F", "description"},
       // Skipping description is OK for browser- and pageActions.
-      {true, ctrl_f, "_execute_browser_action", "Ctrl+F", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_f, "_execute_page_action", "Ctrl+F", "",
-       Command::Type::kPageAction},
+      {true, ctrl_f, "_execute_browser_action", "Ctrl+F", ""},
+      {true, ctrl_f, "_execute_page_action", "Ctrl+F", ""},
       // Home, End, Arrow keys, etc.
-      {true, ctrl_comma, "_execute_browser_action", "Ctrl+Comma", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_dot, "_execute_browser_action", "Ctrl+Period", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_left, "_execute_browser_action", "Ctrl+Left", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_right, "_execute_browser_action", "Ctrl+Right", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_up, "_execute_browser_action", "Ctrl+Up", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_down, "_execute_browser_action", "Ctrl+Down", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_ins, "_execute_browser_action", "Ctrl+Insert", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_del, "_execute_browser_action", "Ctrl+Delete", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_home, "_execute_browser_action", "Ctrl+Home", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_end, "_execute_browser_action", "Ctrl+End", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_pgup, "_execute_browser_action", "Ctrl+PageUp", "",
-       Command::Type::kBrowserAction},
-      {true, ctrl_pgdwn, "_execute_browser_action", "Ctrl+PageDown", "",
-       Command::Type::kBrowserAction},
+      {true, ctrl_comma, "_execute_browser_action", "Ctrl+Comma", ""},
+      {true, ctrl_dot, "_execute_browser_action", "Ctrl+Period", ""},
+      {true, ctrl_left, "_execute_browser_action", "Ctrl+Left", ""},
+      {true, ctrl_right, "_execute_browser_action", "Ctrl+Right", ""},
+      {true, ctrl_up, "_execute_browser_action", "Ctrl+Up", ""},
+      {true, ctrl_down, "_execute_browser_action", "Ctrl+Down", ""},
+      {true, ctrl_ins, "_execute_browser_action", "Ctrl+Insert", ""},
+      {true, ctrl_del, "_execute_browser_action", "Ctrl+Delete", ""},
+      {true, ctrl_home, "_execute_browser_action", "Ctrl+Home", ""},
+      {true, ctrl_end, "_execute_browser_action", "Ctrl+End", ""},
+      {true, ctrl_pgup, "_execute_browser_action", "Ctrl+PageUp", ""},
+      {true, ctrl_pgdwn, "_execute_browser_action", "Ctrl+PageDown", ""},
       // Media keys.
-      {true, next_track, "command", "MediaNextTrack", "description",
-       Command::Type::kNamed},
-      {true, play_pause, "command", "MediaPlayPause", "description",
-       Command::Type::kNamed},
-      {true, prev_track, "command", "MediaPrevTrack", "description",
-       Command::Type::kNamed},
-      {true, stop, "command", "MediaStop", "description",
-       Command::Type::kNamed},
+      {true, next_track, "command", "MediaNextTrack", "description"},
+      {true, play_pause, "command", "MediaPlayPause", "description"},
+      {true, prev_track, "command", "MediaPrevTrack", "description"},
+      {true, stop, "command", "MediaStop", "description"},
       {false, none, "_execute_browser_action", "MediaNextTrack", ""},
       {false, none, "_execute_page_action", "MediaPrevTrack", ""},
       {false, none, "command", "Ctrl+Shift+MediaPrevTrack", "description"},
@@ -255,7 +227,7 @@ TEST(CommandTest, ExtensionCommandParsingFallback) {
 #if defined(OS_WIN)
   ui::Accelerator accelerator(ui::VKEY_W,
                               ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN);
-#elif defined(OS_MACOSX)
+#elif defined(OS_MAC)
   ui::Accelerator accelerator(ui::VKEY_M,
                               ui::EF_SHIFT_DOWN | ui::EF_COMMAND_DOWN);
 #elif defined(OS_CHROMEOS)
@@ -307,7 +279,7 @@ TEST(CommandTest, ExtensionCommandParsingFallback) {
   EXPECT_FALSE(command.Parse(input.get(), command_name, 0, &error));
 
   // Make sure Mac specific keys are not processed on other platforms.
-#if !defined(OS_MACOSX)
+#if !defined(OS_MAC)
   key_dict->SetString("windows", "Command+Shift+M");
   EXPECT_FALSE(command.Parse(input.get(), command_name, 0, &error));
 #endif
@@ -319,10 +291,8 @@ TEST(CommandTest, ExtensionCommandParsingPlatformSpecific) {
                                  ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN);
 
   ConstCommandsTestData kChromeOsTests[] = {
-      {true, search_shift_z, "command", "Search+Shift+Z", "description",
-       Command::Type::kNamed},
-      {true, search_a, "command", "Search+A", "description",
-       Command::Type::kNamed},
+      {true, search_shift_z, "command", "Search+Shift+Z", "description"},
+      {true, search_a, "command", "Search+A", "description"},
       // Command is not valid on Chrome OS.
       {false, search_shift_z, "command", "Command+Shift+Z", "description"},
   };

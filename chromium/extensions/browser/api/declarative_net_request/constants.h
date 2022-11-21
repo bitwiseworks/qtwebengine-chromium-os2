@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "base/feature_list.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
 
 namespace extensions {
@@ -36,7 +37,6 @@ enum class ParseResult {
   ERROR_NON_ASCII_EXCLUDED_DOMAIN,
 
   ERROR_INVALID_URL_FILTER,
-  ERROR_EMPTY_REMOVE_HEADERS_LIST,
   ERROR_INVALID_REDIRECT,
   ERROR_INVALID_EXTENSION_PATH,
   ERROR_INVALID_TRANSFORM_SCHEME,
@@ -57,7 +57,11 @@ enum class ParseResult {
   ERROR_NO_HEADERS_SPECIFIED,
   ERROR_EMPTY_REQUEST_HEADERS_LIST,
   ERROR_EMPTY_RESPONSE_HEADERS_LIST,
-  ERROR_INVALID_HEADER_NAME
+  ERROR_INVALID_HEADER_NAME,
+  ERROR_INVALID_HEADER_VALUE,
+  ERROR_HEADER_VALUE_NOT_SPECIFIED,
+  ERROR_HEADER_VALUE_PRESENT,
+  ERROR_APPEND_REQUEST_HEADER_UNSUPPORTED
 };
 
 // Describes the ways in which updating dynamic rules can fail.
@@ -86,6 +90,39 @@ enum class UpdateDynamicRulesStatus {
   kMaxValue = kErrorRegexRuleCountExceeded,
 };
 
+// Describes the result of loading a single JSON Ruleset.
+// This is logged as part of UMA. Hence existing values should not be re-
+// numbered or deleted.
+enum class LoadRulesetResult {
+  // Ruleset loading succeeded.
+  kSuccess = 0,
+
+  // Ruleset loading failed since the provided path did not exist.
+  kErrorInvalidPath = 1,
+
+  // Ruleset loading failed due to a file read error.
+  kErrorCannotReadFile = 2,
+
+  // Ruleset loading failed due to a checksum mismatch.
+  kErrorChecksumMismatch = 3,
+
+  // Ruleset loading failed due to version header mismatch.
+  // TODO(karandeepb): This should be split into two cases:
+  //    - When the indexed ruleset doesn't have the version header in the
+  //      correct format.
+  //    - When the indexed ruleset's version is not the same as that used by
+  //      Chrome.
+  kErrorVersionMismatch = 4,
+
+  // Ruleset loading failed since the checksum for the ruleset wasn't found in
+  // prefs.
+  kErrorChecksumNotFound = 5,
+
+  // Magic constant used by histograms code. Should be equal to the largest enum
+  // value.
+  kMaxValue = kErrorChecksumNotFound,
+};
+
 // Schemes which can be used as part of url transforms.
 extern const char* const kAllowedTransformSchemes[4];
 
@@ -100,7 +137,6 @@ extern const char kErrorInvalidRedirectUrl[];
 extern const char kErrorDuplicateIDs[];
 extern const char kErrorPersisting[];
 extern const char kErrorNonAscii[];
-extern const char kErrorEmptyRemoveHeadersList[];
 extern const char kErrorInvalidKey[];
 extern const char kErrorInvalidTransformScheme[];
 extern const char kErrorQueryAndTransformBothSpecified[];
@@ -112,14 +148,21 @@ extern const char kErrorRegexTooLarge[];
 extern const char kErrorRegexesTooLarge[];
 extern const char kErrorNoHeaderListsSpecified[];
 extern const char kErrorInvalidHeaderName[];
+extern const char kErrorInvalidHeaderValue[];
+extern const char kErrorNoHeaderValueSpecified[];
+extern const char kErrorHeaderValuePresent[];
+extern const char kErrorCannotAppendRequestHeader[];
 
 extern const char kErrorListNotPassed[];
 
 // Rule indexing install warnings.
 extern const char kRuleCountExceeded[];
 extern const char kRegexRuleCountExceeded[];
+extern const char kEnabledRuleCountExceeded[];
+extern const char kEnabledRegexRuleCountExceeded[];
 extern const char kRuleNotParsedWarning[];
 extern const char kTooManyParseFailuresWarning[];
+extern const char kIndexingRuleLimitExceeded[];
 
 // Dynamic rules API errors.
 extern const char kInternalErrorUpdatingDynamicRules[];
@@ -127,12 +170,20 @@ extern const char kInternalErrorGettingDynamicRules[];
 extern const char kDynamicRuleCountExceeded[];
 extern const char kDynamicRegexRuleCountExceeded[];
 
+// Static ruleset toggling API errors.
+extern const char kInvalidRulesetIDError[];
+extern const char kEnabledRulesetsRuleCountExceeded[];
+extern const char kEnabledRulesetsRegexRuleCountExceeded[];
+extern const char kInternalErrorUpdatingEnabledRulesets[];
+
 // Histogram names.
 extern const char kIndexAndPersistRulesTimeHistogram[];
 extern const char kManifestRulesCountHistogram[];
+extern const char kManifestEnabledRulesCountHistogram[];
 extern const char kUpdateDynamicRulesStatusHistogram[];
 extern const char kReadDynamicRulesJSONStatusHistogram[];
 extern const char kIsLargeRegexHistogram[];
+extern const char kLoadRulesetResultHistogram[];
 
 // Placeholder text to use for getBadgeText extension function call, when the
 // badge text is set to the DNR action count.
@@ -141,6 +192,14 @@ extern const char kActionCountPlaceholderBadgeText[];
 // Error returned for the getMatchedRules extension function call, if the
 // extension does not have sufficient permissions to make the call.
 extern const char kErrorGetMatchedRulesMissingPermissions[];
+
+// The maximum amount of static rules in the global rule pool for a single
+// profile.
+constexpr int kMaxStaticRulesPerProfile = 300000;
+
+// Enables extensions to enable more rules than the per-extension static rule
+// count, up to a global limit shared between all extensions.
+extern const base::Feature kDeclarativeNetRequestGlobalRules;
 
 }  // namespace declarative_net_request
 }  // namespace extensions

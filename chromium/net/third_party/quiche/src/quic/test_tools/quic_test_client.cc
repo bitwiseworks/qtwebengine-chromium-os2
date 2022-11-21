@@ -74,6 +74,7 @@ class RecordingProofVerifier : public ProofVerifier {
 
   QuicAsyncStatus VerifyCertChain(
       const std::string& /*hostname*/,
+      const uint16_t /*port*/,
       const std::vector<std::string>& certs,
       const std::string& /*ocsp_response*/,
       const std::string& cert_sct,
@@ -209,6 +210,22 @@ MockableQuicClient::MockableQuicClient(
     const ParsedQuicVersionVector& supported_versions,
     QuicEpollServer* epoll_server,
     std::unique_ptr<ProofVerifier> proof_verifier)
+    : MockableQuicClient(server_address,
+                         server_id,
+                         config,
+                         supported_versions,
+                         epoll_server,
+                         std::move(proof_verifier),
+                         nullptr) {}
+
+MockableQuicClient::MockableQuicClient(
+    QuicSocketAddress server_address,
+    const QuicServerId& server_id,
+    const QuicConfig& config,
+    const ParsedQuicVersionVector& supported_versions,
+    QuicEpollServer* epoll_server,
+    std::unique_ptr<ProofVerifier> proof_verifier,
+    std::unique_ptr<SessionCache> session_cache)
     : QuicClient(
           server_address,
           server_id,
@@ -217,8 +234,8 @@ MockableQuicClient::MockableQuicClient(
           epoll_server,
           std::make_unique<MockableQuicClientEpollNetworkHelper>(epoll_server,
                                                                  this),
-          QuicWrapUnique(
-              new RecordingProofVerifier(std::move(proof_verifier)))),
+          QuicWrapUnique(new RecordingProofVerifier(std::move(proof_verifier))),
+          std::move(session_cache)),
       override_server_connection_id_(EmptyQuicConnectionId()),
       server_connection_id_overridden_(false),
       override_client_connection_id_(EmptyQuicConnectionId()),
@@ -341,6 +358,24 @@ QuicTestClient::QuicTestClient(
   Initialize();
 }
 
+QuicTestClient::QuicTestClient(
+    QuicSocketAddress server_address,
+    const std::string& server_hostname,
+    const QuicConfig& config,
+    const ParsedQuicVersionVector& supported_versions,
+    std::unique_ptr<ProofVerifier> proof_verifier,
+    std::unique_ptr<SessionCache> session_cache)
+    : client_(new MockableQuicClient(
+          server_address,
+          QuicServerId(server_hostname, server_address.port(), false),
+          config,
+          supported_versions,
+          &epoll_server_,
+          std::move(proof_verifier),
+          std::move(session_cache))) {
+  Initialize();
+}
+
 QuicTestClient::QuicTestClient() = default;
 
 QuicTestClient::~QuicTestClient() {
@@ -357,10 +392,6 @@ void QuicTestClient::Initialize() {
   num_requests_ = 0;
   num_responses_ = 0;
   ClearPerConnectionState();
-  // TODO(b/142715651): Figure out how to use QPACK in tests.
-  // Do not use the QPACK dynamic table in tests to avoid flakiness due to the
-  // uncertain order of receiving the SETTINGS frame and sending headers.
-  client_->disable_qpack_dynamic_table();
   // As chrome will generally do this, we want it to be the default when it's
   // not overridden.
   if (!client_->config()->HasSetBytesForConnectionIdToSend()) {
@@ -392,9 +423,7 @@ ssize_t QuicTestClient::SendRequestAndRstTogether(const std::string& uri) {
 
   QuicStreamId stream_id = GetNthClientInitiatedBidirectionalStreamId(
       session->transport_version(), 0);
-  QuicStream* stream = session->GetOrCreateStream(stream_id);
-  session->SendRstStream(stream_id, QUIC_STREAM_CANCELLED,
-                         stream->stream_bytes_written());
+  session->ResetStream(stream_id, QUIC_STREAM_CANCELLED);
   return ret;
 }
 
@@ -576,10 +605,6 @@ QuicErrorCode QuicTestClient::connection_error() {
   return client()->connection_error();
 }
 
-MockableQuicClient* QuicTestClient::client() {
-  return client_.get();
-}
-
 const std::string& QuicTestClient::cert_common_name() const {
   return reinterpret_cast<RecordingProofVerifier*>(client_->proof_verifier())
       ->common_name();
@@ -607,7 +632,10 @@ bool QuicTestClient::connected() const {
 }
 
 void QuicTestClient::Connect() {
-  DCHECK(!connected());
+  if (connected()) {
+    QUIC_BUG << "Cannot connect already-connected client";
+    return;
+  }
   if (!connect_attempted_) {
     client_->Initialize();
   }
@@ -960,7 +988,7 @@ void QuicTestClient::WaitForDelayedAcks() {
   const QuicClock* clock = client()->client_session()->connection()->clock();
 
   QuicTime wait_until = clock->ApproximateNow() + kWaitDuration;
-  while (clock->ApproximateNow() < wait_until) {
+  while (connected() && clock->ApproximateNow() < wait_until) {
     // This waits for up to 50 ms.
     client()->WaitForEvents();
   }

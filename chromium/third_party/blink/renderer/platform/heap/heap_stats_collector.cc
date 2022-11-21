@@ -6,7 +6,7 @@
 
 #include <cmath>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 
 namespace blink {
@@ -90,26 +90,21 @@ void ThreadHeapStatsCollector::DecreaseAllocatedSpace(size_t bytes) {
   });
 }
 
-void ThreadHeapStatsCollector::IncreaseWrapperCount(size_t count) {
-  wrapper_count_ += count;
-}
-
-void ThreadHeapStatsCollector::DecreaseWrapperCount(size_t count) {
-  wrapper_count_ -= count;
-}
-
-void ThreadHeapStatsCollector::IncreaseCollectedWrapperCount(size_t count) {
-  collected_wrapper_count_ += count;
+ThreadHeapStatsCollector::Event::Event() {
+  static std::atomic<size_t> counter{0};
+  unique_id = counter.fetch_add(1);
 }
 
 void ThreadHeapStatsCollector::NotifyMarkingStarted(
     BlinkGC::CollectionType collection_type,
-    BlinkGC::GCReason reason) {
+    BlinkGC::GCReason reason,
+    bool is_forced_gc) {
   DCHECK(!is_started_);
   DCHECK(current_.marking_time().is_zero());
   is_started_ = true;
   current_.reason = reason;
   current_.collection_type = collection_type;
+  current_.is_forced_gc = is_forced_gc;
 }
 
 void ThreadHeapStatsCollector::NotifyMarkingCompleted(size_t marked_bytes) {
@@ -121,9 +116,7 @@ void ThreadHeapStatsCollector::NotifyMarkingCompleted(size_t marked_bytes) {
   current_.allocated_space_in_bytes_before_sweeping = allocated_space_bytes();
   current_.partition_alloc_bytes_before_sweeping =
       WTF::Partitions::TotalSizeOfCommittedPages();
-  current_.wrapper_count_before_sweeping = wrapper_count_;
   allocated_bytes_since_prev_gc_ = 0;
-  collected_wrapper_count_ = 0;
   pos_delta_allocated_bytes_since_prev_gc_ = 0;
   neg_delta_allocated_bytes_since_prev_gc_ = 0;
 
@@ -160,21 +153,6 @@ size_t ThreadHeapStatsCollector::object_size_in_bytes() const {
                              allocated_bytes_since_prev_gc_);
 }
 
-double ThreadHeapStatsCollector::estimated_marking_time_in_seconds() const {
-  // Assume 8ms time for an initial heap. 8 ms is long enough for low-end mobile
-  // devices to mark common real-world object graphs.
-  constexpr double kInitialMarkingTimeInSeconds = 0.008;
-
-  const double prev_marking_speed =
-      previous().marking_time_in_bytes_per_second();
-  return prev_marking_speed ? prev_marking_speed * object_size_in_bytes()
-                            : kInitialMarkingTimeInSeconds;
-}
-
-base::TimeDelta ThreadHeapStatsCollector::estimated_marking_time() const {
-  return base::TimeDelta::FromSecondsD(estimated_marking_time_in_seconds());
-}
-
 base::TimeDelta ThreadHeapStatsCollector::Event::roots_marking_time() const {
   return scope_data[kVisitRoots];
 }
@@ -183,6 +161,16 @@ base::TimeDelta ThreadHeapStatsCollector::Event::incremental_marking_time()
     const {
   return scope_data[kIncrementalMarkingStartMarking] +
          scope_data[kIncrementalMarkingStep] + scope_data[kUnifiedMarkingStep];
+}
+
+base::TimeDelta
+ThreadHeapStatsCollector::Event::worklist_processing_time_foreground() const {
+  return scope_data[kMarkProcessWorklists];
+}
+
+base::TimeDelta ThreadHeapStatsCollector::Event::flushing_v8_references_time()
+    const {
+  return scope_data[kMarkFlushV8References];
 }
 
 base::TimeDelta ThreadHeapStatsCollector::Event::atomic_marking_time() const {
@@ -210,12 +198,6 @@ base::TimeDelta ThreadHeapStatsCollector::Event::background_marking_time()
 
 base::TimeDelta ThreadHeapStatsCollector::Event::marking_time() const {
   return foreground_marking_time() + background_marking_time();
-}
-
-double ThreadHeapStatsCollector::Event::marking_time_in_bytes_per_second()
-    const {
-  return marked_bytes ? marking_time().InMillisecondsF() / 1000 / marked_bytes
-                      : 0.0;
 }
 
 base::TimeDelta ThreadHeapStatsCollector::Event::gc_cycle_time() const {
@@ -257,16 +239,17 @@ base::TimeDelta ThreadHeapStatsCollector::marking_time_so_far() const {
   return current_.marking_time();
 }
 
+base::TimeDelta ThreadHeapStatsCollector::worklist_processing_time_foreground()
+    const {
+  return current_.worklist_processing_time_foreground();
+}
+
+base::TimeDelta ThreadHeapStatsCollector::flushing_v8_references_time() const {
+  return current_.flushing_v8_references_time();
+}
+
 size_t ThreadHeapStatsCollector::allocated_space_bytes() const {
   return allocated_space_bytes_;
-}
-
-size_t ThreadHeapStatsCollector::collected_wrapper_count() const {
-  return collected_wrapper_count_;
-}
-
-size_t ThreadHeapStatsCollector::wrapper_count() const {
-  return wrapper_count_;
 }
 
 void ThreadHeapStatsCollector::RegisterObserver(

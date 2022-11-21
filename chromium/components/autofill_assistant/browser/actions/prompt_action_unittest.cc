@@ -45,12 +45,14 @@ class PromptActionTest : public testing::Test {
 
     EXPECT_CALL(mock_action_delegate_, OnWaitForDom(_, _, _, _))
         .WillRepeatedly(Invoke(this, &PromptActionTest::FakeWaitForDom));
-    ON_CALL(mock_action_delegate_, Prompt(_, _, _))
+    ON_CALL(mock_action_delegate_, Prompt(_, _, _, _, _))
         .WillByDefault(
-            Invoke([this](std::unique_ptr<std::vector<UserAction>> user_actions,
-                          bool disable_force_expand_sheet, bool browse_mode) {
+            [this](std::unique_ptr<std::vector<UserAction>> user_actions,
+                   bool disable_force_expand_sheet,
+                   base::OnceCallback<void()> callback, bool browse_mode,
+                   bool browse_mode_invisible) {
               user_actions_ = std::move(user_actions);
-            }));
+            });
     prompt_proto_ = proto_.mutable_prompt();
   }
 
@@ -171,7 +173,9 @@ TEST_F(PromptActionTest, SelectButtons) {
       Run(Pointee(AllOf(
           Property(&ProcessedActionProto::status, ACTION_APPLIED),
           Property(&ProcessedActionProto::prompt_choice,
-                   Property(&PromptProto::Choice::server_payload, "ok"))))));
+                   Property(&PromptProto::Result::navigation_ended, false)),
+          Property(&ProcessedActionProto::prompt_choice,
+                   Property(&PromptProto::Result::server_payload, "ok"))))));
   EXPECT_TRUE((*user_actions_)[0].HasCallback());
   (*user_actions_)[0].Call(TriggerContext::CreateEmpty());
 }
@@ -206,7 +210,8 @@ TEST_F(PromptActionTest, ShowOnlyIfElementExists) {
   ok_proto->mutable_chip()->set_text("Ok");
   ok_proto->mutable_chip()->set_type(HIGHLIGHTED_ACTION);
   ok_proto->set_server_payload("ok");
-  ok_proto->mutable_show_only_when()->mutable_match()->add_selectors("element");
+  *ok_proto->mutable_show_only_when()->mutable_match() =
+      ToSelectorProto("element");
 
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
@@ -232,7 +237,8 @@ TEST_F(PromptActionTest, DisabledUnlessElementExists) {
   ok_proto->mutable_chip()->set_type(HIGHLIGHTED_ACTION);
   ok_proto->set_server_payload("ok");
   ok_proto->set_allow_disabling(true);
-  ok_proto->mutable_show_only_when()->mutable_match()->add_selectors("element");
+  *ok_proto->mutable_show_only_when()->mutable_match() =
+      ToSelectorProto("element");
 
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
@@ -256,8 +262,8 @@ TEST_F(PromptActionTest, DisabledUnlessElementExists) {
 TEST_F(PromptActionTest, AutoSelectWhenElementExists) {
   auto* choice_proto = prompt_proto_->add_choices();
   choice_proto->set_server_payload("auto-select");
-  choice_proto->mutable_auto_select_when()->mutable_match()->add_selectors(
-      "element");
+  *choice_proto->mutable_auto_select_when()->mutable_match() =
+      ToSelectorProto("element");
 
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
@@ -272,7 +278,7 @@ TEST_F(PromptActionTest, AutoSelectWhenElementExists) {
       callback_,
       Run(Pointee(AllOf(Property(&ProcessedActionProto::status, ACTION_APPLIED),
                         Property(&ProcessedActionProto::prompt_choice,
-                                 Property(&PromptProto::Choice::server_payload,
+                                 Property(&PromptProto::Result::server_payload,
                                           "auto-select"))))));
   task_env_.FastForwardBy(base::TimeDelta::FromSeconds(1));
 }
@@ -285,8 +291,8 @@ TEST_F(PromptActionTest, AutoSelectWithButton) {
 
   auto* choice_proto = prompt_proto_->add_choices();
   choice_proto->set_server_payload("auto-select");
-  choice_proto->mutable_auto_select_when()->mutable_match()->add_selectors(
-      "element");
+  *choice_proto->mutable_auto_select_when()->mutable_match() =
+      ToSelectorProto("element");
 
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
@@ -300,7 +306,7 @@ TEST_F(PromptActionTest, AutoSelectWithButton) {
       callback_,
       Run(Pointee(AllOf(Property(&ProcessedActionProto::status, ACTION_APPLIED),
                         Property(&ProcessedActionProto::prompt_choice,
-                                 Property(&PromptProto::Choice::server_payload,
+                                 Property(&PromptProto::Result::server_payload,
                                           "auto-select"))))));
   task_env_.FastForwardBy(base::TimeDelta::FromSeconds(1));
 }
@@ -365,7 +371,7 @@ TEST_F(PromptActionTest, ForceExpandSheetDefault) {
   ok_proto->mutable_chip()->set_type(HIGHLIGHTED_ACTION);
   ok_proto->set_server_payload("ok");
 
-  EXPECT_CALL(mock_action_delegate_, Prompt(_, Eq(false), Eq(false)));
+  EXPECT_CALL(mock_action_delegate_, Prompt(_, false, _, false, false));
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
 }
@@ -377,7 +383,7 @@ TEST_F(PromptActionTest, ForceExpandSheetDisable) {
   ok_proto->set_server_payload("ok");
 
   prompt_proto_->set_disable_force_expand_sheet(true);
-  EXPECT_CALL(mock_action_delegate_, Prompt(_, Eq(true), Eq(false)));
+  EXPECT_CALL(mock_action_delegate_, Prompt(_, true, _, false, false));
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
 }
@@ -389,7 +395,20 @@ TEST_F(PromptActionTest, RunPromptInBrowseMode) {
   ok_proto->set_server_payload("ok");
 
   prompt_proto_->set_browse_mode(true);
-  EXPECT_CALL(mock_action_delegate_, Prompt(_, Eq(false), Eq(true)));
+  EXPECT_CALL(mock_action_delegate_, Prompt(_, false, _, true, false));
+  PromptAction action(&mock_action_delegate_, proto_);
+  action.ProcessAction(callback_.Get());
+}
+
+TEST_F(PromptActionTest, RunPromptInInvisibleBrowseMode) {
+  auto* ok_proto = prompt_proto_->add_choices();
+  ok_proto->mutable_chip()->set_text("Ok");
+  ok_proto->mutable_chip()->set_type(HIGHLIGHTED_ACTION);
+  ok_proto->set_server_payload("ok");
+
+  prompt_proto_->set_browse_mode(true);
+  prompt_proto_->set_browse_mode_invisible(true);
+  EXPECT_CALL(mock_action_delegate_, Prompt(_, false, _, true, true));
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
 }
@@ -398,8 +417,8 @@ TEST_F(PromptActionTest, ForwardInterruptFailure) {
   prompt_proto_->set_allow_interrupt(true);
   auto* choice_proto = prompt_proto_->add_choices();
   choice_proto->set_server_payload("auto-select");
-  choice_proto->mutable_auto_select_when()->mutable_match()->add_selectors(
-      "element");
+  *choice_proto->mutable_auto_select_when()->mutable_match() =
+      ToSelectorProto("element");
 
   PromptAction action(&mock_action_delegate_, proto_);
   action.ProcessAction(callback_.Get());
@@ -416,9 +435,36 @@ TEST_F(PromptActionTest, ForwardInterruptFailure) {
           Pointee(Property(&ProcessedActionProto::status, INTERRUPT_FAILED)),
           Pointee(
               Property(&ProcessedActionProto::prompt_choice,
-                       Property(&PromptProto::Choice::server_payload, ""))))));
+                       Property(&PromptProto::Result::server_payload, ""))))));
   ASSERT_TRUE(fake_wait_for_dom_done_);
   std::move(fake_wait_for_dom_done_).Run(ClientStatus(INTERRUPT_FAILED));
+}
+
+TEST_F(PromptActionTest, EndActionOnNavigation) {
+  EXPECT_CALL(mock_action_delegate_, Prompt(_, _, _, _, _))
+      .WillOnce([this](std::unique_ptr<std::vector<UserAction>> user_actions,
+                       bool disable_force_expand_sheet,
+                       base::OnceCallback<void()> callback, bool browse_mode,
+                       bool browse_mode_invisible) {
+        user_actions_ = std::move(user_actions);
+        std::move(callback).Run();
+      });
+
+  prompt_proto_->set_end_on_navigation(true);
+  prompt_proto_->add_choices()->mutable_chip()->set_text("ok");
+
+  PromptAction action(&mock_action_delegate_, proto_);
+
+  // Set new expectations for when the navigation event arrives.
+  EXPECT_CALL(mock_action_delegate_, CleanUpAfterPrompt());
+  EXPECT_CALL(
+      callback_,
+      Run(Pointee(AllOf(
+          Property(&ProcessedActionProto::status, ACTION_APPLIED),
+          Property(&ProcessedActionProto::prompt_choice,
+                   Property(&PromptProto::Result::navigation_ended, true))))));
+
+  action.ProcessAction(callback_.Get());
 }
 
 }  // namespace

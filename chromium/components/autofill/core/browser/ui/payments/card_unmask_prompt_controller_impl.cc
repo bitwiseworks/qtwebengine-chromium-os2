@@ -27,9 +27,8 @@
 namespace autofill {
 
 CardUnmaskPromptControllerImpl::CardUnmaskPromptControllerImpl(
-    PrefService* pref_service,
-    bool is_off_the_record)
-    : pref_service_(pref_service), is_off_the_record_(is_off_the_record) {}
+    PrefService* pref_service)
+    : pref_service_(pref_service) {}
 
 CardUnmaskPromptControllerImpl::~CardUnmaskPromptControllerImpl() {
   if (card_unmask_view_)
@@ -55,7 +54,8 @@ void CardUnmaskPromptControllerImpl::ShowPrompt(
   unmasking_result_ = AutofillClient::NONE;
   unmasking_number_of_attempts_ = 0;
   unmasking_initial_should_store_pan_ = GetStoreLocallyStartState();
-  AutofillMetrics::LogUnmaskPromptEvent(AutofillMetrics::UNMASK_PROMPT_SHOWN);
+  AutofillMetrics::LogUnmaskPromptEvent(AutofillMetrics::UNMASK_PROMPT_SHOWN,
+                                        card_.HasNonEmptyValidNickname());
 }
 
 void CardUnmaskPromptControllerImpl::OnVerificationResult(
@@ -124,26 +124,20 @@ void CardUnmaskPromptControllerImpl::OnUnmaskPromptAccepted(
     pending_details_.exp_month = exp_month;
     pending_details_.exp_year = exp_year;
   }
-  if (CanStoreLocally()) {
-    pending_details_.should_store_pan = should_store_pan;
-    // Remember the last choice the user made (on this device).
-    pref_service_->SetBoolean(prefs::kAutofillWalletImportStorageCheckboxState,
-                              should_store_pan);
-  } else {
-    DCHECK(!should_store_pan);
-    pending_details_.should_store_pan = false;
-  }
+  DCHECK(!should_store_pan);
+  pending_details_.should_store_pan = false;
 
-  // The FIDO authentication checkbox is only shown when the local storage
-  // checkbox is not shown and the flag is turned on. If it is shown, then
-  // remember the last choice the user made on this device.
+  // On Android, the FIDO authentication checkbox is only shown when the flag is
+  // turned on. If it is shown, then remember the last choice the user made on
+  // this device.
+#if defined(OS_ANDROID)
   if (base::FeatureList::IsEnabled(
-          features::kAutofillCreditCardAuthentication) &&
-      !CanStoreLocally()) {
+          features::kAutofillCreditCardAuthentication)) {
     pending_details_.enable_fido_auth = enable_fido_auth;
     pref_service_->SetBoolean(
         prefs::kAutofillCreditCardFidoAuthOfferCheckboxState, enable_fido_auth);
   }
+#endif
 
   // There is a chance the delegate has disappeared (i.e. tab closed) before the
   // unmask response came in. Avoid a crash.
@@ -164,7 +158,7 @@ base::string16 CardUnmaskPromptControllerImpl::GetWindowTitle() const {
       ShouldRequestExpirationDate()
           ? IDS_AUTOFILL_CARD_UNMASK_PROMPT_EXPIRED_TITLE
           : IDS_AUTOFILL_CARD_UNMASK_PROMPT_TITLE,
-      card_.NetworkAndLastFourDigits());
+      card_.CardIdentifierStringForAutofillDisplay());
 #endif
 }
 
@@ -185,7 +179,8 @@ base::string16 CardUnmaskPromptControllerImpl::GetInstructionsMessage() const {
   }
   // The iOS UI shows the card details in the instructions text since they
   // don't fit in the title.
-  return l10n_util::GetStringFUTF16(ids, card_.NetworkAndLastFourDigits());
+  return l10n_util::GetStringFUTF16(
+      ids, card_.CardIdentifierStringForAutofillDisplay());
 #else
   return l10n_util::GetStringUTF16(
       card_.record_type() == autofill::CreditCard::LOCAL_CARD
@@ -208,28 +203,16 @@ bool CardUnmaskPromptControllerImpl::ShouldRequestExpirationDate() const {
          new_card_link_clicked_;
 }
 
-bool CardUnmaskPromptControllerImpl::CanStoreLocally() const {
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillNoLocalSaveOnUnmaskSuccess)) {
-    return false;
-  }
-  // Never offer to save for incognito.
-  if (is_off_the_record_)
-    return false;
-  if (reason_ == AutofillClient::UNMASK_FOR_PAYMENT_REQUEST)
-    return false;
-  if (card_.record_type() == CreditCard::LOCAL_CARD)
-    return false;
-
-  return OfferStoreUnmaskedCards(is_off_the_record_);
-}
-
 bool CardUnmaskPromptControllerImpl::GetStoreLocallyStartState() const {
   return pref_service_->GetBoolean(
       prefs::kAutofillWalletImportStorageCheckboxState);
 }
 
 #if defined(OS_ANDROID)
+int CardUnmaskPromptControllerImpl::GetGooglePayImageRid() const {
+  return IDR_AUTOFILL_GOOGLE_PAY_WITH_DIVIDER;
+}
+
 bool CardUnmaskPromptControllerImpl::ShouldOfferWebauthn() const {
   return delegate_ && delegate_->ShouldOfferFidoAuth();
 }
@@ -238,6 +221,11 @@ bool CardUnmaskPromptControllerImpl::GetWebauthnOfferStartState() const {
   return pref_service_->GetBoolean(
       prefs::kAutofillCreditCardFidoAuthOfferCheckboxState);
 }
+
+bool CardUnmaskPromptControllerImpl::IsCardLocal() const {
+  return card_.record_type() == CreditCard::LOCAL_CARD;
+}
+
 #endif
 
 bool CardUnmaskPromptControllerImpl::InputCvcIsValid(
@@ -301,39 +289,27 @@ bool CardUnmaskPromptControllerImpl::AllowsRetry(
 
 void CardUnmaskPromptControllerImpl::LogOnCloseEvents() {
   AutofillMetrics::UnmaskPromptEvent close_reason_event = GetCloseReasonEvent();
-  AutofillMetrics::LogUnmaskPromptEvent(close_reason_event);
+  AutofillMetrics::LogUnmaskPromptEvent(close_reason_event,
+                                        card_.HasNonEmptyValidNickname());
   AutofillMetrics::LogUnmaskPromptEventDuration(
-      AutofillClock::Now() - shown_timestamp_, close_reason_event);
+      AutofillClock::Now() - shown_timestamp_, close_reason_event,
+      card_.HasNonEmptyValidNickname());
 
   if (close_reason_event == AutofillMetrics::UNMASK_PROMPT_CLOSED_NO_ATTEMPTS)
     return;
 
   if (close_reason_event ==
       AutofillMetrics::UNMASK_PROMPT_CLOSED_ABANDON_UNMASKING) {
-    AutofillMetrics::LogTimeBeforeAbandonUnmasking(AutofillClock::Now() -
-                                                   verify_timestamp_);
+    AutofillMetrics::LogTimeBeforeAbandonUnmasking(
+        AutofillClock::Now() - verify_timestamp_,
+        card_.HasNonEmptyValidNickname());
   }
 
   bool final_should_store_pan = pending_details_.should_store_pan;
   if (unmasking_result_ == AutofillClient::SUCCESS && final_should_store_pan) {
     AutofillMetrics::LogUnmaskPromptEvent(
-        AutofillMetrics::UNMASK_PROMPT_SAVED_CARD_LOCALLY);
-  }
-
-  if (CanStoreLocally()) {
-    // Tracking changes in local save preference.
-    AutofillMetrics::UnmaskPromptEvent event;
-    if (unmasking_initial_should_store_pan_ && final_should_store_pan) {
-      event = AutofillMetrics::UNMASK_PROMPT_LOCAL_SAVE_DID_NOT_OPT_OUT;
-    } else if (!unmasking_initial_should_store_pan_ &&
-               !final_should_store_pan) {
-      event = AutofillMetrics::UNMASK_PROMPT_LOCAL_SAVE_DID_NOT_OPT_IN;
-    } else if (unmasking_initial_should_store_pan_ && !final_should_store_pan) {
-      event = AutofillMetrics::UNMASK_PROMPT_LOCAL_SAVE_DID_OPT_OUT;
-    } else {
-      event = AutofillMetrics::UNMASK_PROMPT_LOCAL_SAVE_DID_OPT_IN;
-    }
-    AutofillMetrics::LogUnmaskPromptEvent(event);
+        AutofillMetrics::UNMASK_PROMPT_SAVED_CARD_LOCALLY,
+        card_.HasNonEmptyValidNickname());
   }
 }
 

@@ -9,7 +9,6 @@
 #include <memory>
 
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
@@ -41,6 +40,8 @@ class PRINTING_EXPORT PrintedDocument
   PrintedDocument(std::unique_ptr<PrintSettings> settings,
                   const base::string16& name,
                   int cookie);
+  PrintedDocument(const PrintedDocument&) = delete;
+  PrintedDocument& operator=(const PrintedDocument&) = delete;
 
 #if defined(OS_WIN)
   // Indicates that the PDF has been generated and the document is waiting for
@@ -50,7 +51,7 @@ class PRINTING_EXPORT PrintedDocument
   void SetConvertingPdf();
 
   // Sets a page's data. 0-based. Note: locks for a short amount of time.
-  void SetPage(int page_number,
+  void SetPage(uint32_t page_number,
                std::unique_ptr<MetafilePlayer> metafile,
                float shrink,
                const gfx::Size& page_size,
@@ -59,7 +60,7 @@ class PRINTING_EXPORT PrintedDocument
   // Retrieves a page. If the page is not available right now, it
   // requests to have this page be rendered and returns NULL.
   // Note: locks for a short amount of time.
-  scoped_refptr<PrintedPage> GetPage(int page_number);
+  scoped_refptr<PrintedPage> GetPage(uint32_t page_number);
 
   // Drop the specified page's reference for the particular page number.
   // Note: locks for a short amount of time.
@@ -67,9 +68,7 @@ class PRINTING_EXPORT PrintedDocument
 #endif  // defined(OS_WIN)
 
   // Sets the document data. Note: locks for a short amount of time.
-  void SetDocument(std::unique_ptr<MetafilePlayer> metafile,
-                   const gfx::Size& page_size,
-                   const gfx::Rect& page_content_rect);
+  void SetDocument(std::unique_ptr<MetafilePlayer> metafile);
 
   // Retrieves the metafile with the data to print. Lock must be held when
   // calling this function
@@ -95,17 +94,17 @@ class PRINTING_EXPORT PrintedDocument
   // Sets the number of pages in the document to be rendered. Can only be set
   // once.
   // Note: locks for a short amount of time.
-  void set_page_count(int max_page);
+  void set_page_count(uint32_t max_page);
 
   // Number of pages in the document.
   // Note: locks for a short amount of time.
-  int page_count() const;
+  uint32_t page_count() const;
 
   // Returns the number of expected pages to be rendered. It is a non-linear
   // series if settings().ranges is not empty. It is the same value as
   // document_page_count() otherwise.
   // Note: locks for a short amount of time.
-  int expected_page_count() const;
+  uint32_t expected_page_count() const;
 
   // Getters. All these items are immutable hence thread-safe.
   const PrintSettings& settings() const { return *immutable_.settings_; }
@@ -126,18 +125,18 @@ class PRINTING_EXPORT PrintedDocument
       const base::string16& document_name,
       const base::FilePath::StringType& extension);
 
+#if defined(OS_WIN)
+  // Get page content rect adjusted based on
+  // http://dev.w3.org/csswg/css3-page/#positioning-page-box
+  static gfx::Rect GetCenteredPageContentRect(const gfx::Size& paper_size,
+                                              const gfx::Size& page_size,
+                                              const gfx::Rect& content_rect);
+#endif
+
   // Dump data on blocking task runner.
   // Should only be called when debug dumps are enabled.
   void DebugDumpData(const base::RefCountedMemory* data,
                      const base::FilePath::StringType& extension);
-
-#if defined(OS_WIN) || defined(OS_MACOSX)
-  // Get page content rect adjusted based on
-  // http://dev.w3.org/csswg/css3-page/#positioning-page-box
-  gfx::Rect GetCenteredPageContentRect(const gfx::Size& paper_size,
-                                       const gfx::Size& page_size,
-                                       const gfx::Rect& content_rect) const;
-#endif
 
  private:
   friend class base::RefCountedThreadSafe<PrintedDocument>;
@@ -145,7 +144,7 @@ class PRINTING_EXPORT PrintedDocument
   ~PrintedDocument();
 
   // Array of data for each print previewed page.
-  using PrintedPages = std::map<int, scoped_refptr<PrintedPage>>;
+  using PrintedPages = std::map<uint32_t, scoped_refptr<PrintedPage>>;
 
   // Contains all the mutable stuff. All this stuff MUST be accessed with the
   // lock held.
@@ -155,10 +154,10 @@ class PRINTING_EXPORT PrintedDocument
 
     // Number of expected pages to be rendered.
     // Warning: Lock must be held when accessing this member.
-    int expected_page_count_ = 0;
+    uint32_t expected_page_count_ = 0;
 
     // The total number of pages in the document.
-    int page_count_ = 0;
+    uint32_t page_count_ = 0;
 
     std::unique_ptr<MetafilePlayer> metafile_;
 
@@ -172,11 +171,6 @@ class PRINTING_EXPORT PrintedDocument
 
     // Whether the PDF is being converted for printing.
     bool converting_pdf_ = false;
-#endif
-
-#if defined(OS_MACOSX)
-    gfx::Size page_size_;
-    gfx::Rect page_content_rect_;
 #endif
   };
 
@@ -213,8 +207,6 @@ class PRINTING_EXPORT PrintedDocument
 
   // All the immutable members.
   const Immutable immutable_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrintedDocument);
 };
 
 }  // namespace printing

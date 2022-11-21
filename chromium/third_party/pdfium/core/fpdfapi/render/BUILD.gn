@@ -7,8 +7,8 @@ import("../../../testing/test.gni")
 
 source_set("render") {
   sources = [
-    "cpdf_charposlist.cpp",
-    "cpdf_charposlist.h",
+    "charposlist.cpp",
+    "charposlist.h",
     "cpdf_devicebuffer.cpp",
     "cpdf_devicebuffer.h",
     "cpdf_docrenderdata.cpp",
@@ -33,6 +33,8 @@ source_set("render") {
     "cpdf_rendershading.h",
     "cpdf_renderstatus.cpp",
     "cpdf_renderstatus.h",
+    "cpdf_rendertiling.cpp",
+    "cpdf_rendertiling.h",
     "cpdf_scaledrenderbuffer.cpp",
     "cpdf_scaledrenderbuffer.h",
     "cpdf_textrenderer.cpp",
@@ -76,5 +78,6 @@ pdfium_embeddertest_source_set("embeddertests") {
     "fpdf_progressive_render_embeddertest.cpp",
     "fpdf_render_pattern_embeddertest.cpp",
   ]
+  deps = [ "../../fxge" ]
   pdfium_root_dir = "../../../"
 }

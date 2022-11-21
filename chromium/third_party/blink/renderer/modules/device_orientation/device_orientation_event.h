@@ -66,15 +66,11 @@ class DeviceOrientationEvent final : public Event {
   base::Optional<double> alpha() const;
   base::Optional<double> beta() const;
   base::Optional<double> gamma() const;
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  double alpha(bool& is_null) const;  // DEPRECATED
-  double beta(bool& is_null) const;   // DEPRECATED
-  double gamma(bool& is_null) const;  // DEPRECATED
   bool absolute() const;
 
   const AtomicString& InterfaceName() const override;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   Member<DeviceOrientationData> orientation_;

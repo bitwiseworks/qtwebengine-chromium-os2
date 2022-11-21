@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as TextEditor from '../text_editor/text_editor.js';
 import * as UI from '../ui/ui.js';  // eslint-disable-line no-unused-vars
 
@@ -45,10 +48,14 @@ export class ChangesTextEditor extends TextEditor.CodeMirrorTextEditor.CodeMirro
       const row = diffRows[lineNumber];
       let gutterMarker;
       if (row.type === RowType.Deletion) {
-        gutterMarker = createElementWithClass('div', 'deletion changes-diff-gutter-marker');
+        gutterMarker = document.createElement('div');
+        gutterMarker.classList.add('deletion');
+        gutterMarker.classList.add('changes-diff-gutter-marker');
         gutterMarker.textContent = '-';
       } else if (row.type === RowType.Addition) {
-        gutterMarker = createElementWithClass('div', 'addition changes-diff-gutter-marker');
+        gutterMarker = document.createElement('div');
+        gutterMarker.classList.add('addition');
+        gutterMarker.classList.add('changes-diff-gutter-marker');
         gutterMarker.textContent = '+';
       }
       if (gutterMarker) {

@@ -24,10 +24,6 @@
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "url/gurl.h"
 
-namespace storage {
-class BlobStorageContext;
-}  // namespace storage
-
 namespace network {
 class SharedURLLoaderFactory;
 }
@@ -43,7 +39,8 @@ class PrefetchedSignedExchangeCacheAdapter;
 class SignedExchangePrefetchHandler;
 class SignedExchangePrefetchMetricRecorder;
 
-// PrefetchURLLoader which basically just keeps draining the data.
+// A URLLoader for loading a prefetch request, including <link rel="prefetch">.
+// It basically just keeps draining the data.
 class CONTENT_EXPORT PrefetchURLLoader : public network::mojom::URLLoader,
                                          public network::mojom::URLLoaderClient,
                                          public mojo::DataPipeDrainer::Client {
@@ -72,7 +69,6 @@ class CONTENT_EXPORT PrefetchURLLoader : public network::mojom::URLLoader,
           signed_exchange_prefetch_metric_recorder,
       scoped_refptr<PrefetchedSignedExchangeCache>
           prefetched_signed_exchange_cache,
-      base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
       const std::string& accept_langs,
       RecursivePrefetchTokenGenerator recursive_prefetch_token_generator);
   ~PrefetchURLLoader() override;
@@ -86,20 +82,12 @@ class CONTENT_EXPORT PrefetchURLLoader : public network::mojom::URLLoader,
       const network::URLLoaderCompletionStatus& completion_status);
 
  private:
-  // This enum is used to record a histogram and should not be renumbered.
-  enum class PrefetchRedirect {
-    kPrefetchMade = 0,
-    kPrefetchRedirected = 1,
-    kPrefetchRedirectedSXGHandler = 2,
-    kMaxValue = kPrefetchRedirectedSXGHandler
-  };
-
-  void RecordPrefetchRedirectHistogram(PrefetchRedirect event);
-
   // network::mojom::URLLoader overrides:
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_headers,
-                      const base::Optional<GURL>& new_url) override;
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_headers,
+      const base::Optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override;
   void PauseReadingBodyFromNet() override;

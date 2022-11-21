@@ -92,7 +92,7 @@ void FakeHidConnection::SendFeatureReport(uint8_t report_id,
 }
 
 // Implementation of FakeHidManager.
-FakeHidManager::FakeHidManager() {}
+FakeHidManager::FakeHidManager() = default;
 FakeHidManager::~FakeHidManager() = default;
 
 void FakeHidManager::Bind(mojo::PendingReceiver<mojom::HidManager> receiver) {
@@ -100,10 +100,18 @@ void FakeHidManager::Bind(mojo::PendingReceiver<mojom::HidManager> receiver) {
 }
 
 // mojom::HidManager implementation:
+void FakeHidManager::AddReceiver(
+    mojo::PendingReceiver<mojom::HidManager> receiver) {
+  Bind(std::move(receiver));
+}
+
 void FakeHidManager::GetDevicesAndSetClient(
     mojo::PendingAssociatedRemote<mojom::HidManagerClient> client,
     GetDevicesCallback callback) {
   GetDevices(std::move(callback));
+
+  if (!client.is_valid())
+    return;
 
   clients_.Add(std::move(client));
 }
@@ -199,6 +207,11 @@ void FakeHidManager::RemoveDevice(const std::string& guid) {
       client->DeviceRemoved(device_info->Clone());
     devices_.erase(guid);
   }
+}
+
+void FakeHidManager::SimulateConnectionError() {
+  clients_.Clear();
+  receivers_.Clear();
 }
 
 }  // namespace device

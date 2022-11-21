@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
 
 static_library("arc") {
@@ -22,17 +23,28 @@ static_library("arc") {
     "crash_collector/arc_crash_collector_bridge.h",
     "disk_quota/arc_disk_quota_bridge.cc",
     "disk_quota/arc_disk_quota_bridge.h",
+    "enterprise/arc_data_snapshotd_bridge.cc",
+    "enterprise/arc_data_snapshotd_bridge.h",
+    "enterprise/arc_data_snapshotd_manager.cc",
+    "enterprise/arc_data_snapshotd_manager.h",
     "ime/arc_ime_bridge.h",
     "ime/arc_ime_bridge_impl.cc",
     "ime/arc_ime_bridge_impl.h",
     "ime/arc_ime_service.cc",
     "ime/arc_ime_service.h",
+    "ime/arc_ime_util.cc",
+    "ime/arc_ime_util.h",
+    "ime/key_event_result_receiver.cc",
+    "ime/key_event_result_receiver.h",
     "intent_helper/activity_icon_loader.cc",
     "intent_helper/activity_icon_loader.h",
+    "intent_helper/adaptive_icon_delegate.h",
     "intent_helper/arc_intent_helper_bridge.cc",
     "intent_helper/arc_intent_helper_bridge.h",
     "intent_helper/arc_intent_helper_observer.h",
     "intent_helper/control_camera_app_delegate.h",
+    "intent_helper/custom_tab.cc",
+    "intent_helper/custom_tab.h",
     "intent_helper/factory_reset_delegate.h",
     "intent_helper/intent_constants.cc",
     "intent_helper/intent_constants.h",
@@ -55,12 +67,16 @@ static_library("arc") {
     "net/arc_net_host_impl.h",
     "obb_mounter/arc_obb_mounter_bridge.cc",
     "obb_mounter/arc_obb_mounter_bridge.h",
+    "pay/arc_payment_app_bridge.cc",
+    "pay/arc_payment_app_bridge.h",
     "power/arc_power_bridge.cc",
     "power/arc_power_bridge.h",
     "property/arc_property_bridge.cc",
     "property/arc_property_bridge.h",
     "rotation_lock/arc_rotation_lock_bridge.cc",
     "rotation_lock/arc_rotation_lock_bridge.h",
+    "sensor/arc_sensor_bridge.cc",
+    "sensor/arc_sensor_bridge.h",
     "storage_manager/arc_storage_manager.cc",
     "storage_manager/arc_storage_manager.h",
     "timer/arc_timer_bridge.cc",
@@ -94,6 +110,7 @@ static_library("arc") {
     "//chromeos/dbus/power:power_manager_proto",
     "//chromeos/dbus/session_manager",
     "//chromeos/dbus/session_manager:login_manager_proto",
+    "//chromeos/dbus/upstart:upstart",
     "//chromeos/disks",
     "//chromeos/login/login_state",
     "//chromeos/network",
@@ -101,13 +118,14 @@ static_library("arc") {
     "//components/exo",
     "//components/google/core/common",
     "//components/guest_os",
+    "//components/keyed_service/core",
     "//components/onc",
     "//components/prefs",
 
     # TODO(crbug.com/853604): After fully migrating the intent picker to query
     # directly from App Service, we will deprecated the match functionality
     # in intent_filter and this dependency will be removed.
-    "//components/services/app_service/public/cpp:intent_util",
+    "//components/services/app_service/public/cpp:intents",
     "//components/session_manager/core",
     "//components/timers",
     "//components/url_formatter",
@@ -130,6 +148,7 @@ static_library("arc") {
     "//ui/events",
     "//ui/events:dom_keycode_converter",
     "//ui/events/ozone",
+    "//ui/ozone",
     "//ui/wm/public",
     "//url:url",
   ]
@@ -200,6 +219,7 @@ static_library("arc_base") {
     "arc_features_parser.h",
     "arc_service_manager.cc",
     "arc_service_manager.h",
+    "session/adb_sideloading_availability_delegate.h",
     "session/arc_bridge_host_impl.cc",
     "session/arc_bridge_host_impl.h",
     "session/arc_bridge_service.cc",
@@ -230,8 +250,8 @@ static_library("arc_base") {
 
   deps = [
     "//ash/public/cpp",
+    "//ash/public/cpp/external_arc",
     "//base",
-    "//base/util/memory_pressure",
     "//chromeos/constants",
     "//chromeos/cryptohome",
     "//chromeos/dbus:common",
@@ -240,6 +260,7 @@ static_library("arc_base") {
     "//chromeos/dbus/session_manager",
     "//chromeos/dbus/session_manager:login_manager_proto",
     "//chromeos/dbus/upstart",
+    "//chromeos/memory:memory",
     "//chromeos/system:system",
     "//components/account_id",
     "//components/keyed_service/content",
@@ -295,6 +316,8 @@ static_library("notification_test_support") {
 static_library("arc_test_support") {
   testonly = true
   sources = [
+    "test/arc_payment_app_bridge_test_support.cc",
+    "test/arc_payment_app_bridge_test_support.h",
     "test/fake_accessibility_helper_instance.cc",
     "test/fake_accessibility_helper_instance.h",
     "test/fake_app_instance.cc",
@@ -309,6 +332,8 @@ static_library("arc_test_support") {
     "test/fake_bluetooth_instance.h",
     "test/fake_clipboard_instance.cc",
     "test/fake_clipboard_instance.h",
+    "test/fake_cros_config.cc",
+    "test/fake_cros_config.h",
     "test/fake_file_system_instance.cc",
     "test/fake_file_system_instance.h",
     "test/fake_intent_helper_instance.cc",
@@ -357,7 +382,10 @@ source_set("unit_tests") {
     "bluetooth/bluetooth_mojom_traits_unittest.cc",
     "bluetooth/bluetooth_type_converters_unittest.cc",
     "clipboard/arc_clipboard_bridge_unittest.cc",
+    "enterprise/arc_data_snapshotd_bridge_unittest.cc",
+    "enterprise/arc_data_snapshotd_manager_unittest.cc",
     "ime/arc_ime_service_unittest.cc",
+    "ime/key_event_result_receiver_unittest.cc",
     "intent_helper/activity_icon_loader_unittest.cc",
     "intent_helper/arc_intent_helper_bridge_unittest.cc",
     "intent_helper/intent_filter_unittest.cc",
@@ -366,6 +394,7 @@ source_set("unit_tests") {
     "metrics/stability_metrics_manager_unittest.cc",
     "net/always_on_vpn_manager_unittest.cc",
     "net/arc_net_host_impl_unittest.cc",
+    "pay/arc_payment_app_bridge_unittest.cc",
     "power/arc_power_bridge_unittest.cc",
     "property/arc_property_bridge_unittest.cc",
     "session/arc_data_remover_unittest.cc",
@@ -398,7 +427,7 @@ source_set("unit_tests") {
     "//chromeos/network:test_support",
     "//chromeos/system:system",
     "//components/account_id",
-    "//components/arc/video_accelerator",
+    "//components/arc/video_accelerator:common",
     "//components/keyed_service/content",
     "//components/prefs:test_support",
     "//components/session_manager/core:core",
@@ -420,6 +449,16 @@ source_set("unit_tests") {
     "//ui/base/ime",
     "//ui/events",
     "//ui/events:dom_keycode_converter",
+    "//ui/ozone",
     "//url:url",
+  ]
+}
+
+fuzzer_test("arc_property_util_expand_property_contents_fuzzer") {
+  sources = [ "session/arc_property_util_expand_property_contents_fuzzer.cc" ]
+  deps = [
+    ":arc",
+    ":arc_test_support",
+    "//base",
   ]
 }

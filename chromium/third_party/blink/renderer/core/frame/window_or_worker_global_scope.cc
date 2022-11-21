@@ -35,11 +35,12 @@
 #include "base/containers/span.h"
 #include "third_party/blink/renderer/bindings/core/v8/scheduled_action.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_for_context_dispose.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/dom_timer.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/page_dismissal_scope.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap_factories.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
@@ -55,13 +56,19 @@ namespace blink {
 static bool IsAllowed(ExecutionContext* execution_context,
                       bool is_eval,
                       const String& source) {
-  if (Document* document = Document::DynamicFrom(execution_context)) {
-    if (!document->GetFrame())
+  if (auto* window = DynamicTo<LocalDOMWindow>(execution_context)) {
+    if (!window->GetFrame())
       return false;
-    if (is_eval && !document->GetContentSecurityPolicy()->AllowEval(
+    if (is_eval && !window->GetContentSecurityPolicy()->AllowEval(
                        ReportingDisposition::kReport,
                        ContentSecurityPolicy::kWillNotThrowException, source)) {
       return false;
+    }
+    if (PageDismissalScope::IsActive()) {
+      UseCounter::Count(execution_context,
+                        window->document()->ProcessingBeforeUnload()
+                            ? WebFeature::kTimerInstallFromBeforeUnload
+                            : WebFeature::kTimerInstallFromUnload);
     }
     return true;
   }
@@ -136,7 +143,7 @@ int WindowOrWorkerGlobalScope::setTimeout(
   ExecutionContext* execution_context = event_target.GetExecutionContext();
   if (!IsAllowed(execution_context, false, g_empty_string))
     return 0;
-  if (timeout >= 0 && execution_context->IsDocument()) {
+  if (timeout >= 0 && execution_context->IsWindow()) {
     // FIXME: Crude hack that attempts to pass idle time to V8. This should
     // be done using the scheduler instead.
     V8GCForContextDispose::Instance().NotifyIdle();
@@ -159,7 +166,7 @@ int WindowOrWorkerGlobalScope::setTimeout(ScriptState* script_state,
   // performance issue.
   if (handler.IsEmpty())
     return 0;
-  if (timeout >= 0 && execution_context->IsDocument()) {
+  if (timeout >= 0 && execution_context->IsWindow()) {
     // FIXME: Crude hack that attempts to pass idle time to V8. This should
     // be done using the scheduler instead.
     V8GCForContextDispose::Instance().NotifyIdle();
@@ -217,17 +224,17 @@ void WindowOrWorkerGlobalScope::clearInterval(EventTarget& event_target,
 
 ScriptPromise WindowOrWorkerGlobalScope::createImageBitmap(
     ScriptState* script_state,
-    EventTarget& event_target,
+    EventTarget&,
     const ImageBitmapSourceUnion& bitmap_source,
     const ImageBitmapOptions* options,
     ExceptionState& exception_state) {
-  return ImageBitmapFactories::CreateImageBitmap(
-      script_state, event_target, bitmap_source, options, exception_state);
+  return ImageBitmapFactories::CreateImageBitmap(script_state, bitmap_source,
+                                                 options, exception_state);
 }
 
 ScriptPromise WindowOrWorkerGlobalScope::createImageBitmap(
     ScriptState* script_state,
-    EventTarget& event_target,
+    EventTarget&,
     const ImageBitmapSourceUnion& bitmap_source,
     int sx,
     int sy,
@@ -235,9 +242,13 @@ ScriptPromise WindowOrWorkerGlobalScope::createImageBitmap(
     int sh,
     const ImageBitmapOptions* options,
     ExceptionState& exception_state) {
-  return ImageBitmapFactories::CreateImageBitmap(script_state, event_target,
-                                                 bitmap_source, sx, sy, sw, sh,
-                                                 options, exception_state);
+  return ImageBitmapFactories::CreateImageBitmap(
+      script_state, bitmap_source, sx, sy, sw, sh, options, exception_state);
+}
+
+bool WindowOrWorkerGlobalScope::crossOriginIsolated(
+    const ExecutionContext& execution_context) {
+  return execution_context.CrossOriginIsolatedCapability();
 }
 
 }  // namespace blink

@@ -11,6 +11,7 @@
 #include "content/browser/appcache/appcache_disk_cache.h"
 #include "content/browser/appcache/appcache_disk_cache_ops.h"
 #include "content/common/content_export.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace content {
 
@@ -25,16 +26,8 @@ class CONTENT_EXPORT ServiceWorkerDiskCache : public AppCacheDiskCache {
   ServiceWorkerDiskCache();
 };
 
-class CONTENT_EXPORT ServiceWorkerResponseReader
-    : public AppCacheResponseReader {
- protected:
-  // Should only be constructed by the storage class.
-  friend class ServiceWorkerStorage;
-
-  ServiceWorkerResponseReader(int64_t resource_id,
-                              base::WeakPtr<AppCacheDiskCache> disk_cache);
-};
-
+// TODO(crbug.com/1060076): Migrate to
+// storage::mojom::ServiceWorkerResourceWriter.
 class CONTENT_EXPORT ServiceWorkerResponseWriter
     : public AppCacheResponseWriter {
  protected:

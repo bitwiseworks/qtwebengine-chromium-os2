@@ -27,8 +27,6 @@
 
 #include <initializer_list>
 
-class GrContext;
-
 /**
  * This GM tests reusing the same text blobs with distance fields rendering using various
  * combinations of perspective and non-perspetive matrices, scissor clips, and different x,y params
@@ -60,8 +58,8 @@ protected:
     }
 
     void onDraw(SkCanvas* inputCanvas) override {
-    // set up offscreen rendering with distance field text
-        GrContext* ctx = inputCanvas->getGrContext();
+        // set up offscreen rendering with distance field text
+        auto ctx = inputCanvas->recordingContext();
         SkISize size = this->onISize();
         if (!inputCanvas->getBaseLayerSize().isEmpty()) {
             size = inputCanvas->getBaseLayerSize();
@@ -131,8 +129,8 @@ private:
                 persp.setPerspY(-0.0015f);
                 break;
         }
-        persp = SkMatrix::Concat(persp, SkMatrix::MakeTrans(-x, -y));
-        persp = SkMatrix::Concat(SkMatrix::MakeTrans(x, y), persp);
+        persp = SkMatrix::Concat(persp, SkMatrix::Translate(-x, -y));
+        persp = SkMatrix::Concat(SkMatrix::Translate(x, y), persp);
         canvas->concat(persp);
         if (TranslateWithMatrix::kYes == translateWithMatrix) {
             canvas->translate(x, y);
@@ -146,7 +144,7 @@ private:
     }
 
     SkTArray<sk_sp<SkTextBlob>> fBlobs;
-    typedef skiagm::GM INHERITED;
+    using INHERITED = skiagm::GM;
 };
 
 DEF_GM(return new DFTextBlobPerspGM;)

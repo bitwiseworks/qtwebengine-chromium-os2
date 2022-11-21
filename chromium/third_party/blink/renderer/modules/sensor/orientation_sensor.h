@@ -17,13 +17,11 @@ class OrientationSensor : public Sensor {
 
  public:
   base::Optional<Vector<double>> quaternion();
-  // TODO(crbug.com/1060971): Remove |is_null| version.
-  Vector<double> quaternion(bool& is_null);  // DEPRECATED
   void populateMatrix(Float32ArrayOrFloat64ArrayOrDOMMatrix&, ExceptionState&);
 
   bool isReadingDirty() const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  protected:
   OrientationSensor(ExecutionContext*,

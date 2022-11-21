@@ -6,7 +6,6 @@
 
 #include "xfa/fwl/theme/cfwl_comboboxtp.h"
 
-#include "core/fxge/render_defines.h"
 #include "xfa/fwl/cfwl_combobox.h"
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_widget.h"
@@ -21,12 +20,13 @@ CFWL_ComboBoxTP::~CFWL_ComboBoxTP() = default;
 void CFWL_ComboBoxTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
   switch (pParams.m_iPart) {
     case CFWL_Part::Border: {
-      DrawBorder(pParams.m_pGraphics.Get(), pParams.m_rtPart, pParams.m_matrix);
+      DrawBorder(pParams.m_pGraphics.Get(), pParams.m_PartRect,
+                 pParams.m_matrix);
       break;
     }
     case CFWL_Part::Background: {
       CXFA_GEPath path;
-      const CFX_RectF& rect = pParams.m_rtPart;
+      const CFX_RectF& rect = pParams.m_PartRect;
       path.AddRectangle(rect.left, rect.top, rect.width, rect.height);
       FX_ARGB argb_color;
       switch (pParams.m_dwStates) {
@@ -41,7 +41,8 @@ void CFWL_ComboBoxTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
       }
       pParams.m_pGraphics->SaveGraphState();
       pParams.m_pGraphics->SetFillColor(CXFA_GEColor(argb_color));
-      pParams.m_pGraphics->FillPath(&path, FXFILL_WINDING, &pParams.m_matrix);
+      pParams.m_pGraphics->FillPath(
+          &path, CFX_FillRenderOptions::FillType::kWinding, &pParams.m_matrix);
       pParams.m_pGraphics->RestoreGraphState();
       break;
     }
@@ -78,6 +79,6 @@ void CFWL_ComboBoxTP::DrawDropDownButton(const CFWL_ThemeBackground& pParams,
     default:
       break;
   }
-  DrawArrowBtn(pParams.m_pGraphics.Get(), pParams.m_rtPart,
+  DrawArrowBtn(pParams.m_pGraphics.Get(), pParams.m_PartRect,
                FWLTHEME_DIRECTION_Down, eState, pParams.m_matrix);
 }

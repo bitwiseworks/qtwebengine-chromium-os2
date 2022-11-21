@@ -4,7 +4,9 @@
 
 #include "content/browser/code_cache/generated_code_cache.h"
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/common/url_constants.h"
@@ -52,6 +54,8 @@ void CheckValidKeys(const GURL& resource_url, const GURL& origin_lock) {
 // with a separator in between. |origin_lock| could be empty when renderer is
 // not locked to an origin (ex: SitePerProcess is disabled) and it is safe to
 // use only |resource_url| as the key in such cases.
+// TODO(wjmaclean): Either convert this to use a SiteInfo object, or convert it
+// to something not based on URLs.
 std::string GetCacheKey(const GURL& resource_url, const GURL& origin_lock) {
   CheckValidKeys(resource_url, origin_lock);
 
@@ -93,6 +97,20 @@ constexpr size_t kSmallDataLimit = 4096;
 // the hash, enabling a two stage lookup.
 constexpr size_t kLargeDataLimit = 64 * 1024;
 
+// crbug.com/936107: This is a study to determine a good size threshold to
+// deduplicate JS and WebAssembly cache entries.
+// TODO(bbudge): Remove this after the study finishes.
+constexpr base::Feature kCodeCacheDeduplicationStudy{
+    "CodeCacheDeduplicationStudy", base::FEATURE_DISABLED_BY_DEFAULT};
+constexpr base::FeatureParam<int> kCodeCacheDeduplicationThreshold{
+    &kCodeCacheDeduplicationStudy, "size", (int)kLargeDataLimit};
+
+size_t GetLargeDataLimit() {
+  // The large data limit should be greater than or equal to kSmallDataLimit.
+  return std::max(kSmallDataLimit, base::saturated_cast<size_t>(
+                                       kCodeCacheDeduplicationThreshold.Get()));
+}
+
 // Checks that the header data in the small buffer is valid. We may read cache
 // entries that were written by a previous version of Chrome which use obsolete
 // formats. These reads should fail and be doomed as soon as possible.
@@ -105,7 +123,7 @@ bool IsValidHeader(scoped_refptr<net::IOBufferWithSize> small_buffer) {
          kDataSizeInBytes);
   if (data_size <= kSmallDataLimit)
     return buffer_size == kHeaderSizeInBytes + data_size;
-  if (data_size <= kLargeDataLimit)
+  if (data_size <= GetLargeDataLimit())
     return buffer_size == kHeaderSizeInBytes;
   return buffer_size == kHeaderSizeInBytes + kSHAKeySizeInBytes;
 }
@@ -353,7 +371,7 @@ void GeneratedCodeCache::WriteEntry(const GURL& url,
     memcpy(small_buffer->data() + kHeaderSizeInBytes, data.data(), data.size());
     // Write 0 bytes and truncate stream 1 to clear any stale data.
     large_buffer = base::MakeRefCounted<BigIOBuffer>(mojo_base::BigBuffer());
-  } else if (data_size <= kLargeDataLimit) {
+  } else if (data_size <= GetLargeDataLimit()) {
     // 2. Large
     // [stream0] response time, size
     // [stream1] data
@@ -366,9 +384,18 @@ void GeneratedCodeCache::WriteEntry(const GURL& url,
     // [stream1] <empty>
     // [stream0 (checksum key entry)] <empty>
     // [stream1 (checksum key entry)] data
+
+    // Make a copy of the data before hashing. A compromised renderer could
+    // change shared memory before we can compute the hash and write the data.
+    // TODO(1135729) Eliminate this copy when the shared memory can't be written
+    // by the sender.
+    mojo_base::BigBuffer copy({data.data(), data.size()});
+    if (copy.size() != data.size())
+      return;
+    data = mojo_base::BigBuffer();  // Release the old buffer.
     uint8_t result[crypto::kSHA256Length];
     crypto::SHA256HashString(
-        base::StringPiece(reinterpret_cast<char*>(data.data()), data.size()),
+        base::StringPiece(reinterpret_cast<char*>(copy.data()), copy.size()),
         result, base::size(result));
     std::string checksum_key = base::HexEncode(result, base::size(result));
     small_buffer = base::MakeRefCounted<net::IOBufferWithSize>(
@@ -383,7 +410,7 @@ void GeneratedCodeCache::WriteEntry(const GURL& url,
     // Issue another write operation for the code, with the checksum as the key
     // and nothing in the header.
     auto small_buffer2 = base::MakeRefCounted<net::IOBufferWithSize>(0);
-    auto large_buffer2 = base::MakeRefCounted<BigIOBuffer>(std::move(data));
+    auto large_buffer2 = base::MakeRefCounted<BigIOBuffer>(std::move(copy));
     auto op2 = std::make_unique<PendingOperation>(Operation::kWriteWithSHAKey,
                                                   checksum_key, small_buffer2,
                                                   large_buffer2);
@@ -737,7 +764,7 @@ void GeneratedCodeCache::ReadComplete(PendingOperation* op) {
         memcpy(data.data(), op->small_buffer()->data() + kHeaderSizeInBytes,
                data_size);
         op->TakeReadCallback().Run(response_time, std::move(data));
-      } else if (data_size <= kLargeDataLimit) {
+      } else if (data_size <= GetLargeDataLimit()) {
         // Large data below the merging threshold. Return the large buffer.
         op->TakeReadCallback().Run(response_time,
                                    op->large_buffer()->TakeBuffer());

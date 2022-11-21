@@ -192,7 +192,7 @@ void WebServiceWorkerProviderImpl::SetController(
   for (blink::mojom::WebFeature feature : features)
     provider_client_->CountFeature(feature);
   provider_client_->SetController(
-      controller.To<blink::WebServiceWorkerObjectInfo>(),
+      std::move(controller).To<blink::WebServiceWorkerObjectInfo>(),
       should_notify_controller_change);
 }
 
@@ -203,7 +203,8 @@ void WebServiceWorkerProviderImpl::PostMessageToClient(
     return;
 
   provider_client_->ReceiveMessage(
-      source.To<blink::WebServiceWorkerObjectInfo>(), std::move(message));
+      std::move(source).To<blink::WebServiceWorkerObjectInfo>(),
+      std::move(message));
 }
 
 void WebServiceWorkerProviderImpl::CountFeature(
@@ -235,7 +236,8 @@ void WebServiceWorkerProviderImpl::OnRegistered(
   DCHECK_NE(blink::mojom::kInvalidServiceWorkerRegistrationId,
             registration->registration_id);
   callbacks->OnSuccess(
-      registration.To<blink::WebServiceWorkerRegistrationObjectInfo>());
+      std::move(registration)
+          .To<blink::WebServiceWorkerRegistrationObjectInfo>());
 }
 
 void WebServiceWorkerProviderImpl::OnDidGetRegistration(
@@ -262,7 +264,8 @@ void WebServiceWorkerProviderImpl::OnDidGetRegistration(
          registration->registration_id !=
              blink::mojom::kInvalidServiceWorkerRegistrationId);
   callbacks->OnSuccess(
-      registration.To<blink::WebServiceWorkerRegistrationObjectInfo>());
+      std::move(registration)
+          .To<blink::WebServiceWorkerRegistrationObjectInfo>());
 }
 
 void WebServiceWorkerProviderImpl::OnDidGetRegistrations(
@@ -292,7 +295,8 @@ void WebServiceWorkerProviderImpl::OnDidGetRegistrations(
     DCHECK_NE(blink::mojom::kInvalidServiceWorkerRegistrationId,
               (*infos)[i]->registration_id);
     registrations.emplace_back(
-        (*infos)[i].To<blink::WebServiceWorkerRegistrationObjectInfo>());
+        std::move((*infos)[i])
+            .To<blink::WebServiceWorkerRegistrationObjectInfo>());
   }
   callbacks->OnSuccess(std::move(registrations));
 }
@@ -308,15 +312,16 @@ void WebServiceWorkerProviderImpl::OnDidGetRegistrationForReady(
   // GetRegistrationForReady() needs to respond some non-sense params even if it
   // has found that the request is a bad message and has called
   // mojo::ReportBadMessage(), this is forced by Mojo, please see
-  // content::ServiceWorkerProviderHost::GetRegistrationForReady(). We'll find a
-  // better solution once the discussion at
+  // content::ServiceWorkerContainerHost::GetRegistrationForReady(). We'll find
+  // a better solution once the discussion at
   // https://groups.google.com/a/chromium.org/forum/#!topic/chromium-mojo/NNsogKNurlA
   // settled.
   CHECK(registration);
   DCHECK_NE(blink::mojom::kInvalidServiceWorkerRegistrationId,
             registration->registration_id);
   std::move(callback).Run(
-      registration.To<blink::WebServiceWorkerRegistrationObjectInfo>());
+      std::move(registration)
+          .To<blink::WebServiceWorkerRegistrationObjectInfo>());
 }
 
 }  // namespace content

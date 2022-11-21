@@ -336,10 +336,6 @@ ChromePermissionMessageRule::GetAllRules() {
   // system should allow us to design a system that is simple enough to explain
   // yet powerful enough to encapsulate all the messages we want to display.
   ChromePermissionMessageRule rules_arr[] = {
-      // BEGIN POWERFUL PERMISSIONS:
-      // The following permissions are shown in the chrome://management page.
-      // See also GetPowerfulPermissionMessages().
-
       // Full access permission messages.
       {IDS_EXTENSION_PROMPT_WARNING_DEBUGGER, {APIPermission::kDebugger}, {}},
       {IDS_EXTENSION_PROMPT_WARNING_FULL_ACCESS,
@@ -394,6 +390,21 @@ ChromePermissionMessageRule::GetAllRules() {
        {APIPermission::kNewTabPageOverride},
        {}},
 
+      // Video and audio capture.
+      {IDS_EXTENSION_PROMPT_WARNING_AUDIO_AND_VIDEO_CAPTURE,
+       {APIPermission::kAudioCapture, APIPermission::kVideoCapture},
+       {}},
+      {IDS_EXTENSION_PROMPT_WARNING_AUDIO_CAPTURE,
+       {APIPermission::kAudioCapture},
+       {}},
+      {IDS_EXTENSION_PROMPT_WARNING_VIDEO_CAPTURE,
+       {APIPermission::kVideoCapture},
+       {}},
+
+      {IDS_EXTENSION_PROMPT_WARNING_GEOLOCATION,
+       {APIPermission::kGeolocation},
+       {}},
+
       // History-related permission messages.
       // History already allows reading favicons, tab access and accessing the
       // list of most frequently visited sites.
@@ -437,8 +448,6 @@ ChromePermissionMessageRule::GetAllRules() {
       {IDS_EXTENSION_PROMPT_WARNING_PRINTING_METRICS,
        {APIPermission::kPrintingMetrics},
        {}},
-
-      // END POWERFUL PERMISSIONS
 
       {IDS_EXTENSION_PROMPT_WARNING_DECLARATIVE_WEB_REQUEST,
        {APIPermission::kDeclarativeWebRequest},
@@ -542,17 +551,6 @@ ChromePermissionMessageRule::GetAllRules() {
        {APIPermission::kFileSystemDirectory},
        {}},
 
-      // Video and audio capture.
-      {IDS_EXTENSION_PROMPT_WARNING_AUDIO_AND_VIDEO_CAPTURE,
-       {APIPermission::kAudioCapture, APIPermission::kVideoCapture},
-       {}},
-      {IDS_EXTENSION_PROMPT_WARNING_AUDIO_CAPTURE,
-       {APIPermission::kAudioCapture},
-       {}},
-      {IDS_EXTENSION_PROMPT_WARNING_VIDEO_CAPTURE,
-       {APIPermission::kVideoCapture},
-       {}},
-
       // Network-related permissions.
       {IDS_EXTENSION_PROMPT_WARNING_NETWORKING_PRIVATE,
        {APIPermission::kNetworkingOnc},
@@ -573,9 +571,6 @@ ChromePermissionMessageRule::GetAllRules() {
        {APIPermission::kNetworkState},
        {}},
       {IDS_EXTENSION_PROMPT_WARNING_VPN, {APIPermission::kVpnProvider}, {}},
-      {IDS_EXTENSION_PROMPT_WARNING_WEB_CONNECTABLE,
-       {APIPermission::kWebConnectable},
-       {}},
       {std::make_unique<SingleParameterFormatter>(
            IDS_EXTENSION_PROMPT_WARNING_HOME_PAGE_SETTING_OVERRIDE),
        {APIPermission::kHomepage},
@@ -608,9 +603,6 @@ ChromePermissionMessageRule::GetAllRules() {
        {}},
       {IDS_EXTENSION_PROMPT_WARNING_IDENTITY_EMAIL,
        {APIPermission::kIdentityEmail},
-       {}},
-      {IDS_EXTENSION_PROMPT_WARNING_GEOLOCATION,
-       {APIPermission::kGeolocation},
        {}},
 
       {IDS_EXTENSION_PROMPT_WARNING_SYSTEM_STORAGE,
@@ -672,6 +664,15 @@ ChromePermissionMessageRule::GetAllRules() {
        {}},
       {IDS_EXTENSION_PROMPT_WARNING_ENTERPRISE_HARDWARE_PLATFORM,
        {APIPermission::kEnterpriseHardwarePlatform},
+       {}},
+      {IDS_EXTENSION_PROMPT_WARNING_ENTERPRISE_DEVICE_ATTRIBUTES,
+       {APIPermission::kEnterpriseDeviceAttributes},
+       {}},
+      {IDS_EXTENSION_PROMPT_WARNING_ENTERPRISE_NETWORKING_ATTRIBUTES,
+       {APIPermission::kEnterpriseNetworkingAttributes},
+       {}},
+      {IDS_EXTENSION_PROMPT_WARNING_ENTERPRISE_PLATFORMKEYS,
+       {APIPermission::kEnterprisePlatformKeys},
        {}},
       {IDS_EXTENSION_PROMPT_WARNING_LOGIN, {APIPermission::kLogin}, {}},
       {IDS_EXTENSION_PROMPT_WARNING_LOGIN_SCREEN_UI,

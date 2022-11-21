@@ -11,11 +11,6 @@
 #ifndef CONTENT_COMMON_DRAG_MESSAGES_H_
 #error "Failed to include content/common/drag_messages.h"
 #endif
-#undef CONTENT_COMMON_DRAG_TRAITS_H_
-#include "content/common/drag_traits.h"
-#ifndef CONTENT_COMMON_DRAG_TRAITS_H_
-#error "Failed to include content/common/drag_traits.h"
-#endif
 #undef CONTENT_COMMON_FRAME_MESSAGES_H_
 #include "content/common/frame_messages.h"
 #ifndef CONTENT_COMMON_FRAME_MESSAGES_H_
@@ -41,11 +36,6 @@
 #ifndef CONTENT_COMMON_RESOURCE_MESSAGES_H_
 #error "Failed to include content/common/resource_messages.h"
 #endif
-#undef CONTENT_COMMON_TEXT_INPUT_CLIENT_MESSAGES_H_
-#include "content/common/text_input_client_messages.h"
-#ifndef CONTENT_COMMON_TEXT_INPUT_CLIENT_MESSAGES_H_
-#error "Failed to include content/common/text_input_client_messages.h"
-#endif
 #undef CONTENT_COMMON_UNFREEZABLE_FRAME_MESSAGES_H_
 #include "content/common/unfreezable_frame_messages.h"
 #ifndef CONTENT_COMMON_UNFREEZABLE_FRAME_MESSAGES_H_
@@ -62,12 +52,6 @@
 #error "Failed to include content/common/widget_messages.h"
 #endif
 #include "media/media_buildflags.h"
-
-#undef CONTENT_COMMON_SYNC_COMPOSITOR_MESSAGES_H_
-#include "content/common/input/sync_compositor_messages.h"
-#ifndef CONTENT_COMMON_SYNC_COMPOSITOR_MESSAGES_H_
-#error "Failed to include content/common/input/sync_compositor_messages.h"
-#endif
 
 #if defined(OS_ANDROID)
 #undef CONTENT_COMMON_GIN_JAVA_BRIDGE_MESSAGES_H_

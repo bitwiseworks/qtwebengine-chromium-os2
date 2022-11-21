@@ -6,8 +6,9 @@
 #define UTIL_WEAK_PTR_H_
 
 #include <memory>
+#include <utility>
 
-#include "util/logging.h"
+#include "util/osp_logging.h"
 
 namespace openscreen {
 
@@ -92,7 +93,7 @@ class WeakPtr {
   }
 
   // Create/Assign from nullptr.
-  WeakPtr(std::nullptr_t) {}
+  WeakPtr(std::nullptr_t) {}  // NOLINT
 
   WeakPtr& operator=(std::nullptr_t) {
     impl_.reset();

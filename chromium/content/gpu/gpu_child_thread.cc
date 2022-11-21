@@ -12,6 +12,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/memory/weak_ptr.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_device_source.h"
@@ -25,7 +26,6 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/gpu/content_gpu_client.h"
 #include "gpu/command_buffer/common/activity_flags.h"
@@ -37,15 +37,13 @@
 #include "mojo/public/cpp/bindings/binder_map.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/scoped_message_error_crash_key.h"
+#include "mojo/public/cpp/system/functions.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "services/metrics/public/mojom/ukm_interface.mojom.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/viz/privileged/mojom/gl/gpu_service.mojom.h"
 #include "third_party/skia/include/core/SkGraphics.h"
-
-#if defined(USE_OZONE)
-#include "ui/ozone/public/ozone_platform.h"
-#endif
 
 #if defined(OS_ANDROID)
 #include "media/base/android/media_drm_bridge_client.h"
@@ -82,15 +80,15 @@ bool CreateCommandBufferSyncQt(
 namespace content {
 namespace {
 
+// Called when the GPU process receives a bad IPC message.
+void HandleBadMessage(const std::string& error) {
+  LOG(ERROR) << "Mojo error in GPU process: " << error;
+  mojo::debug::ScopedMessageErrorCrashKey crash_key_value(error);
+  base::debug::DumpWithoutCrashing();
+}
+
 ChildThreadImpl::Options GetOptions() {
   ChildThreadImpl::Options::Builder builder;
-
-#if defined(USE_OZONE)
-  IPC::MessageFilter* message_filter =
-      ui::OzonePlatform::GetInstance()->GetGpuMessageFilter();
-  if (message_filter)
-    builder.AddStartupFilter(message_filter);
-#endif
 
   builder.ConnectToBrowser(true);
   builder.ExposesInterfacesToBrowser();
@@ -163,6 +161,9 @@ GpuChildThread::GpuChildThread(base::RepeatingClosure quit_closure,
 GpuChildThread::~GpuChildThread() = default;
 
 void GpuChildThread::Init(const base::Time& process_start_time) {
+  if (!in_process_gpu())
+    mojo::SetDefaultProcessErrorHandler(base::BindRepeating(&HandleBadMessage));
+
   viz_main_.gpu_service()->set_start_time(process_start_time);
 
   // When running in in-process mode, this has been set in the browser at
@@ -179,9 +180,9 @@ void GpuChildThread::Init(const base::Time& process_start_time) {
   associated_registry->AddInterface(base::BindRepeating(
       &GpuChildThread::CreateVizMainService, base::Unretained(this)));
 
-  memory_pressure_listener_ =
-      std::make_unique<base::MemoryPressureListener>(base::BindRepeating(
-          &GpuChildThread::OnMemoryPressure, base::Unretained(this)));
+  memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
+      FROM_HERE, base::BindRepeating(&GpuChildThread::OnMemoryPressure,
+                                     base::Unretained(this)));
 }
 
 void GpuChildThread::CreateVizMainService(
@@ -246,8 +247,10 @@ void GpuChildThread::OnGpuServiceConnection(viz::GpuServiceImpl* gpu_service) {
   // |ExposeGpuInterfacesToBrowser()| in browser_exposed_gpu_interfaces.cc, as
   // that will ensure security review coverage.
   mojo::BinderMap binders;
-  content::ExposeGpuInterfacesToBrowser(gpu_service->gpu_preferences(),
-                                        &binders);
+  content::ExposeGpuInterfacesToBrowser(
+      gpu_service->gpu_preferences(),
+      gpu_service->gpu_channel_manager()->gpu_driver_bug_workarounds(),
+      &binders);
   ExposeInterfacesToBrowser(std::move(binders));
 }
 
@@ -284,7 +287,8 @@ void GpuChildThread::QuitSafelyHelper(
           return;
         GpuChildThread* gpu_child_thread =
             static_cast<GpuChildThread*>(current_child_thread);
-        gpu_child_thread->viz_main_.ExitProcess(/*immediately=*/true);
+        gpu_child_thread->viz_main_.ExitProcess(
+            viz::ExitCode::RESULT_CODE_NORMAL_EXIT);
       }));
 }
 

@@ -28,7 +28,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Host from '../host/host.js';
+import * as ThemeSupport from '../theme_support/theme_support.js';
 
 import * as ARIAUtils from './ARIAUtils.js';
 import {AnchorBehavior, GlassPane, MarginBehavior, PointerEventsBehavior, SizeBehavior,} from './GlassPane.js';  // eslint-disable-line no-unused-vars
@@ -41,7 +45,7 @@ import {ElementFocusRestorer} from './UIUtils.js';
 export class SoftContextMenu {
   /**
    * @param {!Array.<!InspectorFrontendHostAPI.ContextMenuDescriptor>} items
-   * @param {function(string)} itemSelectedCallback
+   * @param {function(string):void} itemSelectedCallback
    * @param {!SoftContextMenu=} parentMenu
    */
   constructor(items, itemSelectedCallback, parentMenu) {
@@ -122,6 +126,10 @@ export class SoftContextMenu {
     }
     if (this._parentMenu) {
       delete this._parentMenu._subMenu;
+      if (this._parentMenu._activeSubMenuElement) {
+        ARIAUtils.setExpanded(this._parentMenu._activeSubMenuElement, false);
+        delete this._parentMenu._activeSubMenuElement;
+      }
     }
   }
 
@@ -134,7 +142,8 @@ export class SoftContextMenu {
       return this._createSubMenu(item);
     }
 
-    const menuItemElement = createElementWithClass('div', 'soft-context-menu-item');
+    const menuItemElement = document.createElement('div');
+    menuItemElement.classList.add('soft-context-menu-item');
     menuItemElement.tabIndex = -1;
     ARIAUtils.markAsMenuItem(menuItemElement);
     const checkMarkElement = Icon.create('smallicon-checkmark', 'checkmark');
@@ -183,7 +192,8 @@ export class SoftContextMenu {
   }
 
   _createSubMenu(item) {
-    const menuItemElement = createElementWithClass('div', 'soft-context-menu-item');
+    const menuItemElement = document.createElement('div');
+    menuItemElement.classList.add('soft-context-menu-item');
     menuItemElement._subItems = item.subItems;
     menuItemElement.tabIndex = -1;
     ARIAUtils.markAsMenuItemSubMenu(menuItemElement);
@@ -197,8 +207,9 @@ export class SoftContextMenu {
     checkMarkElement.style.opacity = '0';
 
     menuItemElement.createTextChild(item.label);
+    ARIAUtils.setExpanded(menuItemElement, false);
 
-    if (Host.Platform.isMac() && !self.UI.themeSupport.hasTheme()) {
+    if (Host.Platform.isMac() && !ThemeSupport.ThemeSupport.instance().hasTheme()) {
       const subMenuArrowElement = menuItemElement.createChild('span', 'soft-context-menu-item-submenu-arrow');
       subMenuArrowElement.textContent = '\u25B6';  // BLACK RIGHT-POINTING TRIANGLE
     } else {
@@ -217,7 +228,8 @@ export class SoftContextMenu {
   }
 
   _createSeparator() {
-    const separatorElement = createElementWithClass('div', 'soft-context-menu-separator');
+    const separatorElement = document.createElement('div');
+    separatorElement.classList.add('soft-context-menu-separator');
     separatorElement._isSeparator = true;
     separatorElement.createChild('div', 'separator-line');
     return separatorElement;
@@ -268,6 +280,8 @@ export class SoftContextMenu {
       return;
     }
 
+    this._activeSubMenuElement = menuItemElement;
+    ARIAUtils.setExpanded(menuItemElement, true);
     this._subMenu = new SoftContextMenu(menuItemElement._subItems, this._itemSelectedCallback, this);
     const anchorBox = menuItemElement.boxInWindow();
     // Adjust for padding.
@@ -316,7 +330,7 @@ export class SoftContextMenu {
     }
     this._highlightedMenuItemElement = menuItemElement;
     if (this._highlightedMenuItemElement) {
-      if (self.UI.themeSupport.hasTheme() || Host.Platform.isMac()) {
+      if (ThemeSupport.ThemeSupport.instance().hasTheme() || Host.Platform.isMac()) {
         this._highlightedMenuItemElement.classList.add('force-white-icons');
       }
       this._highlightedMenuItemElement.classList.add('soft-context-menu-item-mouse-over');

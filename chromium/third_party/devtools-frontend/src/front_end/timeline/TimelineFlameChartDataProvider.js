@@ -27,12 +27,15 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Bindings from '../bindings/bindings.js';
 import * as Common from '../common/common.js';
 import * as Host from '../host/host.js';
 import * as PerfUI from '../perf_ui/perf_ui.js';
 import * as SDK from '../sdk/sdk.js';
+import * as ThemeSupport from '../theme_support/theme_support.js';
 import * as TimelineModel from '../timeline_model/timeline_model.js';
 import * as UI from '../ui/ui.js';
 
@@ -93,8 +96,10 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
       padding: 4,
       height: 17,
       collapsible: true,
-      color: self.UI.themeSupport.patchColorText('#222', UI.UIUtils.ThemeSupport.ColorUsage.Foreground),
-      backgroundColor: self.UI.themeSupport.patchColorText('white', UI.UIUtils.ThemeSupport.ColorUsage.Background),
+      color:
+          ThemeSupport.ThemeSupport.instance().patchColorText('#222', ThemeSupport.ThemeSupport.ColorUsage.Foreground),
+      backgroundColor:
+          ThemeSupport.ThemeSupport.instance().patchColorText('white', ThemeSupport.ThemeSupport.ColorUsage.Background),
       font: this._font,
       nestingLevel: 0,
       shareHeaderLine: true
@@ -117,6 +122,17 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
    */
   groupTrack(group) {
     return group._track || null;
+  }
+
+  /**
+   * @override
+   */
+  navStartTimes() {
+    if (!this._model) {
+      return new Map();
+    }
+
+    return this._model.navStartTimes();
   }
 
   /**
@@ -319,7 +335,9 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
           const group = this._appendHeader(ls`Timings`, style, true /* selectable */);
           group._track = track;
           this._appendPageMetrics();
-          this._appendAsyncEventsGroup(track, null, track.asyncEvents, style, eventEntryType, true /* selectable */);
+          this._copyPerfMarkEvents(track);
+          this._appendSyncEvents(track, track.events, null, null, eventEntryType, true /* selectable */);
+          this._appendAsyncEventsGroup(track, null, track.asyncEvents, null, eventEntryType, true /* selectable */);
           break;
         }
 
@@ -347,8 +365,7 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
 
         case TimelineModel.TimelineModel.TrackType.Worker: {
           this._appendSyncEvents(
-              track, track.events, track.url ? ls`Worker \u2014 ${track.url}` : ls`Dedicated Worker`,
-              this._headerLevel1, eventEntryType, true /* selectable */);
+              track, track.events, track.name, this._headerLevel1, eventEntryType, true /* selectable */);
           break;
         }
 
@@ -448,8 +465,8 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
   /**
    * @param {?TimelineModel.TimelineModel.Track} track
    * @param {!Array<!SDK.TracingModel.Event>} events
-   * @param {string} title
-   * @param {!PerfUI.FlameChart.GroupStyle} style
+   * @param {?string} title
+   * @param {?PerfUI.FlameChart.GroupStyle} style
    * @param {!EntryType} entryType
    * @param {boolean} selectable
    * @return {?PerfUI.FlameChart.Group}
@@ -465,15 +482,21 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
     let maxStackDepth = 0;
     let group = null;
     if (track && track.type === TimelineModel.TimelineModel.TrackType.MainThread) {
-      group = this._appendHeader(title, style, selectable);
+      group = this._appendHeader(
+          /** @type {string} */ (title), /** @type {!PerfUI.FlameChart.GroupStyle} */ (style), selectable);
       group._track = track;
     }
     for (let i = 0; i < events.length; ++i) {
       const e = events[i];
-      // Skip Layout Shifts when dealing with the main thread.
-      if (track && track.type === TimelineModel.TimelineModel.TrackType.MainThread && this._performanceModel &&
-          this._performanceModel.timelineModel().isLayoutShiftEvent(e)) {
-        continue;
+      // Skip Layout Shifts and TTI events when dealing with the main thread.
+      if (this._performanceModel) {
+        const isInteractiveTime = this._performanceModel.timelineModel().isInteractiveTimeEvent(e);
+        const isLayoutShift = this._performanceModel.timelineModel().isLayoutShiftEvent(e);
+        const skippableEvent = isInteractiveTime || isLayoutShift;
+
+        if (track && track.type === TimelineModel.TimelineModel.TrackType.MainThread && skippableEvent) {
+          continue;
+        }
       }
 
       if (this._performanceModel && this._performanceModel.timelineModel().isLayoutShiftEvent(e)) {
@@ -523,8 +546,8 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
         }
         e._blackboxRoot = true;
       }
-      if (!group) {
-        group = this._appendHeader(title, style, selectable);
+      if (!group && title) {
+        group = this._appendHeader(title, /** @type {!PerfUI.FlameChart.GroupStyle} */ (style), selectable);
         if (selectable) {
           group._track = track;
         }
@@ -575,14 +598,14 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
 
   /**
    * @param {?TimelineModel.TimelineModel.Track} track
-   * @param {?string} header
+   * @param {?string} title
    * @param {!Array<!SDK.TracingModel.AsyncEvent>} events
-   * @param {!PerfUI.FlameChart.GroupStyle} style
+   * @param {?PerfUI.FlameChart.GroupStyle} style
    * @param {!EntryType} entryType
    * @param {boolean} selectable
    * @return {?PerfUI.FlameChart.Group}
    */
-  _appendAsyncEventsGroup(track, header, events, style, entryType, selectable) {
+  _appendAsyncEventsGroup(track, title, events, style, entryType, selectable) {
     if (!events.length) {
       return null;
     }
@@ -593,8 +616,8 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
       if (!this._performanceModel.isVisible(asyncEvent)) {
         continue;
       }
-      if (!group && header) {
-        group = this._appendHeader(header, style, selectable);
+      if (!group && title) {
+        group = this._appendHeader(title, /** @type {!PerfUI.FlameChart.GroupStyle} */ (style), selectable);
         if (selectable) {
           group._track = track;
         }
@@ -679,6 +702,75 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
     ++this._currentLevel;
   }
 
+  /**
+   * This function pushes a copy of each performance.mark() event from the Main track
+   * into Timings so they can be appended to the performance UI.
+   * Performance.mark() are a part of the "blink.user_timing" category alongside
+   * Navigation and Resource Timing events, so we must filter them out before pushing.
+   *
+   * @param {?TimelineModel.TimelineModel.Track} timingTrack
+   */
+  _copyPerfMarkEvents(timingTrack) {
+    this._entryTypeByLevel[this._currentLevel] = EntryType.Event;
+    const timelineModel = this._performanceModel.timelineModel();
+    const ResourceTimingNames = [
+      'workerStart',
+      'redirectStart',
+      'redirectEnd',
+      'fetchStart',
+      'domainLookupStart',
+      'domainLookupEnd',
+      'connectStart',
+      'connectEnd',
+      'secureConnectionStart',
+      'requestStart',
+      'responseStart',
+      'responseEnd',
+    ];
+    const NavTimingNames = [
+      'navigationStart',
+      'unloadEventStart',
+      'unloadEventEnd',
+      'redirectStart',
+      'redirectEnd',
+      'fetchStart',
+      'domainLookupStart',
+      'domainLookupEnd',
+      'connectStart',
+      'connectEnd',
+      'secureConnectionStart',
+      'requestStart',
+      'responseStart',
+      'responseEnd',
+      'domLoading',
+      'domInteractive',
+      'domContentLoadedEventStart',
+      'domContentLoadedEventEnd',
+      'domComplete',
+      'loadEventStart',
+      'loadEventEnd',
+    ];
+    const IgnoreNames = [...ResourceTimingNames, ...NavTimingNames];
+    for (const track of this._model.tracks()) {
+      if (track.type === TimelineModel.TimelineModel.TrackType.MainThread) {
+        for (const event of track.events) {
+          if (timelineModel.isUserTimingEvent(event)) {
+            if (IgnoreNames.includes(event.name)) {
+              continue;
+            }
+            if (SDK.TracingModel.TracingModel.isAsyncPhase(event.phase)) {
+              continue;
+            }
+            event.setEndTime(event.startTime);
+            timingTrack.events.push(event);
+          }
+        }
+      }
+    }
+
+    ++this._currentLevel;
+  }
+
   _appendFrames() {
     const screenshots = this._performanceModel.filmStripModel().frames();
     const hasFilmStrip = !!screenshots.length;
@@ -756,6 +848,14 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
         // TODO: Update this to be dynamic when the trace data supports it.
         const occurrences = 1;
         time = ls`Occurrences: ${occurrences}`;
+      }
+
+      if (this._model && this._model.isParseHTMLEvent(event)) {
+        const startLine = event.args['beginData']['startLine'];
+        const endLine = event.args['endData'] && event.args['endData']['endLine'];
+        const url = Bindings.ResourceUtils.displayNameForURL(event.args['beginData']['url']);
+        const range = (endLine !== -1 || endLine === startLine) ? `${startLine}...${endLine}` : startLine;
+        title += ` - ${url} [${range}]`;
       }
 
     } else if (type === EntryType.Frame) {
@@ -1120,17 +1220,23 @@ export class TimelineFlameChartDataProvider extends Common.ObjectWrapper.ObjectW
       timelineData.flowEndLevels[flowIndex] = level;
     }
 
+    const eventId = event.id;
+
+    if (!eventId) {
+      return;
+    }
+
     switch (event.phase) {
       case SDK.TracingModel.Phase.FlowBegin:
-        this._flowEventIndexById.set(event.id, pushStartFlow(event));
+        this._flowEventIndexById.set(eventId, pushStartFlow(event));
         break;
       case SDK.TracingModel.Phase.FlowStep:
-        pushEndFlow(event, this._flowEventIndexById.get(event.id));
-        this._flowEventIndexById.set(event.id, pushStartFlow(event));
+        pushEndFlow(event, this._flowEventIndexById.get(eventId));
+        this._flowEventIndexById.set(eventId, pushStartFlow(event));
         break;
       case SDK.TracingModel.Phase.FlowEnd:
-        pushEndFlow(event, this._flowEventIndexById.get(event.id));
-        this._flowEventIndexById.delete(event.id);
+        pushEndFlow(event, this._flowEventIndexById.get(eventId));
+        this._flowEventIndexById.delete(eventId);
         break;
     }
   }

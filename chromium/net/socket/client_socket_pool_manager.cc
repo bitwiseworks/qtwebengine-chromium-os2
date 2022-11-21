@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
@@ -232,11 +232,7 @@ base::TimeDelta ClientSocketPoolManager::unused_idle_socket_timeout(
   return base::TimeDelta::FromSeconds(base::GetFieldTrialParamByFeatureAsInt(
       net::features::kNetUnusedIdleSocketTimeout,
       "unused_idle_socket_timeout_seconds",
-#if defined(OS_ANDROID)
       60
-#else
-      10
-#endif
       ));
 }
 

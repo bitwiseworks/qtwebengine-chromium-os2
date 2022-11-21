@@ -8,7 +8,7 @@
 
 #include <limits>
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"  // For |Sleep()|.
 #include "build/build_config.h"
@@ -54,9 +54,9 @@ void Sleep(MojoDeadline deadline) {
       base::TimeDelta::FromMicroseconds(static_cast<int64_t>(deadline)));
 }
 
-Stopwatch::Stopwatch() {}
+Stopwatch::Stopwatch() = default;
 
-Stopwatch::~Stopwatch() {}
+Stopwatch::~Stopwatch() = default;
 
 void Stopwatch::Start() {
   start_time_ = base::TimeTicks::Now();

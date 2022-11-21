@@ -22,6 +22,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as Platform from '../platform/platform.js';
@@ -38,7 +40,8 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
   constructor(dataGridParameters) {
     super();
     const {displayName, columns: columnsArray, editCallback, deleteCallback, refreshCallback} = dataGridParameters;
-    this.element = createElementWithClass('div', 'data-grid');
+    this.element = document.createElement('div');
+    this.element.classList.add('data-grid');
     UI.Utils.appendStyle(this.element, 'data_grid/dataGrid.css');
     this.element.tabIndex = 0;
     this.element.addEventListener('keydown', this._keyDown.bind(this), false);
@@ -596,7 +599,8 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
     }
     const column = this._columns[columnId];
     const cellIndex = this.visibleColumnsArray.indexOf(column);
-    const textBeforeEditing = /** @type {string} */ (this._editingNode.data[columnId]);
+    const valueBeforeEditing = /** @type {string|boolean} */ (
+        this._editingNode.data[columnId] === null ? '' : this._editingNode.data[columnId]);
     const currentEditingNode = this._editingNode;
 
     /**
@@ -652,7 +656,7 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
     // Show trimmed text after editing.
     this.setElementContent(element, newText);
 
-    if (textBeforeEditing === newText) {
+    if (valueBeforeEditing === newText) {
       this._editingCancelled(element);
       moveToNextIfNeeded.call(this, false);
       return;
@@ -663,7 +667,7 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
 
     // Make the callback - expects an editing node (table row), the column number that is being edited,
     // the text that used to be there, and the new text.
-    this._editCallback(this._editingNode, columnId, textBeforeEditing, newText);
+    this._editCallback(this._editingNode, columnId, valueBeforeEditing, newText);
 
     if (this._editingNode.isCreationNode) {
       this.addCreationNode(false);
@@ -888,8 +892,10 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   _resetColumnWeights() {
-    for (let i = 0; i < this._columnsArray.length; ++i) {
-      const column = this._columnsArray[i];
+    for (const column of this._columnsArray) {
+      if (!column.defaultWeight) {
+        continue;
+      }
       column.weight = column.defaultWeight;
     }
     this._applyColumnWeights();
@@ -951,6 +957,7 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
     }
     let sum = 0;
     let lastOffset = 0;
+    const minColumnWidth = 14;  // px
 
     for (let i = 0; i < this.visibleColumnsArray.length; ++i) {
       const column = this.visibleColumnsArray[i];
@@ -960,7 +967,7 @@ export class DataGridImpl extends Common.ObjectWrapper.ObjectWrapper {
       } else {
         sum += column.weight;
         const offset = (sum * tableWidth / sumOfWeights) | 0;
-        width = offset - lastOffset;
+        width = Math.max(offset - lastOffset, minColumnWidth);
         lastOffset = offset;
       }
       this._setPreferredWidth(i, width);
@@ -1660,7 +1667,8 @@ export class DataGridNode extends Common.ObjectWrapper.ObjectWrapper {
    * @return {!Element}
    */
   createElement() {
-    this._element = createElementWithClass('tr', 'data-grid-data-grid-node');
+    this._element = document.createElement('tr');
+    this._element.classList.add('data-grid-data-grid-node');
     this._element._dataGridNode = this;
 
     if (this._hasChildren) {
@@ -1704,6 +1712,9 @@ export class DataGridNode extends Common.ObjectWrapper.ObjectWrapper {
    */
   createCells(element) {
     element.removeChildren();
+    if (!this.dataGrid) {
+      return;
+    }
     const columnsArray = this.dataGrid.visibleColumnsArray;
     const accessibleTextArray = [];
     // Add depth if node is part of a tree
@@ -1718,7 +1729,7 @@ export class DataGridNode extends Common.ObjectWrapper.ObjectWrapper {
       accessibleTextArray.push(`${localizedTitle}: ${this.cellAccessibleTextMap.get(column.id) || cell.textContent}`);
     }
     this.nodeAccessibleText = accessibleTextArray.join(', ');
-    element.appendChild(this._createTDWithClass('corner'));
+    element.appendChild(this.createTDWithClass('corner'));
   }
 
   /**
@@ -1939,11 +1950,15 @@ export class DataGridNode extends Common.ObjectWrapper.ObjectWrapper {
   }
 
   /**
+   * @protected
    * @param {string} className
-   * @return {!Element}
+   * @return {!HTMLElement}
    */
-  _createTDWithClass(className) {
-    const cell = createElementWithClass('td', className);
+  createTDWithClass(className) {
+    const cell = /** @type {!HTMLElement} */ (document.createElement('td'));
+    if (className) {
+      cell.className = className;
+    }
     const cellClass = this.dataGrid._cellClass;
     if (cellClass) {
       cell.classList.add(cellClass);
@@ -1953,10 +1968,10 @@ export class DataGridNode extends Common.ObjectWrapper.ObjectWrapper {
 
   /**
    * @param {string} columnId
-   * @return {!Element}
+   * @return {!HTMLElement}
    */
   createTD(columnId) {
-    const cell = this._createTDWithClass(columnId + '-column');
+    const cell = this.createTDWithClass(columnId + '-column');
     cell[DataGrid._columnIdSymbol] = columnId;
 
     const alignment = this.dataGrid._columns[columnId].align;
@@ -1976,7 +1991,7 @@ export class DataGridNode extends Common.ObjectWrapper.ObjectWrapper {
 
   /**
    * @param {string} columnId
-   * @return {!Element}
+   * @return {!HTMLElement}
    */
   createCell(columnId) {
     const cell = this.createTD(columnId);
@@ -2539,8 +2554,8 @@ export class DataGridWidget extends UI.Widget.VBox {
  * @typedef {{
  *   displayName: string,
  *   columns: !Array.<!ColumnDescriptor>,
- *   editCallback: (function(!Object, string, *, *)|undefined),
- *   deleteCallback: (function(!Object)|undefined|function(string)),
+ *   editCallback: (function(*, string, *, *)|undefined),
+ *   deleteCallback: (function(*)|undefined|function(string)),
  *   refreshCallback: (function()|undefined)
  * }}
  */
@@ -2554,6 +2569,7 @@ export let Parameters;
  *   sortable: boolean,
  *   sort: (?Order|undefined),
  *   align: (?Align|undefined),
+ *   width: (string|undefined),
  *   fixedWidth: (boolean|undefined),
  *   editable: (boolean|undefined),
  *   nonSelectable: (boolean|undefined),
@@ -2561,7 +2577,8 @@ export let Parameters;
  *   disclosure: (boolean|undefined),
  *   weight: (number|undefined),
  *   allowInSortByEvenWhenHidden: (boolean|undefined),
- *   dataType: (?DataType|undefined)
+ *   dataType: (?DataType|undefined),
+ *   defaultWeight: (number|undefined)
  * }}
  */
 export let ColumnDescriptor;

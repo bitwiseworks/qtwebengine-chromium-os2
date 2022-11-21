@@ -16,8 +16,6 @@ class MediaDevices;
 
 class NavigatorUserMedia final : public GarbageCollected<NavigatorUserMedia>,
                                  public Supplement<Navigator> {
-  USING_GARBAGE_COLLECTED_MIXIN(NavigatorUserMedia);
-
  public:
   static const char kSupplementName[];
 
@@ -25,7 +23,7 @@ class NavigatorUserMedia final : public GarbageCollected<NavigatorUserMedia>,
 
   explicit NavigatorUserMedia(Navigator&);
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
  private:
   MediaDevices* GetMediaDevices();

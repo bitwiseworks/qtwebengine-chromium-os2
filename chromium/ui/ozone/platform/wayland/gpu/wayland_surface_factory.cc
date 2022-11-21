@@ -25,6 +25,10 @@
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
+#if BUILDFLAG(ENABLE_VULKAN)
+#include "ui/ozone/platform/wayland/gpu/vulkan_implementation_wayland.h"
+#endif
+
 namespace ui {
 
 namespace {
@@ -132,9 +136,7 @@ WaylandSurfaceFactory::WaylandSurfaceFactory(
 WaylandSurfaceFactory::~WaylandSurfaceFactory() = default;
 
 std::unique_ptr<SurfaceOzoneCanvas>
-WaylandSurfaceFactory::CreateCanvasForWidget(
-    gfx::AcceleratedWidget widget,
-    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+WaylandSurfaceFactory::CreateCanvasForWidget(gfx::AcceleratedWidget widget) {
   return std::make_unique<WaylandCanvasSurface>(buffer_manager_, widget);
 }
 
@@ -158,6 +160,15 @@ GLOzone* WaylandSurfaceFactory::GetGLOzone(
       return nullptr;
   }
 }
+
+#if BUILDFLAG(ENABLE_VULKAN)
+std::unique_ptr<gpu::VulkanImplementation>
+WaylandSurfaceFactory::CreateVulkanImplementation(
+    bool allow_protected_memory,
+    bool enforce_protected_memory) {
+  return std::make_unique<VulkanImplementationWayland>();
+}
+#endif
 
 scoped_refptr<gfx::NativePixmap> WaylandSurfaceFactory::CreateNativePixmap(
     gfx::AcceleratedWidget widget,

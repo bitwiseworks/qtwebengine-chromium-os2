@@ -13,11 +13,10 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "content/common/content_export.h"
-#include "content/common/media/renderer_audio_input_stream_factory.mojom.h"
 #include "media/mojo/mojom/audio_input_stream.mojom.h"
 #include "media/mojo/mojom/audio_output_stream.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/audio/public/mojom/audio_processing.mojom.h"
+#include "third_party/blink/public/mojom/media/renderer_audio_input_stream_factory.mojom.h"
 
 namespace audio {
 namespace mojom {
@@ -106,9 +105,8 @@ class CONTENT_EXPORT AudioStreamBrokerFactory {
       uint32_t shared_memory_count,
       media::UserInputMonitorBase* user_input_monitor,
       bool enable_agc,
-      audio::mojom::AudioProcessingConfigPtr processing_config,
       AudioStreamBroker::DeleterCallback deleter,
-      mojo::PendingRemote<mojom::RendererAudioInputStreamFactoryClient>
+      mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
           renderer_factory_client) = 0;
 
   virtual std::unique_ptr<AudioStreamBroker> CreateAudioLoopbackStreamBroker(
@@ -119,7 +117,7 @@ class CONTENT_EXPORT AudioStreamBrokerFactory {
       uint32_t shared_memory_count,
       bool mute_source,
       AudioStreamBroker::DeleterCallback deleter,
-      mojo::PendingRemote<mojom::RendererAudioInputStreamFactoryClient>
+      mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
           renderer_factory_client) = 0;
 
   virtual std::unique_ptr<AudioStreamBroker> CreateAudioOutputStreamBroker(
@@ -129,7 +127,6 @@ class CONTENT_EXPORT AudioStreamBrokerFactory {
       const std::string& output_device_id,
       const media::AudioParameters& params,
       const base::UnguessableToken& group_id,
-      const base::Optional<base::UnguessableToken>& processing_id,
       AudioStreamBroker::DeleterCallback deleter,
       mojo::PendingRemote<media::mojom::AudioOutputStreamProviderClient>
           client) = 0;

@@ -228,6 +228,15 @@ void CPDFSDK_PageView::ReplaceSelection(const WideString& text) {
   }
 }
 
+bool CPDFSDK_PageView::SelectAllText() {
+  CPDFSDK_Annot* annot = GetFocusAnnot();
+  if (!annot)
+    return false;
+
+  CPDFSDK_AnnotHandlerMgr* handler = m_pFormFillEnv->GetAnnotHandlerMgr();
+  return handler->Annot_SelectAllText(annot);
+}
+
 bool CPDFSDK_PageView::CanUndo() {
   if (CPDFSDK_Annot* pAnnot = GetFocusAnnot()) {
     CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr =
@@ -264,7 +273,7 @@ bool CPDFSDK_PageView::Redo() {
   return false;
 }
 
-bool CPDFSDK_PageView::OnFocus(const CFX_PointF& point, uint32_t nFlag) {
+bool CPDFSDK_PageView::OnFocus(uint32_t nFlag, const CFX_PointF& point) {
   ObservedPtr<CPDFSDK_Annot> pAnnot(GetFXWidgetAtPoint(point));
   if (!pAnnot) {
     m_pFormFillEnv->KillFocusAnnot(nFlag);
@@ -275,7 +284,7 @@ bool CPDFSDK_PageView::OnFocus(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPDFSDK_PageView::OnLButtonDown(const CFX_PointF& point, uint32_t nFlag) {
+bool CPDFSDK_PageView::OnLButtonDown(uint32_t nFlag, const CFX_PointF& point) {
   ObservedPtr<CPDFSDK_Annot> pAnnot(GetFXWidgetAtPoint(point));
   if (!pAnnot) {
     m_pFormFillEnv->KillFocusAnnot(nFlag);
@@ -294,7 +303,7 @@ bool CPDFSDK_PageView::OnLButtonDown(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPDFSDK_PageView::OnLButtonUp(const CFX_PointF& point, uint32_t nFlag) {
+bool CPDFSDK_PageView::OnLButtonUp(uint32_t nFlag, const CFX_PointF& point) {
   CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr =
       m_pFormFillEnv->GetAnnotHandlerMgr();
   ObservedPtr<CPDFSDK_Annot> pFXAnnot(GetFXWidgetAtPoint(point));
@@ -308,8 +317,8 @@ bool CPDFSDK_PageView::OnLButtonUp(const CFX_PointF& point, uint32_t nFlag) {
          pAnnotHandlerMgr->Annot_OnLButtonUp(this, &pFXAnnot, nFlag, point);
 }
 
-bool CPDFSDK_PageView::OnLButtonDblClk(const CFX_PointF& point,
-                                       uint32_t nFlag) {
+bool CPDFSDK_PageView::OnLButtonDblClk(uint32_t nFlag,
+                                       const CFX_PointF& point) {
   ObservedPtr<CPDFSDK_Annot> pAnnot(GetFXWidgetAtPoint(point));
   if (!pAnnot) {
     m_pFormFillEnv->KillFocusAnnot(nFlag);
@@ -328,7 +337,7 @@ bool CPDFSDK_PageView::OnLButtonDblClk(const CFX_PointF& point,
   return true;
 }
 
-bool CPDFSDK_PageView::OnRButtonDown(const CFX_PointF& point, uint32_t nFlag) {
+bool CPDFSDK_PageView::OnRButtonDown(uint32_t nFlag, const CFX_PointF& point) {
   ObservedPtr<CPDFSDK_Annot> pAnnot(GetFXWidgetAtPoint(point));
   if (!pAnnot)
     return false;
@@ -345,7 +354,7 @@ bool CPDFSDK_PageView::OnRButtonDown(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPDFSDK_PageView::OnRButtonUp(const CFX_PointF& point, uint32_t nFlag) {
+bool CPDFSDK_PageView::OnRButtonUp(uint32_t nFlag, const CFX_PointF& point) {
   ObservedPtr<CPDFSDK_Annot> pAnnot(GetFXWidgetAtPoint(point));
   if (!pAnnot)
     return false;
@@ -362,7 +371,7 @@ bool CPDFSDK_PageView::OnRButtonUp(const CFX_PointF& point, uint32_t nFlag) {
   return true;
 }
 
-bool CPDFSDK_PageView::OnMouseMove(const CFX_PointF& point, int nFlag) {
+bool CPDFSDK_PageView::OnMouseMove(int nFlag, const CFX_PointF& point) {
   CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr =
       m_pFormFillEnv->GetAnnotHandlerMgr();
 
@@ -419,18 +428,17 @@ void CPDFSDK_PageView::ExitWidget(CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr,
   m_pCaptureWidget.Reset();
 }
 
-bool CPDFSDK_PageView::OnMouseWheel(double deltaX,
-                                    double deltaY,
+bool CPDFSDK_PageView::OnMouseWheel(int nFlag,
                                     const CFX_PointF& point,
-                                    int nFlag) {
+                                    const CFX_Vector& delta) {
   ObservedPtr<CPDFSDK_Annot> pAnnot(GetFXWidgetAtPoint(point));
   if (!pAnnot)
     return false;
 
   CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr =
       m_pFormFillEnv->GetAnnotHandlerMgr();
-  return pAnnotHandlerMgr->Annot_OnMouseWheel(this, &pAnnot, nFlag,
-                                              static_cast<int>(deltaY), point);
+  return pAnnotHandlerMgr->Annot_OnMouseWheel(this, &pAnnot, nFlag, point,
+                                              delta);
 }
 
 bool CPDFSDK_PageView::SetIndexSelected(int index, bool selected) {
@@ -467,12 +475,10 @@ bool CPDFSDK_PageView::OnChar(int nChar, uint32_t nFlag) {
 }
 
 bool CPDFSDK_PageView::OnKeyDown(int nKeyCode, int nFlag) {
-  if (CPDFSDK_Annot* pAnnot = GetFocusAnnot()) {
-    CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr =
-        m_pFormFillEnv->GetAnnotHandlerMgr();
-    return pAnnotHandlerMgr->Annot_OnKeyDown(pAnnot, nKeyCode, nFlag);
-  }
-  return false;
+  CPDFSDK_AnnotHandlerMgr* pAnnotHandlerMgr =
+      m_pFormFillEnv->GetAnnotHandlerMgr();
+  return pAnnotHandlerMgr->Annot_OnKeyDown(this, GetFocusAnnot(), nKeyCode,
+                                           nFlag);
 }
 
 bool CPDFSDK_PageView::OnKeyUp(int nKeyCode, int nFlag) {
@@ -491,9 +497,9 @@ void CPDFSDK_PageView::LoadFXAnnots() {
   CPDF_Document::Extension* pContext = m_pFormFillEnv->GetDocExtension();
   if (pContext && pContext->ContainsExtensionFullForm()) {
     CXFA_FFPageView* pageView = protector->GetXFAPageView();
-    std::unique_ptr<IXFA_WidgetIterator> pWidgetHandler =
-        pageView->CreateFormWidgetIterator(XFA_WidgetStatus_Visible |
-                                           XFA_WidgetStatus_Viewable);
+    IXFA_WidgetIterator* pWidgetHandler =
+        pageView->CreateGCedFormWidgetIterator(XFA_WidgetStatus_Visible |
+                                               XFA_WidgetStatus_Viewable);
 
     while (CXFA_FFWidget* pXFAAnnot = pWidgetHandler->MoveToNext()) {
       std::unique_ptr<CPDFSDK_Annot> pNewAnnot =
@@ -513,7 +519,7 @@ void CPDFSDK_PageView::LoadFXAnnots() {
   bool bUpdateAP = CPDF_InteractiveForm::IsUpdateAPEnabled();
   // Disable the default AP construction.
   CPDF_InteractiveForm::SetUpdateAP(false);
-  m_pAnnotList = pdfium::MakeUnique<CPDF_AnnotList>(pPage);
+  m_pAnnotList = std::make_unique<CPDF_AnnotList>(pPage);
   CPDF_InteractiveForm::SetUpdateAP(bUpdateAP);
 
   const size_t nCount = m_pAnnotList->Count();
@@ -565,7 +571,7 @@ bool CPDFSDK_PageView::IsValidAnnot(const CPDF_Annot* p) const {
 bool CPDFSDK_PageView::IsValidSDKAnnot(const CPDFSDK_Annot* p) const {
   if (!p)
     return false;
-  return pdfium::ContainsValue(m_SDKAnnotArray, p);
+  return pdfium::Contains(m_SDKAnnotArray, p);
 }
 
 CPDFSDK_Annot* CPDFSDK_PageView::GetFocusAnnot() {

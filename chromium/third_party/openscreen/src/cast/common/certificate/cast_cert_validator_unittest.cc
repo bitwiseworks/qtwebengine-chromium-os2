@@ -11,6 +11,8 @@
 #include "cast/common/certificate/testing/test_helpers.h"
 #include "gtest/gtest.h"
 #include "openssl/pem.h"
+#include "platform/test/paths.h"
+#include "util/crypto/pem_helpers.h"
 
 namespace openscreen {
 namespace cast {
@@ -50,8 +52,7 @@ void RunTest(Error::Code expected_result,
              const DateTime& time,
              TrustStoreDependency trust_store_dependency,
              const std::string& optional_signed_data_file_name) {
-  std::vector<std::string> certs =
-      testing::ReadCertificatesFromPemFile(certs_file_name);
+  std::vector<std::string> certs = ReadCertificatesFromPemFile(certs_file_name);
   TrustStore* trust_store;
   std::unique_ptr<TrustStore> fake_trust_store;
 
@@ -93,7 +94,10 @@ void RunTest(Error::Code expected_result,
   // Test that the context is good.
   EXPECT_EQ(expected_common_name, context->GetCommonName());
 
-#define DATA_SPAN_FROM_LITERAL(s) ConstDataSpan{(uint8_t*)s, sizeof(s) - 1}
+#define DATA_SPAN_FROM_LITERAL(s)                                          \
+  ConstDataSpan{const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(s)), \
+                sizeof(s) - 1}
+
   // Test verification of some invalid signatures.
   EXPECT_FALSE(context->VerifySignatureOverData(
       DATA_SPAN_FROM_LITERAL("bogus signature"),
@@ -153,7 +157,11 @@ DateTime MarchFirst2037() {
   return CreateDate(2037, 3, 1);
 }
 
-#define TEST_DATA_PREFIX OPENSCREEN_TEST_DATA_DIR "/cast/common/certificate/"
+const std::string& GetSpecificTestDataPath() {
+  static std::string data_path =
+      GetTestDataPath() + "/cast/common/certificate/";
+  return data_path;
+}
 
 // Tests verifying a valid certificate chain of length 2:
 //
@@ -163,11 +171,12 @@ DateTime MarchFirst2037() {
 // Chains to trust anchor:
 //   Eureka Root CA    (built-in trust store)
 TEST(VerifyCastDeviceCertTest, ChromecastGen1) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "2ZZBG9 FA8FCA3EF91A",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/chromecast_gen1.pem", AprilFirst2016(),
+          data_path + "certificates/chromecast_gen1.pem", AprilFirst2016(),
           TRUST_STORE_BUILTIN,
-          TEST_DATA_PREFIX "signeddata/2ZZBG9_FA8FCA3EF91A.pem");
+          data_path + "signeddata/2ZZBG9_FA8FCA3EF91A.pem");
 }
 
 // Tests verifying a valid certificate chain of length 2:
@@ -178,11 +187,12 @@ TEST(VerifyCastDeviceCertTest, ChromecastGen1) {
 // Chains to trust anchor:
 //   Cast Root CA     (built-in trust store)
 TEST(VerifyCastDeviceCertTest, ChromecastGen1Reissue) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "2ZZBG9 FA8FCA3EF91A",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/chromecast_gen1_reissue.pem",
+          data_path + "certificates/chromecast_gen1_reissue.pem",
           AprilFirst2016(), TRUST_STORE_BUILTIN,
-          TEST_DATA_PREFIX "signeddata/2ZZBG9_FA8FCA3EF91A.pem");
+          data_path + "signeddata/2ZZBG9_FA8FCA3EF91A.pem");
 }
 
 // Tests verifying a valid certificate chain of length 2:
@@ -193,9 +203,10 @@ TEST(VerifyCastDeviceCertTest, ChromecastGen1Reissue) {
 // Chains to trust anchor:
 //   Cast Root CA     (built-in trust store)
 TEST(VerifyCastDeviceCertTest, ChromecastGen2) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "3ZZAK6 FA8FCA3F0D35",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/chromecast_gen2.pem", AprilFirst2016(),
+          data_path + "certificates/chromecast_gen2.pem", AprilFirst2016(),
           TRUST_STORE_BUILTIN, "");
 }
 
@@ -208,9 +219,10 @@ TEST(VerifyCastDeviceCertTest, ChromecastGen2) {
 // Chains to trust anchor:
 //   Cast Root CA     (built-in trust store)
 TEST(VerifyCastDeviceCertTest, Fugu) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "-6394818897508095075",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/fugu.pem", AprilFirst2016(),
+          data_path + "certificates/fugu.pem", AprilFirst2016(),
           TRUST_STORE_BUILTIN, "");
 }
 
@@ -223,9 +235,10 @@ TEST(VerifyCastDeviceCertTest, Fugu) {
 //
 // This is invalid because it does not chain to a trust anchor.
 TEST(VerifyCastDeviceCertTest, Unchained) {
-  RunTest(Error::Code::kErrCertsVerifyGeneric, "",
+  std::string data_path = GetSpecificTestDataPath();
+  RunTest(Error::Code::kErrCertsVerifyUntrustedCert, "",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/unchained.pem", AprilFirst2016(),
+          data_path + "certificates/unchained.pem", AprilFirst2016(),
           TRUST_STORE_BUILTIN, "");
 }
 
@@ -240,9 +253,10 @@ TEST(VerifyCastDeviceCertTest, Unchained) {
 // trust anchors after all) it fails the test as it is not a *device
 // certificate*.
 TEST(VerifyCastDeviceCertTest, CastRootCa) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kErrCertsRestrictions, "",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/cast_root_ca.pem", AprilFirst2016(),
+          data_path + "certificates/cast_root_ca.pem", AprilFirst2016(),
           TRUST_STORE_BUILTIN, "");
 }
 
@@ -257,10 +271,11 @@ TEST(VerifyCastDeviceCertTest, CastRootCa) {
 // This device certificate has a policy that means it is valid only for audio
 // devices.
 TEST(VerifyCastDeviceCertTest, ChromecastAudio) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "4ZZDZJ FA8FCA7EFE3C",
           CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX "certificates/chromecast_audio.pem",
-          AprilFirst2016(), TRUST_STORE_BUILTIN, "");
+          data_path + "certificates/chromecast_audio.pem", AprilFirst2016(),
+          TRUST_STORE_BUILTIN, "");
 }
 
 // Tests verifying a valid certificate chain of length 3:
@@ -275,9 +290,10 @@ TEST(VerifyCastDeviceCertTest, ChromecastAudio) {
 // This device certificate has a policy that means it is valid only for audio
 // devices.
 TEST(VerifyCastDeviceCertTest, MtkAudioDev) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "MediaTek Audio Dev Test",
           CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX "certificates/mtk_audio_dev.pem", JanuaryFirst2015(),
+          data_path + "certificates/mtk_audio_dev.pem", JanuaryFirst2015(),
           TRUST_STORE_BUILTIN, "");
 }
 
@@ -289,31 +305,33 @@ TEST(VerifyCastDeviceCertTest, MtkAudioDev) {
 // Chains to trust anchor:
 //   Cast Root CA     (built-in trust store)
 TEST(VerifyCastDeviceCertTest, Vizio) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "9V0000VB FA8FCA784D01",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/vizio.pem", AprilFirst2016(),
+          data_path + "certificates/vizio.pem", AprilFirst2016(),
           TRUST_STORE_BUILTIN, "");
 }
 
 // Tests verifying a valid certificate chain of length 2 using expired
 // time points.
 TEST(VerifyCastDeviceCertTest, ChromecastGen2InvalidTime) {
-  const char* kCertsFile = TEST_DATA_PREFIX "certificates/chromecast_gen2.pem";
+  const std::string certs_file =
+      GetSpecificTestDataPath() + "certificates/chromecast_gen2.pem";
 
   // Control test - certificate should be valid at some time otherwise
   // this test is pointless.
   RunTest(Error::Code::kNone, "3ZZAK6 FA8FCA3F0D35",
-          CastDeviceCertPolicy::kUnrestricted, kCertsFile, AprilFirst2016(),
+          CastDeviceCertPolicy::kUnrestricted, certs_file, AprilFirst2016(),
           TRUST_STORE_BUILTIN, "");
 
   // Use a time before notBefore.
   RunTest(Error::Code::kErrCertsDateInvalid, "",
-          CastDeviceCertPolicy::kUnrestricted, kCertsFile, JanuaryFirst2015(),
+          CastDeviceCertPolicy::kUnrestricted, certs_file, JanuaryFirst2015(),
           TRUST_STORE_BUILTIN, "");
 
   // Use a time after notAfter.
   RunTest(Error::Code::kErrCertsDateInvalid, "",
-          CastDeviceCertPolicy::kUnrestricted, kCertsFile, MarchFirst2037(),
+          CastDeviceCertPolicy::kUnrestricted, certs_file, MarchFirst2037(),
           TRUST_STORE_BUILTIN, "");
 }
 
@@ -329,11 +347,12 @@ TEST(VerifyCastDeviceCertTest, ChromecastGen2InvalidTime) {
 // This device certificate has a policy that means it is valid only for audio
 // devices.
 TEST(VerifyCastDeviceCertTest, AudioRefDevTestChain3) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Audio Reference Dev Test",
           CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX "certificates/audio_ref_dev_test_chain_3.pem",
+          data_path + "certificates/audio_ref_dev_test_chain_3.pem",
           AprilFirst2016(), TRUST_STORE_BUILTIN,
-          TEST_DATA_PREFIX "signeddata/AudioReferenceDevTest.pem");
+          data_path + "signeddata/AudioReferenceDevTest.pem");
 }
 
 // TODO(btolsch): This won't work by default with boringssl, so do we want to
@@ -373,10 +392,11 @@ TEST(VerifyCastDeviceCertTest, IntermediateSerialNumberTooLong) {
 // Chains to trust anchor:
 //   Expired CastRoot     (provided by test data)
 TEST(VerifyCastDeviceCertTest, ExpiredTrustAnchor) {
+  std::string data_path = GetSpecificTestDataPath();
   // The root certificate is only valid in 2015, so validating with a time in
   // 2016 means it is expired.
   RunTest(Error::Code::kNone, "CastDevice", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/expired_root.pem", AprilFirst2016(),
+          data_path + "certificates/expired_root.pem", AprilFirst2016(),
           TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -394,10 +414,11 @@ TEST(VerifyCastDeviceCertTest, ExpiredTrustAnchor) {
 // Chains to trust anchor:
 //   Root     (provided by test data; has pathlen=1 constraint)
 TEST(VerifyCastDeviceCertTest, ViolatesPathlenTrustAnchorConstraint) {
+  std::string data_path = GetSpecificTestDataPath();
   // Test that the chain verification fails due to the pathlen constraint.
   RunTest(Error::Code::kErrCertsPathlen, "Target",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/violates_root_pathlen_constraint.pem",
+          data_path + "certificates/violates_root_pathlen_constraint.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -407,9 +428,9 @@ TEST(VerifyCastDeviceCertTest, ViolatesPathlenTrustAnchorConstraint) {
 //  Intermediate:   policies={anyPolicy}
 //  Leaf:           policies={anyPolicy}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafAnypolicy) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX
-          "certificates/policies_ica_anypolicy_leaf_anypolicy.pem",
+          data_path + "certificates/policies_ica_anypolicy_leaf_anypolicy.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -419,9 +440,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafAnypolicy) {
 //   Intermediate:   policies={anyPolicy}
 //   Leaf:           policies={audioOnly}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafAudioonly) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX
-          "certificates/policies_ica_anypolicy_leaf_audioonly.pem",
+          data_path + "certificates/policies_ica_anypolicy_leaf_audioonly.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -431,8 +452,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafAudioonly) {
 //   Intermediate:   policies={anyPolicy}
 //   Leaf:           policies={foo}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafFoo) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/policies_ica_anypolicy_leaf_foo.pem",
+          data_path + "certificates/policies_ica_anypolicy_leaf_foo.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -442,8 +464,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafFoo) {
 //   Intermediate:   policies={anyPolicy}
 //   Leaf:           policies={}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafNone) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/policies_ica_anypolicy_leaf_none.pem",
+          data_path + "certificates/policies_ica_anypolicy_leaf_none.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -453,9 +476,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAnypolicyLeafNone) {
 //   Intermediate:   policies={audioOnly}
 //   Leaf:           policies={anyPolicy}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafAnypolicy) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX
-          "certificates/policies_ica_audioonly_leaf_anypolicy.pem",
+          data_path + "certificates/policies_ica_audioonly_leaf_anypolicy.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -465,9 +488,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafAnypolicy) {
 //   Intermediate:   policies={audioOnly}
 //   Leaf:           policies={audioOnly}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafAudioonly) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX
-          "certificates/policies_ica_audioonly_leaf_audioonly.pem",
+          data_path + "certificates/policies_ica_audioonly_leaf_audioonly.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -477,8 +500,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafAudioonly) {
 //   Intermediate:   policies={audioOnly}
 //   Leaf:           policies={foo}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafFoo) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX "certificates/policies_ica_audioonly_leaf_foo.pem",
+          data_path + "certificates/policies_ica_audioonly_leaf_foo.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -488,8 +512,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafFoo) {
 //   Intermediate:   policies={audioOnly}
 //   Leaf:           policies={}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafNone) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX "certificates/policies_ica_audioonly_leaf_none.pem",
+          data_path + "certificates/policies_ica_audioonly_leaf_none.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -499,8 +524,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaAudioonlyLeafNone) {
 //   Intermediate:   policies={}
 //   Leaf:           policies={anyPolicy}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafAnypolicy) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/policies_ica_none_leaf_anypolicy.pem",
+          data_path + "certificates/policies_ica_none_leaf_anypolicy.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -510,8 +536,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafAnypolicy) {
 //   Intermediate:   policies={}
 //   Leaf:           policies={audioOnly}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafAudioonly) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kAudioOnly,
-          TEST_DATA_PREFIX "certificates/policies_ica_none_leaf_audioonly.pem",
+          data_path + "certificates/policies_ica_none_leaf_audioonly.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -521,8 +548,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafAudioonly) {
 //   Intermediate:   policies={}
 //   Leaf:           policies={foo}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafFoo) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/policies_ica_none_leaf_foo.pem",
+          data_path + "certificates/policies_ica_none_leaf_foo.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -532,8 +560,9 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafFoo) {
 //   Intermediate:   policies={}
 //   Leaf:           policies={}
 TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafNone) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Leaf", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/policies_ica_none_leaf_none.pem",
+          data_path + "certificates/policies_ica_none_leaf_none.pem",
           AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -541,29 +570,32 @@ TEST(VerifyCastDeviceCertTest, PoliciesIcaNoneLeafNone) {
 // 1024-bit RSA key. Verification should fail since the target's key is
 // too weak.
 TEST(VerifyCastDeviceCertTest, DeviceCertHas1024BitRsaKey) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kErrCertsVerifyGeneric, "RSA 1024 Device Cert",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/rsa1024_device_cert.pem",
-          AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE, "");
+          data_path + "certificates/rsa1024_device_cert.pem", AprilFirst2016(),
+          TRUST_STORE_FROM_TEST_FILE, "");
 }
 
 // Tests verifying a certificate chain where the leaf certificate has a
 // 2048-bit RSA key, and then verifying signed data (both SHA1 and SHA256)
 // for it.
 TEST(VerifyCastDeviceCertTest, DeviceCertHas2048BitRsaKey) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "RSA 2048 Device Cert",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/rsa2048_device_cert.pem",
-          AprilFirst2016(), TRUST_STORE_FROM_TEST_FILE,
-          TEST_DATA_PREFIX "signeddata/rsa2048_device_cert_data.pem");
+          data_path + "certificates/rsa2048_device_cert.pem", AprilFirst2016(),
+          TRUST_STORE_FROM_TEST_FILE,
+          data_path + "signeddata/rsa2048_device_cert_data.pem");
 }
 
 // Tests verifying a certificate chain where an intermediate certificate has a
 // nameConstraints extension but the leaf certificate is still permitted under
 // these constraints.
 TEST(VerifyCastDeviceCertTest, NameConstraintsObeyed) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kNone, "Device", CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/nc.pem", AprilFirst2020(),
+          data_path + "certificates/nc.pem", AprilFirst2020(),
           TRUST_STORE_FROM_TEST_FILE, "");
 }
 
@@ -571,9 +603,10 @@ TEST(VerifyCastDeviceCertTest, NameConstraintsObeyed) {
 // nameConstraints extension and the leaf certificate is not permitted under
 // these constraints.
 TEST(VerifyCastDeviceCertTest, NameConstraintsViolated) {
+  std::string data_path = GetSpecificTestDataPath();
   RunTest(Error::Code::kErrCertsVerifyGeneric, "Device",
           CastDeviceCertPolicy::kUnrestricted,
-          TEST_DATA_PREFIX "certificates/nc_fail.pem", AprilFirst2020(),
+          data_path + "certificates/nc_fail.pem", AprilFirst2020(),
           TRUST_STORE_FROM_TEST_FILE, "");
 }
 

@@ -5,11 +5,11 @@
 #include "components/browser_ui/site_settings/android/storage_info_fetcher.h"
 
 #include "base/bind.h"
-#include "base/task/post_task.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
+#include "storage/browser/quota/quota_client_type.h"
 #include "storage/browser/quota/quota_manager.h"
 
 using content::BrowserContext;
@@ -32,8 +32,8 @@ void StorageInfoFetcher::FetchStorageInfo(FetchCallback fetch_callback) {
 
   // QuotaManager must be called on IO thread, but the callback must then be
   // called on the UI thread.
-  base::PostTask(
-      FROM_HERE, {BrowserThread::IO},
+  content::GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &StorageInfoFetcher::GetUsageInfo, this,
           base::BindOnce(&StorageInfoFetcher::OnGetUsageInfoInternal, this)));
@@ -48,11 +48,11 @@ void StorageInfoFetcher::ClearStorage(const std::string& host,
   clear_callback_ = std::move(clear_callback);
   type_to_delete_ = type;
 
-  base::PostTask(
-      FROM_HERE, {BrowserThread::IO},
+  content::GetIOThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &storage::QuotaManager::DeleteHostData, quota_manager_, host, type,
-          storage::QuotaClient::kAllClientsMask,
+          storage::AllQuotaClientTypes(),
           base::BindOnce(&StorageInfoFetcher::OnUsageClearedInternal, this)));
 }
 
@@ -67,8 +67,8 @@ void StorageInfoFetcher::OnGetUsageInfoInternal(
 
   entries_ = std::move(entries);
 
-  base::PostTask(FROM_HERE, {BrowserThread::UI},
-                 base::BindOnce(&StorageInfoFetcher::OnFetchCompleted, this));
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&StorageInfoFetcher::OnFetchCompleted, this));
 }
 
 void StorageInfoFetcher::OnFetchCompleted() {
@@ -85,8 +85,8 @@ void StorageInfoFetcher::OnUsageClearedInternal(
 
   quota_manager_->ResetUsageTracker(type_to_delete_);
 
-  base::PostTask(
-      FROM_HERE, {BrowserThread::UI},
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE,
       base::BindOnce(&StorageInfoFetcher::OnClearCompleted, this, code));
 }
 

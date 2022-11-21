@@ -11,8 +11,8 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_ice_parameters.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_ice_server.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_peer_connection_ice_event_init.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/modules/peerconnection/adapters/ice_transport_adapter_cross_thread_factory.h"
@@ -122,14 +122,13 @@ class DefaultIceTransportAdapterCrossThreadFactory
 
 RTCIceTransport* RTCIceTransport::Create(ExecutionContext* context) {
 #if BUILDFLAG(ENABLE_WEBRTC)
-  LocalFrame* frame = Document::From(context)->GetFrame();
   scoped_refptr<base::SingleThreadTaskRunner> proxy_thread =
-      frame->GetTaskRunner(TaskType::kNetworking);
+      context->GetTaskRunner(TaskType::kNetworking);
 
   PeerConnectionDependencyFactory::GetInstance()->EnsureInitialized();
   scoped_refptr<base::SingleThreadTaskRunner> host_thread =
       PeerConnectionDependencyFactory::GetInstance()
-          ->GetWebRtcWorkerTaskRunner();
+          ->GetWebRtcNetworkTaskRunner();
   return MakeGarbageCollected<RTCIceTransport>(
       context, std::move(proxy_thread), std::move(host_thread),
       std::make_unique<DefaultIceTransportAdapterCrossThreadFactory>());
@@ -143,14 +142,13 @@ RTCIceTransport* RTCIceTransport::Create(
     rtc::scoped_refptr<webrtc::IceTransportInterface> ice_transport,
     RTCPeerConnection* peer_connection) {
 #if BUILDFLAG(ENABLE_WEBRTC)
-  LocalFrame* frame = Document::From(context)->GetFrame();
   scoped_refptr<base::SingleThreadTaskRunner> proxy_thread =
-      frame->GetTaskRunner(TaskType::kNetworking);
+      context->GetTaskRunner(TaskType::kNetworking);
 
   PeerConnectionDependencyFactory::GetInstance()->EnsureInitialized();
   scoped_refptr<base::SingleThreadTaskRunner> host_thread =
       PeerConnectionDependencyFactory::GetInstance()
-          ->GetWebRtcWorkerTaskRunner();
+          ->GetWebRtcNetworkTaskRunner();
   return MakeGarbageCollected<RTCIceTransport>(
       context, std::move(proxy_thread), std::move(host_thread),
       std::make_unique<DtlsIceTransportAdapterCrossThreadFactory>(
@@ -185,7 +183,7 @@ RTCIceTransport::RTCIceTransport(
   DCHECK(adapter_factory);
   DCHECK(proxy_thread->BelongsToCurrentThread());
 
-  LocalFrame* frame = Document::From(context)->GetFrame();
+  LocalFrame* frame = To<LocalDOMWindow>(context)->GetFrame();
   DCHECK(frame);
   proxy_ = std::make_unique<IceTransportProxy>(*frame, std::move(proxy_thread),
                                                std::move(host_thread), this,
@@ -324,8 +322,12 @@ static webrtc::PeerConnectionInterface::IceServer ConvertIceServer(
   for (const String& url_string : url_strings) {
     converted_ice_server.urls.push_back(url_string.Utf8());
   }
-  converted_ice_server.username = ice_server->username().Utf8();
-  converted_ice_server.password = ice_server->credential().Utf8();
+  if (ice_server->hasUsername()) {
+    converted_ice_server.username = ice_server->username().Utf8();
+  }
+  if (ice_server->hasCredential()) {
+    converted_ice_server.password = ice_server->credential().Utf8();
+  }
   return converted_ice_server;
 }
 
@@ -601,7 +603,7 @@ bool RTCIceTransport::HasPendingActivity() const {
   return !!proxy_;
 }
 
-void RTCIceTransport::Trace(Visitor* visitor) {
+void RTCIceTransport::Trace(Visitor* visitor) const {
   visitor->Trace(local_candidates_);
   visitor->Trace(remote_candidates_);
   visitor->Trace(local_parameters_);

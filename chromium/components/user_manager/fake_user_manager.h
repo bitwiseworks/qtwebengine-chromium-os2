@@ -39,7 +39,15 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
   virtual const user_manager::User* AddPublicAccountUser(
       const AccountId& account_id);
 
+  void LogoutAllUsers();
+
   void set_local_state(PrefService* local_state) { local_state_ = local_state; }
+  void set_is_current_user_new(bool is_current_user_new) {
+    is_current_user_new_ = is_current_user_new;
+  }
+  void set_is_current_user_owner(bool is_current_user_owner) {
+    is_current_user_owner_ = is_current_user_owner;
+  }
 
   // UserManager overrides.
   const UserList& GetUsers() const override;
@@ -144,8 +152,6 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
       const AccountId& account_id) const override;
   void DemoAccountLoggedIn() override {}
   void KioskAppLoggedIn(User* user) override {}
-  void ArcKioskAppLoggedIn(User* user) override {}
-  void WebKioskAppLoggedIn(User* user) override {}
   void PublicAccountUserLoggedIn(User* user) override {}
   void SupervisedUserLoggedIn(const AccountId& account_id) override {}
   void OnUserRemoved(const AccountId& account_id) override {}
@@ -169,6 +175,9 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
 
   // stub. Always empty.
   gfx::ImageSkia empty_image_;
+
+  bool is_current_user_owner_ = false;
+  bool is_current_user_new_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(FakeUserManager);
 };

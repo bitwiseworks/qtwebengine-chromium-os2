@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Bindings from '../bindings/bindings.js';
 import * as ColorPicker from '../color_picker/color_picker.js';
 import * as Common from '../common/common.js';
@@ -77,7 +80,7 @@ export class BezierPopoverIcon {
    * @param {!Event} event
    */
   _onScroll(event) {
-    this._swatchPopoverHelper.reposition();
+    this._swatchPopoverHelper.hide(true);
   }
 
   /**
@@ -233,7 +236,7 @@ export class ColorSwatchPopoverIcon {
    * @param {!Event} event
    */
   _onScroll(event) {
-    this._swatchPopoverHelper.reposition();
+    this._swatchPopoverHelper.hide(true);
   }
 
   /**
@@ -332,7 +335,7 @@ export class ShadowSwatchPopoverHelper {
    * @param {!Event} event
    */
   _onScroll(event) {
-    this._swatchPopoverHelper.reposition();
+    this._swatchPopoverHelper.hide(true);
   }
 
   /**

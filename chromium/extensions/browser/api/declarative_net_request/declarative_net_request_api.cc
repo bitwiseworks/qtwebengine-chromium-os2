@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/optional.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "base/task_runner_util.h"
@@ -27,6 +28,8 @@
 #include "extensions/browser/quota_service.h"
 #include "extensions/common/api/declarative_net_request.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
+#include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
+#include "extensions/common/error_utils.h"
 #include "extensions/common/extension_id.h"
 
 namespace extensions {
@@ -34,25 +37,6 @@ namespace extensions {
 namespace {
 
 namespace dnr_api = api::declarative_net_request;
-
-// Returns true if the given |extension| has a registered ruleset. If it
-// doesn't, returns false and populates |error|.
-// TODO(crbug.com/931967): Using HasRegisteredRuleset for PreRunValidation means
-// that the extension function will fail if the ruleset for the extension is
-// currently being indexed. Fix this.
-bool HasRegisteredRuleset(content::BrowserContext* context,
-                          const ExtensionId& extension_id,
-                          std::string* error) {
-  const auto* rules_monitor_service =
-      declarative_net_request::RulesMonitorService::Get(context);
-  DCHECK(rules_monitor_service);
-
-  if (rules_monitor_service->HasRegisteredRuleset(extension_id))
-    return true;
-
-  *error = "The extension must have a ruleset in order to call this function.";
-  return false;
-}
 
 // Returns whether |extension| can call getMatchedRules for the specified
 // |tab_id| and populates |error| if it can't. If no tab ID is specified, then
@@ -93,6 +77,18 @@ DeclarativeNetRequestUpdateDynamicRulesFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 
+  std::vector<int> rule_ids_to_remove;
+  if (params->options.remove_rule_ids)
+    rule_ids_to_remove = std::move(*params->options.remove_rule_ids);
+
+  std::vector<api::declarative_net_request::Rule> rules_to_add;
+  if (params->options.add_rules)
+    rules_to_add = std::move(*params->options.add_rules);
+
+  // Early return if there is nothing to do.
+  if (rule_ids_to_remove.empty() && rules_to_add.empty())
+    return RespondNow(NoArguments());
+
   auto* rules_monitor_service =
       declarative_net_request::RulesMonitorService::Get(browser_context());
   DCHECK(rules_monitor_service);
@@ -101,17 +97,10 @@ DeclarativeNetRequestUpdateDynamicRulesFunction::Run() {
   auto callback = base::BindOnce(
       &DeclarativeNetRequestUpdateDynamicRulesFunction::OnDynamicRulesUpdated,
       this);
-
   rules_monitor_service->UpdateDynamicRules(
-      *extension(), std::move(params->rule_ids_to_remove),
-      std::move(params->rules_to_add), std::move(callback));
+      *extension(), std::move(rule_ids_to_remove), std::move(rules_to_add),
+      std::move(callback));
   return RespondLater();
-}
-
-bool DeclarativeNetRequestUpdateDynamicRulesFunction::PreRunValidation(
-    std::string* error) {
-  return ExtensionFunction::PreRunValidation(error) &&
-         HasRegisteredRuleset(browser_context(), extension_id(), error);
 }
 
 void DeclarativeNetRequestUpdateDynamicRulesFunction::OnDynamicRulesUpdated(
@@ -129,16 +118,10 @@ DeclarativeNetRequestGetDynamicRulesFunction::
 DeclarativeNetRequestGetDynamicRulesFunction::
     ~DeclarativeNetRequestGetDynamicRulesFunction() = default;
 
-bool DeclarativeNetRequestGetDynamicRulesFunction::PreRunValidation(
-    std::string* error) {
-  return ExtensionFunction::PreRunValidation(error) &&
-         HasRegisteredRuleset(browser_context(), extension_id(), error);
-}
-
 ExtensionFunction::ResponseAction
 DeclarativeNetRequestGetDynamicRulesFunction::Run() {
   auto source = declarative_net_request::RulesetSource::CreateDynamic(
-      browser_context(), *extension());
+      browser_context(), extension()->id());
 
   auto read_dynamic_rules = base::BindOnce(
       [](const declarative_net_request::RulesetSource& source) {
@@ -173,6 +156,113 @@ void DeclarativeNetRequestGetDynamicRulesFunction::OnDynamicRulesFetched(
 
   Respond(ArgumentList(
       dnr_api::GetDynamicRules::Results::Create(read_json_result.rules)));
+}
+
+DeclarativeNetRequestUpdateEnabledRulesetsFunction::
+    DeclarativeNetRequestUpdateEnabledRulesetsFunction() = default;
+DeclarativeNetRequestUpdateEnabledRulesetsFunction::
+    ~DeclarativeNetRequestUpdateEnabledRulesetsFunction() = default;
+
+ExtensionFunction::ResponseAction
+DeclarativeNetRequestUpdateEnabledRulesetsFunction::Run() {
+  using Params = dnr_api::UpdateEnabledRulesets::Params;
+  using RulesetID = declarative_net_request::RulesetID;
+  using DNRManifestData = declarative_net_request::DNRManifestData;
+
+  base::string16 error;
+  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  EXTENSION_FUNCTION_VALIDATE(error.empty());
+
+  std::set<RulesetID> ids_to_disable;
+  std::set<RulesetID> ids_to_enable;
+  const DNRManifestData::ManifestIDToRulesetMap& public_id_map =
+      DNRManifestData::GetManifestIDToRulesetMap(*extension());
+
+  if (params->options.enable_ruleset_ids) {
+    for (const std::string& public_id_to_enable :
+         *params->options.enable_ruleset_ids) {
+      auto it = public_id_map.find(public_id_to_enable);
+      if (it == public_id_map.end()) {
+        return RespondNow(Error(ErrorUtils::FormatErrorMessage(
+            declarative_net_request::kInvalidRulesetIDError,
+            public_id_to_enable)));
+      }
+
+      ids_to_enable.insert(it->second->id);
+    }
+  }
+
+  if (params->options.disable_ruleset_ids) {
+    for (const std::string& public_id_to_disable :
+         *params->options.disable_ruleset_ids) {
+      auto it = public_id_map.find(public_id_to_disable);
+      if (it == public_id_map.end()) {
+        return RespondNow(Error(ErrorUtils::FormatErrorMessage(
+            declarative_net_request::kInvalidRulesetIDError,
+            public_id_to_disable)));
+      }
+
+      // |ruleset_ids_to_enable| takes priority over |ruleset_ids_to_disable|.
+      RulesetID id = it->second->id;
+      if (base::Contains(ids_to_enable, id))
+        continue;
+
+      ids_to_disable.insert(id);
+    }
+  }
+
+  if (ids_to_enable.empty() && ids_to_disable.empty())
+    return RespondNow(NoArguments());
+
+  auto* rules_monitor_service =
+      declarative_net_request::RulesMonitorService::Get(browser_context());
+  DCHECK(rules_monitor_service);
+  DCHECK(extension());
+
+  rules_monitor_service->UpdateEnabledStaticRulesets(
+      *extension(), std::move(ids_to_disable), std::move(ids_to_enable),
+      base::BindOnce(&DeclarativeNetRequestUpdateEnabledRulesetsFunction::
+                         OnEnabledStaticRulesetsUpdated,
+                     this));
+
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+void DeclarativeNetRequestUpdateEnabledRulesetsFunction::
+    OnEnabledStaticRulesetsUpdated(base::Optional<std::string> error) {
+  if (error)
+    Respond(Error(std::move(*error)));
+  else
+    Respond(NoArguments());
+}
+
+DeclarativeNetRequestGetEnabledRulesetsFunction::
+    DeclarativeNetRequestGetEnabledRulesetsFunction() = default;
+DeclarativeNetRequestGetEnabledRulesetsFunction::
+    ~DeclarativeNetRequestGetEnabledRulesetsFunction() = default;
+
+ExtensionFunction::ResponseAction
+DeclarativeNetRequestGetEnabledRulesetsFunction::Run() {
+  auto* rules_monitor_service =
+      declarative_net_request::RulesMonitorService::Get(browser_context());
+  DCHECK(rules_monitor_service);
+
+  std::vector<std::string> public_ids;
+  declarative_net_request::CompositeMatcher* matcher =
+      rules_monitor_service->ruleset_manager()->GetMatcherForExtension(
+          extension_id());
+  if (matcher) {
+    DCHECK(extension());
+    public_ids = GetPublicRulesetIDs(*extension(), *matcher);
+
+    // Exclude the dynamic ruleset ID if present, as expected by the API
+    // function.
+    base::Erase(public_ids, dnr_api::DYNAMIC_RULESET_ID);
+  }
+
+  return RespondNow(
+      ArgumentList(dnr_api::GetEnabledRulesets::Results::Create(public_ids)));
 }
 
 // static
@@ -220,7 +310,7 @@ DeclarativeNetRequestGetMatchedRulesFunction::Run() {
 
   dnr_api::RulesMatchedDetails details;
   details.rules_matched_info =
-      action_tracker.GetMatchedRules(extension_id(), tab_id, min_time_stamp);
+      action_tracker.GetMatchedRules(*extension(), tab_id, min_time_stamp);
 
   return RespondNow(
       ArgumentList(dnr_api::GetMatchedRules::Results::Create(details)));
@@ -281,6 +371,44 @@ DeclarativeNetRequestSetActionCountAsBadgeTextFunction::Run() {
   }
 
   return RespondNow(NoArguments());
+}
+
+DeclarativeNetRequestIsRegexSupportedFunction::
+    DeclarativeNetRequestIsRegexSupportedFunction() = default;
+DeclarativeNetRequestIsRegexSupportedFunction::
+    ~DeclarativeNetRequestIsRegexSupportedFunction() = default;
+
+ExtensionFunction::ResponseAction
+DeclarativeNetRequestIsRegexSupportedFunction::Run() {
+  using Params = dnr_api::IsRegexSupported::Params;
+
+  base::string16 error;
+  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  EXTENSION_FUNCTION_VALIDATE(params);
+  EXTENSION_FUNCTION_VALIDATE(error.empty());
+
+  bool is_case_sensitive = params->regex_options.is_case_sensitive
+                               ? *params->regex_options.is_case_sensitive
+                               : true;
+  bool require_capturing = params->regex_options.require_capturing
+                               ? *params->regex_options.require_capturing
+                               : false;
+  re2::RE2 regex(params->regex_options.regex,
+                 declarative_net_request::CreateRE2Options(is_case_sensitive,
+                                                           require_capturing));
+
+  dnr_api::IsRegexSupportedResult result;
+  if (regex.ok()) {
+    result.is_supported = true;
+  } else {
+    result.is_supported = false;
+    result.reason = regex.error_code() == re2::RE2::ErrorPatternTooLarge
+                        ? dnr_api::UNSUPPORTED_REGEX_REASON_MEMORYLIMITEXCEEDED
+                        : dnr_api::UNSUPPORTED_REGEX_REASON_SYNTAXERROR;
+  }
+
+  return RespondNow(
+      ArgumentList(dnr_api::IsRegexSupported::Results::Create(result)));
 }
 
 }  // namespace extensions

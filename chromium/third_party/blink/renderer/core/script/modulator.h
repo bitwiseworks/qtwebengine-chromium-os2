@@ -6,9 +6,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SCRIPT_MODULATOR_H_
 
 #include "base/single_thread_task_runner.h"
+#include "base/util/type_safety/pass_key.h"
 #include "services/network/public/mojom/referrer_policy.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/module_record.h"
+#include "third_party/blink/renderer/bindings/core/v8/module_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_code_cache.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -44,7 +46,7 @@ class CORE_EXPORT SingleModuleClient
       public NameClient {
  public:
   virtual ~SingleModuleClient() = default;
-  virtual void Trace(Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) const {}
   const char* NameInHeapSnapshot() const override {
     return "SingleModuleClient";
   }
@@ -58,7 +60,7 @@ class CORE_EXPORT ModuleTreeClient : public GarbageCollected<ModuleTreeClient>,
                                      public NameClient {
  public:
   virtual ~ModuleTreeClient() = default;
-  virtual void Trace(Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) const {}
   const char* NameInHeapSnapshot() const override { return "ModuleTreeClient"; }
 
   virtual void NotifyModuleTreeLoadFinished(ModuleScript*) = 0;
@@ -97,8 +99,6 @@ enum class ModuleScriptCustomFetchType {
 class CORE_EXPORT Modulator : public GarbageCollected<Modulator>,
                               public V8PerContextData::Data,
                               public NameClient {
-  USING_GARBAGE_COLLECTED_MIXIN(Modulator);
-
  public:
   static Modulator* From(ScriptState*);
   virtual ~Modulator();
@@ -106,7 +106,7 @@ class CORE_EXPORT Modulator : public GarbageCollected<Modulator>,
   static void SetModulator(ScriptState*, Modulator*);
   static void ClearModulator(ScriptState*);
 
-  void Trace(Visitor* visitor) override {}
+  void Trace(Visitor* visitor) const override {}
   const char* NameInHeapSnapshot() const override { return "Modulator"; }
 
   virtual ModuleRecordResolver* GetModuleRecordResolver() = 0;
@@ -114,7 +114,7 @@ class CORE_EXPORT Modulator : public GarbageCollected<Modulator>,
 
   virtual ScriptState* GetScriptState() = 0;
 
-  virtual V8CacheOptions GetV8CacheOptions() const = 0;
+  virtual mojom::blink::V8CacheOptions GetV8CacheOptions() const = 0;
 
   // https://html.spec.whatwg.org/C/#concept-bc-noscript
   // "scripting is disabled for settings's responsible browsing context"
@@ -191,12 +191,6 @@ class CORE_EXPORT Modulator : public GarbageCollected<Modulator>,
 
   virtual ScriptValue InstantiateModule(v8::Local<v8::Module>, const KURL&) = 0;
 
-  struct ModuleRequest {
-    String specifier;
-    TextPosition position;
-    ModuleRequest(const String& specifier, const TextPosition& position)
-        : specifier(specifier), position(position) {}
-  };
   virtual Vector<ModuleRequest> ModuleRequestsFromModuleRecord(
       v8::Local<v8::Module>) = 0;
 
@@ -207,11 +201,15 @@ class CORE_EXPORT Modulator : public GarbageCollected<Modulator>,
   // CaptureEvalErrorFlag is used to implement "rethrow errors" parameter in
   // run-a-module-script.
   // - When "rethrow errors" is to be set, use kCapture for EvaluateModule().
-  // Then EvaluateModule() returns an exception if any (instead of throwing it),
-  // and the caller should rethrow the returned exception. - When "rethrow
-  // errors" is not to be set, use kReport. EvaluateModule() "report the error"
-  // inside it (if any), and always returns null ScriptValue().
-  virtual ScriptValue ExecuteModule(ModuleScript*, CaptureEvalErrorFlag) = 0;
+  // Then EvaluateModule() wraps exceptions in a ScriptEvaluationResult instead
+  // of throwing it and the caller should rethrow the exception.
+  // - When "rethrow errors" is not to be set, use kReport. If there is an error
+  // to throw, EvaluateModule() "report the error" inside it, and returns
+  // ScriptEvaluationResult wrapping the error. Otherwise, it returns either a
+  // ScriptEvaluationResult that is empty or contains the successful evaluation
+  // result.
+  virtual ScriptEvaluationResult ExecuteModule(ModuleScript*,
+                                               CaptureEvalErrorFlag) = 0;
 
   virtual ModuleScriptFetcher* CreateModuleScriptFetcher(
       ModuleScriptCustomFetchType,

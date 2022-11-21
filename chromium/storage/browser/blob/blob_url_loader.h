@@ -56,12 +56,15 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLLoader
       const net::HttpRequestHeaders& headers,
       mojo::PendingRemote<network::mojom::URLLoaderClient> client,
       std::unique_ptr<BlobDataHandle> blob_handle);
+
   void Start(const std::string& method, const net::HttpRequestHeaders& headers);
 
   // network::mojom::URLLoader implementation:
-  void FollowRedirect(const std::vector<std::string>& removed_headers,
-                      const net::HttpRequestHeaders& modified_request_headers,
-                      const base::Optional<GURL>& new_url) override;
+  void FollowRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_request_headers,
+      const net::HttpRequestHeaders& modified_cors_exempt_request_headers,
+      const base::Optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
   void PauseReadingBodyFromNet() override {}

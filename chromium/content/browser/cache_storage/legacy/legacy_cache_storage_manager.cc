@@ -31,8 +31,6 @@
 #include "content/browser/cache_storage/cache_storage.h"
 #include "content/browser/cache_storage/cache_storage.pb.h"
 #include "content/browser/cache_storage/cache_storage_quota_client.h"
-#include "content/browser/service_worker/service_worker_context_core.h"
-#include "net/base/url_util.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/database/database_identifier.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
@@ -44,11 +42,12 @@ namespace content {
 namespace {
 
 bool DeleteDir(const base::FilePath& path) {
-  return base::DeleteFileRecursively(path);
+  return base::DeletePathRecursively(path);
 }
 
-void DeleteOriginDidDeleteDir(storage::QuotaClient::DeletionCallback callback,
-                              bool rv) {
+void DeleteOriginDidDeleteDir(
+    storage::QuotaClient::DeleteOriginDataCallback callback,
+    bool rv) {
   // On scheduler sequence.
   base::SequencedTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
@@ -60,24 +59,14 @@ void DeleteOriginDidDeleteDir(storage::QuotaClient::DeletionCallback callback,
 // Calculate the sum of all cache sizes in this store, but only if all sizes are
 // known. If one or more sizes are not known then return kSizeUnknown.
 int64_t GetCacheStorageSize(const base::FilePath& base_path,
-                            const base::Time& base_path_time,
                             const base::Time& index_time,
                             const proto::CacheStorageIndex& index) {
-  // If the base path's modified time is newer than the index, then the
-  // contents of a cache must have changed.  The index is stale.
-  if (base_path_time > index_time)
-    return CacheStorage::kSizeUnknown;
-
-  // It should be impossible for the directory containing the index to
-  // have a modified time older than the index's modified time.  Modifying
-  // the index should update the directories time as well.  Therefore we
-  // should be guaranteed that the time is equal here.
-  //
-  // In practice, though, there can be a few microseconds difference on
-  // some operating systems so we can't do an exact DCHECK here.  Instead
-  // we do a fuzzy DCHECK allowing some microseconds difference.
-  DCHECK_LE((index_time - base_path_time).magnitude().InMicroseconds(), 10);
-
+  // Note, do not use the base path time modified to invalidate the index file.
+  // On some platforms the directory modified time will be slightly later than
+  // the last modified time of a file within it.  This means any write to the
+  // index file will also update the directory modify time slightly after
+  // immediately invalidating it.  To avoid this we only look at the cache
+  // directories and not the base directory containing the index itself.
   int64_t storage_size = 0;
   for (int i = 0, max = index.cache_size(); i < max; ++i) {
     const proto::CacheStorageIndex::Cache& cache = index.cache(i);
@@ -186,13 +175,8 @@ void ListOriginsAndLastModifiedOnTaskRunner(
       continue;
     }
 
-    if (!base::GetFileInfo(path, &file_info)) {
-      RecordIndexValidationResult(IndexResult::kPathFileInfoFailed);
-      continue;
-    }
-
-    int64_t storage_size = GetCacheStorageSize(path, file_info.last_modified,
-                                               index_last_modified, index);
+    int64_t storage_size =
+        GetCacheStorageSize(path, index_last_modified, index);
     base::UmaHistogramBoolean("ServiceWorkerCache.UsedIndexFileSize",
                               storage_size != CacheStorage::kSizeUnknown);
 
@@ -202,30 +186,30 @@ void ListOriginsAndLastModifiedOnTaskRunner(
   }
 }
 
-std::set<url::Origin> ListOriginsOnTaskRunner(base::FilePath root_path,
-                                              CacheStorageOwner owner) {
+std::vector<url::Origin> ListOriginsOnTaskRunner(base::FilePath root_path,
+                                                 CacheStorageOwner owner) {
   std::vector<StorageUsageInfo> usages;
   ListOriginsAndLastModifiedOnTaskRunner(&usages, root_path, owner);
 
-  std::set<url::Origin> out_origins;
+  std::vector<url::Origin> out_origins;
   for (const StorageUsageInfo& usage : usages)
-    out_origins.insert(usage.origin);
+    out_origins.push_back(usage.origin);
 
   return out_origins;
 }
 
 void GetOriginsForHostDidListOrigins(
     const std::string& host,
-    storage::QuotaClient::GetOriginsCallback callback,
-    const std::set<url::Origin>& origins) {
+    storage::QuotaClient::GetOriginsForTypeCallback callback,
+    const std::vector<url::Origin>& origins) {
   // On scheduler sequence.
-  std::set<url::Origin> out_origins;
+  std::vector<url::Origin> out_origins;
   for (const url::Origin& origin : origins) {
-    if (host == net::GetHostOrSpecFromURL(origin.GetURL()))
-      out_origins.insert(origin);
+    if (host == origin.host())
+      out_origins.push_back(origin);
   }
   base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), out_origins));
+      FROM_HERE, base::BindOnce(std::move(callback), std::move(out_origins)));
 }
 
 void AllOriginSizesReported(
@@ -293,6 +277,7 @@ CacheStorageHandle LegacyCacheStorageManager::OpenCacheStorage(
   // thread.
   if (!memory_pressure_listener_) {
     memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
+        FROM_HERE,
         base::BindRepeating(&LegacyCacheStorageManager::OnMemoryPressure,
                             base::Unretained(this)));
   }
@@ -417,7 +402,7 @@ void LegacyCacheStorageManager::GetAllOriginsUsageGetSizes(
 void LegacyCacheStorageManager::GetOriginUsage(
     const url::Origin& origin,
     CacheStorageOwner owner,
-    storage::QuotaClient::GetUsageCallback callback) {
+    storage::QuotaClient::GetOriginUsageCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CacheStorageHandle cache_storage = OpenCacheStorage(origin, owner);
@@ -426,17 +411,17 @@ void LegacyCacheStorageManager::GetOriginUsage(
 
 void LegacyCacheStorageManager::GetOrigins(
     CacheStorageOwner owner,
-    storage::QuotaClient::GetOriginsCallback callback) {
+    storage::QuotaClient::GetOriginsForTypeCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (IsMemoryBacked()) {
-    std::set<url::Origin> origins;
+    std::vector<url::Origin> origins;
     for (const auto& key_value : cache_storage_map_)
       if (key_value.first.second == owner)
-        origins.insert(key_value.first.first);
+        origins.push_back(key_value.first.first);
 
     scheduler_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), origins));
+        FROM_HERE, base::BindOnce(std::move(callback), std::move(origins)));
     return;
   }
 
@@ -449,19 +434,19 @@ void LegacyCacheStorageManager::GetOrigins(
 void LegacyCacheStorageManager::GetOriginsForHost(
     const std::string& host,
     CacheStorageOwner owner,
-    storage::QuotaClient::GetOriginsCallback callback) {
+    storage::QuotaClient::GetOriginsForHostCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (IsMemoryBacked()) {
-    std::set<url::Origin> origins;
+    std::vector<url::Origin> origins;
     for (const auto& key_value : cache_storage_map_) {
       if (key_value.first.second != owner)
         continue;
-      if (host == net::GetHostOrSpecFromURL(key_value.first.first.GetURL()))
-        origins.insert(key_value.first.first);
+      if (host == key_value.first.first.host())
+        origins.push_back(key_value.first.first);
     }
     scheduler_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), origins));
+        FROM_HERE, base::BindOnce(std::move(callback), std::move(origins)));
     return;
   }
 
@@ -475,7 +460,7 @@ void LegacyCacheStorageManager::GetOriginsForHost(
 void LegacyCacheStorageManager::DeleteOriginData(
     const url::Origin& origin,
     CacheStorageOwner owner,
-    storage::QuotaClient::DeletionCallback callback) {
+    storage::QuotaClient::DeleteOriginDataCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Create the CacheStorage for the origin if it hasn't been loaded yet.
@@ -502,7 +487,7 @@ void LegacyCacheStorageManager::DeleteOriginData(const url::Origin& origin,
 void LegacyCacheStorageManager::DeleteOriginDidClose(
     const url::Origin& origin,
     CacheStorageOwner owner,
-    storage::QuotaClient::DeletionCallback callback,
+    storage::QuotaClient::DeleteOriginDataCallback callback,
     std::unique_ptr<LegacyCacheStorage> cache_storage,
     int64_t origin_size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -512,7 +497,7 @@ void LegacyCacheStorageManager::DeleteOriginDidClose(
   cache_storage.reset();
 
   quota_manager_proxy_->NotifyStorageModified(
-      CacheStorageQuotaClient::GetIDFromOwner(owner), origin,
+      CacheStorageQuotaClient::GetClientTypeFromOwner(owner), origin,
       blink::mojom::StorageType::kTemporary, -1 * origin_size);
 
   if (owner == CacheStorageOwner::kCacheAPI)

@@ -44,6 +44,10 @@
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "v8/include/v8.h"
 
+namespace base {
+class UnguessableToken;
+}  // namespace base
+
 namespace blink {
 
 class DOMDataStore;
@@ -115,8 +119,11 @@ class PLATFORM_EXPORT DOMWrapperWorld : public RefCounted<DOMWrapperWorld> {
 
   static DOMWrapperWorld& MainWorld();
 
+  static void SetNonMainWorldStableId(int32_t world_id, const String&);
+  String NonMainWorldStableId() const;
+
   static void SetNonMainWorldHumanReadableName(int32_t world_id, const String&);
-  String NonMainWorldHumanReadableName();
+  String NonMainWorldHumanReadableName() const;
 
   // Associates an isolated world (see above for description) with a security
   // origin. XMLHttpRequest instances used in that world will be considered
@@ -126,7 +133,13 @@ class PLATFORM_EXPORT DOMWrapperWorld : public RefCounted<DOMWrapperWorld> {
   static void SetIsolatedWorldSecurityOrigin(
       int32_t world_id,
       scoped_refptr<SecurityOrigin> security_origin);
-  SecurityOrigin* IsolatedWorldSecurityOrigin();
+
+  // Returns the security origin for the given world with the given
+  // |cluster_id|.
+  scoped_refptr<SecurityOrigin> IsolatedWorldSecurityOrigin(
+      const base::UnguessableToken& cluster_id);
+  scoped_refptr<const SecurityOrigin> IsolatedWorldSecurityOrigin(
+      const base::UnguessableToken& cluster_id) const;
 
   static bool HasWrapperInAnyWorldInMainThread(ScriptWrappable*);
 

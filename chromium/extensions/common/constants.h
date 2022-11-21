@@ -6,7 +6,6 @@
 #define EXTENSIONS_COMMON_CONSTANTS_H_
 
 #include "base/files/file_path.h"
-#include "base/logging.h"
 #include "base/strings/string_piece_forward.h"
 #include "components/services/app_service/public/mojom/types.mojom.h"
 #include "components/version_info/channel.h"
@@ -204,6 +203,9 @@ extern const char kCameraAppDevId[];
 // The extension id of the Chrome component application.
 extern const char kChromeAppId[];
 
+// Fake extension ID for the Lacros chrome browser application.
+extern const char kLacrosAppId[];
+
 // The extension id of the Files Manager application.
 extern const char kFilesManagerAppId[];
 
@@ -213,8 +215,14 @@ extern const char kCalculatorAppId[];
 // The extension id of the demo Calendar application.
 extern const char kCalendarDemoAppId[];
 
+// The extension id of the GMail application.
+extern const char kGMailAppId[];
+
 // The extension id of the demo Google Docs application.
 extern const char kGoogleDocsDemoAppId[];
+
+// The extension id of the Google Drive application.
+extern const char kGoogleDriveAppId[];
 
 // The extension id of the demo Google Sheets application.
 extern const char kGoogleSheetsDemoAppId[];
@@ -259,6 +267,9 @@ extern const char kScreensaverAtlasAppId[];
 // The extension id of the kukui Demo Mode screensaver app.
 extern const char kScreensaverKukuiAppId[];
 
+// The id of the testing extension allowed in the signin profile.
+extern const char kSigninProfileTestExtensionId[];
+
 // Returns true if this app is part of the "system UI". Generally this is UI
 // that that on other operating systems would be considered part of the OS,
 // for example the file manager.
@@ -282,7 +293,11 @@ extern const logging::LogSeverity kMinimumSeverityToReportError;
 
 // The minimum channel where Service Worker based extensions can run.
 constexpr version_info::Channel kMinChannelForServiceWorkerBasedExtension =
-    version_info::Channel::CANARY;
+    version_info::Channel::DEV;
+
+// IDs for the Media Router Component Extension.
+extern const char kCastExtensionIdRelease[];
+extern const char kCastExtensionIdDev[];
 
 }  // namespace extension_misc
 

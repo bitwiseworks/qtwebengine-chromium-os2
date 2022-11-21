@@ -6,10 +6,10 @@
 
 #include <algorithm>
 
+#include "base/check_op.h"
 #include "base/debug/activity_tracker.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
-#include "base/logging.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/no_destructor.h"
 #include "base/rand_util.h"
@@ -86,7 +86,7 @@ NOINLINE void MaybeDumpWithoutCrashing(
   user_data.SetBool("had_message_pipe", had_message_pipe);
   user_data.SetUint("seconds_since_construction", seconds_since_construction);
   user_data.SetUint("average_write_rate_per_second",
-                static_cast<uint64_t>(average_write_rate_per_second));
+                    static_cast<uint64_t>(average_write_rate_per_second));
   user_data.SetUint("messages_enqueued", messages_enqueued);
   user_data.SetUint("messages_dequeued", messages_dequeued);
   user_data.SetUint("messages_enqueued", messages_enqueued);
@@ -99,8 +99,8 @@ NOINLINE void MaybeDumpWithoutCrashing(
 }
 
 int64_t ToSamplingInterval(base::TimeTicks when) {
-  return (when - base::TimeTicks::UnixEpoch()) /
-         MessageQuotaChecker::DecayingRateAverage::kSamplingInterval;
+  return (when - base::TimeTicks::UnixEpoch())
+      .IntDiv(MessageQuotaChecker::DecayingRateAverage::kSamplingInterval);
 }
 
 base::TimeTicks FromSamplingInterval(int64_t sampling_interval) {
@@ -322,9 +322,8 @@ double MessageQuotaChecker::DecayingRateAverage::GetDecayedRateAverage(
   // - |when| is beyond the end of the current sampling interval.
   const int64_t sampling_interval = ToSamplingInterval(when);
   double age_in_sampling_intervals =
-      (when - FromSamplingInterval(events_sampling_interval_))
-          .InMicrosecondsF() /
-      kSamplingInterval.InMicrosecondsF();
+      (when - FromSamplingInterval(events_sampling_interval_)) /
+      kSamplingInterval;
   DCHECK_LE(0.0, age_in_sampling_intervals);
   if (when == FromSamplingInterval(events_sampling_interval_)) {
     DCHECK_EQ(0.0, age_in_sampling_intervals);

@@ -4,7 +4,7 @@
 
 #include "net/url_request/ftp_protocol_handler.h"
 
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
 #include "net/base/net_errors.h"
 #include "net/base/port_util.h"
@@ -34,17 +34,17 @@ std::unique_ptr<FtpProtocolHandler> FtpProtocolHandler::CreateForTesting(
 
 FtpProtocolHandler::~FtpProtocolHandler() = default;
 
-URLRequestJob* FtpProtocolHandler::MaybeCreateJob(
-    URLRequest* request, NetworkDelegate* network_delegate) const {
+std::unique_ptr<URLRequestJob> FtpProtocolHandler::CreateJob(
+    URLRequest* request) const {
   DCHECK_EQ("ftp", request->url().scheme());
 
   if (!IsPortAllowedForScheme(request->url().EffectiveIntPort(),
                               request->url().scheme_piece())) {
-    return new URLRequestErrorJob(request, network_delegate, ERR_UNSAFE_PORT);
+    return std::make_unique<URLRequestErrorJob>(request, ERR_UNSAFE_PORT);
   }
 
-  return new URLRequestFtpJob(request, network_delegate,
-                              ftp_transaction_factory_.get(), ftp_auth_cache_);
+  return std::make_unique<URLRequestFtpJob>(
+      request, ftp_transaction_factory_.get(), ftp_auth_cache_);
 }
 
 FtpProtocolHandler::FtpProtocolHandler(

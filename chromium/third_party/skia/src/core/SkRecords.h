@@ -45,6 +45,7 @@ namespace SkRecords {
     M(Save)                                                         \
     M(SaveLayer)                                                    \
     M(SaveBehind)                                                   \
+    M(MarkCTM)                                                      \
     M(SetMatrix)                                                    \
     M(Translate)                                                    \
     M(Scale)                                                        \
@@ -108,25 +109,6 @@ private:
     Optional& operator=(const Optional&) = delete;
 };
 
-// Like Optional, but ptr must not be NULL.
-template <typename T>
-class Adopted {
-public:
-    Adopted(T* ptr) : fPtr(ptr) { SkASSERT(fPtr); }
-    Adopted(Adopted* source) {
-        // Transfer ownership from source to this.
-        fPtr = source->fPtr;
-        source->fPtr = NULL;
-    }
-    ~Adopted() { if (fPtr) fPtr->~T(); }
-
-    ACT_AS_PTR(fPtr)
-private:
-    T* fPtr;
-    Adopted(const Adopted&) = delete;
-    Adopted& operator=(const Adopted&) = delete;
-};
-
 // PODArray doesn't own the pointer's memory, and we assume the data is POD.
 template <typename T>
 class PODArray {
@@ -157,13 +139,6 @@ struct TypedMatrix : public SkMatrix {
     TypedMatrix(const SkMatrix& matrix);
 };
 
-struct Matrix44 : public SkM44 {
-    Matrix44() {}
-    Matrix44(const SkScalar m[16]) {
-        this->setColMajor(m);
-    }
-};
-
 enum Tags {
     kDraw_Tag      = 1,   // May draw something (usually named DrawFoo).
     kHasImage_Tag  = 2,   // Contains an SkImage or SkBitmap.
@@ -191,19 +166,19 @@ RECORD(SaveLayer, kHasPaint_Tag,
        Optional<SkRect> bounds;
        Optional<SkPaint> paint;
        sk_sp<const SkImageFilter> backdrop;
-       sk_sp<const SkImage> clipMask;
-       Optional<SkMatrix> clipMatrix;
        SkCanvas::SaveLayerFlags saveLayerFlags);
 
 RECORD(SaveBehind, 0,
        Optional<SkRect> subset);
 
+RECORD(MarkCTM, 0,
+       SkString name);
 RECORD(SetMatrix, 0,
         TypedMatrix matrix);
 RECORD(Concat, 0,
         TypedMatrix matrix);
 RECORD(Concat44, 0,
-       Matrix44 matrix);
+       SkM44 matrix);
 
 RECORD(Translate, 0,
         SkScalar dx;
@@ -303,7 +278,7 @@ RECORD(DrawPoints, kDraw_Tag|kHasPaint_Tag,
         SkPaint paint;
         SkCanvas::PointMode mode;
         unsigned count;
-        SkPoint* pts);
+        PODArray<SkPoint> pts);
 RECORD(DrawRRect, kDraw_Tag|kHasPaint_Tag,
         SkPaint paint;
         SkRRect rrect);

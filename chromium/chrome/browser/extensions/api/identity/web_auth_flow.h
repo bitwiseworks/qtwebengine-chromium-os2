@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "ui/gfx/geometry/rect.h"
@@ -52,6 +53,11 @@ class WebAuthFlow : public content::NotificationObserver,
     SILENT        // No UI should be shown.
   };
 
+  enum Partition {
+    GET_AUTH_TOKEN,       // Use the getAuthToken() partition.
+    LAUNCH_WEB_AUTH_FLOW  // Use the launchWebAuthFlow() partition.
+  };
+
   enum Failure {
     WINDOW_CLOSED,  // Window closed by user.
     INTERACTION_REQUIRED,  // Non-redirect page load in silent mode.
@@ -78,7 +84,8 @@ class WebAuthFlow : public content::NotificationObserver,
   WebAuthFlow(Delegate* delegate,
               Profile* profile,
               const GURL& provider_url,
-              Mode mode);
+              Mode mode,
+              Partition partition);
 
   ~WebAuthFlow() override;
 
@@ -95,9 +102,11 @@ class WebAuthFlow : public content::NotificationObserver,
   // Returns an ID string attached to the window. Can override for testing.
   virtual const std::string& GetAppWindowKey() const;
 
-  // Returns the URL used by the SiteInstance associated with the WebViewGuest
-  // used in the WebAuthFlow.
-  static GURL GetWebViewSiteURL();
+  // Returns the StoragePartitionConfig for a given |partition| used in the
+  // WebAuthFlow.
+  static content::StoragePartitionConfig GetWebViewPartitionConfig(
+      Partition partition,
+      content::BrowserContext* browser_context);
 
  private:
   friend class ::WebAuthFlowTest;
@@ -129,6 +138,7 @@ class WebAuthFlow : public content::NotificationObserver,
   Profile* profile_;
   GURL provider_url_;
   Mode mode_;
+  Partition partition_;
 
   AppWindow* app_window_;
   std::string app_window_key_;

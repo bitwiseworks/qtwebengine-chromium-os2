@@ -188,8 +188,8 @@ void ExtensionHost::OnNetworkRequestDone(uint64_t request_id) {
     observer.OnNetworkRequestDone(this, request_id);
 }
 
-const GURL& ExtensionHost::GetURL() const {
-  return host_contents()->GetURL();
+const GURL& ExtensionHost::GetLastCommittedURL() const {
+  return host_contents()->GetLastCommittedURL();
 }
 
 void ExtensionHost::LoadInitialURL() {
@@ -384,6 +384,7 @@ content::JavaScriptDialogManager* ExtensionHost::GetJavaScriptDialogManager(
 
 void ExtensionHost::AddNewContents(WebContents* source,
                                    std::unique_ptr<WebContents> new_contents,
+                                   const GURL& target_url,
                                    WindowOpenDisposition disposition,
                                    const gfx::Rect& initial_rect,
                                    bool user_gesture,
@@ -404,8 +405,8 @@ void ExtensionHost::AddNewContents(WebContents* source,
       WebContentsDelegate* delegate = associated_contents->GetDelegate();
       if (delegate) {
         delegate->AddNewContents(associated_contents, std::move(new_contents),
-                                 disposition, initial_rect, user_gesture,
-                                 was_blocked);
+                                 target_url, disposition, initial_rect,
+                                 user_gesture, was_blocked);
         return;
       }
     }

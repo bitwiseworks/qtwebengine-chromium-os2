@@ -13,7 +13,7 @@ namespace gpu {
 // If the actual time the watched GPU thread spent doing actual work is less
 // than the wathdog timeout, the GPU thread can continue running through
 // OnGPUWatchdogTimeout for at most 4 times before the gpu thread is killed.
-constexpr int kMaxCountOfMoreGpuThreadTimeAllowed = 4;
+constexpr int kMaxCountOfMoreGpuThreadTimeAllowed = 3;
 #endif
 constexpr int kMaxExtraCyclesBeforeKill = 0;
 
@@ -27,6 +27,8 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
   static std::unique_ptr<GpuWatchdogThreadImplV2> Create(
       bool start_backgrounded,
       base::TimeDelta timeout,
+      int init_factor,
+      int restart_factor,
       int max_extra_cycles_before_kill,
       bool test_mode);
 
@@ -40,8 +42,6 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
   void OnGpuProcessTearDown() override;
   void ResumeWatchdog() override;
   void PauseWatchdog() override;
-  // Records "GPU.WatchdogThread.Event.V2" and "GPU.WatchdogThread.Event".
-  void GpuWatchdogHistogram(GpuWatchdogThreadEvent thread_event) override;
   bool IsGpuHangDetectedForTesting() override;
   void WaitForPowerObserverAddedForTesting() override;
 
@@ -69,6 +69,8 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
   };
 
   GpuWatchdogThreadImplV2(base::TimeDelta timeout,
+                          int init_factor,
+                          int restart_factor,
                           int max_extra_cycles_before_kill,
                           bool test_mode);
   void OnAddPowerObserver();
@@ -81,6 +83,7 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
   bool IsArmed();
   base::subtle::Atomic32 ReadArmDisarmCounter();
   void OnWatchdogTimeout();
+  bool SlowWatchdogThread();
   bool WatchedThreadNeedsMoreThreadTime(bool no_gpu_hang_detected);
 #if defined(OS_WIN)
   base::ThreadTicks GetWatchedThreadTime();
@@ -89,6 +92,9 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
 
   // Do not change the function name. It is used for [GPU HANG] carsh reports.
   void DeliberatelyTerminateToRecoverFromHang();
+
+  // Records "GPU.WatchdogThread.Event".
+  void GpuWatchdogHistogram(GpuWatchdogThreadEvent thread_event);
 
   // Histogram recorded in OnWatchdogTimeout()
   // Records "GPU.WatchdogThread.Timeout"
@@ -133,6 +139,13 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
   // Timeout on the watchdog thread to check if gpu hangs.
   base::TimeDelta watchdog_timeout_;
 
+  // The one-time watchdog timeout multiplier in the gpu initialization.
+  int watchdog_init_factor_;
+
+  // The one-time watchdog timeout multiplier after the watchdog pauses and
+  // restarts.
+  int watchdog_restart_factor_;
+
   // The time the gpu watchdog was created.
   base::TimeTicks watchdog_start_timeticks_;
 
@@ -155,6 +168,10 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
 
   // The time the last OnWatchdogTimeout() was called.
   base::TimeTicks last_on_watchdog_timeout_timeticks_;
+
+  // The wall-clock time the next OnWatchdogTimeout() will be called.
+  base::Time next_on_watchdog_timeout_time_;
+
 #if defined(OS_WIN)
   base::ThreadTicks last_on_watchdog_timeout_thread_ticks_;
 
@@ -212,7 +229,7 @@ class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV2
   bool in_gpu_initialization_ = false;
 
   // The number of logical processors/cores on the current machine.
-  unsigned num_of_processors_;
+  int num_of_processors_ = 0;
 
   // Don't kill the GPU process immediately after a gpu hang is detected. Wait
   // for extra cycles of timeout. Kill it, if the GPU still doesn't respond

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as Common from '../common/common.js';
 import * as UI from '../ui/ui.js';
 
@@ -87,7 +90,7 @@ export class AudioContextSelector extends Common.ObjectWrapper.ObjectWrapper {
    * @return {!Element}
    */
   createElementForItem(item) {
-    const element = createElementWithClass('div');
+    const element = document.createElement('div');
     const shadowRoot = UI.Utils.createShadowRootWithCoreStyles(element, 'web_audio/audioContextSelector.css');
     const title = shadowRoot.createChild('div', 'title');
     title.createTextChild(this.titleFor(item).trimEndWithMaxLength(100));

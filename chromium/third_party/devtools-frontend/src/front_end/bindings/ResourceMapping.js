@@ -1,6 +1,8 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
 
 import * as Common from '../common/common.js';
 import * as SDK from '../sdk/sdk.js';
@@ -225,7 +227,7 @@ class ModelInfo {
    */
   async _styleSheetChanged(event) {
     const header = this._cssModel.styleSheetHeaderForId(event.data.styleSheetId);
-    if (!header || !header.isInline) {
+    if (!header || !header.isInline || (header.isInline && header.isMutable)) {
       return;
     }
     const binding = this._bindings.get(header.resourceURL());
@@ -292,6 +294,9 @@ class ModelInfo {
         continue;
       }
       const binding = this._bindings.get(resource.url);
+      if (!binding) {
+        continue;
+      }
       if (binding._resources.size === 1) {
         binding.dispose();
         this._bindings.delete(resource.url);

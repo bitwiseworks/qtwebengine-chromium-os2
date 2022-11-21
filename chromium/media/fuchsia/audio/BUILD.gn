@@ -8,7 +8,6 @@ source_set("audio") {
   deps = [
     "//base",
     "//media",
-    "//media/fuchsia/mojom",
     "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.media.audio",
     "//third_party/fuchsia-sdk/sdk/pkg/sys_cpp",
   ]
@@ -18,6 +17,20 @@ source_set("audio") {
     "fuchsia_audio_capturer_source.h",
     "fuchsia_audio_renderer.cc",
     "fuchsia_audio_renderer.h",
+  ]
+}
+
+source_set("test_support") {
+  testonly = true
+  public_deps = [
+    "//base",
+    "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.media",
+    "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.media.audio",
+    "//third_party/fuchsia-sdk/sdk/pkg/fidl_cpp",
+  ]
+  sources = [
+    "fake_audio_consumer.cc",
+    "fake_audio_consumer.h",
   ]
 }
 

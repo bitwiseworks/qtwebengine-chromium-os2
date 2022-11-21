@@ -29,23 +29,23 @@
 #include "third_party/blink/renderer/core/css/css_namespace_rule.h"
 #include "third_party/blink/renderer/core/css/css_page_rule.h"
 #include "third_party/blink/renderer/core/css/css_property_rule.h"
+#include "third_party/blink/renderer/core/css/css_scroll_timeline_rule.h"
 #include "third_party/blink/renderer/core/css/css_style_rule.h"
 #include "third_party/blink/renderer/core/css/css_supports_rule.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
-#include "third_party/blink/renderer/core/css/css_viewport_rule.h"
 #include "third_party/blink/renderer/core/css/style_rule_import.h"
 #include "third_party/blink/renderer/core/css/style_rule_keyframe.h"
 #include "third_party/blink/renderer/core/css/style_rule_namespace.h"
+#include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 
 namespace blink {
 
 struct SameSizeAsStyleRuleBase final
     : public GarbageCollected<SameSizeAsStyleRuleBase> {
-  unsigned bitfields;
+  uint8_t field;
 };
 
-static_assert(sizeof(StyleRuleBase) <= sizeof(SameSizeAsStyleRuleBase),
-              "StyleRuleBase should stay small");
+ASSERT_SIZE(StyleRuleBase, SameSizeAsStyleRuleBase);
 
 CSSRule* StyleRuleBase::CreateCSSOMWrapper(CSSStyleSheet* parent_sheet) const {
   return CreateCSSOMWrapper(parent_sheet, nullptr);
@@ -55,7 +55,7 @@ CSSRule* StyleRuleBase::CreateCSSOMWrapper(CSSRule* parent_rule) const {
   return CreateCSSOMWrapper(nullptr, parent_rule);
 }
 
-void StyleRuleBase::Trace(Visitor* visitor) {
+void StyleRuleBase::Trace(Visitor* visitor) const {
   switch (GetType()) {
     case kCharset:
       To<StyleRuleCharset>(this)->TraceAfterDispatch(visitor);
@@ -74,6 +74,9 @@ void StyleRuleBase::Trace(Visitor* visitor) {
       return;
     case kMedia:
       To<StyleRuleMedia>(this)->TraceAfterDispatch(visitor);
+      return;
+    case kScrollTimeline:
+      To<StyleRuleScrollTimeline>(this)->TraceAfterDispatch(visitor);
       return;
     case kSupports:
       To<StyleRuleSupports>(this)->TraceAfterDispatch(visitor);
@@ -117,6 +120,9 @@ void StyleRuleBase::FinalizeGarbageCollectedObject() {
     case kMedia:
       To<StyleRuleMedia>(this)->~StyleRuleMedia();
       return;
+    case kScrollTimeline:
+      To<StyleRuleScrollTimeline>(this)->~StyleRuleScrollTimeline();
+      return;
     case kSupports:
       To<StyleRuleSupports>(this)->~StyleRuleSupports();
       return;
@@ -151,6 +157,8 @@ StyleRuleBase* StyleRuleBase::Copy() const {
       return To<StyleRuleFontFace>(this)->Copy();
     case kMedia:
       return To<StyleRuleMedia>(this)->Copy();
+    case kScrollTimeline:
+      return To<StyleRuleScrollTimeline>(this)->Copy();
     case kSupports:
       return To<StyleRuleSupports>(this)->Copy();
     case kImport:
@@ -197,6 +205,10 @@ CSSRule* StyleRuleBase::CreateCSSOMWrapper(CSSStyleSheet* parent_sheet,
       rule = MakeGarbageCollected<CSSMediaRule>(To<StyleRuleMedia>(self),
                                                 parent_sheet);
       break;
+    case kScrollTimeline:
+      rule = MakeGarbageCollected<CSSScrollTimelineRule>(
+          To<StyleRuleScrollTimeline>(self), parent_sheet);
+      break;
     case kSupports:
       rule = MakeGarbageCollected<CSSSupportsRule>(To<StyleRuleSupports>(self),
                                                    parent_sheet);
@@ -213,12 +225,9 @@ CSSRule* StyleRuleBase::CreateCSSOMWrapper(CSSStyleSheet* parent_sheet,
       rule = MakeGarbageCollected<CSSNamespaceRule>(
           To<StyleRuleNamespace>(self), parent_sheet);
       break;
-    case kViewport:
-      rule = MakeGarbageCollected<CSSViewportRule>(To<StyleRuleViewport>(self),
-                                                   parent_sheet);
-      break;
     case kKeyframe:
     case kCharset:
+    case kViewport:
       NOTREACHED();
       return nullptr;
   }
@@ -333,6 +342,18 @@ MutableCSSPropertyValueSet& StyleRuleProperty::MutableProperties() {
   return *To<MutableCSSPropertyValueSet>(properties_.Get());
 }
 
+const CSSValue* StyleRuleProperty::GetSyntax() const {
+  return properties_->GetPropertyCSSValue(CSSPropertyID::kSyntax);
+}
+
+const CSSValue* StyleRuleProperty::Inherits() const {
+  return properties_->GetPropertyCSSValue(CSSPropertyID::kInherits);
+}
+
+const CSSValue* StyleRuleProperty::GetInitialValue() const {
+  return properties_->GetPropertyCSSValue(CSSPropertyID::kInitialValue);
+}
+
 void StyleRuleProperty::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(properties_);
   StyleRuleBase::TraceAfterDispatch(visitor);
@@ -353,6 +374,31 @@ MutableCSSPropertyValueSet& StyleRuleFontFace::MutableProperties() {
 
 void StyleRuleFontFace::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(properties_);
+  StyleRuleBase::TraceAfterDispatch(visitor);
+}
+
+StyleRuleScrollTimeline::StyleRuleScrollTimeline(
+    const String& name,
+    const CSSPropertyValueSet* properties)
+    : StyleRuleBase(kScrollTimeline),
+      name_(name),
+      source_(properties->GetPropertyCSSValue(CSSPropertyID::kSource)),
+      orientation_(
+          properties->GetPropertyCSSValue(CSSPropertyID::kOrientation)),
+      start_(properties->GetPropertyCSSValue(CSSPropertyID::kStart)),
+      end_(properties->GetPropertyCSSValue(CSSPropertyID::kEnd)),
+      time_range_(properties->GetPropertyCSSValue(CSSPropertyID::kTimeRange)) {}
+
+StyleRuleScrollTimeline::~StyleRuleScrollTimeline() = default;
+
+void StyleRuleScrollTimeline::TraceAfterDispatch(
+    blink::Visitor* visitor) const {
+  visitor->Trace(source_);
+  visitor->Trace(orientation_);
+  visitor->Trace(start_);
+  visitor->Trace(end_);
+  visitor->Trace(time_range_);
+
   StyleRuleBase::TraceAfterDispatch(visitor);
 }
 

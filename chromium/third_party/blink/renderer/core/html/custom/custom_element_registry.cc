@@ -87,7 +87,7 @@ CustomElementRegistry::CustomElementRegistry(const LocalDOMWindow* owner)
     Entangle(v0);
 }
 
-void CustomElementRegistry::Trace(Visitor* visitor) {
+void CustomElementRegistry::Trace(Visitor* visitor) const {
   visitor->Trace(definitions_);
   visitor->Trace(owner_);
   visitor->Trace(v0_);
@@ -144,7 +144,7 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
 
   // Step 7. customized built-in elements definition
   // element interface extends option checks
-  if (options->hasExtends()) {
+  if (!options->extends().IsNull()) {
     // 7.1. If element interface is valid custom element name, throw exception
     const AtomicString& extends = AtomicString(options->extends());
     if (ThrowIfValidName(AtomicString(options->extends()), exception_state))
@@ -211,6 +211,11 @@ CustomElementDefinition* CustomElementRegistry::DefineInternal(
   definitions_.emplace_back(definition);
   NameIdMap::AddResult result = name_id_map_.insert(descriptor.GetName(), id);
   CHECK(result.is_new_entry);
+
+  if (definition->IsFormAssociated()) {
+    if (Document* document = owner_->document())
+      UseCounter::Count(*document, WebFeature::kFormAssociatedCustomElement);
+  }
 
   HeapVector<Member<Element>> candidates;
   CollectCandidates(descriptor, &candidates);
@@ -355,10 +360,8 @@ void CustomElementRegistry::upgrade(Node* root) {
   CollectUpgradeCandidateInNode(*root, candidates);
 
   // 2. For each candidate of candidates, try to upgrade candidate.
-  for (auto& candidate : candidates) {
-    CustomElement::TryToUpgrade(*candidate,
-                                true /* upgrade_invisible_elements */);
-  }
+  for (auto& candidate : candidates)
+    CustomElement::TryToUpgrade(*candidate);
 }
 
 }  // namespace blink

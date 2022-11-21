@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "base/logging.h"
+#include "base/check.h"
 #include "third_party/blink/renderer/modules/webgpu/dawn_object.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
@@ -23,8 +23,9 @@ class DoubleSequenceOrGPUColorDict;
 class GPUColorDict;
 class GPUProgrammableStageDescriptor;
 class GPUTextureCopyView;
-class UnsignedLongSequenceOrGPUExtent3DDict;
-class UnsignedLongSequenceOrGPUOrigin3DDict;
+class GPUTextureDataLayout;
+class UnsignedLongEnforceRangeSequenceOrGPUExtent3DDict;
+class UnsignedLongEnforceRangeSequenceOrGPUOrigin3DDict;
 
 // Convert WebGPU bitfield values to Dawn enums. These have the same value.
 template <typename DawnEnum>
@@ -42,9 +43,13 @@ DawnEnum AsDawnEnum(const WTF::String& webgpu_enum);
 WGPUColor AsDawnColor(const Vector<double>&);
 WGPUColor AsDawnType(const GPUColorDict*);
 WGPUColor AsDawnType(const DoubleSequenceOrGPUColorDict*);
-WGPUExtent3D AsDawnType(const UnsignedLongSequenceOrGPUExtent3DDict*);
-WGPUOrigin3D AsDawnType(const UnsignedLongSequenceOrGPUOrigin3DDict*);
-WGPUTextureCopyView AsDawnType(const GPUTextureCopyView* webgpu_view);
+WGPUExtent3D AsDawnType(
+    const UnsignedLongEnforceRangeSequenceOrGPUExtent3DDict*);
+WGPUOrigin3D AsDawnType(
+    const UnsignedLongEnforceRangeSequenceOrGPUOrigin3DDict*);
+WGPUTextureCopyView AsDawnType(const GPUTextureCopyView* webgpu_view,
+                               GPUDevice* device);
+WGPUTextureDataLayout AsDawnType(const GPUTextureDataLayout* webgpu_layout);
 using OwnedProgrammableStageDescriptor =
     std::tuple<WGPUProgrammableStageDescriptor, std::unique_ptr<char[]>>;
 OwnedProgrammableStageDescriptor AsDawnType(

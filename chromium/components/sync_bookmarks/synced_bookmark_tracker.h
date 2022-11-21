@@ -5,9 +5,9 @@
 #ifndef COMPONENTS_SYNC_BOOKMARKS_SYNCED_BOOKMARK_TRACKER_H_
 #define COMPONENTS_SYNC_BOOKMARKS_SYNCED_BOOKMARK_TRACKER_H_
 
-#include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -31,6 +31,7 @@ namespace sync_bookmarks {
 
 // Exposed for testing.
 extern const base::Feature kInvalidateBookmarkSyncMetadataIfMismatchingGuid;
+extern const base::Feature kInvalidateBookmarkSyncMetadataIfClientTagMissing;
 
 // This class is responsible for keeping the mapping between bookmark nodes in
 // the local model and the server-side corresponding sync entities. It manages
@@ -55,6 +56,10 @@ class SyncedBookmarkTracker {
 
     // Check whether |specifics| matches the stored specifics_hash.
     bool MatchesSpecificsHash(const sync_pb::EntitySpecifics& specifics) const;
+
+    // Check whether |favicon_png_bytes| matches the stored
+    // bookmark_favicon_hash.
+    bool MatchesFaviconHash(const std::string& favicon_png_bytes) const;
 
     // Returns null for tombstones.
     const bookmarks::BookmarkNode* bookmark_node() const {
@@ -105,6 +110,8 @@ class SyncedBookmarkTracker {
     // otherwise).
     void set_final_guid(const std::string& guid);
 
+    void PopulateFaviconHashIfUnset(const std::string& favicon_png_bytes);
+
     // Returns the estimate of dynamically allocated memory in bytes.
     size_t EstimateMemoryUsage() const;
 
@@ -141,6 +148,10 @@ class SyncedBookmarkTracker {
 
   ~SyncedBookmarkTracker();
 
+  // This method is used to denote that all bookmarks are reuploaded and there
+  // is no need to reupload them again after next browser startup.
+  void SetBookmarksFullTitleReuploaded();
+
   // Returns null if no entity is found.
   const Entity* GetEntityForSyncId(const std::string& sync_id) const;
 
@@ -176,6 +187,11 @@ class SyncedBookmarkTracker {
   // Populates a bookmark's final GUID. |entity| must be owned by this tracker.
   void PopulateFinalGuid(const Entity* entity, const std::string& guid);
 
+  // Populates the metadata field representing the hashed favicon. This method
+  // is effectively used to backfill the proto field, which was introduced late.
+  void PopulateFaviconHashIfUnset(const Entity* entity,
+                                  const std::string& favicon_png_bytes);
+
   // Marks an existing entry that a commit request might have been sent to the
   // server. |entity| must be owned by this tracker.
   void MarkCommitMayHaveStarted(const Entity* entity);
@@ -206,6 +222,11 @@ class SyncedBookmarkTracker {
   void set_model_type_state(sync_pb::ModelTypeState model_type_state) {
     model_type_state_ = std::move(model_type_state);
   }
+
+  // Treats the current time as last sync time.
+  // TODO(crbug.com/1032052): Remove this code once all local sync metadata is
+  // required to populate the client tag (and be considered invalid otherwise).
+  void UpdateLastSyncTime() { last_sync_time_ = base::Time::Now(); }
 
   std::vector<const Entity*> GetAllEntities() const;
 
@@ -259,10 +280,22 @@ class SyncedBookmarkTracker {
   // confirmed the deletion yet.
   size_t TrackedUncommittedTombstonesCountForDebugging() const;
 
+  // Clears the specifics hash for |entity|, useful for testing.
+  void ClearSpecificsHashForTest(const Entity* entity);
+
   // Checks whther all nodes in |bookmark_model| that *should* be tracked as per
   // CanSyncNode() are tracked.
   void CheckAllNodesTracked(
       const bookmarks::BookmarkModel* bookmark_model) const;
+
+  // This method is used to mark all entities except permanent nodes as
+  // unsynced. This will cause reuploading of all bookmarks. The reupload
+  // will be initiated only when the |bookmarks_full_title_reuploaded| field in
+  // BookmarksMetadata is false. This field is used to prevent reuploading after
+  // each browser restart. Returns true if the reupload was initiated.
+  // TODO(crbug.com/1066962): remove this code when most of bookmarks are
+  // reuploaded.
+  bool ReuploadBookmarksOnLoadIfNeeded();
 
  private:
   // Enumeration of possible reasons why persisted metadata are considered
@@ -282,11 +315,15 @@ class SyncedBookmarkTracker {
     UNTRACKED_BOOKMARK = 8,
     BOOKMARK_GUID_MISMATCH = 9,
     DUPLICATED_CLIENT_TAG_HASH = 10,
-    kMaxValue = DUPLICATED_CLIENT_TAG_HASH
+    TRACKED_MANAGED_NODE = 11,
+    MISSING_CLIENT_TAG_HASH = 12,
+
+    kMaxValue = MISSING_CLIENT_TAG_HASH
   };
 
   SyncedBookmarkTracker(sync_pb::ModelTypeState model_type_state,
-                        bool bookmarks_full_title_reuploaded);
+                        bool bookmarks_full_title_reuploaded,
+                        base::Time last_sync_time);
 
   // Add entities to |this| tracker based on the content of |*model| and
   // |model_metadata|. Validates the integrity of |*model| and |model_metadata|
@@ -305,16 +342,6 @@ class SyncedBookmarkTracker {
   std::vector<const Entity*> ReorderUnsyncedEntitiesExceptDeletions(
       const std::vector<const Entity*>& entities) const;
 
-  // This method is used to mark all entities except permanent nodes as
-  // unsynced. This will cause reuploading of all bookmarks. This reupload
-  // should be initiated only when the |bookmarks_full_title_reuploaded| field
-  // in BookmarksMetadata is false. This field is used to prevent reuploading
-  // after each browser restart. It is set to true in
-  // BuildBookmarkModelMetadata.
-  // TODO(crbug.com/1066962): remove this code when most of bookmarks are
-  // reuploaded.
-  void ReuploadBookmarksOnLoadIfNeeded();
-
   // Recursive method that starting from |node| appends all corresponding
   // entities with updates in top-down order to |ordered_entities|.
   void TraverseAndAppend(const bookmarks::BookmarkNode* node,
@@ -323,12 +350,13 @@ class SyncedBookmarkTracker {
 
   // A map of sync server ids to sync entities. This should contain entries and
   // metadata for almost everything.
-  std::map<std::string, std::unique_ptr<Entity>> sync_id_to_entities_map_;
+  std::unordered_map<std::string, std::unique_ptr<Entity>>
+      sync_id_to_entities_map_;
 
   // A map of bookmark nodes to sync entities. It's keyed by the bookmark node
   // pointers which get assigned when loading the bookmark model. This map is
   // first initialized in the constructor.
-  std::map<const bookmarks::BookmarkNode*, Entity*>
+  std::unordered_map<const bookmarks::BookmarkNode*, Entity*>
       bookmark_node_to_entities_map_;
 
   // A list of pending local bookmark deletions. They should be sent to the
@@ -345,6 +373,12 @@ class SyncedBookmarkTracker {
   // TODO(crbug.com/1066962): remove this code when most of bookmarks are
   // reuploaded.
   bool bookmarks_full_title_reuploaded_ = false;
+
+  // The local timestamp corresponding to the last time remote updates were
+  // received.
+  // TODO(crbug.com/1032052): Remove this code once all local sync metadata is
+  // required to populate the client tag (and be considered invalid otherwise).
+  base::Time last_sync_time_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncedBookmarkTracker);
 };

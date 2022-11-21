@@ -128,6 +128,52 @@ bool ValidateDrawElementsInstancedANGLE(const Context *context,
                                         GLsizei primcount);
 bool ValidateVertexAttribDivisorANGLE(const Context *context, GLuint index, GLuint divisor);
 
+// GL_ANGLE_memory_object_flags
+bool ValidateTexStorageMemFlags2DANGLE(const Context *context,
+                                       TextureType targetPacked,
+                                       GLsizei levels,
+                                       GLenum internalFormat,
+                                       GLsizei width,
+                                       GLsizei height,
+                                       MemoryObjectID memoryPacked,
+                                       GLuint64 offset,
+                                       GLbitfield createFlags,
+                                       GLbitfield usageFlags);
+bool ValidateTexStorageMemFlags2DMultisampleANGLE(const Context *context,
+                                                  TextureType targetPacked,
+                                                  GLsizei samples,
+                                                  GLenum internalFormat,
+                                                  GLsizei width,
+                                                  GLsizei height,
+                                                  GLboolean fixedSampleLocations,
+                                                  MemoryObjectID memoryPacked,
+                                                  GLuint64 offset,
+                                                  GLbitfield createFlags,
+                                                  GLbitfield usageFlags);
+bool ValidateTexStorageMemFlags3DANGLE(const Context *context,
+                                       TextureType targetPacked,
+                                       GLsizei levels,
+                                       GLenum internalFormat,
+                                       GLsizei width,
+                                       GLsizei height,
+                                       GLsizei depth,
+                                       MemoryObjectID memoryPacked,
+                                       GLuint64 offset,
+                                       GLbitfield createFlags,
+                                       GLbitfield usageFlags);
+bool ValidateTexStorageMemFlags3DMultisampleANGLE(const Context *context,
+                                                  TextureType targetPacked,
+                                                  GLsizei samples,
+                                                  GLenum internalFormat,
+                                                  GLsizei width,
+                                                  GLsizei height,
+                                                  GLsizei depth,
+                                                  GLboolean fixedSampleLocations,
+                                                  MemoryObjectID memoryPacked,
+                                                  GLuint64 offset,
+                                                  GLbitfield createFlags,
+                                                  GLbitfield usageFlags);
+
 // GL_ANGLE_memory_object_fuchsia
 bool ValidateImportMemoryZirconHandleANGLE(const Context *context,
                                            MemoryObjectID memoryPacked,
@@ -701,6 +747,8 @@ bool ValidateLoseContextCHROMIUM(const Context *context,
                                  GraphicsResetStatus currentPacked,
                                  GraphicsResetStatus otherPacked);
 
+// GL_EXT_EGL_image_array
+
 // GL_EXT_blend_func_extended
 bool ValidateBindFragDataLocationEXT(const Context *context,
                                      ShaderProgramID programPacked,
@@ -718,6 +766,13 @@ bool ValidateGetProgramResourceLocationIndexEXT(const Context *context,
                                                 ShaderProgramID programPacked,
                                                 GLenum programInterface,
                                                 const GLchar *name);
+
+// GL_EXT_buffer_storage
+bool ValidateBufferStorageEXT(const Context *context,
+                              BufferBinding targetPacked,
+                              GLsizeiptr size,
+                              const void *data,
+                              GLbitfield flags);
 
 // GL_EXT_debug_marker
 bool ValidateInsertEventMarkerEXT(const Context *context, GLsizei length, const GLchar *marker);
@@ -921,8 +976,8 @@ bool ValidateImportMemoryFdEXT(const Context *context,
 bool ValidateFramebufferTexture2DMultisampleEXT(const Context *context,
                                                 GLenum target,
                                                 GLenum attachment,
-                                                GLenum textarget,
-                                                GLuint texture,
+                                                TextureTarget textargetPacked,
+                                                TextureID texturePacked,
                                                 GLint level,
                                                 GLsizei samples);
 bool ValidateRenderbufferStorageMultisampleEXT(const Context *context,
@@ -997,6 +1052,18 @@ bool ValidateImportSemaphoreFdEXT(const Context *context,
                                   HandleType handleTypePacked,
                                   GLint fd);
 
+// GL_EXT_texture_buffer
+bool ValidateTexBufferEXT(const Context *context,
+                          TextureType targetPacked,
+                          GLenum internalformat,
+                          BufferID bufferPacked);
+bool ValidateTexBufferRangeEXT(const Context *context,
+                               TextureType targetPacked,
+                               GLenum internalformat,
+                               BufferID bufferPacked,
+                               GLintptr offset,
+                               GLsizeiptr size);
+
 // GL_EXT_texture_compression_bptc
 
 // GL_EXT_texture_compression_dxt1
@@ -1007,9 +1074,13 @@ bool ValidateImportSemaphoreFdEXT(const Context *context,
 
 // GL_EXT_texture_compression_s3tc_srgb
 
+// GL_EXT_texture_cube_map_array
+
 // GL_EXT_texture_filter_anisotropic
 
 // GL_EXT_texture_format_BGRA8888
+
+// GL_EXT_texture_sRGB_R8
 
 // GL_EXT_texture_storage
 bool ValidateTexStorage1DEXT(const Context *context,
@@ -1382,6 +1453,18 @@ bool ValidateTexParameterIuivOES(const Context *context,
                                  GLenum pname,
                                  const GLuint *params);
 
+// GL_OES_texture_buffer
+bool ValidateTexBufferOES(const Context *context,
+                          TextureType targetPacked,
+                          GLenum internalformat,
+                          BufferID bufferPacked);
+bool ValidateTexBufferRangeOES(const Context *context,
+                               TextureType targetPacked,
+                               GLenum internalformat,
+                               BufferID bufferPacked,
+                               GLintptr offset,
+                               GLsizeiptr size);
+
 // GL_OES_texture_cube_map
 bool ValidateGetTexGenfvOES(const Context *context,
                             GLenum coord,
@@ -1402,7 +1485,11 @@ bool ValidateTexGenivOES(const Context *context, GLenum coord, GLenum pname, con
 bool ValidateTexGenxOES(const Context *context, GLenum coord, GLenum pname, GLfixed param);
 bool ValidateTexGenxvOES(const Context *context, GLenum coord, GLenum pname, const GLfixed *params);
 
+// GL_OES_texture_cube_map_array
+
 // GL_OES_texture_half_float
+
+// GL_OES_texture_stencil8
 
 // GL_OES_texture_storage_multisample_2d_array
 bool ValidateTexStorage3DMultisampleOES(const Context *context,

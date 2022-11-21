@@ -49,7 +49,7 @@ class CORE_EXPORT ModuleScript : public Script {
   KURL ResolveModuleSpecifier(const String& module_request,
                               String* failure_reason = nullptr) const;
 
-  void Trace(Visitor*) override;
+  void Trace(Visitor*) const override;
 
   virtual void ProduceCache() {}
   const KURL& SourceURL() const { return source_url_; }
@@ -64,11 +64,13 @@ class CORE_EXPORT ModuleScript : public Script {
   Modulator* SettingsObject() const { return settings_object_; }
 
  private:
-  mojom::ScriptType GetScriptType() const override {
-    return mojom::ScriptType::kModule;
+  mojom::blink::ScriptType GetScriptType() const override {
+    return mojom::blink::ScriptType::kModule;
   }
-  void RunScript(LocalFrame*, const SecurityOrigin*) override;
-  void RunScriptOnWorker(WorkerGlobalScope&) override;
+  void RunScript(LocalFrame*) override;
+  bool RunScriptOnWorkerOrWorklet(WorkerOrWorkletGlobalScope&) override;
+
+  std::pair<size_t, size_t> GetClassicScriptSizes() const override;
 
   friend class ModuleTreeLinkerTestModulator;
 

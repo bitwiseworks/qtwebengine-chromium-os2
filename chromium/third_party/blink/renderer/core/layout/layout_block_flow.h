@@ -37,7 +37,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_BLOCK_FLOW_H_
 
 #include <memory>
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_item.h"
 #include "third_party/blink/renderer/core/layout/floating_objects.h"
@@ -106,7 +105,10 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
                                           scoped_refptr<ComputedStyle>,
                                           LegacyLayout);
 
-  bool IsLayoutBlockFlow() const final { return true; }
+  bool IsLayoutBlockFlow() const final {
+    NOT_DESTROYED();
+    return true;
+  }
 
   void UpdateBlockLayout(bool relayout_children) override;
 
@@ -122,6 +124,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       LayoutUnit position,
       IndentTextOrNot indent_text,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return (LogicalRightOffsetForLine(position, indent_text, logical_height) -
             LogicalLeftOffsetForLine(position, indent_text, logical_height))
         .ClampNegativeToZero();
@@ -130,6 +133,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       LayoutUnit position,
       IndentTextOrNot indent_text,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return LogicalRightOffsetForLine(position, LogicalRightOffsetForContent(),
                                      indent_text, logical_height);
   }
@@ -137,6 +141,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       LayoutUnit position,
       IndentTextOrNot indent_text,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return LogicalLeftOffsetForLine(position, LogicalLeftOffsetForContent(),
                                     indent_text, logical_height);
   }
@@ -144,6 +149,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       LayoutUnit position,
       IndentTextOrNot indent_text,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return StyleRef().IsLeftToRightDirection()
                ? LogicalLeftOffsetForLine(position, indent_text, logical_height)
                : LogicalWidth() - LogicalRightOffsetForLine(
@@ -153,6 +159,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   LayoutUnit AvailableLogicalWidthForAvoidingFloats(
       LayoutUnit position,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return (LogicalRightOffsetForAvoidingFloats(position, logical_height) -
             LogicalLeftOffsetForAvoidingFloats(position, logical_height))
         .ClampNegativeToZero();
@@ -160,18 +167,21 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   LayoutUnit LogicalLeftOffsetForAvoidingFloats(
       LayoutUnit position,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return LogicalLeftFloatOffsetForAvoidingFloats(
         position, LogicalLeftOffsetForContent(), logical_height);
   }
   LayoutUnit LogicalRightOffsetForAvoidingFloats(
       LayoutUnit position,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return LogicalRightFloatOffsetForAvoidingFloats(
         position, LogicalRightOffsetForContent(), logical_height);
   }
   LayoutUnit StartOffsetForAvoidingFloats(
       LayoutUnit position,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return StyleRef().IsLeftToRightDirection()
                ? LogicalLeftOffsetForAvoidingFloats(position, logical_height)
                : LogicalWidth() - LogicalRightOffsetForAvoidingFloats(
@@ -180,20 +190,35 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   LayoutUnit EndOffsetForAvoidingFloats(
       LayoutUnit position,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return !StyleRef().IsLeftToRightDirection()
                ? LogicalLeftOffsetForAvoidingFloats(position, logical_height)
                : LogicalWidth() - LogicalRightOffsetForAvoidingFloats(
                                       position, logical_height);
   }
 
-  const LineBoxList& LineBoxes() const { return line_boxes_; }
-  LineBoxList* LineBoxes() { return &line_boxes_; }
-  InlineFlowBox* FirstLineBox() const { return line_boxes_.First(); }
-  InlineFlowBox* LastLineBox() const { return line_boxes_.Last(); }
+  const LineBoxList& LineBoxes() const {
+    NOT_DESTROYED();
+    return line_boxes_;
+  }
+  LineBoxList* LineBoxes() {
+    NOT_DESTROYED();
+    return &line_boxes_;
+  }
+  InlineFlowBox* FirstLineBox() const {
+    NOT_DESTROYED();
+    return line_boxes_.First();
+  }
+  InlineFlowBox* LastLineBox() const {
+    NOT_DESTROYED();
+    return line_boxes_.Last();
+  }
   RootInlineBox* FirstRootBox() const {
+    NOT_DESTROYED();
     return static_cast<RootInlineBox*>(FirstLineBox());
   }
   RootInlineBox* LastRootBox() const {
+    NOT_DESTROYED();
     return static_cast<RootInlineBox*>(LastLineBox());
   }
 
@@ -216,6 +241,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void MarkSiblingsWithFloatsForLayout(LayoutBox* float_to_remove = nullptr);
 
   bool ContainsFloats() const {
+    NOT_DESTROYED();
     return floating_objects_ && !floating_objects_->Set().IsEmpty();
   }
   bool ContainsFloat(LayoutBox*) const;
@@ -223,9 +249,11 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void RemoveFloatingObjects();
 
   LayoutBoxModelObject* VirtualContinuation() const final {
+    NOT_DESTROYED();
     return Continuation();
   }
   bool IsAnonymousBlockContinuation() const {
+    NOT_DESTROYED();
     return Continuation() && IsAnonymousBlock();
   }
 
@@ -247,29 +275,35 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   bool GeneratesLineBoxesForInlineChild(LayoutObject*);
 
   LayoutUnit LogicalTopForFloat(const FloatingObject& floating_object) const {
+    NOT_DESTROYED();
     return IsHorizontalWritingMode() ? floating_object.Y()
                                      : floating_object.X();
   }
   LayoutUnit LogicalBottomForFloat(
       const FloatingObject& floating_object) const {
+    NOT_DESTROYED();
     return IsHorizontalWritingMode() ? floating_object.MaxY()
                                      : floating_object.MaxX();
   }
   LayoutUnit LogicalLeftForFloat(const FloatingObject& floating_object) const {
+    NOT_DESTROYED();
     return IsHorizontalWritingMode() ? floating_object.X()
                                      : floating_object.Y();
   }
   LayoutUnit LogicalRightForFloat(const FloatingObject& floating_object) const {
+    NOT_DESTROYED();
     return IsHorizontalWritingMode() ? floating_object.MaxX()
                                      : floating_object.MaxY();
   }
   LayoutUnit LogicalWidthForFloat(const FloatingObject& floating_object) const {
+    NOT_DESTROYED();
     return IsHorizontalWritingMode() ? floating_object.Width()
                                      : floating_object.Height();
   }
 
   void SetLogicalTopForFloat(FloatingObject& floating_object,
                              LayoutUnit logical_top) {
+    NOT_DESTROYED();
     if (IsHorizontalWritingMode())
       floating_object.SetY(logical_top);
     else
@@ -277,6 +311,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   }
   void SetLogicalLeftForFloat(FloatingObject& floating_object,
                               LayoutUnit logical_left) {
+    NOT_DESTROYED();
     if (IsHorizontalWritingMode())
       floating_object.SetX(logical_left);
     else
@@ -284,6 +319,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   }
   void SetLogicalHeightForFloat(FloatingObject& floating_object,
                                 LayoutUnit logical_height) {
+    NOT_DESTROYED();
     if (IsHorizontalWritingMode())
       floating_object.SetHeight(logical_height);
     else
@@ -291,6 +327,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   }
   void SetLogicalWidthForFloat(FloatingObject& floating_object,
                                LayoutUnit logical_width) {
+    NOT_DESTROYED();
     if (IsHorizontalWritingMode())
       floating_object.SetWidth(logical_width);
     else
@@ -311,9 +348,11 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   }
 
   LayoutMultiColumnFlowThread* MultiColumnFlowThread() const {
+    NOT_DESTROYED();
     return rare_data_ ? rare_data_->multi_column_flow_thread_ : nullptr;
   }
   void ResetMultiColumnFlowThread() {
+    NOT_DESTROYED();
     if (rare_data_)
       rare_data_->multi_column_flow_thread_ = nullptr;
   }
@@ -344,17 +383,22 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   // between the content logical top of an object and its first child or line
   // (only *between* blocks or lines).
   LayoutUnit PaginationStrutPropagatedFromChild() const {
+    NOT_DESTROYED();
     return rare_data_ ? rare_data_->pagination_strut_propagated_from_child_
                       : LayoutUnit();
   }
   void SetPaginationStrutPropagatedFromChild(LayoutUnit);
 
   LayoutUnit FirstForcedBreakOffset() const {
+    NOT_DESTROYED();
     if (!rare_data_)
       return LayoutUnit();
     return rare_data_->first_forced_break_offset_;
   }
   void SetFirstForcedBreakOffset(LayoutUnit);
+
+  const AtomicString StartPageName() const final;
+  const AtomicString EndPageName() const final;
 
   void PositionSpannerDescendant(LayoutMultiColumnSpannerPlaceholder& child);
 
@@ -369,6 +413,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
 
   LayoutUnit XPositionForFloatIncludingMargin(
       const FloatingObject& child) const {
+    NOT_DESTROYED();
     LayoutUnit scrollbar_adjustment(OriginAdjustmentForScrollbars().Width());
     if (IsHorizontalWritingMode()) {
       return child.X() + child.GetLayoutObject()->MarginLeft() +
@@ -380,6 +425,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   DISABLE_CFI_PERF
   LayoutUnit YPositionForFloatIncludingMargin(
       const FloatingObject& child) const {
+    NOT_DESTROYED();
     if (IsHorizontalWritingMode())
       return child.Y() + MarginBeforeForChild(*child.GetLayoutObject());
 
@@ -389,7 +435,10 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   LayoutPoint FlipFloatForWritingModeForChild(const FloatingObject&,
                                               const LayoutPoint&) const;
 
-  const char* GetName() const override { return "LayoutBlockFlow"; }
+  const char* GetName() const override {
+    NOT_DESTROYED();
+    return "LayoutBlockFlow";
+  }
 
   FloatingObject* InsertFloatingObject(LayoutBox&);
 
@@ -421,32 +470,37 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   LayoutUnit NextFloatLogicalBottomBelowForBlock(LayoutUnit) const;
 
   FloatingObject* LastFloatFromPreviousLine() const {
+    NOT_DESTROYED();
     return ContainsFloats() ? floating_objects_->Set().back().get() : nullptr;
   }
 
   void SetShouldDoFullPaintInvalidationForFirstLine();
 
   void SimplifiedNormalFlowInlineLayout();
-  bool RecalcInlineChildrenLayoutOverflow();
+  RecalcLayoutOverflowResult RecalcInlineChildrenLayoutOverflow();
   void RecalcInlineChildrenVisualOverflow();
 
   PositionWithAffinity PositionForPoint(const PhysicalOffset&) const override;
   PositionWithAffinity PositionForPoint(const LayoutObject& offset_parent,
                                         const PhysicalOffset& offset) const;
+  bool ShouldMoveCaretToHorizontalBoundaryWhenPastTopOrBottom() const;
 
   LayoutUnit LowestFloatLogicalBottom(EClear = EClear::kBoth) const;
 
   bool HasOverhangingFloats() const {
+    NOT_DESTROYED();
     return Parent() && ContainsFloats() &&
            LowestFloatLogicalBottom() > LogicalHeight();
   }
   bool IsOverhangingFloat(const FloatingObject& float_object) const {
+    NOT_DESTROYED();
     return LogicalBottomForFloat(float_object) > LogicalHeight();
   }
 
   LayoutUnit LogicalHeightWithVisibleOverflow() const final;
 
   void SetIsSelfCollapsingFromNG(bool is_self_collapsing) {
+    NOT_DESTROYED();
     is_self_collapsing_ = is_self_collapsing;
   }
 
@@ -456,12 +510,21 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void AddVisualOverflowFromFloats(const NGPhysicalContainerFragment& fragment);
   void AddLayoutOverflowFromFloats();
 
-  virtual NGInlineNodeData* TakeNGInlineNodeData() { return nullptr; }
-  virtual NGInlineNodeData* GetNGInlineNodeData() const { return nullptr; }
-  virtual void ResetNGInlineNodeData() {}
-  virtual void ClearNGInlineNodeData() {}
-  virtual bool HasNGInlineNodeData() const { return false; }
-  virtual void WillCollectInlines() {}
+  virtual NGInlineNodeData* TakeNGInlineNodeData() {
+    NOT_DESTROYED();
+    return nullptr;
+  }
+  virtual NGInlineNodeData* GetNGInlineNodeData() const {
+    NOT_DESTROYED();
+    return nullptr;
+  }
+  virtual void ResetNGInlineNodeData() { NOT_DESTROYED(); }
+  virtual void ClearNGInlineNodeData() { NOT_DESTROYED(); }
+  virtual bool HasNGInlineNodeData() const {
+    NOT_DESTROYED();
+    return false;
+  }
+  virtual void WillCollectInlines() { NOT_DESTROYED(); }
   virtual void SetPaintFragment(const NGBlockBreakToken*,
                                 scoped_refptr<const NGPhysicalFragment>);
   const NGFragmentItems* FragmentItems() const;
@@ -499,6 +562,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       LayoutUnit fixed_offset,
       IndentTextOrNot apply_text_indent,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return AdjustLogicalRightOffsetForLine(
         LogicalRightFloatOffsetForLine(logical_top, fixed_offset,
                                        logical_height),
@@ -509,6 +573,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       LayoutUnit fixed_offset,
       IndentTextOrNot apply_text_indent,
       LayoutUnit logical_height = LayoutUnit()) const {
+    NOT_DESTROYED();
     return AdjustLogicalLeftOffsetForLine(
         LogicalLeftFloatOffsetForLine(logical_top, fixed_offset,
                                       logical_height),
@@ -535,7 +600,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
                        const PhysicalOffset& accumulated_offset,
                        HitTestAction) override;
 
-  PhysicalOffset AccumulateInFlowPositionOffsets() const override;
+  PhysicalOffset AccumulateRelativePositionOffsets() const override;
 
  private:
   void ResetLayout();
@@ -622,6 +687,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void DirtyLinesFromChangedChild(
       LayoutObject* child,
       MarkingBehavior marking_behaviour = kMarkContainerChain) override {
+    NOT_DESTROYED();
     line_boxes_.DirtyLinesFromChangedChild(
         LineLayoutItem(this), LineLayoutItem(child),
         marking_behaviour == kMarkContainerChain);
@@ -656,18 +722,31 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
                                       unsigned expansion_opportunity_count);
 
   bool ShouldBreakAtLineToAvoidWidow() const {
+    NOT_DESTROYED();
     return rare_data_ && rare_data_->line_break_to_avoid_widow_ >= 0;
   }
   void ClearShouldBreakAtLineToAvoidWidow() const;
   int LineBreakToAvoidWidow() const {
+    NOT_DESTROYED();
     return rare_data_ ? rare_data_->line_break_to_avoid_widow_ : -1;
   }
   void SetBreakAtLineToAvoidWidow(int);
   void ClearDidBreakAtLineToAvoidWidow();
   void SetDidBreakAtLineToAvoidWidow();
   bool DidBreakAtLineToAvoidWidow() const {
+    NOT_DESTROYED();
     return rare_data_ && rare_data_->did_break_at_line_to_avoid_widow_;
   }
+
+  // Start page name propagated from the first child, if there are children, and
+  // the first child has a start page name associated with it.
+  const AtomicString PropagatedStartPageName() const;
+  void SetPropagatedStartPageName(const AtomicString&);
+
+  // End page name propagated from the last child, if there are children, and
+  // the last child has a end page name associated with it.
+  const AtomicString PropagatedEndPageName() const;
+  void SetPropagatedEndPageName(const AtomicString&);
 
  public:
   struct FloatWithRect {
@@ -736,6 +815,8 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       : public GarbageCollected<LayoutBlockFlowRareData> {
    public:
     explicit LayoutBlockFlowRareData(const LayoutBlockFlow* block);
+    LayoutBlockFlowRareData(const LayoutBlockFlowRareData&) = delete;
+    LayoutBlockFlowRareData& operator=(const LayoutBlockFlowRareData&) = delete;
     ~LayoutBlockFlowRareData();
 
     static LayoutUnit PositiveMarginBeforeDefault(
@@ -753,7 +834,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       return (-block->MarginAfter()).ClampNegativeToZero();
     }
 
-    void Trace(Visitor*) {}
+    void Trace(Visitor*) const {}
 
     MarginValues margins_;
     LayoutUnit pagination_strut_propagated_from_child_;
@@ -768,11 +849,18 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
     // |offset_mapping_| here.
     std::unique_ptr<NGOffsetMapping> offset_mapping_;
 
+    // Name of the start page for this object, if propagated from a descendant;
+    // see https://drafts.csswg.org/css-page-3/#start-page-value
+    AtomicString propagated_start_page_name_;
+
+    // Name of the end page for this object, if propagated from a descendant;
+    // see https://drafts.csswg.org/css-page-3/#end-page-value
+    AtomicString propagated_end_page_name_;
+
     unsigned break_before_ : 4;
     unsigned break_after_ : 4;
     int line_break_to_avoid_widow_;
     bool did_break_at_line_to_avoid_widow_ : 1;
-    DISALLOW_COPY_AND_ASSIGN(LayoutBlockFlowRareData);
   };
 
   void ClearOffsetMappingIfNeeded();
@@ -780,6 +868,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void SetOffsetMapping(std::unique_ptr<NGOffsetMapping>);
 
   const FloatingObjects* GetFloatingObjects() const {
+    NOT_DESTROYED();
     return floating_objects_.get();
   }
 
@@ -788,28 +877,27 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
 
   bool ShouldTruncateOverflowingText() const;
 
-  int GetLayoutPassCountForTesting();
-
-  // This is public only for use by LayoutNG, so that NGBlockNode can call it.
-  void IncrementLayoutPassCount();
-
  protected:
   LayoutUnit MaxPositiveMarginBefore() const {
+    NOT_DESTROYED();
     return rare_data_
                ? rare_data_->margins_.PositiveMarginBefore()
                : LayoutBlockFlowRareData::PositiveMarginBeforeDefault(this);
   }
   LayoutUnit MaxNegativeMarginBefore() const {
+    NOT_DESTROYED();
     return rare_data_
                ? rare_data_->margins_.NegativeMarginBefore()
                : LayoutBlockFlowRareData::NegativeMarginBeforeDefault(this);
   }
   LayoutUnit MaxPositiveMarginAfter() const {
+    NOT_DESTROYED();
     return rare_data_
                ? rare_data_->margins_.PositiveMarginAfter()
                : LayoutBlockFlowRareData::PositiveMarginAfterDefault(this);
   }
   LayoutUnit MaxNegativeMarginAfter() const {
+    NOT_DESTROYED();
     return rare_data_
                ? rare_data_->margins_.NegativeMarginAfter()
                : LayoutBlockFlowRareData::NegativeMarginAfterDefault(this);
@@ -819,6 +907,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void SetMaxMarginAfterValues(LayoutUnit pos, LayoutUnit neg);
 
   void InitMaxMarginValues() {
+    NOT_DESTROYED();
     if (rare_data_) {
       rare_data_->margins_ = MarginValues(
           LayoutBlockFlowRareData::PositiveMarginBeforeDefault(this),
@@ -832,9 +921,11 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
 
  private:
   LayoutUnit CollapsedMarginBefore() const final {
+    NOT_DESTROYED();
     return MaxPositiveMarginBefore() - MaxNegativeMarginBefore();
   }
   LayoutUnit CollapsedMarginAfter() const final {
+    NOT_DESTROYED();
     return MaxPositiveMarginAfter() - MaxNegativeMarginAfter();
   }
 

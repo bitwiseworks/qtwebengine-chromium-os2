@@ -5,12 +5,6 @@
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 
-# Reset sources_assignment_filter for the BUILD.gn file to prevent
-# regression during the migration of Chromium away from the feature.
-# See docs/no_sources_assignment_filter.md for more information.
-# TODO(crbug.com/1018739): remove this when migration is done.
-set_sources_assignment_filter([])
-
 component("native_theme") {
   sources = [
     "caption_style.cc",
@@ -83,7 +77,7 @@ component("native_theme") {
   ]
 
   if (is_mac) {
-    libs = [
+    frameworks = [
       "CoreGraphics.framework",
       "AppKit.framework",
       "MediaAccessibility.framework",
@@ -132,7 +126,12 @@ source_set("test_support") {
 }
 
 test("native_theme_unittests") {
-  sources = [ "native_theme_unittest.cc" ]
+  use_xvfb = use_xvfb_in_this_config
+
+  sources = [
+    "native_theme_unittest.cc",
+    "themed_vector_icon_unittest.cc",
+  ]
 
   if (use_aura) {
     sources += [ "native_theme_aura_unittest.cc" ]

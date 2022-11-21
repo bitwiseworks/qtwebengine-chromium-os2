@@ -5,13 +5,14 @@
 #ifndef V8_OBJECTS_SHARED_FUNCTION_INFO_INL_H_
 #define V8_OBJECTS_SHARED_FUNCTION_INFO_INL_H_
 
-#include "src/objects/shared-function-info.h"
-
+#include "src/base/macros.h"
 #include "src/handles/handles-inl.h"
 #include "src/heap/heap-write-barrier-inl.h"
+#include "src/heap/local-heap-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/feedback-vector-inl.h"
 #include "src/objects/scope-info.h"
+#include "src/objects/shared-function-info.h"
 #include "src/objects/templates.h"
 #include "src/wasm/wasm-objects-inl.h"
 
@@ -96,6 +97,8 @@ NEVER_READ_ONLY_SPACE_IMPL(SharedFunctionInfo)
 CAST_ACCESSOR(SharedFunctionInfo)
 DEFINE_DEOPT_ELEMENT_ACCESSORS(SharedFunctionInfo, Object)
 
+SYNCHRONIZED_ACCESSORS(SharedFunctionInfo, function_data, Object,
+                       kFunctionDataOffset)
 ACCESSORS(SharedFunctionInfo, name_or_scope_info, Object,
           kNameOrScopeInfoOffset)
 ACCESSORS(SharedFunctionInfo, script_or_debug_info, HeapObject,
@@ -167,15 +170,6 @@ AbstractCode SharedFunctionInfo::abstract_code() {
   }
 }
 
-Object SharedFunctionInfo::function_data() const {
-  return ACQUIRE_READ_FIELD(*this, kFunctionDataOffset);
-}
-
-void SharedFunctionInfo::set_function_data(Object data, WriteBarrierMode mode) {
-  RELEASE_WRITE_FIELD(*this, kFunctionDataOffset, data);
-  CONDITIONAL_WRITE_BARRIER(*this, kFunctionDataOffset, data, mode);
-}
-
 int SharedFunctionInfo::function_token_position() const {
   int offset = raw_function_token_offset();
   if (offset == kFunctionTokenOutOfRange) {
@@ -191,6 +185,12 @@ BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags2, class_scope_has_private_brand,
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags2,
                     has_static_private_methods_or_accessors,
                     SharedFunctionInfo::HasStaticPrivateMethodsOrAccessorsBit)
+
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags2, has_optimized_at_least_once,
+                    SharedFunctionInfo::HasOptimizedAtLeastOnceBit)
+
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags2, may_have_cached_code,
+                    SharedFunctionInfo::MayHaveCachedCodeBit)
 
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags, syntax_kind,
                     SharedFunctionInfo::FunctionSyntaxKindBits)
@@ -250,6 +250,7 @@ void SharedFunctionInfo::set_language_mode(LanguageMode language_mode) {
 }
 
 FunctionKind SharedFunctionInfo::kind() const {
+  STATIC_ASSERT(FunctionKindBits::kSize == kFunctionKindBitSize);
   return FunctionKindBits::decode(flags());
 }
 
@@ -419,8 +420,10 @@ bool SharedFunctionInfo::is_compiled() const {
          !data.IsUncompiledData();
 }
 
-IsCompiledScope SharedFunctionInfo::is_compiled_scope() const {
-  return IsCompiledScope(*this, GetIsolate());
+template <typename LocalIsolate>
+IsCompiledScope SharedFunctionInfo::is_compiled_scope(
+    LocalIsolate* isolate) const {
+  return IsCompiledScope(*this, isolate);
 }
 
 IsCompiledScope::IsCompiledScope(const SharedFunctionInfo shared,
@@ -428,6 +431,16 @@ IsCompiledScope::IsCompiledScope(const SharedFunctionInfo shared,
     : retain_bytecode_(shared.HasBytecodeArray()
                            ? handle(shared.GetBytecodeArray(), isolate)
                            : MaybeHandle<BytecodeArray>()),
+      is_compiled_(shared.is_compiled()) {
+  DCHECK_IMPLIES(!retain_bytecode_.is_null(), is_compiled());
+}
+
+IsCompiledScope::IsCompiledScope(const SharedFunctionInfo shared,
+                                 LocalIsolate* isolate)
+    : retain_bytecode_(
+          shared.HasBytecodeArray()
+              ? isolate->heap()->NewPersistentHandle(shared.GetBytecodeArray())
+              : MaybeHandle<BytecodeArray>()),
       is_compiled_(shared.is_compiled()) {
   DCHECK_IMPLIES(!retain_bytecode_.is_null(), is_compiled());
 }

@@ -11,6 +11,7 @@
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/decoder_client.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
+#include "gpu/command_buffer/service/mailbox_manager_impl.h"
 #include "gpu/command_buffer/service/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image_manager.h"
 #include "gpu/command_buffer/service/test_helper.h"
@@ -19,6 +20,10 @@
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/init/gl_factory.h"
+
+#if defined(OS_MAC)
+#include "gpu/ipc/service/gpu_memory_buffer_factory_io_surface.h"
+#endif
 
 using ::testing::_;
 using ::testing::Return;
@@ -48,11 +53,21 @@ class WebGPUDecoderTest : public ::testing::Test {
 
     gl_context_->MakeCurrent(gl_surface_.get());
 
+#if defined(OS_WIN)
+    // D3D shared images are only supported with passthrough command decoder.
+    gpu_preferences_.use_passthrough_cmd_decoder = true;
+#endif  // OS_WIN
+
+    ImageFactory* image_factory = nullptr;
+#if defined(OS_MAC)
+    image_factory = &image_factory_;
+#endif
+
     decoder_client_.reset(new FakeDecoderClient());
     command_buffer_service_.reset(new FakeCommandBufferServiceBase());
     decoder_.reset(WebGPUDecoder::Create(
         decoder_client_.get(), command_buffer_service_.get(),
-        &shared_image_manager_, nullptr, &outputter_));
+        &shared_image_manager_, nullptr, &outputter_, gpu_preferences_));
     ASSERT_EQ(decoder_->Initialize(), ContextResult::kSuccess);
 
     constexpr uint32_t kAdapterClientID = 0;
@@ -67,16 +82,10 @@ class WebGPUDecoderTest : public ::testing::Test {
     requestDeviceCmd.Init(kDeviceClientID, kAdapterServiceID, 0, 0, 0);
     ASSERT_EQ(error::kNoError, ExecuteCmd(requestDeviceCmd));
 
-    GpuPreferences gpu_preferences;
-#if defined(OS_WIN)
-    // D3D shared images are only supported with passthrough command decoder.
-    gpu_preferences.use_passthrough_cmd_decoder = true;
-#endif  // OS_WIN
-
     factory_ = std::make_unique<SharedImageFactory>(
-        gpu_preferences, GpuDriverBugWorkarounds(), GpuFeatureInfo(),
-        /*context_state=*/nullptr, /*mailbox_manager=*/nullptr,
-        &shared_image_manager_, /*image_factory=*/nullptr, /*tracker=*/nullptr,
+        gpu_preferences_, GpuDriverBugWorkarounds(), GpuFeatureInfo(),
+        /*context_state=*/nullptr, &mailbox_manager_, &shared_image_manager_,
+        image_factory, /*tracker=*/nullptr,
         /*enable_wrapped_sk_image=*/false);
   }
 
@@ -119,12 +128,18 @@ class WebGPUDecoderTest : public ::testing::Test {
   }
 
  protected:
+  GpuPreferences gpu_preferences_;
   std::unique_ptr<FakeCommandBufferServiceBase> command_buffer_service_;
   std::unique_ptr<WebGPUDecoder> decoder_;
   std::unique_ptr<FakeDecoderClient> decoder_client_;
   gles2::TraceOutputter outputter_;
   SharedImageManager shared_image_manager_;
   std::unique_ptr<SharedImageFactory> factory_;
+  gles2::MailboxManagerImpl mailbox_manager_;
+#if defined(OS_MAC)
+  // SharedImages on macOS require a valid image factory.
+  GpuMemoryBufferFactoryIOSurface image_factory_;
+#endif
   scoped_refptr<gl::GLSurface> gl_surface_;
   scoped_refptr<gl::GLContext> gl_context_;
 
@@ -156,7 +171,8 @@ TEST_F(WebGPUDecoderTest, AssociateMailbox) {
   gpu::Mailbox mailbox = Mailbox::GenerateForSharedImage();
   EXPECT_TRUE(factory_->CreateSharedImage(
       mailbox, viz::ResourceFormat::RGBA_8888, {1, 1},
-      gfx::ColorSpace::CreateSRGB(), gfx::kNullAcceleratedWidget,
+      gfx::ColorSpace::CreateSRGB(), kTopLeft_GrSurfaceOrigin,
+      kPremul_SkAlphaType, gfx::kNullAcceleratedWidget,
       SHARED_IMAGE_USAGE_WEBGPU));
 
   // Error case: invalid mailbox
@@ -253,8 +269,8 @@ TEST_F(WebGPUDecoderTest, DissociateMailbox) {
   gpu::Mailbox mailbox = Mailbox::GenerateForSharedImage();
   EXPECT_TRUE(factory_->CreateSharedImage(
       mailbox, viz::ResourceFormat::RGBA_8888, {1, 1},
-      gfx::ColorSpace::CreateSRGB(), kNullSurfaceHandle,
-      SHARED_IMAGE_USAGE_WEBGPU));
+      gfx::ColorSpace::CreateSRGB(), kTopLeft_GrSurfaceOrigin,
+      kPremul_SkAlphaType, kNullSurfaceHandle, SHARED_IMAGE_USAGE_WEBGPU));
 
   // Associate a mailbox so we can later dissociate it.
   {

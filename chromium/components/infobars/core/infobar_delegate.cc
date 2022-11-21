@@ -4,7 +4,6 @@
 
 #include "components/infobars/core/infobar_delegate.h"
 
-#include "base/logging.h"
 #include "base/no_destructor.h"
 #include "build/build_config.h"
 #include "components/infobars/core/infobar.h"
@@ -101,7 +100,8 @@ HungRendererInfoBarDelegate* InfoBarDelegate::AsHungRendererInfoBarDelegate() {
   return nullptr;
 }
 
-PopupBlockedInfoBarDelegate* InfoBarDelegate::AsPopupBlockedInfoBarDelegate() {
+blocked_content::PopupBlockedInfoBarDelegate*
+InfoBarDelegate::AsPopupBlockedInfoBarDelegate() {
   return nullptr;
 }
 
@@ -122,7 +122,6 @@ InfoBarDelegate::AsOfflinePageInfoBarDelegate() {
 }
 #endif
 
-InfoBarDelegate::InfoBarDelegate() : nav_entry_id_(0) {
-}
+InfoBarDelegate::InfoBarDelegate() = default;
 
 }  // namespace infobars

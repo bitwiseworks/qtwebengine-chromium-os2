@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/check_op.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
@@ -89,7 +89,7 @@ class FakeMidiManagerFactory : public MidiService::ManagerFactory {
   }
 
   base::WeakPtr<FakeMidiManager> manager() {
-#if defined(OS_MACOSX)
+#if defined(OS_MAC)
     // To avoid Core MIDI issues, MidiManager won't be destructed on macOS.
     // See https://crbug.com/718140.
     if (!manager_ ||
@@ -342,7 +342,7 @@ class PlatformMidiManagerTest : public ::testing::Test {
   // This #ifdef needs to be identical to the one in media/midi/midi_manager.cc.
   // Do not change the condition for disabling this test.
   bool IsSupported() {
-#if !defined(OS_MACOSX) && !defined(OS_WIN) && \
+#if !defined(OS_MAC) && !defined(OS_WIN) && \
     !(defined(USE_ALSA) && defined(USE_UDEV)) && !defined(OS_ANDROID)
     return false;
 #else

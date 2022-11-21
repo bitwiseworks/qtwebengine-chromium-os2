@@ -5,6 +5,7 @@
 #include "components/viz/common/features.h"
 
 #include "base/command_line.h"
+#include "base/system/sys_info.h"
 #include "build/chromecast_buildflags.h"
 #include "components/viz/common/switches.h"
 #include "components/viz/common/viz_utils.h"
@@ -16,21 +17,18 @@
 
 namespace features {
 
-const base::Feature kUseSkiaForGLReadback{"UseSkiaForGLReadback",
-                                          base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kForcePreferredIntervalForVideo{
+    "ForcePreferredIntervalForVideo", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Use the SkiaRenderer.
-#if defined(OS_LINUX) && !(defined(OS_CHROMEOS) || BUILDFLAG(IS_CHROMECAST))
+#if defined(OS_WIN) || \
+    (defined(OS_LINUX) && !(defined(OS_CHROMEOS) || BUILDFLAG(IS_CHROMECAST)))
 const base::Feature kUseSkiaRenderer{"UseSkiaRenderer",
                                      base::FEATURE_ENABLED_BY_DEFAULT};
 #else
 const base::Feature kUseSkiaRenderer{"UseSkiaRenderer",
                                      base::FEATURE_DISABLED_BY_DEFAULT};
 #endif
-
-// Use the SkiaRenderer to record SkPicture.
-const base::Feature kRecordSkPicture{"RecordSkPicture",
-                                     base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Kill-switch to disable de-jelly, even if flags/properties indicate it should
 // be enabled.
@@ -41,7 +39,7 @@ const base::Feature kDisableDeJelly{"DisableDeJelly",
 // When wide color gamut content from the web is encountered, promote our
 // display to wide color gamut if supported.
 const base::Feature kDynamicColorGamut{"DynamicColorGamut",
-                                       base::FEATURE_DISABLED_BY_DEFAULT};
+                                       base::FEATURE_ENABLED_BY_DEFAULT};
 #endif
 
 // Viz for WebView architecture.
@@ -53,33 +51,47 @@ const base::Feature kVizForWebView{"VizForWebView",
 const base::Feature kVizFrameSubmissionForWebView{
     "VizFrameSubmissionForWebView", base::FEATURE_DISABLED_BY_DEFAULT};
 
+#if defined(OS_ANDROID)
+const base::Feature kUsePreferredIntervalForVideo{
+    "UsePreferredIntervalForVideo", base::FEATURE_DISABLED_BY_DEFAULT};
+#else
+const base::Feature kUsePreferredIntervalForVideo{
+    "UsePreferredIntervalForVideo", base::FEATURE_ENABLED_BY_DEFAULT};
+#endif
+
 // Whether we should use the real buffers corresponding to overlay candidates in
 // order to do a pageflip test rather than allocating test buffers.
 const base::Feature kUseRealBuffersForPageFlipTest{
     "UseRealBuffersForPageFlipTest", base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Whether we should split partially occluded quads to reduce overdraw.
-const base::Feature kSplitPartiallyOccludedQuads{
-    "SplitPartiallyOccludedQuads", base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kUsePreferredIntervalForVideo{
-    "UsePreferredIntervalForVideo", base::FEATURE_DISABLED_BY_DEFAULT};
+#if defined(OS_FUCHSIA)
+// Enables SkiaOutputDeviceBufferQueue instead of Vulkan swapchain on Fuchsia.
+const base::Feature kUseSkiaOutputDeviceBufferQueue{
+    "UseSkiaOutputDeviceBufferQueue", base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
 
 // Whether we should log extra debug information to webrtc native log.
 const base::Feature kWebRtcLogCapturePipeline{
     "WebRtcLogCapturePipeline", base::FEATURE_DISABLED_BY_DEFAULT};
 
+// The number of frames to wait before toggling to a lower frame rate.
+const base::FeatureParam<int> kNumOfFramesToToggleInterval{
+    &kUsePreferredIntervalForVideo, "NumOfFramesToToggleInterval", 6};
+
+#if defined(OS_WIN)
+// Enables swap chains to call SetPresentDuration to request DWM/OS to reduce
+// vsync.
+const base::Feature kUseSetPresentDuration{"UseSetPresentDuration",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
+#endif  // OS_WIN
+
+bool IsForcePreferredIntervalForVideoEnabled() {
+  return base::FeatureList::IsEnabled(kForcePreferredIntervalForVideo);
+}
+
 bool IsVizHitTestingDebugEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kEnableVizHitTestDebug);
-}
-
-bool IsUsingSkiaForGLReadback() {
-  // Viz for webview requires Skia Readback.
-  if (IsUsingVizForWebView())
-    return true;
-
-  return base::FeatureList::IsEnabled(kUseSkiaForGLReadback);
 }
 
 bool IsUsingSkiaRenderer() {
@@ -99,14 +111,12 @@ bool IsUsingSkiaRenderer() {
          base::FeatureList::IsEnabled(kVulkan);
 }
 
-bool IsRecordingSkPicture() {
-  return IsUsingSkiaRenderer() &&
-         base::FeatureList::IsEnabled(kRecordSkPicture);
-}
-
 #if defined(OS_ANDROID)
 bool IsDynamicColorGamutEnabled() {
   if (viz::AlwaysUseWideColorGamut())
+    return false;
+  auto* build_info = base::android::BuildInfo::GetInstance();
+  if (!build_info->is_at_least_q())
     return false;
   return base::FeatureList::IsEnabled(kDynamicColorGamut);
 }
@@ -130,19 +140,25 @@ bool IsUsingVizFrameSubmissionForWebView() {
 }
 
 bool IsUsingPreferredIntervalForVideo() {
-  return base::FeatureList::IsEnabled(kUsePreferredIntervalForVideo);
+  return IsForcePreferredIntervalForVideoEnabled() ||
+         base::FeatureList::IsEnabled(kUsePreferredIntervalForVideo);
+}
+
+int NumOfFramesToToggleInterval() {
+  return kNumOfFramesToToggleInterval.Get();
 }
 
 bool ShouldUseRealBuffersForPageFlipTest() {
   return base::FeatureList::IsEnabled(kUseRealBuffersForPageFlipTest);
 }
 
-bool ShouldSplitPartiallyOccludedQuads() {
-  return base::FeatureList::IsEnabled(kSplitPartiallyOccludedQuads);
-}
-
 bool ShouldWebRtcLogCapturePipeline() {
   return base::FeatureList::IsEnabled(kWebRtcLogCapturePipeline);
 }
 
+#if defined(OS_WIN)
+bool ShouldUseSetPresentDuration() {
+  return base::FeatureList::IsEnabled(kUseSetPresentDuration);
+}
+#endif  // OS_WIN
 }  // namespace features

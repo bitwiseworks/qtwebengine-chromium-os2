@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @ts-nocheck
+// TODO(crbug.com/1011811): Enable TypeScript compiler checks
+
 import * as SDK from '../sdk/sdk.js';
 
 /**
@@ -794,7 +797,8 @@ export class ScreenshotCapture {
     }
     this._capturing = true;
     this._screenCaptureModel.startScreencast(
-        'jpeg', 80, undefined, 300, 2, this._screencastFrame.bind(this), visible => {});
+        Protocol.Page.StartScreencastRequestFormat.Jpeg, 80, undefined, 300, 2, this._screencastFrame.bind(this),
+        visible => {});
   }
 
   /**

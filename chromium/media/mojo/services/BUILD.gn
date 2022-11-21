@@ -15,8 +15,6 @@ jumbo_component("services") {
     "gpu_mojo_media_client.h",
     "interface_factory_impl.cc",
     "interface_factory_impl.h",
-    "media_interface_provider.cc",
-    "media_interface_provider.h",
     "media_metrics_provider.cc",
     "media_metrics_provider.h",
     "media_mojo_export.h",
@@ -58,6 +56,8 @@ jumbo_component("services") {
     "mojo_video_encode_accelerator_provider.h",
     "mojo_video_encode_accelerator_service.cc",
     "mojo_video_encode_accelerator_service.h",
+    "playback_events_recorder.cc",
+    "playback_events_recorder.h",
     "test_mojo_media_client.cc",
     "test_mojo_media_client.h",
     "video_decode_perf_history.cc",
@@ -134,24 +134,15 @@ jumbo_component("services") {
       "//media/cdm:cdm_paths",
     ]
 
-    if (enable_cdm_proxy) {
-      sources += [
-        "mojo_cdm_proxy.cc",
-        "mojo_cdm_proxy.h",
-        "mojo_cdm_proxy_service.cc",
-        "mojo_cdm_proxy_service.h",
-      ]
-      deps += [
-        # Needed by test_mojo_media_client.cc to create ClearKeyCdmProxy.
-        "//media/cdm/library_cdm/clear_key_cdm:clear_key_cdm_proxy",
-      ]
-    }
-
     # TODO(xhwang): Ideally media should not worry about sandbox. Find a way to
     # remove this dependency.
     if (is_mac) {
       deps += [ "//sandbox" ]
     }
+  }
+  if (is_chromeos) {
+    deps +=
+        [ "//chromeos/components/cdm_factory_daemon:cdm_factory_daemon_gpu" ]
   }
 }
 
@@ -166,6 +157,7 @@ source_set("unit_tests") {
     "mojo_audio_output_stream_provider_unittest.cc",
     "mojo_audio_output_stream_unittest.cc",
     "mojo_video_encode_accelerator_service_unittest.cc",
+    "playback_events_recorder_test.cc",
     "test_helpers.cc",
     "test_helpers.h",
     "video_decode_perf_history_unittest.cc",
@@ -201,10 +193,6 @@ source_set("unit_tests") {
       "mojo_cdm_file_io_unittest.cc",
       "mojo_cdm_helper_unittest.cc",
     ]
-
-    if (enable_cdm_proxy) {
-      sources += [ "mojo_cdm_proxy_unittest.cc" ]
-    }
 
     deps += [ "//media/cdm:cdm_api" ]
   }

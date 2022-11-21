@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-assert(is_linux, "This file should only be referenced on Linux")
+assert(is_linux || is_chromeos, "This file should only be referenced on Linux")
 
 import("//build/config/features.gni")
 import("//build/config/jumbo.gni")
@@ -35,10 +35,10 @@ jumbo_component("gtk") {
     "native_theme_gtk.h",
     "nav_button_provider_gtk.cc",
     "nav_button_provider_gtk.h",
-    "print_dialog_gtk.cc",
-    "print_dialog_gtk.h",
-    "printing_gtk_util.cc",
-    "printing_gtk_util.h",
+    "printing/print_dialog_gtk.cc",
+    "printing/print_dialog_gtk.h",
+    "printing/printing_gtk_util.cc",
+    "printing/printing_gtk_util.h",
     "select_file_dialog_impl.cc",
     "select_file_dialog_impl.h",
     "select_file_dialog_impl_gtk.cc",
@@ -72,11 +72,11 @@ jumbo_component("gtk") {
     # our own HarfBuzz avoid mixing symbols from system HarfBuzz and
     # our own through the indirect dependency to harfbuzz-ng here.
     "//build/config/linux/gtk",
-    "//chrome/browser:theme_properties",
     "//third_party:freetype_harfbuzz",
     "//ui/aura",
     "//ui/base",
     "//ui/base:buildflags",
+    "//ui/base/cursor:theme_manager",
     "//ui/base/ime",
     "//ui/base/ime/linux",
     "//ui/display",
@@ -91,35 +91,20 @@ jumbo_component("gtk") {
     "//ui/strings",
     "//ui/views",
   ]
+
+  if (use_cups) {
+    deps += [ "//printing/mojom" ]
+  }
+
   public_deps = [ ":gtk_ui_delegate" ]
 
   if (use_x11 || ozone_platform_x11) {
     # select_file_dialog_impl_kde.cc still refers to XID
-    configs += [ "//build/config/linux:x11" ]
+    deps += [ "//ui/gfx/x" ]
   }
 
   # TODO: This should be removed.
   if (use_ozone) {
     deps += [ "//ui/ozone" ]
   }
-}
-
-component("x") {
-  output_name = "ui_gtk_x"
-  sources = [
-    "gtk_event_loop_x11.cc",
-    "gtk_event_loop_x11.h",
-    "gtk_ui_delegate_x11.cc",
-    "gtk_ui_delegate_x11.h",
-  ]
-  deps = [
-    "//base",
-    "//build/config/linux/gtk",
-    "//ui/base",
-    "//ui/events/platform/x11",
-    "//ui/gfx/x",
-  ]
-  public_deps = [ ":gtk_ui_delegate" ]
-  defines = [ "IS_UI_GTK_X_IMPL" ]
-  configs += [ "//build/config/linux:x11" ]
 }

@@ -81,6 +81,13 @@ struct ShaderInterfaceVariableInfo
     uint32_t xfbBuffer = kInvalid;
     uint32_t xfbOffset = kInvalid;
     uint32_t xfbStride = kInvalid;
+    // Indicates that the precision needs to be modified in the generated SPIR-V
+    // to support only transferring medium precision data when there's a precision
+    // mismatch between the shaders. For example, either the VS casts highp->mediump
+    // or the FS casts mediump->highp.
+    bool useRelaxedPrecision = false;
+    // Indicate if varying is input or output
+    bool varyingIsOutput = false;
 };
 
 // TODO: http://anglebug.com/4524: Need a different hash key than a string, since
@@ -98,6 +105,12 @@ std::string GetMappedSamplerNameOld(const std::string &originalName);
 std::string GlslangGetMappedSamplerName(const std::string &originalName);
 std::string GetXfbBufferName(const uint32_t bufferIndex);
 
+void GlslangAssignLocations(GlslangSourceOptions &options,
+                            const gl::ProgramExecutable &programExecutable,
+                            const gl::ShaderType shaderType,
+                            GlslangProgramInterfaceInfo *programInterfaceInfo,
+                            gl::ShaderMap<ShaderInterfaceVariableInfoMap> *variableInfoMapOut);
+
 // Transform the source to include actual binding points for various shader resources (textures,
 // buffers, xfb, etc).  For some variables, these values are instead output to the variableInfoMap
 // to be set during a SPIR-V transformation.  This is a transitory step towards moving all variables
@@ -109,17 +122,24 @@ void GlslangGetShaderSource(GlslangSourceOptions &options,
                             gl::ShaderMap<std::string> *shaderSourcesOut,
                             ShaderMapInterfaceVariableInfoMap *variableInfoMapOut);
 
-angle::Result TransformSpirvCode(const GlslangErrorCallback &callback,
-                                 const gl::ShaderType shaderType,
-                                 const ShaderInterfaceVariableInfoMap &variableInfoMap,
-                                 const std::vector<uint32_t> &initialSpirvBlob,
-                                 SpirvBlob *spirvBlobOut);
+angle::Result GlslangTransformSpirvCode(const GlslangErrorCallback &callback,
+                                        const gl::ShaderType shaderType,
+                                        bool removeEarlyFragmentTestsOptimization,
+                                        bool removeDebugInfo,
+                                        const ShaderInterfaceVariableInfoMap &variableInfoMap,
+                                        const SpirvBlob &initialSpirvBlob,
+                                        SpirvBlob *spirvBlobOut);
 
 angle::Result GlslangGetShaderSpirvCode(const GlslangErrorCallback &callback,
+                                        const gl::ShaderBitSet &linkedShaderStages,
                                         const gl::Caps &glCaps,
                                         const gl::ShaderMap<std::string> &shaderSources,
-                                        const ShaderMapInterfaceVariableInfoMap &variableInfoMap,
                                         gl::ShaderMap<SpirvBlob> *spirvBlobsOut);
+
+angle::Result GlslangCompileShaderOneOff(const GlslangErrorCallback &callback,
+                                         gl::ShaderType shaderType,
+                                         const std::string &shaderSource,
+                                         SpirvBlob *spirvBlobOut);
 
 }  // namespace rx
 

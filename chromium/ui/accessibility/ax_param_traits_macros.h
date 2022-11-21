@@ -9,6 +9,7 @@
 #include "ipc/ipc_message_macros.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_event.h"
+#include "ui/accessibility/ax_event_intent.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_tree_id.h"
@@ -36,6 +37,13 @@ IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::StringAttribute,
 IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::TextAffinity,
                           ax::mojom::TextAffinity::kMaxValue)
 IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::EventFrom, ax::mojom::EventFrom::kMaxValue)
+IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::Command, ax::mojom::Command::kMaxValue)
+IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::InputEventType,
+                          ax::mojom::InputEventType::kMaxValue)
+IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::TextBoundary,
+                          ax::mojom::TextBoundary::kMaxValue)
+IPC_ENUM_TRAITS_MAX_VALUE(ax::mojom::MoveDirection,
+                          ax::mojom::MoveDirection::kMaxValue)
 
 IPC_STRUCT_TRAITS_BEGIN(ui::AXRelativeBounds)
   IPC_STRUCT_TRAITS_MEMBER(offset_container_id)
@@ -47,7 +55,15 @@ IPC_STRUCT_TRAITS_BEGIN(ui::AXEvent)
   IPC_STRUCT_TRAITS_MEMBER(event_type)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(event_from)
+  IPC_STRUCT_TRAITS_MEMBER(event_intents)
   IPC_STRUCT_TRAITS_MEMBER(action_request_id)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ui::AXEventIntent)
+  IPC_STRUCT_TRAITS_MEMBER(command)
+  IPC_STRUCT_TRAITS_MEMBER(input_event_type)
+  IPC_STRUCT_TRAITS_MEMBER(text_boundary)
+  IPC_STRUCT_TRAITS_MEMBER(move_direction)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ui::AXNodeData)
@@ -93,6 +109,7 @@ IPC_STRUCT_TRAITS_BEGIN(ui::AXTreeUpdate)
   IPC_STRUCT_TRAITS_MEMBER(root_id)
   IPC_STRUCT_TRAITS_MEMBER(nodes)
   IPC_STRUCT_TRAITS_MEMBER(event_from)
+  IPC_STRUCT_TRAITS_MEMBER(event_intents)
 IPC_STRUCT_TRAITS_END()
 
 #undef IPC_MESSAGE_EXPORT
